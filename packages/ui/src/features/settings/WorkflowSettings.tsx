@@ -53,7 +53,7 @@ export function WorkflowSettings({
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
       {!subtitles && (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-2 gap-3">
           {PIPELINE.map(([key, label]) => (
             <label key={key} className="flex gap-2 items-center text-sm">
               <input
@@ -82,7 +82,7 @@ export function WorkflowSettings({
             {tr("settings.paragraphAnnotationAlignment")}
           </label>
         )}
-        <div className="grid sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <div>
             <Label htmlFor="batch-tokens">
               {tr("settings.tokensPerBatch")}

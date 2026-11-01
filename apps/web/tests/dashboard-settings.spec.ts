@@ -63,8 +63,8 @@ test("structured, registry ID and YAML drafts coexist on one settings page", asy
   await expect(page.getByLabel("Model ID", { exact: true })).toHaveValue("pending_model");
 });
 
-test("mobile dashboard final cards and unified settings remain scrollable without overflow", async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 640 });
+test("compact desktop dashboard cards and unified settings remain scrollable without overflow", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 640 });
   await fakeApi(page, { "/projects": Array.from({ length: 12 }, (_, index) => ({ ...project, id: `book-${index}`, name: `Book ${index}` })) });
   await page.goto("/");
   const last = page.getByRole("link", { name: "Open project Book 11", exact: true });

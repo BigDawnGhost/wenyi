@@ -112,7 +112,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
             {(runs.data?.length || 0) > 1 && (
               <Select
                 aria-label={t("review.history")}
-                className="w-full sm:w-auto sm:max-w-72"
+                className="w-auto max-w-72"
                 value={rid || ""}
                 onValueChange={(value) =>
                   setSelected(

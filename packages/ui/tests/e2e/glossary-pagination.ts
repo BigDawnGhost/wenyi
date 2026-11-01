@@ -29,7 +29,7 @@ for (const locale of ["en", "zh-CN"] as const) {
     await expect(page.getByRole("button", {
       name: locale === "en" ? "Next page" : "下一页", exact: true,
     })).toHaveCount(1);
-    for (const width of [1440, 1200, 900, 390]) {
+    for (const width of [1440, 1200, 1024]) {
       await page.setViewportSize({ width, height: 960 });
       const search = await page.getByRole("main").getByRole("textbox").boundingBox();
       const filter = await page.getByRole("combobox").boundingBox();

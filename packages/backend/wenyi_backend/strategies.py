@@ -61,13 +61,6 @@ STEP_REGISTRY = [
         "depends_on": ["review"],
     },
     {"id": "punctuation_normalize", "name": "导出标点规范化", "category": "export"},
-    {
-        "id": "report",
-        "name": "生成报告",
-        "category": "post_process",
-        "always_on": True,
-        "locked": True,
-    },
 ]
 _SWITCHES = {"book_understanding", "polish", "annotation_alignment", "review", "review_autofix"}
 _STANDARD = {**dict.fromkeys(sorted(_SWITCHES), True), "punctuation_normalize": True}
@@ -96,6 +89,12 @@ def _saved_strategy_to_config(strategy: dict[str, Any], base: Config, **kwargs: 
             **strategy,
             "template": "标准翻译",
             "steps": strategy.get("steps", _LEGACY_QUICK_STEPS),
+        }
+    if isinstance(strategy.get("steps"), dict) and "report" in strategy["steps"]:
+        # Ignore the retired required step in existing projects without rewriting saved data.
+        strategy = {
+            **strategy,
+            "steps": {key: value for key, value in strategy["steps"].items() if key != "report"},
         }
     return strategy_to_config(strategy, base, **kwargs)
 

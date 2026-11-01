@@ -109,7 +109,7 @@ export function TranslationDiff({
         </p>
       )}
       {displayedMode === "full" ? (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-2 gap-4">
           {([
             ["proofreading.beforeChange", before],
             ["proofreading.savedVersion", after],

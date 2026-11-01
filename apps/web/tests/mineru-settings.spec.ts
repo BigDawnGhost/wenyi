@@ -1,8 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi } from "../../../packages/ui/tests/e2e/fixtures";
 
-test("MinerU is an informational deployment setting, including Chinese mobile", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+test("MinerU is an informational deployment setting, including Chinese desktop", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 844 });
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   await fakeApi(page);
   const nativeRequests: string[] = [];

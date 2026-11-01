@@ -20,7 +20,7 @@ from wenyi_api.config import Settings
 from wenyi_api.main import create_app
 from wenyi_api.storage_pg import PostgresStorage
 from wenyi_backend.context import ContextMiddleware, current_context, use_context
-from wenyi_backend.routers import chapters, export, glossary, report, review, style, subtitles
+from wenyi_backend.routers import chapters, export, glossary, review, style, subtitles
 from wenyi_backend.routers import dependencies as job_service
 from wenyi_core.storage.file import FileStorage
 
@@ -128,7 +128,7 @@ def api(monkeypatch, pg_pool, tmp_path):
 @pytest.fixture
 def domain_client(pg_storage, pg_pool, monkeypatch):
     monkeypatch.setattr(dal, "get_pool", lambda: pg_pool)
-    for module in (glossary, report, review, style, subtitles):
+    for module in (glossary, review, style, subtitles):
         monkeypatch.setattr(module, "storage_for", lambda pid: pg_storage)
     for module in (chapters, review):
         monkeypatch.setattr(module, "read_storage_for", lambda pid: pg_storage)
@@ -145,7 +145,7 @@ def domain_client(pg_storage, pg_pool, monkeypatch):
     app.add_middleware(
         ContextMiddleware, context=replace(current_context(), storage_for=lambda pid: pg_storage)
     )
-    for module in (chapters, glossary, report, review, style, subtitles):
+    for module in (chapters, glossary, review, style, subtitles):
         app.include_router(module.router)
     with TestClient(app) as client:
         yield client, pg_storage, queued

@@ -139,8 +139,8 @@ test("direct creation route retains the dashboard and dropdown Escape does not d
   await expect(page.locator("#create-project-trigger")).toBeFocused();
 });
 
-test("320px dialog scrolls its form without losing the close header", async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 480 });
+test("a short desktop window scrolls the dialog form without losing the close header", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 480 });
   await fakeApi(page);
   await page.goto("/projects/new");
   const dialog = page.getByRole("dialog", { name: "Create project", exact: true });

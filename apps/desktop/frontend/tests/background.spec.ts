@@ -24,7 +24,11 @@ async function setBackground(page: Page, background: boolean) {
 test("native background suspends polling and socket refetch, then reconciles saved completion", async ({ page }) => {
   await bootstrap(page);
   const savedProject = { ...project, status: "translating" };
-  await fakeApi(page, { [`/projects/${pid}`]: savedProject }, origin);
+  const savedWorkflow = { ...workflow, status: "running" };
+  await fakeApi(page, {
+    [`/projects/${pid}`]: savedProject,
+    [`/projects/${pid}/workflow`]: savedWorkflow,
+  }, origin);
   let socket: WebSocketRoute;
   let connections = 0;
   await page.routeWebSocket("**/ws/**", ws => {
@@ -46,7 +50,7 @@ test("native background suspends polling and socket refetch, then reconciles sav
   await page.goto(`/projects/${pid}`);
   await expect.poll(async () => {
     await page.clock.runFor(100);
-    return ["", "/chapters", "/report", "/stats", "/workflow"]
+    return ["", "/chapters", "/stats", "/workflow"]
       .every(path => responses.has(`/projects/${pid}${path}`));
   }).toBe(true);
   await page.clock.runFor(1000);
@@ -88,6 +92,7 @@ test("native background suspends polling and socket refetch, then reconciles sav
 
   savedProject.name = "Finished in background";
   savedProject.status = "done";
+  savedWorkflow.status = "done";
   await setBackground(page, false);
   await expect.poll(async () => {
     await page.clock.runFor(100);

@@ -177,10 +177,10 @@ test("creation uses server defaults without a workflow selector", async ({
   expect(templateRequests).toEqual([]);
 });
 
-test("global model registration works in Chinese on mobile", async ({
+test("global model registration works in Chinese in a compact desktop window", async ({
   page,
 }, testInfo) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1024, height: 844 });
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   await fakeApi(page);
   await page.goto("/settings");
@@ -190,7 +190,7 @@ test("global model registration works in Chinese on mobile", async ({
   await page.getByRole("button", { name: "添加模型", exact: true }).click();
   await expect(page.getByLabel("模型名称", { exact: true })).toHaveCount(2);
   await page.screenshot({
-    path: testInfo.outputPath("mobile-global-models.png"),
+    path: testInfo.outputPath("compact-global-models.png"),
     fullPage: true,
   });
   expect(

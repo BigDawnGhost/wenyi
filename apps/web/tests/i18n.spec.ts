@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { locales, createTranslator } from "../../../packages/ui/src/i18n/catalog";
+import { workflowStageLabel } from "../../../packages/ui/src/i18n/labels";
 import { statusLabel, statusTone } from "../../../packages/ui/src/i18n/status";
 import { fakeApi, pid } from "../../../packages/ui/tests/e2e/fixtures";
 import { chooseOption } from "../../../packages/ui/tests/e2e/select-helper";
@@ -128,13 +129,21 @@ test("known workflow labels and language names are localized without changing AP
   await page.goto("/settings");
   await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
   await page.goto(`/projects/${pid}`);
-  await page.getByText("Workflow details", { exact: true }).click();
-  // Scope to the opened disclosure: run-history rows reuse the same label.
-  const stages = page.locator("details[open]");
-  await expect(
-    stages.getByText("Translate chapters in batches", { exact: true }),
-  ).toBeVisible();
-  await expect(stages.getByText("分批翻译章节", { exact: true })).toHaveCount(0);
+  const workflow = page.getByRole("region", { name: "Current workflow" });
+  await expect(workflow.getByText("Book translation", { exact: true })).toBeVisible();
+  await expect(workflow.getByText("translation", { exact: true })).toHaveCount(0);
+});
+
+test("stage labels distinguish style analysis from translation-time term extraction", () => {
+  for (const locale of ["en", "zh-CN"] as const) {
+    const t = createTranslator(locale);
+    expect(workflowStageLabel("translation", "分批翻译章节", t))
+      .toBe(t("workflow.translate"));
+    expect(workflowStageLabel("style_analysis", "风格分析", t))
+      .toBe(t("workflow.styleAnalysis"));
+    expect(workflowStageLabel("term_extract", "实时术语提取", t))
+      .toBe(t("workflow.terms"));
+  }
 });
 
 for (const locale of ["en", "zh-CN"] as const) {
@@ -245,10 +254,10 @@ for (const locale of ["en", "zh-CN"] as const) {
   });
 }
 
-test("language settings remain accessible from mobile navigation", async ({
+test("language settings remain accessible from desktop navigation in a compact window", async ({
   page,
 }, testInfo) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1024, height: 844 });
   await fakeApi(page);
   await page.goto("/");
   await page.getByRole("link", { name: "Settings", exact: true }).click();
@@ -258,7 +267,7 @@ test("language settings remain accessible from mobile navigation", async ({
   ).toBeVisible();
   await expect(page.getByLabel("界面语言")).toBeVisible();
   await page.screenshot({
-    path: testInfo.outputPath("mobile-language-settings.png"),
+    path: testInfo.outputPath("compact-language-settings.png"),
     fullPage: true,
   });
 });

@@ -96,7 +96,7 @@ runner 从持久任务身份复核、恢复直到领域执行结束持有书级�
 
 **已落地的护栏：** [离线 schema 导出](../../../scripts/export_openapi.py#L21) 使用共享 app factory 与不可调用的运行端口，不启动生产 lifespan。`pnpm check:schema` 生成临时类型并与已提交文件比较，CI 在前端检查前执行。[路由 loader 检查](../../../packages/ui/tests/source-contracts.mjs#L43) 从 manifest 推导 chunk，同时保留独立的必要 URL/重定向断言及既有 audience/外壳 E2E 覆盖。
 
-**已完成的测试归属迁移：** 全部 18 个跨宿主套件、API fixture、select 辅助函数与测试 harness 均归 UI 测试支持目录，各宿主用自身 bootstrap 和能力选项显式注册，不再导入另一宿主的测试。宿主 fixture 转发已删除。边界检查要求两端注册每个共享套件，并禁止共享测试支持包含原生 bootstrap。原生保存/拖入/凭据/bootstrap 与浏览器行为继续分开验证，测试支持不进入运行时导出。
+**已完成的测试归属迁移：** 全部 20 个跨宿主套件、API fixture、select 辅助函数与测试 harness 均归 UI 测试支持目录，各宿主用自身 bootstrap 和能力选项显式注册，不再导入另一宿主的测试。宿主 fixture 转发已删除。边界检查要求两端注册每个共享套件，并禁止共享测试支持包含原生 bootstrap。原生保存/拖入/凭据/bootstrap 与浏览器行为继续分开验证，测试支持不进入运行时导出。
 
 ### F7：CLI 迁移命令直接调用文件存储私有方法
 
@@ -154,7 +154,7 @@ packages/
       i18n/                          # retained
     tests/e2e/
       fixtures.ts                    # shared API fixtures
-      shell.ts / ...                 # 18 explicitly registered cross-host suites
+      shell.ts / ...                 # 20 explicitly registered cross-host suites
       select-helper.ts / select-harness.tsx
   shared-schema/src/api.d.ts          # retained generated contract
 apps/
@@ -234,13 +234,13 @@ uv run --no-sync pytest -q \
 
 ### 完整实现验收
 
-集成 `main` 的 `5be8d37` 后，本地验证使用 Python 3.12、Node 22/pnpm 9、临时 fixture 状态与一次性 PostgreSQL/Redis 服务：
+集成 `main` 的 `d29acc7` 后，本地验证使用 Python 3.12、Node 22/pnpm 9、临时 fixture 状态与一次性 PostgreSQL/Redis 服务。集成保留上游 Desktop 独立工作流调度器、简化的桌面工作流界面与项目报告退役行为；两个新增跨宿主套件使用共享注册边界，已退役报告请求返回 404 且不打开存储。
 
 | 检查 | 结果 |
 |---|---|
-| 配置隔离测试数据库/Redis URL 后运行 `uv run --no-sync pytest -q` | 2752 项通过、73 个 subtest 通过、5 项跳过；包含架构、存储、恢复、API 集成及 Desktop 生命周期覆盖 |
+| 配置隔离测试数据库/Redis URL 后运行 `uv run --no-sync pytest -q` | 2757 项通过、72 个 subtest 通过、5 项跳过；包含架构、存储、恢复、API 集成及 Desktop 生命周期覆盖 |
 | 两端 `typecheck`、`typecheck:tests`、`build` | 全部通过 |
-| 两端完整 `test:e2e --workers=2 --max-failures=1`，通过临时 `--config` 隔离端口与结果目录 | Web 285 项通过、Desktop 246 项通过；使用 bundled Chromium 153.0.8010.12 |
+| 两端完整 `test:e2e --workers=2 --max-failures=1`，通过临时 `--config` 隔离端口与结果目录 | Web 312 项通过、Desktop 272 项通过；使用 bundled Chromium 153.0.8010.12 |
 | 两端构建后运行 `pnpm check:schema`、`pnpm test:frontend-boundaries` | schema 未漂移，13 项边界测试通过 |
 | 全范围 Ruff check/format、`pyright --project pyrightconfig.json --warnings`、`git diff --check` | 通过；Pyright 1.1.412 在配置的源码/测试范围内零错误、零警告 |
 | 五个 Python 包 sdist/wheel 构建，资源/版本与干净安装检查 | 通过；验证了 66 个语言资源及 CLI/shared/Web/Desktop 依赖隔离 |
@@ -248,6 +248,6 @@ uv run --no-sync pytest -q \
 
 共享 API mock 已从匹配任意层级的 `api` 目录改为匹配根 `/api/` 路径。回归测试在修复前复现前端源码模块被拦截，修复后通过。Desktop 首轮有一次原文视图等待超时，单独复跑和随后带 trace 的全量复跑均通过，未放宽断言；此处记录为偶发测试现象，不据此声称修复了另一个产品缺陷。
 
-五项 Python 跳过分别为三项 Windows 专属用例、需显式启用的 Nginx 代理集成、缺少可选 Weaver PDF 样本。未执行原生 Tauri 打包、其他操作系统/Python 矩阵，以及真实模型/解析服务质量对照。本次抽取不改变提示词或翻译语义；未使用私有书籍、既有项目状态或真实凭据。
+五项 Python 跳过分别为三项 Windows 专属用例、需显式启用的 Nginx 代理集成、缺少可选 Weaver PDF 样本。本地未执行原生 Tauri 打包及其他操作系统/Python 矩阵，由 CI 单独验证；未执行真实模型/解析服务质量对照。本次抽取不改变提示词或翻译语义；未使用私有书籍、既有项目状态或真实凭据。
 
 后续实现遵循[仓库验证规则](../../../AGENTS.md#验证与完成)：Python 改动运行受影响测试、Ruff check/format 与 `git diff --check`；状态、锁、续跑及跨领域改动运行完整 Python 测试；共享 UI 改动验证两端构建、类型与受影响 Playwright。集成验证仅使用隔离的 `WENYI_TEST_DATABASE_URL`、`WENYI_TEST_REDIS_URL`，跳过必须记录为未验证。目录/包迁移还需干净安装、sdist/wheel 资源检查和非空架构扫描。只有另行批准的改动改变提示词或翻译语义时，才需要对应模型质量比较。

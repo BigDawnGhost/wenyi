@@ -172,8 +172,8 @@ test("dirty and pending MinerU writes block signed updates, then release the gua
   await expect(install).toBeEnabled();
 });
 
-test("local errors are redacted, never retried automatically, and Chinese mobile is usable", async ({ page }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+test("local errors are redacted, never retried automatically, and Chinese desktop is usable", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 844 });
   await page.clock.install();
   await page.addInitScript(() => {
     localStorage.setItem("wenyi.locale", "zh-CN");

@@ -674,7 +674,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             self.assertEqual(store.load_usage(), cumulative)
             self.assertTrue(os.path.isfile(store.usage_path))
 
-    def test_report_omits_usage_and_usage_file_keeps_book_total(self):
+    def test_resumed_workflow_keeps_book_usage_total_without_a_report(self):
         with tempfile.TemporaryDirectory() as d:
             source = os.path.join(d, "novel.txt")
             write_sample_txt(source)
@@ -696,9 +696,9 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             resumed_client = FakeClient(handler=routing_handler)
             resumed = Orchestrator(config, client=resumed_client)
             self._record(resumed_client, "cheap", prompt=40, completion=10)
-            result = resumed.run_steps(source, {"report"})
+            result = resumed.run_steps(source, {"translate", "assemble"}, out_format="txt")
 
-            self.assertNotIn("usage", result["report"])
+            self.assertNotIn("report", result)
             usage = result["store"].load_usage()
             self.assertIsNotNone(usage)
             assert usage is not None
@@ -850,7 +850,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             with self.assertRaisesRegex(
                 ValueError, "content does not match existing translation state"
             ):
-                Orchestrator(config, client=FakeClient()).run_report(source)
+                Orchestrator(config, client=FakeClient()).run_assemble(source, out_format="txt")
 
             self.assertNotEqual(store.load_manifest()["source_sha256"], source_sha256(source))
 
@@ -890,7 +890,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
                     ValueError, "content does not match existing translation state"
                 ),
             ):
-                resumed.run_report(source)
+                resumed.run_assemble(source, out_format="txt")
 
     def test_existing_state_restores_detected_source_for_matching_target(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -906,7 +906,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             resumed_config.target_lang = "zh"
             resumed = Orchestrator(resumed_config, client=FakeClient())
 
-            resumed.run_report(source)
+            resumed.run_assemble(source, out_format="txt")
 
             self.assertEqual(resumed.config.source_lang, "ja")
             self.assertEqual(resumed.config.target_lang, "zh")

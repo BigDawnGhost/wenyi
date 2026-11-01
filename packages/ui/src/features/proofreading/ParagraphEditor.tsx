@@ -241,7 +241,7 @@ export function ParagraphEditor({
           </div>
         )}
         <div
-          className={`grid gap-6 ${view !== "precision" ? "md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" : ""}`}
+          className={`grid gap-6 ${view !== "precision" ? "grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" : ""}`}
         >
           <section className="min-w-0 space-y-3">
             <h3 className="text-sm font-medium">{t("common.source")}</h3>

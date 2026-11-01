@@ -30,7 +30,7 @@ for (const locale of ["en", "zh-CN"] as const) {
     const filter = page.getByRole("combobox");
     const table = page.getByRole("table");
     const rows = table.locator("tbody tr");
-    for (const width of [1440, 900, 390]) {
+    for (const width of [1440, 1280, 1024]) {
       await page.setViewportSize({ width, height: 960 });
       await chooseOption(filter, locale === "en" ? "Person" : "人物");
       await expect(rows).toHaveCount(1);

@@ -96,9 +96,8 @@ def book_operation(
         return "done" if not storage.pending_chapters() else "prepared"
     if request.kind == "review":
         orch.run_review(source, progress=progress)
-        orch.run_report(source)
         return "reviewed"
-    steps = {"translate", "report"}
+    steps = {"translate"}
     if config.pipeline.review:
         steps.add("review")
     orch.run_steps(source, steps, progress=progress)

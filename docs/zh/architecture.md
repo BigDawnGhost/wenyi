@@ -51,7 +51,7 @@ i18n、文档语言、样式、允许复用的基础组件、设置布局与格�
 `scripts/export_openapi.py` 使用不可调用的运行端口装配共享 HTTP schema，不导入平台
 入口，也不启动生产 lifespan。CI 通过 `pnpm check:schema` 比较离线生成类型与已提交
 契约。前端边界测试检查宿主导入解析，从路由清单提取懒加载分包，并保留独立 URL
-断言。全部 18 个跨宿主套件、API fixture 和 select 测试支持位于
+断言。全部 20 个跨宿主套件、API fixture 和 select 测试支持位于
 `packages/ui/tests/e2e/`，不进入运行时导出。宿主用自身 bootstrap 与能力选项显式
 注册；禁止跨宿主测试导入和 fixture 转发。
 

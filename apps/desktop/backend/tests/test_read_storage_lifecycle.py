@@ -47,7 +47,6 @@ def inspected_project(desktop_context, monkeypatch):
         ("/events", 200),
         ("/analysis", 200),
         ("/stats", 200),
-        ("/report", 200),
     ],
 )
 def test_inspection_releases_all_storage_handles(inspected_project, path, status):
@@ -56,6 +55,13 @@ def test_inspection_releases_all_storage_handles(inspected_project, path, status
     assert response.status_code == status, response.text
     assert instances, "The route must actually inspect persisted state"
     assert all(instance._conn is None for instance in instances)
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_retired_report_does_not_open_storage(inspected_project, method):
+    pid, client, instances = inspected_project
+    assert client.request(method, f"/projects/{pid}/report").status_code == 404
+    assert instances == []
 
 
 def test_read_failure_still_closes_storage(inspected_project, monkeypatch):

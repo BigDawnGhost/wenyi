@@ -118,7 +118,7 @@ export default function ExportPage() {
           <CardContent className="p-5 space-y-4">
             <div>
               <Label>{tr("export.outputFormat")}</Label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+              <div className="grid grid-cols-4 gap-2 mt-2">
                 {!subtitle && (
                   <button
                     onClick={() => setFormat("")}

@@ -1,4 +1,4 @@
-"""Offline tests for TXT/EPUB assembly, reports and consistency."""
+"""Offline tests for TXT/EPUB assembly and consistency."""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from bs4.element import Tag
 from wenyi_core.assemble.about import append_about_page
 from wenyi_core.assemble.epub_presentation import _inject_bilingual_style, _rewrite_html_document
 from wenyi_core.assemble.html_renderer import _render_chapter_html, _render_segments_html
-from wenyi_core.assemble.report import build_report
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore
@@ -23,7 +22,6 @@ from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.markup.segments import annotate_epub_resource
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
 
 from tests.fake_llm import routing_handler
@@ -1655,63 +1653,6 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
         self.assertNotIn("↩", heading.get_text())
         self.assertNotIn("目录", heading.get_text())
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
-
-
-class TestReport(unittest.TestCase):
-    def test_report_summary(self):
-        with tempfile.TemporaryDirectory() as d:
-            txt = os.path.join(d, "novel.txt")
-            write_sample_txt(txt)
-            store, _ = _run(txt, os.path.join(d, "state"))
-            g = GlossaryStore(store.glossary_path)
-            report = build_report(store, g)
-            g.close()
-            s = report["summary"]
-            self.assertEqual(s["chapters_done"], s["chapters_total"])
-            self.assertEqual(s["empty_targets"], 0)  # Every paragraph has a translation.
-            self.assertGreaterEqual(s["terms"], 1)
-            self.assertNotIn("low_confidence_terms", report)
-            self.assertNotIn("chapters_reviewed", s)
-            self.assertNotIn("review_issues", report)
-
-    def test_report_marks_review_autofix_as_published(self):
-        with tempfile.TemporaryDirectory() as d:
-            txt = os.path.join(d, "novel.txt")
-            write_sample_txt(txt)
-            store, _ = _run(txt, os.path.join(d, "state"))
-            review = ReviewRunStore(store.run_dir)
-            review.start(
-                reviewed_content_digest="digest",
-                metadata={"config": {}, "glossary_fingerprint": "g"},
-            )
-            result = review.finish(
-                status="completed",
-                termination="max_rounds",
-                summary={"issue_count": 2, "change_count": 1},
-                issues=[],
-                changes=[],
-            )
-            review.write_json(
-                "result.json",
-                {
-                    **result,
-                    "autofix": {
-                        "enabled": True,
-                        "status": "partial",
-                        "applied_segment_count": 1,
-                        "failed_issue_count": 1,
-                    },
-                },
-            )
-            glossary = GlossaryStore(store.glossary_path)
-
-            report = build_report(store, glossary)
-            glossary.close()
-
-            self.assertFalse(report["review"]["read_only"])
-            self.assertEqual(report["review"]["autofix_status"], "partial")
-            self.assertEqual(report["review"]["autofix_applied_segment_count"], 1)
-            self.assertEqual(report["review"]["autofix_failed_issue_count"], 1)
 
 
 if __name__ == "__main__":

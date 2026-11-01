@@ -96,7 +96,7 @@ Keep query/mutation ownership with its feature. Split endpoint modules only as c
 
 **Implemented guardrails:** [offline schema export](../../scripts/export_openapi.py#L21) uses the shared app factory and unavailable runtime ports without a production lifespan. `pnpm check:schema` generates temporary types and compares them with the committed file; CI runs it before frontend checks. [Route-loader inspection](../../packages/ui/tests/source-contracts.mjs#L43) derives chunks from the manifest, with separate required-URL/redirect assertions and existing audience/shell E2E coverage.
 
-**Implemented test ownership:** all 18 cross-host suites, API fixtures, select helpers and the select harness live in UI test support. Each host explicitly registers suites with its own bootstrap and capability options; no host imports another host's tests. Host fixture forwarders are removed. Boundary checks require both hosts to register every shared suite and forbid native bootstrap in shared support. Native save/drop/credentials/bootstrap and browser behavior remain separate; test support is not a runtime export.
+**Implemented test ownership:** all 20 cross-host suites, API fixtures, select helpers and the select harness live in UI test support. Each host explicitly registers suites with its own bootstrap and capability options; no host imports another host's tests. Host fixture forwarders are removed. Boundary checks require both hosts to register every shared suite and forbid native bootstrap in shared support. Native save/drop/credentials/bootstrap and browser behavior remain separate; test support is not a runtime export.
 
 ### F7 — CLI migration reaches a private file-store method
 
@@ -154,7 +154,7 @@ packages/
       i18n/                          # retained
     tests/e2e/
       fixtures.ts                    # shared API fixtures
-      shell.ts / ...                 # 18 explicitly registered cross-host suites
+      shell.ts / ...                 # 20 explicitly registered cross-host suites
       select-helper.ts / select-harness.tsx
   shared-schema/src/api.d.ts          # retained generated contract
 apps/
@@ -234,13 +234,13 @@ These establish the initial audit's limited baseline, **not** implementation or 
 
 ### Completed implementation acceptance
 
-Local validation after integrating `main` at `5be8d37` used Python 3.12 and Node 22/pnpm 9, temporary fixture state and disposable PostgreSQL/Redis services:
+Local validation after integrating `main` at `d29acc7` used Python 3.12 and Node 22/pnpm 9, temporary fixture state and disposable PostgreSQL/Redis services. Integration preserves the upstream independent Desktop workflow dispatcher, simplified desktop workflow UI and project-report retirement. The two new cross-host suites use the shared registration boundary; retired report requests return 404 without opening storage.
 
 | Check | Result |
 |---|---|
-| `uv run --no-sync pytest -q` with isolated test database/Redis URLs | 2752 passed, 73 subtests passed, 5 skipped; includes architecture, storage, recovery, API integration and Desktop lifecycle coverage |
+| `uv run --no-sync pytest -q` with isolated test database/Redis URLs | 2757 passed, 72 subtests passed, 5 skipped; includes architecture, storage, recovery, API integration and Desktop lifecycle coverage |
 | Both hosts: `typecheck`, `typecheck:tests`, `build` | Passed |
-| Both hosts: full `test:e2e --workers=2 --max-failures=1` with temporary `--config` overrides for isolated ports/results | Web 285 passed; Desktop 246 passed; bundled Chromium 153.0.8010.12 |
+| Both hosts: full `test:e2e --workers=2 --max-failures=1` with temporary `--config` overrides for isolated ports/results | Web 312 passed; Desktop 272 passed; bundled Chromium 153.0.8010.12 |
 | `pnpm check:schema` and `pnpm test:frontend-boundaries` after both builds | Schema unchanged; 13 boundary tests passed |
 | Full-scope Ruff check/format, `pyright --project pyrightconfig.json --warnings`, `git diff --check` | Passed; Pyright 1.1.412 reported zero errors and zero warnings across the configured source/test scope |
 | Five Python package sdist/wheel builds; resource/version and clean-install checks | Passed; 66 bundled language resources and CLI/shared/Web/Desktop dependency isolation verified |
@@ -248,6 +248,6 @@ Local validation after integrating `main` at `5be8d37` used Python 3.12 and Node
 
 The shared API mock now matches the root `/api/` path rather than any nested `api` directory. A regression test reproduced interception of frontend source modules before the fix and passes afterward. One initial Desktop source-view wait timed out; its isolated rerun and the subsequent full traced suite passed without relaxing assertions. This is recorded as an intermittent test observation, not a separately established product fix.
 
-The five Python skips are three Windows-only cases, the opt-in Nginx proxy integration, and an absent optional Weaver PDF sample. Native Tauri packaging, other OS/Python matrix entries and real-model/real-parser quality comparisons were not run. The extraction changes no prompts or translation semantics. No private books, existing project state or real credentials were used.
+The five Python skips are three Windows-only cases, the opt-in Nginx proxy integration, and an absent optional Weaver PDF sample. Native Tauri packaging and other OS/Python matrix entries were not run locally; CI verifies those separately. Real-model/real-parser quality comparisons were not run. The extraction changes no prompts or translation semantics. No private books, existing project state or real credentials were used.
 
 For implementation, follow the [repository verification rules](../../AGENTS.md#验证与完成): affected Python tests plus Ruff check/format and `git diff --check`; full Python tests for state/locking/resume or cross-domain changes; both frontend builds/typechecks and affected Playwright suites for shared UI changes. Use isolated `WENYI_TEST_DATABASE_URL` and `WENYI_TEST_REDIS_URL` for integration checks and report skips as unverified. Directory/package moves additionally require clean installation, sdist/wheel resource checks and non-empty architecture scans. Model-quality comparison is necessary only if a separately approved change alters prompt or translation semantics.

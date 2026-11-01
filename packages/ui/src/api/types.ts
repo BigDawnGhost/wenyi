@@ -38,9 +38,3 @@ export type Workflow = Output<"WorkflowOut">;
 export type SubtitleData = Output<"SubtitleResult">;
 export type UploadPreview = Output<"UploadPreview">;
 export type AnalysisPayload = Output<"AnalysisOut">;
-export interface ReportData {
-  summary: Record<string, unknown>;
-  usage?: Record<string, unknown>;
-  timing?: Record<string, unknown>;
-  [key: string]: unknown;
-}

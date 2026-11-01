@@ -24,7 +24,7 @@ export function Dialog({
   initialFocus?: React.RefObject<HTMLElement | null>;
   returnFocus?: () => HTMLElement | null;
   children: React.ReactNode;
-  /** Actions pinned below the scrolling body, so they stay reachable on small screens. */
+  /** Actions pinned below the scrolling body, so they stay reachable in short windows. */
   footer?: React.ReactNode;
   className?: string;
 }) {
@@ -70,7 +70,7 @@ export function Dialog({
             )) event.preventDefault();
           }}
         >
-          <div className="shrink-0 border-b px-4 py-4 pr-14 sm:px-6 sm:pr-14">
+          <div className="shrink-0 border-b px-6 py-4 pr-14">
             <Primitive.Title className="text-lg font-semibold">{title}</Primitive.Title>
             {description && (
               <Primitive.Description className="mt-0.5 text-sm text-muted-foreground">
@@ -86,9 +86,9 @@ export function Dialog({
               <X className="h-4 w-4" aria-hidden="true" />
             </Primitive.Close>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">{children}</div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-6">{children}</div>
           {footer && (
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t px-4 py-3 sm:px-6">
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t px-6 py-3">
               {footer}
             </div>
           )}

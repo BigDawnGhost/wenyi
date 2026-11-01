@@ -204,9 +204,6 @@ function tableData(): Record<string, unknown> {
     [`/projects/${pid}/glossary/terms`]: [],
     [`/projects/${pid}/glossary/conflicts`]: [],
     [`/projects/${pid}/review/runs`]: [],
-    [`/projects/${pid}/report`]: {
-      summary: { chapters_done: 3, review_issues: 0 },
-    },
     [`/projects/${pid}/analysis`]: {
       analysis: {
         genre: "青年向奇幻冒险，轻小说质感",

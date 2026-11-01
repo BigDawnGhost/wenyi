@@ -39,9 +39,6 @@ export function ParagraphActions({
         show(event.currentTarget.querySelector("button")!, { x: event.clientX, y: event.clientY });
       }}
     >
-      <span className="block px-4 pt-4 text-xs text-muted-foreground lg:hidden">
-        {t("common.translation")}
-      </span>
       <p
         data-testid="translation-text"
         className="select-text whitespace-pre-wrap p-4 pr-10 text-sm leading-relaxed [overflow-wrap:anywhere]"
@@ -63,7 +60,7 @@ export function ParagraphActions({
         aria-label={t("proofreading.paragraphActions")}
         aria-haspopup="menu"
         aria-expanded={expanded}
-        className="absolute right-2 top-3 rounded p-1 text-muted-foreground hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
+        className="absolute right-2 top-3 rounded p-1 text-muted-foreground opacity-0 hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100"
         onClick={(event) => show(event.currentTarget)}
         onKeyDown={(event) => {
           if (

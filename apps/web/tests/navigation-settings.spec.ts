@@ -33,12 +33,12 @@ test("project settings retain creation-time precision without a mode selector", 
   await expect(page.getByLabel("Polishing", { exact: true })).toBeDisabled();
 });
 
-for (const mobile of [false, true]) {
-  test(`project navigation stays flat on ${mobile ? "mobile in Chinese" : "desktop"}`, async ({
+for (const chinese of [false, true]) {
+  test(`project navigation stays flat in ${chinese ? "Chinese" : "English"}`, async ({
     page,
   }, testInfo) => {
-    if (mobile) {
-      await page.setViewportSize({ width: 390, height: 844 });
+    if (chinese) {
+      await page.setViewportSize({ width: 1024, height: 844 });
       await page.addInitScript(() =>
         localStorage.setItem("wenyi.locale", "zh-CN"),
       );
@@ -46,11 +46,11 @@ for (const mobile of [false, true]) {
     await fakeApi(page);
     await page.goto(`/projects/${pid}/proofreading`);
     const nav = page.getByRole("navigation", {
-      name: mobile ? "项目导航" : "Project navigation",
+      name: chinese ? "项目导航" : "Project navigation",
     });
     await expect(nav.getByRole("link")).toHaveCount(9);
     await expect(nav.getByRole("link")).toHaveText(
-      mobile
+      chinese
         ? [
             "翻译总览",
             "人工校阅",
@@ -77,19 +77,19 @@ for (const mobile of [false, true]) {
     await expect(nav.locator("details, summary")).toHaveCount(0);
     await expect(
       nav.getByRole("link", {
-        name: mobile ? "翻译总览" : "Translation overview",
+        name: chinese ? "翻译总览" : "Translation overview",
         exact: true,
       }),
     ).toBeVisible();
     await expect(
       nav.getByRole("link", {
-        name: mobile ? "人工校阅" : "Manual proofreading",
+        name: chinese ? "人工校阅" : "Manual proofreading",
         exact: true,
       }),
     ).toHaveAttribute("aria-current", "page");
     await expect(
       nav.getByRole("link", {
-        name: mobile ? "事件日志" : "Event log",
+        name: chinese ? "事件日志" : "Event log",
         exact: true,
       }),
     ).toBeVisible();
@@ -100,7 +100,7 @@ for (const mobile of [false, true]) {
     await page.goto(`/projects/${pid}/settings`);
     await expect(
       page.getByRole("heading", {
-        name: mobile ? "项目配置" : "Project settings",
+        name: chinese ? "项目配置" : "Project settings",
         exact: true,
       }),
     ).toBeVisible();
@@ -112,7 +112,7 @@ for (const mobile of [false, true]) {
     await page.reload();
     await expect(nav.locator('a[href$="/settings"]')).toBeVisible();
     await expect(
-      page.getByLabel(mobile ? "界面语言" : "Interface language"),
+      page.getByLabel(chinese ? "界面语言" : "Interface language"),
     ).toHaveCount(0);
   });
 }

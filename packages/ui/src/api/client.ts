@@ -5,7 +5,7 @@ import type {
   ChapterSegments, SegmentRevision, PrecisionDrafts, Term, TermPage, Conflict,
   StrategyTemplate, ExportOut, EventOut, JobEnqueued, Capabilities, GlobalConfig,
   GlobalConfigInput, ModelPingResult, ModelListResult, ModelListRequest,
-  ProjectConfig, ReviewRun, SubtitleData, UploadPreview, AnalysisPayload, ReportData,
+  ProjectConfig, ReviewRun, SubtitleData, UploadPreview, AnalysisPayload,
 } from "./types";
 
 const request = <T>(path: string, init?: RequestInit) => platform().request<T>(path, init);
@@ -79,7 +79,6 @@ export const api = {
       `/projects/${pid}/subtitles/${encodeURIComponent(id)}`,
       { method: "PUT", body: JSON.stringify({ target }) },
     ),
-  getReport: (pid: string) => request<ReportData>(`/projects/${pid}/report`),
   listProjects: () => request<Project[]>("/projects"),
   createProject: (
     body: ProjectInput,
@@ -108,8 +107,6 @@ export const api = {
     request<JobEnqueued>(`/projects/${pid}/resume`, {
       method: "POST",
     }),
-  regenerateReport: (pid: string) =>
-    request<ReportData>(`/projects/${pid}/report`, { method: "POST" }),
 
   listChapters: (pid: string) =>
     request<ChapterSummary[]>(`/projects/${pid}/chapters`),

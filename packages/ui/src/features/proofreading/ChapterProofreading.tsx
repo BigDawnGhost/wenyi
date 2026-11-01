@@ -28,20 +28,16 @@ const ParagraphRow = memo(function ParagraphRow({
   sourceOnly: boolean;
   onMenu: (anchor: ParagraphMenuAnchor) => void;
 }) {
-  const { t } = useI18n();
   return (
     <div
       id={`paragraph-${index}`}
       tabIndex={-1}
-      className={`grid ${sourceOnly ? "" : "lg:grid-cols-2"} border-b last:border-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30`}
+      className={`grid ${sourceOnly ? "" : "grid-cols-2"} border-b last:border-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30`}
       // Keep every paragraph searchable/selectable and addressable by deep links.
       // Unlike virtualization, auto only skips offscreen layout and painting.
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 280px" }}
     >
-      <div className="min-w-0 p-4 text-sm lg:border-r">
-        <span className="mb-2 block text-xs text-muted-foreground lg:hidden">
-          {t("common.source")}
-        </span>
+      <div className="min-w-0 border-r p-4 text-sm">
         <p className="whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">
           {source}
         </p>

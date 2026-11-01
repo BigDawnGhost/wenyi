@@ -70,7 +70,7 @@ language:
 
 运行 `uv run wenyi languages` 查看内置列表，无需 API Key。`target` 不接受 `auto`；不支持的代码在配置校验时拒绝。注册的语言别名 `zh-Hans` / `zh-CN` → `zh`、`zh-TW` → `zh-Hant`、`ja-JP` → `ja`、`ko-KR` → `ko`、`vi-VN` → `vi`；已注册的地区和文字变体保留，不再截取前两个字母。
 
-每次运行选择一个方向。例如 `source: zh`、`target: en` 直接中译英；把日语原文设为 `source: ja`、`target: en` 则直接日译英。检测或规范化后完全相同的语言会拒绝翻译。更换目标语言会建立独立状态；`prepare`、`translate`、`review`、`assemble`、`status`、`report` 和术语命令须使用对应的 `language.target`。源语言显式配置与保存值冲突时拒绝续跑。
+每次运行选择一个方向。例如 `source: zh`、`target: en` 直接中译英；把日语原文设为 `source: ja`、`target: en` 则直接日译英。检测或规范化后完全相同的语言会拒绝翻译。更换目标语言会建立独立状态；`prepare`、`translate`、`review`、`assemble`、`status` 和术语命令须使用对应的 `language.target`。源语言显式配置与保存值冲突时拒绝续跑。
 
 提示词资源与状态隔离见[翻译流程](pipeline.md)，界面语言设置见 [Web 界面语言](web.md#界面语言)。多语言公版长篇盲评、母语审校及 RTL／排版认证仍待开展；支持界面语言不代表翻译质量已经认证。CLI 与提示词指令仍使用英语，当前没有 `ui_locale` 或 `prompt_locale` 配置字段。
 
@@ -312,7 +312,7 @@ pipeline:
 - 旧键 `rolling_context_segments` 不再接受，请使用 `rolling_context_tokens` 替换，不提供段数到 token 的自动换算。
 - `book_understanding`：完整章节按有界分块预扫，生成章节梗概和全书概览，不受 `terminology_context` 影响。风格分析同时参考梗概与原文样本；摘要保留原文身份，只使用已有权威名称映射。有原文内容的章节必须具备可用梗概才能开始正文翻译；全书概览合成失败时翻译继续。失败的章节梗概会在下次 prepare/translate 时补齐。相较旧版默认取样，完整覆盖会增加长章节首次预扫费用。重试与缓存行为见[流程文档](pipeline.md)。
 - `prescan_concurrency`：预扫章节梗概的并发数。
-- `terminology_context`：仅 CLI 可用、只针对人物条目（`type: person`）的实验性全书原文证据与译前发现，默认关闭，避免旧任务隐性增加模型费用。其他类型保留常规译后抽取和冲突处理，不调用全书取证或合并。译前准备不抽取或建立术语。只有 CLI `prepare` 和 `translate` 显式允许生产证据；仅开启 YAML 设置不授权普通 Orchestrator/Runtime 调用方或 API 生产证据。Review、assemble 和 report 可以消费已有备注，但不生产证据。仅适用于书籍，不适用于 SRT；Web/UI 未适配。`terminology.discover`、`terminology.evidence`、`terminology.merge` 模型操作复用常规 LLM 路由配置。词条仍为单一原文身份、单一主译名，不是真正的义项模型；参见[限制和缓存行为](pipeline.md#可选全书术语证据)。
+- `terminology_context`：仅 CLI 可用、只针对人物条目（`type: person`）的实验性全书原文证据与译前发现，默认关闭，避免旧任务隐性增加模型费用。其他类型保留常规译后抽取和冲突处理，不调用全书取证或合并。译前准备不抽取或建立术语。只有 CLI `prepare` 和 `translate` 显式允许生产证据；仅开启 YAML 设置不授权普通 Orchestrator/Runtime 调用方或 API 生产证据。Review 和 assemble 可以消费已有备注，但不生产证据。仅适用于书籍，不适用于 SRT；Web/UI 未适配。`terminology.discover`、`terminology.evidence`、`terminology.merge` 模型操作复用常规 LLM 路由配置。词条仍为单一原文身份、单一主译名，不是真正的义项模型；参见[限制和缓存行为](pipeline.md#可选全书术语证据)。
 - `annotation_alignment`：默认开启。EPUB 中存在脚注、尾注等内部链接时，每个含注释的逻辑段在翻译和润色后立即针对正式译文串行调用一次模型定位。开启导出标点规范化时，导出层会在规范化内存副本的同时重映射已保存的偏移。超长续段会先重新合并，不含注释的段落不会调用模型。关闭后，译文侧仍保留链接但退化为段末可点击标记；未翻译原文及双语版原文侧保留源 EPUB 中的原始位置。该选项只控制链接定位；已经解析出的原语言注释正文始终会自动提供给对应翻译段落。
 - `annotation_alignment_concurrency`：当一个逻辑段内注释数超过一条时，不再用一次模型调用要求同时摆对所有标记（一条出错就会连累整段全部标记回退），而是给每条注释单独发起一次并发请求；该项限制同一段内这些逐条请求可同时并发的上限。
 - `review_concurrency`：针对同一份不可变译文快照执行连续审校块和同轮 Fixer 调用的并发上限；设为 `1` 时串行执行。

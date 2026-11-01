@@ -175,7 +175,6 @@ def workflow(pid: str) -> dict:
                 "修复审校问题并写回",
                 review and autofix,
             )
-            add("report", "生成报告")
     progress = None
     if job:
         try:

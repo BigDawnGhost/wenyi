@@ -63,7 +63,7 @@ test("shared source is host-alias independent and contract modules stay type-onl
 test("shared behavior suites are explicitly registered and never import a host", () => {
   const files = sources(resolve(ui, "tests/e2e"));
   const suites = files.filter(file => /export function register(?:Tests|ShellTests)\(/.test(readFileSync(file, "utf8")));
-  assert(suites.length >= 18, "Scan every migrated shared suite, including the shell");
+  assert(suites.length >= 20, "Scan every migrated shared suite, including the shell");
   for (const file of files) {
     const code = readFileSync(file, "utf8");
     assert(!/__WENYI_DESKTOP|__TAURI|(?:info|testInfo)\.project\.name/.test(code),
