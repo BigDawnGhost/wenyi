@@ -261,7 +261,7 @@ def test_interrupted_run_rebuilds_context_without_retranslating_saved_units(stor
 
 
 @pytest.mark.parametrize("only_chapter", [None, 1])
-def test_completed_previous_chapter_does_not_supply_pdf_context(store, monkeypatch, only_chapter):
+def test_completed_previous_chapter_supplies_pdf_context(store, monkeypatch, only_chapter):
     segments = [_segment(0, "Previous chapter.", "plain text")]
     segments[0].target = "PREVIOUS CHAPTER TARGET"
     _initialize(store, segments)
@@ -283,7 +283,146 @@ def test_completed_previous_chapter_does_not_supply_pdf_context(store, monkeypat
     plans = _record_plans(orchestrator, monkeypatch)
     orchestrator._translation.run(store, book_synopsis="", only_chapter=only_chapter)
     assert len(plans) == 1
-    assert plans[0].context == plans[0].next_source == ""
+    assert plans[0].context == "PREVIOUS CHAPTER TARGET"
+    assert plans[0].next_source == ""
+
+
+@pytest.mark.parametrize(
+    "mode,polish", [("standard", False), ("standard", True), ("best_of_three", True)]
+)
+def test_cross_chapter_pdf_context_skips_layout_only_chapters(store, monkeypatch, mode, polish):
+    chapters = [
+        Chapter(
+            index=0,
+            segments=[
+                _segment(0, "First body.", "plain text"),
+                _segment(1, "Trailing footer", "abandon"),
+            ],
+            meta={"babeldoc": True},
+        ),
+        Chapter(
+            index=1,
+            segments=[
+                _segment(0, "Only footer", "abandon"),
+                _segment(1, "Only table", "fallback_line"),
+            ],
+            meta={"babeldoc": True},
+        ),
+        Chapter(
+            index=2,
+            segments=[
+                _segment(0, "Leading footer", "abandon"),
+                _segment(1, "Second body.", "plain text"),
+            ],
+            meta={"babeldoc": True},
+        ),
+    ]
+    document = Document(
+        title="Study",
+        source_lang="en",
+        target_lang="zh",
+        fmt="pdf",
+        meta={"babeldoc": True},
+        chapters=chapters,
+    )
+    manifest = store.stage_document(document, source_hash="c" * 64)
+    manifest["initialized"] = True
+    store.save_manifest(manifest)
+    config = _config()
+    config.pipeline.translation_mode = mode
+    config.pipeline.polish = polish
+    handler = PrecisionHandler() if mode == "best_of_three" else routing_handler
+    orchestrator = Orchestrator(config, client=FakeClient(handler=handler))
+    plans = _record_plans(orchestrator, monkeypatch)
+
+    orchestrator._translation.run(store, book_synopsis="")
+
+    body_plans = [plan for plan in plans if "body." in plan.sources[0]]
+    assert len(body_plans) == 2
+    assert body_plans[0].context == ""
+    assert body_plans[0].next_source == "Second body."
+    assert body_plans[1].context == store.load_chapter(0).segments[0].target
+    assert body_plans[1].next_source == ""
+    assert all(plan.context == plan.next_source == "" for plan in plans if plan not in body_plans)
+    for chapter in chapters:
+        saved = store.load_chapter(chapter.index)
+        assert [(s.index, s.source, s.meta) for s in saved.segments] == [
+            (s.index, s.source, s.meta) for s in chapter.segments
+        ]
+        assert all(segment.target is not None for segment in saved.segments)
+
+
+@pytest.mark.parametrize("heading_chapter", [0, 1, 2])
+def test_cross_chapter_pdf_context_still_stops_at_explicit_headings(store, heading_chapter):
+    first = _segment(0, "First body.", "plain text")
+    first.target = "FIRST TARGET"
+    chapters = [
+        Chapter(index=0, segments=[first], meta={"babeldoc": True}),
+        Chapter(
+            index=1,
+            segments=[_segment(0, "Page footer", "abandon")],
+            meta={"babeldoc": True},
+        ),
+        Chapter(
+            index=2,
+            segments=[_segment(0, "Second body.", "plain text")],
+            meta={"babeldoc": True},
+        ),
+    ]
+    heading = _segment(10, "2 | Methods", "title")
+    if heading_chapter == 0:
+        chapters[0].segments.append(heading)
+    else:
+        chapters[heading_chapter].segments.insert(0, heading)
+    for chapter in chapters:
+        store.save_chapter(chapter)
+    store.save_manifest({"chapters": [{"index": chapter.index} for chapter in chapters]})
+    service = Orchestrator(_config(), client=FakeClient())._translation
+
+    assert (
+        service.following_source(store, chapters[0], 1, BabeldocContext.for_chapter(chapters[0]))
+        == ""
+    )
+    assert (
+        service.recent_context(
+            store,
+            chapters[2],
+            int(heading_chapter == 2),
+            BabeldocContext.for_chapter(chapters[2]),
+        )
+        == ""
+    )
+
+
+@pytest.mark.parametrize("previous_target,expected", [(None, ""), ("", "OLDER TARGET")])
+def test_cross_chapter_pdf_history_stops_at_pending_not_blank_prose(
+    store, previous_target, expected
+):
+    older = _segment(0, "Older body.", "plain text")
+    older.target = "OLDER TARGET"
+    previous = _segment(1, "Previous body.", "plain text")
+    previous.target = previous_target
+    chapters = [
+        Chapter(
+            index=0,
+            segments=[older, previous, _segment(2, "Footer", "abandon")],
+            meta={"babeldoc": True},
+        ),
+        Chapter(
+            index=1,
+            segments=[_segment(0, "Current body.", "plain text")],
+            meta={"babeldoc": True},
+        ),
+    ]
+    for chapter in chapters:
+        store.save_chapter(chapter)
+    store.save_manifest({"chapters": [{"index": chapter.index} for chapter in chapters]})
+    service = Orchestrator(_config(), client=FakeClient())._translation
+
+    assert (
+        service.recent_context(store, chapters[1], 0, BabeldocContext.for_chapter(chapters[1]))
+        == expected
+    )
 
 
 def test_section_boundaries_reset_context_even_when_old_targets_exist(store, monkeypatch):

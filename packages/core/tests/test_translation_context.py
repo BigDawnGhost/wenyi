@@ -361,11 +361,8 @@ def test_split_fragments_and_chapter_ends_supply_one_reference_to_both_stages(
     store = orch.prepare(str(source))
     before = [store.load_chapter(index) for index in (0, 1)]
     assert any(segment.cont for chapter in before for segment in chapter.text_segments)
-    expected = [
-        chapter.text_segments[index + 1].source if index + 1 < len(chapter.text_segments) else ""
-        for chapter in before
-        for index in range(len(chapter.text_segments))
-    ]
+    ordered_sources = [segment.source for chapter in before for segment in chapter.text_segments]
+    expected = [*ordered_sources[1:], ""]
 
     orch.run(str(source))
 
@@ -390,6 +387,38 @@ def test_split_fragments_and_chapter_ends_supply_one_reference_to_both_stages(
         ]
         assert all(s.target == "润0" for s in after.text_segments)
     assert store.read_artifact("context.json") is None
+
+
+@pytest.mark.parametrize("storage_type", [FileStorage, SqliteStorage])
+def test_following_source_crosses_empty_chapters_without_translating_them_early(
+    tmp_path, config, storage_type
+):
+    config.pipeline.rolling_context_tokens = 0
+    chapters = [
+        Chapter(index=0, segments=[Segment(index=0, source="Current paragraph.")]),
+        Chapter(index=1, segments=[Segment(index=0, source=" \n ")]),
+        Chapter(index=2, segments=[Segment(index=0, source="Next chapter paragraph.")]),
+    ]
+    document = Document(
+        title="Book", source_lang="en", target_lang="zh", fmt="text", chapters=chapters
+    )
+    store = storage_type(str(tmp_path / "run"))
+    manifest = store.stage_document(document, source_hash="b" * 64)
+    manifest["initialized"] = True
+    store.save_manifest(manifest)
+    client = FakeClient(handler=routing_handler)
+    try:
+        Orchestrator(config, client=client)._translation.run(
+            store, book_synopsis="", only_chapter=0
+        )
+        calls = [call for call in client.calls if call["operation"] == "translation.body"]
+        assert len(calls) == 1
+        assert _numbered_sources(calls[0]["messages"][-1]["content"]) == ["Current paragraph."]
+        assert _next_source(calls[0]["messages"][-1]["content"]) == "Next chapter paragraph."
+        assert store.load_chapter(1) == chapters[1]
+        assert store.load_chapter(2) == chapters[2]
+    finally:
+        store.close()
 
 
 def test_resume_rebuilds_reference_after_batch_budget_change_without_saving_it_early(

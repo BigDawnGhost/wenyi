@@ -66,18 +66,19 @@ This lets early chapters benefit from knowledge of later events while helping ad
 
 Preceding translations use `pipeline.rolling_context_tokens` (default `512` tiktoken `cl100k_base` tokens, including newlines), not a fixed paragraph count. Read formal targets backward from the current batch, including preceding chapters as needed, and stop at the first pending target or paragraph that would exceed the budget. Blank completed targets are skipped. Keep complete paragraphs where possible; if the newest nonempty paragraph alone is oversized, use only its Unicode-safe tail. Alignment changes to earlier targets are immediately visible to the next batch. Fresh runs and resume use the same chapter-derived selection, with no separate rolling-context file or database field written or read; old caches remain untouched. Compared with six paragraphs, short dialogue may include more paragraphs and long paragraphs less history; offline token checks do not establish translation quality or actual provider savings.
 
-The following segment is a quoted, read-only reference from the same chapter. It helps the translator recognize a sentence or dialogue that continues beyond the batch, including fragments split from a long paragraph, and avoid inventing an ending or forcing final punctuation. The reference is excluded from the numbered inputs and output count; its content must not be translated early or borrowed to complete the current paragraph. It is also supplied to polishing. At a chapter end there is no following reference; the workflow does not cross into the next chapter. This is built in and remains enabled when `rolling_context_tokens` is zero, which disables only preceding translations.
+The following segment is a quoted, read-only reference selected in whole-book source order, crossing chapter boundaries and skipping empty chapters as needed. It helps the translator recognize a sentence or dialogue that continues beyond the batch, including fragments split from a long paragraph, and avoid inventing an ending or forcing final punctuation. The reference is excluded from the numbered inputs and output count; its content must not be translated early or borrowed to complete the current paragraph. It is also supplied to polishing. Only the end of the book leaves no following reference. This is built in and remains enabled when `rolling_context_tokens` is zero, which disables only preceding translations.
 
-Alignment retries retain the reference. Single-paragraph fallback uses that paragraph's immediate source neighbor, including an unchanged number or symbol. Resume recomputes the neighbor from source order after splitting completed and pending batches, preserving completed targets and stable segment identities. Lookahead is never added to the saved rolling translation context. It adds at most one source segment to each translation or polishing request, with no extra model call. This supplies continuity evidence; actual wording and sentence endings still depend on the model.
+Alignment retries retain the reference. Single-paragraph fallback uses that paragraph's immediate source neighbor, including an unchanged number or symbol. Resume recomputes the neighbor from source order after splitting completed and pending batches, preserving completed targets and stable segment identities. Lookahead is never added to the preceding-translation window. It adds at most one source segment to each translation or polishing request, with no extra model call. This supplies continuity evidence; actual wording and sentence endings still depend on the model.
 
 ### BabelDOC layout-aware continuity
 
 BabelDOC PDFs use a separate continuity policy within the same translation workflow.
 Only `plain text` units in a prose section can supply recent translations or the
 following source reference. Headings bound sections rather than becoming preceding
-prose. Lookahead skips intervening page decorations, tables, captions and other
-non-prose units, but never crosses a heading or chapter boundary. These excluded units
-do not evict preceding prose from the recent-context window.
+prose. Both preceding and following context can cross chapter boundaries, including
+empty or layout-only chapters, but still stop at explicit headings. Lookahead skips
+intervening page decorations, tables, captions and other non-prose units. These
+excluded units do not evict preceding prose from the recent-context window.
 
 Contiguous layout roles and sections are batched separately before applying token
 budgets and completed/pending boundaries. Non-prose batches receive no rolling prose
@@ -95,8 +96,8 @@ heading on the same page remains prose. Unknown labels, including `fallback_line
 are conservatively excluded from prose context, not assumed to be structured table
 cells. Unrecognized metadata and incorrect layout labels remain classification limits.
 
-Each BabelDOC chapter rebuilds its recent context from consumed formal targets, also
-on resume and chapter-only runs; legacy saved context strings are not reused.
+Each BabelDOC batch rebuilds its recent context from consumed formal targets in book
+order, also on resume and chapter-only runs; legacy saved context strings are not reused.
 Completed targets, including already saved empty strings, are preserved. Older
 glossary checkpoints covering a newly split completed batch remain reusable without
 repeating that batch's extraction. This first phase does not change prescan/style

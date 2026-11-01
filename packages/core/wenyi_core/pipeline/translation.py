@@ -349,10 +349,8 @@ class TranslationService:
                 else ""
             )
             next_source = (
-                context_policy.next_source(text_segs, next_index)
-                if context_policy is not None
-                else text_segs[next_index].source
-                if next_index < len(text_segs)
+                self.following_source(store, chapter, next_index, context_policy)
+                if body_context
                 else ""
             )
             plan = BatchPlan.capture(
@@ -565,25 +563,75 @@ class TranslationService:
     ) -> str:
         """Read the translated prefix backward, loading preceding chapters only as needed.
 
-        Formal chapters are the sole source of context on fresh and resumed runs. BabelDOC
-        retains its existing section/prose isolation and never uses a previous chapter.
+        Formal chapters are the sole source of context on fresh and resumed runs. Chapter
+        boundaries do not stop history; BabelDOC still filters layout noise and stops at headings.
         """
 
         def targets() -> Iterator[str | None]:
             if policy is not None:
                 yield from reversed(policy.recent_targets(chapter.text_segments, start))
-                return
-            yield from (segment.target for segment in reversed(chapter.text_segments[:start]))
-            previous = sorted(
-                row["index"]
-                for row in store.load_manifest().get("chapters", [])
-                if isinstance(row.get("index"), int) and row["index"] < chapter.index
-            )
-            for index in reversed(previous):
-                yield from (
-                    segment.target for segment in reversed(store.load_chapter(index).text_segments)
-                )
+                if start and policy.sections[start - 1] != 0:
+                    return
+            else:
+                yield from (segment.target for segment in reversed(chapter.text_segments[:start]))
+            for previous in self._neighboring_chapters(store, chapter.index, following=False):
+                segments = previous.text_segments
+                previous_policy = BabeldocContext.for_chapter(previous)
+                if previous_policy is None:
+                    yield from (segment.target for segment in reversed(segments))
+                else:
+                    yield from reversed(previous_policy.recent_targets(segments, len(segments)))
+                    if previous_policy.sections and previous_policy.sections[-1] != 0:
+                        return
 
         return render_recent_translations(
             targets(), self._runtime.config.pipeline.rolling_context_tokens
         )
+
+    def following_source(
+        self,
+        store: Storage,
+        chapter: Chapter,
+        end: int,
+        policy: BabeldocContext | None,
+    ) -> str:
+        """Find one following source reference in book order without translating it early."""
+        segments = chapter.text_segments
+        if policy is None:
+            if end < len(segments):
+                return segments[end].source
+        else:
+            if end <= 0 or not policy.body[end - 1]:
+                return ""
+            reference = policy.next_source(segments, end)
+            if reference:
+                return reference
+            if policy.sections[-1] != policy.sections[end - 1]:
+                return ""
+        for following in self._neighboring_chapters(store, chapter.index, following=True):
+            segments = following.text_segments
+            following_policy = BabeldocContext.for_chapter(following)
+            if following_policy is None:
+                if segments:
+                    return segments[0].source
+            else:
+                reference = following_policy.next_source(segments, 0)
+                if reference:
+                    return reference
+                if any(following_policy.sections):
+                    return ""
+        return ""
+
+    @staticmethod
+    def _neighboring_chapters(
+        store: Storage, chapter: int, *, following: bool
+    ) -> Iterator[Chapter]:
+        """Load neighboring chapters lazily in stable source order."""
+        indices = sorted(
+            row["index"]
+            for row in store.load_manifest().get("chapters", [])
+            if isinstance(row.get("index"), int)
+            and (row["index"] > chapter if following else row["index"] < chapter)
+        )
+        for index in indices if following else reversed(indices):
+            yield store.load_chapter(index)

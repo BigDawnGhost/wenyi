@@ -114,9 +114,9 @@ class BabeldocContext:
 
     def next_source(self, segments: list[Segment], end: int) -> str:
         """Find the next prose unit, skipping layout noise but never a section boundary."""
-        if end <= 0 or not self.body[end - 1]:
+        if end > 0 and not self.body[end - 1]:
             return ""
-        section = self.sections[end - 1]
+        section = self.sections[end - 1] if end > 0 else 0
         for index in range(end, len(segments)):
             if self.sections[index] != section:
                 break
@@ -124,7 +124,7 @@ class BabeldocContext:
                 return segments[index].source
         return ""
 
-    def recent_targets(self, segments: list[Segment], end: int) -> list[str]:
+    def recent_targets(self, segments: list[Segment], end: int) -> list[str | None]:
         """Rebuild only the consumed section prefix from formal, possibly aligned targets."""
         if end <= 0:
             return []
@@ -132,8 +132,5 @@ class BabeldocContext:
         return [
             segment.target
             for index, segment in enumerate(segments[:end])
-            if self.sections[index] == section
-            and self.body[index]
-            and segment.target
-            and segment.target.strip()
+            if self.sections[index] == section and self.body[index]
         ]
