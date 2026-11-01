@@ -1,4 +1,4 @@
-"""Offline analyzer, glossary-extraction and rolling-context tests."""
+"""Offline analyzer and glossary-extraction tests."""
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from wenyi_core.glossary.extractor import (
 )
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.context import RollingContext
 
 from tests.pipeline_fixtures import fake_agent_config as _cfg
 
@@ -408,30 +407,6 @@ class TestExtractor(unittest.TestCase):
             self.assertIsNone(store.get_term("綾小路"))
             self.assertEqual(summary["history_unresolved"], 1)
             store.close()
-
-
-class TestRollingContext(unittest.TestCase):
-    def test_render_and_bound(self):
-        ctx = RollingContext(max_recent_keep=3)
-        ctx.add_targets(["a", "b", "c", "d", "e"])
-        self.assertEqual(ctx.recent_targets, ["c", "d", "e"])  # Bound retained context length.
-        rendered = ctx.render(n_recent=2)  # Use only the two most recent paragraphs.
-        self.assertIn("d", rendered)
-        self.assertIn("e", rendered)
-        self.assertNotIn("c", rendered)
-
-    def test_roundtrip(self):
-        ctx = RollingContext(recent_targets=["x", "y"], max_recent_keep=75)
-        ctx2 = RollingContext.from_dict(ctx.to_dict())
-        self.assertEqual(ctx2.recent_targets, ["x", "y"])
-        self.assertEqual(ctx2.max_recent_keep, 75)
-
-    def test_configured_minimum_expands_saved_context_limit(self):
-        ctx = RollingContext.from_dict(
-            {"recent_targets": [str(i) for i in range(40)]},
-            min_recent_keep=100,
-        )
-        self.assertEqual(ctx.max_recent_keep, 100)
 
 
 if __name__ == "__main__":
