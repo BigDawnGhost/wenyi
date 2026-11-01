@@ -108,9 +108,10 @@ def test_cli_accepts_gui_executable(tmp_path):
 def test_windows_workflow_checks_native_binary_after_build():
     workflow = (SCRIPT.parent.parent / ".github/workflows/desktop.yml").read_text()
     step = """      - name: Verify native Windows GUI subsystem
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && matrix.tier == 'full'
         run: uv run --no-project python scripts/desktop_pe.py apps/desktop/target/release/wenyi-desktop.exe
 """
     assert step in workflow
-    assert workflow.index("pnpm desktop:build") < workflow.index(step)
+    # The check must still follow the build and precede installer collection.
+    assert workflow.index("name: Build installers") < workflow.index(step)
     assert workflow.index(step) < workflow.index("Collect standalone installers")

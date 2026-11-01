@@ -335,18 +335,29 @@ def test_workflows_use_main_as_the_only_trunk(file):
 
 
 def test_desktop_workflow_builds_native_macos_installers_and_updates():
+    import json
+
     import yaml
 
     document = yaml.load(
         (ROOT / ".github/workflows/desktop.yml").read_text(), Loader=yaml.BaseLoader
     )
-    job = document["jobs"]["local-package"]
-    matrix = {entry["platform"]: entry for entry in job["strategy"]["matrix"]["include"]}
+    jobs = document["jobs"]
+    # The platform list is produced by the plan job so a pull request can run a
+    # reduced subset; the full list is the non-pull-request branch of that step.
+    plan_step = jobs["plan"]["steps"][0]
+    script = plan_step["run"]
+    full_block = script.split("else", 1)[1].split("fi", 1)[0]
+    matrix_json = full_block.split("matrix='", 1)[1].rsplit("'", 1)[0]
+    matrix = {entry["platform"]: entry for entry in json.loads(matrix_json)}
     assert set(matrix) == {"windows-x64", "linux-x64", "macos-arm64", "macos-x64"}
     for platform, runner in [("macos-arm64", "macos-15"), ("macos-x64", "macos-15-intel")]:
         assert matrix[platform]["os"] == runner
         assert matrix[platform]["bundles"] == "dmg"
         assert matrix[platform]["signed_bundles"] == "dmg,app"
+    job = jobs["local-package"]
+    assert job["needs"] == "plan"
+    assert "needs.plan.outputs.matrix" in job["strategy"]["matrix"]
     build = next(
         step["run"]
         for step in job["steps"]
