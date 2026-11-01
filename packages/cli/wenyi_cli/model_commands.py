@@ -13,7 +13,6 @@ from rich.console import Console
 from rich.table import Table
 from wenyi_core.config import Config
 from wenyi_core.llm.operations import configured_operations, require_operation
-from wenyi_core.llm.router import RoutedLLMClient
 from wenyi_core.llm.routing import resolve_routes
 
 
@@ -82,6 +81,9 @@ def register_model_commands(
         try:
             config = load_config()
             operations = configured_operations(config, workflow)
+            # Imported here so ``--help`` never pays for the provider SDK.
+            from wenyi_core.llm.router import RoutedLLMClient
+
             RoutedLLMClient(config.llm).validate_credentials(operations)
             console.print(
                 f"Model configuration valid for {workflow}: {len(operations)} operations."

@@ -44,6 +44,9 @@ data/
 .coverage
 htmlcov/
 
+# tiktoken byte cache; falls back to the working directory when TMPDIR is unusable.
+data-gym-cache/
+
 local_references
 .scratch/
 

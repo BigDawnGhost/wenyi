@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from wenyi_backend.application import create_app as create_http_app
 from wenyi_backend.context import BackendContext, use_context
+from wenyi_core.observability import configure_logging
 
 from . import __version__
 from .adapters import create_context, postgres_repository
@@ -12,6 +13,7 @@ from .config import Settings, settings
 
 
 def create_app(config: Settings | None = None, *, context: BackendContext | None = None):
+    configure_logging(service="wenyi-api")
     context = context or create_context(config or settings)
 
     @asynccontextmanager

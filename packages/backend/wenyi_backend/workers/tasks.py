@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
+import traceback
 from contextlib import ExitStack
 from contextvars import copy_context
 from functools import wraps
@@ -17,10 +19,22 @@ from wenyi_core.pdf_bridge.connection import use_bridge_connection
 
 from .. import dal, paths
 from ..context import current_context, use_context
-from ..emitters import redis_progress_fn
+from ..emitters import publish_error, redis_progress_fn
 from ..live_statistics import LiveStatistics
 from ..project_service import effective_config, storage_for
 from ..source_view import book_preview
+
+log = logging.getLogger(__name__)
+# Bound the persisted traceback so one large failure cannot bloat the event ledger.
+TRACEBACK_LIMIT = 4096
+
+
+def _error_code(error: BaseException) -> str:
+    """Map a pipeline failure onto the same codes the HTTP layer uses."""
+    code = getattr(error, "code", None)
+    if isinstance(code, str) and code:
+        return code
+    return "pipeline_failed"
 
 
 class PauseRequested(KeyboardInterrupt):
@@ -290,8 +304,21 @@ def _execute(
         _record_terminal_status(pid, run_id, error, status="paused")
         storage.log_event("task_paused", kind=kind, run_id=run_id, reason=str(error))
     except Exception as error:
+        # Provider credentials are stripped before they reach this point; the
+        # traceback stays on the operator side and is never returned to clients.
+        log.exception("Pipeline task failed: kind=%s run_id=%s", kind, run_id)
         _record_terminal_status(pid, run_id, error)
-        storage.log_event("pipeline_error", kind=kind, run_id=run_id, error=str(error))
+        storage.log_event(
+            "pipeline_error",
+            kind=kind,
+            run_id=run_id,
+            error=str(error),
+            error_type=type(error).__name__,
+            traceback=traceback.format_exc()[-TRACEBACK_LIMIT:],
+        )
+        # Tell live subscribers the run is over; failure here must not mask the
+        # original error, so publish_error swallows transport problems.
+        publish_error(redis, pid, code=_error_code(error), message=str(error), run_id=run_id)
         raise
     finally:
         finished.set()

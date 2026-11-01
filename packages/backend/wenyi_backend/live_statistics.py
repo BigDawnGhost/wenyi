@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from contextlib import ExitStack
 from datetime import datetime, timezone
@@ -12,6 +13,8 @@ from typing import Any, Protocol
 from wenyi_core.llm.base import LLMClient
 from wenyi_core.llm.usage import empty_usage, merge_usage_summaries, usage_delta
 from wenyi_core.timing import RunTimer, observe_timers
+
+log = logging.getLogger(__name__)
 
 LIVE_TTL_SECONDS = 10
 
@@ -107,9 +110,15 @@ class LiveStatistics:
                     }
                 ),
             )
-        except Exception:
+        except Exception as exc:
             # The regular REST polling path can still return the committed ledgers.
-            pass
+            log.warning(
+                "Failed to publish live statistics for project %s run %s: %s",
+                self.project_id,
+                self.run_id,
+                exc,
+                exc_info=False,
+            )
 
     def _heartbeat(self) -> None:
         while not self._stopped.wait(1):
