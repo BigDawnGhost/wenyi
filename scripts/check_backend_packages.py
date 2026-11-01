@@ -64,6 +64,10 @@ for name in absent:
     assert importlib.util.find_spec(name) is None, f"Unexpected installed dependency: {name}"
 for name in installed:
     importlib.import_module(name)
+if "wenyi_core" in installed:
+    import wenyi_core.pipeline.book_understanding
+    import wenyi_core.pipeline.runtime_usage
+    import wenyi_core.storage.file_migrations
 if "wenyi_backend" in installed:
     import wenyi_backend
     for module in pkgutil.walk_packages(wenyi_backend.__path__, "wenyi_backend."):
@@ -123,6 +127,13 @@ def archives(directory: Path) -> dict[str, Path]:
                 assert not any(name.startswith(f"{other}/") for name in names), (wheel, other)
             if package == "wenyi_core":
                 assert prompts <= names, f"Missing wheel prompts: {prompts - names}"
+                assert {
+                    "wenyi_core/pipeline/book_understanding.py",
+                    "wenyi_core/pipeline/runtime_usage.py",
+                    "wenyi_core/storage/file_migrations.py",
+                } <= names, "Missing extracted Core services"
+            if package == "wenyi_backend":
+                assert "wenyi_backend/dal.py" not in names, "Retired dynamic DAL was packaged"
         sdist = directory / f"{package}-{version}.tar.gz"
         assert sdist.is_file(), f"Missing sdist: {sdist}"
         with tarfile.open(sdist) as archive:

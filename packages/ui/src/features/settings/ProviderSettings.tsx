@@ -3,12 +3,12 @@ import { Plus, Trash2 } from "lucide-react";
 import { RegistryIdField } from "./RegistryIdField";
 import { registryReferences, type RegistryGroup } from "./registryEdits";
 import { SettingsGroupHeader } from "./SettingsSection";
-import { useI18n } from "@/i18n";
-import { Input, Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
-import { platform } from "@/platform";
-import { LazyBoundary } from "@/routes/LazyBoundary";
+import { useI18n } from "../../i18n";
+import { Input, Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
+import { Button } from "../../components/ui/button";
+import { platform } from "../../platform";
+import { LazyBoundary } from "../../routes/LazyBoundary";
 import { ModelConnectivity } from "./ModelConnectivity";
 import { ModelNameField } from "./ModelNameField";
 
@@ -147,7 +147,7 @@ export function ProviderSettings({
           );
           return (
             <div key={id} className="space-y-4 rounded-lg border p-4">
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-2 gap-4">
                 {idField("providers", id)}
                 <div className="min-w-0 space-y-2">
                   <Label htmlFor={`provider-${id}`}>{tr("providerSettings.apiProvider")}</Label>
@@ -246,7 +246,7 @@ export function ProviderSettings({
         {Object.entries(models).map(([id, raw]) => {
           const model = object(raw);
           return (
-            <div key={id} className="grid gap-4 rounded-lg border p-4 sm:grid-cols-3">
+            <div key={id} className="grid grid-cols-3 gap-4 rounded-lg border p-4">
               {idField("models", id)}
               <div className="min-w-0 space-y-2">
                 <Label htmlFor={`connection-${id}`}>{tr("providerSettings.apiConnection")}</Label>

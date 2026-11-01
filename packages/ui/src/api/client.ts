@@ -1,52 +1,18 @@
-import type { components, paths } from "@wenyi/shared-schema";
+import type { components } from "@wenyi/shared-schema";
 import { platform, type ProjectSource } from "../platform";
+import type {
+  Output, ProjectInput, ExportOptions, Project, ProjectDetail, ChapterSummary,
+  ChapterSegments, SegmentRevision, PrecisionDrafts, Term, TermPage, Conflict,
+  StrategyTemplate, ExportOut, EventOut, JobEnqueued, Capabilities, GlobalConfig,
+  GlobalConfigInput, ModelPingResult, ModelListResult, ModelListRequest,
+  ProjectConfig, ReviewRun, SubtitleData, UploadPreview, AnalysisPayload,
+  GlossaryExportFormat,
+} from "./types";
 
 const request = <T>(path: string, init?: RequestInit) => platform().request<T>(path, init);
 const download = (path: string, fallback: string) => platform().download(path, fallback);
 const apiBase = () => platform().apiBase();
 export const setAuthToken = (token: string | null) => platform().setAuthToken(token);
-
-// FastAPI emits model defaults in responses; request defaults remain optional.
-type Output<Name extends keyof components["schemas"]> = Required<
-  components["schemas"][Name]
->;
-export type Project = Output<"Project">;
-export type ProjectDetail = Output<"ProjectDetail">;
-export type ChapterSummary = Output<"ChapterSummary">;
-export type ChapterSegments = Output<"ChapterSegments">;
-export type SegmentRevision = Output<"SegmentRevision">;
-export type PrecisionDrafts = Output<"PrecisionDraftsOut">;
-export type Term = Output<"TermOut">;
-export type TermPage = Omit<Output<"TermPage">, "items"> & { items: Term[] };
-export type Conflict = Output<"ConflictOut">;
-export type StrategyTemplate = Output<"StrategyTemplateOut">;
-export type ExportFormat = NonNullable<
-  components["schemas"]["ExportRequest"]["format"]
->;
-export type ExportOut = Output<"ExportOut">;
-export type EventOut = Output<"EventOut">;
-export type JobEnqueued = Output<"JobEnqueued">;
-export type Capabilities = Output<"Capabilities">;
-export type GlobalConfig = Output<"GlobalConfigOut">;
-export type GlobalConfigInput = components["schemas"]["GlobalConfigInput"];
-export type ModelPingResult = Output<"ModelPingResult">;
-export type ModelListResult = Output<"ModelListResult">;
-export type ModelListRequest =
-  paths["/settings/models/list"]["post"]["requestBody"]["content"]["application/json"];
-export type ProjectConfig = Output<"ProjectConfigOut">;
-export type ReviewRun = Output<"ReviewRun">;
-export type ReviewItem = components["schemas"]["ReviewItem"];
-export type ReviewLocation = components["schemas"]["ReviewLocation"];
-export type Workflow = Output<"WorkflowOut">;
-export type SubtitleData = Output<"SubtitleResult">;
-export type UploadPreview = Output<"UploadPreview">;
-export type AnalysisPayload = Output<"AnalysisOut">;
-export interface ReportData {
-  summary: Record<string, unknown>;
-  usage?: Record<string, unknown>;
-  timing?: Record<string, unknown>;
-  [key: string]: unknown;
-}
 
 // API calls.
 export const api = {
@@ -114,11 +80,9 @@ export const api = {
       `/projects/${pid}/subtitles/${encodeURIComponent(id)}`,
       { method: "PUT", body: JSON.stringify({ target }) },
     ),
-  getReport: (pid: string) => request<ReportData>(`/projects/${pid}/report`),
   listProjects: () => request<Project[]>("/projects"),
   createProject: (
-    body: Pick<components["schemas"]["ProjectCreate"], "name"> &
-      Partial<components["schemas"]["ProjectCreate"]>,
+    body: ProjectInput,
     file: ProjectSource,
   ) => {
     if ("upload" in file) return file.upload(body);
@@ -144,8 +108,6 @@ export const api = {
     request<JobEnqueued>(`/projects/${pid}/resume`, {
       method: "POST",
     }),
-  regenerateReport: (pid: string) =>
-    request<ReportData>(`/projects/${pid}/report`, { method: "POST" }),
 
   listChapters: (pid: string) =>
     request<ChapterSummary[]>(`/projects/${pid}/chapters`),
@@ -197,7 +159,7 @@ export const api = {
       `/projects/${pid}/glossary/conflicts/${cid}/resolve`,
       { method: "POST", body: JSON.stringify(body) },
     ),
-  exportGlossaryUrl: (pid: string, format: "json" | "csv") =>
+  exportGlossaryUrl: (pid: string, format: GlossaryExportFormat) =>
     `${apiBase()}/projects/${pid}/glossary/export?format=${format}`,
   importGlossary: (pid: string, terms: Partial<Term>[]) =>
     request<{ imported: number }>(`/projects/${pid}/glossary/import`, {
@@ -264,7 +226,7 @@ export const api = {
     request<ExportOut[]>(`/projects/${pid}/exports`),
   createExport: (
     pid: string,
-    body: Partial<components["schemas"]["ExportRequest"]>,
+    body: ExportOptions,
   ) =>
     request<Output<"AssembleEnqueued">>(`/projects/${pid}/exports`, {
       method: "POST",
@@ -272,7 +234,7 @@ export const api = {
     }),
   downloadExport: (pid: string, id: number) =>
     download(`/projects/${pid}/exports/${id}/download`, "translation"),
-  downloadGlossary: (pid: string, format: "json" | "csv") =>
+  downloadGlossary: (pid: string, format: GlossaryExportFormat) =>
     download(
       `/projects/${pid}/glossary/export?format=${format}`,
       `glossary.${format}`,

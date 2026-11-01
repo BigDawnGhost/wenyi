@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
-import { chapter, fakeApi, pid, project } from "./fixtures";
+import { chapter, fakeApi, pid, project } from "../../../packages/ui/tests/e2e/fixtures";
 
 const longTitle =
   "Lịch sử và văn hóa Việt Nam / Études sur les échanges et les traditions régionales — ".repeat(
@@ -54,7 +54,7 @@ for (const locale of ["en", "zh-CN"] as const) {
       await expect(first.getByRole("cell").first()).toHaveText(
         longTitle.trim(),
       );
-      for (const width of [1440, 900, 390]) {
+      for (const width of [1440, 1280, 1024]) {
         await page.setViewportSize({ width, height: 960 });
         for (const header of await table.getByRole("columnheader").all()) {
           await expectSingleLine(header);
@@ -137,7 +137,7 @@ for (const locale of ["en", "zh-CN"] as const) {
         .click();
       const preview = page.getByRole("button", { name: saved, exact: true });
       await expect(preview).toBeVisible();
-      for (const width of [1440, 900, 390]) {
+      for (const width of [1440, 1280, 1024]) {
         await page.setViewportSize({ width, height: 960 });
         await expectNoHorizontalOverflow(page.getByRole("main"));
         await expectNoHorizontalOverflow(preview);
@@ -147,17 +147,8 @@ for (const locale of ["en", "zh-CN"] as const) {
         const summaryBox = await preview.boundingBox();
         expect(titleBox).not.toBeNull();
         expect(summaryBox).not.toBeNull();
-        if (width >= 1024) {
-          expect(summaryBox!.x).toBeGreaterThan(titleBox!.x);
-          expect(summaryBox!.width).toBeGreaterThan(titleBox!.width);
-        } else {
-          expect(summaryBox!.y).toBeGreaterThanOrEqual(
-            titleBox!.y + titleBox!.height,
-          );
-          expect(summaryBox!.width).toBeGreaterThan(
-            (width - (width >= 768 ? 240 : 0)) * 0.6,
-          );
-        }
+        expect(summaryBox!.x).toBeGreaterThan(titleBox!.x);
+        expect(summaryBox!.width).toBeGreaterThan(titleBox!.width);
         await preview.click();
         const editor = page.getByRole("textbox");
         await expect(editor).toHaveValue(summary);
@@ -190,7 +181,7 @@ for (const locale of ["en", "zh-CN"] as const) {
       ).toBeVisible();
       expect(submitted).toEqual({ digest: updated });
       await page.screenshot({
-        path: testInfo.outputPath("chapter-summaries-mobile.png"),
+        path: testInfo.outputPath("chapter-summaries-compact.png"),
       });
       await page.setViewportSize({ width: 1440, height: 960 });
       await page.screenshot({
@@ -230,8 +221,9 @@ for (const locale of ["en", "zh-CN"] as const) {
       await page.goto(`/projects/${pid}/proofreading/0`);
       const row = page.locator("#paragraph-12");
       await expect(row.getByTestId("translation-text")).toHaveText(target);
-      for (const width of [1440, 900, 390]) {
-        await page.setViewportSize({ width, height: 960 });
+      for (const width of [1440, 1280, 1024]) {
+        // A short window guarantees real scroll space for menu dismissal.
+        await page.setViewportSize({ width, height: width === 1280 ? 480 : 960 });
         await expectNoHorizontalOverflow(page.getByRole("main"));
         await expectNoHorizontalOverflow(
           page.getByRole("heading", { level: 1 }),
@@ -247,32 +239,25 @@ for (const locale of ["en", "zh-CN"] as const) {
           .boundingBox();
         expect(sourceBox).not.toBeNull();
         expect(targetBox).not.toBeNull();
-        if (width >= 1024) {
-          expect(targetBox!.y).toBe(sourceBox!.y);
-          expect(targetBox!.width).toBeCloseTo(sourceBox!.width, 0);
-          for (const label of locale === "en"
-            ? ["Source", "Translation"]
-            : ["原文", "译文"]) {
-            await expect(
-              page.getByText(label, { exact: true }).filter({ visible: true }),
-            ).toHaveCount(0);
-          }
-        } else {
-          expect(targetBox!.y).toBeGreaterThanOrEqual(
-            sourceBox!.y + sourceBox!.height,
-          );
+        expect(targetBox!.y).toBe(sourceBox!.y);
+        expect(targetBox!.width).toBeCloseTo(sourceBox!.width, 0);
+        for (const label of locale === "en"
+          ? ["Source", "Translation"]
+          : ["原文", "译文"]) {
           await expect(
-            row.getByText(locale === "en" ? "Translation" : "译文", {
-              exact: true,
-            }),
-          ).toBeVisible();
+            page.getByText(label, { exact: true }).filter({ visible: true }),
+          ).toHaveCount(0);
         }
         await row.getByRole("button").click();
         await expect(page.getByRole("menu")).toBeVisible();
-        if (width === 900) {
-          await page
-            .getByRole("main")
-            .evaluate((element) => element.scrollBy(0, -50));
+        if (width === 1280) {
+          const main = page.getByRole("main");
+          const beforeScroll = await main.evaluate((element) => element.scrollTop);
+          await main.evaluate((element) =>
+            element.scrollBy(0, element.scrollTop > 0 ? -50 : 50),
+          );
+          await expect.poll(() => main.evaluate((element) => element.scrollTop))
+            .not.toBe(beforeScroll);
           await expect(page.getByRole("menu")).toHaveCount(0);
           await row.getByRole("button").click();
         }

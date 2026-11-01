@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import closing
+
 from fastapi import APIRouter, HTTPException
 from wenyi_core.srt.store import SrtRunStore
 
-from ..project_service import project_write, require_project, storage_for
 from ..schemas import SubtitleResult, TargetEdit
+from .dependencies import project_write, require_project, storage_for
 
 router = APIRouter(prefix="/projects/{pid}/subtitles", tags=["subtitles"])
 
@@ -19,12 +21,12 @@ def _require_subtitles(project: dict) -> None:
 @router.get("", response_model=SubtitleResult)
 def get_subtitles(pid: str) -> dict:
     _require_subtitles(require_project(pid))
-    storage = storage_for(pid)
-    store = SrtRunStore(storage.run_dir, storage=storage)
-    rows = store.load_cues()
-    if not rows:
-        preview = storage.read_artifact("subtitle_preview.json") or []
-        rows = {str(row["index"]): row for row in preview}
+    with closing(storage_for(pid)) as storage:
+        store = SrtRunStore(storage.run_dir, storage=storage)
+        rows = store.load_cues()
+        if not rows:
+            preview = storage.read_artifact("subtitle_preview.json") or []
+            rows = {str(row["index"]): row for row in preview}
     cues = []
     for key, row in sorted(rows.items(), key=lambda item: int(item[0])):
         timestamp = row.get("timestamp", "")

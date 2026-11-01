@@ -2,12 +2,13 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
-import { toast } from "@/lib/toast";
-import { useI18n } from "@/i18n";
-import { api, type ChapterSegments } from "@/lib/api";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/form";
-import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
+import { toast } from "../../lib/toast";
+import { useI18n } from "../../i18n";
+import { api } from "../../api/client";
+import type { ChapterSegments } from "../../api/types";
+import { Button } from "../../components/ui/button";
+import { Textarea } from "../../components/ui/form";
+import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
 import { RevisionHistory } from "./RevisionHistory";
 import { PrecisionDrafts } from "./PrecisionDrafts";
 
@@ -240,7 +241,7 @@ export function ParagraphEditor({
           </div>
         )}
         <div
-          className={`grid gap-6 ${view !== "precision" ? "md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" : ""}`}
+          className={`grid gap-6 ${view !== "precision" ? "grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" : ""}`}
         >
           <section className="min-w-0 space-y-3">
             <h3 className="text-sm font-medium">{t("common.source")}</h3>

@@ -1,7 +1,7 @@
-import { useI18n } from "@/i18n";
-import { Disclosure } from "@/components/ui/disclosure";
-import { Input, Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
+import { useI18n } from "../../i18n";
+import { Input, Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
+import { SettingsGroup } from "./SettingsSection";
 
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;
@@ -53,7 +53,7 @@ export function WorkflowSettings({
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
       {!subtitles && (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-2 gap-3">
           {PIPELINE.map(([key, label]) => (
             <label key={key} className="flex gap-2 items-center text-sm">
               <input
@@ -67,7 +67,7 @@ export function WorkflowSettings({
           ))}
         </div>
       )}
-      <Disclosure title={tr("settings.performance")} error={error}>
+      <SettingsGroup title={tr("settings.performance")} error={error} collapsible={scope === "project"}>
         {!subtitles && (
           <label className="flex gap-2 items-center text-sm">
             <input
@@ -82,7 +82,7 @@ export function WorkflowSettings({
             {tr("settings.paragraphAnnotationAlignment")}
           </label>
         )}
-        <div className="grid sm:grid-cols-2 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <div>
             <Label htmlFor="batch-tokens">
               {tr("settings.tokensPerBatch")}
@@ -170,7 +170,7 @@ export function WorkflowSettings({
             </div>
           )}
         </div>
-      </Disclosure>
+      </SettingsGroup>
     </fieldset>
   );
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, globalConfiguration } from "./fixtures";
+import { fakeApi, globalConfiguration } from "../../../../packages/ui/tests/e2e/fixtures";
 
 const releaseNotes = `# Wenyi 1.1.0
 
@@ -82,7 +82,7 @@ async function setup(
     });
   }, { mode, phase, notes, transfer });
   await fakeApi(page);
-  await page.goto("/settings");
+  await page.goto("/settings/updates");
 }
 
 test("release notes open separately and render only English Markdown", async ({ page }) => {
@@ -116,17 +116,19 @@ test("release notes open separately and render only English Markdown", async ({ 
   )).toBe(true);
 });
 
-test("updates sit last, poll download and confirm installation with busy feedback", async ({ page }) => {
+test("About polls downloads and confirms installation with busy feedback", async ({ page }) => {
   await setup(page);
   const section = page.getByTestId("desktop-updates");
   await expect(section).toContainText("Current version: 1.0.0");
-  expect(await section.evaluate(el => el.nextElementSibling === null)).toBe(true);
+  await expect(page.getByRole("navigation", { name: "Settings navigation" }).getByRole("link").last())
+    .toHaveText("About");
   await section.getByRole("button", { name: "Check for updates" }).click();
   await section.getByRole("button", { name: "Download update" }).click();
   await expect(section.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
-  await page.getByRole("link", { name: "Projects", exact: true }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(section).toHaveCount(0);
   await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await page.getByRole("link", { name: "About", exact: true }).click();
   await section.getByRole("button", { name: "Install and restart", exact: true }).click();
   await expect(section.getByRole("alertdialog")).toBeVisible();
   await section.getByRole("button", { name: "Confirm install and restart" }).click();
@@ -182,9 +184,11 @@ for (const mode of ["manual", "unconfigured"]) {
 
 test("validated YAML is still unsaved and prevents installation", async ({ page }) => {
   await setup(page, "automatic", "ready");
-  await page.locator("summary").filter({ hasText: "Advanced YAML configuration" }).click();
+  await page.getByRole("link", { name: "Advanced", exact: true }).click();
   const yaml = page.getByRole("textbox", { name: "Advanced YAML configuration" });
+  await expect(yaml).toBeVisible();
   await yaml.fill((await yaml.inputValue()) + "\n# changed");
+  await page.getByRole("link", { name: "About", exact: true }).click();
   await expect(page.getByRole("button", { name: "Install and restart", exact: true })).toBeDisabled();
   await page.getByRole("button", { name: "Validate configuration", exact: true }).click();
   await expect(page.getByRole("button", { name: "Install and restart", exact: true })).toBeDisabled();
@@ -193,7 +197,7 @@ test("validated YAML is still unsaved and prevents installation", async ({ page 
 test("Chinese update labels remain Desktop-only", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   await setup(page);
-  await expect(page.getByTestId("desktop-updates")).toContainText("桌面端更新");
+  await expect(page.getByRole("heading", { name: "关于", level: 1, exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "检查更新", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "打开发布页面" })).toHaveCount(0);
   await page.getByRole("button", { name: "查看更新日志", exact: true }).click();
@@ -207,15 +211,19 @@ test("Chinese update labels remain Desktop-only", async ({ page }) => {
 
 test("release notes follow interface language changes without another update check", async ({ page }) => {
   await setup(page);
+  await page.getByRole("link", { name: "General", exact: true }).click();
   await page.getByLabel("Interface language", { exact: true }).click();
   await page.getByRole("option", { name: "简体中文", exact: true }).click();
+  await page.getByRole("link", { name: "关于", exact: true }).click();
   await page.getByRole("button", { name: "查看更新日志", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "更新日志", exact: true });
   await expect(dialog).toContainText("中文更新说明");
   await expect(dialog).not.toContainText("English release summary.");
   await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await page.getByRole("link", { name: "通用", exact: true }).click();
   await page.getByLabel("界面语言", { exact: true }).click();
   await page.getByRole("option", { name: "English", exact: true }).click();
+  await page.getByRole("link", { name: "About", exact: true }).click();
   await page.getByRole("button", { name: "View release notes", exact: true }).click();
   await expect(page.getByRole("dialog")).toContainText("English release summary.");
   await expect(page.getByRole("dialog")).not.toContainText("中文更新说明");
@@ -358,7 +366,9 @@ test("unsaved and pending credential inputs block installation", async ({ page }
     await route.fulfill({ json: status });
   });
   const install = page.getByRole("button", { name: "Install and restart", exact: true });
+  await page.getByRole("link", { name: "Models & connections", exact: true }).click();
   await page.getByLabel("API key", { exact: true }).fill("fake-test-value");
+  await page.getByRole("link", { name: "About", exact: true }).click();
   await expect(install).toBeDisabled();
   await page.getByRole("button", { name: "Save configuration", exact: true }).click();
   await expect(install).toBeDisabled();

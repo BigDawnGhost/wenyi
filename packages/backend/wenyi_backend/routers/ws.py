@@ -7,7 +7,6 @@ import hmac
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from .. import dal
 from ..context import current_context
 
 router = APIRouter(tags=["ws"])
@@ -22,7 +21,7 @@ async def project_progress(ws: WebSocket, pid: str) -> None:
         if token and not hmac.compare_digest(str(auth.get("token", "")), token):
             await ws.close(code=1008)
             return
-        if not await asyncio.to_thread(dal.get_project, pid):
+        if not await asyncio.to_thread(current_context().repository.get_project, pid):
             await ws.close(code=1008)
             return
     except (asyncio.TimeoutError, ValueError, AttributeError, WebSocketDisconnect):

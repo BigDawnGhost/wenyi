@@ -169,7 +169,7 @@ def test_stage_manifest_last_and_all_major_state(store, document):
     assert store.load_chapter(3) == document.chapters[0]
     assert store.load_annotation_contexts() == {"note": "source note"}
     assert "epub_annotation_contexts" not in manifest["meta"]
-    for name in ("analysis", "report", "usage"):
+    for name in ("analysis", "usage"):
         getattr(store, f"save_{name}")({"name": name})
         assert getattr(store, f"load_{name}")() == {"name": name}
     store.upsert_term(GlossaryTerm("First", "第一"), chapter=3)

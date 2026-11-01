@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, project } from "./fixtures";
+import { fakeApi, project } from "../../../packages/ui/tests/e2e/fixtures";
 
 for (const chinese of [false, true]) {
   test(`creation is a modal over the retained dashboard in ${chinese ? "Chinese" : "English"}`, async ({ page }) => {
@@ -99,7 +99,7 @@ test("loading the creation module never blanks the dashboard", async ({ page }) 
 test("closing creation preserves the history entry before the project list", async ({ page }) => {
   await fakeApi(page);
   await page.goto("/settings");
-  await page.getByRole("link", { name: "Projects", exact: true }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await page.locator("#create-project-trigger").click();
   await page.getByRole("dialog", { name: "Create project", exact: true })
     .getByRole("button", { name: "Cancel", exact: true }).click();
@@ -139,8 +139,8 @@ test("direct creation route retains the dashboard and dropdown Escape does not d
   await expect(page.locator("#create-project-trigger")).toBeFocused();
 });
 
-test("320px dialog scrolls its form without losing the close header", async ({ page }) => {
-  await page.setViewportSize({ width: 320, height: 480 });
+test("a short desktop window scrolls the dialog form without losing the close header", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 480 });
   await fakeApi(page);
   await page.goto("/projects/new");
   const dialog = page.getByRole("dialog", { name: "Create project", exact: true });

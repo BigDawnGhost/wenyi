@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { fakeApi, pid, chapter, project } from "./fixtures";
+import { fakeApi, pid, chapter, project } from "../../../packages/ui/tests/e2e/fixtures";
 
 test("chapter rows localize pending status and support search and filtering", async ({
   page,
@@ -97,7 +97,7 @@ test("review issues use searchable rows and preserve complete evidence on demand
   await expect(list.getByText("Pending", { exact: true })).toBeVisible();
 });
 
-test("progress keeps runtime and matching live progress visible while folding advanced sections", async ({
+test("progress keeps runtime and resume actions without report controls", async ({
   page,
 }) => {
   await fakeApi(page, {
@@ -126,18 +126,15 @@ test("progress keeps runtime and matching live progress visible while folding ad
   await expect(page.getByText("2m 3s", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Translate chapters in batches", { exact: true }),
-  ).not.toBeVisible();
-  await page.getByText("Workflow details", { exact: true }).click();
+  ).toHaveCount(0);
   await expect(
-    page.getByText("Translate chapters in batches", { exact: true }),
+    page.getByRole("region", { name: "Current workflow" }),
   ).toBeVisible();
+  await expect(page.getByText("Workflow details", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Project report", { exact: true })).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Update report", exact: true }),
-  ).not.toBeVisible();
-  await page.getByText("Project report", { exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Update report", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
 });
 
 test("export history shows only the latest five files", async ({

@@ -36,7 +36,7 @@ flowchart TD
     Q -- Yes --> R[Overlay changes; reuse Agent Loop and Fixer<br/>Publish final segment targets]
     Q -- No --> X[Optionally normalize punctuation<br/>on the export-only copy]
     R --> X
-    X --> M[Generate the report and assemble the selected output]
+    X --> M[Assemble the selected output]
 ```
 
 When `book_understanding` is enabled, chapter digests are generated in parallel before style analysis; the whole-book synopsis follows style analysis. In every mode, each digest covers the complete chapter through source chunks of at most 8,000 characters, merged in source order. Style analysis receives all chapter digests for facts and character context, while original opening/middle/ending samples remain the primary evidence for prose style. The synopsis uses the style brief, chapter digests, and relevant authoritative glossary mappings without full term notes. This preparation is independent of `terminology_context` and does not extract or seed glossary entries. The initialization manifest commits last, after chapter digests and style analysis. Disabling `book_understanding` skips both chapter digests and the book synopsis. During translation, each batch receives the most recent glossary snapshot and translated context to support cross-chapter consistency.
@@ -147,7 +147,7 @@ The glossary constrains later translation and supplies evidence to the final rev
 
 ### Optional whole-book terminology evidence
 
-`pipeline.terminology_context` defaults to `false` and is a CLI-only experimental book feature. CLI `prepare` and `translate` explicitly grant operation-scoped `allow_terminology_context=True`; Orchestrator/PipelineRuntime default to `False`. Ordinary callers and the API cannot produce evidence just by enabling the YAML setting. Review, assemble and report may consume existing notes without producing evidence. Web/Desktop do not expose evidence production; SRT does not use this path.
+`pipeline.terminology_context` defaults to `false` and is a CLI-only experimental book feature. CLI `prepare` and `translate` explicitly grant operation-scoped `allow_terminology_context=True`; Orchestrator/PipelineRuntime default to `False`. Ordinary callers and the API cannot produce evidence just by enabling the YAML setting. Review and assemble may consume existing notes without producing evidence. Web/Desktop do not expose evidence production; SRT does not use this path.
 
 When enabled through an authorized CLI operation, only person entries (`type: person`) from pretranslation discoveries and posttranslation backfill pass through whole-book source-evidence admission. An existing entry's stored type takes precedence over a candidate's type. Pretranslation discovery requests people only; nonperson proposals are ignored before historical alignment and admission, and known nonperson entries are not refreshed through evidence. Other term types retain ordinary posttranslation extraction and glossary conflict handling without whole-book evidence or merge calls. Preparation does not extract or seed glossary entries, even in this mode; evidence work begins with pending translation batches. Existing notes and artifacts are not deleted. Every matching source group for a person is processed; failed evidence collection or merging does not publish partial knowledge. Discovery, group results, and merged knowledge are cached through Storage artifacts. Retry retains successful groups and saved translations rather than retranslating completed body text.
 
@@ -259,9 +259,9 @@ status. Chapter JSON receives no additional Review history field. The journal is
 written before formal targets and allows an interrupted publication to resume
 idempotently. A partial final issue fix does not roll back a valid direct `change`;
 the index and result summary report the failure. The run-local usage delta is also
-merged exactly once into the book's cumulative `usage.json`, while `report.json`
-receives a compact Review/Autofix summary and sets `read_only: false` for a published
-run.
+merged exactly once into the book's cumulative `usage.json`. Review/Autofix results
+remain in their run directory; the workflow no longer generates a separate project
+summary report.
 
 `not_rereported` means only that a subsequent blind review did not report the
 logical issue covered by the suggestion again. It is not proof that the proposed

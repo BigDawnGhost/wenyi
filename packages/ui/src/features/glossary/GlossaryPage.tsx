@@ -1,19 +1,20 @@
-import { useI18n, translate as tr } from "@/i18n";
+import { useI18n, translate as tr } from "../../i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import { errorMessage } from "@/lib/error-codes";
-import { api, isProjectBusy, type Term } from "@/lib/api";
-import { useProjectQuery } from "@/lib/projectQuery";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Input, Textarea, Label } from "@/components/ui/form";
-import { Select, SelectDismissScope, SelectItem } from "@/components/ui/select";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
-import { Dialog } from "@/components/ui/misc";
+import { toast } from "../../lib/toast";
+import { errorMessage } from "../../lib/error-codes";
+import { api, isProjectBusy } from "../../api/client";
+import type { GlossaryExportFormat, Term } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Input, Textarea, Label } from "../../components/ui/form";
+import { Select, SelectDismissScope, SelectItem } from "../../components/ui/select";
+import { Card, CardContent } from "../../components/ui/card";
+import { Badge } from "../../components/ui/badge";
+import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
+import { Dialog } from "../../components/ui/misc";
 import {
   Plus,
   Trash2,
@@ -263,14 +264,14 @@ export default function GlossaryPage() {
   };
 
   const exportGlossary = useMutation({
-    mutationFn: async (fmt: "json" | "csv") => {
+    mutationFn: async (fmt: GlossaryExportFormat) => {
       const saved = await api.downloadGlossary(pid, fmt);
       if (saved) toast.success(tr("export.savedTo", { path: saved.path }));
     },
     onError: (error) => toast.error(errorMessage(error, tr)),
   });
 
-  const handleExport = (fmt: "json" | "csv") => {
+  const handleExport = (fmt: GlossaryExportFormat) => {
     setExportMenuOpen(false);
     exportGlossary.mutate(fmt);
   };
@@ -301,7 +302,7 @@ export default function GlossaryPage() {
                 {tr("common.export")} <ChevronDown className="h-3 w-3" />
               </Button>
               {exportMenuOpen && (
-                <div className="absolute right-0 top-full z-10 mt-1 w-36 rounded-md border bg-popover p-1 shadow-md">
+                <div className="absolute right-0 top-full z-10 mt-1 w-56 rounded-md border bg-popover p-1 shadow-md">
                   <button
                     className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
                     onClick={() => handleExport("csv")}
@@ -313,6 +314,12 @@ export default function GlossaryPage() {
                     onClick={() => handleExport("json")}
                   >
                     {tr("glossary.jsonFile")}
+                  </button>
+                  <button
+                    className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+                    onClick={() => handleExport("apkg")}
+                  >
+                    {tr("glossary.ankiDeck")}
                   </button>
                 </div>
               )}

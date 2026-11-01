@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import contextmanager
 
 import yaml
 from fastapi import HTTPException
 from wenyi_core.config import Config
 from wenyi_core.llm.routing import resolve_routes
-from wenyi_core.storage.protocol import Storage
 
-from . import dal, paths
 from .config_documents import (
     config_document,
     merge_project,
@@ -18,40 +17,32 @@ from .config_documents import (
     project_document,
     project_llm,
 )
-from .context import BackendStorage, current_context
+from .context import BackendStorage
 from .errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
-from .global_settings import load_settings, registered_models
+from .global_settings import registered_models
+from .ports.projects import RUNNING_PROJECT_STATUSES, ProjectReader
 from .strategies import _saved_strategy_to_config
 
 
-def require_project(pid: str) -> dict:
-    project = dal.get_project(pid)
+def require_project(pid: str, projects: ProjectReader) -> dict:
+    project = projects.get_project(pid)
     if project is None:
         raise ApiError(PROJECT_NOT_FOUND, 404, "project not found")
     return project
 
 
-def storage_for(pid: str) -> BackendStorage:
-    return current_context().storage_for(pid)
-
-
-def read_storage_for(pid: str) -> Storage:
-    """Open project state for inspection without creating a missing state store."""
-    return current_context().read_storage_for(pid)
-
-
 def busy(project: dict) -> bool:
-    return project.get("status") in dal.RUNNING_PROJECT_STATUSES
+    return project.get("status") in RUNNING_PROJECT_STATUSES
 
 
 @contextmanager
-def project_write(pid: str):
+def project_write(pid: str, projects: ProjectReader, storage_for: Callable[[str], BackendStorage]):
     """Serialize API writes against queued and running domain operations."""
-    require_project(pid)
+    require_project(pid, projects)
     storage = storage_for(pid)
     try:
         with storage.lock(blocking=False):
-            project = require_project(pid)
+            project = require_project(pid, projects)
             if busy(project):
                 raise ApiError(PROJECT_BUSY, 409, "project already has a running task")
             yield project, storage
@@ -68,9 +59,13 @@ def validate_translation_mode_for_format(mode: str, fmt: str | None) -> None:
 
 
 def effective_config(
-    project: dict, *, document: dict | None = None, defaults: Config | None = None
+    project: dict,
+    *,
+    document: dict | None = None,
+    defaults: Config,
+    state_dir: str,
 ) -> Config:
-    base = defaults if defaults is not None else load_settings().config
+    base = defaults
     base = _saved_strategy_to_config(
         project.get("strategy") or {"template": "标准翻译"},
         base,
@@ -92,7 +87,7 @@ def effective_config(
         document is not None and "polish" not in document.get("pipeline", {})
     ):
         raw["pipeline"]["polish"] = True
-    raw["paths"] = {"state_dir": paths.project_dir(project["id"])}
+    raw["paths"] = {"state_dir": state_dir}
     config = Config.from_dict(raw)
     validate_translation_mode_for_format(config.pipeline.translation_mode, project.get("fmt"))
     if config.source_lang == config.target_lang:

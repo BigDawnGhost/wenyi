@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import { useI18n } from "@/i18n";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/form";
-import { ErrorNotice } from "@/components/ui/data";
+import { toast } from "../lib/toast";
+import { useI18n } from "../i18n";
+import { Button } from "./ui/button";
+import { Textarea } from "./ui/form";
+import { ErrorNotice } from "./ui/data";
 
 export function SegmentEditor({
   value,

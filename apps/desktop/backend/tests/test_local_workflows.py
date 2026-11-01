@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 from contextlib import contextmanager
+from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
@@ -13,9 +14,10 @@ import pytest
 from bs4 import BeautifulSoup
 from desktop_test_support import initialize, wait_job
 from fastapi.testclient import TestClient
-from wenyi_backend import dal
-from wenyi_backend.context import use_context
-from wenyi_backend.workers import tasks
+from wenyi_backend.context import current_context, use_context
+from wenyi_backend.execution import operations, runner
+from wenyi_backend.execution.bindings import workflow_dependencies
+from wenyi_backend.execution.contracts import ExecutionRequest
 from wenyi_core.ingest.models import Document
 from wenyi_core.storage.sqlite import SqliteStorage
 from wenyi_desktop.main import create_context
@@ -29,7 +31,7 @@ def upload(client, *, name="book.txt", content=b"A short paragraph.\n"):
     )
     assert response.status_code == 201, response.text
     pid = response.json()["id"]
-    job = wait_job(dal.list_jobs(pid)[0]["run_id"])
+    job = wait_job(current_context().repository.list_jobs(pid)[0]["run_id"])
     assert job["status"] == "done", job
     return pid
 
@@ -125,12 +127,12 @@ def test_parse_completion_waits_for_run_lock_release(desktop, monkeypatch):
     client, backend, _ = desktop
     releasing, release = threading.Event(), threading.Event()
     worker_storage = []
-    parse_source = tasks._parse_source
+    parse_source = operations.parse_source
     storage_lock = SqliteStorage.lock
 
-    def capture_storage(pid, storage, config, progress):
+    def capture_storage(pid, storage, config, progress, services):
         worker_storage.append(storage)
-        return parse_source(pid, storage, config, progress)
+        return parse_source(pid, storage, config, progress, services)
 
     @contextmanager
     def hold_lock_exit(storage, blocking=True):
@@ -142,7 +144,7 @@ def test_parse_completion_waits_for_run_lock_release(desktop, monkeypatch):
                     releasing.set()
                     assert release.wait(10), "The test did not release the worker's run lock"
 
-    monkeypatch.setattr(tasks, "_parse_source", capture_storage)
+    monkeypatch.setattr(operations, "parse_source", capture_storage)
     monkeypatch.setattr(SqliteStorage, "lock", hold_lock_exit)
     try:
         created = client.post(
@@ -157,16 +159,16 @@ def test_parse_completion_waits_for_run_lock_release(desktop, monkeypatch):
         assert created.status_code == 201, created.text
         pid = created.json()["id"]
         assert releasing.wait(5), "The parse worker did not reach its run-lock exit"
-        job = dal.list_jobs(pid)[0]
+        job = current_context().repository.list_jobs(pid)[0]
         assert job["status"] == "running"
-        assert dal.get_project(pid)["status"] == "parsing"
+        assert current_context().repository.get_project(pid)["status"] == "parsing"
         configuration = {"yaml": "pipeline: {review: false}"}
         assert client.put(f"/projects/{pid}/config", json=configuration).status_code == 409
     finally:
         release.set()
 
     assert wait_job(job["run_id"])["status"] == "done"
-    assert dal.get_project(pid)["status"] == "uploaded"
+    assert current_context().repository.get_project(pid)["status"] == "uploaded"
     configured = client.put(f"/projects/{pid}/config", json=configuration)
     assert configured.status_code == 200, configured.text
     assert backend.get_job(job["id"])["status"] == "done"
@@ -174,11 +176,11 @@ def test_parse_completion_waits_for_run_lock_release(desktop, monkeypatch):
 
 @pytest.mark.parametrize("status", ["error", "paused"])
 def test_terminal_failure_status_waits_for_run_lock_release(desktop_context, monkeypatch, status):
-    pid = dal.create_project("Completion", "en", "zh", {})
-    job = dal.create_job(
+    pid = current_context().repository.create_project("Completion", "en", "zh", {})
+    job = current_context().repository.create_job(
         pid, "translation", "terminal-run", run_id="terminal-run", status="running"
     )
-    dal.set_project_status(pid, "translating")
+    current_context().repository.set_project_status(pid, "translating")
     storage_lock = SqliteStorage.lock
     statuses_at_release = []
 
@@ -188,47 +190,63 @@ def test_terminal_failure_status_waits_for_run_lock_release(desktop_context, mon
             try:
                 yield
             finally:
-                statuses_at_release.append(dal.get_job(job)["status"])
+                statuses_at_release.append(current_context().repository.get_job(job)["status"])
 
     monkeypatch.setattr(SqliteStorage, "lock", observe_lock_exit)
-    tasks._record_terminal_status(pid, "terminal-run", RuntimeError("Stopped"), status=status)
+    request = ExecutionRequest("translation", pid, "terminal-run")
+    dependencies = workflow_dependencies(desktop_context)
+    runner.record_terminal_status(request, dependencies, RuntimeError("Stopped"), status=status)
 
     assert statuses_at_release == ["running"]
-    assert dal.get_job(job)["status"] == status
-    assert dal.get_job(job)["error"] == "Stopped"
-    assert dal.get_project(pid)["status"] == status
+    assert current_context().repository.get_job(job)["status"] == status
+    assert current_context().repository.get_job(job)["error"] == "Stopped"
+    assert current_context().repository.get_project(pid)["status"] == status
 
-    tasks._record_terminal_status(pid, "terminal-run", RuntimeError("Stopped"), status=status)
+    runner.record_terminal_status(request, dependencies, RuntimeError("Stopped"), status=status)
     assert statuses_at_release == ["running"]
 
 
 def test_late_terminal_status_updates_only_its_own_job(desktop_context):
-    pid = dal.create_project("Completion", "en", "zh", {})
-    old = dal.create_job(pid, "translation", "old-run", run_id="old-run", status="running")
-    latest = dal.create_job(pid, "translation", "new-run", run_id="new-run")
-    dal.set_project_status(pid, "translating")
+    pid = current_context().repository.create_project("Completion", "en", "zh", {})
+    old = current_context().repository.create_job(
+        pid, "translation", "old-run", run_id="old-run", status="running"
+    )
+    latest = current_context().repository.create_job(
+        pid, "translation", "new-run", run_id="new-run"
+    )
+    current_context().repository.set_project_status(pid, "translating")
 
-    tasks._record_terminal_status(pid, "old-run", RuntimeError("Old failure"))
+    runner.record_terminal_status(
+        ExecutionRequest("translation", pid, "old-run"),
+        workflow_dependencies(desktop_context),
+        RuntimeError("Old failure"),
+    )
 
-    assert dal.get_job(old)["status"] == "error"
-    assert dal.get_job(latest)["status"] == "queued"
-    assert dal.get_project(pid)["status"] == "translating"
+    assert current_context().repository.get_job(old)["status"] == "error"
+    assert current_context().repository.get_job(latest)["status"] == "queued"
+    assert current_context().repository.get_project(pid)["status"] == "translating"
 
 
 def test_terminal_status_survives_unavailable_storage(desktop_context, monkeypatch):
-    pid = dal.create_project("Completion", "en", "zh", {})
-    job = dal.create_job(pid, "translation", "failed-run", run_id="failed-run", status="running")
-    dal.set_project_status(pid, "translating")
+    pid = current_context().repository.create_project("Completion", "en", "zh", {})
+    job = current_context().repository.create_job(
+        pid, "translation", "failed-run", run_id="failed-run", status="running"
+    )
+    current_context().repository.set_project_status(pid, "translating")
 
     def unavailable(_pid):
         raise OSError("Storage unavailable")
 
-    monkeypatch.setattr(tasks, "_pipeline_storage", unavailable)
+    dependencies = replace(workflow_dependencies(desktop_context), storage_for=unavailable)
     with pytest.raises(OSError, match="Storage unavailable"):
-        tasks._record_terminal_status(pid, "failed-run", RuntimeError("Worker failed"))
+        runner.record_terminal_status(
+            ExecutionRequest("translation", pid, "failed-run"),
+            dependencies,
+            RuntimeError("Worker failed"),
+        )
 
-    assert dal.get_job(job)["status"] == "error"
-    assert dal.get_job(job)["error"] == "Worker failed"
+    assert current_context().repository.get_job(job)["status"] == "error"
+    assert current_context().repository.get_job(job)["error"] == "Worker failed"
 
 
 @pytest.mark.parametrize("name,fmt", [("book.txt", "text"), ("book.md", "markdown")])
@@ -310,7 +328,7 @@ def test_create_and_prepare_parses_before_model_credentials_fail(desktop, monkey
     )
     assert response.status_code == 201, response.text
     pid = response.json()["id"]
-    assert wait_job(dal.list_jobs(pid)[0]["run_id"])["status"] == "error"
+    assert wait_job(current_context().repository.list_jobs(pid)[0]["run_id"])["status"] == "error"
     assert fake.calls == []
     detail = client.get(f"/projects/{pid}").json()
     assert detail["initialized"] is False
@@ -603,7 +621,7 @@ def test_parallel_translation_isolates_pause_failure_resume_and_usage(
                 runs[pid] = response.json()["job_id"]
             assert all(event.wait(5) for event in saved.values())
             for pid in pids:
-                assert dal.get_job_by_arq_id(runs[pid])["status"] == "running"
+                assert context.repository.get_job_by_arq_id(runs[pid])["status"] == "running"
                 assert client.get(f"/projects/{pid}/workflow").json()["run_id"] == runs[pid]
             assert len({id(clients[pid][0]) for pid in pids}) == 3
             assert client.get("/settings").status_code == 200
@@ -616,7 +634,7 @@ def test_parallel_translation_isolates_pause_failure_resume_and_usage(
             assert wait_job(runs[first])["status"] == outcome
             for pid in pids[1:]:
                 assert not cancelled[pid].is_set()
-                assert dal.get_job_by_arq_id(runs[pid])["status"] == "running"
+                assert context.repository.get_job_by_arq_id(runs[pid])["status"] == "running"
 
             response = client.post(f"/projects/{first}/resume")
             assert response.status_code == 200, response.text
@@ -624,7 +642,7 @@ def test_parallel_translation_isolates_pause_failure_resume_and_usage(
             assert resumed != runs[first]
             assert wait_job(resumed)["status"] == "done"
             for pid in pids[1:]:
-                assert dal.get_job_by_arq_id(runs[pid])["status"] == "running"
+                assert context.repository.get_job_by_arq_id(runs[pid])["status"] == "running"
         finally:
             for event in release.values():
                 event.set()
@@ -723,7 +741,7 @@ def test_shutdown_waits_for_saved_translation_checkpoint(desktop, monkeypatch):
     stopped.result(timeout=5)
     job = wait_job(response.json()["job_id"])
     assert job["status"] == "paused", job
-    assert dal.get_project(pid)["status"] == "paused"
+    assert current_context().repository.get_project(pid)["status"] == "paused"
     store = backend.storage_for(pid)
     assert store.load_chapter(0).text_segments[0].target == "译0"
     assert store.list_events(event_type="task_paused")
@@ -746,9 +764,9 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
     contexts, clients, lifespans = [], [], []
     pid, run_id = "same-project", "same-run"
     entered = Barrier(2)
-    parse = tasks._parse_source
+    parse = operations.parse_source
 
-    def parse_with_owner_check(project_id, storage, config, progress):
+    def parse_with_owner_check(project_id, storage, config, progress, services):
         context = current_context()
         owner = contexts.index(context)
         assert context.repository.get_project(project_id)["name"] == f"Owner {owner}"
@@ -758,9 +776,9 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
         assert credential_store().snapshot(providers)[name] == f"fake-owner-{owner}"
         assert Path(storage.run_dir).is_relative_to(context.repository.workspace)
         entered.wait(timeout=5)
-        return parse(project_id, storage, config, progress)
+        return parse(project_id, storage, config, progress, services)
 
-    monkeypatch.setattr(tasks, "_parse_source", parse_with_owner_check)
+    monkeypatch.setattr(operations, "parse_source", parse_with_owner_check)
     with ExitStack() as stack:
         for owner in range(2):
             workspace = tmp_path / str(owner)

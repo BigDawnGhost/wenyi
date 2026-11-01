@@ -2,7 +2,7 @@ import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
 import { frontendManualChunks } from "../../packages/ui/vite.shared";
-import { createSandboxState, resolveFixture } from "./tests/fixtures";
+import { createSandboxState, resolveFixture } from "../../packages/ui/tests/e2e/fixtures";
 
 // MOCK_API=1 pnpm dev:web serves the same fixture data the Playwright suites
 // use, directly from the dev server — click around every page without a
@@ -57,8 +57,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "../../packages/ui/src"),
-      "@wenyi/ui": path.resolve(__dirname, "../../packages/ui/src"),
+      "@": path.resolve(__dirname, "./src"),
     },
   },
   build: {

@@ -9,7 +9,7 @@ import {
   configuration,
   capabilities,
   globalConfiguration,
-} from "./fixtures";
+} from "../../../packages/ui/tests/e2e/fixtures";
 
 test("creates a multilingual project and waits for background parsing", async ({
   page,
@@ -90,10 +90,10 @@ test("creates a multilingual project and waits for background parsing", async ({
   await browseFiles
     .locator("..")
     .screenshot({ path: testInfo.outputPath("upload-control-desktop.png") });
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1024, height: 844 });
   await browseFiles
     .locator("..")
-    .screenshot({ path: testInfo.outputPath("upload-control-mobile.png") });
+    .screenshot({ path: testInfo.outputPath("upload-control-compact.png") });
   await page.setViewportSize({ width: 1280, height: 720 });
   const chooserPromise = page.waitForEvent("filechooser");
   await browseFiles.focus();
@@ -272,7 +272,10 @@ test("advanced configuration reports validation errors", async ({
 test("authenticates the progress socket before displaying project events", async ({
   page,
 }) => {
-  await fakeApi(page);
+  await fakeApi(page, {
+    [`/projects/${pid}`]: { ...project, status: "translating" },
+    [`/projects/${pid}/workflow`]: { ...workflow, status: "running" },
+  });
   await page.addInitScript(() =>
     localStorage.setItem("wenyi_token", "test-auth-token"),
   );
@@ -334,7 +337,7 @@ test("global API provider form saves endpoint, model and tier changes", async ({
       yaml: JSON.stringify(settings),
     },
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page
     .locator("#provider-models")
     .getByLabel("API provider", { exact: true })
@@ -364,6 +367,7 @@ test("workflow snapshot and cached progress survive a page reload", async ({
   page,
 }) => {
   await fakeApi(page, {
+    [`/projects/${pid}`]: { ...project, status: "paused" },
     [`/projects/${pid}/workflow`]: {
       source: "snapshot",
       kind: "translation",
@@ -374,6 +378,8 @@ test("workflow snapshot and cached progress survive a page reload", async ({
         { id: "review", label: "全书审校", enabled: false },
       ],
       progress: {
+        kind: "translation",
+        project_id: pid,
         label: "正在翻译第 3 章",
         done: 2,
         total: 5,
@@ -388,8 +394,8 @@ test("workflow snapshot and cached progress survive a page reload", async ({
   await expect(
     page.getByText("正在翻译第 3 章", { exact: false }),
   ).toBeVisible();
-  await page.getByText("Workflow details", { exact: true }).click();
-  await expect(page.getByText("2 · Disabled")).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Paused");
+  await expect(page.getByRole("status")).toContainText("(2/5)");
   await page.reload();
   await expect(
     page.getByText("正在翻译第 3 章", { exact: false }),

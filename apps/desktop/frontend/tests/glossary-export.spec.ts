@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../../../packages/ui/tests/e2e/fixtures";
 
 const origin = "http://127.0.0.1:19481";
 
@@ -22,13 +22,15 @@ test.beforeEach(async ({ page }) => {
   await fakeApi(page, {}, origin);
 });
 
-for (const format of ["csv", "json"] as const) {
+for (const format of ["csv", "json", "apkg"] as const) {
   test(`glossary ${format} uses native saving and reports the destination`, async ({ page }) => {
     const browserDownloads: string[] = [];
     page.on("download", download => browserDownloads.push(download.suggestedFilename()));
-    await page.goto(`/projects/${pid}/glossary`);
+    await page.goto(`/projects/${pid}/glossary?type=person`);
     await page.getByRole("button", { name: "Export", exact: true }).click();
-    await page.getByRole("button", { name: `${format.toUpperCase()} file`, exact: true }).click();
+    await expect(page.getByText(/Exports all terms, regardless of filters or selection/)).toHaveCount(0);
+    const label = format === "apkg" ? "Anki deck (.apkg)" : `${format.toUpperCase()} file`;
+    await page.getByRole("button", { name: label, exact: true }).click();
     await expect.poll(() => page.evaluate(() =>
       (window as unknown as { glossarySaveCalls: unknown[] }).glossarySaveCalls,
     )).toEqual([{
@@ -50,7 +52,7 @@ test("canceling a glossary save is quiet and allows retry; failures are visible"
   await page.goto(`/projects/${pid}/glossary`);
   const button = page.getByRole("button", { name: "Export", exact: true });
   await button.click();
-  await page.getByRole("button", { name: "JSON file", exact: true }).click();
+  await page.getByRole("button", { name: "Anki deck (.apkg)", exact: true }).click();
   await expect(button).toBeDisabled();
   await page.evaluate(() => {
     (window as unknown as { finishGlossarySave: (value: unknown) => void }).finishGlossarySave(null);
@@ -58,7 +60,7 @@ test("canceling a glossary save is quiet and allows retry; failures are visible"
   await expect(button).toBeEnabled();
   await expect(page.getByText(/^Saved to /)).toHaveCount(0);
   await button.click();
-  await page.getByRole("button", { name: "CSV file", exact: true }).click();
+  await page.getByRole("button", { name: "Anki deck (.apkg)", exact: true }).click();
   await expect(button).toBeDisabled();
   await page.evaluate(() => {
     (window as unknown as { failGlossarySave: (reason: string) => void })

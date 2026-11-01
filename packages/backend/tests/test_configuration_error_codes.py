@@ -7,10 +7,9 @@ from wenyi_backend.errors import INVALID_CONFIGURATION, SETTINGS_CONFLICT, ApiEr
 
 def _client(backend_context, monkeypatch, project):
     from fastapi.testclient import TestClient
-    from wenyi_backend import dal
     from wenyi_backend.application import create_app
 
-    monkeypatch.setattr(dal, "get_project", lambda pid: project)
+    backend_context.repository.get_project.return_value = project
     return TestClient(create_app(backend_context))
 
 

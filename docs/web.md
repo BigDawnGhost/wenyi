@@ -123,18 +123,26 @@ pnpm -C apps/web dev
 
 The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the API. The API initializes a fresh database schema. Starting only the ordinary worker does not consume the export queue.
 
-To click through the UI without starting any backend, run `MOCK_API=1 pnpm -C apps/web dev`. Vite then answers `/api` with the same fixture data the Playwright suites use (`apps/web/tests/fixtures.ts`), so every page opens with sample data and action buttons complete against the mock instead of a real service. The progress WebSocket stays unavailable and the UI falls back to polling the mock API. Leave `MOCK_API` unset for normal proxied development.
+To click through the UI without starting any backend, run `MOCK_API=1 pnpm -C apps/web dev`. Vite then answers `/api` with the same fixture data the Playwright suites use (`packages/ui/tests/e2e/fixtures.ts`), so every page opens with sample data and action buttons complete against the mock instead of a real service. The progress WebSocket stays unavailable and the UI falls back to polling the mock API. Leave `MOCK_API` unset for normal proxied development.
+
+## Supported devices
+
+The frontend is for computers. A mobile/tablet user agent (UA) shows **Please use a computer** instead of mounting the workspace, loading project data, or connecting to project progress. Detection uses only the UA: window width, touch support, and platform hints do not block access. A device presenting a desktop UA is treated as a computer.
+
+Narrow computer windows keep the same desktop sidebar and multi-column layout, with horizontal scrolling in the content area when needed. Resizing does not remount pages or discard unsaved drafts. There is no separate phone navigation or stacked mobile workspace.
 
 ## Interface language
 
 The interface defaults to English, regardless of browser language. Open global
-**Settings → Interface language** to choose **English** or **简体中文**.
+**Settings → General → Interface language** to choose **English** or **简体中文**.
 This preference is available before creating a project and while tasks run; it is
 not part of project settings.
 
-Open **Settings** from the shared sidebar footer, including on mobile or with no
-projects. `/settings` contains interface language, shared models, project defaults,
-and advanced YAML together; it does not use a separate settings layout.
+Open **Settings** from the shared sidebar footer, including with no
+projects. It opens a dedicated settings page with category navigation in place of
+the project sidebar. `/settings` opens General; **Back**, pinned to the lower-left
+corner of the sidebar, returns to the page that
+opened Settings, or to Projects when visiting a settings URL directly.
 
 The choice applies immediately, survives reloads, and synchronizes between tabs on
 the same site. It is stored under `wenyi.locale` in the browser, not in project
@@ -164,14 +172,20 @@ is treated as unknown. Historical misses are not assumed to be ordinary input,
 because they may include cache writes. See [usage accounting](cli.md#usage-and-event-logs)
 for supported usage dialects and ledger compatibility. These counters do not establish cost.
 
-1. Use **Create project** in the shared sidebar to open the centered dialog over the project list. The list stays visible behind it but cannot be interacted with. `/projects/new` opens the same dialog directly, not a separate page. Focus starts in **Project name**; Tab stays inside the dialog, and Escape closes an open dropdown before closing the dialog. **Cancel**, **Close**, clicking the backdrop, or Escape returns to the previous page (the project list for a direct link) without creating a project; focus returns to the sidebar entry and reopening starts a clean form. Browser Back also leaves the dialog. On narrow screens the form scrolls while its close header stays visible.
+1. Use **Create project** in the shared sidebar to open the centered dialog over the project list. The list stays visible behind it but cannot be interacted with. `/projects/new` opens the same dialog directly, not a separate page. Focus starts in **Project name**; Tab stays inside the dialog, and Escape closes an open dropdown before closing the dialog. **Cancel**, **Close**, clicking the backdrop, or Escape returns to the previous page (the project list for a direct link) without creating a project; focus returns to the sidebar entry and reopening starts a clean form. Browser Back also leaves the dialog. In short windows the form scrolls while its close header stays visible.
    Choose source/target languages and a nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, PDF, or SRT file. Drag one file into the source area or use **Browse files**, then click **Create project** to upload it. Both methods use the same format and empty-file checks; multiple-file drops are rejected. Source selection and dialog dismissal are disabled while uploading, not a way to cancel a task. Failed uploads retain the form and source for retry. Legacy `/projects/new?project=<id>` links keep the saved source read-only and expose existing preview/resume controls. Optionally select **Prepare before translating** for books; PDF parser selection is available before upload.
    Browser Back can still leave during an upload; it does not cancel the request. The project may be created in the background, and completion will not redirect you away from the current page.
 2. Successful creation immediately opens the project overview; parsing or optional preparation continues in the background. As soon as parsing finishes, **Read contents & source** opens the chapter list and read-only original text without waiting for model preparation. Optional preparation parses before constructing/checking the model client, so missing credentials or later AI failures do not hide successfully parsed source. Titles and translations remain read-only until initialization completes. The overview refreshes task status, including queue failures and resume actions. Matching parse results are reused during preparation.
 3. The creation dialog uses a flat form for the project name, language direction, source file, and translation mode, with its actions pinned below the scrolling form. For books, choose **Standard translation** or **Three-draft precision** using the two-option switch only here. The mode defaults to standard independently of global settings; precision enables polishing and uses built-in three-branch concurrency, without a concurrency option. Global and project settings have no mode/template selectors, and Quick draft is retired. Use **Project settings** to adjust other workflow steps and registered model selections, and validate actual routes before starting translation. Changing translation mode requires creating another project.
-4. Start the run and watch the progress page. After a safe-boundary pause, resume continues the actual task type.
+4. Start the run and watch the progress page. After a safe-boundary pause, resume continues the actual task type. A pause arriving after completion, or after the active run has changed, is rejected with HTTP 409 instead of leaving a completed project stuck in “Pausing”; refresh to see the latest state.
 5. For books, edit glossary, style, and paragraphs, and inspect whole-book review history, suggestions, and published fixes. For SRT, edit subtitle cues and timestamps.
 6. Export with format and monolingual/bilingual options. An independent worker reads a saved snapshot. Each export has its own file location and can be downloaded when done.
+
+API source replacement is limited to uninitialized projects. If preview-cache invalidation
+fails, the previous source reference and caches remain intact. If source publication has
+an uncertain outcome, the complete new file is retained, even when the request fails;
+reload the project before retrying. This favors preserving a possibly published source
+over automatically removing an unreferenced upload.
 
 **Manual proofreading** has its own navigation entry, separate from whole-book review. Its chapter list appears after parsing, before AI preparation. Uninitialized books show source text only, without edit/history/draft actions; prepared books include unfinished translations. While a task is active, the chapter view refreshes saved paragraphs every 3 seconds, so each persisted translation batch is visible before the chapter finishes; paused and completed projects do not poll the chapter or its revision history. Pending paragraphs show “Waiting for translation”; an intentionally saved empty translation still counts as complete. A running task allows viewing; pause it before editing saved paragraphs. Refreshes preserve an open edit draft.
 
@@ -189,9 +203,13 @@ results also offer manual reload. Intentionally empty translations are labeled.
 
 Open a paragraph's **Change history** from its actions menu to compare revisions. Polishing and manual changes default to inline word-level highlights: removed text is red and struck through; added text is green and underlined. **Full texts** switches to the original before/after versions. Word boundaries follow the project's target language, with a character-level fallback in older browsers; spaces, punctuation, and line breaks remain part of the comparison. Large or complex changes fall back to full texts. Only expanded records calculate differences. Older projects without a separate polishing revision can compare **Initial translation → current version**, explicitly labeled because the current version may include later edits or automatic fixes. Comparisons are read-only; using a saved version only loads a draft until you save.
 
-The project list, project pages, and Settings share one persistent sidebar. It contains **Create project**, **Projects**, the current or last opened project's navigation, and **Settings** in the footer; there are no floating dashboard actions. Use **Collapse sidebar** beside the logo to make more room: desktop navigation becomes an icon rail with named hover hints; on mobile, links hide while the expand button stays visible. Width, labels, and mobile navigation height transition smoothly over 280 ms. The browser remembers this preference and the last opened project across pages and reloads. Navigation and lazy page loading keep the shell mounted.
+The project list and project pages share one persistent sidebar. It contains **Create project**, **Projects**, the current or last opened project's navigation, and **Settings** in the footer; there are no floating dashboard actions. Settings replaces these links with its own categories and a **Back** button. Use **Collapse sidebar** to make more room: navigation becomes an icon rail with named hover hints, even in a narrow computer window. Width and labels transition smoothly over 280 ms. The browser remembers this preference and the last opened project across pages and reloads. Navigation and lazy page loading keep the shell mounted.
 
-Global **Settings** is one `/settings` page of titled sections: **General**, **Providers & models**, **Default models**, **Workflow**, **MinerU PDF parsing**, and **Advanced**. Save, validate, and restore defaults stay in a bar pinned to the bottom of the page. Reminder links jump to incomplete ID edits or unvalidated YAML on the same page. Legacy `/settings/providers`, `/settings/defaults`, and `/settings/advanced` links redirect to `/settings`. **Test connection** under Providers & models sends one short live request per saved model profile (`POST /settings/models/ping`) and reports connectivity, latency and the failure category; it uses a few provider tokens per click.
+Global **Settings** shows one category at a time: **General**, **Models & connections**, **Default models**, **Workflow**, **PDF parsing**, or **Advanced**. Categories have reloadable URLs: `/settings`, `/settings/providers`, `/settings/defaults`, `/settings/workflow`, `/settings/mineru`, and `/settings/advanced`. Unknown categories return to General. Switching categories or using browser history preserves unsaved configuration, ID, and YAML drafts; leaving Settings or reloading discards unsaved drafts. Save, validate, and restore defaults apply to the shared configuration draft and remain in a bar pinned to the bottom. Reminder links open the category containing incomplete ID edits or unvalidated YAML. **Test connection** under Models & connections sends one short live request per saved model profile (`POST /settings/models/ping`) and reports connectivity, latency and the failure category; it uses a few provider tokens per click.
+
+Each settings category uses the full content width, with its name in the page header instead of a duplicate title column. **Segmentation and performance**, **Models by operation**, and **Advanced YAML configuration** are shown directly, without collapsible groups. Project settings retains its titled sections and compact disclosures.
+
+There is no divider above **Back**. The global settings action bar stays flush with the bottom of the content pane, including when scrolling to the end.
 
 Web and Desktop omit introductory subtitles from the project list, glossary, whole-book review, event log, and global/project settings, along with redundant introductions in the creation and paragraph editor dialogs. Project settings keeps the link to global model management. Advanced YAML shows an unsaved-change summary only when edited; cost, read-only, safety, and error notices remain.
 
@@ -199,9 +217,9 @@ Operational constraints remain visible in both apps: export history warns that o
 
 Same-page history navigation closes open dropdowns without resetting configuration drafts. Notifications stay fixed in the viewport rather than following the last clicked button: successes dismiss after one second, errors and warnings after ten seconds, and other messages after five seconds. Errors can be dismissed; glossary add/edit failures also remain inline until retried or the dialog is closed.
 
-Long chapter titles wrap without squeezing status labels or actions; on narrow screens, the overview's chapter table scrolls horizontally within its card. Sections without a title show “Untitled chapter” in the overview and proofreading views. Source and translation appear side by side without a header row on wide screens and stack with labels on narrower screens. Long text and references wrap within the reading and editing views.
+Long chapter titles wrap without squeezing status labels or actions. Sections without a title show “Untitled chapter” in the overview and proofreading views. Source and translation always appear side by side without a header row. Long text and references wrap within the reading and editing views; narrow computer windows can scroll the content horizontally rather than switching to a phone layout.
 
-The glossary keeps the same compact rows and column widths across type filters. Long source and translated terms use a single-line preview; hover over the text or open the term editor to read the full value. On narrow screens, the table scrolls horizontally within its card.
+The glossary keeps the same compact rows and column widths across type filters. Long source and translated terms use a single-line preview; hover over the text or open the term editor to read the full value. Tables retain horizontal scrolling where needed.
 
 In Web and Desktop, queued or running tasks keep **Term details** available through the eye button. You can read and copy the full source, translation, aliases, notes, and Japanese-source reading; type and gender remain visible but cannot be changed. Adding, importing, editing, deleting, and resolving conflicts remain disabled. An open term dialog follows task status: it becomes read-only when a task starts and editable again when the task stops.
 
@@ -231,9 +249,31 @@ appellation, honorific, speech habit, and fixed expression. Labels follow the in
 language; stored and exported type IDs remain English. Custom types keep their original
 labels in the table.
 
+**Glossary → Export → Anki deck (.apkg)** exports the complete glossary, regardless of
+search, type filters, pagination or selected rows. Import the file in Anki to get a
+`Wenyi` parent deck with a project-specific book deck and one subdeck per term type.
+All types are included, including custom types; filter or suspend unwanted cards in
+Anki instead of excluding them during export. Built-in subdeck names use the stored
+English type IDs. Whitespace and reserved separators in custom type names/tags are
+percent-encoded to keep them distinct and prevent extra hierarchy levels.
+
+Each term creates one recognition card: source on the front; existing reading,
+the book's translation, notes and aliases on the back, with book/type/language metadata.
+Tags include `wenyi::type::person`, `wenyi::project::<project-id>` and source/target
+language tags. These are book-specific translations, not dictionary definitions.
+Export does not generate readings, example sentences, reverse cards or audio, call
+models, modify the glossary, or include unresolved alternative translations.
+
+Re-exporting the same project's unchanged source terms uses stable note identities;
+Anki can update their contents without creating duplicate notes or resetting reviews.
+Content updates depend on Anki's import options and modification-time checks. A renamed
+source term or a different project is a new note. Import is not synchronization:
+deleting terms in Wenyi does not delete cards in Anki, and existing card placement is
+managed by Anki. CSV/JSON exports and imports remain available; `.apkg` is export-only.
+
 The Web and Desktop glossary tables load 100 terms per page, ordered by the original
 source's Unicode code points (not locale or phonetic order). Search, type filters and
-pagination share the top toolbar, wrapping on narrow screens; no pager is repeated
+pagination share the top toolbar, wrapping when space is limited; no pager is repeated
 below the table. Search and type filters
 apply to the complete glossary and return to the first page. Select-all affects only
 the current page; changing pages or filters clears selection. Import checks existing
@@ -248,7 +288,7 @@ preserves existing terms, including entries created by older versions. Name mapp
 in model requests come from the glossary, not old translated names in an analysis
 snapshot.
 
-In **Style & synopsis → Chapter summaries**, long titles and summaries wrap in separate columns on wide screens, with more space for the summary. On narrower screens, each title appears above its summary, and the tabs wrap to fit. Untitled sections use the same “Untitled chapter” label. Summaries remain editable when the project is idle and read-only while a task runs.
+In **Style & synopsis → Chapter summaries**, long titles and summaries wrap in separate columns, with more space for the summary. Untitled sections use the same “Untitled chapter” label. Summaries remain editable when the project is idle and read-only while a task runs.
 
 The review page distinguishes recommendations from actual write-back; historical runs do not borrow current-task progress. The server retains the latest five completed export files per project.
 
@@ -266,10 +306,14 @@ After a job is confirmed orphaned, ordinary workflows are marked interrupted and
 
 ## APIs, checks, and troubleshooting
 
-The live `/openapi.json` is the source of API types. `GET /capabilities` reports languages, formats, providers, and registered operations. Generate frontend types with:
+The shared app's route/schema definitions are the source of API types. The live
+`/openapi.json` remains available for inspection, but generation does not require a
+running API, PostgreSQL, Redis or credentials. After installing the workspace Python
+dependencies and frontend dependencies, generate or check the contract offline:
 
 ```bash
-pnpm gen:schema  # API already running on localhost:8000
+pnpm gen:schema  # Update shared types from the shared app factory, offline
+pnpm check:schema  # Compare temporary generated types; does not change tracked files
 uv run --no-sync ruff check packages/core packages/cli apps/api
 uv run --no-sync pytest -q -n auto
 pnpm -C apps/web typecheck
@@ -277,6 +321,11 @@ pnpm -C apps/web build
 pnpm -C apps/web exec playwright install chromium
 pnpm -C apps/web test:e2e
 ```
+
+CI runs `check:schema` before frontend typechecks. Generation uses unavailable runtime
+ports and no production lifespan; only the schema artifact's installation-dependent
+version is normalized. `GET /capabilities` still reports runtime languages, formats,
+providers and registered operations.
 
 Web and Desktop share the chunking rule in `packages/ui/vite.shared.ts`: React,
 React DOM and Scheduler form a separate `react-runtime` chunk, while pages keep
@@ -305,11 +354,19 @@ Editing a connection clears its fetched model list. Lists and errors from reques
 
 Web and Desktop publish a workflow job's terminal status only after releasing its project run lock. Successful completion also waits for the completion event and live-statistics cleanup, so saving configuration immediately after observing a completed job does not race that worker's cleanup. Queued or running work still keeps project edits read-only.
 
-The **MinerU PDF parsing** section provides deployment guidance only. Set `MINERU_API_KEY`
+The **PDF parsing** category provides MinerU deployment guidance only. Set `MINERU_API_KEY`
 for the API and workers when using MinerU; this is independent of model API keys. Web
 does not expose Desktop's manual MinerU credential input or storage endpoints.
 
-In **Translation overview**, expand **Workflow details** to see **Current workflow**. It shows enabled and disabled steps for the latest non-export task using that task's configuration snapshot, with separate plans for books, subtitles, preparation, and review. Before the first task it shows the project's configured translation plan. Step cards describe the plan, not individual completion checkpoints; polishing still runs inside translation batches. The latest progress callback is cached in Redis for seven days and associated with the run ID, so reloading restores progress without showing an older run. Export jobs remain on the export page.
+In **Translation overview**, **Current workflow** directly shows the latest non-export task's type, status, and current progress in a flat section without nested cards or an expandable step checklist. The stage text and counts come from actual progress callbacks, not inferred completion of configured steps; polishing still runs inside translation batches. Completed tasks show their completion status without a redundant final callback or waiting message. Paused and failed tasks retain their last reported stage when available. Before the first run, the task is **Not started**. The overview no longer shows or fetches a project report; usage, run time, chapter status, and **Read contents & source** remain available. Adjust enabled steps in **Project settings**.
+
+Project summary reports are no longer generated, and `GET`/`POST /projects/{pid}/report`
+have been removed. Use `/stats`, chapter/glossary endpoints and Review results instead;
+there is no separate empty-translation summary. Existing report data is left untouched,
+and a saved legacy `report` workflow step is ignored when loading an existing project.
+Review/Autofix results and export behavior are unchanged.
+
+The latest progress callback is cached in Redis for seven days and associated with the run ID, so reloading restores progress without showing an older run. Export jobs remain on the export page.
 
 ## Related notes
 

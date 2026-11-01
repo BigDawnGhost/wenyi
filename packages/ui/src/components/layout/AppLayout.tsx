@@ -1,17 +1,17 @@
-import { useI18n } from "@/i18n";
-import { useEffect, useState } from "react";
-import { Link, Outlet, useLocation, useParams } from "react-router-dom";
+import { useI18n } from "../../i18n";
+import { useEffect, useRef, useState } from "react";
+import { Link, Outlet, useLocation, useMatch, useParams } from "react-router-dom";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { SelectDismissScope } from "@/components/ui/select";
-import { NavigationLink, ProjectNavigation } from "./Navigation";
-import { navEntries } from "@/routes/manifest";
-import { RouteGate } from "@/routes/RouteGate";
-import { NotificationToaster } from "@/components/NotificationToaster";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
+import { SelectDismissScope } from "../ui/select";
+import { NavigationLink, ProjectNavigation, SettingsNavigation } from "./Navigation";
+import { navEntries } from "../../routes/manifest";
+import { RouteGate } from "../../routes/RouteGate";
+import { NotificationToaster } from "../NotificationToaster";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { platform } from "@/platform";
+import { api } from "../../api/client";
+import { platform } from "../../platform";
 
 const emblemUrl = new URL("../../assets/wenyi-emblem.png", import.meta.url)
   .href;
@@ -45,6 +45,11 @@ export function AppLayout() {
   const { t: tr } = useI18n();
   const { pid } = useParams();
   const location = useLocation();
+  const settings = !!useMatch("/settings/:section?");
+  const content = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (settings) content.current?.scrollTo(0, 0);
+  }, [settings, location.pathname]);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return platform().preferences.get(sidebarStorageKey) === "true";
@@ -85,7 +90,7 @@ export function AppLayout() {
   const projects = useQuery({
     queryKey: ["projects"],
     queryFn: api.listProjects,
-    enabled: !pid,
+    enabled: !pid && !settings,
   });
   const recalledPid =
     pid ??
@@ -97,7 +102,7 @@ export function AppLayout() {
   const { data: projectDetails } = useQuery({
     queryKey: ["project", recalledPid],
     queryFn: () => api.getProject(recalledPid!),
-    enabled: !!recalledPid,
+    enabled: !!recalledPid && !settings,
   });
   // Only use metadata for this identity; retaining the previous project's
   // format would build the wrong menu for the newly selected project.
@@ -118,40 +123,46 @@ export function AppLayout() {
           key={entry.to}
           to={entry.to}
           icon={entry.icon}
-          label={entry.label}
+          label={tr(entry.label)}
           collapsed={collapsed}
           end={entry.end}
           prefetch={entry.loader}
           id={slot === "action" ? "create-project-trigger" : undefined}
-          state={slot === "action" ? { fromAppNavigation: true } : undefined}
+          state={slot === "action"
+            ? { fromAppNavigation: true }
+            : entry.to === "/settings"
+              ? { settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }
+              : undefined}
           className={slot === "action" ? "w-full border" : undefined}
         />
       ));
 
   return (
-    <div className="flex h-dvh w-full flex-col overflow-hidden md:flex-row">
+    <div className="flex h-dvh w-full overflow-hidden">
       <aside
         data-slot="sidebar"
         data-collapsed={collapsed}
         className={cn(
-          "flex min-h-0 shrink-0 flex-col border-b bg-card transition-[width] duration-sidebar ease-sidebar md:border-b-0 md:border-r",
-          collapsed ? "md:w-16" : "md:w-60",
+          "flex min-h-0 shrink-0 flex-col border-r bg-card transition-[width] duration-sidebar ease-sidebar",
+          collapsed ? "w-16" : "w-60",
         )}
       >
         <div
           data-slot="sidebar.logo-row"
           className={cn(
             "flex min-h-14 shrink-0 items-center justify-between gap-2 pl-5 pr-3 pt-[10px] transition-[padding,gap] duration-sidebar ease-sidebar",
-            collapsed && "md:gap-0 md:pl-4 md:pr-[15px]",
+            collapsed && "gap-0 pl-4 pr-[15px]",
           )}
         >
           <div
             className={cn(
-              "min-w-0 overflow-hidden transition-[max-width,opacity,transform,visibility] duration-sidebar ease-sidebar md:max-w-40",
-              collapsed && "md:invisible md:max-w-0 md:-translate-x-2 md:opacity-0",
+              "min-w-0 max-w-40 overflow-hidden transition-[max-width,opacity,transform,visibility] duration-sidebar ease-sidebar",
+              collapsed && "invisible max-w-0 -translate-x-2 opacity-0",
             )}
           >
-            <Brand />
+            {settings
+              ? <span className="text-lg font-semibold">{tr("settings.title")}</span>
+              : <Brand />}
           </div>
           <Button
             type="button"
@@ -183,82 +194,82 @@ export function AppLayout() {
         <div
           id="sidebar-navigation"
           data-slot="sidebar.strata"
-          className={cn(
-            "grid min-h-0 transition-[grid-template-rows,opacity,visibility] duration-sidebar ease-sidebar md:flex md:flex-1 md:flex-col",
-            collapsed
-              ? "invisible grid-rows-[0fr] opacity-0 md:visible md:opacity-100"
-              : "grid-rows-[1fr]",
-          )}
+          className="flex min-h-0 flex-1 flex-col"
         >
-          {/* One clipped grid child lets mobile navigation animate to its
-              natural height while retaining the same links on desktop. */}
-          <div className="min-h-0 overflow-hidden md:flex md:flex-1 md:flex-col">
-            <div
-              data-slot="sidebar.action"
-              className={cn(
-                "shrink-0 px-3 pt-3 pb-1 transition-[padding] duration-sidebar ease-sidebar",
-                collapsed && "md:p-2",
-              )}
-            >
-              {renderGlobal("action")}
-            </div>
-            <nav
-              data-slot="sidebar.panels"
-              aria-label={tr("navigation.global")}
-              className={cn(
-                "flex shrink-0 flex-wrap gap-1 px-3 py-1 transition-[padding] duration-sidebar ease-sidebar md:block md:space-y-1",
-                collapsed && "md:p-2",
-              )}
-            >
-              {renderGlobal("panel")}
-            </nav>
-            <div
-              data-slot="sidebar.region"
-              className="relative min-h-0 md:flex md:flex-col md:flex-1"
-            >
+          {settings ? (
+            <SettingsNavigation collapsed={collapsed} />
+          ) : (
+            <>
               <div
+                data-slot="sidebar.action"
                 className={cn(
-                  "min-h-0 overflow-y-auto transition-[padding] duration-sidebar ease-sidebar md:max-h-none md:flex-1",
-                  recalledPid && "max-h-[35vh]",
-                  recalledPid && "p-3",
-                  recalledPid && collapsed && "md:p-2",
+                  "shrink-0 px-3 pt-3 pb-1 transition-[padding] duration-sidebar ease-sidebar",
+                  collapsed && "p-2",
                 )}
               >
-                {recalledPid && (
-                  <ProjectNavigation
-                    key={recalledPid}
-                    pid={recalledPid}
-                    format={project?.fmt}
-                    name={project?.name}
-                    collapsed={collapsed}
-                  />
-                )}
+                {renderGlobal("action")}
               </div>
-            </div>
-            <div
-              data-slot="sidebar.footer"
-              className={cn(
-                "shrink-0 px-3 pt-1 pb-3 transition-[padding] duration-sidebar ease-sidebar",
-                collapsed && "md:p-2",
-              )}
-            >
-              {renderGlobal("foot")}
-            </div>
-          </div>
+              <nav
+                data-slot="sidebar.panels"
+                aria-label={tr("navigation.global")}
+                className={cn(
+                  "shrink-0 space-y-1 px-3 py-1 transition-[padding] duration-sidebar ease-sidebar",
+                  collapsed && "p-2",
+                )}
+              >
+                {renderGlobal("panel")}
+              </nav>
+              <div
+                data-slot="sidebar.region"
+                className="relative flex min-h-0 flex-1 flex-col"
+              >
+                <div
+                  className={cn(
+                    "min-h-0 flex-1 overflow-y-auto transition-[padding] duration-sidebar ease-sidebar",
+                    recalledPid && "p-3",
+                    recalledPid && collapsed && "p-2",
+                  )}
+                >
+                  {recalledPid && (
+                    <ProjectNavigation
+                      key={recalledPid}
+                      pid={recalledPid}
+                      format={project?.fmt}
+                      name={project?.name}
+                      collapsed={collapsed}
+                    />
+                  )}
+                </div>
+              </div>
+              <div
+                data-slot="sidebar.footer"
+                className={cn(
+                  "shrink-0 px-3 pt-1 pb-3 transition-[padding] duration-sidebar ease-sidebar",
+                  collapsed && "p-2",
+                )}
+              >
+                {renderGlobal("foot")}
+              </div>
+            </>
+          )}
         </div>
       </aside>
       <NotificationToaster />
       <main
+        ref={content}
         data-slot="content"
-        className="relative flex-1 min-h-0 min-w-0 overflow-y-auto"
+        className="relative flex-1 min-h-0 min-w-0 overflow-auto"
       >
         {/* The route gate keeps the shell mounted while a lazy chunk loads and
-            confines route failures to the content area. */}
-        <RouteGate>
-          <SelectDismissScope dismissKey={`${location.key}:${location.hash}`}>
-            <Outlet />
-          </SelectDismissScope>
-        </RouteGate>
+            confines route failures to the content area. Preserve desktop columns
+            in narrow windows and scroll only this pane (704px content + 48px padding). */}
+        <div className="min-h-full min-w-[752px]">
+          <RouteGate>
+            <SelectDismissScope dismissKey={`${location.key}:${location.hash}`}>
+              <Outlet />
+            </SelectDismissScope>
+          </RouteGate>
+        </div>
       </main>
     </div>
   );
@@ -276,7 +287,7 @@ export function PageHeader({
   return (
     <div
       data-slot="page.header"
-      className="relative flex flex-wrap items-center justify-between gap-4 border-b px-4 sm:px-6 py-4"
+      className="relative flex flex-wrap items-center justify-between gap-4 border-b px-6 py-4"
     >
       <div className="flex min-w-0 flex-1 basis-64 flex-wrap items-center gap-x-3 gap-y-1 [overflow-wrap:anywhere]">
         <h1 className="text-lg font-semibold">{title}</h1>

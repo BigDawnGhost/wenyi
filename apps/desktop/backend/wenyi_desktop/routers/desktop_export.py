@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from wenyi_backend.context import current_context
 from wenyi_backend.export_plan import export_filename, resolve_export
 from wenyi_backend.export_response import ExportResponse
-from wenyi_backend.project_service import effective_config, require_book, require_project
-from wenyi_backend.schemas import ExportRequest
+from wenyi_backend.project_service import require_book
+from wenyi_backend.routers.dependencies import effective_config, require_project
+from wenyi_backend.schemas import ExportRequest, GlossaryExportFormat
 
 from ..local_backend import LocalBackend
 
@@ -41,7 +41,7 @@ def _plan(filename: str, fmt: str, request: ExportRequest | None = None) -> Nati
 
 
 @router.get("/glossary/plan")
-def plan_glossary(pid: str, format: Literal["json", "csv"] = "json") -> NativeExportPlan:
+def plan_glossary(pid: str, format: GlossaryExportFormat = "json") -> NativeExportPlan:
     require_book(require_project(pid))
     return _plan(f"glossary-{pid}.{format}", format)
 

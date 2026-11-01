@@ -1,19 +1,19 @@
-import { useI18n } from "@/i18n";
-import { languageName } from "@/i18n/labels";
+import { useI18n } from "../../i18n";
+import { languageName } from "../../i18n/labels";
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import { useLocation, useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button } from "@/components/ui/button";
-import { Input, Label } from "@/components/ui/form";
-import { Dialog } from "@/components/ui/misc";
-import { Select, SelectItem } from "@/components/ui/select";
-import { ErrorNotice } from "@/components/ui/data";
-import { api, isProjectBusy } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { Button } from "../../components/ui/button";
+import { Input, Label } from "../../components/ui/form";
+import { Dialog } from "../../components/ui/misc";
+import { Select, SelectItem } from "../../components/ui/select";
+import { ErrorNotice } from "../../components/ui/data";
+import { api, isProjectBusy } from "../../api/client";
+import { cn } from "../../lib/utils";
 import { SourcePreview } from "./SourcePreview";
 import { SourceFilePicker } from "./SourceFilePicker";
-import { releaseSource, type ProjectSource } from "@/platform";
+import { releaseSource, type ProjectSource } from "../../platform";
 
 export default function CreateProjectDialog() {
   const { t: tr, locale } = useI18n();
@@ -240,7 +240,7 @@ export default function CreateProjectDialog() {
             onChange={(e) => setName(e.target.value)}
           />
         </div>
-        <div className="grid items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-3">
           <div className="min-w-0 space-y-2">
             <Label htmlFor="source-language">{tr("createProject.sourceLanguage")}</Label>
             <Select
@@ -258,7 +258,7 @@ export default function CreateProjectDialog() {
             </Select>
           </div>
           <ArrowRight
-            className="mb-2.5 hidden h-4 w-4 text-muted-foreground sm:block"
+            className="mb-2.5 h-4 w-4 text-muted-foreground"
             aria-hidden="true"
           />
           <div className="min-w-0 space-y-2">
@@ -312,12 +312,12 @@ export default function CreateProjectDialog() {
             <legend className="mb-2 text-sm font-medium leading-none">
               {tr("createProject.translationMode")}
             </legend>
-            <div className="inline-flex w-full rounded-lg border p-1 sm:w-auto">
+            <div className="inline-flex rounded-lg border p-1">
               {(["standard", "best_of_three"] as const).map((mode) => (
                 <label
                   key={mode}
                   className={cn(
-                    "relative flex flex-1 cursor-pointer items-center justify-center rounded-md px-4 py-1.5 text-sm transition-colors sm:flex-none",
+                    "relative flex cursor-pointer items-center justify-center rounded-md px-4 py-1.5 text-sm transition-colors",
                     "focus-within:ring-2 focus-within:ring-ring",
                     displayedMode === mode
                       ? "bg-primary text-primary-foreground"

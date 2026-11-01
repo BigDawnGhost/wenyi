@@ -1,26 +1,32 @@
 import { lazy, type ReactNode } from "react";
-import { Navigate } from "react-router-dom";
 import {
+  Activity,
   BookOpenCheck,
   Captions,
+  Code,
   FileOutput,
+  FileScan,
   FolderPlus,
+  Info,
   Languages,
   LayoutDashboard,
   Library,
   ListChecks,
   ListTree,
+  Plug,
+  Puzzle,
   ScrollText,
   Settings,
   Settings2,
   Sparkles,
+  Workflow,
   type LucideIcon,
 } from "lucide-react";
-import type { MessageKey } from "@/i18n";
+import type { MessageKey } from "../i18n";
+import { platform } from "../platform";
 
 // Single source of truth for routes, sidebar navigation, chunk warm-up and
 // intent prefetch. Adding or removing a page changes only this file.
-// Keep routeChunks in packages/ui/tests/platform-boundaries.test.mjs in sync.
 
 const loadDashboard = () => import("../features/dashboard/Dashboard");
 const loadCreateProject = () => import("../features/project-create/CreateProject");
@@ -82,8 +88,7 @@ export const routeEntries: RouteEntry[] = [
     element: <Dashboard />,
     children: [{ path: "/projects/new", element: <CreateProject /> }],
   },
-  { path: "/settings", element: <InterfaceSettingsPage /> },
-  { path: "/settings/:section", element: <Navigate to="/settings" replace /> },
+  { path: "/settings/:section?", element: <InterfaceSettingsPage /> },
   { path: "/projects/:pid", element: <ProgressPage /> },
   { path: "/projects/:pid/glossary", element: <GlossaryPage /> },
   { path: "/projects/:pid/style", element: <StylePage /> },
@@ -96,6 +101,45 @@ export const routeEntries: RouteEntry[] = [
   { path: "/projects/:pid/export", element: <ExportPage /> },
   { path: "/projects/:pid/events", element: <EventsPage /> },
 ];
+
+export type SettingsSectionId =
+  | "general" | "providers" | "defaults" | "workflow" | "mineru"
+  | "plugins" | "advanced" | "diagnostics" | "updates";
+
+type SettingsNavEntry = {
+  id: SettingsSectionId;
+  icon: LucideIcon;
+} & (
+  | { label: MessageKey; capability?: never }
+  | { label?: never; capability: "plugins" | "diagnostics" | "updates" }
+);
+
+const settingsSections: SettingsNavEntry[] = [
+  { id: "general", label: "settings.sectionGeneral", icon: Settings2 },
+  { id: "providers", label: "settings.sectionProviders", icon: Plug },
+  { id: "defaults", label: "settings.sectionDefaultModels", icon: Sparkles },
+  { id: "workflow", label: "settings.sectionWorkflow", icon: Workflow },
+  { id: "mineru", label: "settings.sectionPdf", icon: FileScan },
+  { id: "plugins", icon: Puzzle, capability: "plugins" },
+  { id: "advanced", label: "settings.sectionAdvanced", icon: Code },
+  { id: "diagnostics", icon: Activity, capability: "diagnostics" },
+  { id: "updates", icon: Info, capability: "updates" },
+];
+
+export function availableSettingsSections(locale: string, t: (key: MessageKey) => string) {
+  return settingsSections
+    .filter((entry) => !entry.capability || platform().capabilities[entry.capability])
+    .map((entry) => ({
+      ...entry,
+      label: entry.capability
+        ? platform().capabilities[entry.capability]!.label(locale)
+        : t(entry.label),
+    }));
+}
+
+export function settingsPath(section: SettingsSectionId) {
+  return section === "general" ? "/settings" : `/settings/${section}`;
+}
 
 /** Which projects a nav link applies to, mirroring the historical rules. */
 export type Audience = "all" | "book" | "srt";

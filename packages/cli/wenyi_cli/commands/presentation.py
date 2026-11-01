@@ -130,10 +130,12 @@ def print_preparation_summary(
     console.print("Run translate with the same source file to continue the full translation.")
 
 
-def print_translation_summary(console: Console, summary: dict[str, Any]) -> None:
+def print_translation_summary(
+    console: Console, *, chapters_done: int, chapters_total: int, terms: int
+) -> None:
     """Show complete book chapter and terminology counts."""
     console.print(
-        f"[bold green]Complete[/]: {summary['chapters_done']}/{summary['chapters_total']} chapters, terms: {summary['terms']}."
+        f"[bold green]Complete[/]: {chapters_done}/{chapters_total} chapters, terms: {terms}."
     )
 
 

@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 import zipfile
+from contextlib import nullcontext
 from unittest.mock import patch
 
 import pytest
@@ -505,6 +506,18 @@ class TestCliBilingualFlags(unittest.TestCase):
         class FakeStore:
             run_dir = "state/book"
 
+            def lock(self):
+                return nullcontext()
+
+            def state_lock(self):
+                return nullcontext()
+
+            def load_manifest(self):
+                return {"chapters": [{"status": "done"}]}
+
+            def stats(self):
+                return {"terms": 0}
+
             def load_usage(self):
                 return None
 
@@ -516,7 +529,6 @@ class TestCliBilingualFlags(unittest.TestCase):
 
             def run_all(self, input_path, **kwargs):
                 return {
-                    "report": {"summary": {"chapters_done": 1, "chapters_total": 1, "terms": 0}},
                     "output": "novel.zh.epub",
                     "outputs": ["novel.zh.epub", "novel.zh-bi.epub"],
                     "store": FakeStore(),

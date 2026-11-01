@@ -22,6 +22,8 @@ from wenyi_core.pdf_bridge.connection import BridgeResolver
 from wenyi_core.storage.protocol import Storage
 
 from .live_statistics import StatisticsCache
+from .ports.jobs import JobCatalog
+from .ports.projects import ProjectCatalog
 
 if TYPE_CHECKING:
     from .global_settings import GlobalSettings
@@ -35,75 +37,9 @@ class BackendStorage(Storage, Protocol):
     def export_lock(self, export_id: int, *, blocking: bool = True) -> ContextManager[None]: ...
 
 
-class Repository(Protocol):
-    """Catalog operations; connection tokens are opaque to shared services."""
+class Repository(ProjectCatalog, JobCatalog, Protocol):
+    """Composition aggregate, not an implicit service locator; consumers use narrower ports."""
 
-    def create_project(
-        self,
-        name: str,
-        source_lang: str,
-        target_lang: str,
-        strategy: dict,
-        *,
-        project_id: str | None = None,
-        source: dict | None = None,
-        config: dict | None = None,
-        connection: Any = None,
-    ) -> str: ...
-    def get_project(self, pid: str) -> dict | None: ...
-    def list_projects(self) -> list[dict]: ...
-    def delete_project(self, pid: str) -> None: ...
-    def set_project_status(self, pid: str, status: str, *, error: str | None = None) -> None: ...
-    def set_project_strategy(self, pid: str, strategy: dict, *, connection: Any = None) -> None: ...
-    def set_project_config(self, pid: str, config: dict, *, connection: Any = None) -> None: ...
-    def set_project_languages(
-        self, pid: str, source_lang: str, target_lang: str, *, connection: Any = None
-    ) -> None: ...
-    def set_project_source(
-        self,
-        pid: str,
-        source_path: str,
-        book_title: str | None,
-        *,
-        source_sha256: str | None = None,
-        fmt: str | None = None,
-        source_meta: dict | None = None,
-    ) -> None: ...
-    def chapter_summaries(self, pid: str) -> list[dict]: ...
-    def total_word_count(self, pid: str) -> int: ...
-    def create_job(
-        self,
-        pid: str,
-        kind: str,
-        arq_job_id: str,
-        *,
-        params: dict | None = None,
-        config_snapshot: dict | None = None,
-        run_id: str | None = None,
-        status: str = "queued",
-    ) -> int: ...
-    def admit_job(
-        self,
-        pid: str,
-        kind: str,
-        job_id: str,
-        /,
-        *,
-        project_status: str,
-        params: dict | None = None,
-        config_snapshot: dict | None = None,
-        run_id: str | None = None,
-    ) -> int: ...
-    def fail_admission(self, job_id: int, previous_status: str, error: str, /) -> Any: ...
-    def get_job(self, job_id: int) -> dict | None: ...
-    def get_job_by_arq_id(self, arq_job_id: str) -> dict | None: ...
-    def set_job_status(
-        self, job_id: int, status: str, error: str | None = None, *, result: dict | None = None
-    ) -> Any: ...
-    def list_jobs(self, pid: str) -> list[dict]: ...
-    def latest_resumable_job(self, pid: str) -> dict | None: ...
-    def job_review_id(self, job_id: int) -> str | None: ...
-    def is_paused(self, pid: str) -> bool: ...
     def create_export(self, pid: str, fmt: str, options: dict) -> int: ...
     def set_export_status(
         self,

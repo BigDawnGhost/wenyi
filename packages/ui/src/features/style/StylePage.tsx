@@ -1,16 +1,17 @@
-import { useI18n } from "@/i18n";
+import { useI18n } from "../../i18n";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { skipToken, useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import { api, isProjectBusy, type AnalysisPayload } from "@/lib/api";
-import { useProjectQuery } from "@/lib/projectQuery";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label, Textarea } from "@/components/ui/form";
-import { ErrorNotice, ReadOnlyNotice } from "@/components/ui/data";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/misc";
+import { toast } from "../../lib/toast";
+import { api, isProjectBusy } from "../../api/client";
+import type { AnalysisPayload } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { Label, Textarea } from "../../components/ui/form";
+import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/misc";
 
 const styleFields = [
   ["genre", "style.genre"],
@@ -119,7 +120,7 @@ export default function StylePage() {
                 </Button>
               </CardHeader>
               <CardContent>
-                <div className="grid md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   {styleFields.map(([key, label]) => (
                     <div key={key} className="min-w-0 space-y-2">
                       <Label htmlFor={`style-${key}`}>{tr(label)}</Label>
@@ -179,7 +180,7 @@ export default function StylePage() {
               <CardContent className="p-0">
                 <div
                   aria-hidden="true"
-                  className="hidden grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 border-b p-4 text-xs font-medium text-muted-foreground lg:grid"
+                  className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 border-b p-4 text-xs font-medium text-muted-foreground"
                 >
                   <span>{tr("common.chapter")}</span>
                   <span>{tr("common.summary")}</span>
@@ -191,7 +192,7 @@ export default function StylePage() {
                   {digests.map((d) => (
                     <div
                       key={d.index}
-                      className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:gap-4"
+                      className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 p-4"
                     >
                       <dt className="min-w-0 font-medium [overflow-wrap:anywhere]">
                         {d.title?.trim() || tr("common.untitledChapter")}

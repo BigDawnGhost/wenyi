@@ -1,19 +1,21 @@
 import { useEffect, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import { api, type GlobalConfig } from "@/lib/api";
-import { platform } from "@/platform";
-import { LazyBoundary } from "@/routes/LazyBoundary";
-import { useI18n } from "@/i18n";
-import { Button } from "@/components/ui/button";
-import { ErrorNotice } from "@/components/ui/data";
-import { Disclosure } from "@/components/ui/disclosure";
-import { Textarea } from "@/components/ui/form";
+import { toast } from "../../lib/toast";
+import { api } from "../../api/client";
+import type { GlobalConfig } from "../../api/types";
+import { platform } from "../../platform";
+import { LazyBoundary } from "../../routes/LazyBoundary";
+import type { SettingsSectionId } from "../../routes/manifest";
+import { useI18n } from "../../i18n";
+import { Button } from "../../components/ui/button";
+import { ErrorNotice } from "../../components/ui/data";
+import { Textarea } from "../../components/ui/form";
 import { LanguageSettings } from "./LanguageSettings";
 import { ModelSelection } from "./ModelSelection";
 import { ProviderSettings } from "./ProviderSettings";
 import { MinerUSettings } from "./MinerUSettings";
-import { SettingsActionBar, SettingsSection } from "./SettingsSection";
+import { SettingsActionBar, SettingsGroup, SettingsSection } from "./SettingsSection";
 import { WorkflowSettings, workflowField } from "./WorkflowSettings";
 import { renameRegistryId, type RegistryGroup } from "./registryEdits";
 
@@ -21,8 +23,9 @@ type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
 const noPendingCredentials = () => false;
 
-export function GlobalConfiguration() {
+export function GlobalConfiguration({ section }: { section: SettingsSectionId }) {
   const { t } = useI18n();
+  const location = useLocation();
   const qc = useQueryClient();
   const credentials = platform().capabilities.credentials;
   // The platform is fixed before React mounts, so the hook identity is stable.
@@ -172,77 +175,109 @@ export function GlobalConfiguration() {
   return (
     <>
       <ErrorNotice error={query.error || error} />
-      <LanguageSettings />
-      <SettingsSection id="provider-models" title={t("settings.sectionProviders")}>
-        <ProviderSettings
-          key={registryKey}
-          config={effective}
-          kinds={caps?.providers || []}
-          disabled={disabled}
-          onChange={changeLlm}
-          onRename={rename}
-          onEditingChange={setEditingIds}
-          saved={configSaved && !credentialsPending}
-        />
-      </SettingsSection>
-      <SettingsSection title={t("settings.sectionDefaultModels")}>
-        <ModelSelection
-          llm={llm}
-          models={object(llm.models)}
-          operations={caps?.operations}
-          disabled={disabled}
-          onChange={changeLlm}
-        />
-      </SettingsSection>
-      <SettingsSection title={t("settings.sectionWorkflow")}>
-        <WorkflowSettings
-          scope="global"
-          config={effective}
-          disabled={disabled}
-          pdf
-          error={error}
-          onField={(group, key, value) => change(workflowField(effective, group, key, value))}
-        />
-      </SettingsSection>
-      <MinerUSettings />
-      {Plugins && (
-        <LazyBoundary>
-          <Plugins disabled={installing} />
-        </LazyBoundary>
-      )}
-      <SettingsSection id="advanced-yaml" title={t("settings.sectionAdvanced")}>
-        <Disclosure
-          title={t("settings.advancedYamlConfiguration")}
-          summary={yamlDirty ? t("settings.unsavedSummary") : undefined}
-          error={error}
-        >
-          <Textarea
-            aria-label={t("settings.advancedYamlConfiguration")}
-            spellCheck={false}
-            className="min-h-[420px] font-mono text-xs"
-            value={draft?.yaml || ""}
-            disabled={!draft || pending}
-            onChange={(event) => {
-              if (draft) {
-                setDraft({ ...draft, yaml: event.target.value });
-                setYamlDirty(true);
-              }
-            }}
-          />
-        </Disclosure>
-      </SettingsSection>
+      {/* Keep controls mounted so category navigation preserves local ID/key drafts. */}
+      <div className="flex-1">
+        <div hidden={section !== "general"}>
+          <LanguageSettings />
+        </div>
+        <div hidden={section !== "providers"}>
+          <SettingsSection id="provider-models" title={t("settings.sectionProviders")}>
+            <ProviderSettings
+              key={registryKey}
+              config={effective}
+              kinds={caps?.providers || []}
+              disabled={disabled}
+              onChange={changeLlm}
+              onRename={rename}
+              onEditingChange={setEditingIds}
+              saved={configSaved && !credentialsPending}
+            />
+          </SettingsSection>
+        </div>
+        <div hidden={section !== "defaults"}>
+          <SettingsSection title={t("settings.sectionDefaultModels")}>
+            <ModelSelection
+              scope="global"
+              llm={llm}
+              models={object(llm.models)}
+              operations={caps?.operations}
+              disabled={disabled}
+              onChange={changeLlm}
+            />
+          </SettingsSection>
+        </div>
+        <div hidden={section !== "workflow"}>
+          <SettingsSection title={t("settings.sectionWorkflow")}>
+            <WorkflowSettings
+              scope="global"
+              config={effective}
+              disabled={disabled}
+              pdf
+              error={error}
+              onField={(group, key, value) => change(workflowField(effective, group, key, value))}
+            />
+          </SettingsSection>
+        </div>
+        <div hidden={section !== "mineru"}>
+          <MinerUSettings />
+        </div>
+        {Plugins && (
+          <div hidden={section !== "plugins"}>
+            <LazyBoundary>
+              <Plugins disabled={installing} />
+            </LazyBoundary>
+          </div>
+        )}
+        <div hidden={section !== "advanced"}>
+          <SettingsSection id="advanced-yaml" title={t("settings.sectionAdvanced")}>
+            <SettingsGroup
+              title={t("settings.advancedYamlConfiguration")}
+              summary={yamlDirty ? t("settings.unsavedSummary") : undefined}
+            >
+              <Textarea
+                aria-label={t("settings.advancedYamlConfiguration")}
+                spellCheck={false}
+                className="min-h-[420px] font-mono text-xs"
+                value={draft?.yaml || ""}
+                disabled={!draft || pending}
+                onChange={(event) => {
+                  if (draft) {
+                    setDraft({ ...draft, yaml: event.target.value });
+                    setYamlDirty(true);
+                  }
+                }}
+              />
+            </SettingsGroup>
+          </SettingsSection>
+        </div>
+        {Diagnostics && (
+          <div hidden={section !== "diagnostics"}><Diagnostics /></div>
+        )}
+        {Updates && (
+          <div hidden={section !== "updates"}>
+            <LazyBoundary>
+              <Updates
+                blocked={!draft || !query.data || draft.yaml !== query.data.yaml ||
+                  uncommitted || yamlDirty || editingIds || pending || mutations > 0 ||
+                  Object.keys(renames).length > 0 || Object.keys(providerRenames).length > 0}
+                onInstalling={setInstalling}
+              />
+            </LazyBoundary>
+          </div>
+        )}
+      </div>
       <SettingsActionBar
         notices={
           <>
             {yamlDirty && (
-              <a href="#advanced-yaml" className="block text-amber-700 underline underline-offset-4 dark:text-amber-300">
+              <Link to="/settings/advanced" state={location.state} className="block text-amber-700 underline underline-offset-4 dark:text-amber-300">
                 {t("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
-              </a>
+              </Link>
             )}
             {editingIds && (
-              <a href="#provider-models" className="block text-amber-700 underline underline-offset-4 dark:text-amber-300">
+              <Link to="/settings/providers" state={location.state} className="block text-amber-700 underline underline-offset-4 dark:text-amber-300">
                 {t("registry.finishRenaming")}
-              </a>
+              </Link>
             )}
             {!yamlDirty && !editingIds && dirty && (
               <span className="text-muted-foreground">{t("settings.unsavedSummary")}</span>
@@ -264,17 +299,6 @@ export function GlobalConfiguration() {
           {pending ? t("common.saving") : t("settings.saveConfiguration")}
         </Button>
       </SettingsActionBar>
-      {Diagnostics && <Diagnostics />}
-      {Updates && (
-        <LazyBoundary>
-          <Updates
-            blocked={!draft || !query.data || draft.yaml !== query.data.yaml ||
-              uncommitted || yamlDirty || editingIds || pending || mutations > 0 ||
-              Object.keys(renames).length > 0 || Object.keys(providerRenames).length > 0}
-            onInstalling={setInstalling}
-          />
-        </LazyBoundary>
-      )}
     </>
   );
 }

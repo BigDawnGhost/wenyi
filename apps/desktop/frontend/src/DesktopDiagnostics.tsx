@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button } from "@wenyi/ui/components/ui/button";
-import { Dialog } from "@wenyi/ui/components/ui/misc";
-import { SettingsSection } from "@wenyi/ui/features/settings/SettingsSection";
+import { Button, Dialog } from "@wenyi/ui/primitives";
+import { SettingsSection } from "@wenyi/ui/settings";
 import { useDesktopI18n } from "./i18n";
 import { diagnosticCommand, type DiagnosticStatus } from "./diagnostics";
 

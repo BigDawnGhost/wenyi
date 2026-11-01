@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from wenyi_backend import dal
+from wenyi_backend.context import current_context
 from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_desktop import main
@@ -19,7 +19,7 @@ from wenyi_desktop import main
 @pytest.fixture
 def desktop_exports(desktop_context):
     backend = desktop_context.repository
-    pid = dal.create_project("Example", "en", "zh", {})
+    pid = current_context().repository.create_project("Example", "en", "zh", {})
     source = backend.project_dir(pid) / "source.txt"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("A paragraph.", encoding="utf-8")
@@ -34,7 +34,7 @@ def desktop_exports(desktop_context):
             chapters=[Chapter(index=0, title="One", segments=[Segment(index=0, source="Text")])],
         )
     )
-    dal.set_project_source(
+    current_context().repository.set_project_source(
         pid,
         source_path=str(source),
         book_title="Example",
@@ -68,7 +68,7 @@ def test_plan_is_side_effect_free_and_matches_export_filename(desktop_exports, f
     assert (backend.list_exports(pid), backend.all_jobs()) == before
 
 
-@pytest.mark.parametrize("fmt", ["csv", "json"])
+@pytest.mark.parametrize("fmt", ["csv", "json", "apkg"])
 def test_glossary_plan_is_side_effect_free_and_matches_download(desktop_exports, fmt):
     client, backend, pid = desktop_exports
     terms = [
@@ -96,6 +96,11 @@ def test_glossary_plan_is_side_effect_free_and_matches_download(desktop_exports,
     assert content.status_code == 200, content.text
     assert plan["filename"] in content.headers["content-disposition"]
     assert int(content.headers["content-length"]) == len(content.content)
+    if fmt == "apkg":
+        with zipfile.ZipFile(io.BytesIO(content.content)) as archive:
+            assert set(archive.namelist()) == {"collection.anki2", "media"}
+        assert (backend.list_exports(pid), backend.all_jobs()) == before
+        return
     rows = content.json() if fmt == "json" else list(csv.DictReader(io.StringIO(content.text)))
     by_source = {row["source"]: row for row in rows}
     assert set(by_source) == {term.source for term in terms}
@@ -110,8 +115,8 @@ def test_glossary_plan_rejects_unknown_project_format_and_subtitles(desktop_expo
     client, _, pid = desktop_exports
     assert client.get("/desktop/projects/missing/glossary/plan?format=json").status_code == 404
     assert client.get(f"/desktop/projects/{pid}/glossary/plan?format=txt").status_code == 422
-    subtitle_pid = dal.create_project("Subtitles", "en", "zh", {})
-    dal.set_project_source(
+    subtitle_pid = current_context().repository.create_project("Subtitles", "en", "zh", {})
+    current_context().repository.set_project_source(
         subtitle_pid, source_path="source.srt", book_title="Subtitles", fmt="srt"
     )
     response = client.get(f"/desktop/projects/{subtitle_pid}/glossary/plan?format=json")
@@ -201,7 +206,7 @@ def test_html_bundle_rejects_links_outside_export(desktop_exports, tmp_path, lin
 def test_native_content_is_project_scoped_and_requires_published_status(desktop_exports):
     client, backend, pid = desktop_exports
     export_id, _ = publish(backend, pid, "txt", b"translation")
-    other = dal.create_project("Other", "en", "zh", {})
+    other = current_context().repository.create_project("Other", "en", "zh", {})
     for suffix in ("plan", "content"):
         assert (
             client.get(f"/desktop/projects/{other}/exports/{export_id}/{suffix}").status_code == 404

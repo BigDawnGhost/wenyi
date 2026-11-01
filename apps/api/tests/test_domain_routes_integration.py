@@ -211,24 +211,8 @@ def test_subtitle_routes_preserve_timeline_and_overlapping_cache(domain_client, 
     for path in ("/chapters", "/review/runs", "/glossary/terms", "/analysis"):
         assert client.get(root + path).status_code == 422
     assert client.post(root + "/review/run", json={}).status_code == 422
-    assert client.get(root + "/report").json()["summary"]["cues_done"] == 1
     dal.set_project_status(storage.project_id, "translating")
     assert client.put(root + "/subtitles/1", json={"target": "blocked"}).status_code == 409
-
-
-def test_report_counts_unreviewed_and_preserves_usage(domain_client, tmp_path):
-    client, storage, _ = domain_client
-    initialize(storage, tmp_path)
-    root = f"/projects/{storage.project_id}"
-    before = client.get(root + "/report").json()
-    assert "review" not in before
-    assert before["summary"]["chapters_done"] == 0
-    assert client.get(root + "/chapters").json()[0]["review_status"] == "pending"
-    storage.record_timing({"id": "run", "elapsed_seconds": 3})
-    response = client.post(root + "/report")
-    assert response.status_code == 200
-    assert response.json()["timing"]["total_seconds"] == 3
-    assert storage.load_report() == response.json()
 
 
 def test_review_status_follows_edit_manual_completion_and_new_ai_review(domain_client, tmp_path):

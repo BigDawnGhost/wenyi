@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
-import { useI18n } from "@/i18n";
-import type { ReviewItem, ReviewLocation } from "@/lib/api";
-import { Badge } from "@/components/ui/badge";
-import { StructuredData } from "@/components/ui/data";
+import { useI18n } from "../../i18n";
+import type { ReviewItem, ReviewLocation } from "../../api/types";
+import { Badge } from "../../components/ui/badge";
+import { StructuredData } from "../../components/ui/data";
 import { text } from "./reviewData";
 
 export function ReviewItemDetails({
@@ -91,7 +91,7 @@ export function ReviewItemDetails({
                     )}
                   </p>
                 )}
-                <div className="grid gap-4 md:grid-cols-2">
+                <div className="grid grid-cols-2 gap-4">
                   {typeof before === "string" && (
                     <TextBlock
                       label={t("review.beforeRevision")}
@@ -145,7 +145,7 @@ export function ReviewItemDetails({
 function Passage({ location }: { location: ReviewLocation }) {
   const { t } = useI18n();
   return (
-    <div className="grid gap-4 rounded-md bg-muted/40 p-3 md:grid-cols-2">
+    <div className="grid grid-cols-2 gap-4 rounded-md bg-muted/40 p-3">
       <TextBlock label={t("common.source")} value={location.source} />
       <TextBlock
         label={t("common.translation")}

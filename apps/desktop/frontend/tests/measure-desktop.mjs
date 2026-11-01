@@ -26,7 +26,6 @@ const data = {
     stages: [], progress: null,
   },
   "/projects/fixture/stats": { usage: { totals: { calls: 0 } }, timing: { runs: [], total_seconds: 0 } },
-  "/projects/fixture/report": { summary: {} },
 };
 
 async function serve(directory) {
@@ -60,7 +59,7 @@ async function measure(directory, desktop) {
     });
     const page = await context.newPage();
     await page.routeWebSocket("**/ws/**", () => {});
-    await page.route(desktop ? "http://127.0.0.1:19481/**" : "**/api/**", route => {
+    await page.route(desktop ? "http://127.0.0.1:19481/**" : `${origin}/api/**`, route => {
       const path = new URL(route.request().url()).pathname.replace(/^\/api/, "");
       return route.fulfill({ json: data[path] || {} });
     });

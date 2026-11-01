@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { fakeApi, pid, project } from "../../../packages/ui/tests/e2e/fixtures";
 
 for (const fmt of ["epub", "pdf"]) {
   test(`${fmt} projects without BabelDOC state do not offer PDF export`, async ({ page }) => {

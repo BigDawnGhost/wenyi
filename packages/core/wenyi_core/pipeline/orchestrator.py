@@ -3,7 +3,7 @@ Assemble runtime and preparation, translation, annotation, review, autofix and f
 services. Route steps, order stages, choose lock scopes, forward
 progress and propagate exceptions with consistent return structures.
 All parsing, model calls, state I/O, pools, glossary operations, alignment, review state
-machines, reports, exports and accounting belong to domain services. This facade must not
+machines, exports and accounting belong to domain services. This facade must not
 directly depend on agents, ingest, glossary, assemble or ThreadPoolExecutor, nor read/write
 state files.
 Dependencies flow from CLI to Orchestrator, then Runtime/domain services, then
@@ -19,7 +19,7 @@ from ..config import Config
 from ..events import ProgressFn
 from ..storage.protocol import Storage
 from .annotations import AnnotationService
-from .finalization import AssemblyService, ReportService
+from .finalization import AssemblyService
 from .preparation import PreparationService
 from .review_autofix import ReviewAutofixService
 from .review_workflow import ReviewService
@@ -31,7 +31,7 @@ class Orchestrator:
     """Assemble runtime/services and control only step routing and lock scopes."""
 
     # Optional stages and the complete workflow.
-    ALL_STEPS = ("translate", "review", "report", "assemble")
+    ALL_STEPS = ("translate", "review", "assemble")
 
     def __init__(
         self,
@@ -58,7 +58,6 @@ class Orchestrator:
         self._translation = TranslationService(self._runtime, self._annotations)
         self._review = ReviewService(self._runtime)
         self._review_autofix = ReviewAutofixService(self._runtime, self._annotations)
-        self._report = ReportService(self._runtime)
         self._assembly = AssemblyService(self._runtime)
 
     # Public entry points.
@@ -91,7 +90,7 @@ class Orchestrator:
                         book_understanding=self.config.pipeline.book_understanding,
                     )
                 finally:
-                    self._runtime.flush_usage(store, scope="prepare")
+                    self._runtime.usage.flush(store, scope="prepare")
             return store
 
     def run(
@@ -140,7 +139,7 @@ class Orchestrator:
             )
         finally:
             # Prescan can stop before translation's own usage checkpoint is reached.
-            self._runtime.flush_usage(store, scope="translate")
+            self._runtime.usage.flush(store, scope="translate")
 
     def run_review(
         self,
@@ -185,42 +184,6 @@ class Orchestrator:
             return outcome
         return self._review_autofix.run(store, outcome, terms, progress=progress)
 
-    def _run_existing_steps(
-        self,
-        input_path: str,
-        steps: set[str],
-        *,
-        progress: ProgressFn | None,
-        out_format: str | None = None,
-        out_path: str | None = None,
-    ) -> dict[str, Any]:
-        """Run local finalization from existing state without creating a translation task."""
-        store = self._preparation.locate_existing(input_path, progress=progress)
-        with store.lock():
-            self._preparation.activate(store)
-            return self._finish_steps_locked(
-                store,
-                input_path=input_path,
-                steps=steps,
-                run_steps_input=sorted(steps),
-                progress=progress,
-                out_format=out_format,
-                out_path=out_path,
-            )
-
-    def run_report(
-        self,
-        input_path: str,
-        *,
-        progress: ProgressFn | None = None,
-    ) -> dict[str, Any]:
-        """Regenerate the report from existing state."""
-        return self._run_existing_steps(
-            input_path,
-            {"report"},
-            progress=progress,
-        )
-
     def run_assemble(
         self,
         input_path: str,
@@ -254,7 +217,6 @@ class Orchestrator:
                 "store": store,
                 "output": outputs[0] if outputs else None,
                 "outputs": outputs,
-                "report": None,
                 "review_issues": [],
                 "review_changes": [],
                 "review_result": None,
@@ -271,8 +233,11 @@ class Orchestrator:
         out_path: str | None = None,
     ) -> dict[str, Any]:
         """Run any requested subset of ALL_STEPS."""
+        steps = set(steps)
+        unknown = steps - set(self.ALL_STEPS)
+        if unknown:
+            raise ValueError("Unknown workflow steps: " + ", ".join(sorted(unknown)))
         with self._runtime.track_workflow("workflow"):
-            steps = set(steps)
             run_steps_input = sorted(steps)
             if steps == {"review"}:
                 reviewed = self.run_review(input_path, progress=progress)
@@ -280,7 +245,6 @@ class Orchestrator:
                     "store": reviewed["store"],
                     "output": None,
                     "outputs": [],
-                    "report": None,
                     "review_issues": reviewed["review_issues"],
                     "review_changes": reviewed["review_changes"],
                     "review_result": reviewed["review_result"],
@@ -321,9 +285,7 @@ class Orchestrator:
         out_format: str | None,
         out_path: str | None,
     ) -> dict[str, Any]:
-        """Delegate review, reporting and assembly under the book lock and return combined
-        results.
-        """
+        """Delegate review and assembly under the book lock and return combined results."""
         self._runtime.log_event(
             store,
             "run_steps_started",
@@ -335,34 +297,22 @@ class Orchestrator:
         review_changes: list[dict] = []
         review_result: dict[str, Any] | None = None
         review_dir: str | None = None
-        report: dict[str, Any] | None = None
-        with self._report.glossary_scope(store, "report" in steps) as glossary:
-            try:
-                if "review" in steps:
-                    # Flush earlier stage deltas first so session usage.json contains only review calls.
-                    self._runtime.flush_usage(store, scope="pipeline")
-                    terms = self._review.session_terms(store, glossary)
-                    outcome = self._run_review_locked(
-                        store,
-                        terms,
-                        progress=progress,
-                    )
-                    review_issues = outcome.issues
-                    review_changes = outcome.changes
-                    review_result = outcome.result
-                    review_dir = outcome.run_dir
-
-                self._runtime.flush_usage(store, scope="pipeline")
-                if "report" in steps:
-                    if glossary is None:  # pragma: no cover - Guaranteed by the needs condition.
-                        raise RuntimeError("Report generation requires a glossary")
-                    report = self._report.build_and_save(
-                        store,
-                        glossary,
-                        progress=progress,
-                    )
-            finally:
-                self._runtime.flush_usage(store, scope="pipeline")
+        try:
+            if "review" in steps:
+                # Flush earlier stage deltas first so session usage.json contains only review calls.
+                self._runtime.usage.flush(store, scope="pipeline")
+                terms = self._review.session_terms(store)
+                outcome = self._run_review_locked(
+                    store,
+                    terms,
+                    progress=progress,
+                )
+                review_issues = outcome.issues
+                review_changes = outcome.changes
+                review_result = outcome.result
+                review_dir = outcome.run_dir
+        finally:
+            self._runtime.usage.flush(store, scope="pipeline")
 
         outputs: list[str] = []
         if "assemble" in steps:
@@ -384,7 +334,6 @@ class Orchestrator:
             "store": store,
             "output": outputs[0] if outputs else None,
             "outputs": outputs,
-            "report": report,
             "review_issues": review_issues,
             "review_changes": review_changes,
             "review_result": review_result,
@@ -399,8 +348,8 @@ class Orchestrator:
         out_format: str | None = None,
         out_path: str | None = None,
     ) -> dict[str, Any]:
-        """Translate, review, report and assemble, returning combined results."""
-        steps = {"translate", "report", "assemble"}
+        """Translate, optionally review and assemble, returning combined results."""
+        steps = {"translate", "assemble"}
         if self.config.pipeline.review:
             steps.add("review")
         return self.run_steps(

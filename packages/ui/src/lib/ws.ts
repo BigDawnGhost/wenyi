@@ -66,7 +66,6 @@ export function useProjectProgress(pid: string | undefined) {
       "subtitles",
       "workflow",
       "stats",
-      "report",
       "review-runs",
       "review-run",
       "events",

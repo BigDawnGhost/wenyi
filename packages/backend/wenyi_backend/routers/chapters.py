@@ -7,10 +7,9 @@ from dataclasses import asdict
 from fastapi import APIRouter, HTTPException
 from wenyi_core.storage.precision_drafts import read_precision_drafts
 
-from .. import dal
 from ..chapter_state import chapter_review_state
-from ..job_service import start_job
-from ..project_service import project_write, read_storage_for, require_book, require_project
+from ..context import current_context
+from ..project_service import require_book
 from ..schemas import (
     ChapterSegments,
     ChapterSummary,
@@ -19,7 +18,14 @@ from ..schemas import (
     JobEnqueued,
     PrecisionDraftsOut,
 )
-from ..source_view import chapter_summaries, parsed_source
+from .dependencies import (
+    chapter_summaries,
+    parsed_source,
+    project_write,
+    read_storage_for,
+    require_project,
+    start_job,
+)
 
 router = APIRouter(prefix="/projects/{pid}/chapters", tags=["chapters"])
 
@@ -180,7 +186,10 @@ def update_chapter_title(pid: str, ci: int, body: ChapterTitleUpdate) -> dict:
 @router.post("/{ci}/translate", response_model=JobEnqueued)
 async def translate_chapter(pid: str, ci: int) -> dict:
     require_book(require_project(pid))
-    chapter = next((row for row in dal.chapter_summaries(pid) if row["index"] == ci), None)
+    chapter = next(
+        (row for row in current_context().repository.chapter_summaries(pid) if row["index"] == ci),
+        None,
+    )
     if chapter is None:
         raise HTTPException(404, "chapter not found")
     if chapter["status"] == "done":

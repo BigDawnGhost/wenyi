@@ -1,5 +1,5 @@
-import { useI18n } from "@/i18n";
-import type { UploadPreview } from "@/lib/api";
+import { useI18n } from "../../i18n";
+import type { UploadPreview } from "../../api/types";
 
 export function SourcePreview({ preview }: { preview: UploadPreview }) {
   const { t: tr } = useI18n();

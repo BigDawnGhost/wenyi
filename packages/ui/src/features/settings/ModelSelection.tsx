@@ -1,19 +1,21 @@
-import { Disclosure } from "@/components/ui/disclosure";
-import { Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
-import { useI18n } from "@/i18n";
-import { operationLabel } from "@/i18n/labels";
+import { Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
+import { useI18n } from "../../i18n";
+import { operationLabel } from "../../i18n/labels";
+import { SettingsGroup } from "./SettingsSection";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
 
 export function ModelSelection({
+  scope,
   llm,
   models,
   operations = [],
   disabled,
   onChange,
 }: {
+  scope: "global" | "project";
   llm: Document;
   models: Document;
   operations?: Document[];
@@ -38,7 +40,7 @@ export function ModelSelection({
   ];
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         {tierNames.map(([id, label]) => (
           <div key={id} className="min-w-0">
             <Label htmlFor={`tier-${id}`}>{label}</Label>
@@ -57,7 +59,7 @@ export function ModelSelection({
           </div>
         ))}
       </div>
-      <Disclosure title={t("settings.operationModels")}>
+      <SettingsGroup title={t("settings.operationModels")} collapsible={scope === "project"}>
         <div className="space-y-3">
           {operations.map((operation) => {
             const id = String(operation.id);
@@ -68,7 +70,7 @@ export function ModelSelection({
             return (
               <div
                 key={id}
-                className="grid gap-2 sm:grid-cols-2 sm:items-center"
+                className="grid grid-cols-2 items-center gap-2"
               >
                 <Label
                   htmlFor={`operation-${id}`}
@@ -108,7 +110,7 @@ export function ModelSelection({
             );
           })}
         </div>
-      </Disclosure>
+      </SettingsGroup>
     </fieldset>
   );
 }

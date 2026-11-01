@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { useI18n } from "@/i18n";
-import { api } from "@/lib/api";
-import { ErrorNotice } from "@/components/ui/data";
-import { Button } from "@/components/ui/button";
+import { useI18n } from "../../i18n";
+import { api } from "../../api/client";
+import { ErrorNotice } from "../../components/ui/data";
+import { Button } from "../../components/ui/button";
 
 export function PrecisionDrafts({
   pid,

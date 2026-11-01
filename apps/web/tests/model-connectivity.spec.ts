@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
-import type { ModelPingResult } from "../../../packages/ui/src/lib/api";
-import { fakeApi } from "./fixtures";
+import type { ModelPingResult } from "@wenyi/ui/api/types";
+import { fakeApi } from "../../../packages/ui/tests/e2e/fixtures";
 
 test("global settings test saved model connections and explain failures", async ({ page }) => {
   const requests: unknown[] = [];
@@ -24,7 +24,7 @@ test("global settings test saved model connections and explain failures", async 
     requests.push(route.request().postDataJSON());
     await route.fulfill({ json: results });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   const test = page.getByRole("button", { name: "Test connection", exact: true });
   await expect(test).toBeEnabled();
   await test.click();

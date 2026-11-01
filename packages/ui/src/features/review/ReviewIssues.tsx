@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { useI18n } from "@/i18n";
-import type { ReviewItem } from "@/lib/api";
-import { Input, Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
+import { useI18n } from "../../i18n";
+import type { ReviewItem } from "../../api/types";
+import { Input, Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
+import { Badge } from "../../components/ui/badge";
 import { ReviewItemDetails } from "./ReviewItemDetails";
 import { itemStatuses, itemType } from "./reviewData";
 
@@ -43,7 +43,7 @@ export function ReviewIssues({
           );
         })}
       </div>
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_208px]">
+      <div className="grid grid-cols-[minmax(0,1fr)_208px] gap-3">
         <div className="space-y-2">
           <Label htmlFor="issue-search">{t("review.searchIssues")}</Label>
           <Input

@@ -1,5 +1,5 @@
 import { test, expect, type Route } from "@playwright/test";
-import { configuration, fakeApi, pid, project } from "./fixtures";
+import { configuration, fakeApi, pid, project } from "../../../packages/ui/tests/e2e/fixtures";
 
 const preview = {
   title: "Source preview",
@@ -269,11 +269,11 @@ test("creation with a failed preparation queue enters the overview and retries a
   ).toBeEnabled();
 });
 
-test("Chinese creation fits mobile and enters the overview before parsing finishes", async ({
+test("Chinese creation fits a compact desktop window and opens the overview before parsing finishes", async ({
   page,
 }) => {
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1024, height: 844 });
   await fakeApi(page);
   let ready = false;
   await page.route("**/api/projects", (r) => {
@@ -312,7 +312,7 @@ test("Chinese creation fits mobile and enters the overview before parsing finish
   ).not.toBeChecked();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
-  ).toBeLessThanOrEqual(390);
+  ).toBeLessThanOrEqual(1024);
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
   await expect(page).toHaveURL(`/projects/${pid}`);
   await expect(page.getByText("解析中", { exact: true })).toBeVisible();

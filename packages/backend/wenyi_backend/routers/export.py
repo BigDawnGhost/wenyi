@@ -13,9 +13,10 @@ from ..context import current_context
 from ..errors import EXPORT_NOT_FOUND, QUEUE_UNAVAILABLE, SOURCE_NOT_READY, ApiError
 from ..export_plan import resolve_export
 from ..export_response import ExportResponse
-from ..project_service import config_document, effective_config, require_project, storage_for
+from ..project_service import config_document
 from ..schemas import AssembleEnqueued, ExportOut, ExportRequest
 from ..workers import enqueue
+from .dependencies import effective_config, require_project, storage_for
 
 router = APIRouter(prefix="/projects/{pid}/exports", tags=["export"])
 
