@@ -29,7 +29,7 @@ test("Desktop tests saved model connections next to the credential fields", asyn
       ],
     });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
   const status = page.getByRole("status").filter({ hasText: "unreachable" });
   await expect(status).toContainText("No API key is configured for this connection.");

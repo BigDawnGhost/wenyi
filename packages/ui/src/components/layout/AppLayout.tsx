@@ -1,11 +1,11 @@
 import { useI18n } from "../../i18n";
-import { useEffect, useState } from "react";
-import { Link, Outlet, useLocation, useParams } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { Link, Outlet, useLocation, useMatch, useParams } from "react-router-dom";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { SelectDismissScope } from "../ui/select";
-import { NavigationLink, ProjectNavigation } from "./Navigation";
+import { NavigationLink, ProjectNavigation, SettingsNavigation } from "./Navigation";
 import { navEntries } from "../../routes/manifest";
 import { RouteGate } from "../../routes/RouteGate";
 import { NotificationToaster } from "../NotificationToaster";
@@ -45,6 +45,11 @@ export function AppLayout() {
   const { t: tr } = useI18n();
   const { pid } = useParams();
   const location = useLocation();
+  const settings = !!useMatch("/settings/:section?");
+  const content = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (settings) content.current?.scrollTo(0, 0);
+  }, [settings, location.pathname]);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return platform().preferences.get(sidebarStorageKey) === "true";
@@ -85,7 +90,7 @@ export function AppLayout() {
   const projects = useQuery({
     queryKey: ["projects"],
     queryFn: api.listProjects,
-    enabled: !pid,
+    enabled: !pid && !settings,
   });
   const recalledPid =
     pid ??
@@ -97,7 +102,7 @@ export function AppLayout() {
   const { data: projectDetails } = useQuery({
     queryKey: ["project", recalledPid],
     queryFn: () => api.getProject(recalledPid!),
-    enabled: !!recalledPid,
+    enabled: !!recalledPid && !settings,
   });
   // Only use metadata for this identity; retaining the previous project's
   // format would build the wrong menu for the newly selected project.
@@ -118,12 +123,16 @@ export function AppLayout() {
           key={entry.to}
           to={entry.to}
           icon={entry.icon}
-          label={entry.label}
+          label={tr(entry.label)}
           collapsed={collapsed}
           end={entry.end}
           prefetch={entry.loader}
           id={slot === "action" ? "create-project-trigger" : undefined}
-          state={slot === "action" ? { fromAppNavigation: true } : undefined}
+          state={slot === "action"
+            ? { fromAppNavigation: true }
+            : entry.to === "/settings"
+              ? { settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }
+              : undefined}
           className={slot === "action" ? "w-full border" : undefined}
         />
       ));
@@ -151,7 +160,9 @@ export function AppLayout() {
               collapsed && "invisible max-w-0 -translate-x-2 opacity-0",
             )}
           >
-            <Brand />
+            {settings
+              ? <span className="text-lg font-semibold">{tr("settings.title")}</span>
+              : <Brand />}
           </div>
           <Button
             type="button"
@@ -185,60 +196,67 @@ export function AppLayout() {
           data-slot="sidebar.strata"
           className="flex min-h-0 flex-1 flex-col"
         >
-          <div
-            data-slot="sidebar.action"
-            className={cn(
-              "shrink-0 px-3 pt-3 pb-1 transition-[padding] duration-sidebar ease-sidebar",
-              collapsed && "p-2",
-            )}
-          >
-            {renderGlobal("action")}
-          </div>
-          <nav
-            data-slot="sidebar.panels"
-            aria-label={tr("navigation.global")}
-            className={cn(
-              "shrink-0 space-y-1 px-3 py-1 transition-[padding] duration-sidebar ease-sidebar",
-              collapsed && "p-2",
-            )}
-          >
-            {renderGlobal("panel")}
-          </nav>
-          <div
-            data-slot="sidebar.region"
-            className="relative flex min-h-0 flex-1 flex-col"
-          >
-            <div
-              className={cn(
-                "min-h-0 flex-1 overflow-y-auto transition-[padding] duration-sidebar ease-sidebar",
-                recalledPid && "p-3",
-                recalledPid && collapsed && "p-2",
-              )}
-            >
-              {recalledPid && (
-                <ProjectNavigation
-                  key={recalledPid}
-                  pid={recalledPid}
-                  format={project?.fmt}
-                  name={project?.name}
-                  collapsed={collapsed}
-                />
-              )}
-            </div>
-          </div>
-          <div
-            data-slot="sidebar.footer"
-            className={cn(
-              "shrink-0 px-3 pt-1 pb-3 transition-[padding] duration-sidebar ease-sidebar",
-              collapsed && "p-2",
-            )}
-          >
-            {renderGlobal("foot")}
-          </div>
+          {settings ? (
+            <SettingsNavigation collapsed={collapsed} />
+          ) : (
+            <>
+              <div
+                data-slot="sidebar.action"
+                className={cn(
+                  "shrink-0 px-3 pt-3 pb-1 transition-[padding] duration-sidebar ease-sidebar",
+                  collapsed && "p-2",
+                )}
+              >
+                {renderGlobal("action")}
+              </div>
+              <nav
+                data-slot="sidebar.panels"
+                aria-label={tr("navigation.global")}
+                className={cn(
+                  "shrink-0 space-y-1 px-3 py-1 transition-[padding] duration-sidebar ease-sidebar",
+                  collapsed && "p-2",
+                )}
+              >
+                {renderGlobal("panel")}
+              </nav>
+              <div
+                data-slot="sidebar.region"
+                className="relative flex min-h-0 flex-1 flex-col"
+              >
+                <div
+                  className={cn(
+                    "min-h-0 flex-1 overflow-y-auto transition-[padding] duration-sidebar ease-sidebar",
+                    recalledPid && "p-3",
+                    recalledPid && collapsed && "p-2",
+                  )}
+                >
+                  {recalledPid && (
+                    <ProjectNavigation
+                      key={recalledPid}
+                      pid={recalledPid}
+                      format={project?.fmt}
+                      name={project?.name}
+                      collapsed={collapsed}
+                    />
+                  )}
+                </div>
+              </div>
+              <div
+                data-slot="sidebar.footer"
+                className={cn(
+                  "shrink-0 px-3 pt-1 pb-3 transition-[padding] duration-sidebar ease-sidebar",
+                  collapsed && "p-2",
+                )}
+              >
+                {renderGlobal("foot")}
+              </div>
+            </>
+          )}
         </div>
       </aside>
       <NotificationToaster />
       <main
+        ref={content}
         data-slot="content"
         className="relative flex-1 min-h-0 min-w-0 overflow-auto"
       >

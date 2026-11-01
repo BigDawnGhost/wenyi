@@ -134,13 +134,15 @@ Narrow computer windows keep the same desktop sidebar and multi-column layout, w
 ## Interface language
 
 The interface defaults to English, regardless of browser language. Open global
-**Settings → Interface language** to choose **English** or **简体中文**.
+**Settings → General → Interface language** to choose **English** or **简体中文**.
 This preference is available before creating a project and while tasks run; it is
 not part of project settings.
 
 Open **Settings** from the shared sidebar footer, including with no
-projects. `/settings` contains interface language, shared models, project defaults,
-and advanced YAML together; it does not use a separate settings layout.
+projects. It opens a dedicated settings page with category navigation in place of
+the project sidebar. `/settings` opens General; **Back**, pinned to the lower-left
+corner of the sidebar, returns to the page that
+opened Settings, or to Projects when visiting a settings URL directly.
 
 The choice applies immediately, survives reloads, and synchronizes between tabs on
 the same site. It is stored under `wenyi.locale` in the browser, not in project
@@ -201,9 +203,13 @@ results also offer manual reload. Intentionally empty translations are labeled.
 
 Open a paragraph's **Change history** from its actions menu to compare revisions. Polishing and manual changes default to inline word-level highlights: removed text is red and struck through; added text is green and underlined. **Full texts** switches to the original before/after versions. Word boundaries follow the project's target language, with a character-level fallback in older browsers; spaces, punctuation, and line breaks remain part of the comparison. Large or complex changes fall back to full texts. Only expanded records calculate differences. Older projects without a separate polishing revision can compare **Initial translation → current version**, explicitly labeled because the current version may include later edits or automatic fixes. Comparisons are read-only; using a saved version only loads a draft until you save.
 
-The project list, project pages, and Settings share one persistent sidebar. It contains **Create project**, **Projects**, the current or last opened project's navigation, and **Settings** in the footer; there are no floating dashboard actions. Use **Collapse sidebar** beside the logo to make more room: navigation becomes an icon rail with named hover hints, even in a narrow computer window. Width and labels transition smoothly over 280 ms. The browser remembers this preference and the last opened project across pages and reloads. Navigation and lazy page loading keep the shell mounted.
+The project list and project pages share one persistent sidebar. It contains **Create project**, **Projects**, the current or last opened project's navigation, and **Settings** in the footer; there are no floating dashboard actions. Settings replaces these links with its own categories and a **Back** button. Use **Collapse sidebar** to make more room: navigation becomes an icon rail with named hover hints, even in a narrow computer window. Width and labels transition smoothly over 280 ms. The browser remembers this preference and the last opened project across pages and reloads. Navigation and lazy page loading keep the shell mounted.
 
-Global **Settings** is one `/settings` page of titled sections: **General**, **Providers & models**, **Default models**, **Workflow**, **MinerU PDF parsing**, and **Advanced**. Save, validate, and restore defaults stay in a bar pinned to the bottom of the page. Reminder links jump to incomplete ID edits or unvalidated YAML on the same page. Legacy `/settings/providers`, `/settings/defaults`, and `/settings/advanced` links redirect to `/settings`. **Test connection** under Providers & models sends one short live request per saved model profile (`POST /settings/models/ping`) and reports connectivity, latency and the failure category; it uses a few provider tokens per click.
+Global **Settings** shows one category at a time: **General**, **Models & connections**, **Default models**, **Workflow**, **PDF parsing**, or **Advanced**. Categories have reloadable URLs: `/settings`, `/settings/providers`, `/settings/defaults`, `/settings/workflow`, `/settings/mineru`, and `/settings/advanced`. Unknown categories return to General. Switching categories or using browser history preserves unsaved configuration, ID, and YAML drafts; leaving Settings or reloading discards unsaved drafts. Save, validate, and restore defaults apply to the shared configuration draft and remain in a bar pinned to the bottom. Reminder links open the category containing incomplete ID edits or unvalidated YAML. **Test connection** under Models & connections sends one short live request per saved model profile (`POST /settings/models/ping`) and reports connectivity, latency and the failure category; it uses a few provider tokens per click.
+
+Each settings category uses the full content width, with its name in the page header instead of a duplicate title column. **Segmentation and performance**, **Models by operation**, and **Advanced YAML configuration** are shown directly, without collapsible groups. Project settings retains its titled sections and compact disclosures.
+
+There is no divider above **Back**. The global settings action bar stays flush with the bottom of the content pane, including when scrolling to the end.
 
 Web and Desktop omit introductory subtitles from the project list, glossary, whole-book review, event log, and global/project settings, along with redundant introductions in the creation and paragraph editor dialogs. Project settings keeps the link to global model management. Advanced YAML shows an unsaved-change summary only when edited; cost, read-only, safety, and error notices remain.
 
@@ -326,7 +332,7 @@ Editing a connection clears its fetched model list. Lists and errors from reques
 
 Web and Desktop publish a workflow job's terminal status only after releasing its project run lock. Successful completion also waits for the completion event and live-statistics cleanup, so saving configuration immediately after observing a completed job does not race that worker's cleanup. Queued or running work still keeps project edits read-only.
 
-The **MinerU PDF parsing** section provides deployment guidance only. Set `MINERU_API_KEY`
+The **PDF parsing** category provides MinerU deployment guidance only. Set `MINERU_API_KEY`
 for the API and workers when using MinerU; this is independent of model API keys. Web
 does not expose Desktop's manual MinerU credential input or storage endpoints.
 
