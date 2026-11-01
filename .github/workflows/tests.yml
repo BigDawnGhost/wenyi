@@ -284,11 +284,11 @@ jobs:
       matrix:
         include:
           - name: web
-            command: pnpm -C apps/web test:e2e --reporter=list --reporter=json
+            app: apps/web
             results: apps/web/test-results/
             report: apps/web/playwright-report/
           - name: desktop
-            command: pnpm -C apps/desktop/frontend test:e2e --reporter=list --reporter=json
+            app: apps/desktop/frontend
             results: apps/desktop/frontend/test-results/
             report: apps/desktop/frontend/playwright-report/
     steps:
@@ -320,7 +320,7 @@ jobs:
           PLAYWRIGHT_WORKERS: "3"
           # The JSON reporter is what the per-spec timing table is built from.
           PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/${{ matrix.name }}-results.json
-        run: ${{ matrix.command }}
+        run: pnpm -C ${{ matrix.app }} test:e2e --reporter=list --reporter=json
       - name: Record the spec overlap once
         if: always() && matrix.name == 'web'
         run: |
