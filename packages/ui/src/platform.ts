@@ -59,6 +59,7 @@ export interface PlatformServices {
   bindSourceDrop: (zone: HTMLElement, callbacks: SourceDropCallbacks) => () => void;
   capabilities: {
     diagnostics?: {
+      label: (locale: string) => string;
       Section: ComponentType;
       ExportButton: ComponentType;
       /** No exception object or user text crosses this optional observation hook. */
@@ -68,9 +69,11 @@ export interface PlatformServices {
       MinerU: ComponentType;
     };
     updates?: {
+      label: (locale: string) => string;
       Section: ComponentType<{ blocked: boolean; onInstalling: (value: boolean) => void }>;
     };
     plugins?: {
+      label: (locale: string) => string;
       Section: ComponentType<{ disabled: boolean }>;
     };
     saveExport?: (

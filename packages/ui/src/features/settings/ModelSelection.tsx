@@ -1,19 +1,21 @@
-import { Disclosure } from "@/components/ui/disclosure";
 import { Label } from "@/components/ui/form";
 import { Select, SelectItem } from "@/components/ui/select";
 import { useI18n } from "@/i18n";
 import { operationLabel } from "@/i18n/labels";
+import { SettingsGroup } from "./SettingsSection";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
 
 export function ModelSelection({
+  scope,
   llm,
   models,
   operations = [],
   disabled,
   onChange,
 }: {
+  scope: "global" | "project";
   llm: Document;
   models: Document;
   operations?: Document[];
@@ -57,7 +59,7 @@ export function ModelSelection({
           </div>
         ))}
       </div>
-      <Disclosure title={t("settings.operationModels")}>
+      <SettingsGroup title={t("settings.operationModels")} collapsible={scope === "project"}>
         <div className="space-y-3">
           {operations.map((operation) => {
             const id = String(operation.id);
@@ -108,7 +110,7 @@ export function ModelSelection({
             );
           })}
         </div>
-      </Disclosure>
+      </SettingsGroup>
     </fieldset>
   );
 }

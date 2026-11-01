@@ -76,6 +76,7 @@ const en = {
   "mineru.sessionWarning": "Stored for this session only.",
   "mineru.failed": "MinerU credential could not be checked or saved. Please retry.",
   "mineru.environmentInvalid": "MINERU_API_KEY is not a valid key. Correct it and restart Desktop.",
+  "about.title": "About",
   "updates.title": "Desktop updates",
   "updates.currentVersion": "Current version: {version}",
   "updates.version": "Available version: {version}",
@@ -197,6 +198,7 @@ const zhCN: Record<keyof typeof en, string> = {
   "mineru.sessionWarning": "仅在当前会话中保存。",
   "mineru.failed": "无法检查或保存 MinerU 凭据，请重试。",
   "mineru.environmentInvalid": "MINERU_API_KEY 格式无效，请修正后重启 Desktop。",
+  "about.title": "关于",
   "updates.title": "桌面端更新",
   "updates.currentVersion": "当前版本：{version}",
   "updates.version": "可用版本：{version}",
@@ -243,13 +245,21 @@ const zhCN: Record<keyof typeof en, string> = {
   "credentials.refresh": "重新检查",
 };
 
+export function translateDesktop(
+  locale: string,
+  key: keyof typeof en,
+  values: Record<string, unknown> = {},
+) {
+  return (locale === "zh-CN" ? zhCN : en)[key].replace(
+    /\{(\w+)\}/g, (_, name: string) => String(values[name] ?? ""),
+  );
+}
+
 export function useDesktopI18n() {
   const { locale } = useI18n();
   return {
     locale,
     t: (key: keyof typeof en, values: Record<string, unknown> = {}) =>
-      (locale === "zh-CN" ? zhCN : en)[key].replace(
-        /\{(\w+)\}/g, (_, name: string) => String(values[name] ?? ""),
-      ),
+      translateDesktop(locale, key, values),
   };
 }

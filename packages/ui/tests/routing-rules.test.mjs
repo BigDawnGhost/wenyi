@@ -92,7 +92,10 @@ test("route manifest is complete and consistent", () => {
     const group = line.match(/group:\s*"(global|project)"/)?.[1];
     const slot = line.match(/slot:\s*"(action|panel|foot)"/)?.[1];
     assert(to && order && audience && loader, `incomplete nav entry: ${line.trim()}`);
-    assert(paths.includes(to), `nav target ${to} has no route`);
+    assert(
+      paths.some((path) => path === to || path.replace(/\/:[^/]+\?/g, "") === to),
+      `nav target ${to} has no route (including omitted optional parameters)`,
+    );
     if (group === "global") {
       assert(slot, `global nav entry must declare a sidebar slot: ${line.trim()}`);
     }

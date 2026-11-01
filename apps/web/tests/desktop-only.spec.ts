@@ -47,7 +47,7 @@ test.describe("phone entry points", () => {
 });
 
 test("desktop windows remain usable at any width without resetting a settings draft", async ({ page }) => {
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   const field = page.getByLabel("API base URL", { exact: true });
   await field.fill("https://unsaved.example/v1");
   await field.focus();

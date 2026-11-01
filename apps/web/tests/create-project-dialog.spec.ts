@@ -99,7 +99,7 @@ test("loading the creation module never blanks the dashboard", async ({ page }) 
 test("closing creation preserves the history entry before the project list", async ({ page }) => {
   await fakeApi(page);
   await page.goto("/settings");
-  await page.getByRole("link", { name: "Projects", exact: true }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await page.locator("#create-project-trigger").click();
   await page.getByRole("dialog", { name: "Create project", exact: true })
     .getByRole("button", { name: "Cancel", exact: true }).click();

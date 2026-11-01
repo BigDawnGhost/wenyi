@@ -43,13 +43,13 @@ test.describe("browser language preference", () => {
     await expect(page.getByLabel("Interface language")).toHaveText("English");
     await chooseOption(page.locator("#interface-language"), "简体中文");
     await expect(
-      page.getByRole("heading", { name: "设置", exact: true }),
+      page.getByRole("heading", { name: "通用", exact: true }),
     ).toBeVisible();
     await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
     await expect(page).toHaveTitle("文译 — AI 翻译");
     await page.reload();
     await expect(page.getByLabel("界面语言")).toHaveText("简体中文");
-    await page.getByRole("link", { name: "项目列表", exact: true }).click();
+    await page.getByRole("button", { name: "返回", exact: true }).click();
     await expect(page.getByRole("heading", { name: "我的项目" })).toBeVisible();
     await expect(page.getByText("原文", { exact: true })).toBeVisible();
   });
@@ -263,7 +263,7 @@ test("language settings remain accessible from desktop navigation in a compact w
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   await chooseOption(page.locator("#interface-language"), "简体中文");
   await expect(
-    page.getByRole("heading", { name: "设置", exact: true }),
+    page.getByRole("heading", { name: "通用", exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("界面语言")).toBeVisible();
   await page.screenshot({

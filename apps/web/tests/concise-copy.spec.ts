@@ -24,7 +24,7 @@ for (const locale of ["en", "zh-CN"] as const) {
     }) => {
       const routes = [
         ["/", t("dashboard.myProjects")],
-        ["/settings", t("settings.title")],
+        ["/settings", t("settings.sectionGeneral")],
         [`/projects/${pid}/glossary`, t("common.glossary")],
         [`/projects/${pid}/review`, t("common.wholeBookReview")],
         [`/projects/${pid}/events`, t("common.eventLog")],
@@ -46,7 +46,7 @@ for (const locale of ["en", "zh-CN"] as const) {
         name: t("settings.manageGlobalModels"),
         exact: true,
       });
-      await expect(manageModels).toHaveAttribute("href", "/settings");
+      await expect(manageModels).toHaveAttribute("href", "/settings/providers");
       await expect(manageModels).toHaveText(t("settings.manageGlobalModels"));
     });
 
@@ -221,18 +221,19 @@ for (const locale of ["en", "zh-CN"] as const) {
     test("YAML summaries omit static help but retain unsaved changes", async ({
       page,
     }) => {
-      for (const path of ["/settings", `/projects/${pid}/settings`]) {
+      for (const path of ["/settings/advanced", `/projects/${pid}/settings`]) {
         await page.goto(path);
-        const summary = page.locator("summary").filter({
-          hasText: t("settings.advancedYamlConfiguration"),
-        });
+        const standalone = path === "/settings/advanced";
+        const summary = standalone
+          ? page.getByRole("heading", { name: t("settings.advancedYamlConfiguration") })
+          : page.locator("summary").filter({ hasText: t("settings.advancedYamlConfiguration") });
         await expect(summary).toHaveText(t("settings.advancedYamlConfiguration"));
-        await summary.click();
+        if (!standalone) await summary.click();
         await page.getByRole("textbox", {
           name: t("settings.advancedYamlConfiguration"),
           exact: true,
         }).fill("{}");
-        await summary.click();
+        if (!standalone) await summary.click();
         await expect(summary).toContainText(t("settings.unsavedSummary"));
         await expect(page.getByRole("button", {
           name: t("settings.validateConfiguration"),

@@ -24,7 +24,7 @@ test("global settings test saved model connections and explain failures", async 
     requests.push(route.request().postDataJSON());
     await route.fulfill({ json: results });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   const test = page.getByRole("button", { name: "Test connection", exact: true });
   await expect(test).toBeEnabled();
   await test.click();

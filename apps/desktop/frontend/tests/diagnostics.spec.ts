@@ -37,7 +37,7 @@ test("Desktop settings export a native report and temporary detail does not save
   page.on("request", request => {
     if (["POST", "PUT", "PATCH", "DELETE"].includes(request.method())) writes.push(request.url());
   });
-  await page.goto("/settings");
+  await page.goto("/settings/diagnostics");
   const section = page.getByTestId("desktop-diagnostics");
   await expect(section.getByText("Stored: 0.0 MiB · Dropped records: 3")).toBeVisible();
   await section.getByRole("button", { name: "Enable detailed logging for 30 minutes" }).click();
