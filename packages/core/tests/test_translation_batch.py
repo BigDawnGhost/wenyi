@@ -13,7 +13,6 @@ from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore
 from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.context import RollingContext
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.review_chunks import ReviewChunkService
 from wenyi_core.pipeline.translation import TranslationService
@@ -235,7 +234,6 @@ class TestTranslationService(unittest.TestCase):
                         0,
                         store,
                         glossary,
-                        RollingContext(),
                         "",
                         translation_history={},
                         source_corpus="aabbcc",

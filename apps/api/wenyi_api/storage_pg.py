@@ -134,7 +134,7 @@ class PostgresStorage:
                 finally:
                     self._local.state_conn = None
 
-    # Initialization is committed only after chapters, analysis, glossary and context.
+    # Initialization is committed only after chapters, analysis and glossary.
     def exists(self) -> bool:
         with self._conn as conn:
             row = conn.execute(
@@ -183,7 +183,7 @@ class PostgresStorage:
                 )
             conn.execute(
                 """UPDATE projects SET initialization_sha256=%s, source_sha256=%s,
-                manifest='{}'::jsonb, meta='{}'::jsonb, context=NULL,
+                manifest='{}'::jsonb, meta='{}'::jsonb,
                 annotation_contexts=NULL, analysis=NULL,
                 usage=CASE WHEN %s THEN usage ELSE NULL END, report=NULL,
                 updated_at=now() WHERE id=%s""",
@@ -489,12 +489,6 @@ class PostgresStorage:
                 (self.project_id,),
             ).fetchone()
         return row[0] if row else None
-
-    def save_context(self, data: dict) -> None:
-        self._save_field("context", data)
-
-    def load_context(self) -> dict | None:
-        return self._load_field("context")
 
     def save_analysis(self, data: dict) -> None:
         self._save_field("analysis", data)

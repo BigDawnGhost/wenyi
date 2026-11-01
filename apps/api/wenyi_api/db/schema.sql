@@ -24,7 +24,6 @@ CREATE TABLE IF NOT EXISTS projects (
     config JSONB NOT NULL DEFAULT '{}'::jsonb,
     manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
     meta JSONB NOT NULL DEFAULT '{}'::jsonb,
-    context JSONB,
     annotation_contexts JSONB,
     analysis JSONB,
     usage JSONB,

@@ -1,8 +1,8 @@
 """Persistent run state with interruption recovery.
 Within the selected book/target run directory: manifest.json stores book metadata and
 chapter status; chapters/ch{n}.json stores segments; source/ caches preprocessing;
-annotation_contexts.json indexes immutable EPUB annotation sources; context.json stores
-recent translations; analysis.json stores global analysis.
+annotation_contexts.json indexes immutable EPUB annotation sources;
+analysis.json stores global analysis. Recent translations are derived from chapters.
 usage.json accumulates tokens across runs; glossary.db stores terms/conflicts;
 report.json summarizes translation;
 events.jsonl is append-only; reviews/ holds review results, round records and optional
@@ -118,11 +118,6 @@ class RunStore(FileArtifacts):
         return os.path.join(self.run_dir, ".initializing.json")
 
     @property
-    def context_path(self) -> str:
-        """Return the rolling-context path."""
-        return os.path.join(self.run_dir, "context.json")
-
-    @property
     def annotation_contexts_path(self) -> str:
         """Return the EPUB annotation-context index path."""
         return os.path.join(self.run_dir, "annotation_contexts.json")
@@ -222,7 +217,6 @@ class RunStore(FileArtifacts):
         for path in (
             self.analysis_path,
             self.annotation_contexts_path,
-            self.context_path,
             self.glossary_path,
             f"{self.glossary_path}-wal",
             f"{self.glossary_path}-shm",
@@ -404,15 +398,7 @@ class RunStore(FileArtifacts):
         """Read and validate chapter state."""
         return Chapter.model_validate(self._read_json(self.chapter_path(ci)))
 
-    # Context, analysis and reports.
-    def save_context(self, data: dict) -> None:
-        """Atomically save the rolling-context snapshot."""
-        self._write_json(self.context_path, data)
-
-    def load_context(self) -> dict | None:
-        """Read rolling context, or return None if absent."""
-        return self._read_json(self.context_path) if os.path.isfile(self.context_path) else None
-
+    # Annotation contexts, analysis and reports.
     def save_annotation_contexts(self, data: dict) -> None:
         """Atomically save the deduplicated EPUB annotation-source index."""
         self._write_json(self.annotation_contexts_path, data)

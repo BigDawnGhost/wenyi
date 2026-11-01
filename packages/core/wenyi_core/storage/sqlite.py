@@ -713,12 +713,6 @@ class SqliteStorage:
                 chapter.meta.pop("title_translated", None)
             return chapter
 
-    def save_context(self, data: dict) -> None:
-        self.write_artifact("context.json", data)
-
-    def load_context(self) -> dict | None:
-        return self.read_artifact("context.json")
-
     def save_annotation_contexts(self, data: dict) -> None:
         self.write_artifact("annotation_contexts.json", data)
 

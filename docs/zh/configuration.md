@@ -285,7 +285,7 @@ pipeline:
   review: true
   align_retry_limit: 2
   polish: true
-  rolling_context_segments: 6
+  rolling_context_tokens: 512
   book_understanding: true
   terminology_context: false
   prescan_concurrency: 4
@@ -308,7 +308,8 @@ pipeline:
 - `review`：默认开启；全书翻译完成时自动执行取证式全书审校。一键流程可用 `--no-review` 或设为 `false` 跳过。仍可显式调用 `wenyi review`。
 - `align_retry_limit`：模型输出结构无效时的额外尝试次数；默认 `2` 表示连同初次请求最多尝试三次，`0` 关闭此类重试。标准翻译耗尽后回退到逐段翻译；精翻的每份初稿和综合润色使用同一预算，仅重试失败阶段并保持上下文不变，耗尽后暂停，不自动拆段。实际请求（包括失败尝试）产生模型用量；网络等传输重试仍独立处理。
 - `polish`：翻译后再调用强模型润色，质量可能提升，但显著增加耗时和成本。
-- `rolling_context_segments`：每批翻译附带的前文译文段数。翻译与润色还会内置附带同章下一条原文片段作为只读参考，此值为零时也保留后文参考；它不改变输出段数，也不写入滚动译文上下文。详见[全书理解与上下文](pipeline.md#全书理解与上下文)。
+- `rolling_context_tokens`：前文译文预算，使用 tiktoken `cl100k_base` 计数，包含段间换行；默认 `512`，最小为 `0`。从最近译文向前选取预算内连续的完整段落；若最近的非空段落单独就超限，只取该段不破坏 Unicode 字符的尾部。上下文从正式章节译文重建，不再单独持久化缓存；已有 `context.json` 不读取、不改写或删除。此值为零时，翻译与润色仍保留内置后文原文参考。详见[全书理解与上下文](pipeline.md#全书理解与上下文)。
+- 旧键 `rolling_context_segments` 不再接受，请使用 `rolling_context_tokens` 替换，不提供段数到 token 的自动换算。
 - `book_understanding`：完整章节按有界分块预扫，生成章节梗概和全书概览，不受 `terminology_context` 影响。风格分析同时参考梗概与原文样本；摘要保留原文身份，只使用已有权威名称映射。有原文内容的章节必须具备可用梗概才能开始正文翻译；全书概览合成失败时翻译继续。失败的章节梗概会在下次 prepare/translate 时补齐。相较旧版默认取样，完整覆盖会增加长章节首次预扫费用。重试与缓存行为见[流程文档](pipeline.md)。
 - `prescan_concurrency`：预扫章节梗概的并发数。
 - `terminology_context`：仅 CLI 可用、只针对人物条目（`type: person`）的实验性全书原文证据与译前发现，默认关闭，避免旧任务隐性增加模型费用。其他类型保留常规译后抽取和冲突处理，不调用全书取证或合并。译前准备不抽取或建立术语。只有 CLI `prepare` 和 `translate` 显式允许生产证据；仅开启 YAML 设置不授权普通 Orchestrator/Runtime 调用方或 API 生产证据。Review、assemble 和 report 可以消费已有备注，但不生产证据。仅适用于书籍，不适用于 SRT；Web/UI 未适配。`terminology.discover`、`terminology.evidence`、`terminology.merge` 模型操作复用常规 LLM 路由配置。词条仍为单一原文身份、单一主译名，不是真正的义项模型；参见[限制和缓存行为](pipeline.md#可选全书术语证据)。

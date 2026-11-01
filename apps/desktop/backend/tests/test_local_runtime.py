@@ -1,9 +1,11 @@
-"""Local runtime ownership, bounded scheduling and durable restart contracts."""
+"""Independent local workflows, bounded exports and durable restart contracts."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -52,6 +54,49 @@ def test_workspace_second_owner_is_rejected_and_release_allows_restart(catalog):
             await asyncio.wait_for(first.stop(), 3)
         await second.start()
         await asyncio.wait_for(second.stop(), 3)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("count", [3, 8])
+def test_workflows_overlap_without_occupying_the_default_executor(catalog, monkeypatch, count):
+    from wenyi_backend.workers import tasks
+
+    async def run():
+        context = current_context()
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+        runtime = LocalRuntime(catalog, context)
+        started = {f"parallel-{index}": asyncio.Event() for index in range(count)}
+        release = threading.Event()
+        owners = {}
+
+        def execute(kind, pid, run_id, params, stop):
+            owners[run_id] = (current_context(), threading.get_ident(), pid)
+            job = dal.get_job_by_arq_id(run_id)
+            dal.set_job_status(job["id"], "running")
+            loop.call_soon_threadsafe(started[run_id].set)
+            assert release.wait(10), "The test did not release its synchronous workflows"
+            dal.set_job_status(job["id"], "done")
+
+        monkeypatch.setattr(tasks, "_execute", execute)
+        await runtime.start()
+        try:
+            for run_id in started:
+                enqueue(runtime, project(), run_id)
+            await asyncio.wait_for(asyncio.gather(*(event.wait() for event in started.values())), 3)
+            assert all(owner is context for owner, _, _ in owners.values())
+            assert len({thread for _, thread, _ in owners.values()}) == count
+            assert len({pid for _, _, pid in owners.values()}) == count
+            assert not runtime.idle
+            assert (
+                await asyncio.wait_for(asyncio.to_thread(lambda: "responsive"), 1) == "responsive"
+            )
+        finally:
+            release.set()
+            await asyncio.wait_for(runtime.stop(), 5)
+        assert runtime.idle
+        assert all(job["status"] == "done" for job in catalog.all_jobs())
 
     asyncio.run(run())
 
@@ -125,6 +170,7 @@ def test_duplicate_delivery_and_independent_two_export_slots(catalog, monkeypatc
         runtime = LocalRuntime(catalog, current_context())
         release = asyncio.Event()
         workflow_started = asyncio.Event()
+        other_workflow_started = asyncio.Event()
         exports_started = asyncio.Event()
         calls = []
 
@@ -134,6 +180,8 @@ def test_duplicate_delivery_and_independent_two_export_slots(catalog, monkeypatc
             dal.set_job_status(job["id"], "running")
             if run_id == "workflow":
                 workflow_started.set()
+            if run_id == "other-workflow":
+                other_workflow_started.set()
             if len([value for value in calls if value.startswith("export")]) == 2:
                 exports_started.set()
             await release.wait()
@@ -149,15 +197,16 @@ def test_duplicate_delivery_and_independent_two_export_slots(catalog, monkeypatc
                 "run_translation", _job_id="workflow", project_id=pid, run_id="workflow"
             )
             await asyncio.wait_for(workflow_started.wait(), 3)
-            enqueue(runtime, project(), "queued-workflow")
+            enqueue(runtime, project(), "other-workflow")
             for index in range(3):
                 enqueue(runtime, project(), f"export-{index}", "export")
+            await asyncio.wait_for(other_workflow_started.wait(), 3)
             await asyncio.wait_for(exports_started.wait(), 3)
             assert calls.count("workflow") == 1
-            assert "queued-workflow" not in calls
+            assert "other-workflow" in calls
             assert "export-2" not in calls
             release.set()
-            await asyncio.wait_for(runtime.workflow_queue.join(), 3)
+            await asyncio.wait_for(asyncio.gather(*tuple(runtime._workflows)), 3)
             await asyncio.wait_for(runtime.export_queue.join(), 3)
             runtime.enqueue(
                 "run_translation", _job_id="workflow", project_id=pid, run_id="workflow"
@@ -170,31 +219,150 @@ def test_duplicate_delivery_and_independent_two_export_slots(catalog, monkeypatc
     asyncio.run(run())
 
 
-def test_queue_is_bounded_and_shutdown_interrupts_unstarted_work(catalog):
+def test_export_queue_remains_bounded_and_shutdown_fails_unstarted_exports(catalog):
     async def run():
         runtime = LocalRuntime(catalog, current_context())
-        assert runtime.workflow_queue.maxsize == 128
+        assert runtime.export_queue.maxsize == 128
         # Exercise overflow and durable draining, not a 128-job disk benchmark.
         # No consumers are started, so admission remains deterministic.
-        runtime.workflow_queue = asyncio.Queue(maxsize=2)
+        runtime.export_queue = asyncio.Queue(maxsize=2)
         runtime.accepting = True
         pid = project()
-        for index in range(runtime.workflow_queue.maxsize):
-            enqueue(runtime, pid, f"queued-{index}")
+        for index in range(runtime.export_queue.maxsize):
+            run_id = f"export-{index}"
+            eid, _ = catalog.admit_export(pid, "txt", {}, run_id, {})
+            runtime.enqueue(
+                "run_export", _job_id=run_id, project_id=pid, run_id=run_id, export_id=eid
+            )
+        eid, _ = catalog.admit_export(pid, "txt", {}, "overflow", {})
         with pytest.raises(asyncio.QueueFull):
-            enqueue(runtime, project(), "overflow")
+            runtime.enqueue(
+                "run_export", _job_id="overflow", project_id=pid, run_id="overflow", export_id=eid
+            )
         assert "overflow" not in runtime._submitted
-        assert runtime.export_queue.empty()
         await asyncio.wait_for(runtime.stop(), 10)
         assert runtime.idle
         assert all(
-            row["status"] == "interrupted"
-            for row in catalog.all_jobs()
-            if row["run_id"] != "overflow"
+            row["status"] == "error" for row in catalog.all_jobs() if row["run_id"] != "overflow"
         )
-        assert dal.get_project(pid)["status"] == "paused"
         with pytest.raises(RuntimeError, match="not accepting"):
             runtime.enqueue("run_parse")
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("supervisor_started", [False, True])
+def test_shutdown_owns_every_workflow_before_worker_entry(catalog, monkeypatch, supervisor_started):
+    from wenyi_backend.workers import tasks
+
+    async def never_execute(*args, **kwargs):
+        pytest.fail("Shutdown must not enter an unstarted domain workflow")
+
+    monkeypatch.setattr(tasks, "run_translation", never_execute)
+
+    async def run():
+        runtime = LocalRuntime(catalog, current_context())
+        runtime.accepting = True
+        # Exceed the former admission queue size without allocating model or worker threads.
+        for index in range(129):
+            pid = project()
+            dal.set_project_status(pid, "translating")
+            enqueue(runtime, pid, f"unstarted-{index}")
+        assert not runtime.idle
+        if supervisor_started:
+            # Supervisors create their children; stop before those children enter the adapter.
+            await asyncio.sleep(0)
+            assert len(runtime._active) == 129
+        await runtime.stop()
+        assert runtime.idle
+        assert all(row["status"] == "interrupted" for row in catalog.all_jobs())
+        assert all(row["status"] == "paused" for row in catalog.list_projects())
+
+    asyncio.run(run())
+
+
+def test_thread_allocation_failure_terminates_only_its_workflow(catalog, monkeypatch):
+    from wenyi_backend.workers import tasks
+
+    allocations = []
+
+    def executor(**kwargs):
+        allocations.append(kwargs)
+        if len(allocations) == 1:
+            raise RuntimeError("No workflow thread available")
+        return ThreadPoolExecutor(**kwargs)
+
+    def execute(kind, pid, run_id, params, stop):
+        job = dal.get_job_by_arq_id(run_id)
+        dal.set_job_status(job["id"], "done")
+
+    monkeypatch.setattr(local_runtime, "ThreadPoolExecutor", executor)
+    monkeypatch.setattr(tasks, "_execute", execute)
+
+    async def run():
+        runtime = LocalRuntime(catalog, current_context())
+        await runtime.start()
+        try:
+            failed = project()
+            enqueue(runtime, failed, "failed")
+            enqueue(runtime, project(), "healthy")
+            await asyncio.wait_for(asyncio.gather(*tuple(runtime._workflows)), 3)
+            assert runtime.idle
+            assert dal.get_project(failed)["status"] == "error"
+            assert dal.get_job_by_arq_id("failed")["error"] == "No workflow thread available"
+            assert dal.get_job_by_arq_id("healthy")["status"] == "done"
+        finally:
+            await asyncio.wait_for(runtime.stop(), 3)
+
+    asyncio.run(run())
+
+
+def test_shutdown_waits_for_all_parallel_writers(catalog, monkeypatch):
+    from wenyi_backend.workers import tasks
+
+    async def run():
+        loop = asyncio.get_running_loop()
+        runtime = LocalRuntime(catalog, current_context())
+        started = [asyncio.Event() for _ in range(3)]
+        stopping = [asyncio.Event() for _ in range(3)]
+        finished = [asyncio.Event() for _ in range(3)]
+        release = [threading.Event() for _ in range(3)]
+
+        def execute(kind, pid, run_id, params, stop):
+            index = int(run_id)
+            job = dal.get_job_by_arq_id(run_id)
+            dal.set_job_status(job["id"], "running")
+            loop.call_soon_threadsafe(started[index].set)
+            assert stop.wait(5)
+            loop.call_soon_threadsafe(stopping[index].set)
+            assert release[index].wait(5)
+            dal.set_job_status(job["id"], "paused")
+            loop.call_soon_threadsafe(finished[index].set)
+
+        monkeypatch.setattr(tasks, "_execute", execute)
+        await runtime.start()
+        shutdown = None
+        try:
+            for index in range(3):
+                enqueue(runtime, project(), str(index))
+            await asyncio.wait_for(asyncio.gather(*(event.wait() for event in started)), 3)
+            shutdown = asyncio.create_task(runtime.stop())
+            await asyncio.wait_for(asyncio.gather(*(event.wait() for event in stopping)), 3)
+            release[0].set()
+            await asyncio.wait_for(finished[0].wait(), 3)
+            assert not shutdown.done()
+            assert not runtime.idle
+            assert not runtime.accepting
+        finally:
+            for event in release:
+                event.set()
+            if shutdown is not None:
+                await asyncio.wait_for(shutdown, 5)
+            else:
+                await runtime.stop()
+        assert all(event.is_set() for event in finished)
+        assert runtime.idle
+        assert all(job["status"] == "paused" for job in catalog.all_jobs())
 
     asyncio.run(run())
 

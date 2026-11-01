@@ -12,6 +12,7 @@ overwriting targets.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from ..config import PipelineConfig
@@ -21,7 +22,7 @@ from ..glossary.store import GlossaryStore
 from ..ingest.models import Chapter, Segment
 from ..storage.protocol import Storage
 from .babeldoc_context import BabeldocContext
-from .context import RollingContext
+from .context import render_recent_translations
 from .docx_styles import DocxStyleService
 from .precision import PrecisionBatchExecutor, PrecisionError
 from .runstore import STATUS_DONE
@@ -70,10 +71,6 @@ class TranslationService:
         PipelineConfig.model_validate(self._runtime.config.pipeline.model_dump())
         manifest = store.load_manifest()
         glossary = store
-        context = RollingContext.from_dict(
-            store.load_context() or {},
-            min_recent_keep=max(40, self._runtime.config.pipeline.rolling_context_segments),
-        )
         style = self._runtime.analyzer.style_brief(store.load_analysis() or {})
         allow_empty_translations = _is_mineru_pdf(manifest)
 
@@ -110,7 +107,6 @@ class TranslationService:
                     ci,
                     store,
                     glossary,
-                    context,
                     style,
                     book_synopsis,
                     translation_history=translation_history,
@@ -122,7 +118,6 @@ class TranslationService:
                     allow_empty_translations=allow_empty_translations,
                     terminology=terminology,
                 )
-                store.save_context(context.to_dict())
                 self._runtime.flush_usage(store, scope="chapter")
             # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
             if not store.pending_chapters():
@@ -225,7 +220,6 @@ class TranslationService:
         ci: int,
         store: Storage,
         glossary: Storage | GlossaryStore,
-        context: RollingContext,
         style: str,
         book_synopsis: str = "",
         *,
@@ -252,10 +246,6 @@ class TranslationService:
             return done
         chapter_digest = chapter.meta.get("source_digest", "")
         context_policy = BabeldocContext.for_chapter(chapter)
-        if context_policy is not None:
-            # Legacy context strings have no source identity. Replay this chapter's
-            # completed units instead of reusing them or leaking the previous chapter.
-            context.recent_targets.clear()
         annotation_contexts = self._annotations.annotation_contexts_for_segments(
             text_segs,
             annotation_context_registry,
@@ -275,7 +265,7 @@ class TranslationService:
         term_snapshot = glossary.all_terms()
         term_snapshot_stale = False
 
-        # Process batches serially: render current context, translate and immediately append targets.
+        # Process batches serially, deriving context from the latest formal targets.
         # This preserves pronoun, term and voice continuity between batches within a chapter.
         # Skip saved complete batches on resume and reconstruct context without retranslating them.
         seg_base = 0  # Chapter-local index of this batch's first paragraph, used to map local issue indices.
@@ -285,7 +275,7 @@ class TranslationService:
             if all(s.target is not None for s in b):
                 # Reuse a batch translated at this position/context, rebuild rolling context and skip it.
                 # Blank "" is a completed MinerU allowance; only None means not yet translated.
-                self._align_batch_context(store, chapter, text_segs, context, batch_start, len(b))
+                self._align_batch_context(store, chapter, batch_start, len(b))
                 if glossary_key in glossary_checkpoints or (
                     context_policy is not None
                     and self._glossary_checkpoint_covers(glossary_checkpoints, batch_start, len(b))
@@ -354,15 +344,13 @@ class TranslationService:
             next_index = batch_start + len(b)
             body_context = context_policy is None or context_policy.body[batch_start]
             ctx_text = (
-                context.render(self._runtime.config.pipeline.rolling_context_segments)
+                self.recent_context(store, chapter, batch_start, context_policy)
                 if body_context
                 else ""
             )
             next_source = (
-                context_policy.next_source(text_segs, next_index)
-                if context_policy is not None
-                else text_segs[next_index].source
-                if next_index < len(text_segs)
+                self.following_source(store, chapter, next_index, context_policy)
+                if body_context
                 else ""
             )
             plan = BatchPlan.capture(
@@ -404,7 +392,7 @@ class TranslationService:
                     segment.target_before_polish = before_polish
                 # Persist translations incrementally so interruption resumes after this batch.
                 store.save_chapter(chapter)
-            self._align_batch_context(store, chapter, text_segs, context, batch_start, len(b))
+            self._align_batch_context(store, chapter, batch_start, len(b))
             store.log_event(
                 "batch_translated",
                 chapter=ci,
@@ -474,29 +462,16 @@ class TranslationService:
         self,
         store: Storage,
         chapter: Chapter,
-        text_segments: list[Segment],
-        context: RollingContext,
         start: int,
         count: int,
     ) -> None:
-        """Align saved or newly translated text before updating the rolling context.
+        """Align formal targets before subsequent batches derive their context.
 
         Alignment handles touched logical paragraphs in source order, waiting for their
-        final continuation. Refresh the completed prefix because alignment can also
-        update targets from earlier batches.
+        final continuation. It can also update targets from earlier batches.
         """
         self._annotations.align_annotations_after_batch(chapter.index, chapter, start, count, store)
         self._docx_styles.align_styles_after_batch(chapter.index, chapter, start, count, store)
-        policy = BabeldocContext.for_chapter(chapter)
-        if policy is not None:
-            context.recent_targets = policy.recent_targets(text_segments, start + count)[
-                -context.max_recent_keep :
-            ]
-            return
-        context.add_targets(
-            [segment.target or "" for segment in text_segments[start : start + count]]
-        )
-        self.sync_context_chapter_prefix(context, text_segments, start + count)
 
     @staticmethod
     def save_precision_batch(store: Storage, plan: BatchPlan, result: BatchResult) -> Chapter:
@@ -579,21 +554,84 @@ class TranslationService:
         )
         return summary
 
-    @staticmethod
-    def sync_context_chapter_prefix(
-        context: RollingContext,
-        segments: list[Segment],
-        end: int,
-    ) -> None:
-        """Refresh recent context from the chapter's completed prefix.
-        When an annotated logical paragraph spans batches, completing its final continuation
-        can finalize earlier targets too. Copy those updates into context so the next batch
-        sees current formal text.
+    def recent_context(
+        self,
+        store: Storage,
+        chapter: Chapter,
+        start: int,
+        policy: BabeldocContext | None,
+    ) -> str:
+        """Read the translated prefix backward, loading preceding chapters only as needed.
+
+        Formal chapters are the sole source of context on fresh and resumed runs. Chapter
+        boundaries do not stop history; BabelDOC still filters layout noise and stops at headings.
         """
-        prefix = segments[: max(0, min(end, len(segments)))]
-        if not prefix or any(segment.target is None for segment in prefix):
-            return
-        targets = [segment.target or "" for segment in prefix]
-        retained = min(len(targets), len(context.recent_targets))
-        if retained:
-            context.recent_targets[-retained:] = targets[-retained:]
+
+        def targets() -> Iterator[str | None]:
+            if policy is not None:
+                yield from reversed(policy.recent_targets(chapter.text_segments, start))
+                if start and policy.sections[start - 1] != 0:
+                    return
+            else:
+                yield from (segment.target for segment in reversed(chapter.text_segments[:start]))
+            for previous in self._neighboring_chapters(store, chapter.index, following=False):
+                segments = previous.text_segments
+                previous_policy = BabeldocContext.for_chapter(previous)
+                if previous_policy is None:
+                    yield from (segment.target for segment in reversed(segments))
+                else:
+                    yield from reversed(previous_policy.recent_targets(segments, len(segments)))
+                    if previous_policy.sections and previous_policy.sections[-1] != 0:
+                        return
+
+        return render_recent_translations(
+            targets(), self._runtime.config.pipeline.rolling_context_tokens
+        )
+
+    def following_source(
+        self,
+        store: Storage,
+        chapter: Chapter,
+        end: int,
+        policy: BabeldocContext | None,
+    ) -> str:
+        """Find one following source reference in book order without translating it early."""
+        segments = chapter.text_segments
+        if policy is None:
+            if end < len(segments):
+                return segments[end].source
+        else:
+            if end <= 0 or not policy.body[end - 1]:
+                return ""
+            reference = policy.next_source(segments, end)
+            if reference:
+                return reference
+            if policy.sections[-1] != policy.sections[end - 1]:
+                return ""
+        for following in self._neighboring_chapters(store, chapter.index, following=True):
+            segments = following.text_segments
+            following_policy = BabeldocContext.for_chapter(following)
+            if following_policy is None:
+                if segments:
+                    return segments[0].source
+            else:
+                reference = following_policy.next_source(segments, 0)
+                if reference:
+                    return reference
+                if any(following_policy.sections):
+                    return ""
+        return ""
+
+    @staticmethod
+    def _neighboring_chapters(
+        store: Storage, chapter: int, *, following: bool
+    ) -> Iterator[Chapter]:
+        """Load neighboring chapters lazily in stable source order."""
+        indices = sorted(
+            row["index"]
+            for row in store.load_manifest().get("chapters", [])
+            if isinstance(row.get("index"), int)
+            and (row["index"] > chapter if following else row["index"] < chapter)
+        )
+        for index in indices if following else reversed(indices):
+            yield store.load_chapter(index)
