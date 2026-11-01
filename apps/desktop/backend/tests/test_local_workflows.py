@@ -540,6 +540,135 @@ def test_fake_book_translation_commits_domain_state(desktop):
     store.close()
 
 
+@pytest.mark.parametrize("outcome", ["paused", "error"])
+def test_parallel_translation_isolates_pause_failure_resume_and_usage(
+    tmp_path, monkeypatch, outcome
+):
+    from dataclasses import replace
+
+    from tests.fake_llm import MeteredFakeClient, routing_handler
+    from wenyi_desktop.main import create_app
+
+    clients, saved, release, cancelled = {}, {}, {}, {}
+    fail_once = set()
+
+    def build_client(config):
+        pid = Path(config.state_dir).name
+
+        class ProjectClient(MeteredFakeClient):
+            def cancel(self):
+                super().cancel()
+                cancelled[pid].set()
+
+        fake = ProjectClient(routing_handler)
+        clients.setdefault(pid, []).append(fake)
+        return fake
+
+    save_chapter = SqliteStorage.save_chapter
+
+    def checkpoint(store, chapter):
+        save_chapter(store, chapter)
+        pid = Path(store.run_dir).name
+        if pid in saved and any(segment.target is not None for segment in chapter.text_segments):
+            saved[pid].set()
+            assert release[pid].wait(15), "The test did not release the saved batch"
+            if pid in fail_once:
+                fail_once.remove(pid)
+                raise RuntimeError("Offline project failure after checkpoint")
+
+    monkeypatch.setattr(SqliteStorage, "save_chapter", checkpoint)
+    context = replace(
+        create_context(tmp_path / "parallel", api_token="offline-test-token"),
+        build_client=build_client,
+    )
+    with (
+        use_context(context),
+        TestClient(
+            create_app(context=context),
+            headers={"Authorization": "Bearer offline-test-token"},
+        ) as client,
+    ):
+        pids = [upload(client, name=f"book-{index}.txt") for index in range(3)]
+        for pid in pids:
+            response = client.put(
+                f"/projects/{pid}/config",
+                json={
+                    "yaml": json.dumps(
+                        {
+                            "pipeline": {
+                                "polish": False,
+                                "review": False,
+                                "book_understanding": False,
+                            }
+                        }
+                    )
+                },
+            )
+            assert response.status_code == 200, response.text
+            saved[pid], release[pid], cancelled[pid] = (
+                threading.Event(),
+                threading.Event(),
+                threading.Event(),
+            )
+        first = pids[0]
+        if outcome == "error":
+            fail_once.add(first)
+        runs = {}
+        try:
+            for pid in pids:
+                response = client.post(f"/projects/{pid}/translate")
+                assert response.status_code == 200, response.text
+                runs[pid] = response.json()["job_id"]
+            assert all(event.wait(5) for event in saved.values())
+            for pid in pids:
+                assert context.repository.get_job_by_arq_id(runs[pid])["status"] == "running"
+                assert client.get(f"/projects/{pid}/workflow").json()["run_id"] == runs[pid]
+            assert len({id(clients[pid][0]) for pid in pids}) == 3
+            assert client.get("/settings").status_code == 200
+            assert client.post(f"/projects/{pids[1]}/translate").status_code == 409
+            assert client.post("/desktop/updates/prepare").status_code == 409
+            if outcome == "paused":
+                assert client.post(f"/projects/{first}/pause").status_code == 200
+                assert cancelled[first].wait(3)
+            release[first].set()
+            assert wait_job(runs[first])["status"] == outcome
+            for pid in pids[1:]:
+                assert not cancelled[pid].is_set()
+                assert context.repository.get_job_by_arq_id(runs[pid])["status"] == "running"
+
+            response = client.post(f"/projects/{first}/resume")
+            assert response.status_code == 200, response.text
+            resumed = response.json()["job_id"]
+            assert resumed != runs[first]
+            assert wait_job(resumed)["status"] == "done"
+            for pid in pids[1:]:
+                assert context.repository.get_job_by_arq_id(runs[pid])["status"] == "running"
+        finally:
+            for event in release.values():
+                event.set()
+
+        for pid in pids[1:]:
+            assert wait_job(runs[pid])["status"] == "done"
+        for pid in pids:
+            store = context.repository.storage_for(pid)
+            try:
+                assert store.load_chapter(0).text_segments[0].target == "译0"
+                assert (
+                    sum(
+                        call["operation"] == "translation.body"
+                        for fake in clients[pid]
+                        for call in fake.calls
+                    )
+                    == 1
+                )
+                expected = sum(
+                    fake.usage.summary()["totals"]["total_tokens"] for fake in clients[pid]
+                )
+                assert store.load_usage()["totals"]["total_tokens"] == expected > 0
+            finally:
+                store.close()
+
+
 def test_fake_srt_translation_edit_and_export(desktop):
     client, backend, fake = desktop
 

@@ -7,6 +7,7 @@ import json
 import threading
 from contextlib import ExitStack, closing
 from contextvars import copy_context
+from functools import partial
 
 from wenyi_core.llm.base import LLMClient
 from wenyi_core.llm.limits import RequestCancelled, RequestStopped
@@ -166,7 +167,7 @@ def execute(
 
 async def run(request: ExecutionRequest, dependencies: ExecutionDependencies) -> None:
     stop = threading.Event()
-    task = asyncio.create_task(asyncio.to_thread(execute, request, dependencies, stop))
+    task = asyncio.create_task(dependencies.run_sync(partial(execute, request, dependencies, stop)))
     try:
         await asyncio.shield(task)
     except asyncio.CancelledError:

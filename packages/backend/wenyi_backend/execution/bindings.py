@@ -67,6 +67,7 @@ def workflow_dependencies(context: BackendContext) -> ExecutionDependencies:
         storage_for=context.storage_for,
         telemetry=context.telemetry,
         operation=partial(run_operation, services=operation_services(context)),
+        run_sync=context.run_workflow_sync,
     )
 
 

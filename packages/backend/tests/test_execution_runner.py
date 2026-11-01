@@ -1,5 +1,6 @@
 """Explicit execution ports preserve cleanup, identity and publication lock ownership."""
 
+import asyncio
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from types import SimpleNamespace
@@ -29,7 +30,9 @@ def execution(monkeypatch):
     jobs.list_jobs.return_value = [job]
     telemetry = Mock()
     operation = Mock(return_value="done")
-    dependencies = ExecutionDependencies(projects, jobs, lambda _: storage, telemetry, operation)
+    dependencies = ExecutionDependencies(
+        projects, jobs, lambda _: storage, telemetry, operation, asyncio.to_thread
+    )
     monkeypatch.setattr(
         runner, "LiveStatistics", lambda *args: nullcontext(SimpleNamespace(bind_client=Mock()))
     )

@@ -9,7 +9,7 @@ from typing import Literal, Protocol
 from wenyi_core.events import ProgressFn
 from wenyi_core.llm.base import LLMClient
 
-from ..context import BackendStorage, Telemetry
+from ..context import BackendStorage, Telemetry, WorkflowDispatcher
 from ..ports.jobs import JobRepository
 from ..ports.projects import ProjectRepository
 
@@ -43,6 +43,7 @@ class ExecutionDependencies:
     storage_for: Callable[[str], BackendStorage]
     telemetry: Telemetry
     operation: WorkflowOperation
+    run_sync: WorkflowDispatcher
 
 
 @dataclass(frozen=True)

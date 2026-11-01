@@ -217,6 +217,7 @@ def test_startup_failure_is_persisted(monkeypatch, kind):
 
 def test_arq_cancellation_waits_for_state_to_be_flushed(monkeypatch):
     started, flushed = threading.Event(), threading.Event()
+    assert current_context().run_workflow_sync is asyncio.to_thread
 
     def execute(request, dependencies, stop):
         started.set()

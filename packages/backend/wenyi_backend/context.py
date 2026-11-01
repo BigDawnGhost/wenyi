@@ -7,6 +7,7 @@ AnyIO and asyncio.to_thread copy this scope; raw threads must copy it explicitly
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -85,6 +86,12 @@ class Telemetry(Protocol):
     async def relay(self, websocket: WebSocket, pid: str) -> None: ...
 
 
+class WorkflowDispatcher(Protocol):
+    """Run a synchronous workflow with its context, retaining ownership until it exits."""
+
+    async def __call__(self, operation: Callable[[], None], /) -> None: ...
+
+
 @dataclass(frozen=True)
 class BackendContext:
     """One application's adapters; never inferred from environment or imports."""
@@ -107,6 +114,8 @@ class BackendContext:
     # Desktop resolves a saved connection's stored key; None keeps environment lookup (Web).
     connection_credential: Callable[[str, Any], str | None] | None = None
     babeldoc_connection: BridgeResolver | None = None
+    # Web retains its executor; Desktop owns a dedicated thread per workflow.
+    run_workflow_sync: WorkflowDispatcher = asyncio.to_thread
 
 
 _context: ContextVar[BackendContext] = ContextVar("wenyi_backend_context")
