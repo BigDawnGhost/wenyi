@@ -284,11 +284,11 @@ jobs:
       matrix:
         include:
           - name: web
-            command: pnpm -C apps/web test:e2e
+            command: pnpm -C apps/web test:e2e --reporter=list --reporter=json
             results: apps/web/test-results/
             report: apps/web/playwright-report/
           - name: desktop
-            command: pnpm -C apps/desktop/frontend test:e2e
+            command: pnpm -C apps/desktop/frontend test:e2e --reporter=list --reporter=json
             results: apps/desktop/frontend/test-results/
             report: apps/desktop/frontend/playwright-report/
     steps:
@@ -318,7 +318,30 @@ jobs:
           # Three workers instead of the two a four-core runner derives: the
           # retry-and-report path already catches a flaky pass.
           PLAYWRIGHT_WORKERS: "3"
+          # The JSON reporter is what the per-spec timing table is built from.
+          PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/${{ matrix.name }}-results.json
         run: ${{ matrix.command }}
+      - name: Record the spec overlap once
+        if: always() && matrix.name == 'web'
+        run: |
+          python3 scripts/e2e_spec_inventory.py >> "$GITHUB_STEP_SUMMARY"
+      - name: Record per-spec durations
+        if: always()
+        run: |
+          python3 scripts/e2e_spec_timings.py \
+            --input "${{ runner.temp }}/${{ matrix.name }}-results.json" \
+            --label "${{ matrix.name }}" \
+            --output "${{ runner.temp }}/${{ matrix.name }}-timings.md" || true
+          cat "${{ runner.temp }}/${{ matrix.name }}-timings.md" >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: spec-timings-${{ matrix.name }}
+          path: |
+            ${{ runner.temp }}/${{ matrix.name }}-results.json
+            ${{ runner.temp }}/${{ matrix.name }}-timings.md
+          if-no-files-found: ignore
+          retention-days: 14
       - uses: actions/upload-artifact@v6
         if: failure()
         with:
