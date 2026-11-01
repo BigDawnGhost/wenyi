@@ -82,6 +82,9 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertIn("max_tokens_per_batch: 1800", generated)
             self.assertIn("max_tokens_per_segment: 1200", generated)
             self.assertNotIn("max_chars_per_batch", generated)
+            self.assertEqual(cfg.pipeline.rolling_context_tokens, 512)
+            self.assertIn("rolling_context_tokens: 512", generated)
+            self.assertNotIn("rolling_context_segments", generated)
             self.assertNotIn("glossary_scope", generated)
             self.assertNotIn("glossary_scope", cfg.pipeline.model_dump())
 
@@ -94,6 +97,21 @@ class TestConfigFileCreation(unittest.TestCase):
     def test_removed_segment_char_keys_are_rejected(self):
         with self.assertRaises(Exception):
             Config.from_dict({"segment": {"max_chars_per_batch": 99}})
+
+    def test_rolling_context_tokens_accept_zero_and_reject_negative_budgets(self):
+        cfg = Config.from_dict({"pipeline": {"rolling_context_tokens": 0}})
+        self.assertEqual(cfg.pipeline.rolling_context_tokens, 0)
+        with self.assertRaisesRegex(ValidationError, "rolling_context_tokens"):
+            Config.from_dict({"pipeline": {"rolling_context_tokens": -1}})
+
+    def test_removed_rolling_context_segments_is_rejected(self):
+        for pipeline in (
+            {"rolling_context_segments": 6},
+            {"rolling_context_segments": 0, "rolling_context_tokens": 128},
+        ):
+            with self.subTest(pipeline=pipeline):
+                with self.assertRaisesRegex(ValidationError, "rolling_context_segments"):
+                    Config.from_dict({"pipeline": pipeline})
 
     def test_load_never_overwrites_existing_config(self):
         with tempfile.TemporaryDirectory() as d:

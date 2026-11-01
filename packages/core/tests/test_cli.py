@@ -83,6 +83,7 @@ class TestCliConfig(unittest.TestCase):
                 self.client = FakeClient()
                 captured["polish"] = config.pipeline.polish
                 captured["review"] = config.pipeline.review
+                captured["rolling_context_tokens"] = config.pipeline.rolling_context_tokens
                 captured["allow_terminology_context"] = allow_terminology_context
 
             def run_all(self, input_path, **kwargs):
@@ -109,6 +110,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertTrue(captured["polish"])
         self.assertTrue(captured["review"])
+        self.assertEqual(captured["rolling_context_tokens"], 512)
         self.assertTrue(captured["allow_terminology_context"])
 
     def test_translate_flags_override_config_switches(self):
