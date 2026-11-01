@@ -1,5 +1,18 @@
-import { expect, test, type Request } from "@playwright/test";
+import { expect, test, type Page, type Request } from "@playwright/test";
 import { fakeApi, pid, project } from "./fixtures";
+
+async function waitForProjectReconciliation(
+  page: Page,
+  authenticated: () => boolean,
+  reconciledName: string,
+) {
+  // Clock advancement alone cannot drain socket events or HTTP route callbacks.
+  // Observe the refreshed snapshot in the UI before measuring idle requests.
+  await expect.poll(async () => {
+    await page.clock.runFor(100);
+    return authenticated() && await page.getByTitle(reconciledName, { exact: true }).count() === 1;
+  }, { intervals: [50] }).toBe(true);
+}
 
 export function registerTests() {
 for (const status of ["done", "paused"]) {
@@ -45,13 +58,7 @@ for (const status of ["done", "paused"]) {
           .toHaveAttribute("aria-selected", "true");
       }
       if (hasProgressSocket) {
-        await expect.poll(() => authenticated).toBe(true);
-        // Authentication alone does not mean the coalesced refresh has run.
-        // Wait for its saved metadata to render before measuring idle requests.
-        await expect.poll(async () => {
-          await page.clock.runFor(100);
-          return page.getByTitle(reconciledName, { exact: true }).count();
-        }).toBe(1);
+        await waitForProjectReconciliation(page, () => authenticated, reconciledName);
       } else {
         await page.clock.runFor(1500);
       }
@@ -134,14 +141,47 @@ test("an in-flight chapter read cannot swallow the final paused snapshot", async
   expect(reads).toBe(beforeRelease + 1);
 });
 
-test("resuming an idle project restarts polling without reloading the page", async ({ page }) => {
-  await page.clock.install();
+for (const startup of [
+  { name: "immediate startup", socketDelay: 0, responseDelay: 0 },
+  { name: "delayed socket open", socketDelay: 3000, responseDelay: 0 },
+  { name: "delayed reconciliation response", socketDelay: 0, responseDelay: 3000 },
+]) {
+test(`resuming an idle project restarts polling without reloading the page (${startup.name})`, async ({ page }) => {
+  await page.clock.install({ time: new Date("2025-01-01T00:00:00Z") });
+  if (startup.socketDelay) {
+    await page.addInitScript(delay => {
+      const NativeWebSocket = window.WebSocket;
+      window.WebSocket = class extends NativeWebSocket {
+        constructor(...args: ConstructorParameters<typeof NativeWebSocket>) {
+          super(...args);
+          if (!new URL(args[0], location.href).pathname.startsWith("/ws/")) return;
+          // Deliver the open event after the old fixed startup allowance.
+          this.addEventListener("open", event => {
+            event.stopImmediatePropagation();
+            setTimeout(() => this.dispatchEvent(new Event("open")), delay);
+          }, { once: true });
+        }
+      };
+    }, startup.socketDelay);
+  }
   const saved = { ...project, status: "paused" };
+  const reconciledName = `${project.name} (reconciled)`;
   let reads = 0;
+  let authenticated = false;
   await fakeApi(page);
-  await page.route(`**/api/projects/${pid}`, route => {
-    reads++;
-    return route.fulfill({ json: saved });
+  await page.routeWebSocket("**/ws/**", socket => {
+    socket.onMessage(() => { authenticated = true; });
+  });
+  await page.route(`**/api/projects/${pid}`, async route => {
+    const read = ++reads;
+    if (read === 2 && startup.responseDelay) {
+      await page.evaluate(delay => new Promise<void>(resolve => {
+        setTimeout(resolve, delay);
+      }), startup.responseDelay);
+    }
+    return route.fulfill({
+      json: { ...saved, name: read > 1 ? reconciledName : project.name },
+    });
   });
   await page.route(`**/api/projects/${pid}/resume`, route => {
     saved.status = "translating";
@@ -149,7 +189,7 @@ test("resuming an idle project restarts polling without reloading the page", asy
   });
   await page.goto(`/projects/${pid}`);
   await expect(page.getByRole("button", { name: "Resume task", exact: true })).toBeVisible();
-  await page.clock.runFor(1500);
+  await waitForProjectReconciliation(page, () => authenticated, reconciledName);
   const idle = reads;
   await page.clock.runFor(60_000);
   expect(reads).toBe(idle);
@@ -159,6 +199,7 @@ test("resuming an idle project restarts polling without reloading the page", asy
   await page.clock.runFor(31_000);
   await expect.poll(() => reads).toBeGreaterThan(resumed);
 });
+}
 
 test("the dashboard does not poll when every project is complete or paused", async ({ page }) => {
   await page.clock.install();
