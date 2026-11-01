@@ -442,24 +442,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/projects/{pid}/report": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Report */
-        get: operations["get_report_projects__pid__report_get"];
-        put?: never;
-        /** Regenerate Report */
-        post: operations["regenerate_report_projects__pid__report_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/projects/{pid}/subtitles": {
         parameters: {
             query?: never;
@@ -932,6 +914,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Exposition */
+        get: operations["exposition_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1174,7 +1173,7 @@ export interface components {
              * Default Template
              * @constant
              */
-            default_template: "标准翻译";
+            default_template: "��׼����";
             /** Revision */
             revision: number;
             /** Model Renames */
@@ -1198,7 +1197,7 @@ export interface components {
              * Default Template
              * @constant
              */
-            default_template: "标准翻译";
+            default_template: "��׼����";
             /** Revision */
             revision: number;
         };
@@ -2763,72 +2762,6 @@ export interface operations {
             };
         };
     };
-    get_report_projects__pid__report_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                pid: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    regenerate_report_projects__pid__report_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                pid: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_subtitles_projects__pid__subtitles_get: {
         parameters: {
             query?: never;
@@ -3340,7 +3273,7 @@ export interface operations {
     export_glossary_projects__pid__glossary_export_get: {
         parameters: {
             query?: {
-                format?: "json" | "csv";
+                format?: "json" | "csv" | "apkg";
             };
             header?: never;
             path: {
@@ -3878,6 +3811,24 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    exposition_metrics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };
