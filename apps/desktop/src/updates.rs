@@ -316,7 +316,7 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
                     state.snapshot.notes = Some(notes);
                 }
             }
-            Err(error) => {
+            Err(_) => {
                 app.state::<crate::diagnostics::Diagnostics>().record(
                     crate::diagnostics::Source::Native,
                     crate::diagnostics::Event::UpdateFailed,
@@ -545,7 +545,7 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
     let app = window.app_handle().clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let result = install(&app, update, bytes);
-        if let Err(ref error) = result {
+        if result.is_err() {
             app.state::<crate::diagnostics::Diagnostics>().record(
                 crate::diagnostics::Source::Native,
                 crate::diagnostics::Event::UpdateFailed,
