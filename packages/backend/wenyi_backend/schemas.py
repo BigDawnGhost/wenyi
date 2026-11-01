@@ -148,6 +148,9 @@ class PrecisionDraftsOut(BaseModel):
 
 
 # Glossary terms.
+GlossaryExportFormat = Literal["json", "csv", "apkg"]
+
+
 class TermOut(BaseModel):
     source: str
     target: str

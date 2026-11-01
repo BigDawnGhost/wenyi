@@ -180,6 +180,7 @@ const zhCN = {
   "glossary.couldNotDeleteSelectedTerms": "批量删除失败",
   "glossary.csvFile": "CSV 文件",
   "glossary.jsonFile": "JSON 文件",
+  "glossary.ankiDeck": "Anki 牌组（.apkg）",
   "glossary.import": "导入",
   "glossary.addTerm": "添加术语",
   "glossary.searchSourceTermsTranslationsOrAliases": "搜索源词 / 译词 / 别名 / 备注…",

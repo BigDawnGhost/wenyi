@@ -808,6 +808,7 @@ impl Drop for Temporary<'_> {
 pub enum GlossaryFormat {
     Json,
     Csv,
+    Apkg,
 }
 
 impl GlossaryFormat {
@@ -815,6 +816,7 @@ impl GlossaryFormat {
         match self {
             Self::Json => "json",
             Self::Csv => "csv",
+            Self::Apkg => "apkg",
         }
     }
 }
@@ -1232,7 +1234,11 @@ mod tests {
 
     #[test]
     fn glossary_saves_use_authenticated_scoped_routes_without_creating_jobs() {
-        for format in [GlossaryFormat::Json, GlossaryFormat::Csv] {
+        for format in [
+            GlossaryFormat::Json,
+            GlossaryFormat::Csv,
+            GlossaryFormat::Apkg,
+        ] {
             let fixture = Fixture::new();
             let protected = Fixture::new();
             let (connection, task) = server(vec![

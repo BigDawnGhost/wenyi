@@ -1,4 +1,5 @@
 import { decodeResponse, requestHeaders } from "@wenyi/ui/http";
+import type { GlossaryExportFormat } from "@wenyi/ui/api/types";
 import { apiBase, authToken } from "./runtime";
 import { saveNativeExport, saveNativeGlossary } from "./nativeExport";
 import { reportDiagnostic } from "./diagnostics";
@@ -24,9 +25,9 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 /** Webview downloads must use native saving, never browser-only blob anchors. */
 export async function download(path: string, _fallback: string) {
-  const glossary = path.match(/^\/projects\/([\w-]+)\/glossary\/export\?format=(json|csv)$/);
+  const glossary = path.match(/^\/projects\/([\w-]+)\/glossary\/export\?format=(json|csv|apkg)$/);
   if (glossary)
-    return saveNativeGlossary(glossary[1], glossary[2] as "json" | "csv");
+    return saveNativeGlossary(glossary[1], glossary[2] as GlossaryExportFormat);
   const book = path.match(/^\/projects\/([\w-]+)\/exports\/(\d+)\/download$/);
   if (book)
     return saveNativeExport(book[1], {}, Number(book[2]));

@@ -6,6 +6,7 @@ import type {
   StrategyTemplate, ExportOut, EventOut, JobEnqueued, Capabilities, GlobalConfig,
   GlobalConfigInput, ModelPingResult, ModelListResult, ModelListRequest,
   ProjectConfig, ReviewRun, SubtitleData, UploadPreview, AnalysisPayload,
+  GlossaryExportFormat,
 } from "./types";
 
 const request = <T>(path: string, init?: RequestInit) => platform().request<T>(path, init);
@@ -158,7 +159,7 @@ export const api = {
       `/projects/${pid}/glossary/conflicts/${cid}/resolve`,
       { method: "POST", body: JSON.stringify(body) },
     ),
-  exportGlossaryUrl: (pid: string, format: "json" | "csv") =>
+  exportGlossaryUrl: (pid: string, format: GlossaryExportFormat) =>
     `${apiBase()}/projects/${pid}/glossary/export?format=${format}`,
   importGlossary: (pid: string, terms: Partial<Term>[]) =>
     request<{ imported: number }>(`/projects/${pid}/glossary/import`, {
@@ -233,7 +234,7 @@ export const api = {
     }),
   downloadExport: (pid: string, id: number) =>
     download(`/projects/${pid}/exports/${id}/download`, "translation"),
-  downloadGlossary: (pid: string, format: "json" | "csv") =>
+  downloadGlossary: (pid: string, format: GlossaryExportFormat) =>
     download(
       `/projects/${pid}/glossary/export?format=${format}`,
       `glossary.${format}`,

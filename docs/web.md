@@ -249,6 +249,28 @@ appellation, honorific, speech habit, and fixed expression. Labels follow the in
 language; stored and exported type IDs remain English. Custom types keep their original
 labels in the table.
 
+**Glossary → Export → Anki deck (.apkg)** exports the complete glossary, regardless of
+search, type filters, pagination or selected rows. Import the file in Anki to get a
+`Wenyi` parent deck with a project-specific book deck and one subdeck per term type.
+All types are included, including custom types; filter or suspend unwanted cards in
+Anki instead of excluding them during export. Built-in subdeck names use the stored
+English type IDs. Whitespace and reserved separators in custom type names/tags are
+percent-encoded to keep them distinct and prevent extra hierarchy levels.
+
+Each term creates one recognition card: source on the front; existing reading,
+the book's translation, notes and aliases on the back, with book/type/language metadata.
+Tags include `wenyi::type::person`, `wenyi::project::<project-id>` and source/target
+language tags. These are book-specific translations, not dictionary definitions.
+Export does not generate readings, example sentences, reverse cards or audio, call
+models, modify the glossary, or include unresolved alternative translations.
+
+Re-exporting the same project's unchanged source terms uses stable note identities;
+Anki can update their contents without creating duplicate notes or resetting reviews.
+Content updates depend on Anki's import options and modification-time checks. A renamed
+source term or a different project is a new note. Import is not synchronization:
+deleting terms in Wenyi does not delete cards in Anki, and existing card placement is
+managed by Anki. CSV/JSON exports and imports remain available; `.apkg` is export-only.
+
 The Web and Desktop glossary tables load 100 terms per page, ordered by the original
 source's Unicode code points (not locale or phonetic order). Search, type filters and
 pagination share the top toolbar, wrapping when space is limited; no pager is repeated
