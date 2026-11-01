@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from ..config import Config
+from ..errors import WenyiError
 from ..glossary.store import GlossaryTerm
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
@@ -24,7 +25,7 @@ _OUTPUT_FIELDS = {
 }
 
 
-class ReviewFixerProtocolError(ValueError):
+class ReviewFixerProtocolError(WenyiError, ValueError):
     """Fixer input or output violates the temporary-patch protocol."""
 
 

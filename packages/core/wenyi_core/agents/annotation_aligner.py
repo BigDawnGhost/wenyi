@@ -20,6 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Any
 
+from ..errors import WenyiError
 from .base import Agent
 
 _MARKER_RE = re.compile(r"⟪([^⟪⟫]+)⟫")
@@ -38,7 +39,7 @@ Return JSON only. Preserve every input unit_id exactly and return one item per i
 """
 
 
-class AnnotationAlignmentError(ValueError):
+class AnnotationAlignmentError(WenyiError, ValueError):
     """The model output cannot safely be mapped back to the immutable target."""
 
 

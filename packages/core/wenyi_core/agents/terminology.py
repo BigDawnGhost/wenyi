@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ..errors import WenyiError
 from ..glossary.evidence import trusted_match_sources
 from ..glossary.evidence_models import (
     DiscoveryRejection,
@@ -31,7 +32,7 @@ _CITATION_RULES = (
 )
 
 
-class TerminologyReferenceError(ValueError):
+class TerminologyReferenceError(WenyiError, ValueError):
     """Report reference shape/counts without exposing model prose or untrusted IDs."""
 
     def __init__(
@@ -83,7 +84,7 @@ def _knowledge_field(location: tuple[str | int, ...]) -> str:
     return field + (".<extra>" if rest else "")
 
 
-class TerminologyKnowledgeError(ValueError):
+class TerminologyKnowledgeError(WenyiError, ValueError):
     """Expose bounded schema diagnostics, never invalid values or extra property names."""
 
     def __init__(self, error: ValidationError, *, operation: str):

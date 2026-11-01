@@ -1,10 +1,11 @@
 """Translate aligned title batches without accessing book state."""
 
+from ..errors import WenyiError
 from . import prompts
 from .base import Agent
 
 
-class TitleOutputError(RuntimeError):
+class TitleOutputError(WenyiError, RuntimeError):
     """Expose response counts so the caller can retain its rejection event contract."""
 
     def __init__(self, expected: int, actual: int | None):

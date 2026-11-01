@@ -18,6 +18,7 @@ from typing import Any, Iterator, Literal
 from psycopg import sql
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
+from wenyi_core.errors import WenyiError
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm, search_term_page
 from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.pipeline.runstore import ExportSnapshotStore, source_sha256
@@ -25,8 +26,12 @@ from wenyi_core.pipeline.runstore import ExportSnapshotStore, source_sha256
 from .segment_history import load_history, record_chapter_changes
 
 
-class ProjectBusyError(BlockingIOError):
-    """A different workflow or editor currently owns this project."""
+class ProjectBusyError(WenyiError, BlockingIOError):
+    """A different workflow or editor currently owns this project.
+
+    Keeps ``BlockingIOError`` so existing ``except BlockingIOError`` guards keep
+    matching while the code migrates.
+    """
 
 
 class PostgresStorage:
