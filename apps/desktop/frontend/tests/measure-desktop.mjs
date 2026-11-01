@@ -26,7 +26,6 @@ const data = {
     stages: [], progress: null,
   },
   "/projects/fixture/stats": { usage: { totals: { calls: 0 } }, timing: { runs: [], total_seconds: 0 } },
-  "/projects/fixture/report": { summary: {} },
 };
 
 async function serve(directory) {

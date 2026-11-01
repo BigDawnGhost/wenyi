@@ -40,7 +40,6 @@ def test_workflow_uses_snapshot_and_excludes_exports(
     assert [(s["id"], s["enabled"]) for s in result["stages"]] == [
         ("review", True),
         ("review_autofix", enabled),
-        ("report", True),
     ]
     assert result["progress"] is None
 

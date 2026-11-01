@@ -10,8 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { ErrorNotice, StructuredData } from "@/components/ui/data";
-import { Disclosure } from "@/components/ui/disclosure";
+import { ErrorNotice } from "@/components/ui/data";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { Accounting } from "./Accounting";
 import { toast } from "@/lib/toast";
@@ -38,11 +37,6 @@ export default function ProgressPage() {
     enabled: subtitle,
     refetchInterval: busy ? progressInterval(connected, 3000) : false,
   });
-  const report = useQuery({
-    queryKey: ["report", pid],
-    queryFn: () => api.getReport(pid),
-    enabled: !!project && !subtitle,
-  });
   const stats = useQuery({
     queryKey: ["stats", pid],
     queryFn: () => api.getStats(pid),
@@ -66,13 +60,6 @@ export default function ProgressPage() {
           ? tr("progress.pauseRequestedSavingCompletedWork")
           : tr("progress.taskSubmitted"),
       );
-    },
-  });
-  const regenerate = useMutation({
-    mutationFn: () => api.regenerateReport(pid),
-    onSuccess: (result) => {
-      qc.setQueryData(["report", pid], result);
-      toast.success(tr("progress.reportUpdated"));
     },
   });
   const chapters = chapterQuery.data || [];
@@ -188,36 +175,11 @@ export default function ProgressPage() {
           </div>
         )}
         {!subtitle && (
-          <>
-            <Disclosure
-              title={tr("progress.projectReport")}
-              error={report.error || regenerate.error}
-            >
-              <Button
-                variant="outline"
-                disabled={regenerate.isPending || busy || !project?.initialized}
-                onClick={() => regenerate.mutate()}
-              >
-                {tr("progress.updateReport")}
-              </Button>
-              <ErrorNotice error={report.error || regenerate.error} />
-              <StructuredData
-                value={
-                  report.data?.summary &&
-                  Object.fromEntries(
-                    Object.entries(report.data.summary).filter(
-                      ([key]) => !["usage", "timing"].includes(key),
-                    ),
-                  )
-                }
-              />
-            </Disclosure>
-            <ChapterTable
-              pid={pid}
-              chapters={chapters}
-              busy={busy || !project?.initialized}
-            />
-          </>
+          <ChapterTable
+            pid={pid}
+            chapters={chapters}
+            busy={busy || !project?.initialized}
+          />
         )}
       </PageContainer>
     </>

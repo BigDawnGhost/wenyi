@@ -41,12 +41,6 @@ export type Workflow = Output<"WorkflowOut">;
 export type SubtitleData = Output<"SubtitleResult">;
 export type UploadPreview = Output<"UploadPreview">;
 export type AnalysisPayload = Output<"AnalysisOut">;
-export interface ReportData {
-  summary: Record<string, unknown>;
-  usage?: Record<string, unknown>;
-  timing?: Record<string, unknown>;
-  [key: string]: unknown;
-}
 
 // API calls.
 export const api = {
@@ -114,7 +108,6 @@ export const api = {
       `/projects/${pid}/subtitles/${encodeURIComponent(id)}`,
       { method: "PUT", body: JSON.stringify({ target }) },
     ),
-  getReport: (pid: string) => request<ReportData>(`/projects/${pid}/report`),
   listProjects: () => request<Project[]>("/projects"),
   createProject: (
     body: Pick<components["schemas"]["ProjectCreate"], "name"> &
@@ -144,8 +137,6 @@ export const api = {
     request<JobEnqueued>(`/projects/${pid}/resume`, {
       method: "POST",
     }),
-  regenerateReport: (pid: string) =>
-    request<ReportData>(`/projects/${pid}/report`, { method: "POST" }),
 
   listChapters: (pid: string) =>
     request<ChapterSummary[]>(`/projects/${pid}/chapters`),

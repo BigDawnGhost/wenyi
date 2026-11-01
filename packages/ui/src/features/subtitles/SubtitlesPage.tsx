@@ -69,7 +69,7 @@ export default function SubtitlesPage() {
                 <header className="px-3 py-2 bg-muted/40 text-xs text-muted-foreground">
                   #{cue.id} · {cue.start} → {cue.end}
                 </header>
-                <div className="grid md:grid-cols-2">
+                <div className="grid grid-cols-2">
                   <div className="p-3 text-sm whitespace-pre-wrap border-r">
                     {cue.source}
                   </div>

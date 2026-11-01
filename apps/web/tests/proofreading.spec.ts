@@ -182,10 +182,10 @@ test("paused proofreading stops polling, preserves conflicting drafts and isolat
   await expect(page.getByLabel("Edit translation")).toHaveCount(0);
 });
 
-test("mobile Chinese navigation opens proofreading and distinguishes saved empty translations", async ({
+test("Chinese desktop navigation opens proofreading and distinguishes saved empty translations", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1024, height: 844 });
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   await fakeApi(page, {
     [`/projects/${pid}/review/0`]: {

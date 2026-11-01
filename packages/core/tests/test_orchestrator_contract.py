@@ -74,21 +74,22 @@ class TestOrchestratorContract(unittest.TestCase):
         self.review_autofix = MagicMock(spec=type(orch._review_autofix))
         orch._review_autofix = self.review_autofix
         self.review_autofix.resume_pending.return_value = None
-        self.report = MagicMock(spec=type(orch._report))
-        orch._report = self.report
         self.assembly = MagicMock(spec=type(orch._assembly))
         orch._assembly = self.assembly
-        # Finalization requires a usable glossary scope supplied by the spy.
-        self.report.glossary_scope.side_effect = lambda store, needed: self._glossary_scope()
         return orch
-
-    @staticmethod
-    @contextmanager
-    def _glossary_scope():
-        yield Mock()
 
     def _manifest(self):
         return {"chapters": [{"index": 0}, {"index": 1}]}
+
+    def test_removed_report_step_is_rejected_before_state_access(self):
+        orch = self._orchestrator()
+
+        with self.assertRaisesRegex(ValueError, "Unknown workflow steps: report"):
+            orch.run_steps("novel.txt", {"translate", "report"})
+
+        self.preparation.prepare.assert_not_called()
+        self.preparation.locate_existing.assert_not_called()
+        self.translation.run.assert_not_called()
 
     def test_run_routes_prepare_then_translation_under_lock(self):
         """Prepare, restore language, build synopsis and translate under the book lock with
@@ -150,7 +151,7 @@ class TestOrchestratorContract(unittest.TestCase):
         self.translation.run.assert_called_once()
 
     def test_run_review_uses_existing_state_fast_path_under_lock(self):
-        """Review-only uses fast state lookup and a locked session without reporting or export."""
+        """Review-only uses fast state lookup and a locked session without export."""
         orch = self._orchestrator()
         store = _RecordingStore()
         self.preparation.locate_existing.return_value = store
@@ -178,7 +179,6 @@ class TestOrchestratorContract(unittest.TestCase):
             },
         )
         self.assertEqual(store.lock_events, ["lock:enter", "lock:exit"])
-        self.report.build_and_save.assert_not_called()
         self.assembly.assemble_live.assert_not_called()
 
     def test_run_steps_review_only_routes_to_review_fast_path(self):
@@ -197,7 +197,7 @@ class TestOrchestratorContract(unittest.TestCase):
         self.translation.run.assert_not_called()
         self.review.run_session.assert_called_once()
         self.assertEqual(result["review_result"], {"r": 1})
-        self.assertIsNone(result["report"])
+        self.assertNotIn("report", result)
 
     def test_review_autofix_runs_after_read_only_review_when_enabled(self):
         """Publish autofix only after review produces a result, returning the new outcome."""
@@ -259,7 +259,7 @@ class TestOrchestratorContract(unittest.TestCase):
         self.assertEqual(store.assemble_lock_events, [])
         self.assertEqual(result["output"], "out.epub")
         self.assertEqual(result["outputs"], ["out.epub"])
-        self.assertIsNone(result["report"])
+        self.assertNotIn("report", result)
         self.assertIsNone(result["review_dir"])
 
     def test_run_steps_assemble_only_uses_snapshot_fast_path(self):
@@ -281,45 +281,45 @@ class TestOrchestratorContract(unittest.TestCase):
         )
         self.assertEqual(result["output"], "out.epub")
 
-    def test_run_steps_report_only_uses_prepare_not_locate_existing(self):
+    def test_run_steps_review_and_assemble_use_prepare_not_locate_existing(self):
         """Other combinations without translation retain current preparation behavior."""
         orch = self._orchestrator()
         store = _RecordingStore()
         self.preparation.prepare.return_value = store
-        self.report.build_and_save.return_value = {"report": True}
+        self.review.run_session.return_value = Mock(
+            issues=[], changes=[], result={"r": 1}, run_dir="reviews/1"
+        )
+        self.assembly.assemble_live.return_value = ["out.epub"]
 
-        result = orch.run_steps("novel.txt", {"report"})
+        result = orch.run_steps("novel.txt", {"review", "assemble"})
 
         self.preparation.prepare.assert_called_once_with("novel.txt", progress=None)
         self.preparation.locate_existing.assert_not_called()
-        self.report.build_and_save.assert_called_once()
-        self.assertEqual(result["report"], {"report": True})
+        self.review.session_terms.assert_called_once_with(store)
+        self.assertEqual(result["review_result"], {"r": 1})
+        self.assertEqual(result["outputs"], ["out.epub"])
         self.assertEqual(store.lock_events, ["lock:enter", "lock:exit"])
 
     def test_full_pipeline_steps_order_and_result_assembly(self):
-        """Translate first, then reacquire the lock for reporting and live export."""
+        """Translate first, then reacquire the lock for live export."""
         orch = self._orchestrator()
         store = _RecordingStore()
         self.preparation.prepare.return_value = store
         self.preparation.activate.return_value = self._manifest()
         self.preparation.ensure_understanding.return_value = ""
         self.translation.run.return_value = store
-        self.report.build_and_save.return_value = {"report": True}
         self.assembly.assemble_live.return_value = ["out.epub"]
 
         calls: list[str] = []
-        self.report.build_and_save.side_effect = lambda *a, **k: (
-            calls.append("report") or {"report": True}
-        )
         self.assembly.assemble_live.side_effect = lambda *a, **k: (
             calls.append("assemble") or ["out.epub"]
         )
         self.translation.run.side_effect = lambda *a, **k: calls.append("translate") or store
 
-        result = orch.run_steps("novel.txt", {"translate", "report", "assemble"})
+        result = orch.run_steps("novel.txt", {"translate", "assemble"})
 
         # Reenter the lock for finalization after translation; skip review unless requested.
-        self.assertEqual(calls, ["translate", "report", "assemble"])
+        self.assertEqual(calls, ["translate", "assemble"])
         self.review.run_session.assert_not_called()
         self.assertEqual(
             store.lock_events,
@@ -331,7 +331,6 @@ class TestOrchestratorContract(unittest.TestCase):
                 "store": store,
                 "output": "out.epub",
                 "outputs": ["out.epub"],
-                "report": {"report": True},
                 "review_issues": [],
                 "review_changes": [],
                 "review_result": None,
@@ -339,10 +338,8 @@ class TestOrchestratorContract(unittest.TestCase):
             },
         )
 
-    def test_full_pipeline_with_review_includes_review_between_translate_and_report(self):
-        """Combinations containing translation finish it before locked review, reporting and
-        live assembly.
-        """
+    def test_full_pipeline_with_review_includes_review_between_translate_and_assemble(self):
+        """Combinations containing translation finish it before locked review and live assembly."""
         orch = self._orchestrator()
         store = _RecordingStore()
         self.preparation.prepare.return_value = store
@@ -352,7 +349,6 @@ class TestOrchestratorContract(unittest.TestCase):
         self.review.run_session.return_value = Mock(
             issues=[], changes=[], result={"r": 1}, run_dir="reviews/3"
         )
-        self.report.build_and_save.return_value = {"report": True}
         self.assembly.assemble_live.return_value = ["out.epub"]
 
         calls: list[str] = []
@@ -360,22 +356,20 @@ class TestOrchestratorContract(unittest.TestCase):
             calls.append("review")
             or Mock(issues=[], changes=[], result={"r": 1}, run_dir="reviews/3")
         )
-        self.report.build_and_save.side_effect = lambda *a, **k: (
-            calls.append("report") or {"report": True}
-        )
         self.assembly.assemble_live.side_effect = lambda *a, **k: (
             calls.append("assemble") or ["out.epub"]
         )
         self.translation.run.side_effect = lambda *a, **k: calls.append("translate") or store
 
-        result = orch.run_steps("novel.txt", {"translate", "review", "report", "assemble"})
+        result = orch.run_steps("novel.txt", {"translate", "review", "assemble"})
 
-        self.assertEqual(calls, ["translate", "review", "report", "assemble"])
+        self.assertEqual(calls, ["translate", "review", "assemble"])
+        self.review.session_terms.assert_called_once_with(store)
         self.assertEqual(result["review_result"], {"r": 1})
-        self.assertEqual(result["report"], {"report": True})
+        self.assertNotIn("report", result)
 
-    def test_review_failure_short_circuits_report_and_assemble(self):
-        """Review failure skips reporting/export and propagates unchanged."""
+    def test_review_failure_short_circuits_assemble(self):
+        """Review failure skips export and propagates unchanged."""
         orch = self._orchestrator()
         store = _RecordingStore()
         self.preparation.prepare.return_value = store
@@ -386,26 +380,10 @@ class TestOrchestratorContract(unittest.TestCase):
         self.review.run_session.side_effect = boom
 
         with self.assertRaises(RuntimeError) as ctx:
-            orch.run_steps("novel.txt", {"translate", "review", "report", "assemble"})
-        self.assertIs(ctx.exception, boom)
-        self.report.build_and_save.assert_not_called()
-        self.assembly.assemble_live.assert_not_called()
-
-    def test_report_failure_short_circuits_assemble(self):
-        """Report failure skips export and propagates unchanged."""
-        orch = self._orchestrator()
-        store = _RecordingStore()
-        self.preparation.prepare.return_value = store
-        self.preparation.activate.return_value = self._manifest()
-        self.preparation.ensure_understanding.return_value = ""
-        self.translation.run.return_value = store
-        boom = RuntimeError("report 失败")
-        self.report.build_and_save.side_effect = boom
-
-        with self.assertRaises(RuntimeError) as ctx:
-            orch.run_steps("novel.txt", {"translate", "report", "assemble"})
+            orch.run_steps("novel.txt", {"translate", "review", "assemble"})
         self.assertIs(ctx.exception, boom)
         self.assembly.assemble_live.assert_not_called()
+        self.assertEqual(store.lock_events, ["lock:enter", "lock:exit", "lock:enter", "lock:exit"])
 
     def test_run_all_with_review_enabled_requests_review(self):
         """run_all includes review when enabled in configuration."""
@@ -414,7 +392,7 @@ class TestOrchestratorContract(unittest.TestCase):
             result = orch.run_all("novel.txt")
         spy.assert_called_once()
         steps = spy.call_args.args[1]
-        self.assertEqual(steps, {"translate", "review", "report", "assemble"})
+        self.assertEqual(steps, {"translate", "review", "assemble"})
         self.assertEqual(result, {"sentinel": True})
 
     def test_run_all_without_review_excludes_review(self):
@@ -422,7 +400,7 @@ class TestOrchestratorContract(unittest.TestCase):
         orch = self._orchestrator(review=False)
         with patch.object(orch, "run_steps", return_value={}) as spy:
             orch.run_all("novel.txt")
-        self.assertEqual(spy.call_args.args[1], {"translate", "report", "assemble"})
+        self.assertEqual(spy.call_args.args[1], {"translate", "assemble"})
 
     def test_prepare_delegates_thinly(self):
         """prepare is a thin delegation preserving arguments and return values."""

@@ -50,27 +50,27 @@ for (const locale of ["en", "zh-CN"] as const) {
       await expect(manageModels).toHaveText(t("settings.manageGlobalModels"));
     });
 
-    test("workflow separates style analysis from translation-time term extraction", async ({
+    test("workflow identifies the task without an enabled-step checklist", async ({
       page,
     }) => {
+      let kind = "translation";
       await page.route(`**/projects/${pid}/workflow`, (route) =>
-        route.fulfill({
-          json: {
-            ...workflow,
-            stages: [
-              { id: "style_analysis", label: "风格分析", enabled: true },
-              { id: "term_extract", label: "实时术语提取", enabled: true },
-            ],
-          },
-        }),
+        route.fulfill({ json: { ...workflow, kind } }),
       );
-      await page.goto(`/projects/${pid}`);
-      await page.getByText(t("progress.workflowDetails"), { exact: true }).click();
-      await expect(page.getByText(locale === "en" ? "Style analysis" : "风格分析", {
-        exact: true,
-      })).toBeVisible();
-      await expect(page.getByText(t("workflow.terms"), { exact: true })).toBeVisible();
-      await expect(page.getByText(/initial glossary|初始术语/i)).toHaveCount(0);
+      for (const [task, label] of [
+        ["parse", "workflowPanel.sourceParsing"],
+        ["prepare", "common.preparation"],
+        ["translation", "workflowPanel.bookTranslation"],
+        ["chapter_translation", "workflowPanel.chapterTranslation"],
+        ["review", "common.wholeBookReview"],
+        ["srt", "workflowPanel.subtitleTranslation"],
+      ] as const) {
+        kind = task;
+        await page.goto(`/projects/${pid}`);
+        const panel = page.getByRole("region", { name: t("workflowPanel.currentWorkflow") });
+        await expect(panel.getByRole("status")).toContainText(t(label));
+        await expect(panel.locator("details, ol")).toHaveCount(0);
+      }
     });
 
     test("dialogs retain named controls without redundant descriptions", async ({

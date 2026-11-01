@@ -320,7 +320,9 @@ class TestRunAll(unittest.TestCase):
             event_names = [e["event"] for e in events]
             self.assertIn("run_initialized", event_names)
             self.assertIn("batch_translated", event_names)
-            self.assertIn("report_saved", event_names)
+            self.assertNotIn("report_saved", event_names)
+            self.assertNotIn("report", result)
+            self.assertFalse(os.path.exists(os.path.join(result["store"].run_dir, "report.json")))
             self.assertIn("assembled", event_names)
             translated = next(e for e in events if e["event"] == "batch_translated")
             self.assertTrue(translated["segments"])

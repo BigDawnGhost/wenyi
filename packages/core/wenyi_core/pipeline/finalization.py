@@ -1,5 +1,4 @@
-"""Report and assembly finalization services.
-ReportService owns glossary lifetime, build_report, report.json and related events.
+"""Assembly finalization service.
 AssemblyService exports monolingual/bilingual products from live state or immutable
 snapshots and forwards format options.
 Standalone assembly avoids the long run lock: capture a snapshot under the assembly/state
@@ -10,50 +9,15 @@ lock to serialize output writers.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ..events import ProgressFn
-from ..glossary.store import GlossaryStore
 from ..storage.protocol import Storage
 from .language_policies import persist_plan
 from .runstore import source_sha256
 
 if TYPE_CHECKING:
     from .runtime import PipelineRuntime
-
-
-class ReportService:
-    """Domain service for glossary lifetime and report generation."""
-
-    def __init__(self, runtime: PipelineRuntime):
-        self._runtime = runtime
-
-    @contextmanager
-    def glossary_scope(
-        self, store: Storage, needed: bool
-    ) -> Iterator[Storage | GlossaryStore | None]:
-        """Borrow the injected glossary; its lifetime belongs to the caller."""
-        yield store if needed else None
-
-    def build_and_save(
-        self,
-        store: Storage,
-        glossary: Storage | GlossaryStore,
-        *,
-        progress: ProgressFn | None = None,
-    ) -> dict[str, Any]:
-        """Generate and persist report.json and record the corresponding event."""
-        from ..assemble.report import build_report
-
-        if progress:
-            progress(0, 0, "Generating report…")
-        report = build_report(store, glossary)
-        assert report is not None
-        store.save_report(report)
-        store.log_event("report_saved", artifact="report.json")
-        return report
 
 
 class AssemblyService:
