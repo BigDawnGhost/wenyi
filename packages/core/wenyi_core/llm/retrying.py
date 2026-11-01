@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 from tenacity import (
@@ -19,6 +19,8 @@ from tenacity import (
     wait_random_exponential,
 )
 
+from ..errors import WenyiError
+
 _LOGGER = logging.getLogger(__name__)
 _RETRYABLE_STATUS_CODES = {408, 409, 429}
 # Provider stops that should leave Review resumable even when automatic retry gives up.
@@ -27,16 +29,26 @@ _MAX_WAIT_SECONDS = 30.0
 _FALLBACK_WAIT = wait_random_exponential(multiplier=1, max=_MAX_WAIT_SECONDS)
 
 
-class EmptyResponseError(RuntimeError):
+class EmptyResponseError(WenyiError, RuntimeError):
     """The model returned no usable text in standard response fields."""
 
+    code: ClassVar[str] = "llm_empty_response"
+    retryable: ClassVar[bool] = True
 
-class TruncatedResponseError(RuntimeError):
+
+class TruncatedResponseError(WenyiError, RuntimeError):
     """The provider stopped generation at its output token limit."""
 
+    code: ClassVar[str] = "llm_truncated_response"
+    # A truncated answer is not fixed by asking again; the caller has to
+    # change how it splits the work.
+    retryable: ClassVar[bool] = False
 
-class ProviderRequestError(RuntimeError):
+
+class ProviderRequestError(WenyiError, RuntimeError):
     """A credential-scoped failure containing only stable, safe classifications."""
+
+    code: ClassVar[str] = "llm_provider_request"
 
     def __init__(
         self,
