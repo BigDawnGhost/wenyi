@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from ..errors import WenyiError
 from ..glossary.store import GlossaryTerm
 from ..llm.base import Messages
 from ..llm.json_parser import JsonParseError, parse_json_loose
@@ -20,7 +21,7 @@ PrecisionCallRecorder = Callable[
 ]
 
 
-class PrecisionError(ValueError):
+class PrecisionError(WenyiError, ValueError):
     """A precision response cannot safely be used for document backfill."""
 
 

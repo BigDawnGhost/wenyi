@@ -9,12 +9,13 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ..errors import WenyiError
 from ..llm.json_parser import parse_json_result
 from . import prompts
 from .base import Agent
 
 
-class ReviewOutputError(ValueError):
+class ReviewOutputError(WenyiError, ValueError):
     """Structured review output error that can be retried with a smaller input."""
 
     def __init__(self, reason: str):

@@ -80,3 +80,44 @@ def test_retryable_can_be_declared_per_subclass():
 
     assert Transient.retryable is True
     assert WenyiError.retryable is False
+
+
+def test_agent_errors_join_the_shared_base_but_keep_their_parents():
+    """Agents raise these into CLI guards; both parents must keep matching."""
+    from wenyi_core.agents.annotation_aligner import AnnotationAlignmentError
+    from wenyi_core.agents.precision import PrecisionError
+    from wenyi_core.agents.review_actions import ReviewLoopProtocolError
+    from wenyi_core.agents.review_fixer import ReviewFixerProtocolError
+    from wenyi_core.agents.reviewer import ReviewOutputError
+    from wenyi_core.agents.terminology import (
+        TerminologyKnowledgeError,
+        TerminologyReferenceError,
+    )
+    from wenyi_core.agents.title_translator import TitleOutputError
+
+    value_errors = [
+        AnnotationAlignmentError,
+        PrecisionError,
+        ReviewLoopProtocolError,
+        ReviewFixerProtocolError,
+        ReviewOutputError,
+        TerminologyKnowledgeError,
+        TerminologyReferenceError,
+    ]
+    for error_type in value_errors:
+        assert issubclass(error_type, WenyiError), error_type
+        assert issubclass(error_type, ValueError), error_type
+    assert issubclass(TitleOutputError, WenyiError)
+    assert issubclass(TitleOutputError, RuntimeError)
+
+
+def test_agents_exceptions_are_catchable_by_the_cli_guard():
+    """The CLI catches WenyiError so it can print one line instead of a traceback."""
+    from wenyi_core.agents.precision import PrecisionError
+
+    try:
+        raise PrecisionError("bad precision output")
+    except WenyiError as error:
+        assert str(error) == "bad precision output"
+    else:
+        pytest.fail("agent failures must be catchable as WenyiError")
