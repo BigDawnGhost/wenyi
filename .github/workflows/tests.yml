@@ -188,8 +188,16 @@ jobs:
           uv run --no-sync ruff format --check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
           git diff --check
       - name: Offline Python regression tests
-        # loadgroup keeps tests that share a group on one worker; -n auto sizes to the runner.
-        run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration"
+        # loadgroup keeps tests that share a group on one worker; -n auto sizes
+        # to the runner. Only the oldest supported interpreter is narrowed to the
+        # core suite (D-4 option A): 3.12 keeps every package, so a compatibility
+        # problem in the CLI, backend, API or desktop still surfaces there.
+        run: |
+          if [ "${{ matrix.python-version }}" = "3.10" ]; then
+            uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration" packages/core/tests
+          else
+            uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration"
+          fi
       - name: Service integration tests (PostgreSQL and Redis enabled)
         # Two workers bound connections against the shared postgres service.
         # One rerun absorbs resource flake; a retried pass lands in the job
@@ -198,7 +206,13 @@ jobs:
         # pull request skips because it needs a running Docker daemon.
         env:
           WENYI_TEST_DOCKER: ${{ github.event_name == 'schedule' && '1' || '0' }}
-        run: uv run --no-sync pytest -q -n 2 --dist loadgroup --reruns 1 -m integration
+        # The narrowed 3.10 leg keeps the same scope as its offline run.
+        run: |
+          if [ "${{ matrix.python-version }}" = "3.10" ]; then
+            uv run --no-sync pytest -q -n 2 --dist loadgroup --reruns 1 -m integration packages/core/tests
+          else
+            uv run --no-sync pytest -q -n 2 --dist loadgroup --reruns 1 -m integration
+          fi
       - name: Build distributable packages and verify bundled resources
         if: matrix.python-version == '3.12'
         run: |

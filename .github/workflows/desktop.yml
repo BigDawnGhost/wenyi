@@ -182,6 +182,9 @@ jobs:
           node-version: "22"
           cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+      # nextest runs every test in its own process and reports per-test timings,
+      # which the plain harness cannot do.
+      - uses: taiki-e/install-action@nextest
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop -> target
@@ -210,7 +213,7 @@ jobs:
       - run: uv run --no-sync pytest -q apps/desktop/backend/tests
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
-      - run: cargo test --locked --manifest-path apps/desktop/Cargo.toml
+      - run: cargo nextest run --locked --manifest-path apps/desktop/Cargo.toml
       - name: Test Linux menu visibility after native window remaps
         if: runner.os == 'Linux'
         run: >
