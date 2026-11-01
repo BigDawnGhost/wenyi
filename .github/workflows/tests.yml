@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # A nightly full run is what replaced the unconditional push run (T-35): a
+    # stale path filter is caught within a day instead of on every merge. The
+    # end-to-end specs and the Docker proxy suite ride along here too.
+    - cron: "0 18 * * *"
 
 permissions:
   contents: read
@@ -18,6 +23,7 @@ jobs:
       python: ${{ steps.filter.outputs.python }}
       web: ${{ steps.filter.outputs.web }}
       force: ${{ steps.filter.outputs.force }}
+      e2e: ${{ steps.filter.outputs.e2e }}
     steps:
       # A push diffs the before/after commits locally, so this job needs full
       # history on every event that can reach it.
@@ -54,14 +60,77 @@ jobs:
               - "uv.lock"
               - "config.yaml"
               - ".github/workflows/**"
+            # The browser specs exercise the HTTP contract as well as the shared
+            # components, so a backend or schema change has to run them.
+            e2e:
+              - "apps/web/**"
+              - "apps/desktop/frontend/**"
+              - "packages/ui/**"
+              - "packages/shared-schema/**"
+              - "apps/api/**"
+              - "packages/backend/**"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+
+  contract:
+    # A route or schema edit can break the browser specs without touching any
+    # path the filter above watches, so the OpenAPI document is compared on
+    # its own. This is a separate job because it installs the workspace, which
+    # does not fit the five minutes the filter job is allowed.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      changed: ${{ steps.compare.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The base revision is read from the same clone.
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Compare the HTTP contract with the base revision
+        id: compare
+        run: |
+          set -eu
+          base="origin/${{ github.base_ref }}"
+          # A base revision that predates the snapshot script cannot be
+          # described, so it counts as changed and the specs run.
+          if ! git cat-file -e "$base:scripts/openapi_snapshot.py" 2>/dev/null; then
+            echo "No snapshot on the base revision; treating the contract as changed."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          uv sync --locked --all-packages --group dev --quiet
+          uv run --no-sync python scripts/openapi_snapshot.py > "$RUNNER_TEMP/head.json"
+          # The workspace is installed in editable mode, so the base tree only
+          # needs to win on PYTHONPATH: no second resolve, no second install.
+          git worktree add --detach "$RUNNER_TEMP/base" "$base"
+          PYTHONPATH="$RUNNER_TEMP/base/packages/core:$RUNNER_TEMP/base/packages/backend" \
+            uv run --no-sync python "$RUNNER_TEMP/base/scripts/openapi_snapshot.py" \
+            > "$RUNNER_TEMP/base.json"
+          git worktree remove --force "$RUNNER_TEMP/base"
+          if cmp -s "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json"; then
+            echo "The HTTP contract is unchanged."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "The HTTP contract changed; the browser specs will run."
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
 
   python:
     needs: changes
-    # A manual run is always the full suite. A push and a pull request are both
-    # filtered: the merged commit was already tested on the pull request ref, and
-    # the nightly run covers what a stale filter could miss. `force` is the paths
-    # that invalidate the filter itself.
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.python == 'true' || needs.changes.outputs.force == 'true'
+    # A manual or scheduled run is always the full suite. A push and a pull
+    # request are both filtered: the merged commit was already tested on the pull
+    # request ref, and the nightly run covers what a stale filter could miss.
+    # `force` is the paths that invalidate the filter itself.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.python == 'true' || needs.changes.outputs.force == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -125,6 +194,10 @@ jobs:
         # Two workers bound connections against the shared postgres service.
         # One rerun absorbs resource flake; a retried pass lands in the job
         # summary as flaky rather than disappearing into a green run.
+        # The nightly run also enables the Docker proxy suite, which every
+        # pull request skips because it needs a running Docker daemon.
+        env:
+          WENYI_TEST_DOCKER: ${{ github.event_name == 'schedule' && '1' || '0' }}
         run: uv run --no-sync pytest -q -n 2 --dist loadgroup --reruns 1 -m integration
       - name: Build distributable packages and verify bundled resources
         if: matrix.python-version == '3.12'
@@ -138,8 +211,14 @@ jobs:
           uv run --no-sync python scripts/check_backend_packages.py dist
 
   web:
-    needs: changes
-    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.web == 'true' || needs.changes.outputs.force == 'true'
+    needs: [changes, contract]
+    # A manual or scheduled run is always full; a filtered run is decided below.
+    if: |
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event_name == 'schedule' ||
+       needs.changes.outputs.web == 'true' ||
+       needs.changes.outputs.force == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -159,6 +238,54 @@ jobs:
       - run: pnpm -C apps/web build
       - run: pnpm -C apps/desktop/frontend build
       - run: pnpm test:frontend-boundaries
+      # The browser specs only run when the contract they exercise could have
+      # moved: a watched path, a forced path, or an OpenAPI document that no
+      # longer matches the base revision. Typecheck and build always run.
+      - uses: actions/cache@v5
+        id: playwright-cache
+        if: github.event_name != 'pull_request' || needs.changes.outputs.e2e == 'true' || needs.changes.outputs.force == 'true' || needs.contract.outputs.changed == 'true'
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-1.63.0-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm -C apps/web exec playwright install --with-deps chromium
+        if: (github.event_name != 'pull_request' || needs.changes.outputs.e2e == 'true' || needs.changes.outputs.force == 'true' || needs.contract.outputs.changed == 'true') && steps.playwright-cache.outputs.cache-hit != 'true'
+      - name: Install Playwright system dependencies
+        if: github.event_name != 'pull_request' || needs.changes.outputs.e2e == 'true' || needs.changes.outputs.force == 'true' || needs.contract.outputs.changed == 'true'
+        run: pnpm -C apps/web exec playwright install-deps chromium
+      - name: Web end-to-end specs
+        if: github.event_name != 'pull_request' || needs.changes.outputs.e2e == 'true' || needs.changes.outputs.force == 'true' || needs.contract.outputs.changed == 'true'
+        run: pnpm -C apps/web test:e2e
+      - name: Desktop end-to-end specs
+        if: github.event_name != 'pull_request' || needs.changes.outputs.e2e == 'true' || needs.changes.outputs.force == 'true' || needs.contract.outputs.changed == 'true'
+        run: pnpm -C apps/desktop/frontend test:e2e
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: playwright-results
+          path: |
+            apps/web/test-results/
+            apps/desktop/frontend/test-results/
+          if-no-files-found: ignore
+
+  nightly:
+    # Not gated on the filter: a scheduled run is always the full sweep.
+    # The nightly run is the safety net T-35 traded the unconditional push run
+    # for: everything the filtered run skips, once a day, on the same commit.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C apps/web build
+      - run: pnpm -C apps/desktop/frontend build
       - uses: actions/cache@v5
         id: playwright-cache
         with:
@@ -168,12 +295,18 @@ jobs:
         if: steps.playwright-cache.outputs.cache-hit != 'true'
       - name: Install Playwright system dependencies
         run: pnpm -C apps/web exec playwright install-deps chromium
-      - run: pnpm -C apps/web test:e2e
-      - run: pnpm -C apps/desktop/frontend test:e2e
+      - name: Web end-to-end specs including the performance measurement
+        env:
+          PLAYWRIGHT_PERF: "1"
+        run: pnpm -C apps/web test:e2e
+      - name: Desktop end-to-end specs including the performance measurement
+        env:
+          PLAYWRIGHT_PERF: "1"
+        run: pnpm -C apps/desktop/frontend test:e2e
       - uses: actions/upload-artifact@v6
         if: failure()
         with:
-          name: playwright-results
+          name: playwright-nightly-results
           path: |
             apps/web/test-results/
             apps/desktop/frontend/test-results/
