@@ -196,7 +196,7 @@ uv sync --locked --all-packages --group dev --python 3.12
 uv run --no-sync ruff check packages/core packages/cli apps/api
 uv run --no-sync ruff format --check packages/core packages/cli apps/api
 pyright --project pyrightconfig.json --warnings
-uv run --no-sync pytest -q
+uv run --no-sync pytest -q -n auto
 git diff --check
 ```
 

@@ -245,7 +245,7 @@ Worker 启动独立的异步恢复循环，每 30 秒检查一次数据库中超
 ```bash
 pnpm gen:schema  # API 已在 localhost:8000 运行
 uv run --no-sync ruff check packages/core packages/cli apps/api
-uv run --no-sync pytest -q
+uv run --no-sync pytest -q -n auto
 pnpm -C apps/web typecheck
 pnpm -C apps/web build
 pnpm -C apps/web exec playwright install chromium
