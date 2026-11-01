@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from wenyi_core.i18n.languages import label, supported_languages
 from wenyi_core.llm.operations import OPERATIONS, configured_operations
 from wenyi_core.llm.registry import PROVIDERS
@@ -14,6 +14,7 @@ from wenyi_core.llm.routing import resolve_routes
 from .. import dal
 from ..config_documents import project_document
 from ..context import current_context
+from ..errors import INVALID_CONFIGURATION, ApiError
 from ..global_settings import load_settings, registry_guard
 from ..project_service import (
     config_document,
@@ -55,7 +56,7 @@ def get_config(pid: str) -> dict:
     try:
         return config_response(project, effective_config(project))
     except (ValueError, yaml.YAMLError) as error:
-        raise HTTPException(422, str(error)) from error
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from error
 
 
 @router.get("/projects/{pid}/config/defaults", response_model=ProjectConfigOut)
@@ -64,7 +65,7 @@ def project_defaults(pid: str) -> dict:
     try:
         return config_response(project, effective_config(project, document={}))
     except (ValueError, yaml.YAMLError) as error:
-        raise HTTPException(422, str(error)) from error
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from error
 
 
 @router.post("/projects/{pid}/config/validate", response_model=ProjectConfigOut)
@@ -75,7 +76,7 @@ def validate_config(pid: str, body: ConfigInput) -> dict:
             project, effective_config(project, document=parse_project_yaml(body.yaml))
         )
     except (ValueError, yaml.YAMLError) as error:
-        raise HTTPException(422, str(error)) from error
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from error
 
 
 @router.put("/projects/{pid}/config", response_model=ProjectConfigOut)
@@ -88,7 +89,7 @@ def save_config(pid: str, body: ConfigInput) -> dict:
                 defaults=load_settings(connection=conn).config,
             )
         except (ValueError, yaml.YAMLError) as error:
-            raise HTTPException(422, str(error)) from error
+            raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from error
         dal.set_project_config(pid, project_document(config), connection=conn)
         # The project direction must also drive upload, list and worker dispatch.
         dal.set_project_languages(pid, config.source_lang, config.target_lang, connection=conn)
@@ -112,7 +113,7 @@ def check_models(pid: str, body: ModelCheckRequest) -> dict:
         client.validate_credentials(operations)
         return {"valid": True, "operations": list(operations)}
     except (ValueError, RuntimeError) as error:
-        raise HTTPException(422, str(error)) from error
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from error
 
 
 @router.get("/projects/{pid}/stats", response_model=ProjectStats)
