@@ -22,11 +22,6 @@ impl IpcError {
             message: message.into(),
         }
     }
-
-    /// A failure whose own text is already the right thing to show.
-    pub fn with_message(code: impl Into<String>, message: impl std::fmt::Display) -> Self {
-        Self::new(code, message.to_string())
-    }
 }
 
 impl std::fmt::Display for IpcError {
