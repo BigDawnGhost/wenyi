@@ -69,10 +69,11 @@ RUN --mount=type=cache,id=wenyi-apt-cache,target=/var/cache/apt,sharing=locked \
 
 COPY --from=builder /app/.venv /app/.venv
 COPY config.yaml ./
+COPY docker/logging.json ./logging.json
 
 FROM base AS api
 EXPOSE 8000
-CMD ["uvicorn", "wenyi_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "wenyi_api.main:app", "--host", "0.0.0.0", "--port", "8000", "--log-config", "logging.json"]
 
 FROM base AS worker
 CMD ["arq", "wenyi_api.workers.WorkerSettings"]

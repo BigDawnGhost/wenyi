@@ -489,6 +489,12 @@ Reports contain `manifest.json`, a readable `report.md`, basic version/OS/archit
 
 No book text, prompts, model responses, credentials, request bodies, raw exceptions/configuration, project databases or usage ledgers are included. Arbitrary stdout/stderr is not captured. IDs used for task correlation are pseudonymized, but timings and platform metadata may still identify you. **Review the ZIP before sharing it. Nothing is uploaded automatically.** Attach it yourself with reproduction steps, expected/actual behavior and the error ID. **Copy troubleshooting summary** copies the version, latest error ID and log-health information without the log path.
 
+HTTP response request/error IDs match the corresponding diagnostic record.
+Desktop generates opaque IDs rather than persisting caller-supplied request IDs.
+Native save and drag-and-drop failures retain readable error messages even when
+the native command returns a structured error code. Diagnostic dialogs retain
+their localized retry guidance rather than displaying raw exceptions.
+
 Normal capture is INFO and above. **Enable detailed logging for 30 minutes** adds safe request/attempt/usage observations, never content; it expires automatically, can be stopped early and resets on restart. Reproduce the issue while it is enabled, then export. Logging settings do not change translation configuration or caches.
 
 The native process is the only file writer. Logs normally live in `<workspace>/diagnostics/`, rotate at 10 MiB or 24 hours, and have a 200 MiB total limit; files last written over 7 days ago are removed. Export additionally filters individual records to the selected time range. If that location is unavailable, Desktop tries a workspace-scoped folder under `Wenyi Desktop Logs` in the platform state/log location (Linux: `$XDG_STATE_HOME` or `~/.local/state`; macOS: `~/Library/Logs`; Windows: `%LOCALAPPDATA%`). The settings page shows the actual folder, stored size and dropped-record count. Both locations failing leaves only a bounded memory buffer; export before exiting. A previous active-session marker is reported as an unclean exit, not proof of a crash.

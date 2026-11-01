@@ -10,6 +10,7 @@ import anyio
 from fastapi import WebSocketDisconnect
 from wenyi_backend.application import create_app as create_http_app
 from wenyi_backend.context import BackendContext, use_context
+from wenyi_core.observability import configure_logging
 
 from .babeldoc_plugin import BabeldocPlugin
 from .diagnostics import DiagnosticsMiddleware, Reporter, scope
@@ -132,6 +133,9 @@ def create_app(
     from .desktop import ORIGINS
     from .routers import babeldoc_plugin, credentials, desktop_export, external_credentials
 
+    # The sidecar owns its own stderr; stdout carries the parent/child protocol.
+    configure_logging(service="wenyi-desktop")
+
     if context is None:
         if workspace is None:
             raise ValueError("Desktop requires an explicit workspace")
@@ -156,7 +160,12 @@ def create_app(
                     context.settings_store.credentials.clear_session()
                     context.repository.close()
 
-    app = create_http_app(context, lifespan=lifespan, origins=list(ORIGINS))
+    app = create_http_app(
+        context,
+        lifespan=lifespan,
+        origins=list(ORIGINS),
+        handle_errors=diagnostics is None,
+    )
     app.include_router(credentials.router)
     app.include_router(desktop_export.router)
     app.include_router(external_credentials.router)

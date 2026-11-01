@@ -27,6 +27,7 @@ class LLMClient(ABC):
         self.usage = UsageTracker()
         self._event_sink: EventSink | None = None
         self._event_sink_lock = threading.Lock()
+        self._event_listeners: dict[object, EventSink] = {}
         self._event_observer: ContextVar[EventSink | None] = ContextVar(
             "llm_event_observer", default=None
         )
@@ -45,6 +46,18 @@ class LLMClient(ABC):
         finally:
             self._event_observer.reset(token)
 
+    @contextmanager
+    def observe_events(self, observer: EventSink) -> Iterator[None]:
+        """Observe this client's threads independently of ledger sinks and scoped capture."""
+        identity = object()
+        with self._event_sink_lock:
+            self._event_listeners[identity] = observer
+        try:
+            yield
+        finally:
+            with self._event_sink_lock:
+                del self._event_listeners[identity]
+
     def _emit_event(self, event: str, **data: Any) -> None:
         """Emit provider events safely across threads; logging failures must not hide model
         exceptions.
@@ -56,6 +69,12 @@ class LLMClient(ABC):
                     sink(event, **data)
                 except Exception:  # noqa: BLE001 - Logging must not change model-call semantics.
                     self._log_event_sink_error(event)
+            listeners = tuple(self._event_listeners.values())
+        for listener in listeners:
+            try:
+                listener(event, **data)
+            except Exception:  # noqa: BLE001 - Observability must not change model results.
+                self._log_event_sink_error(event)
         observer = self._event_observer.get()
         if observer is not None:
             try:

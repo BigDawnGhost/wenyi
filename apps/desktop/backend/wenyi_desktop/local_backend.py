@@ -475,6 +475,12 @@ class LocalBackend:
         """Return durable jobs for startup recovery."""
         return self._list("jobs")
 
+    def queued_job_count(self) -> int:
+        with self.transaction(write=False) as connection:
+            return connection.execute(
+                "SELECT count(*) FROM jobs WHERE json_extract(document, '$.status')='queued'"
+            ).fetchone()[0]
+
     def set_job_status(
         self,
         job_id: int,

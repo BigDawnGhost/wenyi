@@ -87,13 +87,17 @@ From the repository root:
 ```bash
 uv sync --locked --all-packages --group dev
 uv run --no-sync python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
-uv run --no-sync pytest -q -m "not integration"  # No external test services.
-uv run --no-sync pytest -q -m integration        # Isolated service tests.
-uv run --no-sync pytest -q                      # Full collection, as before.
+uv run --no-sync pytest -q -n auto -m "not integration"  # No external test services.
+uv run --no-sync pytest -q -n 2 -m integration           # Isolated service tests.
+uv run --no-sync pytest -q -n auto                       # Full collection.
 ```
+
+Scale the run to the risk instead of always running everything. A change confined to one domain needs that domain's tests plus the suite that surrounds it; run the whole collection once when a batch is finished, and once more before pushing. Keep `-n auto`: the full collection takes roughly 80-120 s in parallel versus several minutes serially. Integration is capped at two workers because it holds real PostgreSQL and Redis connections.
 
 The vocabulary preparation command downloads `cl100k_base` if it is not cached yet; prepare it while online before running offline tests. Tests keep the real tokenizer rather than replacing token-budget semantics with a fake. CI prepares the vocabulary before regression steps, so cold downloads do not consume local-job test timeouts.
 
 API tests that depend on the `pg_pool` fixture (including indirect dependencies) automatically receive the `integration` marker. Parameters that request PostgreSQL fixtures dynamically must mark that parameter explicitly; file-storage cases remain offline. Local SQLite, subprocess, crash-recovery, and workflow tests stay in the offline suite.
 
-Set `WENYI_TEST_DATABASE_URL` and `WENYI_TEST_REDIS_URL` only to isolated test services. PostgreSQL fixtures create a private schema and drop it afterward. Docker proxy tests are also marked `integration` and additionally require `WENYI_TEST_DOCKER=1`. Missing services produce skips, not successful integration validation. CI runs both selections on Python 3.10 and 3.12 with PostgreSQL and Redis enabled; Desktop packaging retains its platform-specific tests.
+Set `WENYI_TEST_DATABASE_URL` and `WENYI_TEST_REDIS_URL` only to isolated test services. PostgreSQL fixtures create a private schema and drop it afterward. Docker proxy tests are also marked `integration` and additionally require `WENYI_TEST_DOCKER=1`. Missing services produce skips, not successful integration validation.
+
+CI runs both selections on Python 3.10 and 3.12 with PostgreSQL and Redis enabled, and applies the same layering locally: a `changes` job classifies each pull request so a documentation-only change skips the Python and web jobs entirely, while a push to `main` and a manual dispatch always run everything. Both Python steps use `pytest-xdist`, with integration capped at two workers. Desktop keeps a smoke tier on pull requests and builds every platform only for a release or a manual dispatch. Integration retries once, but any test that only passes on the retry is listed as flaky in the job summary, so a retry never hides a real problem.

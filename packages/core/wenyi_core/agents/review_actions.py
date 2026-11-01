@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from ..config import Config
+from ..errors import WenyiError
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
 from ..llm.retrying import is_resumable_provider_interrupt
@@ -14,7 +15,7 @@ from ..review.contracts import EvidenceTools, ReviewTrace
 from ..review.models import clean_text
 
 
-class ReviewLoopProtocolError(ValueError):
+class ReviewLoopProtocolError(WenyiError, ValueError):
     """The agent loop returned content that violates the action protocol."""
 
 

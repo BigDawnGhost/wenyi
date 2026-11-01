@@ -2,6 +2,7 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { useI18n } from "../../i18n";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "../../lib/toast";
+import { errorMessage } from "../../lib/error-codes";
 import { Link, Outlet } from "react-router-dom";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
 import { Button } from "../../components/ui/button";
@@ -33,7 +34,7 @@ export default function Dashboard() {
     },
     onError: (error) =>
       toast.error(
-        tr("dashboard.couldNotDeleteProject", { error: error.message }),
+        tr("dashboard.couldNotDeleteProject", { error: errorMessage(error, tr) }),
       ),
   });
 

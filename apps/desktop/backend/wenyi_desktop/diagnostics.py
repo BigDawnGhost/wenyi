@@ -225,6 +225,9 @@ class DiagnosticsMiddleware:
             return
         started = time.monotonic()
         request_id = uuid4().hex
+        # The outer owner chooses an opaque ID; inner middleware must reuse it.
+        # Never persist an arbitrary caller-supplied header in Desktop diagnostics.
+        asgi_scope.setdefault("state", {})["request_id"] = request_id
         status = 500
         error_id = None
         response_started = False
@@ -235,10 +238,15 @@ class DiagnosticsMiddleware:
                 response_started = True
                 status = message["status"]
                 headers = list(message.get("headers", []))
-                headers.append((b"x-request-id", request_id.encode()))
+                present = {key.lower() for key, _ in headers}
+                # The shared request-context middleware runs inside this layer and
+                # may already have stamped the response; keep a single copy.
+                if b"x-request-id" not in present:
+                    headers.append((b"x-request-id", request_id.encode()))
                 if status >= 500:
-                    error_id = error_id or uuid4().hex
-                    headers.append((b"x-error-id", error_id.encode()))
+                    error_id = request_id
+                    if b"x-error-id" not in present:
+                        headers.append((b"x-error-id", error_id.encode()))
                 # Merge with CORS rather than replace its Content-Disposition exposure.
                 exposed = [
                     value
@@ -265,7 +273,7 @@ class DiagnosticsMiddleware:
                 await self.app(asgi_scope, receive, observe)
         except Exception as error:
             fields.update(failure_attributes(error))
-            error_id = error_id or uuid4().hex
+            error_id = request_id
             if response_started:
                 raise
             # Own unexpected failures before headers: return the same safe ID that we record.

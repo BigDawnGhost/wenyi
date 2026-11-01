@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 
+from ..errors import CHAPTER_NOT_FOUND, SEGMENT_NOT_FOUND, ApiError
 from ..project_service import require_book
 from ..review_presentation import review_items
 from ..schemas import (
@@ -100,10 +101,10 @@ def edit_segment(pid: str, ci: int, seg_idx: int, body: SegmentEdit) -> dict:
         try:
             chapter = storage.load_chapter(ci)
         except KeyError:
-            raise HTTPException(404, "chapter not found") from None
+            raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found") from None
         segment = next((item for item in chapter.segments if item.index == seg_idx), None)
         if segment is None:
-            raise HTTPException(404, "segment not found")
+            raise ApiError(SEGMENT_NOT_FOUND, 404, "segment not found")
         before = segment.target
         if before != body.expected_target:
             raise HTTPException(
@@ -152,7 +153,7 @@ def mark_reviewed(pid: str, ci: int) -> dict:
         try:
             chapter = storage.load_chapter(ci)
         except KeyError:
-            raise HTTPException(404, "chapter not found") from None
+            raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found") from None
         if any(segment.target is None for segment in chapter.text_segments):
             raise HTTPException(409, "Translate every text segment before marking review complete")
         chapter.meta["review_passed"] = True

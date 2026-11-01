@@ -1,0 +1,107 @@
+"""The run report is read-only and must survive a partial event log."""
+
+import json
+from io import StringIO
+from typing import Any
+
+from rich.console import Console
+from typer.testing import CliRunner
+from wenyi_cli.cli import create_app
+from wenyi_cli.commands.run_report import build_report
+from wenyi_core.llm.usage import UsageSample, UsageTracker
+from wenyi_core.pipeline.runstore import RunStore
+
+
+class FakeStore:
+    def __init__(self, tmp_path):
+        self.run_dir = str(tmp_path)
+        self.event_log_path = str(tmp_path / "events.jsonl")
+        self._usage: dict[str, Any] | None = None
+
+    def load_usage(self):
+        return self._usage
+
+
+def write_events(store, events):
+    with open(store.event_log_path, "w", encoding="utf-8") as handle:
+        for event in events:
+            handle.write(json.dumps(event) + "\n")
+
+
+def test_a_failed_run_reports_the_error_type_and_traceback(tmp_path):
+    store = FakeStore(tmp_path)
+    write_events(
+        store,
+        [
+            {"event": "chapter_done", "index": 1},
+            {"event": "llm_retry_wait", "provider": "openai"},
+            {
+                "event": "pipeline_error",
+                "error_type": "ProviderRequestError",
+                "error": "Model request failed",
+                "run_id": "run-7",
+                "traceback": "Traceback ...",
+            },
+        ],
+    )
+    report = build_report(store)
+    assert report["events"] == 3
+    assert report["failures"] == 1
+    assert report["retries"] == 1
+    assert report["last_failure"]["error_type"] == "ProviderRequestError"
+    assert report["last_failure"]["run_id"] == "run-7"
+
+
+def test_a_torn_final_line_keeps_the_earlier_records(tmp_path):
+    store = FakeStore(tmp_path)
+    with open(store.event_log_path, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps({"event": "chapter_done"}) + "\n")
+        # An interrupted append leaves half a record behind.
+        handle.write('{"event": "pipeline_er')
+    report = build_report(store)
+    assert report["events"] == 1
+    assert report["failures"] == 0
+
+
+def test_a_run_without_failures_says_so(tmp_path):
+    store = FakeStore(tmp_path)
+    write_events(store, [{"event": "chapter_done"}])
+    report = build_report(store)
+    assert report["last_failure"] is None
+    assert report["pauses"] == 0
+
+
+def test_usage_totals_come_from_the_ledger(tmp_path):
+    store = FakeStore(tmp_path)
+    write_events(store, [])
+    tracker = UsageTracker()
+    tracker.record("cheap", UsageSample(120, 30, 150, cache_hit_tokens=40))
+    store._usage = tracker.summary()
+    report = build_report(store)
+    assert report["usage"]["prompt_tokens"] == 120
+    assert report["usage"]["completion_tokens"] == 30
+    assert report["usage"]["cache_hit_tokens"] == 40
+
+
+def test_inspect_run_displays_the_real_usage_schema(tmp_path, monkeypatch):
+    store = RunStore(str(tmp_path / "run"))
+    store.save_manifest({"chapters": []})
+    tracker = UsageTracker()
+    tracker.record("cheap", UsageSample(120, 30, 150, cache_hit_tokens=40))
+    store.save_usage(tracker.summary())
+    monkeypatch.setattr("wenyi_cli.commands.inspection.runstore_for_cli", lambda *a, **kw: store)
+    output = StringIO()
+    app = create_app(console=Console(file=output, width=120))
+    result = CliRunner().invoke(
+        app, ["-c", str(tmp_path / "config.yaml"), "inspect-run", "synthetic.txt"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Tokens: in 120  out 30  cache read 40" in output.getvalue()
+
+
+def test_a_missing_run_directory_reports_empty_rather_than_failing(tmp_path):
+    store = FakeStore(tmp_path)
+    report = build_report(store)
+    assert report["events"] == 0
+    assert report["failures"] == 0
+    assert report["usage"] == {}

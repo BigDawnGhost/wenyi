@@ -18,6 +18,13 @@ from wenyi_desktop import local_runtime
 from wenyi_desktop.local_runtime import LocalRuntime, ProgressHub
 from wenyi_desktop.main import create_context
 
+# These cases drive one LocalRuntime through admission, supervision and shutdown.
+# Their assertions depend on how the event loop interleaves those tasks, so they
+# stay on a single worker: under -n auto the loop can schedule a supervisor
+# before or after the test looks, which is a scheduling difference rather than a
+# behaviour difference. --dist loadgroup (already used in CI) keeps them together.
+pytestmark = pytest.mark.xdist_group("local-runtime")
+
 
 @pytest.fixture
 def catalog(tmp_path):

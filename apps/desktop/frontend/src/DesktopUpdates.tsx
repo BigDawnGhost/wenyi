@@ -6,6 +6,7 @@ import { useDesktopI18n } from "./i18n";
 import { useCredentialSafety } from "./updateSafety";
 import { ReleaseNotes } from "./ReleaseNotes";
 import { TransferProgress } from "./TransferProgress";
+import { ipcFailure } from "./ipcError";
 
 type Status = {
   currentVersion: string;
@@ -17,6 +18,16 @@ type Status = {
   total?: number;
   error?: "check_failed" | "download_failed" | "install_failed" | "busy" | "unavailable";
 };
+// Command code -> the label this page already knows how to render. The codes
+// come from apps/desktop/src/{updates,native_export,native_drop,diagnostics_ui}.rs.
+const SUCCESS_LABELS: Record<string, NonNullable<Status["error"]>> = {
+  update_busy: "busy",
+  update_unavailable: "unavailable",
+  update_check_failed: "check_failed",
+  update_download_failed: "download_failed",
+  update_install_failed: "install_failed",
+};
+
 function invoke<T>(command: string): Promise<T> {
   const native = (window as unknown as {
     __TAURI_INTERNALS__?: { invoke: <R>(command: string) => Promise<R> };
@@ -55,9 +66,12 @@ export function DesktopUpdates({ blocked, onInstalling }: {
       await invoke(`desktop_update_${action}`);
       await status.refetch();
     } catch (failure) {
-      const code = String(failure);
-      setError(code.includes("busy") ? "busy" : code.includes("unavailable") ? "unavailable"
-        : action === "install" ? "install_failed" : action === "download" ? "download_failed" : "check_failed");
+      // The native command reports a stable code; map it to the label the
+      // settings page shows. An unknown code falls back to the action's own
+      // failure label, which is what the old substring search did by default.
+      const { code } = ipcFailure(failure);
+      setError(SUCCESS_LABELS[code] ?? (action === "install" ? "install_failed"
+        : action === "download" ? "download_failed" : "check_failed"));
       setInstalling(false);
     } finally { setPending(false); }
   }

@@ -8,7 +8,7 @@ from enum import Enum
 import typer
 from rich.progress import Progress
 from wenyi_core.config import PipelineConfig
-from wenyi_core.ingest.errors import IngestError
+from wenyi_core.errors import WenyiError
 from wenyi_core.storage.protocol import STATUS_DONE
 from wenyi_core.timing import load_timing
 
@@ -58,7 +58,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 console.print("Source parsed. AI preparation has not been run by this command.")
             finally:
                 store.close()
-        except (IngestError, ImportError, OSError, ValueError, RuntimeError) as error:
+        except (WenyiError, ImportError, OSError, ValueError, RuntimeError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
 
@@ -90,7 +90,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             )
         except typer.Exit:
             raise
-        except (IngestError, ImportError, OSError, ValueError, RuntimeError) as error:
+        except (WenyiError, ImportError, OSError, ValueError, RuntimeError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
 
@@ -305,7 +305,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 store = orch.prepare_for_translation(input_path, progress=cb)
         except typer.Exit:
             raise
-        except (IngestError, ImportError, OSError, ValueError, RuntimeError) as error:
+        except (WenyiError, ImportError, OSError, ValueError, RuntimeError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
 
@@ -428,7 +428,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 result = orch.run_review(input, progress=cb)
         except typer.Exit:
             raise
-        except (IngestError, ImportError, OSError, ValueError, RuntimeError) as error:
+        except (WenyiError, ImportError, OSError, ValueError, RuntimeError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
 

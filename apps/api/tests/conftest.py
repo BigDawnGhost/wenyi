@@ -20,6 +20,7 @@ from wenyi_api.config import Settings
 from wenyi_api.main import create_app
 from wenyi_api.storage_pg import PostgresStorage
 from wenyi_backend.context import ContextMiddleware, current_context, use_context
+from wenyi_backend.metrics import Metrics
 from wenyi_backend.routers import chapters, export, glossary, review, style, subtitles
 from wenyi_backend.routers import dependencies as job_service
 from wenyi_core.storage.file import FileStorage
@@ -27,7 +28,10 @@ from wenyi_core.storage.file import FileStorage
 
 @pytest.fixture(autouse=True)
 def web_context(tmp_path):
-    context = create_context(replace(Settings(), data_dir=str(tmp_path), api_token=None))
+    context = replace(
+        create_context(replace(Settings(), data_dir=str(tmp_path), api_token=None)),
+        metrics=Metrics(),
+    )
     with use_context(context):
         yield context
 
@@ -109,6 +113,7 @@ def api(monkeypatch, pg_pool, tmp_path):
     context = replace(
         create_context(overrides),
         build_client=lambda cfg: factory.build_client(cfg),
+        metrics=Metrics(),
     )
     postgres_repository(context)._pool = pg_pool
     queue = []

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "../../lib/toast";
+import { errorMessage } from "../../lib/error-codes";
 import { api, isProjectBusy } from "../../api/client";
 import type { GlossaryExportFormat, Term } from "../../api/types";
 import { useProjectQuery } from "../../lib/projectQuery";
@@ -218,7 +219,7 @@ export default function GlossaryPage() {
       invalidate();
       toast.success(tr("glossary.deleted"));
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(errorMessage(e, tr)),
   });
   const resolve = useMutation({
     mutationFn: ({
@@ -234,7 +235,7 @@ export default function GlossaryPage() {
       invalidate();
       toast.success(tr("glossary.conflictResolved"));
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(errorMessage(e, tr)),
   });
 
   // batch ops
@@ -267,7 +268,7 @@ export default function GlossaryPage() {
       const saved = await api.downloadGlossary(pid, fmt);
       if (saved) toast.success(tr("export.savedTo", { path: saved.path }));
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error) => toast.error(errorMessage(error, tr)),
   });
 
   const handleExport = (fmt: GlossaryExportFormat) => {
@@ -956,7 +957,7 @@ function ImportDialog({
         try {
           items = parseCsv(text);
         } catch (error) {
-          toast.error((error as Error).message);
+          toast.error(errorMessage(error, tr));
           return;
         }
       } else {

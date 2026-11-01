@@ -11,6 +11,7 @@ from wenyi_core.timing import load_timing
 from wenyi_cli.commands import presentation
 
 from .context import ContextAccessor
+from .run_report import build_report
 from .validation import (
     require_input_file,
     resolve_output_format,
@@ -91,6 +92,45 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         console.print("Glossary: ", g.stats())
         g.close()
         presentation.print_timing(console, load_timing(store.run_dir))
+
+    @app.command(rich_help_panel="State and output")
+    def inspect_run(
+        input: str = typer.Argument(..., help="Source file with existing translation state"),
+        verbose: bool = typer.Option(False, "--verbose", help="Include the last failure traceback"),
+    ) -> None:
+        """Summarize one run: failures, retries, timing and token usage, read-only."""
+        console = context().console
+        config = context().load_config()
+        store = runstore_for_cli(config, input, console=console)
+        if not store.exists():
+            console.print("[yellow]No progress found. Run prepare or translate first.[/]")
+            raise typer.Exit(1)
+
+        report = build_report(store)
+        console.print(f"Run: [bold]{report['run_dir']}[/]")
+        console.print(
+            f"  Events {report['events']}  Failures {report['failures']}  "
+            f"Retries {report['retries']}  Pauses {report['pauses']}"
+        )
+        failure = report["last_failure"]
+        if failure:
+            # The type is what makes a failure diagnosable; the text alone is not.
+            console.print(
+                f"  Last failure: [red]{failure['error_type'] or 'unknown'}[/] {failure['error'] or ''}"
+            )
+            if verbose and failure.get("traceback"):
+                console.print(failure["traceback"])
+        else:
+            console.print("  Last failure: none")
+
+        usage = report["usage"]
+        if usage:
+            console.print(
+                "  Tokens: "
+                f"in {usage.get('prompt_tokens', 0)}  out {usage.get('completion_tokens', 0)}  "
+                f"cache read {usage.get('cache_hit_tokens', 0)}"
+            )
+        presentation.print_timing(console, report["timing"])
 
     @app.command(rich_help_panel="State and output")
     def assemble(

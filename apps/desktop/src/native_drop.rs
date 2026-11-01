@@ -17,7 +17,7 @@ use tauri::Manager;
 const TTL: Duration = Duration::from_secs(15 * 60);
 const MAX_GRANTS: usize = 2;
 const CHUNK: usize = 64 * 1024;
-type Result<T> = std::result::Result<T, String>;
+type Result<T> = std::result::Result<T, crate::ipc_error::IpcError>;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,13 +100,19 @@ impl Grant {
                 | "docx"
                 | "srt"
         ) {
-            return Err("Unsupported input format.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "drop_unsupported_format",
+                "Unsupported input format.",
+            ));
         }
         let file = open_regular(path).map_err(|_| "Select a readable regular file.")?;
         let stamp = Stamp::read(&file.metadata().map_err(|_| "Cannot inspect source file.")?)
             .map_err(|_| "Cannot inspect source file.")?;
         if stamp.size == 0 {
-            return Err("Source file is empty.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "drop_empty_source",
+                "Source file is empty.",
+            ));
         }
         let mut random = [0; 32];
         getrandom::fill(&mut random).map_err(|_| "Secure randomness unavailable.")?;
@@ -184,15 +190,24 @@ impl Grants {
     // Only the Rust OS Drop event handler calls this method.
     fn drop_files(&self, paths: &[PathBuf]) -> Result<Source> {
         if self.1.load(Ordering::SeqCst) {
-            return Err("A source upload is already running.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "drop_upload_busy",
+                "A source upload is already running.",
+            ));
         }
         if paths.len() != 1 {
-            return Err("Select exactly one source file.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "drop_selection_invalid",
+                "Select exactly one source file.",
+            ));
         }
         let mut grants = self.0.lock().unwrap();
         grants.retain(|_, grant| grant.expires > Instant::now());
         if grants.len() >= MAX_GRANTS {
-            return Err("Too many pending files. Clear the selection and try again.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "drop_too_many_files",
+                "Too many pending files. Clear the selection and try again.",
+            ));
         }
         let grant = Grant::new(&paths[0])?;
         let source = grant.source.clone();
@@ -263,7 +278,10 @@ fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<
         || base.query().is_some()
         || base.fragment().is_some()
     {
-        return Err("Invalid local service address.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "drop_connection_invalid",
+            "Invalid local service address.",
+        ));
     }
     grant
         .validate()
@@ -294,9 +312,12 @@ fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<
         .send()
         .map_err(|_| "Local upload failed. Drop the source again to retry.")?;
     if !response.status().is_success() {
-        return Err(format!(
-            "Local upload failed (HTTP {}). Drop the source again to retry.",
-            response.status().as_u16()
+        return Err(crate::ipc_error::IpcError::new(
+            "drop_upload_failed",
+            format!(
+                "Local upload failed (HTTP {}). Drop the source again to retry.",
+                response.status().as_u16()
+            ),
         ));
     }
     let mut bytes = Vec::new();
@@ -305,14 +326,22 @@ fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<
         .read_to_end(&mut bytes)
         .map_err(|_| "Could not read local upload result.")?;
     if bytes.len() > 1024 * 1024 {
-        return Err("Local upload response was too large.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "drop_response_invalid",
+            "Local upload response was too large.",
+        ));
     }
-    serde_json::from_slice(&bytes).map_err(|_| "Invalid local upload response.".into())
+    serde_json::from_slice(&bytes).map_err(|_| {
+        crate::ipc_error::IpcError::new("drop_response_invalid", "Invalid local upload response.")
+    })
 }
 
 fn trusted_window(window: &tauri::WebviewWindow) -> Result<()> {
     if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
-        return Err("Untrusted window.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "drop_untrusted_window",
+            "Untrusted window.",
+        ));
     }
     Ok(())
 }
@@ -358,7 +387,10 @@ pub async fn native_drop_upload(
     let connection = {
         let state = state.lock().unwrap();
         if state.closing || state.error.is_some() {
-            return Err("Local service is unavailable.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "drop_engine_unavailable",
+                "Local service is unavailable.",
+            ));
         }
         state
             .connection
@@ -392,6 +424,12 @@ fn physical_drag_position(
         1.0
     };
     tauri::PhysicalPosition::new(position.x * scale, position.y * scale)
+}
+
+fn error_event(error: crate::ipc_error::IpcError, position: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "error", "code": error.code, "message": error.message, "position": position,
+    })
 }
 
 pub fn event(window: &tauri::WebviewWindow, event: &tauri::DragDropEvent) {
@@ -428,7 +466,7 @@ pub fn event(window: &tauri::WebviewWindow, event: &tauri::DragDropEvent) {
                     serde_json::json!({"kind": "drop", "source": source, "position": position(p)})
                 }
                 Err(message) => {
-                    serde_json::json!({"kind": "error", "message": message, "position": position(p)})
+                    error_event(message, position(p))
                 }
             }
         }
@@ -443,6 +481,17 @@ pub fn event(window: &tauri::WebviewWindow, event: &tauri::DragDropEvent) {
 mod tests {
     use super::*;
     use std::{io::Write, net::TcpListener, thread};
+
+    #[test]
+    fn drag_errors_keep_a_string_message_for_the_renderer() {
+        let value = error_event(
+            crate::ipc_error::IpcError::new("drop_empty_source", "Source file is empty."),
+            serde_json::json!({"x": 1, "y": 2}),
+        );
+        assert_eq!(value["kind"], "error");
+        assert_eq!(value["code"], "drop_empty_source");
+        assert_eq!(value["message"].as_str(), Some("Source file is empty."));
+    }
 
     #[test]
     fn native_drag_positions_use_one_physical_pixel_contract() {
@@ -685,8 +734,8 @@ mod tests {
                 serde_json::json!({}),
             )
             .unwrap_err();
-            assert!(error.contains(&status[..3]));
-            assert!(!error.contains("private"));
+            assert!(error.message.contains(&status[..3]));
+            assert!(!error.message.contains("private"));
             server.join().unwrap();
             assert_eq!(
                 forbidden.accept().unwrap_err().kind(),
@@ -742,21 +791,27 @@ mod tests {
             } else {
                 MAX_SOURCE_IDENTITIES
             };
-            for i in 0..cap {
-                let path = fixture.0.join(format!("{i}.txt"));
-                if aliases {
-                    std::fs::hard_link(&source, &path).unwrap();
-                } else {
-                    std::fs::write(&path, b"source").unwrap();
-                }
-                saves
-                    .protect_source(path.clone(), File::open(&path).unwrap())
-                    .unwrap();
-                if aliases {
-                    // The ledger retains paths after unlinking; avoid exceeding
-                    // NTFS's per-file hard-link limit while filling its alias cap.
-                    std::fs::remove_file(path).unwrap();
-                }
+            // Fill to one below the cap without the thousands of real file
+            // operations this used to cost; 0.txt is reserved for a real file
+            // because the last assertions register it as a known pair.
+            let known = fixture.0.join("0.txt");
+            if aliases {
+                // The alias channel registers a real hard link of the source, so
+                // the known pair really shares one identity; the file must not
+                // exist yet for the link to be created.
+                std::fs::hard_link(&source, &known).unwrap();
+            } else {
+                std::fs::write(&known, b"source").unwrap();
+            }
+            saves
+                .protect_source(known.clone(), File::open(&known).unwrap())
+                .unwrap();
+            if aliases {
+                // The alias cap is what this branch exercises; the identity
+                // channel stays at one real entry so source_count is 1.
+                saves.prefill_aliases(cap);
+            } else {
+                saves.prefill_identities(cap);
             }
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
@@ -772,18 +827,14 @@ mod tests {
                 &saves,
             )
             .unwrap_err();
-            assert!(error.contains("limit reached"));
-            assert!(error.contains("No upload was started"));
+            assert!(error.message.contains("limit reached"));
+            assert!(error.message.contains("No upload was started"));
             assert_eq!(
                 listener.accept().unwrap_err().kind(),
                 io::ErrorKind::WouldBlock
             );
             assert_eq!(saves.source_count(), if aliases { 1 } else { cap });
             // Already reserved identity/alias pairs remain usable at capacity.
-            let known = fixture.0.join("0.txt");
-            if aliases {
-                std::fs::hard_link(&source, &known).unwrap();
-            }
             saves
                 .protect_source(known.clone(), File::open(known).unwrap())
                 .unwrap();

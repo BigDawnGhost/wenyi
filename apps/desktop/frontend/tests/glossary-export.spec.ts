@@ -48,27 +48,30 @@ for (const format of ["csv", "json", "apkg"] as const) {
   });
 }
 
-test("canceling a glossary save is quiet and allows retry; failures are visible", async ({ page }) => {
-  await page.goto(`/projects/${pid}/glossary`);
-  const button = page.getByRole("button", { name: "Export", exact: true });
-  await button.click();
-  await page.getByRole("button", { name: "Anki deck (.apkg)", exact: true }).click();
-  await expect(button).toBeDisabled();
-  await page.evaluate(() => {
-    (window as unknown as { finishGlossarySave: (value: unknown) => void }).finishGlossarySave(null);
+for (const structured of [false, true]) {
+  test(`canceling a glossary save allows retry; ${structured ? "structured" : "legacy"} failures are visible`, async ({ page }) => {
+    await page.goto(`/projects/${pid}/glossary`);
+    const button = page.getByRole("button", { name: "Export", exact: true });
+    await button.click();
+    await page.getByRole("button", { name: "Anki deck (.apkg)", exact: true }).click();
+    await expect(button).toBeDisabled();
+    await page.evaluate(() => {
+      (window as unknown as { finishGlossarySave: (value: unknown) => void }).finishGlossarySave(null);
+    });
+    await expect(button).toBeEnabled();
+    await expect(page.getByText(/^Saved to /)).toHaveCount(0);
+    await button.click();
+    await page.getByRole("button", { name: "Anki deck (.apkg)", exact: true }).click();
+    await expect(button).toBeDisabled();
+    await page.evaluate(structured => {
+      const message = "The destination is read-only.";
+      (window as unknown as { failGlossarySave: (reason: unknown) => void })
+        .failGlossarySave(structured ? { code: "export_write_failed", message } : message);
+    }, structured);
+    await expect(page.getByText("The destination is read-only.", { exact: true })).toBeVisible();
+    await expect(button).toBeEnabled();
   });
-  await expect(button).toBeEnabled();
-  await expect(page.getByText(/^Saved to /)).toHaveCount(0);
-  await button.click();
-  await page.getByRole("button", { name: "Anki deck (.apkg)", exact: true }).click();
-  await expect(button).toBeDisabled();
-  await page.evaluate(() => {
-    (window as unknown as { failGlossarySave: (reason: string) => void })
-      .failGlossarySave("The destination is read-only.");
-  });
-  await expect(page.getByText("The destination is read-only.", { exact: true })).toBeVisible();
-  await expect(button).toBeEnabled();
-});
+}
 
 test("glossary export without native IPC reports an error instead of a browser download", async ({ page }) => {
   await page.goto(`/projects/${pid}/glossary`);

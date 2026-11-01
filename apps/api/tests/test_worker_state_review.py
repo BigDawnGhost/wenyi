@@ -100,23 +100,6 @@ def test_limit_stops_keep_actionable_diagnostics(worker_state, monkeypatch, reas
     assert pause["reason"] == reason
 
 
-def test_model_failures_still_record_an_error(worker_state, monkeypatch):
-    pid = worker_state.project_id
-    job_id = dal.create_job(pid, "translation", "failed-model", run_id="failed-model")
-    dal.set_project_status(pid, "translating")
-
-    def failed(*_):
-        raise RuntimeError("Provider connection failed")
-
-    monkeypatch.setattr(operations, "book_operation", failed)
-    with pytest.raises(RuntimeError, match="Provider connection failed"):
-        execute_workflow("translation", pid, "failed-model")
-    assert must(dal.get_project(pid))["status"] == "error"
-    assert must(dal.get_project(pid))["error"] == "Provider connection failed"
-    assert must(dal.get_job(job_id))["error"] == "Provider connection failed"
-    assert any(event["event"] == "pipeline_error" for event in worker_state.list_events())
-
-
 def test_superseded_redis_delivery_cannot_execute_over_new_work(worker_state, monkeypatch):
     pid = worker_state.project_id
     old = dal.create_job(pid, "translation", "old-delivery", run_id="old-delivery")

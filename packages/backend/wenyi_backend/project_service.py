@@ -18,6 +18,7 @@ from .config_documents import (
     project_llm,
 )
 from .context import BackendStorage
+from .errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from .global_settings import registered_models
 from .ports.projects import RUNNING_PROJECT_STATUSES, ProjectReader
 from .strategies import _saved_strategy_to_config
@@ -26,7 +27,7 @@ from .strategies import _saved_strategy_to_config
 def require_project(pid: str, projects: ProjectReader) -> dict:
     project = projects.get_project(pid)
     if project is None:
-        raise HTTPException(404, "project not found")
+        raise ApiError(PROJECT_NOT_FOUND, 404, "project not found")
     return project
 
 
@@ -43,10 +44,10 @@ def project_write(pid: str, projects: ProjectReader, storage_for: Callable[[str]
         with storage.lock(blocking=False):
             project = require_project(pid, projects)
             if busy(project):
-                raise HTTPException(409, "project already has a running task")
+                raise ApiError(PROJECT_BUSY, 409, "project already has a running task")
             yield project, storage
     except BlockingIOError as error:
-        raise HTTPException(409, "project already has a running task") from error
+        raise ApiError(PROJECT_BUSY, 409, "project already has a running task") from error
     finally:
         storage.close()
 

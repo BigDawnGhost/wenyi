@@ -1,5 +1,6 @@
 import type { ExportOptions } from "@wenyi/ui/platform";
 import type { GlossaryExportFormat } from "@wenyi/ui/api/types";
+import { asIpcError } from "./ipcError";
 
 export type SavedExport = { path: string };
 
@@ -19,7 +20,7 @@ export async function saveNativeExport(
       ...(exportId === undefined ? {} : { exportId }),
     });
   } catch (error) {
-    throw error instanceof Error ? error : new Error(String(error));
+    throw asIpcError(error);
   }
 }
 
@@ -32,6 +33,6 @@ export async function saveNativeGlossary(
   try {
     return await window.__TAURI_INTERNALS__.invoke("native_glossary_save", { projectId, format });
   } catch (error) {
-    throw error instanceof Error ? error : new Error(String(error));
+    throw asIpcError(error);
   }
 }

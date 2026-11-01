@@ -5,10 +5,11 @@ import shutil
 import time
 from pathlib import Path
 
-from fastapi import HTTPException
 from psycopg.types.json import Jsonb
 from wenyi_backend.context import BackendContext
+from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_backend.export_paths import EXPORT_LIMIT
+from wenyi_backend.metrics import Metrics
 from wenyi_core.llm.factory import build_client
 
 from . import dal
@@ -21,6 +22,7 @@ from .export_retention import (
     publish_export,
 )
 from .global_settings import PostgresSettings
+from .metrics import RedisCounters
 from .storage_pg import PostgresStorage
 from .telemetry import RedisTelemetry
 
@@ -84,7 +86,7 @@ class PostgresRepository:
         directory = Path(self.project_dir(pid))
         root = Path(self.settings.data_dir).resolve()
         if directory.is_symlink() or directory.resolve().parent != root:
-            raise HTTPException(409, "Project directory is outside DATA_DIR")
+            raise ApiError(PROJECT_BUSY, 409, "Project directory is outside DATA_DIR")
         with (
             project_write(pid, self, self.storage_for),
             export_history_session_lock(self.pool, pid) as connection,
@@ -99,13 +101,15 @@ class PostgresRepository:
             ).fetchone()
             connection.commit()
             if row and row[0]:
-                raise HTTPException(409, "A task is active; wait for it before deleting")
+                raise ApiError(PROJECT_BUSY, 409, "A task is active; wait for it before deleting")
             try:
                 if directory.exists():
                     shutil.rmtree(directory)
             except OSError as error:
-                raise HTTPException(
-                    409, "Could not remove project files; close files using this project and retry"
+                raise ApiError(
+                    PROJECT_BUSY,
+                    409,
+                    "Could not remove project files; close files using this project and retry",
                 ) from error
             dal.delete_project(pid, connection=connection)
             connection.commit()
@@ -113,6 +117,11 @@ class PostgresRepository:
     def health(self):
         with self.pool.connection() as conn:
             conn.execute("SELECT 1")
+
+    def queued_job_count(self) -> int:
+        with self.pool.connection() as connection:
+            row = connection.execute("SELECT count(*) FROM jobs WHERE status='queued'").fetchone()
+            return row[0]
 
     def admit_job(self, pid, kind, job_id, *, project_status, **kwargs):
         result = dal.create_job(pid, kind, job_id, status="queued", **kwargs)
@@ -187,7 +196,7 @@ class PostgresExports:
         with self.repository.pool.connection() as connection:
             export_history_lock(connection, pid)
             if connection.execute("SELECT 1 FROM projects WHERE id=%s", (pid,)).fetchone() is None:
-                raise HTTPException(404, "project not found")
+                raise ApiError(PROJECT_NOT_FOUND, 404, "project not found")
             export_id = dal.create_export(pid, fmt, options, connection=connection)
             job_id = dal.create_job(
                 pid,
@@ -247,4 +256,5 @@ def create_context(settings: Settings) -> BackendContext:
         update_term=repository.update_term,
         api_token=settings.api_token,
         remove_project=repository.remove_project,
+        metrics=Metrics(RedisCounters(settings.redis_url)),
     )

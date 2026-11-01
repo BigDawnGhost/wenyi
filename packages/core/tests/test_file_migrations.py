@@ -2,6 +2,7 @@
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from threading import Event
 
 import pytest
@@ -60,7 +61,10 @@ def test_atomic_publish_failure_preserves_original_and_can_resume(tmp_path, monk
     replace = artifacts.os.replace
 
     def fail_review(source, destination):
-        if destination == paths[1].resolve():
+        # Windows I/O uses extended-length paths, while tmp_path may use DOS
+        # spelling. Match file identity, not the spelling of the destination.
+        target = Path(destination)
+        if target.exists() and target.samefile(paths[1]):
             raise OSError("publication interrupted")
         replace(source, destination)
 
