@@ -11,7 +11,52 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      web: ${{ steps.filter.outputs.web }}
+    steps:
+      # Both downstream jobs need this one, so it must not fail on a push event:
+      # paths-filter diffs before..after locally there, which needs full history.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            # Anything that can affect the Python suite, plus the paths that must
+            # never be skipped: the shared config, the lockfile and CI itself.
+            python:
+              - "packages/**"
+              - "apps/api/**"
+              - "apps/desktop/backend/**"
+              - "scripts/**"
+              - "pyproject.toml"
+              - "uv.lock"
+              - ".github/workflows/**"
+              - "config.yaml"
+            # Anything that can affect typecheck, build or the browser specs.
+            web:
+              - "apps/web/**"
+              - "apps/desktop/frontend/**"
+              - "packages/ui/**"
+              - "packages/shared-schema/**"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - "pnpm-workspace.yaml"
+              - ".github/workflows/**"
+              - "apps/api/**"
+              - "pyproject.toml"
+              - "uv.lock"
+
   python:
+    needs: changes
+    # Filtering only applies to pull requests: a push to main and a manual run
+    # must always execute the full suite, so a wrong filter cannot ship a break.
+    if: github.event_name != 'pull_request' || needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -84,6 +129,8 @@ jobs:
           uv run --no-sync python scripts/check_backend_packages.py dist
 
   web:
+    needs: changes
+    if: github.event_name != 'pull_request' || needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
