@@ -17,9 +17,10 @@ jobs:
     outputs:
       python: ${{ steps.filter.outputs.python }}
       web: ${{ steps.filter.outputs.web }}
+      force: ${{ steps.filter.outputs.force }}
     steps:
-      # Both downstream jobs need this one, so it must not fail on a push event:
-      # paths-filter diffs before..after locally there, which needs full history.
+      # A push diffs the before/after commits locally, so this job needs full
+      # history on every event that can reach it.
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
@@ -27,17 +28,14 @@ jobs:
         id: filter
         with:
           filters: |
-            # Anything that can affect the Python suite, plus the paths that must
-            # never be skipped: the shared config, the lockfile and CI itself.
+            # Anything that can affect the Python suite. The paths that must never
+            # be skipped are not listed here: they set force below instead, so one
+            # shared reason can bypass both jobs.
             python:
               - "packages/**"
               - "apps/api/**"
               - "apps/desktop/backend/**"
               - "scripts/**"
-              - "pyproject.toml"
-              - "uv.lock"
-              - ".github/workflows/**"
-              - "config.yaml"
             # Anything that can affect typecheck, build or the browser specs.
             web:
               - "apps/web/**"
@@ -47,16 +45,23 @@ jobs:
               - "package.json"
               - "pnpm-lock.yaml"
               - "pnpm-workspace.yaml"
-              - ".github/workflows/**"
               - "apps/api/**"
+            # A path whose change can invalidate either filter's assumption: the
+            # shared configuration, both lockfiles and the CI definition itself.
+            # Touching one runs both jobs regardless of what else changed.
+            force:
               - "pyproject.toml"
               - "uv.lock"
+              - "config.yaml"
+              - ".github/workflows/**"
 
   python:
     needs: changes
-    # Filtering only applies to pull requests: a push to main and a manual run
-    # must always execute the full suite, so a wrong filter cannot ship a break.
-    if: github.event_name != 'pull_request' || needs.changes.outputs.python == 'true'
+    # A manual run is always the full suite. A push and a pull request are both
+    # filtered: the merged commit was already tested on the pull request ref, and
+    # the nightly run covers what a stale filter could miss. `force` is the paths
+    # that invalidate the filter itself.
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.python == 'true' || needs.changes.outputs.force == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -134,7 +139,7 @@ jobs:
 
   web:
     needs: changes
-    if: github.event_name != 'pull_request' || needs.changes.outputs.web == 'true'
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.web == 'true' || needs.changes.outputs.force == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
