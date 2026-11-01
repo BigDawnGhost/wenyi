@@ -1,15 +1,22 @@
 """The run report is read-only and must survive a partial event log."""
 
 import json
+from io import StringIO
+from typing import Any
 
+from rich.console import Console
+from typer.testing import CliRunner
+from wenyi_cli.cli import create_app
 from wenyi_cli.commands.run_report import build_report
+from wenyi_core.llm.usage import UsageSample, UsageTracker
+from wenyi_core.pipeline.runstore import RunStore
 
 
 class FakeStore:
     def __init__(self, tmp_path):
         self.run_dir = str(tmp_path)
         self.event_log_path = str(tmp_path / "events.jsonl")
-        self._usage = None
+        self._usage: dict[str, Any] | None = None
 
     def load_usage(self):
         return self._usage
@@ -67,10 +74,29 @@ def test_a_run_without_failures_says_so(tmp_path):
 def test_usage_totals_come_from_the_ledger(tmp_path):
     store = FakeStore(tmp_path)
     write_events(store, [])
-    store._usage = {"totals": {"input_tokens": 120, "output_tokens": 30}}
+    tracker = UsageTracker()
+    tracker.record("cheap", UsageSample(120, 30, 150, cache_hit_tokens=40))
+    store._usage = tracker.summary()
     report = build_report(store)
-    assert report["usage"]["input_tokens"] == 120
-    assert report["usage"]["output_tokens"] == 30
+    assert report["usage"]["prompt_tokens"] == 120
+    assert report["usage"]["completion_tokens"] == 30
+    assert report["usage"]["cache_hit_tokens"] == 40
+
+
+def test_inspect_run_displays_the_real_usage_schema(tmp_path, monkeypatch):
+    store = RunStore(str(tmp_path / "run"))
+    store.save_manifest({"chapters": []})
+    tracker = UsageTracker()
+    tracker.record("cheap", UsageSample(120, 30, 150, cache_hit_tokens=40))
+    store.save_usage(tracker.summary())
+    monkeypatch.setattr("wenyi_cli.commands.inspection.runstore_for_cli", lambda *a, **kw: store)
+    output = StringIO()
+    app = create_app(console=Console(file=output, width=120))
+    result = CliRunner().invoke(
+        app, ["-c", str(tmp_path / "config.yaml"), "inspect-run", "synthetic.txt"]
+    )
+    assert result.exit_code == 0, result.output
+    assert "Tokens: in 120  out 30  cache read 40" in output.getvalue()
 
 
 def test_a_missing_run_directory_reports_empty_rather_than_failing(tmp_path):

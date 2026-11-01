@@ -82,8 +82,8 @@ test("failed native upload keeps the form and allows retry with a fresh source g
   await create.click();
   await expect.poll(async () => (await calls(page)).filter(call => call.command === "native_drop_upload").length).toBe(1);
   await page.evaluate(() => (window as unknown as {
-    failNativeUpload: (reason: string) => void;
-  }).failNativeUpload("Native upload unavailable"));
+    failNativeUpload: (reason: unknown) => void;
+  }).failNativeUpload({ code: "drop_upload_failed", message: "Native upload unavailable" }));
   await expect(dialog.getByText("Native upload unavailable", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Project name", { exact: true })).toHaveValue("Native book");
   await expect(dialog.getByText("retry.docx", { exact: true })).toBeVisible();

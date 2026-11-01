@@ -30,6 +30,8 @@ class JobAdmission(Protocol):
 
 
 class JobCatalog(JobRepository, JobAdmission, Protocol):
+    def queued_job_count(self) -> int: ...
+
     def create_job(
         self,
         pid: str,

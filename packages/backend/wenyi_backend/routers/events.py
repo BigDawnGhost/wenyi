@@ -25,7 +25,10 @@ def list_events(
             {
                 "id": r.get("_id"),
                 "type": r.get("event") or r.get("type", ""),
-                "payload": {k: v for k, v in r.items() if k not in ("_id", "_ts", "event")},
+                # Older ledgers may contain server-only diagnostics.
+                "payload": {
+                    k: v for k, v in r.items() if k not in ("_id", "_ts", "event", "traceback")
+                },
                 "created_at": r.get("_ts"),
             }
         )

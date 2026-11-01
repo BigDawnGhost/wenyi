@@ -127,8 +127,8 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         if usage:
             console.print(
                 "  Tokens: "
-                f"in {usage.get('input_tokens', 0)}  out {usage.get('output_tokens', 0)}  "
-                f"cache read {usage.get('cache_read_tokens', 0)}"
+                f"in {usage.get('prompt_tokens', 0)}  out {usage.get('completion_tokens', 0)}  "
+                f"cache read {usage.get('cache_hit_tokens', 0)}"
             )
         presentation.print_timing(console, report["timing"])
 

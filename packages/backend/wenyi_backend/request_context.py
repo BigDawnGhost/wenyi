@@ -21,6 +21,9 @@ def new_request_id() -> str:
 
 def request_id_from(scope: Scope) -> str:
     """Reuse an inbound correlation ID when a caller already supplied one."""
+    owned = scope.get("state", {}).get("request_id")
+    if isinstance(owned, str) and owned:
+        return owned
     for key, value in scope.get("headers", []):
         if key.lower() == REQUEST_ID_HEADER.encode():
             supplied = value.decode("latin1").strip()
@@ -37,8 +40,9 @@ class RequestContextMiddleware:
     response leaking any failure detail.
     """
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, *, handle_errors: bool = True) -> None:
         self.app = app
+        self.handle_errors = handle_errors
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -72,6 +76,9 @@ class RequestContextMiddleware:
         try:
             await self.app(scope, receive, tracked_send)
         except Exception:
+            if not self.handle_errors:
+                # An explicit outer error responder owns the body and safe diagnostics.
+                raise
             # Starlette's ServerErrorMiddleware sits outside user middleware, so an
             # unhandled failure would otherwise produce a response we cannot stamp.
             # Emit a correlated 500 here, then re-raise exactly like Starlette does:

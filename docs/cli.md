@@ -262,6 +262,13 @@ There is no `glossary.db` or `reviews/` tree for subtitles. Package code lives i
 
 Each target directory stores cumulative token usage in `usage.json` and appends stage events and retries to `events.jsonl`. Review directories also record session usage; each increment is merged into the cumulative ledger once.
 
+Use `uv run wenyi inspect-run book.epub` to read a summary of the saved events,
+timing and cumulative usage for the selected target, without calling a model.
+Its `Tokens: in / out / cache read` values come from `prompt_tokens`,
+`completion_tokens` and `cache_hit_tokens` respectively; these are target-ledger
+totals across resumes, not just the last invocation. Only failures and retries
+present in the saved event log can appear in the summary.
+
 Cache accounting separates reads (`cache_hit_tokens`), writes (`cache_write_tokens`),
 ordinary input (`uncached_tokens`), and unclassified input (`cache_unknown_tokens`).
 These four buckets sum to `prompt_tokens`. The displayed rate and `cache_hit_rate`

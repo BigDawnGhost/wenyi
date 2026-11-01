@@ -8,7 +8,8 @@
   },
   "handlers": {
     "console": {
-      "class": "logging.StreamHandler",
+      "()": "wenyi_core.observability.console_handler",
+      "service": "wenyi-api",
       "formatter": "default",
       "stream": "ext://sys.stderr"
     }

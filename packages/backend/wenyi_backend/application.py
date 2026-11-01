@@ -31,7 +31,11 @@ from .routers import (
 
 
 def create_app(
-    context: BackendContext, *, lifespan=None, origins: list[str] | None = None
+    context: BackendContext,
+    *,
+    lifespan=None,
+    origins: list[str] | None = None,
+    handle_errors: bool = True,
 ) -> FastAPI:
     app = FastAPI(lifespan=lifespan, title="Wenyi API", version=__version__)
     app.state.backend = context
@@ -66,7 +70,7 @@ def create_app(
     )
     app.add_middleware(ContextMiddleware, context=context)
     # Added last, so it is the outermost layer and can stamp every response.
-    app.add_middleware(RequestContextMiddleware)
+    app.add_middleware(RequestContextMiddleware, handle_errors=handle_errors)
     for module in (
         health,
         strategies,

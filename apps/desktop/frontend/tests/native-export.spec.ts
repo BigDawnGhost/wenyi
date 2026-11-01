@@ -123,3 +123,23 @@ test("Desktop saving completes and reports its path after leaving the export pag
   });
   await expect(page.getByText("Saved to /fixture/destination/book.zh.docx")).toBeVisible();
 });
+
+test("structured native save failures retain their actionable message", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
+    window.__TAURI_INTERNALS__ = {
+      invoke: (command) => command === "native_export_save"
+        ? Promise.reject({
+            code: "export_destination_invalid",
+            message: "The original source cannot be overwritten.",
+          })
+        : Promise.resolve(null as never),
+    };
+  });
+  await fakeApi(page, {}, origin);
+  await page.goto(`/projects/${pid}/export`);
+  await page.getByRole("button", { name: "Generate export", exact: true }).click();
+  await expect(page.getByText("The original source cannot be overwritten.", { exact: true }))
+    .toBeVisible();
+  await expect(page.getByText("[object Object]", { exact: true })).toHaveCount(0);
+});

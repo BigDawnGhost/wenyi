@@ -344,6 +344,34 @@ Set `WENYI_TEST_DATABASE_URL` to run real PostgreSQL integration tests. Those te
 
 From `deploy/`, inspect task failures with `docker compose logs -f api worker export-worker`. Record offline/browser verification separately from real-model translation quality evaluation.
 
+### Correlation and metrics
+
+Responses include `X-Request-ID`; server failures also include `X-Error-ID`.
+Use these IDs to correlate HTTP failures with server logs. Docker's logging
+configuration emits one JSON record per log event, including its bound request
+ID. `WENYI_LOG_FORMAT=json` selects JSON for other entry points. Internal
+tracebacks stay in server logs, not the project event API; legacy event records
+are also filtered when returned.
+
+`GET /metrics` exposes Prometheus text using the same `API_TOKEN` authentication
+as other API routes. Configure the scraper's bearer token when authentication
+is enabled. API and workers must use the same Redis database:
+
+- `wenyi_tasks_total{status,code}` counts finished **workflow** tasks (`done`,
+  `paused`, `error`), not export tasks.
+- `wenyi_llm_retries_total{provider,reason}` counts actual retry waits, once per
+  call ID and attempt. Exhaustion notifications are not additional retries.
+- `wenyi_queue_depth` reads admitted, queued workflow and export jobs from the
+  project catalog; running jobs are excluded.
+
+Web counters are shared through Redis and last as long as those Redis keys.
+Recent task/retry identities are deduplicated with a bounded 20,000-entry window.
+Desktop instead keeps counters per application in memory and resets them on
+restart, while reading queue depth from its own SQLite catalog. Counter writes
+are best-effort and do not fail workflows; an unavailable metrics store or
+catalog returns HTTP 503 rather than a misleading zero snapshot. Metrics are
+not the usage/billing ledger, and Wenyi does not install a scraper automatically.
+
 ### Provider settings and workflow view
 
 Global **Settings** owns provider connections, model registration, default tiers and operation routes, and shared workflow defaults—not translation modes or workflow templates. Connection/model IDs can be renamed; referenced entries cannot be deleted. Restoring defaults loads a draft and takes effect only after saving. **Project settings** selects already registered models and adjusts other project workflow options; it does not register providers/models or switch the creation-time mode. Advanced YAML supports operation-specific routes and fallbacks.

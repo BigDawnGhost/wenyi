@@ -426,6 +426,12 @@ fn physical_drag_position(
     tauri::PhysicalPosition::new(position.x * scale, position.y * scale)
 }
 
+fn error_event(error: crate::ipc_error::IpcError, position: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "kind": "error", "code": error.code, "message": error.message, "position": position,
+    })
+}
+
 pub fn event(window: &tauri::WebviewWindow, event: &tauri::DragDropEvent) {
     if trusted_window(window).is_err() {
         return;
@@ -460,7 +466,7 @@ pub fn event(window: &tauri::WebviewWindow, event: &tauri::DragDropEvent) {
                     serde_json::json!({"kind": "drop", "source": source, "position": position(p)})
                 }
                 Err(message) => {
-                    serde_json::json!({"kind": "error", "message": message, "position": position(p)})
+                    error_event(message, position(p))
                 }
             }
         }
@@ -475,6 +481,17 @@ pub fn event(window: &tauri::WebviewWindow, event: &tauri::DragDropEvent) {
 mod tests {
     use super::*;
     use std::{io::Write, net::TcpListener, thread};
+
+    #[test]
+    fn drag_errors_keep_a_string_message_for_the_renderer() {
+        let value = error_event(
+            crate::ipc_error::IpcError::new("drop_empty_source", "Source file is empty."),
+            serde_json::json!({"x": 1, "y": 2}),
+        );
+        assert_eq!(value["kind"], "error");
+        assert_eq!(value["code"], "drop_empty_source");
+        assert_eq!(value["message"].as_str(), Some("Source file is empty."));
+    }
 
     #[test]
     fn native_drag_positions_use_one_physical_pixel_contract() {

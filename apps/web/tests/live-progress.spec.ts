@@ -307,20 +307,24 @@ test("an error event from the worker keeps the last stage readable", async ({
   await page.clock.install();
   await fakeApi(page);
   let socket: WebSocketRoute | undefined;
+  let workflowReads = 0;
   await page.route(`**/api/projects/${pid}`, (route) =>
     route.fulfill({ json: { ...project, status: "translating" } }),
   );
   // Pin the workflow to a running state with no persisted progress, so the
   // stage text can only come from the socket events this test sends.
-  await page.route(`**/api/projects/${pid}/workflow`, (route) =>
-    route.fulfill({
+  await page.route(`**/api/projects/${pid}/workflow`, (route) => {
+    workflowReads++;
+    return route.fulfill({
       json: { ...workflow, status: "running", run_id: "run-a", progress: null },
-    }),
-  );
+    });
+  });
   await page.routeWebSocket("**/ws/projects/*/progress", (ws) => {
-    socket = ws;
+    // A routed socket can exist before React's live subscription is ready.
+    ws.onMessage(() => { socket = ws; });
   });
   await page.goto(`/projects/${pid}`);
+  await expect(page.getByRole("status")).toContainText("Waiting for progress updates");
   await expect.poll(() => !!socket).toBe(true);
   socket!.send(
     JSON.stringify({
@@ -333,6 +337,7 @@ test("an error event from the worker keeps the last stage readable", async ({
     }),
   );
   await expect(page.getByRole("status")).toContainText("Batch saved");
+  const readsBeforeError = workflowReads;
   socket!.send(
     JSON.stringify({
       kind: "error",
@@ -342,6 +347,9 @@ test("an error event from the worker keeps the last stage readable", async ({
       message: "Provider connection failed",
     }),
   );
+  // Exercise the coalesced invalidation rather than asserting the pre-event DOM.
+  await page.clock.runFor(500);
+  await expect.poll(() => workflowReads).toBeGreaterThan(readsBeforeError);
   await expect(page.getByRole("status")).toContainText("Batch saved");
   await expect(page.getByRole("status")).not.toContainText(
     "Waiting for progress updates",

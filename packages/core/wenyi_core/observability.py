@@ -14,7 +14,7 @@ _request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "wenyi_request_id", default=None
 )
 
-HUMAN_FORMAT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
+HUMAN_FORMAT = "%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s: %(message)s"
 JSON_LOG_FORMAT_ENV = "WENYI_LOG_FORMAT"
 
 
@@ -74,6 +74,19 @@ def use_json_logs(json_logs: bool | None = None) -> bool:
     return os.environ.get(JSON_LOG_FORMAT_ENV, "").strip().lower() == "json"
 
 
+class _ConsoleHandler(logging.StreamHandler):
+    """Mark handlers shared by dictConfig and application logging assembly."""
+
+    _wenyi_handler = True
+
+
+def console_handler(*, stream: Any | None = None, service: str | None = None) -> logging.Handler:
+    """One owned handler factory for dictConfig and application entry points."""
+    handler = _ConsoleHandler(stream if stream is not None else sys.stderr)
+    handler.addFilter(_ContextFilter(service))
+    return handler
+
+
 def configure_logging(
     level: str = "INFO",
     *,
@@ -88,15 +101,19 @@ def configure_logging(
     reconfiguring never silences existing output.
     """
     root = logging.getLogger()
+    configured_json = False
     for existing in list(root.handlers):
         if getattr(existing, "_wenyi_handler", False):
+            configured_json |= isinstance(existing.formatter, JsonFormatter)
             root.removeHandler(existing)
 
-    handler = logging.StreamHandler(stream if stream is not None else sys.stderr)
+    # Preserve an explicit server log configuration unless the caller or environment
+    # selects a format. Docker's dictConfig and app startup share this ownership.
+    if json is None and JSON_LOG_FORMAT_ENV not in os.environ:
+        json = configured_json
+    handler = console_handler(stream=stream, service=service)
     handler.setFormatter(
         JsonFormatter() if use_json_logs(json) else logging.Formatter(HUMAN_FORMAT)
     )
-    handler.addFilter(_ContextFilter(service))
-    handler._wenyi_handler = True
     root.addHandler(handler)
     root.setLevel(level.upper())

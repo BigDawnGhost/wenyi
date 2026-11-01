@@ -17,7 +17,7 @@ class WenyiError(Exception):
     builtin parents is a later step, not part of introducing this base.
     """
 
-    code: ClassVar[str] = "wenyi_error"
+    code: str = "wenyi_error"
     retryable: ClassVar[bool] = False
 
     def __init__(self, message: str = "", *, code: str | None = None) -> None:

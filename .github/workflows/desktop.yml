@@ -222,6 +222,7 @@ jobs:
           uv run --no-sync pytest -q -n auto --dist loadgroup
           packages/core/tests/test_file_artifacts.py
           packages/core/tests/test_file_storage.py
+          packages/core/tests/test_file_migrations.py
           packages/core/tests/test_precision_pipeline.py
           packages/core/tests/test_orchestrator.py
       # loadgroup keeps tests that drive one runtime on the same worker; --dist
@@ -237,6 +238,7 @@ jobs:
       # asserts the Windows graph stays free of every C TLS backend.
       - name: Assert the Windows target links no C TLS backend
         if: matrix.tier == 'full'
+        shell: bash
         run: |
           set -eu
           for crate in ring aws-lc-sys openssl-sys; do

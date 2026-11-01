@@ -54,6 +54,62 @@ def test_runner_uses_supplied_ports_not_ambient_repository(execution, backend_co
     )
 
 
+def test_completed_workflow_is_counted(execution):
+    from wenyi_backend import metrics
+
+    request, dependencies, _ = execution
+    runner.execute(request, dependencies)
+    text = metrics.render(dependencies.metrics.snapshot(), depth=0)
+    assert 'wenyi_tasks_total{code="none",status="done"} 1' in text
+
+
+def test_worker_observes_real_retries_after_ledger_rebinding(execution, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from wenyi_core.llm.configuration import LLMConfig
+    from wenyi_core.llm.providers.fake import FakeProvider
+    from wenyi_core.llm.retrying import EmptyResponseError
+    from wenyi_core.llm.router import RoutedLLMClient
+
+    request, dependencies, storage = execution
+    client = RoutedLLMClient(
+        LLMConfig.model_validate(
+            {
+                "preset": "fake",
+                "providers": {"default": {"kind": "fake", "max_retries": 1}},
+            }
+        )
+    )
+    attempts = 0
+
+    def respond(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise EmptyResponseError("empty")
+        return "translated"
+
+    monkeypatch.setattr(FakeProvider, "_request", respond)
+    monkeypatch.setattr(client.limits, "wait_for_retry", lambda seconds: None)
+
+    def operation(request, store, progress, bind_client):
+        bind_client(client)
+        # Runtime binds the durable ledger again; independent observers must survive.
+        client.set_event_sink(store.log_event)
+        with client.capture_events(lambda *args, **kwargs: None):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                assert pool.submit(client.complete, [], operation="translation.body").result() == (
+                    "translated"
+                )
+        return "done"
+
+    runner.execute(request, replace(dependencies, operation=operation))
+    assert dependencies.metrics.snapshot()["tasks"] == {("done", "none"): 1}
+    assert dependencies.metrics.snapshot()["retries"] == {("fake", "empty_response"): 1}
+    assert client._event_listeners == {}
+    assert any(call.args[0] == "llm_retry_wait" for call in storage.log_event.call_args_list)
+
+
 @pytest.mark.parametrize(
     "change",
     [
@@ -73,6 +129,7 @@ def test_invalid_or_duplicate_delivery_never_runs_or_claims_work(execution, chan
     dependencies.jobs.set_job_status.assert_not_called()
     storage.close.assert_called_once()
     dependencies.telemetry.release.assert_called_once()
+    assert dependencies.metrics.snapshot()["tasks"] == {}
 
 
 @pytest.mark.parametrize("failure", ["connect", "thread_start", "release"])
@@ -103,10 +160,11 @@ def test_operation_failure_drains_resources_and_records_its_own_run(execution):
     dependencies.jobs.set_job_status.assert_any_call(1, "error", error="Domain failed")
     assert storage.close.call_count >= 1
     dependencies.telemetry.release.assert_called_once()
+    assert dependencies.metrics.snapshot()["tasks"] == {("error", "pipeline_failed"): 1}
 
 
-def test_failure_records_its_type_and_a_bounded_traceback(execution, monkeypatch):
-    """T-8: the ledger keeps enough to diagnose a failure without the client seeing it."""
+def test_failure_keeps_its_traceback_in_server_logs_only(execution, caplog):
+    """Public event payloads retain the classification, not the internal stack."""
     request, dependencies, storage = execution
     dependencies.operation.side_effect = ValueError("Domain failed")
     with pytest.raises(ValueError, match="Domain failed"):
@@ -123,8 +181,8 @@ def test_failure_records_its_type_and_a_bounded_traceback(execution, monkeypatch
     )
     assert event == "pipeline_error"
     assert fields["error_type"] == "ValueError"
-    assert "ValueError: Domain failed" in fields["traceback"]
-    assert len(fields["traceback"]) <= runner.TRACEBACK_LIMIT
+    assert "traceback" not in fields
+    assert any(record.exc_info for record in caplog.records if record.name == runner.__name__)
 
 
 def test_failure_publishes_the_code_to_live_subscribers(execution, monkeypatch):

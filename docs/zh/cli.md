@@ -247,6 +247,11 @@ state/srt/<slug>/targets/<目标语言>/
 
 每个目标目录的 `usage.json` 保存跨续跑累计的 token 用量，`events.jsonl` 追加记录阶段事件与重试。Review 目录另存本次审校用量，其增量只合并到总账一次。
 
+使用 `uv run wenyi inspect-run book.epub` 可只读查看所选目标已保存的事件、耗时和
+累计用量摘要，不调用模型。`Tokens: in / out / cache read` 分别取自
+`prompt_tokens`、`completion_tokens` 和 `cache_hit_tokens`，是跨续跑的目标账本总量，
+并非仅上一次命令的用量。摘要只能展示事件日志中实际记录的失败和重试。
+
 缓存统计分别记录读取（`cache_hit_tokens`）、写入（`cache_write_tokens`）、
 普通输入（`uncached_tokens`）和分类未知输入（`cache_unknown_tokens`），四类之和为
 `prompt_tokens`。显示比例与 `cache_hit_rate` 统一使用**已报告读取 / 全部输入**，

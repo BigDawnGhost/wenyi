@@ -9,6 +9,7 @@ from psycopg.types.json import Jsonb
 from wenyi_backend.context import BackendContext
 from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_backend.export_paths import EXPORT_LIMIT
+from wenyi_backend.metrics import Metrics
 from wenyi_core.llm.factory import build_client
 
 from . import dal
@@ -21,6 +22,7 @@ from .export_retention import (
     publish_export,
 )
 from .global_settings import PostgresSettings
+from .metrics import RedisCounters
 from .storage_pg import PostgresStorage
 from .telemetry import RedisTelemetry
 
@@ -115,6 +117,11 @@ class PostgresRepository:
     def health(self):
         with self.pool.connection() as conn:
             conn.execute("SELECT 1")
+
+    def queued_job_count(self) -> int:
+        with self.pool.connection() as connection:
+            row = connection.execute("SELECT count(*) FROM jobs WHERE status='queued'").fetchone()
+            return row[0]
 
     def admit_job(self, pid, kind, job_id, *, project_status, **kwargs):
         result = dal.create_job(pid, kind, job_id, status="queued", **kwargs)
@@ -249,4 +256,5 @@ def create_context(settings: Settings) -> BackendContext:
         update_term=repository.update_term,
         api_token=settings.api_token,
         remove_project=repository.remove_project,
+        metrics=Metrics(RedisCounters(settings.redis_url)),
     )

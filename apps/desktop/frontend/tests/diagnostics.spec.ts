@@ -71,6 +71,25 @@ test("engine startup failure can export without any loopback requests", async ({
   expect(requests).toEqual([]);
 });
 
+test("structured native diagnostic failures keep the safe retry guidance", async ({ page }) => {
+  await setup(page, true);
+  await page.addInitScript(() => {
+    const original = window.__TAURI_INTERNALS__!.invoke;
+    window.__TAURI_INTERNALS__!.invoke = (command, args) =>
+      command === "desktop_diagnostics_export"
+        ? Promise.reject({ code: "diagnostic_export_failed", message: "The destination is read-only." })
+        : original(command, args);
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Export diagnostic report", exact: true }).click();
+  await page.getByRole("button", { name: "Choose destination and save" }).click();
+  // Diagnostic UI intentionally uses localized guidance, not raw native exceptions.
+  await expect(page.getByRole("dialog").getByRole("alert")).toHaveText(
+    "Diagnostic operation failed. Retry, or use Export diagnostic report from the native menu (Ctrl/Cmd+Shift+D).",
+  );
+  await expect(page.getByText("[object Object]", { exact: true })).toHaveCount(0);
+});
+
 test("frontend diagnostics never forward exception messages or objects", async ({ page }) => {
   await setup(page);
   await page.goto("/");

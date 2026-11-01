@@ -160,7 +160,12 @@ def create_app(
                     context.settings_store.credentials.clear_session()
                     context.repository.close()
 
-    app = create_http_app(context, lifespan=lifespan, origins=list(ORIGINS))
+    app = create_http_app(
+        context,
+        lifespan=lifespan,
+        origins=list(ORIGINS),
+        handle_errors=diagnostics is None,
+    )
     app.include_router(credentials.router)
     app.include_router(desktop_export.router)
     app.include_router(external_credentials.router)

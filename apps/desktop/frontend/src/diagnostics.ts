@@ -1,3 +1,5 @@
+import { asIpcError } from "./ipcError";
+
 /** Native diagnostics accept event names, never errors, request objects or user text. */
 export type DiagnosticEvent =
   | "frontend_ready" | "frontend_error" | "frontend_rejection"
@@ -13,12 +15,12 @@ export type DiagnosticStatus = {
   lastErrorId: string | null;
 };
 
-export function diagnosticCommand<T>(action: string, args: Record<string, unknown> = {}): Promise<T> {
-  if (!window.__TAURI_INTERNALS__) return Promise.reject(new Error("Native diagnostics unavailable"));
+export async function diagnosticCommand<T>(action: string, args: Record<string, unknown> = {}): Promise<T> {
+  if (!window.__TAURI_INTERNALS__) throw new Error("Native diagnostics unavailable");
   try {
-    return Promise.resolve(window.__TAURI_INTERNALS__.invoke<T>(`desktop_diagnostics_${action}`, args));
-  } catch {
-    return Promise.reject(new Error("Native diagnostics unavailable"));
+    return await window.__TAURI_INTERNALS__.invoke<T>(`desktop_diagnostics_${action}`, args);
+  } catch (error) {
+    throw asIpcError(error);
   }
 }
 

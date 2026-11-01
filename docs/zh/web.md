@@ -306,6 +306,27 @@ chunk 不超过 Vite 默认的 500 kB 限制。体积增长时应继续拆包，
 
 在 `deploy/` 下可用 `docker compose logs -f api worker export-worker` 查看任务失败原因。离线/浏览器验证结果与真实模型的翻译质量评估应分别记录。
 
+### 关联编号与指标
+
+响应包含 `X-Request-ID`，服务端失败还包含 `X-Error-ID`，可据此关联 HTTP 失败和
+服务端日志。Docker 日志配置对每条日志只输出一条 JSON 记录，并带上已绑定的请求编号；
+其他入口可用 `WENYI_LOG_FORMAT=json` 选择 JSON。内部 traceback 只保留在服务端日志中，
+不通过项目事件 API 返回；读取历史事件时也会过滤该字段。
+
+`GET /metrics` 输出 Prometheus 文本，使用与其他 API 路由一致的 `API_TOKEN` 鉴权。
+开启鉴权时须给采集器配置 bearer token。API 和 worker 必须连接同一个 Redis 数据库：
+
+- `wenyi_tasks_total{status,code}` 统计结束的**流程**任务（`done`、`paused`、`error`），
+  不统计导出任务。
+- `wenyi_llm_retries_total{provider,reason}` 统计实际重试等待，按 call ID 和 attempt 去重；
+  重试耗尽通知不额外计为一次重试。
+- `wenyi_queue_depth` 从项目目录库读取已接纳、仍在排队的流程和导出任务数，不含运行中任务。
+
+Web 计数通过 Redis 跨进程共享，保留时间与对应 Redis key 一致；最近的任务/重试身份在
+20,000 条有界窗口内去重。Desktop 则使用应用实例独立的内存计数，重启后归零，
+队列深度仍读取自身 SQLite 目录库。计数写入尽力完成，不使流程失败；指标存储或目录库
+不可用时返回 HTTP 503，而不是误导性的零值。指标不是用量/计费账本，Wenyi 不自动安装采集器。
+
 ### 提供商设置与流程视图
 
 全局 **设置** 统一管理提供商连接、模型注册、默认档位与步骤路由，以及通用流程默认值，不提供翻译模式或流程模板。连接和模型 ID 可以重命名，存在引用的条目不能删除；恢复默认配置先载入草稿，保存后生效。**项目配置** 只选用已注册模型并调整其他流程设置，不注册提供商或模型，也不切换创建时选定的翻译方式。高级 YAML 支持按操作路由与回退。

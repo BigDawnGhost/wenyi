@@ -11,7 +11,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, BinaryIO, ContextManager, Protocol, runtime_checkable
 
@@ -22,6 +22,7 @@ from wenyi_core.pdf_bridge.connection import BridgeResolver
 from wenyi_core.storage.protocol import Storage
 
 from .live_statistics import StatisticsCache
+from .metrics import Metrics
 from .ports.jobs import JobCatalog
 from .ports.projects import ProjectCatalog
 
@@ -116,6 +117,7 @@ class BackendContext:
     babeldoc_connection: BridgeResolver | None = None
     # Web retains its executor; Desktop owns a dedicated thread per workflow.
     run_workflow_sync: WorkflowDispatcher = asyncio.to_thread
+    metrics: Metrics = field(default_factory=Metrics)
 
 
 _context: ContextVar[BackendContext] = ContextVar("wenyi_backend_context")

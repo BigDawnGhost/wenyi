@@ -1,108 +1,117 @@
-"""Task and model counters exposed as a scrape-ready text response.
-
-Two rules govern everything here:
-
-1. Observability never changes behaviour. Recording a sample is bounded and
-   silent, so measuring cannot fail the request or the run that produced it.
-2. Counters are keyed by `call_id`, not by log line. The event ledger already
-   merges a retried call once; counting lines would double every retry.
-
-The registry renders its own text rather than pulling in a client library.
-The deployment decision (D-5 option C) keeps scraping out of scope for now, so
-a dependency would buy nothing yet; `render()` already emits the exposition
-format a scraper would read.
-"""
+"""Application-owned, best-effort counters with an explicitly injected backing store."""
 
 from __future__ import annotations
 
 import logging
 import threading
-from collections import defaultdict
-from dataclasses import dataclass, field
+from collections import OrderedDict
+from typing import Literal, Protocol
 
 log = logging.getLogger(__name__)
+Metric = Literal["tasks", "retries"]
+Counters = dict[str, dict[tuple[str, str], int]]
+MAX_SEEN = 20_000
 
 
-@dataclass
-class _Registry:
-    """Counters plus the set of call ids already counted."""
+class CounterStore(Protocol):
+    """Atomically deduplicate and increment; adapters own cross-process visibility."""
 
-    lock: threading.Lock = field(default_factory=threading.Lock)
-    tasks: dict[tuple[str, str], int] = field(default_factory=lambda: defaultdict(int))
-    retries: dict[tuple[str, str], int] = field(default_factory=lambda: defaultdict(int))
-    depth: int = 0
-    seen_calls: set[str] = field(default_factory=set)
-    # Bound the dedupe set so a long-lived process cannot grow without limit.
-    max_seen: int = 20_000
+    def increment(self, metric: Metric, labels: tuple[str, str], identity: str | None) -> None: ...
+    def snapshot(self) -> Counters: ...
 
 
-_REGISTRY = _Registry()
+class MemoryCounters:
+    """One Desktop application's thread-safe counters, never process-global state."""
 
+    def __init__(self, *, max_seen: int = MAX_SEEN) -> None:
+        self._lock = threading.Lock()
+        self._counts: Counters = {"tasks": {}, "retries": {}}
+        self._seen: OrderedDict[tuple[str, str], None] = OrderedDict()
+        self.max_seen = max_seen
 
-def record_task(*, status: str, code: str) -> None:
-    """Count one finished task by its outcome; never raises."""
-    try:
-        with _REGISTRY.lock:
-            _REGISTRY.tasks[(status, code)] += 1
-    except Exception:  # noqa: BLE001 - a counter must not fail the caller
-        log.warning("Could not record a task sample", exc_info=False)
-
-
-def record_retry(*, provider: str, reason: str, call_id: str | None = None) -> None:
-    """Count one model retry, ignoring a repeat report for the same call."""
-    try:
-        with _REGISTRY.lock:
-            if call_id is not None:
-                if call_id in _REGISTRY.seen_calls:
+    def increment(self, metric: Metric, labels: tuple[str, str], identity: str | None) -> None:
+        with self._lock:
+            if identity is not None:
+                key = (metric, identity)
+                if key in self._seen:
                     return
-                if len(_REGISTRY.seen_calls) >= _REGISTRY.max_seen:
-                    _REGISTRY.seen_calls.clear()
-                _REGISTRY.seen_calls.add(call_id)
-            _REGISTRY.retries[(provider, reason)] += 1
-    except Exception:  # noqa: BLE001 - a counter must not fail the caller
-        log.warning("Could not record a retry sample", exc_info=False)
+                self._seen[key] = None
+                while len(self._seen) > self.max_seen:
+                    self._seen.popitem(last=False)
+            counts = self._counts[metric]
+            counts[labels] = counts.get(labels, 0) + 1
+
+    def snapshot(self) -> Counters:
+        with self._lock:
+            return {metric: dict(counts) for metric, counts in self._counts.items()}
 
 
-def record_queue_depth(*, depth: int) -> None:
-    try:
-        with _REGISTRY.lock:
-            _REGISTRY.depth = max(0, depth)
-    except Exception:  # noqa: BLE001
-        log.warning("Could not record the queue depth", exc_info=False)
+class Metrics:
+    """Observe workflow outcomes and retry waits without changing their results."""
 
+    def __init__(self, store: CounterStore | None = None) -> None:
+        self.store = store if store is not None else MemoryCounters()
 
-def reset() -> None:
-    """Drop every sample. Only tests should need this."""
-    with _REGISTRY.lock:
-        _REGISTRY.tasks.clear()
-        _REGISTRY.retries.clear()
-        _REGISTRY.depth = 0
-        _REGISTRY.seen_calls.clear()
+    def _record(self, metric: Metric, labels: tuple[str, str], identity: str | None) -> None:
+        try:
+            self.store.increment(metric, labels, identity)
+        except Exception:
+            log.warning("Could not record a %s sample", metric, exc_info=False)
+
+    def record_task(self, *, status: str, code: str, identity: str | None = None) -> None:
+        self._record("tasks", (status, code), identity)
+
+    def record_retry(
+        self, *, provider: str, reason: str, call_id: str | None = None, attempt: int = 1
+    ) -> None:
+        # A single call can retry more than once, including across model failover.
+        identity = f"{call_id}:{attempt}" if call_id else None
+        self._record("retries", (provider, reason), identity)
+
+    def record_event(self, event: str, **data) -> None:
+        if event != "llm_retry_wait":
+            return
+        provider, reason = data.get("provider"), data.get("reason")
+        call_id = data.get("call_id")
+        attempt = data.get("attempt", data.get("failed_attempt", 1))
+        self.record_retry(
+            provider=provider if isinstance(provider, str) else "unknown",
+            reason=reason if isinstance(reason, str) else "unknown",
+            call_id=call_id if isinstance(call_id, str) else None,
+            attempt=attempt if type(attempt) is int else 1,
+        )
+
+    def snapshot(self) -> Counters:
+        # A failed scrape is unavailable, not a fabricated zero-valued snapshot.
+        return self.store.snapshot()
 
 
 def _labels(pairs: dict[str, str]) -> str:
-    if not pairs:
-        return ""
-    rendered = ",".join(f'{key}="{value}"' for key, value in sorted(pairs.items()))
+    def escape(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("\n", "\\n").replace('"', '\\"')
+
+    rendered = ",".join(f'{key}="{escape(value)}"' for key, value in sorted(pairs.items()))
     return f"{{{rendered}}}"
 
 
-def render() -> str:
-    """Render the exposition text, sorted so two scrapes are easy to diff."""
-    lines: list[str] = []
-    with _REGISTRY.lock:
-        lines.append("# HELP wenyi_tasks_total Finished pipeline tasks by outcome.")
-        lines.append("# TYPE wenyi_tasks_total counter")
-        for (status, code), value in sorted(_REGISTRY.tasks.items()):
-            lines.append(f"wenyi_tasks_total{_labels({'status': status, 'code': code})} {value}")
-
-        lines.append("# HELP wenyi_llm_retries_total Model retries by provider and reason.")
-        lines.append("# TYPE wenyi_llm_retries_total counter")
-        for (provider, reason), value in sorted(_REGISTRY.retries.items()):
-            labels = _labels({"provider": provider, "reason": reason})
-            lines.append(f"wenyi_llm_retries_total{labels} {value}")
-
-        lines.append("# HELP wenyi_queue_depth Tasks waiting in the queue.")
-        lines.append("# TYPE wenyi_queue_depth gauge")
-        lines.append(f"wenyi_queue_depth {_REGISTRY.depth}")
+def render(counts: Counters, *, depth: int) -> str:
+    """Render a stable Prometheus snapshot; queue depth comes from the job catalog."""
+    lines = [
+        "# HELP wenyi_tasks_total Finished workflow tasks by outcome.",
+        "# TYPE wenyi_tasks_total counter",
+    ]
+    for (status, code), value in sorted(counts["tasks"].items()):
+        lines.append(f"wenyi_tasks_total{_labels({'status': status, 'code': code})} {value}")
+    lines += [
+        "# HELP wenyi_llm_retries_total Model retry waits by provider and reason.",
+        "# TYPE wenyi_llm_retries_total counter",
+    ]
+    for (provider, reason), value in sorted(counts["retries"].items()):
+        labels = _labels({"provider": provider, "reason": reason})
+        lines.append(f"wenyi_llm_retries_total{labels} {value}")
+    lines += [
+        "# HELP wenyi_queue_depth Admitted workflow and export jobs waiting to run.",
+        "# TYPE wenyi_queue_depth gauge",
+        f"wenyi_queue_depth {max(0, depth)}",
+    ]
     return "\n".join(lines) + "\n"

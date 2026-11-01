@@ -3,6 +3,9 @@
 import io
 import json
 import logging
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 from wenyi_core import observability
@@ -82,3 +85,33 @@ def test_json_format_is_selected_by_environment(monkeypatch):
     monkeypatch.setenv(observability.JSON_LOG_FORMAT_ENV, "text")
     assert observability.use_json_logs() is False
     assert observability.use_json_logs(True) is True
+
+
+def test_docker_and_application_install_one_correlated_json_handler(monkeypatch):
+    monkeypatch.delenv(observability.JSON_LOG_FORMAT_ENV, raising=False)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import json
+import logging
+import logging.config
+from wenyi_core.observability import bind_request_id, configure_logging
+with open("docker/logging.json", encoding="utf-8") as handle:
+    logging.config.dictConfig(json.load(handle))
+configure_logging(service="wenyi-api")
+configure_logging(service="wenyi-api")
+bind_request_id("test-request")
+logging.getLogger("wenyi.test").warning("one record")
+""",
+        ],
+        cwd=Path(__file__).resolve().parents[3],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    records = result.stderr.splitlines()
+    assert len(records) == 1, records
+    assert json.loads(records[0])["request_id"] == "test-request"
+    assert json.loads(records[0])["service"] == "wenyi-api"

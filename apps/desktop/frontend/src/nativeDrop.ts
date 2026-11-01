@@ -1,4 +1,5 @@
 import type { SourceDropCallbacks, SourceCapability } from "@wenyi/ui/platform";
+import { asIpcError } from "./ipcError";
 
 export type NativeSource = {
   kind: "native";
@@ -25,7 +26,7 @@ function invoke<T>(command: string, args: Record<string, unknown>): Promise<T> {
   if (!window.__TAURI_INTERNALS__)
     return Promise.reject(new Error("Native file selection is unavailable."));
   return window.__TAURI_INTERNALS__.invoke<T>(command, args).catch((error) => {
-    throw error instanceof Error ? error : new Error(String(error));
+    throw asIpcError(error);
   });
 }
 

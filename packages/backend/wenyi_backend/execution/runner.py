@@ -6,7 +6,6 @@ import asyncio
 import json
 import logging
 import threading
-import traceback
 from contextlib import ExitStack, closing
 from contextvars import copy_context
 from functools import partial
@@ -14,14 +13,11 @@ from functools import partial
 from wenyi_core.llm.base import LLMClient
 from wenyi_core.llm.limits import RequestCancelled, RequestStopped
 
-from .. import metrics
 from ..emitters import publish_error, redis_progress_fn
 from ..live_statistics import LiveStatistics
 from .contracts import ExecutionDependencies, ExecutionRequest
 
 log = logging.getLogger(__name__)
-# Bound the persisted traceback so one large failure cannot bloat the event ledger.
-TRACEBACK_LIMIT = 4096
 
 
 def error_code(error: BaseException) -> str:
@@ -84,6 +80,7 @@ def execute(
     """Run one synchronous workflow, retaining ownership until all callbacks are drained."""
     projects, jobs = dependencies.projects, dependencies.jobs
     pid, run_id, kind = request.project_id, request.run_id, request.kind
+    metric_identity = f"{pid}:{run_id}" if run_id else None
     stop = stop or threading.Event()
     finished = threading.Event()
     client: LLMClient | None = None
@@ -148,6 +145,7 @@ def execute(
                     client = value
                     live.bind_client(value)
                     value.set_event_sink(storage.log_event)
+                    scope.enter_context(value.observe_events(dependencies.metrics.record_event))
                     if stop.is_set():
                         value.cancel()
 
@@ -159,12 +157,21 @@ def execute(
             projects.set_project_status(pid, result_status)
             if job:
                 jobs.set_job_status(job["id"], "done")
+            dependencies.metrics.record_task(status="done", code="none", identity=metric_identity)
         except (KeyboardInterrupt, RequestCancelled):
             record_terminal_status(request, dependencies, status="paused")
             storage.log_event("task_paused", kind=kind, run_id=run_id)
+            if job or not run_id:
+                dependencies.metrics.record_task(
+                    status="paused", code="none", identity=metric_identity
+                )
         except RequestStopped as error:
             record_terminal_status(request, dependencies, error, status="paused")
             storage.log_event("task_paused", kind=kind, run_id=run_id, reason=str(error))
+            if job or not run_id:
+                dependencies.metrics.record_task(
+                    status="paused", code="none", identity=metric_identity
+                )
         except Exception as error:
             # Provider credentials are stripped before they reach this point; the
             # traceback stays on the operator side and is never returned to clients.
@@ -176,13 +183,15 @@ def execute(
                 run_id=run_id,
                 error=str(error),
                 error_type=type(error).__name__,
-                traceback=traceback.format_exc()[-TRACEBACK_LIMIT:],
             )
             # Tell live subscribers the run is over; failure here must not mask the
             # original error, so publish_error swallows transport problems.
             publish_error(cache, pid, code=error_code(error), message=str(error), run_id=run_id)
             # Observability only: the counter swallows its own failures.
-            metrics.record_task(status="error", code=error_code(error))
+            if job or not run_id:
+                dependencies.metrics.record_task(
+                    status="error", code=error_code(error), identity=metric_identity
+                )
             raise
         finally:
             stop_watcher()

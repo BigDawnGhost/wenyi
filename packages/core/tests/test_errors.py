@@ -36,6 +36,7 @@ def test_instances_are_catchable_as_both_parents():
     try:
         raise StorageBusyError("busy")
     except BlockingIOError as error:
+        assert isinstance(error, WenyiError)
         assert error.message == "busy"
     else:
         pytest.fail("storage contention must stay catchable as BlockingIOError")
