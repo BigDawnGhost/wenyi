@@ -10,6 +10,8 @@ on:
         default: ""
   release:
     types: [published]
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
     paths:
@@ -53,8 +55,42 @@ jobs:
           fi
           echo "matrix={\"include\":${matrix}}" >> "$GITHUB_OUTPUT"
 
+  # Warm the Rust caches on every push to main so a later pull request or
+  # release starts with a populated target directory instead of compiling the
+  # whole dependency graph from cold. --no-run compiles but does not execute,
+  # and both profiles are warmed because cargo test and the Tauri bundle use
+  # different ones.
+  cargo-warm:
+    if: github.event_name == 'push'
+    name: Cargo warm · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop -> target
+          # A warm-only job must save the cache, not just consume it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev libdbus-1-dev librsvg2-dev patchelf
+      - name: Warm the test profile
+        run: cargo test --locked --no-run --manifest-path apps/desktop/Cargo.toml
+      - name: Warm the release profile
+        run: cargo build --locked --release --manifest-path apps/desktop/Cargo.toml
   local-package:
     needs: plan
+    # A push to main only warms the caches; packaging there would burn four
+    # runners for artefacts nobody consumes. Release and pull requests still
+    # build, and a manual dispatch keeps the full matrix available.
+    if: github.event_name != 'push'
     name: Desktop · ${{ matrix.platform }}
     timeout-minutes: 90
     strategy:

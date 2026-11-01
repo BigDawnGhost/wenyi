@@ -330,6 +330,14 @@ def test_workflows_use_main_as_the_only_trunk(file):
         assert events["push"]["branches"] == ["main"]
         assert "paths" not in events["pull_request"]
         assert "paths-ignore" not in events["pull_request"]
+    elif file == "desktop.yml":
+        # The desktop workflow listens to main only to warm the Rust caches, but
+        # the packaging job must never run there: four runners would burn on
+        # artefacts nobody consumes.
+        assert events["push"]["branches"] == ["main"]
+        jobs = document["jobs"]
+        assert jobs["local-package"]["if"] == "github.event_name != 'push'"
+        assert jobs["cargo-warm"]["if"] == "github.event_name == 'push'"
     else:
         assert "push" not in events
 
