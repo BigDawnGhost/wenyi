@@ -13,11 +13,17 @@ import anyio
 import pytest
 from desktop_test_support import initialize
 from starlette.websockets import WebSocketDisconnect
-from wenyi_backend import dal
 from wenyi_backend.context import current_context, use_context
 from wenyi_desktop import local_runtime
 from wenyi_desktop.local_runtime import LocalRuntime, ProgressHub
 from wenyi_desktop.main import create_context
+
+# These cases drive one LocalRuntime through admission, supervision and shutdown.
+# Their assertions depend on how the event loop interleaves those tasks, so they
+# stay on a single worker: under -n auto the loop can schedule a supervisor
+# before or after the test looks, which is a scheduling difference rather than a
+# behaviour difference. --dist loadgroup (already used in CI) keeps them together.
+pytestmark = pytest.mark.xdist_group("local-runtime")
 
 
 @pytest.fixture
@@ -32,11 +38,11 @@ def catalog(tmp_path):
 
 
 def project():
-    return dal.create_project("Runtime", "en", "zh", {})
+    return current_context().repository.create_project("Runtime", "en", "zh", {})
 
 
 def enqueue(runtime, pid, run, kind="translation"):
-    identity = dal.create_job(pid, kind, run, run_id=run)
+    identity = current_context().repository.create_job(pid, kind, run, run_id=run)
     runtime.enqueue("run_" + kind, _job_id=run, project_id=pid, run_id=run)
     return identity
 
@@ -60,7 +66,7 @@ def test_workspace_second_owner_is_rejected_and_release_allows_restart(catalog):
 
 @pytest.mark.parametrize("count", [3, 8])
 def test_workflows_overlap_without_occupying_the_default_executor(catalog, monkeypatch, count):
-    from wenyi_backend.workers import tasks
+    from wenyi_backend.execution import runner
 
     async def run():
         context = current_context()
@@ -71,15 +77,16 @@ def test_workflows_overlap_without_occupying_the_default_executor(catalog, monke
         release = threading.Event()
         owners = {}
 
-        def execute(kind, pid, run_id, params, stop):
+        def execute(request, dependencies, stop):
+            pid, run_id = request.project_id, request.run_id
             owners[run_id] = (current_context(), threading.get_ident(), pid)
-            job = dal.get_job_by_arq_id(run_id)
-            dal.set_job_status(job["id"], "running")
+            job = dependencies.jobs.get_job_by_arq_id(run_id)
+            dependencies.jobs.set_job_status(job["id"], "running")
             loop.call_soon_threadsafe(started[run_id].set)
             assert release.wait(10), "The test did not release its synchronous workflows"
-            dal.set_job_status(job["id"], "done")
+            dependencies.jobs.set_job_status(job["id"], "done")
 
-        monkeypatch.setattr(tasks, "_execute", execute)
+        monkeypatch.setattr(runner, "execute", execute)
         await runtime.start()
         try:
             for run_id in started:
@@ -144,17 +151,17 @@ def test_diagnostics_distinguish_runner_timeout_from_user_cancellation(catalog, 
 def test_recovery_pauses_orphan_workflows_and_fails_exports(catalog, status):
     async def run():
         pid, other = project(), project()
-        job = dal.create_job(pid, "translation", "orphan", run_id="orphan")
-        dal.set_job_status(job, status)
-        dal.set_project_status(pid, "translating")
+        job = current_context().repository.create_job(pid, "translation", "orphan", run_id="orphan")
+        current_context().repository.set_job_status(job, status)
+        current_context().repository.set_project_status(pid, "translating")
         eid, export_job = catalog.admit_export(other, "txt", {}, "orphan-export", {})
-        dal.set_job_status(export_job, status)
+        current_context().repository.set_job_status(export_job, status)
         runtime = LocalRuntime(catalog, current_context())
         await runtime.start()
         try:
-            assert dal.get_job(job)["status"] == "interrupted"
-            assert dal.get_project(pid)["status"] == "paused"
-            assert dal.get_job(export_job)["status"] == "error"
+            assert current_context().repository.get_job(job)["status"] == "interrupted"
+            assert current_context().repository.get_project(pid)["status"] == "paused"
+            assert current_context().repository.get_job(export_job)["status"] == "error"
             assert catalog.list_exports(other)[0]["id"] == eid
             assert catalog.list_exports(other)[0]["status"] == "error"
         finally:
@@ -176,8 +183,8 @@ def test_duplicate_delivery_and_independent_two_export_slots(catalog, monkeypatc
 
         async def execute(ctx, *, project_id, run_id):
             calls.append(run_id)
-            job = dal.get_job_by_arq_id(run_id)
-            dal.set_job_status(job["id"], "running")
+            job = current_context().repository.get_job_by_arq_id(run_id)
+            current_context().repository.set_job_status(job["id"], "running")
             if run_id == "workflow":
                 workflow_started.set()
             if run_id == "other-workflow":
@@ -185,7 +192,7 @@ def test_duplicate_delivery_and_independent_two_export_slots(catalog, monkeypatc
             if len([value for value in calls if value.startswith("export")]) == 2:
                 exports_started.set()
             await release.wait()
-            dal.set_job_status(job["id"], "done")
+            current_context().repository.set_job_status(job["id"], "done")
 
         monkeypatch.setattr(tasks, "run_translation", execute)
         monkeypatch.setattr(tasks, "run_export", execute)
@@ -266,7 +273,7 @@ def test_shutdown_owns_every_workflow_before_worker_entry(catalog, monkeypatch, 
         # Exceed the former admission queue size without allocating model or worker threads.
         for index in range(129):
             pid = project()
-            dal.set_project_status(pid, "translating")
+            catalog.set_project_status(pid, "translating")
             enqueue(runtime, pid, f"unstarted-{index}")
         assert not runtime.idle
         if supervisor_started:
@@ -282,7 +289,7 @@ def test_shutdown_owns_every_workflow_before_worker_entry(catalog, monkeypatch, 
 
 
 def test_thread_allocation_failure_terminates_only_its_workflow(catalog, monkeypatch):
-    from wenyi_backend.workers import tasks
+    from wenyi_backend.execution import runner
 
     allocations = []
 
@@ -292,12 +299,12 @@ def test_thread_allocation_failure_terminates_only_its_workflow(catalog, monkeyp
             raise RuntimeError("No workflow thread available")
         return ThreadPoolExecutor(**kwargs)
 
-    def execute(kind, pid, run_id, params, stop):
-        job = dal.get_job_by_arq_id(run_id)
-        dal.set_job_status(job["id"], "done")
+    def execute(request, dependencies, stop):
+        job = dependencies.jobs.get_job_by_arq_id(request.run_id)
+        dependencies.jobs.set_job_status(job["id"], "done")
 
     monkeypatch.setattr(local_runtime, "ThreadPoolExecutor", executor)
-    monkeypatch.setattr(tasks, "_execute", execute)
+    monkeypatch.setattr(runner, "execute", execute)
 
     async def run():
         runtime = LocalRuntime(catalog, current_context())
@@ -308,9 +315,9 @@ def test_thread_allocation_failure_terminates_only_its_workflow(catalog, monkeyp
             enqueue(runtime, project(), "healthy")
             await asyncio.wait_for(asyncio.gather(*tuple(runtime._workflows)), 3)
             assert runtime.idle
-            assert dal.get_project(failed)["status"] == "error"
-            assert dal.get_job_by_arq_id("failed")["error"] == "No workflow thread available"
-            assert dal.get_job_by_arq_id("healthy")["status"] == "done"
+            assert catalog.get_project(failed)["status"] == "error"
+            assert catalog.get_job_by_arq_id("failed")["error"] == "No workflow thread available"
+            assert catalog.get_job_by_arq_id("healthy")["status"] == "done"
         finally:
             await asyncio.wait_for(runtime.stop(), 3)
 
@@ -318,7 +325,7 @@ def test_thread_allocation_failure_terminates_only_its_workflow(catalog, monkeyp
 
 
 def test_shutdown_waits_for_all_parallel_writers(catalog, monkeypatch):
-    from wenyi_backend.workers import tasks
+    from wenyi_backend.execution import runner
 
     async def run():
         loop = asyncio.get_running_loop()
@@ -328,18 +335,19 @@ def test_shutdown_waits_for_all_parallel_writers(catalog, monkeypatch):
         finished = [asyncio.Event() for _ in range(3)]
         release = [threading.Event() for _ in range(3)]
 
-        def execute(kind, pid, run_id, params, stop):
+        def execute(request, dependencies, stop):
+            run_id = request.run_id
             index = int(run_id)
-            job = dal.get_job_by_arq_id(run_id)
-            dal.set_job_status(job["id"], "running")
+            job = dependencies.jobs.get_job_by_arq_id(run_id)
+            dependencies.jobs.set_job_status(job["id"], "running")
             loop.call_soon_threadsafe(started[index].set)
             assert stop.wait(5)
             loop.call_soon_threadsafe(stopping[index].set)
             assert release[index].wait(5)
-            dal.set_job_status(job["id"], "paused")
+            dependencies.jobs.set_job_status(job["id"], "paused")
             loop.call_soon_threadsafe(finished[index].set)
 
-        monkeypatch.setattr(tasks, "_execute", execute)
+        monkeypatch.setattr(runner, "execute", execute)
         await runtime.start()
         shutdown = None
         try:
@@ -474,8 +482,10 @@ def test_progress_relay_cancellation_drains_children_and_unsubscribes(catalog, m
 def test_workflow_cached_progress_rejects_other_project_and_old_run(desktop):
     client, backend, _ = desktop
     pid, store = initialize(backend)
-    job = dal.create_job(pid, "translation", "latest-run", run_id="latest-run")
-    dal.set_job_status(job, "done")
+    job = current_context().repository.create_job(
+        pid, "translation", "latest-run", run_id="latest-run"
+    )
+    current_context().repository.set_job_status(job, "done")
     payload = {
         "kind": "translation",
         "project_id": pid,

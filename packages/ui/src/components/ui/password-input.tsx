@@ -1,6 +1,6 @@
 import * as React from "react";
 import { Eye, EyeOff } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn } from "../../lib/utils";
 import { Input } from "./form";
 
 type PasswordInputProps = Omit<React.InputHTMLAttributes<HTMLInputElement>, "type"> & {

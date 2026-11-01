@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { chapter, fakeApi, pid, project } from "./fixtures";
+import { chapter, fakeApi, pid, project } from "../../../packages/ui/tests/e2e/fixtures";
 
 const longTitle =
   "A long title about rivers, mountains and regional traditions ".repeat(8);
@@ -67,7 +67,7 @@ async function mockContents(page: Page, state = serverState()) {
 }
 
 for (const chinese of [false, true]) {
-  test(`contents titles persist on the server and fit narrow screens in ${chinese ? "Chinese" : "English"}`, async ({
+  test(`contents titles persist on the server and fit desktop windows in ${chinese ? "Chinese" : "English"}`, async ({
     page,
     browser,
   }, testInfo) => {
@@ -134,7 +134,7 @@ for (const chinese of [false, true]) {
     await expect(rows).toHaveCount(1);
     await search.clear();
     await expect(rows).toHaveCount(2);
-    for (const width of [1440, 900, 390]) {
+    for (const width of [1440, 1280, 1024]) {
       await page.setViewportSize({ width, height: 960 });
       expect(
         await page
@@ -166,7 +166,7 @@ for (const chinese of [false, true]) {
       ).toBe(true);
       await page.keyboard.press("Escape");
     }
-    await page.screenshot({ path: testInfo.outputPath("contents-mobile.png") });
+    await page.screenshot({ path: testInfo.outputPath("contents-compact.png") });
     await rows
       .nth(1)
       .getByRole("button", { name: chinese ? "编辑标题" : "Edit title" })

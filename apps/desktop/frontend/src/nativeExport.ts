@@ -1,4 +1,5 @@
 import type { ExportOptions } from "@wenyi/ui/platform";
+import type { GlossaryExportFormat } from "@wenyi/ui/api/types";
 
 export type SavedExport = { path: string };
 
@@ -24,7 +25,7 @@ export async function saveNativeExport(
 
 export async function saveNativeGlossary(
   projectId: string,
-  format: "json" | "csv",
+  format: GlossaryExportFormat,
 ): Promise<SavedExport | null> {
   if (!window.__TAURI_INTERNALS__)
     throw new Error("Native saving is unavailable.");

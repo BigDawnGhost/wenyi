@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import { useEffect } from "react";
 import { AppLayout } from "./components/layout/AppLayout";
 import { AppErrorBoundary } from "./routes/AppErrorBoundary";
+import { DesktopOnly } from "./routes/DesktopOnly";
 import { pageLoaders, routeEntries, type RouteEntry } from "./routes/manifest";
 
 function renderRoute({ path, element, children }: RouteEntry) {
@@ -13,18 +14,26 @@ function renderRoute({ path, element, children }: RouteEntry) {
 }
 
 export default function App() {
+  return (
+    <AppErrorBoundary>
+      <DesktopOnly>
+        <Workspace />
+      </DesktopOnly>
+    </AppErrorBoundary>
+  );
+}
+
+function Workspace() {
   useEffect(() => {
     // A warm-up failure stays quiet: the route retries when it is visited.
     void Promise.all(pageLoaders.map((load) => load())).catch(() => {});
   }, []);
   return (
-    <AppErrorBoundary>
-      <Routes>
-        <Route element={<AppLayout />}>
-          {routeEntries.map(renderRoute)}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Route>
-      </Routes>
-    </AppErrorBoundary>
+    <Routes>
+      <Route element={<AppLayout />}>
+        {routeEntries.map(renderRoute)}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Route>
+    </Routes>
   );
 }

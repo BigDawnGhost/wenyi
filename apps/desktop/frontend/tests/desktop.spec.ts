@@ -1,5 +1,5 @@
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
-import { fakeApi, globalConfiguration, pid, project } from "./fixtures";
+import { fakeApi, globalConfiguration, pid, project, workflow } from "../../../../packages/ui/tests/e2e/fixtures";
 import type {} from "../src/runtime";
 
 const origin = "http://127.0.0.1:19481";
@@ -29,7 +29,7 @@ async function desktop(page: Page, pending = false) {
   }, { origin, token, pending });
 }
 
-test("Desktop dashboard shares settings shell and keeps structured drafts", async ({ page }) => {
+test("Desktop settings replaces app navigation and keeps structured drafts between categories", async ({ page }) => {
   await desktop(page);
   await fakeApi(page, {}, origin);
   await page.goto("/");
@@ -43,18 +43,22 @@ test("Desktop dashboard shares settings shell and keeps structured drafts", asyn
   const sidebar = page.getByRole("complementary");
   await expect(sidebar).toHaveCount(1);
   expect(await shell!.evaluate(node => node === document.querySelector("#sidebar-navigation"))).toBe(true);
-  await expect(page.getByRole("navigation", { name: "Settings navigation" })).toHaveCount(0);
+  await expect(page.getByRole("navigation", { name: "Settings navigation" })).toBeVisible();
+  await expect(nav).toHaveCount(0);
+  await page.getByRole("link", { name: "Workflow", exact: true }).click();
   await page.getByLabel("Polishing", { exact: true }).uncheck();
+  await page.getByRole("link", { name: "Models & connections", exact: true }).click();
   await page.locator("#provider-models").getByLabel("API provider", { exact: true }).click();
   await expect(page.getByRole("listbox")).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page).toHaveURL("/settings");
+  await expect(page).toHaveURL("/settings/providers");
   await expect(page.locator('[role="listbox"]')).toHaveCount(0);
+  await page.getByRole("link", { name: "Workflow", exact: true }).click();
   await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
   await page.reload();
-  await expect(page).toHaveURL("/settings");
+  await expect(page).toHaveURL("/settings/workflow");
   await expect(page.getByLabel("Polishing", { exact: true })).toBeChecked();
-  await page.getByRole("link", { name: "Projects", exact: true }).click();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page).toHaveURL("/");
   await page.goto(`/projects/${pid}`);
   await expect(nav.getByRole("link")).toHaveCount(1);
@@ -99,14 +103,15 @@ test("lazy credentials do not blank settings after its configuration loads", asy
       return blank;
     });
     expect(blankFrames).toBe(0);
-    await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "General", exact: true })).toBeVisible();
     await expect(page.getByLabel("Interface language")).toBeVisible();
+    await page.getByRole("link", { name: "Models & connections", exact: true }).click();
     await expect(page.locator("#provider-models").getByLabel("API provider", { exact: true })).toBeVisible();
     await expect(page.locator("#key-default")).toBeVisible();
     releaseCredential();
-    // The native field retains the environment setting in its closed Advanced section.
-    await expect(page.locator("#key-default")).toBeHidden();
+    // The native field keeps environment controls visible alongside the masked API key.
     await expect(page.locator("#credential-secret-default")).toBeVisible();
+    await expect(page.locator("#key-default")).toBeVisible();
   } finally {
     releaseConfig();
     releaseCredential();
@@ -234,7 +239,10 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   // Pause before app timers exist; a fixed future time avoids sampling a running clock.
   await page.clock.install({ time: new Date("2025-01-01T00:00:00Z") });
   await page.clock.pauseAt(new Date("2025-01-02T00:00:00Z"));
-  await fakeApi(page, { [`/projects/${pid}`]: { ...project, status: "translating" } }, origin);
+  await fakeApi(page, {
+    [`/projects/${pid}`]: { ...project, status: "translating" },
+    [`/projects/${pid}/workflow`]: { ...workflow, status: "running" },
+  }, origin);
   let socket: WebSocketRoute;
   let accept = true;
   await page.routeWebSocket("**/ws/**", ws => {
@@ -242,7 +250,7 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
     else void ws.close();
   });
   const initialResponses = new Set<string>();
-  const initialPaths = ["", "/chapters", "/report", "/stats", "/workflow"]
+  const initialPaths = ["", "/chapters", "/stats", "/workflow"]
     .map(path => `/projects/${pid}${path}`);
   page.on("response", response => {
     if (response.url().startsWith(origin)) initialResponses.add(new URL(response.url()).pathname);

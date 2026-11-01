@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi } from "./fixtures";
+import { fakeApi } from "../../../../packages/ui/tests/e2e/fixtures";
 
 test("plugin setup persists across navigation, retries and shares update progress style", async ({ page }, testInfo) => {
   await page.addInitScript(() => {
@@ -30,7 +30,7 @@ test("plugin setup persists across navigation, retries and shares update progres
     }
     await route.fulfill({ json: state });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/plugins");
   const plugin = page.getByTestId("babeldoc-plugin");
   await expect(plugin).toContainText("未启用");
   await expect(plugin).toContainText("AGPL-3.0-only");
@@ -56,8 +56,9 @@ test("plugin setup persists across navigation, retries and shares update progres
   const update = page.getByTestId("desktop-updates");
   expect(await plugin.locator('[data-slot="transfer-progress"]').getAttribute("class"))
     .toEqual(await update.locator('[data-slot="transfer-progress"]').getAttribute("class"));
-  await page.getByRole("link", { name: "项目列表", exact: true }).click();
+  await page.getByRole("button", { name: "返回", exact: true }).click();
   await page.getByRole("link", { name: "设置", exact: true }).click();
+  await page.getByRole("link", { name: "BabelDOC 插件", exact: true }).click();
   await expect(plugin.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
   state.phase = "error";
   state.error = "install_failed";
@@ -80,7 +81,7 @@ test("ready plugin can be disabled but busy jobs keep it enabled with feedback",
   await page.route("**/api/desktop/plugins/babeldoc/disable", route => route.fulfill({
     status: 409, json: { detail: "Desktop jobs are in progress" },
   }));
-  await page.goto("/settings");
+  await page.goto("/settings/plugins");
   const plugin = page.getByTestId("babeldoc-plugin");
   await plugin.getByRole("button", { name: "Disable plugin" }).click();
   await expect(plugin.getByRole("alert")).toContainText("Finish all project jobs");
@@ -116,7 +117,7 @@ test("plugin upgrades are manual, confirmed, and keep the active version until r
     }
     await route.fulfill({ json: state });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/plugins");
   const plugin = page.getByTestId("babeldoc-plugin");
   await expect(plugin).toContainText("插件版本：0.1.0");
   expect(actions).toEqual([]);
@@ -141,8 +142,9 @@ test("plugin upgrades are manual, confirmed, and keep the active version until r
   state.total = 64 * 1024 * 1024;
   await expect(plugin.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
   await plugin.screenshot({ path: testInfo.outputPath("plugin-upgrade-progress.png") });
-  await page.getByRole("link", { name: "项目列表", exact: true }).click();
+  await page.getByRole("button", { name: "返回", exact: true }).click();
   await page.getByRole("link", { name: "设置", exact: true }).click();
+  await page.getByRole("link", { name: "BabelDOC 插件", exact: true }).click();
   await expect(plugin.getByRole("button", { name: "取消更新" })).toBeVisible();
   state.phase = "ready";
   state.updating = false;
@@ -193,7 +195,7 @@ test("failed checks and cancelled upgrades leave the installed plugin available"
     }
     await route.fulfill({ json: state });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/plugins");
   const plugin = page.getByTestId("babeldoc-plugin");
   await plugin.getByRole("button", { name: "Check for plugin updates" }).click();
   await expect(plugin.getByRole("alert")).toContainText("current installation is unchanged");
@@ -234,7 +236,7 @@ test("a disabled installed plugin can be updated without enabling it", async ({ 
     }
     await route.fulfill({ json: state });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/plugins");
   const plugin = page.getByTestId("babeldoc-plugin");
   await plugin.getByRole("button", { name: "Check for plugin updates" }).click();
   await plugin.getByRole("button", { name: "Update plugin", exact: true }).click();

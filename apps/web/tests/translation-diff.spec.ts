@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { fakeApi, pid, project } from "../../../packages/ui/tests/e2e/fixtures";
 
 async function openHistory(
   page: Page,
@@ -178,10 +178,10 @@ test("old projects label initial/current comparison without inventing a polish r
   });
 });
 
-test("mobile character fallback preserves emoji, whitespace and literal markup", async ({
+test("character fallback preserves emoji, whitespace and literal markup", async ({
   page,
 }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1024, height: 844 });
   await page.addInitScript(() => {
     Object.defineProperty(Intl, "Segmenter", { value: undefined });
   });

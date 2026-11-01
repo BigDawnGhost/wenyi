@@ -1,13 +1,11 @@
-import { StatusBadge } from "@/components/StatusBadge";
-import { useI18n } from "@/i18n";
-import { workflowStageLabel } from "@/i18n/labels";
+import { useId } from "react";
+import { StatusBadge } from "../../components/StatusBadge";
+import { useI18n } from "../../i18n";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import type { ProgressMessage } from "@/lib/ws";
-import { Disclosure } from "@/components/ui/disclosure";
-import { Card, CardContent } from "@/components/ui/card";
-import { ErrorNotice } from "@/components/ui/data";
-import { progressInterval } from "@/lib/runtime";
+import { api } from "../../api/client";
+import type { ProgressMessage } from "../../lib/ws";
+import { ErrorNotice } from "../../components/ui/data";
+import { progressInterval } from "../../lib/runtime";
 
 export function WorkflowPanel({
   pid,
@@ -21,6 +19,7 @@ export function WorkflowPanel({
   busy: boolean;
 }) {
   const { t: tr } = useI18n();
+  const headingId = useId();
   const TASKS: Record<string, string> = {
     parse: tr("workflowPanel.sourceParsing"),
     prepare: tr("common.preparation"),
@@ -48,58 +47,42 @@ export function WorkflowPanel({
     !cachedIsNewer
       ? msg
       : cached;
+  const showProgress =
+    workflow &&
+    !["not_started", "queued", "done", "completed"].includes(workflow.status) &&
+    (!!live?.label || workflow.status === "running");
+
   return (
-    <Card>
-      <CardContent className="p-5 space-y-4">
-        <div>
-          <h2 className="font-medium">{tr("workflowPanel.currentWorkflow")}</h2>
-        </div>
-        <ErrorNotice error={query.error} />
-        {workflow && (
-          <>
-            <div className="flex flex-wrap gap-3 text-sm">
-              <strong>{TASKS[workflow.kind] || workflow.kind}</strong>
-              <StatusBadge status={workflow.status} />
-            </div>
-            <div role="status" className="rounded border p-3 text-sm">
-              <span className="text-muted-foreground">
-                {tr("workflowPanel.latestStage")}
+    <section aria-labelledby={headingId} className="space-y-3 py-2">
+      <h2 id={headingId} className="font-medium">
+        {tr("workflowPanel.currentWorkflow")}
+      </h2>
+      <ErrorNotice error={query.error} />
+      {workflow && (
+        <div role="status" aria-atomic="true" className="space-y-2 text-sm">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="font-medium">{TASKS[workflow.kind] || workflow.kind}</span>
+            <StatusBadge status={workflow.status} />
+          </div>
+          {showProgress && (
+            <p className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+              <span className="min-w-0 [overflow-wrap:anywhere]">
+                {live?.label
+                  ? String(live.label)
+                  : tr("workflowPanel.waitingForProgressUpdates")}
               </span>
-              {live?.label
-                ? String(live.label)
-                : tr("workflowPanel.waitingForProgressUpdates")}
-              {live && Number(live.total) > 0 && (
-                <span className="ml-2">
+              {!!live?.label && Number(live.total) > 0 && (
+                <span className="shrink-0 tabular-nums text-muted-foreground">
                   {tr("workflow.stageCount", {
                     done: Number(live.done) || 0,
                     total: Number(live.total),
                   })}
                 </span>
               )}
-            </div>
-            <Disclosure title={tr("progress.workflowDetails")}>
-              <ol className="space-y-2">
-                {workflow.stages.map((stage, index) => (
-                  <li
-                    key={stage.id}
-                    className={`flex items-center gap-4 py-2 ${stage.enabled ? "" : "text-muted-foreground"}`}
-                  >
-                    <div className="text-xs text-muted-foreground">
-                      {index + 1} ·{" "}
-                      {stage.enabled
-                        ? tr("common.enabled")
-                        : tr("workflowPanel.disabled")}
-                    </div>
-                    <div className="text-sm font-medium mt-1">
-                      {workflowStageLabel(stage.id, stage.label, tr)}
-                    </div>
-                  </li>
-                ))}
-              </ol>
-            </Disclosure>
-          </>
-        )}
-      </CardContent>
-    </Card>
+            </p>
+          )}
+        </div>
+      )}
+    </section>
   );
 }

@@ -1,6 +1,6 @@
 // Exercise the shared accounting UI through the Desktop entry point as well.
 import { test } from "@playwright/test";
-import "../../../web/tests/accounting.spec";
+import { registerTests } from "../../../../packages/ui/tests/e2e/accounting";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -13,3 +13,5 @@ test.beforeEach(async ({ page }) => {
     });
   });
 });
+
+registerTests();

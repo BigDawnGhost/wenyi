@@ -725,12 +725,6 @@ class SqliteStorage:
     def load_analysis(self) -> dict | None:
         return self.read_artifact("analysis.json")
 
-    def save_report(self, data: dict) -> None:
-        self.write_artifact("report.json", data)
-
-    def load_report(self) -> dict | None:
-        return self.read_artifact("report.json")
-
     def save_usage(self, data: dict) -> None:
         self.write_artifact("usage.json", data)
 

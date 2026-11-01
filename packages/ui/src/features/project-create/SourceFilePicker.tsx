@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { FileText, FolderOpen } from "lucide-react";
-import { useI18n } from "@/i18n";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { ErrorNotice } from "@/components/ui/data";
-import { platform, type ProjectSource } from "@/platform";
+import { useI18n } from "../../i18n";
+import { cn } from "../../lib/utils";
+import { Button } from "../../components/ui/button";
+import { ErrorNotice } from "../../components/ui/data";
+import { platform, type ProjectSource } from "../../platform";
 
 function formatSize(bytes: number, locale: string) {
   const units = ["B", "KB", "MB", "GB"];

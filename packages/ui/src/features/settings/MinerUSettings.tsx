@@ -1,6 +1,6 @@
-import { useI18n } from "@/i18n";
-import { platform } from "@/platform";
-import { LazyBoundary } from "@/routes/LazyBoundary";
+import { useI18n } from "../../i18n";
+import { platform } from "../../platform";
+import { LazyBoundary } from "../../routes/LazyBoundary";
 import { SettingsSection } from "./SettingsSection";
 
 export function MinerUSettings() {

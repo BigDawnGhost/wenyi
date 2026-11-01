@@ -61,7 +61,7 @@ def test_review_recovers_checkpoint_and_usage_boundaries(tmp_path, boundary, aft
     manifest = Path(store.manifest_path).read_bytes()
     stopped = False
     save = ReviewRunStore.save_checkpoint
-    flush = orch._runtime.flush_usage
+    flush = orch._runtime.usage.flush
 
     def checkpoint(debug, value):
         nonlocal stopped
@@ -83,7 +83,7 @@ def test_review_recovers_checkpoint_and_usage_boundaries(tmp_path, boundary, aft
 
     with (
         patch.object(ReviewRunStore, "save_checkpoint", checkpoint),
-        patch.object(orch._runtime, "flush_usage", side_effect=usage),
+        patch.object(orch._runtime.usage, "flush", side_effect=usage),
         pytest.raises(KeyboardInterrupt),
     ):
         orch._review.run_session(store, [])

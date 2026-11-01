@@ -12,7 +12,8 @@
     "desktop:build": "node scripts/desktop.mjs build",
     "dev:api": "uv run uvicorn wenyi_api.main:app --reload --port 8000",
     "dev:worker": "uv run arq wenyi_api.workers.WorkerSettings",
-    "gen:schema": "openapi-typescript http://localhost:8000/openapi.json -o packages/shared-schema/src/api.d.ts",
+    "gen:schema": "node scripts/schema.mjs --write",
+    "check:schema": "node scripts/schema.mjs --check",
     "build": "pnpm build:web"
   },
   "devDependencies": {

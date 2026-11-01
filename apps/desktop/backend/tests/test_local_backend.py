@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from wenyi_backend import dal, paths
+from wenyi_backend import paths
 from wenyi_backend.context import current_context, use_context
 from wenyi_backend.global_settings import load_settings, save_settings
 from wenyi_desktop.local_backend import LocalBackend
@@ -45,7 +45,9 @@ def backend(tmp_path, monkeypatch):
 
 
 def new_project():
-    return dal.create_project("Sample", "en", "zh", {"template": "标准翻译"})
+    return current_context().repository.create_project(
+        "Sample", "en", "zh", {"template": "标准翻译"}
+    )
 
 
 def test_strategy_and_admission_calls_match_repository(backend):
@@ -64,19 +66,21 @@ def test_strategy_and_admission_calls_match_repository(backend):
 def test_catalog_durability_and_workspace_isolation(backend, tmp_path):
     pid = new_project()
     assert Path(paths.project_dir(pid)) == backend.workspace / "projects" / pid
-    dal.set_project_config(pid, {"pipeline": {"polish": False}})
-    identity = dal.create_job(pid, "translation", "task", run_id="run")
-    dal.set_job_status(identity, "error", "offline", result={"stage": "translate"})
-    saved = dal.get_job(identity)
+    current_context().repository.set_project_config(pid, {"pipeline": {"polish": False}})
+    identity = current_context().repository.create_job(pid, "translation", "task", run_id="run")
+    current_context().repository.set_job_status(
+        identity, "error", "offline", result={"stage": "translate"}
+    )
+    saved = current_context().repository.get_job(identity)
     assert saved["run_id"] == "run"
-    assert dal.latest_resumable_job(pid) == saved
+    assert current_context().repository.latest_resumable_job(pid) == saved
     workspace = backend.workspace
     backend.close()
     other = create_context(tmp_path / "second")
     try:
         with use_context(other):
             assert other.repository.all_jobs() == []
-            assert dal.list_projects() == []
+            assert current_context().repository.list_projects() == []
     finally:
         other.repository.close()
     reopened = LocalBackend(workspace)
@@ -91,14 +95,14 @@ def test_run_identity_and_conditional_transitions(backend):
     import sqlite3
 
     pid = new_project()
-    identity = dal.create_job(pid, "parse", "task", run_id="unique")
+    identity = current_context().repository.create_job(pid, "parse", "task", run_id="unique")
     with pytest.raises(sqlite3.IntegrityError):
-        dal.create_job(pid, "parse", "other-task", run_id="unique")
+        current_context().repository.create_job(pid, "parse", "other-task", run_id="unique")
     assert backend.set_job_status(identity, "running", expected_status="queued")
     assert not backend.set_job_status(identity, "done", expected_status="queued")
-    assert dal.get_job(identity)["status"] == "running"
+    assert current_context().repository.get_job(identity)["status"] == "running"
     assert backend.set_job_status(identity, "interrupted", expected_status={"running"})
-    assert dal.get_job_by_arq_id("task")["status"] == "interrupted"
+    assert current_context().repository.get_job_by_arq_id("task")["status"] == "interrupted"
 
 
 def test_catalog_transaction_rolls_back_project_and_config(backend):
@@ -106,10 +110,14 @@ def test_catalog_transaction_rolls_back_project_and_config(backend):
 
     with pytest.raises(RuntimeError):
         with registry_guard() as connection:
-            pid = dal.create_project("Rollback", "en", "zh", {}, connection=connection)
-            dal.set_project_config(pid, {"test": True}, connection=connection)
+            pid = current_context().repository.create_project(
+                "Rollback", "en", "zh", {}, connection=connection
+            )
+            current_context().repository.set_project_config(
+                pid, {"test": True}, connection=connection
+            )
             raise RuntimeError("abort")
-    assert dal.list_projects() == []
+    assert current_context().repository.list_projects() == []
 
 
 def test_defaults_do_not_load_cli_config_and_revision_is_optimistic(backend, tmp_path, monkeypatch):
@@ -132,7 +140,7 @@ def test_export_retention_and_project_ownership(backend):
     pid, other = new_project(), new_project()
 
     def publish(index):
-        identity = dal.create_export(pid, "txt", {"index": index})
+        identity = current_context().repository.create_export(pid, "txt", {"index": index})
         output = Path(paths.exports_dir(pid)) / f"{identity}.txt"
         output.write_text(str(index), encoding="utf-8")
         backend.publish_export(pid, identity, str(output))
@@ -555,7 +563,7 @@ def test_settings_projects_health_and_download_routes_without_pg(backend):
     assert client.post("/settings/validate", json=body).status_code == 200
     assert client.put("/settings", json=body).status_code == 200
     assert client.put("/settings", json=body).status_code == 409
-    eid = dal.create_export(pid, "txt", {})
+    eid = current_context().repository.create_export(pid, "txt", {})
     output = Path(paths.exports_dir(pid)) / "sample.txt"
     output.write_text("download", encoding="utf-8")
     backend.publish_export(pid, eid, str(output))
@@ -582,18 +590,18 @@ def test_backend_cannot_be_replaced_implicitly(backend, tmp_path):
 def test_atomic_admission_and_late_compensation(backend):
     pid = new_project()
     identity = backend.admit_job(pid, "parse", "first", project_status="parsing")
-    assert dal.get_project(pid)["status"] == "parsing"
+    assert current_context().repository.get_project(pid)["status"] == "parsing"
     with pytest.raises(HTTPException) as error:
         backend.admit_job(pid, "parse", "second", project_status="parsing")
     assert error.value.status_code == 409
-    assert len(dal.list_jobs(pid)) == 1
+    assert len(current_context().repository.list_jobs(pid)) == 1
     assert backend.fail_admission(identity, "uploaded", "queue rejected")
-    assert dal.get_project(pid)["status"] == "uploaded"
+    assert current_context().repository.get_project(pid)["status"] == "uploaded"
     second = backend.admit_job(pid, "parse", "second", project_status="parsing")
     backend.set_job_status(second, "running", expected_status="queued")
     assert not backend.fail_admission(second, "uploaded", "late rejection")
-    assert dal.get_project(pid)["status"] == "parsing"
-    assert dal.get_job(second)["status"] == "running"
+    assert current_context().repository.get_project(pid)["status"] == "parsing"
+    assert current_context().repository.get_job(second)["status"] == "running"
 
 
 def test_export_admission_is_atomic_and_late_compensation_is_ignored(backend):
@@ -628,8 +636,10 @@ def test_model_rename_updates_projects_not_frozen_jobs(backend):
         json={"yaml": json.dumps({"llm": {"tiers": {"strong": old}}})},
     )
     assert response.status_code == 200, response.text
-    job_id = dal.create_job(pid, "translation", "frozen", config_snapshot=document)
-    frozen = dal.get_job(job_id)["params"]
+    job_id = current_context().repository.create_job(
+        pid, "translation", "frozen", config_snapshot=document
+    )
+    frozen = current_context().repository.get_job(job_id)["params"]
     llm = document["llm"]
     llm["preset"] = None
     llm["models"]["renamed"] = llm["models"].pop(old)
@@ -641,11 +651,13 @@ def test_model_rename_updates_projects_not_frozen_jobs(backend):
         "model_renames": {old: "renamed"},
     }
     assert client.post("/settings/validate", json=body).status_code == 200
-    assert dal.get_project_config(pid)["llm"]["tiers"]["strong"] == old
+    assert current_context().repository.get_project_config(pid)["llm"]["tiers"]["strong"] == old
     response = client.put("/settings", json=body)
     assert response.status_code == 200, response.text
-    assert dal.get_project_config(pid)["llm"]["tiers"]["strong"] == "renamed"
-    assert dal.get_job(job_id)["params"] == frozen
+    assert (
+        current_context().repository.get_project_config(pid)["llm"]["tiers"]["strong"] == "renamed"
+    )
+    assert current_context().repository.get_job(job_id)["params"] == frozen
 
 
 def test_local_lifespan_starts_runner_without_pg_and_closes_backend(backend, monkeypatch):
@@ -684,7 +696,7 @@ def test_progress_is_latest_only_and_cascades_with_project(backend):
     backend.save_progress(pid, {"run_id": "run", "percent": 10})
     backend.save_progress(pid, {"run_id": "run", "percent": 100})
     assert backend.load_progress(pid) == {"run_id": "run", "percent": 100}
-    dal.delete_project(pid)
+    current_context().repository.delete_project(pid)
     assert backend.load_progress(pid) is None
 
 

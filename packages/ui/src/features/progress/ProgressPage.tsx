@@ -1,21 +1,21 @@
-import { StatusBadge } from "@/components/StatusBadge";
-import { useI18n } from "@/i18n";
+import { StatusBadge } from "../../components/StatusBadge";
+import { useI18n } from "../../i18n";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, isProjectBusy, type ChapterSummary } from "@/lib/api";
-import { useProjectQuery } from "@/lib/projectQuery";
-import { useProjectProgress } from "@/lib/ws";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { ErrorNotice, StructuredData } from "@/components/ui/data";
-import { Disclosure } from "@/components/ui/disclosure";
+import { api, isProjectBusy } from "../../api/client";
+import type { ChapterSummary } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { useProjectProgress } from "../../lib/ws";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent } from "../../components/ui/card";
+import { Badge } from "../../components/ui/badge";
+import { Progress } from "../../components/ui/progress";
+import { ErrorNotice } from "../../components/ui/data";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { Accounting } from "./Accounting";
-import { toast } from "@/lib/toast";
-import { progressInterval } from "@/lib/runtime";
+import { toast } from "../../lib/toast";
+import { progressInterval } from "../../lib/runtime";
 
 export default function ProgressPage() {
   const { t: tr } = useI18n();
@@ -37,11 +37,6 @@ export default function ProgressPage() {
     queryFn: () => api.getSubtitles(pid),
     enabled: subtitle,
     refetchInterval: busy ? progressInterval(connected, 3000) : false,
-  });
-  const report = useQuery({
-    queryKey: ["report", pid],
-    queryFn: () => api.getReport(pid),
-    enabled: !!project && !subtitle,
   });
   const stats = useQuery({
     queryKey: ["stats", pid],
@@ -66,13 +61,6 @@ export default function ProgressPage() {
           ? tr("progress.pauseRequestedSavingCompletedWork")
           : tr("progress.taskSubmitted"),
       );
-    },
-  });
-  const regenerate = useMutation({
-    mutationFn: () => api.regenerateReport(pid),
-    onSuccess: (result) => {
-      qc.setQueryData(["report", pid], result);
-      toast.success(tr("progress.reportUpdated"));
     },
   });
   const chapters = chapterQuery.data || [];
@@ -188,36 +176,11 @@ export default function ProgressPage() {
           </div>
         )}
         {!subtitle && (
-          <>
-            <Disclosure
-              title={tr("progress.projectReport")}
-              error={report.error || regenerate.error}
-            >
-              <Button
-                variant="outline"
-                disabled={regenerate.isPending || busy || !project?.initialized}
-                onClick={() => regenerate.mutate()}
-              >
-                {tr("progress.updateReport")}
-              </Button>
-              <ErrorNotice error={report.error || regenerate.error} />
-              <StructuredData
-                value={
-                  report.data?.summary &&
-                  Object.fromEntries(
-                    Object.entries(report.data.summary).filter(
-                      ([key]) => !["usage", "timing"].includes(key),
-                    ),
-                  )
-                }
-              />
-            </Disclosure>
-            <ChapterTable
-              pid={pid}
-              chapters={chapters}
-              busy={busy || !project?.initialized}
-            />
-          </>
+          <ChapterTable
+            pid={pid}
+            chapters={chapters}
+            busy={busy || !project?.initialized}
+          />
         )}
       </PageContainer>
     </>

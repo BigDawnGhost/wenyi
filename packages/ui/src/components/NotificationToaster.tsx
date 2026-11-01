@@ -9,7 +9,6 @@ export function NotificationToaster() {
       closeButton
       position="top-right"
       offset={24}
-      mobileOffset={16}
       duration={5000}
       style={{ zIndex: 200, pointerEvents: "auto" }}
     />,

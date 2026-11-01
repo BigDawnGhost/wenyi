@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Loader2 } from "lucide-react";
-import { useI18n } from "@/i18n";
-import { useForeground } from "@/lib/runtime";
-import type { ProgressMessage } from "@/lib/ws";
-import { StatusBadge } from "@/components/StatusBadge";
-import { Progress } from "@/components/ui/progress";
-import { formatDuration } from "@/features/progress/accountingData";
+import { useI18n } from "../../i18n";
+import { useForeground } from "../../lib/runtime";
+import type { ProgressMessage } from "../../lib/ws";
+import { StatusBadge } from "../../components/StatusBadge";
+import { Progress } from "../../components/ui/progress";
+import { formatDuration } from "../progress/accountingData";
 import { reviewPhase } from "./reviewData";
 
 export function ReviewActivity({

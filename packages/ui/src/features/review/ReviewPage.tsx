@@ -1,17 +1,17 @@
 import { useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "@/lib/toast";
-import { useI18n } from "@/i18n";
-import { statusLabel } from "@/i18n/status";
-import { api, isProjectBusy } from "@/lib/api";
-import { useProjectQuery } from "@/lib/projectQuery";
-import { useProjectProgress } from "@/lib/ws";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Select, SelectItem } from "@/components/ui/select";
-import { StatusBadge } from "@/components/StatusBadge";
-import { ErrorNotice } from "@/components/ui/data";
+import { toast } from "../../lib/toast";
+import { useI18n } from "../../i18n";
+import { statusLabel } from "../../i18n/status";
+import { api, isProjectBusy } from "../../api/client";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { useProjectProgress } from "../../lib/ws";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Select, SelectItem } from "../../components/ui/select";
+import { StatusBadge } from "../../components/StatusBadge";
+import { ErrorNotice } from "../../components/ui/data";
 import { ReviewIssues } from "./ReviewIssues";
 import { ReviewActivity } from "./ReviewActivity";
 import { reviewPhase, reviewProgress } from "./reviewData";
@@ -112,7 +112,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
             {(runs.data?.length || 0) > 1 && (
               <Select
                 aria-label={t("review.history")}
-                className="w-full sm:w-auto sm:max-w-72"
+                className="w-auto max-w-72"
                 value={rid || ""}
                 onValueChange={(value) =>
                   setSelected(

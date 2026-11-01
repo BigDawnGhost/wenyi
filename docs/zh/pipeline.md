@@ -36,7 +36,7 @@ flowchart TD
     Q -- 是 --> R[叠加 changes 并复用 Agent Loop 与 Fixer<br/>发布最终段落 target]
     Q -- 否 --> X[可选仅规范导出副本标点]
     R --> X
-    X --> M[生成报告并组装所选格式]
+    X --> M[组装所选格式]
 ```
 
 启用 `book_understanding` 时，先按配置的并发数生成逐章梗概，再分析风格，最后生成全书概览。所有模式均将每章完整原文按最多 8,000 字符分块，再按原文顺序归并。风格分析接收全部章节梗概作为事实与人物背景，开头／中间／结尾的原文样本仍是文风判断的主要依据。全书概览使用风格摘要、章节梗概和相关权威术语映射，不携带完整术语备注。这套准备流程不受 `terminology_context` 开关影响，也不抽取或建立术语。初始化 manifest 在章节梗概和风格分析完成后最后提交。关闭 `book_understanding` 会跳过章节梗概和全书概览。翻译过程中，每批获得最新的术语快照和已译上下文，为跨章一致性提供参考。
@@ -125,7 +125,7 @@ Fixer 术语文本，仍需自行负责其内容；自动过滤适用于结构�
 
 ### 可选全书术语证据
 
-`pipeline.terminology_context` 默认为 `false`，是仅 CLI 可用的实验性书籍功能。CLI `prepare` 和 `translate` 显式授予本次操作 `allow_terminology_context=True`；Orchestrator/PipelineRuntime 默认为 `False`。普通调用方和 API 不能仅靠开启 YAML 设置生产证据。Review、assemble 和 report 可以消费已有备注，不生产证据。Web/Desktop 不开放证据生产；SRT 不使用此路径。
+`pipeline.terminology_context` 默认为 `false`，是仅 CLI 可用的实验性书籍功能。CLI `prepare` 和 `translate` 显式授予本次操作 `allow_terminology_context=True`；Orchestrator/PipelineRuntime 默认为 `False`。普通调用方和 API 不能仅靠开启 YAML 设置生产证据。Review 和 assemble 可以消费已有备注，不生产证据。Web/Desktop 不开放证据生产；SRT 不使用此路径。
 
 通过获授权的 CLI 操作开启后，仅译前发现及译后补漏中的人物条目（`type: person`）经过全书原文证据准入。已有条目以保存的类型为准，而非候选建议的类型。译前发现只请求人物；非人物建议在历史对齐和准入前被忽略，已有非人物条目也不通过取证刷新。其他类型保留常规译后抽取及术语冲突处理，不调用全书取证或合并。即使开启此模式，译前准备也不抽取或建立术语；取证从待译批次开始。不会删除已有备注和产物。人物的所有匹配原文组都会处理；取证或合并失败时不发布局部知识。发现结果、分组结果和合并知识通过 Storage artifacts 缓存，重试保留成功组与已保存译文，不重新翻译已完成正文。
 
@@ -220,8 +220,8 @@ state/<书名>/targets/<目标语言>/reviews/review-YYYYMMDD-HHMMSS-ffffff/
 Agent 判定、失败原因、目标哈希和发布状态；章节 JSON 不增加 Review 历史字段。索引
 会在正式 target 之前落盘，进程中断后可幂等续写。最终 issue 修订部分失败时，已有效
 应用的直接 `change` 不会回滚，失败会进入索引和结果摘要。本次用量增量还会且只会
-合并一次到本书累计 `usage.json`；`report.json` 保存简短的 Review/Autofix 摘要，
-已发布的运行会标记 `read_only: false`。
+合并一次到本书累计 `usage.json`。Review/Autofix 结果继续保存在各自运行目录中；
+流程不再生成独立的项目汇总报告。
 
 `not_rereported` 只表示后续盲审没有再次报告该建议所覆盖的逻辑问题，并不证明
 候选替换在语义上正确。停止原因

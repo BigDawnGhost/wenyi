@@ -181,28 +181,3 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         presentation.print_timing(console, load_timing(result["store"].run_dir))
         for path in paths:
             console.print(f"Translation written: [bold]{path}[/]")
-
-    @app.command(rich_help_panel="State and output")
-    def report(
-        input: str = typer.Argument(..., help="Source file with existing translation state"),
-    ) -> None:
-        """Regenerate report.json from chapter and glossary state without calling a model."""
-        console = context().console
-        from wenyi_core.llm.providers.fake import FakeClient
-        from wenyi_core.pipeline.orchestrator import Orchestrator
-
-        config = context().load_config()
-        require_input_file(input, console=console)
-        try:
-            result = Orchestrator(config, client=FakeClient()).run_report(input)
-        except (IngestError, OSError, ValueError) as error:
-            console.print(f"[red]Error: {error}[/]")
-            raise typer.Exit(1) from None
-        store = result["store"]
-        rep = result["report"]
-        s = rep["summary"]
-        console.print(f"Report written to {store.report_path}")
-        console.print(
-            f"  Chapter {s['chapters_done']}/{s['chapters_total']}  Terms {s['terms']}  "
-            f"Unresolved conflicts {s['open_conflicts']}  Empty translations {s['empty_targets']}"
-        )

@@ -16,7 +16,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from ..events import ProgressFn
-from ..glossary.store import GlossaryStore, GlossaryTerm
+from ..glossary.store import GlossaryTerm
 from ..llm.retrying import is_resumable_provider_interrupt
 from ..review.evidence import BookEvidenceIndex
 from ..review.models import ReviewOutcome
@@ -44,14 +44,8 @@ class ReviewService:
             runtime.config, runtime.client, runtime.analyzer.style_brief, self._chunks
         )
 
-    def session_terms(
-        self,
-        store: Storage,
-        glossary: Storage | GlossaryStore | GlossaryStore | None = None,
-    ) -> list[GlossaryTerm]:
+    def session_terms(self, store: Storage) -> list[GlossaryTerm]:
         """Return the final glossary snapshot used by this review."""
-        if glossary is not None:
-            return glossary.all_terms()
         return store.all_terms()
 
     def _review_config_snapshot(self) -> dict[str, Any]:
@@ -131,7 +125,7 @@ class ReviewService:
     ) -> ReviewInputs | ReviewOutcome:
         """Validate formal state and restore or initialize the appropriate Review directory."""
         manifest = store.load_manifest()
-        self._runtime.flush_usage(store, scope="before_review")
+        self._runtime.usage.flush(store, scope="before_review")
         pending = [
             chapter["index"]
             for chapter in manifest.get("chapters", [])
@@ -245,7 +239,7 @@ class ReviewService:
             """Persist this review's usage delta and merge it into cumulative book usage."""
             from ..llm.usage import empty_usage
 
-            self._runtime.flush_usage(store, scope="review", review=debug)
+            self._runtime.usage.flush(store, scope="review", review=debug)
             return debug.load_usage() or empty_usage()
 
         policy = ReviewPolicy(

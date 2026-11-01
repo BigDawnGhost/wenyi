@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../../packages/ui/tests/e2e/fixtures";
 
 test("navigating between routes keeps the sidebar shell as the same node", async ({
   page,
@@ -53,6 +53,8 @@ test("project navigation follows the last opened project across global routes", 
   await page.goto(`/projects/${pid}`);
   const projectNav = page.getByRole("navigation", {
     name: "Project navigation",
+    // The creation dialog keeps the sidebar visible but hides it from accessibility navigation.
+    includeHidden: true,
   });
   await expect(projectNav).toBeVisible();
   await page
@@ -65,11 +67,14 @@ test("project navigation follows the last opened project across global routes", 
     .locator('[data-slot="sidebar.footer"] a[href="/settings"]')
     .click();
   await expect(page).toHaveURL("/settings");
+  await expect(projectNav).toHaveCount(0);
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(projectNav).toBeVisible();
   await page
     .locator('[data-slot="sidebar.action"] a[href="/projects/new"]')
     .click();
   await expect(page).toHaveURL("/projects/new");
+  await expect(page.getByRole("dialog", { name: "Create project", exact: true })).toBeVisible();
   await expect(projectNav).toBeVisible();
   // The preference survives a reload.
   await page.reload();

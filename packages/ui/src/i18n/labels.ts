@@ -16,7 +16,6 @@ const stages: Record<string, MessageKey> = {
   term_extract: "workflow.terms",
   review: "common.wholeBookReview",
   review_autofix: "data.autofix",
-  report: "workflow.report",
   assemble: "workflow.export",
   export: "workflow.export",
   srt: "workflow.subtitles",

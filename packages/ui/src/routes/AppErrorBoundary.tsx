@@ -1,6 +1,6 @@
 import { Component, type ReactNode } from "react";
 import { ErrorFallback } from "./RouteGate";
-import { platform } from "@/platform";
+import { platform } from "../platform";
 
 /**
  * Root-level safety net for failures outside the route content (providers,

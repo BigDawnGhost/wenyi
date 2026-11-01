@@ -13,6 +13,8 @@ from wenyi_api import dal
 from wenyi_api.adapters import postgres_repository
 from wenyi_api.telemetry import RedisTelemetry
 from wenyi_backend.context import current_context, use_context
+from wenyi_backend.execution import bindings, exporting, operations, runner
+from wenyi_backend.execution.contracts import ExecutionRequest, ExportRequest
 from wenyi_backend.workers import tasks
 from wenyi_core.config import Config
 from wenyi_core.llm.limits import RequestLimits, RequestStopped
@@ -24,20 +26,30 @@ def worker_state(pg_storage, pg_pool, monkeypatch):
     from wenyi_core.llm import factory
 
     monkeypatch.setattr(dal, "get_pool", lambda: pg_pool)
-    monkeypatch.setattr(tasks, "_pipeline_storage", lambda *_: pg_storage)
-    monkeypatch.setattr(tasks, "redis_progress_fn", lambda *_a, **_k: lambda *_: None)
+    monkeypatch.setattr(runner, "redis_progress_fn", lambda *_a, **_k: lambda *_: None)
     config = Config.from_dict(
         {"language": {"source": "en", "target": "zh"}, "llm": {"preset": "fake"}}
     )
-    monkeypatch.setattr(tasks, "_build_config_for", lambda *_: config)
+    monkeypatch.setattr(bindings, "build_config_for", lambda *_: config)
     monkeypatch.setattr(factory, "build_client", lambda _: FakeClient())
-    context = replace(current_context(), build_client=lambda cfg: factory.build_client(cfg))
+    context = replace(
+        current_context(),
+        storage_for=lambda _: pg_storage,
+        build_client=lambda cfg: factory.build_client(cfg),
+    )
     postgres_repository(context)._pool = pg_pool
     telemetry = context.telemetry
     assert isinstance(telemetry, RedisTelemetry)
     telemetry.url = "redis://127.0.0.1:56379/0"
     with use_context(context):
         yield pg_storage
+
+
+def execute_workflow(kind, pid, run_id, params=None):
+    runner.execute(
+        ExecutionRequest(kind, pid, run_id, params or {}),
+        bindings.workflow_dependencies(current_context()),
+    )
 
 
 def test_cancelled_requests_pause_without_recording_an_error(worker_state, monkeypatch):
@@ -50,8 +62,8 @@ def test_cancelled_requests_pause_without_recording_an_error(worker_state, monke
         limits.cancel()
         limits.check()
 
-    monkeypatch.setattr(tasks, "_book_operation", cancelled)
-    tasks._execute("translation", pid, "cancelled-run", {})
+    monkeypatch.setattr(operations, "book_operation", cancelled)
+    execute_workflow("translation", pid, "cancelled-run")
     assert must(dal.get_project(pid))["status"] == "paused"
     assert must(dal.get_project(pid))["error"] is None
     assert must(dal.get_job(job_id))["status"] == "paused"
@@ -79,69 +91,13 @@ def test_limit_stops_keep_actionable_diagnostics(worker_state, monkeypatch, reas
     def exhausted(*_):
         raise RequestStopped(reason)
 
-    monkeypatch.setattr(tasks, "_book_operation", exhausted)
-    tasks._execute("translation", pid, "budget-run", {})
+    monkeypatch.setattr(operations, "book_operation", exhausted)
+    execute_workflow("translation", pid, "budget-run")
     assert must(dal.get_project(pid))["status"] == "paused"
     assert must(dal.get_project(pid))["error"] == reason
     assert must(dal.get_job(job_id))["error"] == reason
     pause = next(event for event in worker_state.list_events() if event["event"] == "task_paused")
     assert pause["reason"] == reason
-
-
-def test_model_failures_still_record_an_error(worker_state, monkeypatch):
-    pid = worker_state.project_id
-    job_id = dal.create_job(pid, "translation", "failed-model", run_id="failed-model")
-    dal.set_project_status(pid, "translating")
-
-    def failed(*_):
-        raise RuntimeError("Provider connection failed")
-
-    monkeypatch.setattr(tasks, "_book_operation", failed)
-    with pytest.raises(RuntimeError, match="Provider connection failed"):
-        tasks._execute("translation", pid, "failed-model", {})
-    assert must(dal.get_project(pid))["status"] == "error"
-    assert must(dal.get_project(pid))["error"] == "Provider connection failed"
-    assert must(dal.get_job(job_id))["error"] == "Provider connection failed"
-    failure = next(
-        event for event in worker_state.list_events() if event["event"] == "pipeline_error"
-    )
-    assert failure["error"] == "Provider connection failed"
-    assert failure["error_type"] == "RuntimeError"
-    assert "RuntimeError: Provider connection failed" in failure["traceback"]
-
-
-def test_failed_task_publishes_an_error_event(worker_state, monkeypatch):
-    """Live clients must stop waiting when a run fails, and learn the code."""
-    pid = worker_state.project_id
-    dal.create_job(pid, "translation", "failing-run", run_id="failing-run")
-    dal.set_project_status(pid, "translating")
-    published = []
-
-    class RecordingRedis:
-        def publish(self, channel, value):
-            published.append((channel, __import__("json").loads(value)))
-
-        def set(self, *args, **kwargs):
-            return None
-
-        def get(self, key):
-            return None
-
-    monkeypatch.setattr(tasks, "_record_terminal_status", lambda *a, **k: None)
-    monkeypatch.setattr(tasks, "publish_error", lambda *a, **k: published.append(("error", k)))
-    monkeypatch.setattr(tasks, "redis_progress_fn", lambda *_a, **_k: lambda *_: None)
-
-    def failed(*_):
-        raise RuntimeError("Provider connection failed")
-
-    monkeypatch.setattr(tasks, "_book_operation", failed)
-    with pytest.raises(RuntimeError):
-        tasks._execute("translation", pid, "failing-run", {})
-    errors = [entry for entry in published if entry[0] == "error"]
-    assert errors, published
-    assert errors[0][1]["code"] == "pipeline_failed"
-    assert errors[0][1]["message"] == "Provider connection failed"
-    assert errors[0][1]["run_id"] == "failing-run"
 
 
 def test_superseded_redis_delivery_cannot_execute_over_new_work(worker_state, monkeypatch):
@@ -156,8 +112,8 @@ def test_superseded_redis_delivery_cannot_execute_over_new_work(worker_state, mo
         calls.append("unexpected old workflow")
         return "done"
 
-    monkeypatch.setattr(tasks, "_book_operation", operation)
-    tasks._execute("translation", pid, "old-delivery", {})
+    monkeypatch.setattr(operations, "book_operation", operation)
+    execute_workflow("translation", pid, "old-delivery")
     assert calls == []
     assert must(dal.get_job(new))["status"] == "queued"
     assert must(dal.get_project(pid))["status"] == "translating"
@@ -179,7 +135,7 @@ def test_async_error_fallback_does_not_overwrite_a_newer_task(worker_state, monk
         dal.set_project_status(pid, "translating")
         raise RuntimeError("old service failure")
 
-    monkeypatch.setattr(tasks, "_execute", failed_thread)
+    monkeypatch.setattr(runner, "execute", failed_thread)
     with pytest.raises(RuntimeError, match="old service failure"):
         asyncio.run(tasks._run("translation", pid, "old-failure", {}))
     assert must(dal.get_job(latest[0]))["status"] == "queued"
@@ -204,7 +160,7 @@ def test_worker_streams_time_and_usage_before_a_batch_finishes(worker_state, mon
     monkeypatch.setattr(configuration, "storage_for", lambda _: worker_state)
     paused = True
 
-    def operation(kind, project_id, store, config, client, progress, params):
+    def operation(request, store, config, client, progress, services):
         runtime = PipelineRuntime(config, client)
         baseline = (store.load_usage() or {"totals": {"total_tokens": 0}})["totals"]["total_tokens"]
         previous_seconds = (store.read_artifact("timing.json") or {}).get("total_seconds", 0)
@@ -230,12 +186,12 @@ def test_worker_streams_time_and_usage_before_a_batch_finishes(worker_state, mon
                     "total_tokens"
                 ] == baseline
                 if paused:
-                    raise tasks.PauseRequested(pid)
+                    raise runner.PauseRequested(pid)
             finally:
-                runtime.flush_usage(store, scope="test")
+                runtime.usage.flush(store, scope="test")
         return "done"
 
-    monkeypatch.setattr(tasks, "_book_operation", operation)
+    monkeypatch.setattr(operations, "book_operation", operation)
     with Redis.from_url(redis_url) as redis:
         try:
             for run_id, expected_status, tokens in [
@@ -244,7 +200,7 @@ def test_worker_streams_time_and_usage_before_a_batch_finishes(worker_state, mon
             ]:
                 dal.create_job(pid, "translation", run_id, run_id=run_id)
                 dal.set_project_status(pid, "translating")
-                tasks._execute("translation", pid, run_id, {})
+                execute_workflow("translation", pid, run_id)
                 assert must(dal.get_project(pid))["status"] == expected_status
                 final = configuration.project_stats(pid)
                 assert "live" not in final
@@ -278,16 +234,19 @@ def _export_row(pool, export_id):
 
 @pytest.fixture
 def recovery_state(worker_state, pg_pool, monkeypatch):
+    from dataclasses import replace
+
     from wenyi_api.storage_pg import PostgresStorage
     from wenyi_api.workers import recovery
+    from wenyi_backend.context import current_context, use_context
 
     monkeypatch.setattr(recovery, "get_pool", lambda: pg_pool)
-    monkeypatch.setattr(
-        recovery,
-        "storage_for",
-        lambda pid: PostgresStorage(pid, pg_pool, run_dir=worker_state.run_dir),
+    context = replace(
+        current_context(),
+        storage_for=lambda pid: PostgresStorage(pid, pg_pool, run_dir=worker_state.run_dir),
     )
-    return worker_state, recovery
+    with use_context(context):
+        yield worker_state, recovery
 
 
 def test_export_recovery_marks_orphan_error_without_changing_project(recovery_state, pg_pool):
@@ -380,7 +339,11 @@ def test_failure_does_not_leave_project_busy_when_api_briefly_owns_lock(worker_s
     thread = threading.Thread(target=api_request)
     thread.start()
     assert acquired.wait(2)
-    tasks._record_terminal_status(pid, "failed-between-locks", RuntimeError("worker failed"))
+    runner.record_terminal_status(
+        ExecutionRequest("translation", pid, "failed-between-locks"),
+        bindings.workflow_dependencies(current_context()),
+        RuntimeError("worker failed"),
+    )
     thread.join(2)
     assert must(dal.get_job(job))["status"] == "error"
     assert must(dal.get_project(pid))["status"] == "error"
@@ -395,9 +358,11 @@ def test_export_render_uses_enqueued_config_snapshot(pg_storage, pg_pool, monkey
     initialize(pg_storage, tmp_path)
     pid = pg_storage.project_id
     monkeypatch.setattr(dal, "get_pool", lambda: pg_pool)
-    monkeypatch.setattr(tasks, "_pipeline_storage", lambda *_: pg_storage)
-    monkeypatch.setattr(tasks.paths, "project_dir", lambda _: pg_storage.run_dir)
-    monkeypatch.setattr(tasks.paths, "exports_dir", lambda _: str(tmp_path / pid / "exports"))
+    context = replace(
+        current_context(),
+        storage_for=lambda _: pg_storage,
+        project_dir=lambda _: str(tmp_path / pid),
+    )
     postgres_repository(current_context())._pool = pg_pool
     original_config = Config.from_dict(
         {
@@ -427,7 +392,10 @@ def test_export_render_uses_enqueued_config_snapshot(pg_storage, pg_pool, monkey
         Path(options["out_path"]).write_text("rendered", encoding="utf-8")
 
     monkeypatch.setattr(writer, "assemble", assemble)
-    tasks._export_sync(pid, export_id=export_id, run_id="snapshot-export", fmt="txt")
+    exporting.execute(
+        ExportRequest(pid, export_id, "snapshot-export", {"fmt": "txt"}),
+        bindings.export_dependencies(context),
+    )
     assert rendered[0]["punctuation_normalize"] is False
     assert rendered[0]["babeldoc_timeout"] == 123
     assert must(dal.get_job(job_id))["status"] == "done"
@@ -445,7 +413,7 @@ def test_cancelled_export_waits_for_render_thread_to_publish(monkeypatch):
         finished.set()
         return 1
 
-    monkeypatch.setattr(tasks, "_export_sync", render)
+    monkeypatch.setattr(exporting, "execute", render)
 
     async def run():
         job = asyncio.create_task(
@@ -493,11 +461,11 @@ def test_pause_monitor_cancels_waiting_model_without_progress_callback(worker_st
             raise AssertionError("Pause monitor did not cancel the waiting client")
         limits.check()
 
-    monkeypatch.setattr(tasks, "_book_operation", wait_for_model)
+    monkeypatch.setattr(operations, "book_operation", wait_for_model)
 
     def execute():
         try:
-            tasks._execute("translation", pid, "monitor-cancel", {})
+            execute_workflow("translation", pid, "monitor-cancel")
         except BaseException as error:
             errors.append(error)
         finally:

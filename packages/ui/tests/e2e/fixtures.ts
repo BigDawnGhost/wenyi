@@ -204,9 +204,6 @@ function tableData(): Record<string, unknown> {
     [`/projects/${pid}/glossary/terms`]: [],
     [`/projects/${pid}/glossary/conflicts`]: [],
     [`/projects/${pid}/review/runs`]: [],
-    [`/projects/${pid}/report`]: {
-      summary: { chapters_done: 3, review_issues: 0 },
-    },
     [`/projects/${pid}/analysis`]: {
       analysis: {
         genre: "青年向奇幻冒险，轻小说质感",
@@ -593,7 +590,7 @@ export async function fakeApi(
   apiOrigin?: string,
 ) {
   await page.routeWebSocket("**/ws/**", () => {});
-  await page.route(apiOrigin ? `${apiOrigin}/**` : "**/api/**", async (route) => {
+  await page.route(apiOrigin ? `${apiOrigin}/**` : url => url.pathname.startsWith("/api/"), async (route) => {
     const url = new URL(route.request().url());
     const pathname = url.pathname + url.search;
     const method = route.request().method();

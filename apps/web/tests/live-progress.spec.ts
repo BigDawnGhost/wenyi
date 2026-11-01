@@ -1,5 +1,5 @@
 import { expect, test, type WebSocketRoute } from "@playwright/test";
-import { fakeApi, pid, project, chapter, workflow } from "./fixtures";
+import { fakeApi, pid, project, chapter, workflow } from "../../../packages/ui/tests/e2e/fixtures";
 
 test("run time ticks during a long batch and stops on pause without reloading", async ({
   page,

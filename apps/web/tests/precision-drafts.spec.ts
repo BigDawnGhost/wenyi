@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { fakeApi, pid, project } from "../../../packages/ui/tests/e2e/fixtures";
 
 const endpoint = `/projects/${pid}/chapters/0/segments/42/precision-drafts`;
 const archive = {
@@ -39,9 +39,9 @@ async function open(page: Page) {
   await page.getByRole("menuitem", { name: "精翻初稿", exact: true }).click();
 }
 
-for (const mobile of [false, true]) {
-  test(`three read-only precision drafts in Chinese: ${mobile ? "mobile" : "desktop"}`, async ({ page }, info) => {
-    await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 1200 });
+for (const width of [1024, 1440]) {
+  test(`three read-only precision drafts in Chinese at ${width}px`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 900 });
     await setup(page, true);
     let requests = 0;
     await page.route(`**/api${endpoint}`, async route => {
@@ -63,9 +63,9 @@ for (const mobile of [false, true]) {
     await expect(dialog.getByRole("button", { name: /发布|保存/ })).toHaveCount(0);
     expect(requests).toBe(1);
     expect(await dialog.evaluate(e => e.scrollWidth <= e.clientWidth)).toBe(true);
-    await page.screenshot({ path: info.outputPath(`precision-${mobile ? "mobile" : "desktop"}.png`) });
+    await page.screenshot({ path: info.outputPath(`precision-${width}.png`) });
     await dialog.getByText("归档综合润色结果", { exact: true }).scrollIntoViewIfNeeded();
-    await page.screenshot({ path: info.outputPath(`precision-${mobile ? "mobile" : "desktop"}-synthesis.png`) });
+    await page.screenshot({ path: info.outputPath(`precision-${width}-synthesis.png`) });
   });
 }
 

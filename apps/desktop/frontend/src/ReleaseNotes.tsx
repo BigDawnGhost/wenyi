@@ -1,6 +1,6 @@
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Dialog } from "@/components/ui/misc";
+import { Dialog } from "@wenyi/ui/primitives";
 import { useDesktopI18n } from "./i18n";
 import { remarkLocalizedReleaseNotes } from "./localizedReleaseNotes";
 

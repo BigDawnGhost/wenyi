@@ -6,8 +6,8 @@ import {
   MessagesSquare,
 } from "lucide-react";
 import { lazy } from "react";
-import { useI18n } from "@/i18n";
-import { LazyBoundary } from "@/routes/LazyBoundary";
+import { useI18n } from "../../i18n";
+import { LazyBoundary } from "../../routes/LazyBoundary";
 import {
   amount,
   cacheRate,
@@ -70,14 +70,14 @@ export function Accounting({
   ];
   return (
     <section aria-label={t("progress.totalUsageRunTime")} className="space-y-5">
-      <dl className="grid grid-cols-2 gap-5 rounded-lg bg-muted/40 p-4 lg:grid-cols-4">
+      <dl className="grid grid-cols-4 gap-5 rounded-lg bg-muted/40 p-4">
         {metrics.map(({ label, value, icon: Icon }) => (
           <div key={label} className="min-w-0">
             <dt className="flex items-center gap-2 text-xs text-muted-foreground">
               <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
               {label}
             </dt>
-            <dd className="mt-2 break-words text-lg font-semibold tracking-tight tabular-nums sm:text-xl">
+            <dd className="mt-2 break-words text-xl font-semibold tracking-tight tabular-nums">
               {value}
             </dd>
           </div>

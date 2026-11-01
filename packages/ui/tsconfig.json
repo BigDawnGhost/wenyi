@@ -13,11 +13,7 @@
     "jsx": "react-jsx",
     "strict": true,
     "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["./src/*"],
-      "@wenyi/ui/*": ["./src/*"]
-    }
+    "baseUrl": "."
   },
   "include": ["src"]
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi } from "./fixtures";
+import { fakeApi } from "../../../packages/ui/tests/e2e/fixtures";
 
 test("fetching models for a connection fills a searchable model-name list", async ({ page }) => {
   await fakeApi(page);
@@ -10,7 +10,7 @@ test("fetching models for a connection fills a searchable model-name list", asyn
       json: { ok: true, models: ["deepseek-flash", "deepseek-pro", "other-model"], category: "ok", message: "" },
     });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   const name = page.getByRole("combobox", { name: "Model name", exact: true });
   await expect(page.getByRole("listbox")).toHaveCount(0);
   // The draft (unsaved) base URL is used for the request.
@@ -48,7 +48,7 @@ test("listing failures explain the cause in Chinese", async ({ page }) => {
     route.fulfill({
       json: { ok: false, models: [], category: "authentication_failed", message: "x", status_code: 401 },
     }));
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page.getByRole("button", { name: "获取模型列表", exact: true }).click();
   await expect(page.getByRole("status").filter({ hasText: "认证失败" })).toBeVisible();
   await expect(page.getByRole("listbox")).toHaveCount(0);
@@ -76,7 +76,7 @@ for (const outcome of ["success", "failure", "http error"] as const) {
       } });
     });
     try {
-      await page.goto("/settings");
+      await page.goto("/settings/providers");
       const fetch = page.getByRole("button", { name: "Fetch models", exact: true });
       const submitted = page.waitForRequest("**/api/settings/models/list");
       await fetch.click();

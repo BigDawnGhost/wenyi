@@ -100,10 +100,6 @@ class FileStorage(FileArtifacts):
         return self._run.glossary_path
 
     @property
-    def report_path(self) -> str:
-        return self._run.report_path
-
-    @property
     def manifest_path(self) -> str:
         return self._run.manifest_path
 
@@ -180,22 +176,12 @@ class FileStorage(FileArtifacts):
     def load_chapter(self, ci: int) -> Chapter:
         return self._run.load_chapter(ci)
 
-    # Analysis, reports and usage.
+    # Analysis, review results and usage.
     def save_analysis(self, data: dict) -> None:
         self._run.save_analysis(data)
 
     def load_analysis(self) -> Optional[dict]:
         return self._run.load_analysis()
-
-    def save_report(self, data: dict) -> None:
-        self._run.save_report(data)
-
-    def load_report(self) -> Optional[dict]:
-        path = self._run.report_path
-        if not os.path.isfile(path):
-            return None
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
 
     def load_latest_review_result(self) -> Optional[dict]:
         return self._run.load_latest_review_result()

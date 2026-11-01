@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import closing
+
 from fastapi import APIRouter, HTTPException
 
-from ..project_service import project_write, require_book, require_project, storage_for
+from ..project_service import require_book
 from ..schemas import AnalysisOut, AnalysisUpdate, DigestUpdate
+from .dependencies import project_write, require_project, storage_for
 
 router = APIRouter(prefix="/projects/{pid}", tags=["style"])
 
@@ -13,18 +16,18 @@ router = APIRouter(prefix="/projects/{pid}", tags=["style"])
 @router.get("/analysis", response_model=AnalysisOut)
 def get_analysis(pid: str) -> dict:
     require_book(require_project(pid))
-    storage = storage_for(pid)
-    digests = []
-    for entry in storage.load_manifest().get("chapters", []):
-        chapter = storage.load_chapter(entry["index"])
-        digests.append(
-            {
-                "index": chapter.index,
-                "title": chapter.title,
-                "digest": str(chapter.meta.get("source_digest") or ""),
-            }
-        )
-    return {"analysis": storage.load_analysis() or {}, "chapter_digests": digests}
+    with closing(storage_for(pid)) as storage:
+        digests = []
+        for entry in storage.load_manifest().get("chapters", []):
+            chapter = storage.load_chapter(entry["index"])
+            digests.append(
+                {
+                    "index": chapter.index,
+                    "title": chapter.title,
+                    "digest": str(chapter.meta.get("source_digest") or ""),
+                }
+            )
+        return {"analysis": storage.load_analysis() or {}, "chapter_digests": digests}
 
 
 @router.put("/analysis")

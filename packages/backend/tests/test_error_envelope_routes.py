@@ -1,13 +1,12 @@
 """The shared application exposes codes without changing any existing detail text."""
 
 from fastapi.testclient import TestClient
-from wenyi_backend import dal
 from wenyi_backend.application import create_app
 from wenyi_backend.errors import PROJECT_NOT_FOUND
 
 
 def _client(backend_context, monkeypatch):
-    monkeypatch.setattr(dal, "get_project", lambda pid: None)
+    backend_context.repository.get_project.return_value = None
     return TestClient(create_app(backend_context))
 
 

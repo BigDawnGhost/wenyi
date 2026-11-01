@@ -5,8 +5,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from arq.jobs import Job, JobStatus
-from wenyi_backend.context import BackendStorage
-from wenyi_backend.project_service import storage_for
+from wenyi_backend.context import BackendStorage, current_context
 
 from .. import dal
 from ..db import get_pool
@@ -42,7 +41,7 @@ async def recover_jobs(ctx: dict) -> None:
             # Validated above: export_id is a positive int.
             assert isinstance(export_id, int)
             export_id_i = export_id
-        storage = storage_for(pid)
+        storage = current_context().storage_for(pid)
         assert isinstance(storage, RecoveryStorage)
         lock = (
             storage.export_lock(export_id_i, blocking=False)

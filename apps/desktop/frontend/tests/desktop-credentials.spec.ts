@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, globalConfiguration } from "./fixtures";
+import { fakeApi, globalConfiguration } from "../../../../packages/ui/tests/e2e/fixtures";
 
 test("API keys are typed directly, saved with the configuration and shown masked", async ({ page }) => {
   await page.addInitScript(() => {
@@ -44,7 +44,7 @@ test("API keys are typed directly, saved with the configuration and shown masked
     };
     await route.fulfill({ json: status });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   // No separate save button and no prerequisite save: the field is ready immediately.
   await expect(page.getByRole("button", { name: "Save key", exact: true })).toHaveCount(0);
   const secret = page.getByLabel("API key", { exact: true });
@@ -58,6 +58,9 @@ test("API keys are typed directly, saved with the configuration and shown masked
   await expect(secret).toHaveAttribute("type", "password");
   await secret.fill("fake-ui-secret-not-real");
   await page.getByLabel("Model name", { exact: true }).fill("edited-model");
+  await page.getByRole("link", { name: "General", exact: true }).click();
+  await page.getByRole("link", { name: "Models & connections", exact: true }).click();
+  await expect(secret).toHaveValue("fake-ui-secret-not-real");
   expect(submissions).toEqual([]);
   await page.getByRole("button", { name: "Save configuration", exact: true }).click();
   await expect(page.getByText("Global settings saved", { exact: true })).toBeVisible();
@@ -83,7 +86,6 @@ test("API keys are typed directly, saved with the configuration and shown masked
   await expect.poll(() => submissions.length).toBe(2);
   expect(submissions[1]).toEqual({ mode: "manual", clear: true });
   await expect(secret).toHaveAttribute("placeholder", "Enter API key");
-  await page.getByText("Environment variable", { exact: true }).click();
   await expect(page.getByLabel("API key environment variable", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Use environment variable instead", exact: true }).click();
   await expect(page.getByRole("button", { name: "Use environment variable instead", exact: true })).toBeDisabled();
@@ -111,7 +113,7 @@ test("a key entered for a new connection is saved under its renamed ID", async (
       system_storage_available: true, requires_key: true,
     } });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page.getByRole("button", { name: "Add API connection", exact: true }).click();
   await page.locator("#credential-secret-provider1").fill("fake-new-connection-key");
   const id = page.getByLabel("Connection ID", { exact: true }).last();
@@ -135,7 +137,7 @@ test("credential reads never retry or automatically recheck on focus/reconnect",
     reads++;
     return route.fulfill({ status: 503, json: { detail: "Credential store unavailable" } });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await expect(page.getByRole("alert").filter({ hasText: "Credential store unavailable" })).toBeVisible();
   await page.clock.runFor(60_000);
   await page.evaluate(() => {
@@ -154,7 +156,7 @@ test("credential reads never retry or automatically recheck on focus/reconnect",
   });
   await page.clock.runFor(1000);
   expect(reads).toBe(1);
-  await page.getByText("Environment variable", { exact: true }).click();
+  await expect(page.getByLabel("API key environment variable", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Recheck", exact: true }).click();
   await expect.poll(() => reads).toBe(2);
 });
@@ -188,19 +190,20 @@ for (const revisit of [false, true]) {
       return route.fulfill({ json: status });
     });
     try {
-      await page.goto("/settings");
+      await page.goto("/settings/providers");
       const key = page.getByLabel("API key", { exact: true });
       await key.fill("fake-submitted-key");
       const submitted = page.waitForRequest(request =>
         new URL(request.url()).pathname === "/api/settings" && request.method() === "PUT");
       await page.getByRole("button", { name: "Save configuration", exact: true }).click();
       await submitted;
-      await page.getByRole("link", { name: "Projects", exact: true }).click();
+      await page.getByRole("button", { name: "Back", exact: true }).click();
       // Wait for the page to unmount, not just for navigation to start.
       await expect(key).toHaveCount(0);
       expect(writes).toEqual([]);
       if (revisit) {
         await page.getByRole("link", { name: "Settings", exact: true }).click();
+        await page.getByRole("link", { name: "Models & connections", exact: true }).click();
         await key.fill("fake-newer-draft");
       }
       release();
@@ -216,6 +219,7 @@ for (const revisit of [false, true]) {
         await expect(page.getByRole("button", { name: "Test connection", exact: true })).toBeEnabled();
       } else {
         await page.getByRole("link", { name: "Settings", exact: true }).click();
+        await page.getByRole("link", { name: "Models & connections", exact: true }).click();
         await expect(key).toHaveValue("fake-submitted-key");
       }
     } finally {
@@ -246,17 +250,21 @@ test("saving a padded key normalizes the field and clears the pending state", as
     writes.push(route.request().postDataJSON());
     return route.fulfill({ json: status });
   });
-  await page.goto("/settings");
+  await page.goto("/settings/updates");
   const key = page.getByLabel("API key", { exact: true });
   const save = page.getByRole("button", { name: "Save configuration", exact: true });
   const install = page.getByRole("button", { name: "Install and restart", exact: true });
   await expect(install).toBeEnabled();
+  await page.getByRole("link", { name: "Models & connections", exact: true }).click();
   await key.fill(" fake-padded-key ");
+  await page.getByRole("link", { name: "About", exact: true }).click();
   await expect(install).toBeDisabled();
   await save.click();
+  await page.getByRole("link", { name: "Models & connections", exact: true }).click();
   await expect(key).toHaveValue("fake-padded-key");
   await expect(page.getByText("Unsaved changes", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Test connection", exact: true })).toBeEnabled();
+  await page.getByRole("link", { name: "About", exact: true }).click();
   await expect(install).toBeEnabled();
   await expect(save).toBeEnabled();
   const savedAgain = page.waitForResponse(response =>
@@ -293,7 +301,7 @@ for (const stage of ["configuration", "credential"]) {
         ? route.fulfill({ status: 503, json: { detail: "Credential unavailable" } })
         : route.fulfill({ json: status });
     });
-    await page.goto("/settings");
+    await page.goto("/settings/providers");
     const key = page.getByLabel("API key", { exact: true });
     const save = page.getByRole("button", { name: "Save configuration", exact: true });
     await key.fill(" fake-retry-key ");

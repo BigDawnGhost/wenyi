@@ -1,5 +1,5 @@
-import { useI18n, type MessageKey } from "@/i18n";
-import { statusLabel } from "@/i18n/status";
+import { useI18n, type MessageKey } from "../../i18n";
+import { statusLabel } from "../../i18n/status";
 import { Lock } from "lucide-react";
 export function ErrorNotice({ error }: { error?: unknown }) {
   if (!error) return null;
@@ -83,7 +83,7 @@ export function StructuredData({
           key={key}
           className={
             depth < 2
-              ? "grid gap-1 sm:grid-cols-[minmax(100px,180px)_1fr]"
+              ? "grid grid-cols-[minmax(100px,180px)_1fr] gap-1"
               : "space-y-1 border-l pl-3"
           }
         >

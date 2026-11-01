@@ -897,7 +897,7 @@ class TestReviewReporting(unittest.TestCase):
             )
 
     def test_review_never_modifies_body_or_translation_state(self):
-        """Review creates recommendations without modifying body, manifest, glossary or report."""
+        """Review preserves formal state and historical project reports."""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -905,11 +905,13 @@ class TestReviewReporting(unittest.TestCase):
             client = MeteredFakeClient(handler=self._handler())
             orch = Orchestrator(cfg, client=client)
             store = require_file_storage(orch.run(txt))
+            legacy_report = Path(store.run_dir) / "report.json"
+            legacy_report.write_text('{"legacy": true}', encoding="utf-8")
             watched = [
                 store.manifest_path,
                 store.chapter_path(0),
                 store.glossary_path,
-                store.report_path,
+                str(legacy_report),
             ]
             before = {
                 path: Path(path).read_bytes() if os.path.exists(path) else None for path in watched
@@ -1005,7 +1007,7 @@ class TestReviewReporting(unittest.TestCase):
     def test_independent_review_does_not_create_report_implicitly(self):
         with tempfile.TemporaryDirectory() as d:
             result = self._run(d)
-            self.assertFalse(os.path.exists(result["store"].report_path))
+            self.assertFalse((Path(result["store"].run_dir) / "report.json").exists())
 
     def test_review_index_mapping(self):
         """Map block-local issue indices correctly to chapter-local positions."""
@@ -1581,10 +1583,11 @@ class TestReviewReporting(unittest.TestCase):
 
                 if fail:
                     with self.assertRaisesRegex(RuntimeError, "review failed"):
-                        orch.run_steps(txt, {"review", "report"})
+                        orch.run_steps(txt, {"review", "assemble"}, out_format="txt")
                 else:
-                    result = orch.run_steps(txt, {"review", "report"})
-                    self.assertIsNotNone(result["report"])
+                    result = orch.run_steps(txt, {"review", "assemble"}, out_format="txt")
+                    self.assertIsNotNone(result["review_result"])
+                    self.assertTrue(Path(result["output"]).is_file())
 
                 usage = base_store.load_usage()
                 self.assertIsNotNone(usage)
@@ -1610,12 +1613,12 @@ class TestReviewReporting(unittest.TestCase):
             orch.run(txt)
 
             reviewed = orch.run_review(txt)
-            reported = orch.run_steps(txt, {"report"})
+            assembled = orch.run_steps(txt, {"assemble"}, out_format="txt")
 
             self.assertIsNotNone(reviewed["review_dir"])
-            self.assertIsNone(reported["review_dir"])
+            self.assertIsNone(assembled["review_dir"])
             self.assertEqual(
-                reported["report"]["review"]["review_id"],
+                assembled["store"].load_latest_review_result()["review_id"],
                 reviewed["review_result"]["review_id"],
             )
 
@@ -2752,7 +2755,7 @@ class TestProgressLabels(unittest.TestCase):
 
             orch.run_steps(
                 txt,
-                {"translate", "report", "assemble"},
+                {"translate", "assemble"},
                 progress=lambda done, total, label: events.append((done, total, label)),
             )
 
@@ -2764,12 +2767,12 @@ class TestProgressLabels(unittest.TestCase):
                 "Generating whole-book synopsis…",
                 "Translating chapter titles…",
                 "Translation complete",
-                "Generating report…",
                 "Assembling translation…",
             ]
             positions = [labels.index(label) for label in expected]
             self.assertEqual(positions, sorted(positions), labels)
             self.assertIn((0, 0, "Generating whole-book synopsis…"), events)
+            self.assertNotIn("Generating report…", labels)
 
 
 if __name__ == "__main__":

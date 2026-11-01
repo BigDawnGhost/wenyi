@@ -67,7 +67,7 @@ The second test verifies far-paragraph deep-link focus, Chromium native text fin
 cross-paragraph selection, keyboard menu access, conflict refreshes while a draft
 is open, and a saved empty translation remaining editable. Existing proofreading
 and paragraph-editor tests additionally cover copy, save, visible progress, long
-textarea sizing and mobile presentation.
+textarea sizing and desktop editor presentation.
 
 ## Shared-menu and idle-query policy / 共享菜单与空闲查询策略
 
@@ -255,8 +255,10 @@ checks additionally passed outside click/context-menu dismissal, keyboard focus,
 long-draft fitting at three actual textarea widths, shrinking, tab changes during
 resizing, real SQLite save, real HTTP 409 with draft preservation, a paused
 6.5-second zero-polling observation, deep links, find and selection, without page
-errors. Native width checks changed the dialog's width, not the OS window; the
-Playwright test separately covers viewport sizes 900, 390 and 1280 pixels.
+errors. Native width checks changed the dialog's width, not the OS window. At the
+time of this measurement, Playwright separately covered viewport sizes 900, 390
+and 1280 pixels. Current editor regression tests cover 1024, 1280 and 1440 pixels;
+the desktop-only suite separately checks narrow desktop windows and mobile UAs.
 
 菜单收益可重复，**编辑器打开仍约一秒，不算解决**。独立实验通过原生 JavaScript
 在同一章节上打开简单的原生 `<dialog>`，绕过 React 编辑器且不使用背景模糊，界面就绪
@@ -267,7 +269,8 @@ Playwright test separately covers viewport sizes 900, 390 and 1280 pixels.
 修复后在两端通过。原生另验证外部点击／右键关闭、键盘焦点、三种输入框实际宽度下的
 长草稿撑高、缩短回收、改宽时切换标签、真实 SQLite 保存、真实 HTTP 409 保留草稿、
 暂停后 6.5 秒零轮询、深链接、查找和选区，未出现页面错误。原生宽度检查调整的是弹窗
-而非系统窗口；Playwright 另覆盖 900、390、1280 像素视口。
+而非系统窗口；当时 Playwright 另覆盖 900、390、1280 像素视口。当前编辑器回归覆盖
+1024、1280、1440 像素；电脑端入口测试另行检查电脑窄窗口和移动设备 UA。
 
 ## Limits / 限制
 

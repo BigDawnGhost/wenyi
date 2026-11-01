@@ -1,16 +1,16 @@
 import { useState } from "react";
 import { Link, Navigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useI18n } from "@/i18n";
-import { statusLabel } from "@/i18n/status";
-import { api, isProjectBusy } from "@/lib/api";
-import { useProjectQuery } from "@/lib/projectQuery";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Card, CardContent } from "@/components/ui/card";
-import { StatusBadge } from "@/components/StatusBadge";
-import { Input, Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
-import { ErrorNotice } from "@/components/ui/data";
+import { useI18n } from "../../i18n";
+import { statusLabel } from "../../i18n/status";
+import { api, isProjectBusy } from "../../api/client";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Card, CardContent } from "../../components/ui/card";
+import { StatusBadge } from "../../components/StatusBadge";
+import { Input, Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
+import { ErrorNotice } from "../../components/ui/data";
 import { ChapterProofreading } from "./ChapterProofreading";
 
 export default function ProofreadingPage() {

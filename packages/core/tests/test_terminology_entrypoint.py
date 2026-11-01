@@ -105,7 +105,7 @@ def test_real_cli_produces_evidence_only_during_translation(tmp_path, entry):
         assert completed == (entry == "translate")
 
 
-@pytest.mark.parametrize("entry", ["run_review", "run_report", "run_assemble"])
+@pytest.mark.parametrize("entry", ["run_review", "run_assemble"])
 def test_existing_state_operations_consume_notes_without_generating_evidence(tmp_path, entry):
     source = tmp_path / "book.txt"
     source.write_text("# Chapter 1\n\nAlice enters.\n\nAlice waits.", encoding="utf-8")

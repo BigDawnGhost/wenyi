@@ -1,13 +1,14 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useI18n } from "@/i18n";
-import { api, type ChapterSummary } from "@/lib/api";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { ErrorNotice, ReadOnlyNotice, StructuredData } from "@/components/ui/data";
-import { Disclosure } from "@/components/ui/disclosure";
+import { useI18n } from "../../i18n";
+import { api } from "../../api/client";
+import type { ChapterSummary } from "../../api/types";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent } from "../../components/ui/card";
+import { ErrorNotice, ReadOnlyNotice, StructuredData } from "../../components/ui/data";
+import { Disclosure } from "../../components/ui/disclosure";
 import { ParagraphActions } from "./ParagraphActions";
 import { ParagraphEditor } from "./ParagraphEditor";
 import { ParagraphMenu, type ParagraphMenuAnchor } from "./ParagraphMenu";
@@ -27,20 +28,16 @@ const ParagraphRow = memo(function ParagraphRow({
   sourceOnly: boolean;
   onMenu: (anchor: ParagraphMenuAnchor) => void;
 }) {
-  const { t } = useI18n();
   return (
     <div
       id={`paragraph-${index}`}
       tabIndex={-1}
-      className={`grid ${sourceOnly ? "" : "lg:grid-cols-2"} border-b last:border-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30`}
+      className={`grid ${sourceOnly ? "" : "grid-cols-2"} border-b last:border-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30`}
       // Keep every paragraph searchable/selectable and addressable by deep links.
       // Unlike virtualization, auto only skips offscreen layout and painting.
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 280px" }}
     >
-      <div className="min-w-0 p-4 text-sm lg:border-r">
-        <span className="mb-2 block text-xs text-muted-foreground lg:hidden">
-          {t("common.source")}
-        </span>
+      <div className="min-w-0 border-r p-4 text-sm">
         <p className="whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">
           {source}
         </p>

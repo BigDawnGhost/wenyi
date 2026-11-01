@@ -14,6 +14,7 @@ import {
 import { activity } from "./activity";
 import { DesktopDiagnostics, DiagnosticExportButton } from "./DesktopDiagnostics";
 import { reportDiagnostic } from "./diagnostics";
+import { translateDesktop } from "./i18n";
 
 const loadDesktopCredential = () => import("./DesktopCredential");
 const DesktopCredential = lazy(() =>
@@ -72,13 +73,20 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
     bindSourceDrop,
     capabilities: {
       diagnostics: {
+        label: (locale) => translateDesktop(locale, "diagnostics.title"),
         Section: DesktopDiagnostics,
         ExportButton: DiagnosticExportButton,
         reportRenderFailure: () => reportDiagnostic("frontend_render_failed"),
       },
       externalCredentials: { MinerU: MinerUCredential },
-      updates: { Section: DesktopUpdates },
-      plugins: { Section: BabeldocPlugin },
+      updates: {
+        label: (locale) => translateDesktop(locale, "about.title"),
+        Section: DesktopUpdates,
+      },
+      plugins: {
+        label: (locale) => translateDesktop(locale, "babeldoc.title"),
+        Section: BabeldocPlugin,
+      },
       saveExport: saveNativeExport,
       credentials: {
         Field: DesktopCredential,

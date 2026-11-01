@@ -1,4 +1,4 @@
-import type { createTranslator } from "@/i18n/catalog";
+import type { createTranslator } from "../../i18n/catalog";
 
 export type Translator = ReturnType<typeof createTranslator>;
 export type UsageGroup = "by_model" | "by_provider" | "by_stage";

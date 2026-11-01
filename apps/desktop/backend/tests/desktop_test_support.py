@@ -3,7 +3,7 @@
 import time
 
 import pytest
-from wenyi_backend import dal
+from wenyi_backend.context import current_context
 from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.storage.sqlite import SqliteStorage
 
@@ -12,7 +12,7 @@ def wait_job(run_id, *, timeout=60):
     """Allow slow CI disks to commit real checkpoints without fixed test sleeps."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        job = dal.get_job_by_arq_id(run_id)
+        job = current_context().repository.get_job_by_arq_id(run_id)
         if job and job["status"] not in {"queued", "running"}:
             return job
         time.sleep(0.01)
@@ -20,7 +20,7 @@ def wait_job(run_id, *, timeout=60):
 
 
 def initialize(backend):
-    pid = dal.create_project("Offline", "en", "zh", {"template": "标准翻译"})
+    pid = backend.create_project("Offline", "en", "zh", {"template": "标准翻译"})
     source = backend.project_dir(pid) / "source.txt"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("A short paragraph.\n", encoding="utf-8")
@@ -40,12 +40,12 @@ def initialize(backend):
     chapter = store.load_chapter(0)
     chapter.segments[0].target = "译文"
     store.save_chapter_with_status(chapter, "done")
-    dal.set_project_source(
+    backend.set_project_source(
         pid,
         source_path=str(source),
         book_title="Offline",
         source_sha256=store.load_manifest()["source_sha256"],
         fmt="txt",
     )
-    dal.set_project_status(pid, "done")
+    backend.set_project_status(pid, "done")
     return pid, store

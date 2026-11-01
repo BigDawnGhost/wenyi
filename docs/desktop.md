@@ -31,7 +31,7 @@ Check the release notes for platform requirements and signing status. To build f
 
 ### 2. Connect a model
 
-Open **Settings → Providers & models**, choose a provider, enter the API key in the connection's **API key** field, and set any custom base URL. In each model, click the refresh button next to **Model name** to fetch the provider's model list, then pick a name from the dropdown or type one. Click **Save configuration**; the key is written together with the configuration, with no separate save step.
+Open **Settings → Models & connections**, choose a provider, enter the API key in the connection's **API key** field, and set any custom base URL. In each model, click the refresh button next to **Model name** to fetch the provider's model list, then pick a name from the dropdown or type one. Click **Save configuration**; the key is written together with the configuration, with no separate save step.
 
 Click **Test connection** below the models to send one short request to each saved model. The table shows whether each one connected, its latency and the failure reason, such as an invalid API key, unknown model name or unreachable base URL. Each test uses a few tokens; save edits first, because only saved settings are tested.
 
@@ -39,7 +39,7 @@ Desktop uses the system credential store when available. If it is unavailable, t
 
 ### 3. Create a translation project
 
-Use **Create project** in the shared sidebar to open the centered dialog over the project list. The list remains visible but inactive behind it; `/projects/new` opens the same dialog directly. Focus starts in **Project name** and stays inside the dialog with Tab. Escape closes an open dropdown first. **Cancel**, **Close**, the backdrop, or Escape returns to the previous page (the project list for a direct link) without creating a project and restores focus to the sidebar entry. Browser Back also leaves the dialog. Closing releases any selected native source resource; reopening starts a clean form. On narrow screens the form scrolls while the close header stays visible.
+Use **Create project** in the shared sidebar to open the centered dialog over the project list. The list remains visible but inactive behind it; `/projects/new` opens the same dialog directly. Focus starts in **Project name** and stays inside the dialog with Tab. Escape closes an open dropdown first. **Cancel**, **Close**, the backdrop, or Escape returns to the previous page (the project list for a direct link) without creating a project and restores focus to the sidebar entry. Browser Back also leaves the dialog. Closing releases any selected native source resource; reopening starts a clean form. In short windows the form scrolls while the close header stays visible.
 
 Drag in a supported book or choose it with **Browse files**, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost. During upload, source replacement and dialog dismissal are disabled; this is not a task cancellation action. Failed uploads retain the form and source selection; a failed native upload requires re-dropping the file to renew its single-use grant before retrying. Successful creation enters the project overview while parsing or optional preparation continues in the background. Legacy `/projects/new?project=<id>` links retain read-only source preview/resume controls.
 
@@ -48,6 +48,13 @@ Browser Back can still leave during an upload; it does not cancel the request. T
 Once parsing finishes, **Read contents & source** opens the chapter list and original text without waiting for AI preparation. The parsed source remains readable during preparation or after a model failure; title and translation editing require completed initialization. Parsing itself needs no translation-model credentials, although PDF conversion still uses the selected parser service.
 
 Start translation from the project page. Wenyi parses the source, prepares whole-book context, and translates in batches. Progress, usage, and completed chapters are visible in the application; polishing and whole-book review are configurable.
+
+**Current workflow** directly shows the task type, status, and reported stage in a flat section. There is no nested step checklist or project-report panel. Completed tasks show only their completion status; paused or failed tasks retain the last reported stage when available. Usage, chapter status, and **Read contents & source** remain available.
+
+The local engine no longer generates project summary reports or exposes the `/report`
+endpoint. Historical report data is left untouched, and saved legacy report steps do
+not block project resume. Review/Autofix results, usage, timing, book exports, and
+application diagnostic exports are unaffected.
 
 Multiple Desktop projects can run at the same time, without a fixed workflow-count limit or a concurrency setting. Start each from its existing project page; navigating to another project or hiding the window does not pause it. Background management is internal: there is no separate task center or batch-control interface. Parsing, preparation, translation, chapter translation, review and subtitle workflows can overlap across projects, but conflicting workflows within one project remain mutually exclusive.
 
@@ -70,8 +77,11 @@ Completed and paused projects do not periodically poll their pages, including ch
 
 Choose an export format and, where supported, a bilingual edition. Desktop opens the system save dialog before starting the export; canceling creates no export task. HTML is saved as an HTML-and-assets ZIP, which should be extracted before reading.
 
-On the **Glossary** page, choose **Export → CSV file** or **JSON file** to save the
-complete glossary through the system save dialog. Saving shows the destination path;
+On the **Glossary** page, choose **Export → CSV file**, **JSON file**, or
+**Anki deck (.apkg)** to save the complete glossary through the system save dialog.
+Anki export includes every type in separate subdecks, independent of table filters or
+selection; see [glossary cards and re-import behavior](web.md#workflow).
+Saving shows the destination path;
 canceling writes nothing. A failed save reports an error and preserves any existing
 destination file. Glossary exports do not create book export tasks.
 
@@ -83,9 +93,13 @@ Markdown instead. No local PDF rendering engine is installed or selected.
 
 Completed batches are saved in the local workspace. Reopen Desktop, open the same project, and resume from its checkpoints. Save any in-progress proofreading edits before closing. For workspace locations and backup instructions, see [Independent data](#independent-data).
 
+Pause is accepted only for the current queued or running task. If completion or a new
+run wins the race, the request is rejected instead of changing the completed state to
+“Pausing”; refresh the project to see the latest state.
+
 ## Interface language
 
-The interface defaults to English. Open global **Settings → Interface language**
+The interface defaults to English. Open global **Settings → General → Interface language**
 to choose **English** or **简体中文**. The change applies immediately to interface
 labels, not the book's source/target languages, content, or model-generated analysis.
 
@@ -306,7 +320,7 @@ pretend the plugin is installed. No release is published by a local Desktop buil
 
 ## Application updates
 
-The update area is at the **bottom of global Settings** and shows the current
+The update area is under **Settings → About** and shows the current
 Git-derived application version. Check for a newer public release, then use the
 separate **View release notes** button to read its notes in a scrollable dialog.
 English interfaces show only English notes; Chinese interfaces show only Chinese
@@ -404,11 +418,15 @@ artifact and signed version before installation.
 
 ## API keys
 
-Use **Settings** in the shared sidebar footer. `/settings` is one page of titled sections: General, Providers & models, Default models, Workflow, MinerU PDF parsing, and Advanced. Save, validate, and restore defaults stay in a bar pinned to the bottom of the page. There is no separate settings layout or category navigation. Legacy `/settings/providers`, `/settings/defaults`, and `/settings/advanced` links redirect to `/settings`.
+Each settings category uses the full content width, with its name in the page header instead of a duplicate title column. **Segmentation and performance**, **Models by operation**, **Advanced YAML configuration**, and credential **Environment variable** controls are shown directly, without collapsible groups. Project settings retains its titled sections and compact disclosures.
 
-The project list, projects, and Settings share one persistent, collapsible sidebar: **Create project**, **Projects**, current/last project navigation, and **Settings** in the footer. There are no floating dashboard actions. Width, labels, and narrow-screen navigation height transition smoothly over 280 ms. Same-page history navigation dismisses open dropdowns without resetting configuration drafts. Notifications stay fixed in the viewport; success lasts one second, errors/warnings ten seconds, and other messages five seconds. Glossary add/edit failures also remain inline in the dialog.
+There is no divider above **Back**. The global settings action bar stays flush with the bottom of the content pane, including when scrolling to the end.
 
-Open **Settings → Providers & models** and type the API key into the connection's **API key** field. It can be entered right away, including for a connection that has not been saved yet. The field is masked with dots; the eye button inside it shows or hides the value. **Save configuration** saves the connection first, then writes the key. If writing a key fails while Settings remains open, the configuration stays saved, the key stays in the field, and saving again retries it. Keys not submitted for saving exist only in memory; leaving Settings or deleting the connection discards them.
+Use **Settings** in the shared sidebar footer to open its dedicated page. The sidebar becomes category navigation: General, Models & connections, Default models, Workflow, PDF parsing, BabelDOC plugin, Advanced, Diagnostics and feedback, and About. Only the selected category is shown. **Back** stays pinned to the lower-left corner of the sidebar, including when categories scroll or the sidebar is collapsed; it returns to the page that opened Settings, or to Projects when visiting a settings URL directly. About contains the version information and update controls, retaining the `/settings/updates` URL. Other categories keep reloadable URLs such as `/settings/providers`, `/settings/defaults`, and `/settings/advanced`; `/settings` opens General, and unknown categories return there. Switching categories or using browser history preserves configuration, ID, YAML, and API-key drafts in memory; leaving Settings or reloading discards unsaved drafts. Save, validate, and restore defaults apply to the shared configuration draft and remain in a bar pinned to the bottom. Reminder links open the relevant category.
+
+The project list and projects share one persistent, collapsible sidebar: **Create project**, **Projects**, current/last project navigation, and **Settings** in the footer. Settings replaces these links with its categories and **Back** while retaining the collapse preference. There are no floating dashboard actions. Width and labels transition smoothly over 280 ms. Narrow computer windows keep the desktop icon rail and multi-column workspace, with horizontal content scrolling when needed; resizing preserves open pages and drafts. The shared frontend uses only the user agent to show **Please use a computer** on mobile/tablet browsers; window width, touch support, and platform hints do not block computers. Settings history navigation dismisses open dropdowns without resetting configuration drafts. Notifications stay fixed in the viewport; success lasts one second, errors/warnings ten seconds, and other messages five seconds. Glossary add/edit failures also remain inline in the dialog.
+
+Open **Settings → Models & connections** and type the API key into the connection's **API key** field. It can be entered right away, including for a connection that has not been saved yet. The field is masked with dots; the eye button inside it shows or hides the value. **Save configuration** saves the connection first, then writes the key. If writing a key fails while Settings remains open, the configuration stays saved, the key stays in the field, and saving again retries it. Keys not submitted for saving exist only in memory; leaving Settings or deleting the connection discards them.
 
 Each save captures the keys entered at that time and continues if you navigate away from Settings. Later edits remain a separate draft and require another save. A successful write removes surrounding whitespace from both the stored key and its field, clearing the unsaved-change indicator.
 
@@ -434,7 +452,7 @@ Lists and errors from requests started before a connection edit are ignored.
 
 ### MinerU PDF parsing key
 
-Settings includes a separate **MinerU PDF parsing** section. This key authorizes PDF parsing,
+The **PDF parsing** category contains the MinerU credential controls. This key authorizes PDF parsing,
 not model inference. Its password input includes an eye button to show or hide the saved
 manual key. Edits save automatically after a pause or when the field loses focus;
 clearing the field removes the manual key. There is no separate save button.

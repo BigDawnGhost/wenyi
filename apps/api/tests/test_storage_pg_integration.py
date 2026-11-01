@@ -318,11 +318,11 @@ def test_postgres_complete_workflow_review_reuse_and_export(pg_storage, tmp_path
     assert pg_storage.load_usage()["totals"]["calls"] > 0
     outcome = orch.run_steps(
         doc.source_path,
-        {"report", "assemble"},
+        {"assemble"},
         out_format="txt",
         out_path=str(tmp_path / "translated.txt"),
     )
-    assert outcome["report"] is not None
+    assert "report" not in outcome
     assert all(Path(path).is_file() for path in outcome["outputs"])
     assert pg_storage.read_artifact("timing.json")["total_seconds"] > 0
     assert not list((tmp_path / "resources").rglob("*.json"))
