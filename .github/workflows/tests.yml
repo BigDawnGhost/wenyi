@@ -114,9 +114,11 @@ jobs:
           uv run --no-sync ruff format --check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
           git diff --check
       - name: Offline Python regression tests
-        run: uv run --no-sync pytest -q -m "not integration"
+        # loadgroup keeps tests that share a group on one worker; -n auto sizes to the runner.
+        run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration"
       - name: Service integration tests (PostgreSQL and Redis enabled)
-        run: uv run --no-sync pytest -q -m integration
+        # Two workers bound connections against the shared postgres service.
+        run: uv run --no-sync pytest -q -n 2 --dist loadgroup -m integration
       - name: Build distributable packages and verify bundled resources
         if: matrix.python-version == '3.12'
         run: |
