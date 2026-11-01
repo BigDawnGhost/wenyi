@@ -56,6 +56,12 @@ endpoint. Historical report data is left untouched, and saved legacy report step
 not block project resume. Review/Autofix results, usage, timing, book exports, and
 application diagnostic exports are unaffected.
 
+Multiple Desktop projects can run at the same time, without a fixed workflow-count limit or a concurrency setting. Start each from its existing project page; navigating to another project or hiding the window does not pause it. Background management is internal: there is no separate task center or batch-control interface. Parsing, preparation, translation, chapter translation, review and subtitle workflows can overlap across projects, but conflicting workflows within one project remain mutually exclusive.
+
+Pause and resume affect only the selected project and retain its saved checkpoints. A failed project does not cancel other projects. Quitting the engine waits for active workflows to stop safely; installing updates remains blocked until all tasks and cleanup have finished. Exports retain their independent two-worker queue.
+
+No task-count ceiling does not mean unlimited machine or provider capacity. More simultaneous projects can consume more memory and incur model charges together, and provider throttling can slow them down. Configured model budgets/limits remain per invocation, not a shared cross-project account quota. This Desktop behavior does not change Web worker concurrency or CLI execution.
+
 The shared usage display separates cache reads, writes, ordinary input and unknown
 classification. **Cache read / all input** includes unknown input in its denominator;
 historical misses are not reclassified as ordinary input. Available write TTL subtotals
