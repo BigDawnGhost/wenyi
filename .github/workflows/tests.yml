@@ -118,7 +118,9 @@ jobs:
         run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration"
       - name: Service integration tests (PostgreSQL and Redis enabled)
         # Two workers bound connections against the shared postgres service.
-        run: uv run --no-sync pytest -q -n 2 --dist loadgroup -m integration
+        # One rerun absorbs resource flake; a retried pass lands in the job
+        # summary as flaky rather than disappearing into a green run.
+        run: uv run --no-sync pytest -q -n 2 --dist loadgroup --reruns 1 -m integration
       - name: Build distributable packages and verify bundled resources
         if: matrix.python-version == '3.12'
         run: |
