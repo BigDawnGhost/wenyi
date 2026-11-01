@@ -36,6 +36,7 @@ permissions:
 jobs:
   local-package:
     name: Desktop · ${{ matrix.platform }}
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -178,6 +179,7 @@ jobs:
     if: github.event_name == 'release'
     needs: local-package
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
