@@ -6,9 +6,9 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastapi import HTTPException
 from psycopg.types.json import Jsonb
 from wenyi_backend.context import BackendContext
+from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_backend.export_paths import EXPORT_LIMIT
 from wenyi_core.llm.factory import build_client
 
@@ -88,7 +88,7 @@ class PostgresRepository:
         directory = Path(self.project_dir(pid))
         root = Path(self.settings.data_dir).resolve()
         if directory.is_symlink() or directory.resolve().parent != root:
-            raise HTTPException(409, "Project directory is outside DATA_DIR")
+            raise ApiError(PROJECT_BUSY, 409, "Project directory is outside DATA_DIR")
         with project_write(pid), export_history_session_lock(self.pool, pid) as connection:
             row = connection.execute(
                 """SELECT EXISTS (
@@ -100,13 +100,15 @@ class PostgresRepository:
             ).fetchone()
             connection.commit()
             if row and row[0]:
-                raise HTTPException(409, "A task is active; wait for it before deleting")
+                raise ApiError(PROJECT_BUSY, 409, "A task is active; wait for it before deleting")
             try:
                 if directory.exists():
                     shutil.rmtree(directory)
             except OSError as error:
-                raise HTTPException(
-                    409, "Could not remove project files; close files using this project and retry"
+                raise ApiError(
+                    PROJECT_BUSY,
+                    409,
+                    "Could not remove project files; close files using this project and retry",
                 ) from error
             dal.delete_project(pid, connection=connection)
             connection.commit()
@@ -188,7 +190,7 @@ class PostgresExports:
         with self.repository.pool.connection() as connection:
             export_history_lock(connection, pid)
             if connection.execute("SELECT 1 FROM projects WHERE id=%s", (pid,)).fetchone() is None:
-                raise HTTPException(404, "project not found")
+                raise ApiError(PROJECT_NOT_FOUND, 404, "project not found")
             export_id = dal.create_export(pid, fmt, options, connection=connection)
             job_id = dal.create_job(
                 pid,
