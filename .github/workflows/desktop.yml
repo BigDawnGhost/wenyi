@@ -60,9 +60,11 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - name: Resolve Git version
         id: version
         shell: bash
@@ -177,9 +179,11 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.release.tag_name }}
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - name: Resolve release identity
         id: version
         env:
