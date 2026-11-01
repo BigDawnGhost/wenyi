@@ -9,7 +9,6 @@ import typer
 from rich.progress import Progress
 from wenyi_core.config import PipelineConfig
 from wenyi_core.errors import WenyiError
-from wenyi_core.ingest.errors import IngestError
 from wenyi_core.storage.protocol import STATUS_DONE
 from wenyi_core.timing import load_timing
 

@@ -45,7 +45,9 @@ def test_busy_project_write_raises_project_busy(backend_context, monkeypatch):
     context = replace(backend_context, storage_for=lambda pid: OpenStorage())
     with use_context(context):
         with pytest.raises(ApiError) as caught:
-            with project_write("book", backend_context.repository, lambda _pid: context.storage_for(_pid)):
+            with project_write(
+                "book", backend_context.repository, lambda _pid: context.storage_for(_pid)
+            ):
                 pytest.fail("busy project must not enter the write section")
     assert caught.value.code == PROJECT_BUSY
     assert caught.value.status == 409
@@ -66,7 +68,9 @@ def test_lock_contention_raises_project_busy(backend_context, monkeypatch):
     context = replace(backend_context, storage_for=lambda pid: LockedStorage())
     with use_context(context):
         with pytest.raises(ApiError) as caught:
-            with project_write("book", backend_context.repository, lambda _pid: context.storage_for(_pid)):
+            with project_write(
+                "book", backend_context.repository, lambda _pid: context.storage_for(_pid)
+            ):
                 pytest.fail("contended lock must not enter the write section")
     assert caught.value.code == PROJECT_BUSY
     assert caught.value.message == "project already has a running task"
