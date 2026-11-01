@@ -7,7 +7,7 @@ import json
 import threading
 from contextlib import ExitStack
 from contextvars import copy_context
-from functools import wraps
+from functools import partial, wraps
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -315,7 +315,11 @@ def _execute(
 
 async def _run(kind, project_id, run_id, params):
     stop = threading.Event()
-    task = asyncio.create_task(asyncio.to_thread(_execute, kind, project_id, run_id, params, stop))
+    task = asyncio.create_task(
+        current_context().run_workflow_sync(
+            partial(_execute, kind, project_id, run_id, params, stop)
+        )
+    )
     try:
         await asyncio.shield(task)
     except asyncio.CancelledError:

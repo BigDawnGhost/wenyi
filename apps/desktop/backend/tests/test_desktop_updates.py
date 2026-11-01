@@ -75,7 +75,7 @@ def test_all_project_jobs_block_prepare(context, kind, status):
     assert runtime.accepting
 
 
-@pytest.mark.parametrize("owned", ["_submitted", "_active", "_cancelling"])
+@pytest.mark.parametrize("owned", ["_submitted", "_active", "_cancelling", "_workflows"])
 def test_actual_runtime_ownership_blocks_even_terminal_catalog(context, owned):
     async def run():
         runtime = LocalRuntime(context.repository, context)
@@ -88,7 +88,7 @@ def test_actual_runtime_ownership_blocks_even_terminal_catalog(context, owned):
         if owned == "_active":
             runtime._active["mock"] = task
         else:
-            getattr(runtime, owned).add(task if owned == "_cancelling" else "mock")
+            getattr(runtime, owned).add("mock" if owned == "_submitted" else task)
         guard = UpdateGuard(context.telemetry)
         try:
             with pytest.raises(HTTPException) as error:
