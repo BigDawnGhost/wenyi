@@ -103,6 +103,20 @@ jobs:
           python-version: "3.12"
           enable-cache: true
           cache-dependency-glob: "uv.lock"
+      # generate_context! reads frontendDist at compile time, so the frontend
+      # must exist before cargo runs -- the packaging job builds it for the same
+      # reason. pnpm/action-setup comes first because setup-node resolves the
+      # pnpm binary when caching is enabled.
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the frontend the Tauri context embeds
+        run: pnpm -C apps/desktop/frontend build
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -205,12 +219,12 @@ jobs:
       - name: Test Windows local state and artifact paths
         if: runner.os == 'Windows'
         run: >
-          uv run --no-sync pytest -q
+          uv run --no-sync pytest -q -n auto
           packages/core/tests/test_file_artifacts.py
           packages/core/tests/test_file_storage.py
           packages/core/tests/test_precision_pipeline.py
           packages/core/tests/test_orchestrator.py
-      - run: uv run --no-sync pytest -q apps/desktop/backend/tests
+      - run: uv run --no-sync pytest -q -n auto apps/desktop/backend/tests
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
       - run: cargo nextest run --locked --manifest-path apps/desktop/Cargo.toml
