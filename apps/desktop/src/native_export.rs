@@ -154,6 +154,42 @@ impl Saves {
         Ok(())
     }
 
+    /// Fill one channel of the ledger to its cap without touching the filesystem.
+    ///
+    /// Reaching the caps for real costs thousands of file operations and a linear
+    /// scan per insert, which made the cap test the slowest case in the suite.
+    /// The entries only need to be distinct, so push synthetic values straight
+    /// into the ledger. `aliases` selects the channel: the alias cap is exercised
+    /// with one real identity, the identity cap with no extra aliases.
+    #[cfg(test)]
+    pub fn prefill_identities(&self, cap: usize) {
+        let mut state = self.0 .0.lock().unwrap();
+        // Start well above the real volume and file numbers so a synthetic entry
+        // cannot collide with the file the test registers for real.
+        let base: u64 = 1 << 40;
+        while state.sources.len() < cap {
+            let index = state.sources.len() as u64;
+            state.sources.push(SourceIdentity {
+                volume: base + index,
+                file: u128::from(base) + u128::from(index),
+            });
+        }
+    }
+
+    /// Fill the alias channel to its cap; see `prefill_identities`.
+    #[cfg(test)]
+    pub fn prefill_aliases(&self, cap: usize) {
+        let mut state = self.0 .0.lock().unwrap();
+        while state.aliases.len() < cap {
+            let index = state.aliases.len();
+            // A relative name keeps `same_alias` off the filesystem: it only
+            // compares the string, and no such file is ever opened.
+            state
+                .aliases
+                .push(std::path::PathBuf::from(format!("prefill-alias-{index}")));
+        }
+    }
+
     pub fn close(&self) {
         self.0 .0.lock().unwrap().closing = true;
     }

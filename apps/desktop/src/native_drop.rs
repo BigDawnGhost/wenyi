@@ -774,21 +774,27 @@ mod tests {
             } else {
                 MAX_SOURCE_IDENTITIES
             };
-            for i in 0..cap {
-                let path = fixture.0.join(format!("{i}.txt"));
-                if aliases {
-                    std::fs::hard_link(&source, &path).unwrap();
-                } else {
-                    std::fs::write(&path, b"source").unwrap();
-                }
-                saves
-                    .protect_source(path.clone(), File::open(&path).unwrap())
-                    .unwrap();
-                if aliases {
-                    // The ledger retains paths after unlinking; avoid exceeding
-                    // NTFS's per-file hard-link limit while filling its alias cap.
-                    std::fs::remove_file(path).unwrap();
-                }
+            // Fill to one below the cap without the thousands of real file
+            // operations this used to cost; 0.txt is reserved for a real file
+            // because the last assertions register it as a known pair.
+            let known = fixture.0.join("0.txt");
+            if aliases {
+                // The alias channel registers a real hard link of the source, so
+                // the known pair really shares one identity; the file must not
+                // exist yet for the link to be created.
+                std::fs::hard_link(&source, &known).unwrap();
+            } else {
+                std::fs::write(&known, b"source").unwrap();
+            }
+            saves
+                .protect_source(known.clone(), File::open(&known).unwrap())
+                .unwrap();
+            if aliases {
+                // The alias cap is what this branch exercises; the identity
+                // channel stays at one real entry so source_count is 1.
+                saves.prefill_aliases(cap);
+            } else {
+                saves.prefill_identities(cap);
             }
             let listener = TcpListener::bind("127.0.0.1:0").unwrap();
             listener.set_nonblocking(true).unwrap();
@@ -812,10 +818,6 @@ mod tests {
             );
             assert_eq!(saves.source_count(), if aliases { 1 } else { cap });
             // Already reserved identity/alias pairs remain usable at capacity.
-            let known = fixture.0.join("0.txt");
-            if aliases {
-                std::fs::hard_link(&source, &known).unwrap();
-            }
             saves
                 .protect_source(known.clone(), File::open(known).unwrap())
                 .unwrap();
