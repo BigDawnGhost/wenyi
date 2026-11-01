@@ -124,10 +124,13 @@ CLI / Web / Desktop → Orchestrator → Runtime / Preparation / Translation / A
 ```bash
 uv run --no-sync ruff check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
 uv run --no-sync ruff format --check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
-uv run --no-sync pytest -q packages/core/tests/test_config.py
-uv run --no-sync pytest -q
+uv run --no-sync pytest -q -n auto packages/core/tests/test_config.py
+uv run --no-sync pytest -q -n auto               # Full collection.
+uv run --no-sync pytest -q -n auto -m "not integration"
 git diff --check
 ```
+
+Scale verification to the risk instead of always running everything. A domain-level change needs that domain's tests plus the suite around it; run the whole collection once at the end of a batch, and once more before pushing. Tests run under `pytest-xdist`, so keep `-n auto`: the full collection takes roughly 80-120 s in parallel versus several minutes serially. The `integration` marker is the exception and is capped at two workers in CI because it holds real PostgreSQL and Redis connections.
 
 前端安装使用 `pnpm install --frozen-lockfile`。分别对 `apps/web` 和 `apps/desktop/frontend` 运行 `pnpm -C <目录> typecheck`、`build` 和 `test:e2e`；共享 UI 变更验证两端，并在两端构建后运行 `pnpm test:frontend-boundaries`。E2E 需要 Playwright Chromium，安装与服务配置见 [Web 文档](docs/web.md)、[Desktop 文档](docs/desktop.md) 和 CI。
 

@@ -73,13 +73,17 @@ CLI/Desktop 打包工作流有路径过滤，不应将这些条件检查设为�
 ```bash
 uv sync --locked --all-packages --group dev
 uv run --no-sync python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
-uv run --no-sync pytest -q -m "not integration"  # No external test services.
-uv run --no-sync pytest -q -m integration        # Isolated service tests.
-uv run --no-sync pytest -q                      # Full collection, as before.
+uv run --no-sync pytest -q -n auto -m "not integration"  # No external test services.
+uv run --no-sync pytest -q -n 2 -m integration           # Isolated service tests.
+uv run --no-sync pytest -q -n auto                       # Full collection.
 ```
+
+按风险决定验证范围，而不是每次都跑全量。只改动单个领域时，跑该领域测试及其周边套件即可；一个批次收尾时跑一次全量，push 前再跑一次。请保留 `-n auto`：全量并行约 80-120 秒，串行需数分钟。`integration` 限两个 worker，因为它持有真实的 PostgreSQL 与 Redis 连接。
 
 词表准备命令在缓存缺失时下载 `cl100k_base`；离线测试前先联网准备。测试保留真实 tokenizer，不用 fake 替换 token 预算语义。CI 在回归步骤之前准备词表，避免首次下载占用本地任务测试的超时预算。
 
 依赖 `pg_pool` fixture 的 API 测试（包括间接依赖）会自动获得 `integration` 标记。动态请求 PostgreSQL fixture 的参数需要显式标记该参数，文件存储用例仍属于离线测试。SQLite、子进程、崩溃恢复和本地工作流测试保留在离线测试集中。
 
-`WENYI_TEST_DATABASE_URL` 和 `WENYI_TEST_REDIS_URL` 只能指向隔离测试服务。PostgreSQL fixture 会创建私有 schema 并在结束时删除。Docker 代理测试也标记为 `integration`，还需设置 `WENYI_TEST_DOCKER=1`。缺少服务导致的跳过不算集成验证通过。CI 在 Python 3.10 和 3.12 下分别运行两组测试并启用 PostgreSQL、Redis；Desktop 打包保留各平台测试。
+`WENYI_TEST_DATABASE_URL` 和 `WENYI_TEST_REDIS_URL` 只能指向隔离测试服务。PostgreSQL fixture 会创建私有 schema 并在结束时删除。Docker 代理测试也标记为 `integration`，还需设置 `WENYI_TEST_DOCKER=1`。缺少服务导致的跳过不算集成验证通过。
+
+CI 在 Python 3.10 和 3.12 下分别运行两组测试并启用 PostgreSQL、Redis，并在本地沿用同样的分层：`changes` job 为每个 PR 分类，纯文档改动会跳过 Python 与 web job，而 push 到 `main` 与手动触发始终全跑。两个 Python 步骤都使用 `pytest-xdist`，integration 限两个 worker。Desktop 在 PR 上只跑 smoke 层，仅在 release 或手动触发时构建全部平台。integration 会重试一次，但只在重试后才通过的用例会写入 job 摘要并标为 flaky，因此重试不会掩盖真实问题。

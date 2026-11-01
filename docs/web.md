@@ -271,7 +271,7 @@ The live `/openapi.json` is the source of API types. `GET /capabilities` reports
 ```bash
 pnpm gen:schema  # API already running on localhost:8000
 uv run --no-sync ruff check packages/core packages/cli apps/api
-uv run --no-sync pytest -q
+uv run --no-sync pytest -q -n auto
 pnpm -C apps/web typecheck
 pnpm -C apps/web build
 pnpm -C apps/web exec playwright install chromium
