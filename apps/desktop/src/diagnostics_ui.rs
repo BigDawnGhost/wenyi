@@ -20,28 +20,38 @@ pub struct ExportControl {
     cancel: AtomicBool,
 }
 
-fn trusted(window: &tauri::WebviewWindow) -> Result<(), String> {
+fn trusted(window: &tauri::WebviewWindow) -> Result<(), crate::ipc_error::IpcError> {
     if window.label() == "main" && window.url().is_ok_and(|url| crate::trusted(&url)) {
         Ok(())
     } else {
-        Err("Desktop diagnostics are unavailable.".into())
+        Err(crate::ipc_error::IpcError::new(
+            "diagnostics_untrusted_window",
+            "Desktop diagnostics are unavailable.",
+        ))
     }
 }
 
 #[tauri::command]
-pub async fn desktop_diagnostics_status(window: tauri::WebviewWindow) -> Result<Status, String> {
+pub async fn desktop_diagnostics_status(
+    window: tauri::WebviewWindow,
+) -> Result<Status, crate::ipc_error::IpcError> {
     trusted(&window)?;
     let diagnostics = window.state::<Diagnostics>().inner().clone();
     tauri::async_runtime::spawn_blocking(move || diagnostics.status())
         .await
-        .map_err(|_| "Cannot inspect diagnostics.".into())
+        .map_err(|_| {
+            crate::ipc_error::IpcError::new(
+                "diagnostics_unavailable",
+                "Cannot inspect diagnostics.",
+            )
+        })
 }
 
 #[tauri::command]
 pub fn desktop_diagnostics_record(
     window: tauri::WebviewWindow,
     event: Event,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, crate::ipc_error::IpcError> {
     trusted(&window)?;
     // Renderer supplies only an enum, never arbitrary strings, frames or attributes.
     Ok(window
@@ -53,14 +63,16 @@ pub fn desktop_diagnostics_record(
 pub fn desktop_diagnostics_detail(
     window: tauri::WebviewWindow,
     enabled: bool,
-) -> Result<(), String> {
+) -> Result<(), crate::ipc_error::IpcError> {
     trusted(&window)?;
     window.state::<Diagnostics>().detail(enabled);
     Ok(())
 }
 
 #[tauri::command]
-pub fn desktop_diagnostics_cancel(window: tauri::WebviewWindow) -> Result<(), String> {
+pub fn desktop_diagnostics_cancel(
+    window: tauri::WebviewWindow,
+) -> Result<(), crate::ipc_error::IpcError> {
     trusted(&window)?;
     window
         .state::<Arc<ExportControl>>()
@@ -70,7 +82,9 @@ pub fn desktop_diagnostics_cancel(window: tauri::WebviewWindow) -> Result<(), St
 }
 
 #[tauri::command]
-pub async fn desktop_diagnostics_clear(window: tauri::WebviewWindow) -> Result<(), String> {
+pub async fn desktop_diagnostics_clear(
+    window: tauri::WebviewWindow,
+) -> Result<(), crate::ipc_error::IpcError> {
     trusted(&window)?;
     let diagnostics = window.state::<Diagnostics>().inner().clone();
     let control = window.state::<Arc<ExportControl>>().inner().clone();
@@ -86,7 +100,9 @@ pub async fn desktop_diagnostics_clear(window: tauri::WebviewWindow) -> Result<(
 }
 
 #[tauri::command]
-pub async fn desktop_diagnostics_open(window: tauri::WebviewWindow) -> Result<(), String> {
+pub async fn desktop_diagnostics_open(
+    window: tauri::WebviewWindow,
+) -> Result<(), crate::ipc_error::IpcError> {
     trusted(&window)?;
     let diagnostics = window.state::<Diagnostics>().inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -112,13 +128,16 @@ pub async fn desktop_diagnostics_open(window: tauri::WebviewWindow) -> Result<()
 
 struct Admission<'a>(&'a ExportControl);
 impl<'a> Admission<'a> {
-    fn new(control: &'a ExportControl) -> Result<Self, String> {
+    fn new(control: &'a ExportControl) -> Result<Self, crate::ipc_error::IpcError> {
         if control
             .busy
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
             .is_err()
         {
-            return Err("A diagnostic operation is already running.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "diagnostics_busy",
+                "A diagnostic operation is already running.",
+            ));
         }
         control.cancel.store(false, Ordering::SeqCst);
         Ok(Self(control))
@@ -130,7 +149,7 @@ impl Drop for Admission<'_> {
     }
 }
 
-fn save(app: &tauri::AppHandle, range: Range) -> Result<Option<Saved>, String> {
+fn save(app: &tauri::AppHandle, range: Range) -> Result<Option<Saved>, crate::ipc_error::IpcError> {
     let control = app.state::<Arc<ExportControl>>();
     let _guard = Admission::new(&control)?;
     let diagnostics = app.state::<Diagnostics>();
@@ -168,7 +187,7 @@ fn save(app: &tauri::AppHandle, range: Range) -> Result<Option<Saved>, String> {
 pub async fn desktop_diagnostics_export(
     window: tauri::WebviewWindow,
     range: Range,
-) -> Result<Option<Saved>, String> {
+) -> Result<Option<Saved>, crate::ipc_error::IpcError> {
     trusted(&window)?;
     let app = window.app_handle().clone();
     tauri::async_runtime::spawn_blocking(move || save(&app, range))

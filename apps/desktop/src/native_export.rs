@@ -15,7 +15,7 @@ use tauri::Manager;
 
 use crate::local_connection::Connection;
 
-type Result<T> = std::result::Result<T, String>;
+type Result<T> = std::result::Result<T, crate::ipc_error::IpcError>;
 const CHUNK: usize = 64 * 1024;
 pub(crate) const MAX_SOURCE_IDENTITIES: usize = 1024;
 pub(crate) const MAX_SOURCE_ALIASES: usize = 4096;
@@ -56,7 +56,10 @@ impl SourceIdentity {
                 )
             } == 0
             {
-                return Err("Cannot identify source file.".into());
+                return Err(crate::ipc_error::IpcError::new(
+                    "export_source_unavailable",
+                    "Cannot identify source file.",
+                ));
             }
             let info = unsafe { info.assume_init() };
             Ok(Self {
@@ -134,10 +137,13 @@ impl Saves {
         if (new_identity && state.sources.len() >= MAX_SOURCE_IDENTITIES)
             || (new_alias && state.aliases.len() >= MAX_SOURCE_ALIASES)
         {
-            return Err("Source protection limit reached. No upload was started. Restart Wenyi before uploading more files.".into());
+            return Err(crate::ipc_error::IpcError::new("export_protection_limit", "Source protection limit reached. No upload was started. Restart Wenyi before uploading more files."));
         }
         if state.closing {
-            return Err("Wenyi is closing. No upload was started.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_closing",
+                "Wenyi is closing. No upload was started.",
+            ));
         }
         if new_identity {
             state.sources.push(identity);
@@ -175,7 +181,10 @@ impl Saves {
 
     fn check(&self) -> Result<()> {
         if self.0 .0.lock().unwrap().closing {
-            Err("Saving stopped because Wenyi is closing.".into())
+            Err(crate::ipc_error::IpcError::new(
+                "export_closing",
+                "Saving stopped because Wenyi is closing.",
+            ))
         } else {
             Ok(())
         }
@@ -184,7 +193,10 @@ impl Saves {
     fn begin(&self) -> Result<Active> {
         let mut state = self.0 .0.lock().unwrap();
         if state.closing {
-            return Err("Wenyi is closing.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_closing",
+                "Wenyi is closing.",
+            ));
         }
         state.active += 1;
         Ok(Active(self.clone()))
@@ -195,7 +207,10 @@ impl Saves {
     fn reserve(&self) -> Result<Pending> {
         let mut state = self.0 .0.lock().unwrap();
         if state.closing {
-            return Err("Wenyi is closing.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_closing",
+                "Wenyi is closing.",
+            ));
         }
         state.pending += 1;
         Ok(Pending(self.clone()))
@@ -211,13 +226,21 @@ impl Saves {
                 .canonicalize()
                 .map_err(|_| "Internal workspace is unavailable.")?;
             if path.starts_with(root) {
-                return Err("Choose a destination outside Wenyi's internal workspace.".into());
+                return Err(crate::ipc_error::IpcError::new(
+                    "export_destination_invalid",
+                    "Choose a destination outside Wenyi's internal workspace.",
+                ));
             }
         }
         let identity = match File::open(path) {
             Ok(file) => Some(SourceIdentity::read(&file)?),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(_) => return Err("Cannot inspect destination source protection.".into()),
+            Err(_) => {
+                return Err(crate::ipc_error::IpcError::new(
+                    "export_destination_invalid",
+                    "Cannot inspect destination source protection.",
+                ))
+            }
         };
         // Resolve existing aliases as well as the canonical parent spelling.
         // On Windows this also normalizes DOS/extended and short-name paths.
@@ -229,7 +252,10 @@ impl Saves {
                     .is_some_and(|canonical| same_alias(alias, canonical))
         }) || identity.is_some_and(|identity| state.sources.contains(&identity))
         {
-            return Err("The original source cannot be overwritten.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_destination_invalid",
+                "The original source cannot be overwritten.",
+            ));
         }
         Ok(())
     }
@@ -306,29 +332,47 @@ fn run_diagnostic_save(
 ) -> Result<Option<Saved>> {
     let _pending = saves.reserve()?;
     let plan = Plan {
-        filename: format!("wenyi-diagnostics-{}.zip", chrono::Utc::now().format("%Y%m%dT%H%M%SZ")),
+        filename: format!(
+            "wenyi-diagnostics-{}.zip",
+            chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+        ),
         extension: "zip".into(),
         label: "Wenyi diagnostic report".into(),
         request: None,
         protected_roots: roots.to_vec(),
     };
-    let Some(path) = dialog.choose(&plan) else { return Ok(None); };
-    if cancelled() { return Ok(None); }
+    let Some(path) = dialog.choose(&plan) else {
+        return Ok(None);
+    };
+    if cancelled() {
+        return Ok(None);
+    }
     let target = Target::new(plan.destination(path), saves, roots)?;
-    if target.existing.is_some() && !dialog.replace(&target.path) { return Ok(None); }
+    if target.existing.is_some() && !dialog.replace(&target.path) {
+        return Ok(None);
+    }
     let _active = saves.begin()?;
     struct CancelReader<R, F>(R, F);
     impl<R: Read, F: Fn() -> bool> Read for CancelReader<R, F> {
         fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
-            if (self.1)() { return Err(std::io::Error::other("Diagnostic export canceled")); }
+            if (self.1)() {
+                return Err(std::io::Error::other("Diagnostic export canceled"));
+            }
             self.0.read(buffer)
         }
     }
     let result = (|| {
         let bytes = build()?;
         let length = bytes.len() as u64;
-        target.copy(&mut CancelReader(std::io::Cursor::new(bytes), &cancelled), length, saves, roots)?;
-        Ok(Some(Saved { path: target.path.to_string_lossy().into_owned() }))
+        target.copy(
+            &mut CancelReader(std::io::Cursor::new(bytes), &cancelled),
+            length,
+            saves,
+            roots,
+        )?;
+        Ok(Some(Saved {
+            path: target.path.to_string_lossy().into_owned(),
+        }))
     })();
     // Picker, collection and copy cancellation have the same neutral UI outcome.
     // A successful publication stays successful even if cancellation arrives too late.
@@ -350,7 +394,10 @@ impl Connection {
             .send()
             .map_err(|_| "Local export connection failed. Retry saving.")?;
         if !response.status().is_success() {
-            return Err("The local engine could not prepare this save. Retry saving.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_engine_unavailable",
+                "The local engine could not prepare this save. Retry saving.",
+            ));
         }
         Ok(response)
     }
@@ -362,7 +409,10 @@ impl Connection {
             .read_to_end(&mut bytes)
             .map_err(|_| "Invalid export response.")?;
         if bytes.len() > 1024 * 1024 {
-            return Err("Export response is too large.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_response_invalid",
+                "Export response is too large.",
+            ));
         }
         serde_json::from_slice(&bytes).map_err(|_| "Invalid export response.".into())
     }
@@ -383,7 +433,10 @@ impl Connection {
                     .send()
                     .map_err(|_| "Export transfer failed.")?;
                 if !response.status().is_success() {
-                    return Err("The local engine could not provide this export.".into());
+                    return Err(crate::ipc_error::IpcError::new(
+                        "export_engine_unavailable",
+                        "The local engine could not provide this export.",
+                    ));
                 }
                 let length = response
                     .content_length()
@@ -421,7 +474,10 @@ impl Connection {
         };
         match download.next()? {
             DownloadPart::Length(length) => Ok((length, download)),
-            _ => Err("Invalid export response.".into()),
+            _ => Err(crate::ipc_error::IpcError::new(
+                "export_response_invalid",
+                "Invalid export response.",
+            )),
         }
     }
 }
@@ -444,7 +500,12 @@ impl Download {
             match self.receiver.recv_timeout(Duration::from_millis(200)) {
                 Ok(part) => return part,
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(_) => return Err("Export transfer interrupted.".into()),
+                Err(_) => {
+                    return Err(crate::ipc_error::IpcError::new(
+                        "export_transfer_interrupted",
+                        "Export transfer interrupted.",
+                    ))
+                }
             }
         }
     }
@@ -502,13 +563,19 @@ fn no_symlinks(path: &Path) -> Result<()> {
             .components()
             .any(|c| matches!(c, std::path::Component::ParentDir))
     {
-        return Err("Choose an absolute destination without parent traversal.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "export_destination_invalid",
+            "Choose an absolute destination without parent traversal.",
+        ));
     }
     for ancestor in path.ancestors() {
         let meta = std::fs::symlink_metadata(ancestor)
             .map_err(|_| "Destination folder is unavailable.")?;
         if meta.is_symlink() {
-            return Err("Choose a destination without symbolic links.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_destination_invalid",
+                "Choose a destination without symbolic links.",
+            ));
         }
     }
     Ok(())
@@ -565,7 +632,10 @@ impl Target {
         match dir.symlink_metadata(name) {
             Ok(meta) => {
                 if !meta.is_file() || meta.is_symlink() {
-                    return Err("The destination must be a regular file, not a link.".into());
+                    return Err(crate::ipc_error::IpcError::new(
+                        "export_destination_invalid",
+                        "The destination must be a regular file, not a link.",
+                    ));
                 }
                 let mut options = cap_std::fs::OpenOptions::new();
                 options.read(true).follow(FollowSymlinks::No);
@@ -580,7 +650,10 @@ impl Target {
                         .map_err(|_| "The destination changed.")?
                         .is_symlink()
                 {
-                    return Err("The destination changed.".into());
+                    return Err(crate::ipc_error::IpcError::new(
+                        "export_destination_changed",
+                        "The destination changed.",
+                    ));
                 }
                 Ok(Some((
                     same_file::Handle::from_file(file)
@@ -592,7 +665,10 @@ impl Target {
                 )))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(_) => Err("Cannot inspect destination.".into()),
+            Err(_) => Err(crate::ipc_error::IpcError::new(
+                "export_destination_invalid",
+                "Cannot inspect destination.",
+            )),
         }
     }
 
@@ -606,7 +682,10 @@ impl Target {
         if same_file::Handle::from_path(parent).ok().as_ref() != Some(&self.parent_identity)
             || Self::inspect(&self.dir, &self.name)? != self.existing
         {
-            return Err("The destination changed. Choose it again.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_destination_changed",
+                "The destination changed. Choose it again.",
+            ));
         }
         Saves::protect_locked(state, &self.path, roots)
     }
@@ -651,13 +730,19 @@ impl Target {
             }
             copied += count as u64;
             if copied > length {
-                return Err("Export length does not match.".into());
+                return Err(crate::ipc_error::IpcError::new(
+                    "export_transfer_interrupted",
+                    "Export length does not match.",
+                ));
             }
             file.write_all(&buffer[..count])
                 .map_err(|_| "Cannot write export; the destination was not changed.")?;
         }
         if copied != length {
-            return Err("Export transfer was truncated; the destination was not changed.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_transfer_interrupted",
+                "Export transfer was truncated; the destination was not changed.",
+            ));
         }
         file.sync_all().map_err(|_| "Cannot flush export.")?;
         let identity = same_file::Handle::from_file(
@@ -671,7 +756,10 @@ impl Target {
         // reservations and shutdown. Never reacquire this mutex in validation.
         let state = saves.0 .0.lock().unwrap();
         if state.closing {
-            return Err("Saving stopped because Wenyi is closing.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_closing",
+                "Saving stopped because Wenyi is closing.",
+            ));
         }
         self.validate_locked(&state, roots)?;
         if Self::inspect(&self.dir, Path::new(&temporary.name))?
@@ -679,7 +767,10 @@ impl Target {
             .map(|(handle, size, _)| (handle, *size))
             != Some((&identity, length))
         {
-            return Err("The temporary export changed; the destination was not changed.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_transfer_interrupted",
+                "The temporary export changed; the destination was not changed.",
+            ));
         }
         // External namespace mutations are not serialized by this mutex.
         // An existing-file rename is not an atomic compare-and-swap: a hostile
@@ -786,7 +877,10 @@ fn pin_windows_parents(parent: &Path) -> Result<Vec<File>> {
                 .file_type()
                 .is_symlink()
             {
-                return Err("Choose a destination without symbolic links.".into());
+                return Err(crate::ipc_error::IpcError::new(
+                    "export_destination_invalid",
+                    "Choose a destination without symbolic links.",
+                ));
             }
             Ok(file)
         })
@@ -840,7 +934,10 @@ fn run_save(
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
     {
-        return Err("Invalid project identity.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "export_request_invalid",
+            "Invalid project identity.",
+        ));
     }
     let desktop = format!("/desktop/projects/{pid}/exports");
     let value = match &request {
@@ -863,7 +960,10 @@ fn run_save(
         || !plan.extension.bytes().all(|b| b.is_ascii_alphanumeric())
         || plan.protected_roots.is_empty()
     {
-        return Err("Invalid export plan.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "export_request_invalid",
+            "Invalid export plan.",
+        ));
     }
     let Some(path) = dialog.choose(&plan) else {
         return Ok(None);
@@ -934,7 +1034,12 @@ fn save_created_export(
             Some("pending" | "queued" | "running") => {
                 std::thread::sleep(Duration::from_millis(500))
             }
-            _ => return Err("Export generation failed. Check export history.".into()),
+            _ => {
+                return Err(crate::ipc_error::IpcError::new(
+                    "export_failed",
+                    "Export generation failed. Check export history.",
+                ))
+            }
         }
     }
     let (length, mut response) = connection.content(format!("{desktop}/{id}/content"), saves)?;
@@ -966,13 +1071,19 @@ async fn save_native(
     request: SaveRequest,
 ) -> Result<Option<Saved>> {
     if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
-        return Err("Native saving is unavailable.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "export_unavailable",
+            "Native saving is unavailable.",
+        ));
     }
     let raw = {
         let state = window.state::<Arc<Mutex<crate::State>>>();
         let state = state.lock().unwrap();
         if state.closing || state.error.is_some() {
-            return Err("Local engine unavailable.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_engine_unavailable",
+                "Local engine unavailable.",
+            ));
         }
         state
             .connection
@@ -980,7 +1091,10 @@ async fn save_native(
             .ok_or("Local engine unavailable.")?
     };
     let saves = window.state::<Saves>().inner().clone();
-    let diagnostics = window.state::<crate::diagnostics::Diagnostics>().inner().clone();
+    let diagnostics = window
+        .state::<crate::diagnostics::Diagnostics>()
+        .inner()
+        .clone();
     tauri::async_runtime::spawn_blocking(move || {
         let result = run_save(
             Connection::new(&raw)?,
@@ -990,8 +1104,20 @@ async fn save_native(
             &NativeDialog,
         );
         match &result {
-            Ok(Some(_)) => { diagnostics.record(crate::diagnostics::Source::Native, crate::diagnostics::Event::ExportCompleted, serde_json::json!({})); }
-            Err(_) => { diagnostics.record(crate::diagnostics::Source::Native, crate::diagnostics::Event::ExportFailed, serde_json::json!({})); }
+            Ok(Some(_)) => {
+                diagnostics.record(
+                    crate::diagnostics::Source::Native,
+                    crate::diagnostics::Event::ExportCompleted,
+                    serde_json::json!({}),
+                );
+            }
+            Err(_) => {
+                diagnostics.record(
+                    crate::diagnostics::Source::Native,
+                    crate::diagnostics::Event::ExportFailed,
+                    serde_json::json!({}),
+                );
+            }
             _ => {}
         }
         result
@@ -1092,16 +1218,55 @@ mod tests {
     fn diagnostics_choose_before_collection_and_preserve_existing_files_on_failure() {
         let fixture = Fixture::new();
         let saves = Saves::default();
-        let cancel = FakeDialog { path: None, replace: false };
-        assert!(run_diagnostic_save(&saves, &[], || panic!("must not collect"), || false, &cancel).unwrap().is_none());
+        let cancel = FakeDialog {
+            path: None,
+            replace: false,
+        };
+        assert!(run_diagnostic_save(
+            &saves,
+            &[],
+            || panic!("must not collect"),
+            || false,
+            &cancel
+        )
+        .unwrap()
+        .is_none());
         let path = fixture.file("report.zip", b"existing");
-        let refuse = FakeDialog { path: Some(path.clone()), replace: false };
-        assert!(run_diagnostic_save(&saves, &[], || panic!("must not collect"), || false, &refuse).unwrap().is_none());
-        let replace = FakeDialog { path: Some(path.clone()), replace: true };
-        assert!(run_diagnostic_save(&saves, &[], || Err("collection failed".into()), || false, &replace).is_err());
+        let refuse = FakeDialog {
+            path: Some(path.clone()),
+            replace: false,
+        };
+        assert!(run_diagnostic_save(
+            &saves,
+            &[],
+            || panic!("must not collect"),
+            || false,
+            &refuse
+        )
+        .unwrap()
+        .is_none());
+        let replace = FakeDialog {
+            path: Some(path.clone()),
+            replace: true,
+        };
+        assert!(run_diagnostic_save(
+            &saves,
+            &[],
+            || Err("collection failed".into()),
+            || false,
+            &replace
+        )
+        .is_err());
         assert_eq!(std::fs::read(&path).unwrap(), b"existing");
         fixture.clean();
-        let result = run_diagnostic_save(&saves, &[], || Ok(b"new archive".to_vec()), || false, &replace).unwrap();
+        let result = run_diagnostic_save(
+            &saves,
+            &[],
+            || Ok(b"new archive".to_vec()),
+            || false,
+            &replace,
+        )
+        .unwrap();
         assert!(result.is_some());
         assert_eq!(std::fs::read(&path).unwrap(), b"new archive");
         fixture.clean();
@@ -1112,7 +1277,10 @@ mod tests {
         let fixture = Fixture::new();
         let saves = Saves::default();
         let path = fixture.file("report.zip", b"existing");
-        let dialog = FakeDialog { path: Some(path.clone()), replace: true };
+        let dialog = FakeDialog {
+            path: Some(path.clone()),
+            replace: true,
+        };
         for fail_collection in [true, false] {
             let cancelled = std::cell::Cell::new(false);
             let result = run_diagnostic_save(
@@ -1140,11 +1308,33 @@ mod tests {
         let fixture = Fixture::new();
         let saves = Saves::default();
         let path = fixture.file("source.zip", b"private source");
-        saves.protect_source(path.clone(), File::open(&path).unwrap()).unwrap();
-        let dialog = FakeDialog { path: Some(path.clone()), replace: true };
-        assert!(run_diagnostic_save(&saves, &[], || panic!("must not collect"), || false, &dialog).is_err());
-        let dialog = FakeDialog { path: Some(fixture.0.join("new.zip")), replace: true };
-        assert!(run_diagnostic_save(&saves, &[fixture.0.clone()], || panic!("must not collect"), || false, &dialog).is_err());
+        saves
+            .protect_source(path.clone(), File::open(&path).unwrap())
+            .unwrap();
+        let dialog = FakeDialog {
+            path: Some(path.clone()),
+            replace: true,
+        };
+        assert!(run_diagnostic_save(
+            &saves,
+            &[],
+            || panic!("must not collect"),
+            || false,
+            &dialog
+        )
+        .is_err());
+        let dialog = FakeDialog {
+            path: Some(fixture.0.join("new.zip")),
+            replace: true,
+        };
+        assert!(run_diagnostic_save(
+            &saves,
+            &[fixture.0.clone()],
+            || panic!("must not collect"),
+            || false,
+            &dialog
+        )
+        .is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"private source");
         fixture.clean();
     }

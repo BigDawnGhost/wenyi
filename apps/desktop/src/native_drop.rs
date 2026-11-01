@@ -17,7 +17,7 @@ use tauri::Manager;
 const TTL: Duration = Duration::from_secs(15 * 60);
 const MAX_GRANTS: usize = 2;
 const CHUNK: usize = 64 * 1024;
-type Result<T> = std::result::Result<T, String>;
+type Result<T> = std::result::Result<T, crate::ipc_error::IpcError>;
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -100,13 +100,19 @@ impl Grant {
                 | "docx"
                 | "srt"
         ) {
-            return Err("Unsupported input format.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "drop_unsupported_format",
+                "Unsupported input format.",
+            ));
         }
         let file = open_regular(path).map_err(|_| "Select a readable regular file.")?;
         let stamp = Stamp::read(&file.metadata().map_err(|_| "Cannot inspect source file.")?)
             .map_err(|_| "Cannot inspect source file.")?;
         if stamp.size == 0 {
-            return Err("Source file is empty.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "drop_empty_source",
+                "Source file is empty.",
+            ));
         }
         let mut random = [0; 32];
         getrandom::fill(&mut random).map_err(|_| "Secure randomness unavailable.")?;
@@ -184,15 +190,24 @@ impl Grants {
     // Only the Rust OS Drop event handler calls this method.
     fn drop_files(&self, paths: &[PathBuf]) -> Result<Source> {
         if self.1.load(Ordering::SeqCst) {
-            return Err("A source upload is already running.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "drop_upload_busy",
+                "A source upload is already running.",
+            ));
         }
         if paths.len() != 1 {
-            return Err("Select exactly one source file.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "drop_selection_invalid",
+                "Select exactly one source file.",
+            ));
         }
         let mut grants = self.0.lock().unwrap();
         grants.retain(|_, grant| grant.expires > Instant::now());
         if grants.len() >= MAX_GRANTS {
-            return Err("Too many pending files. Clear the selection and try again.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "drop_too_many_files",
+                "Too many pending files. Clear the selection and try again.",
+            ));
         }
         let grant = Grant::new(&paths[0])?;
         let source = grant.source.clone();
@@ -263,7 +278,10 @@ fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<
         || base.query().is_some()
         || base.fragment().is_some()
     {
-        return Err("Invalid local service address.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "drop_connection_invalid",
+            "Invalid local service address.",
+        ));
     }
     grant
         .validate()
@@ -305,14 +323,22 @@ fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<
         .read_to_end(&mut bytes)
         .map_err(|_| "Could not read local upload result.")?;
     if bytes.len() > 1024 * 1024 {
-        return Err("Local upload response was too large.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "drop_response_invalid",
+            "Local upload response was too large.",
+        ));
     }
-    serde_json::from_slice(&bytes).map_err(|_| "Invalid local upload response.".into())
+    serde_json::from_slice(&bytes).map_err(|_| {
+        crate::ipc_error::IpcError::new("drop_response_invalid", "Invalid local upload response.")
+    })
 }
 
 fn trusted_window(window: &tauri::WebviewWindow) -> Result<()> {
     if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
-        return Err("Untrusted window.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "drop_untrusted_window",
+            "Untrusted window.",
+        ));
     }
     Ok(())
 }
@@ -358,7 +384,10 @@ pub async fn native_drop_upload(
     let connection = {
         let state = state.lock().unwrap();
         if state.closing || state.error.is_some() {
-            return Err("Local service is unavailable.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "drop_engine_unavailable",
+                "Local service is unavailable.",
+            ));
         }
         state
             .connection
