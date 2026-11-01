@@ -277,10 +277,12 @@ jobs:
        needs.contract.outputs.changed == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Both ends go in one matrix so they run side by side: the wall clock is the
+    # slower of the two suites instead of their sum. The matrix values are kept
+    # out of the name so the check reads `e2e (web)` rather than every field.
+    name: e2e · ${{ matrix.name }}
     strategy:
       fail-fast: false
-      # Both ends go in one matrix so they run side by side: the wall clock is
-      # the slower of the two suites instead of their sum.
       matrix:
         include:
           - name: web
