@@ -5,10 +5,12 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import __version__
 from .context import BackendContext, ContextMiddleware
+from .errors import ApiError, api_error_handler, http_exception_handler
 from .request_context import RequestContextMiddleware
 from .routers import (
     chapters,
@@ -33,6 +35,11 @@ def create_app(
 ) -> FastAPI:
     app = FastAPI(lifespan=lifespan, title="Wenyi API", version=__version__)
     app.state.backend = context
+    # Codes are additive: every error keeps its previous "detail" text as well.
+    # Starlette resolves handlers by exact class, so register the base exception
+    # to also cover fastapi.HTTPException raised by the routers.
+    app.add_exception_handler(ApiError, api_error_handler)
+    app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 
     if context.api_token:
 
