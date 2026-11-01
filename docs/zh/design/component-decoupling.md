@@ -20,7 +20,7 @@
 
 - Core 拥有翻译行为，CLI、共享 Backend 与平台适配依赖 Core，不反向依赖。
 - [Orchestrator](../../../packages/core/wenyi_core/pipeline/orchestrator.py#L30) 已经将领域工作委派给服务。阶段路由和锁作用域是其合理职责，不应为了“更薄”继续拆散。
-- [BackendContext](../../../packages/backend/wenyi_backend/context.py#L89) 按应用注入适配器；ContextVar 属于请求/任务作用域，**不是**进程级 Web/Desktop 开关。线程与回调中的上下文传播必须保留。
+- [BackendContext](../../../packages/backend/wenyi_backend/context.py#L96) 按应用注入适配器；ContextVar 属于请求/任务作用域，**不是**进程级 Web/Desktop 开关。线程与回调中的上下文传播必须保留。
 - Web 拥有 PostgreSQL 与 Redis/Arq；Desktop 拥有独立工作区、SQLite 目录库、凭据与本地运行器。PostgreSQL 适配器必须留在 `apps/api`，不能移入 Core。
 - 共享 UI 已有 feature 目录与宿主能力注入。继续区分路由、外壳、基础组件与功能组件，不为更换父目录名称搬动所有页面。
 - `ArtifactStorage`、Review 证据/模型、markup、DOCX 样式策略、语言策略及独立 SRT 执行已经形成有效边界，应复用而不是再造一套抽象。
@@ -36,9 +36,11 @@
 
 **风险：** 修改调度调用或任务终态处理，会触碰业务执行链。迟到回调与重复投递的安全性依赖嵌在链路内的任务身份及锁检查。
 
-**已落地的 P1 拆分：** [ExecutionRequest 与依赖](../../../packages/backend/wenyi_backend/execution/contracts.py#L20) 显式传入 [runner](../../../packages/backend/wenyi_backend/execution/runner.py#L63)，由后者统一拥有执行前身份复核、中断、清理和终态处理。[操作层](../../../packages/backend/wenyi_backend/execution/operations.py#L108) 负责预览、书籍和字幕用例；`workers/tasks.py` 保留原任务名称及签名，作为薄包装。Web Arq 与 Desktop 调度继续属于平台适配；CLI 仍直接调用 Core，不接入 HTTP 应用层。
+**已落地的 P1 拆分：** [ExecutionRequest 与依赖](../../../packages/backend/wenyi_backend/execution/contracts.py#L20) 显式传入 [runner](../../../packages/backend/wenyi_backend/execution/runner.py#L64)，由后者统一拥有执行前身份复核、中断、清理和终态处理。[操作层](../../../packages/backend/wenyi_backend/execution/operations.py#L108) 负责预览、书籍和字幕用例；`workers/tasks.py` 保留原任务名称及签名，作为薄包装。Web Arq 与 Desktop 调度继续属于平台适配；CLI 仍直接调用 Core，不接入 HTTP 应用层。
 
 runner 从持久任务身份复核、恢复直到领域执行结束持有书级长运行锁。成功目录库状态写入在实时统计清理与运行锁退出后进行，保留现有执行契约，而不是扩大到原方案设想的锁范围。资源取得后立即登记清理，包含启动失败路径；异步取消等待同步工作结束后才返回。读取路由也在成功与错误路径中关闭本次操作创建的存储。
+
+同步调度器通过执行依赖注入：Web 保留默认 executor，Desktop 保留 `main` 新增的每工作流独立线程。集成该改动后，验证了上下文传播、并行关闭、暂停/失败隔离和续跑用量。
 
 独立导出协调器在同一个 `export_lock` 内完成 claim、render、publish 与终态写入。书籍渲染使用 Core 一致快照和 assemble lock；SRT 保留独立的 state-lock 快照路径。渲染不更新目录库状态，发布不调用 Writer。复用现有导出计划、路径和响应辅助模块，不创建第二套导出策略。
 
@@ -232,15 +234,15 @@ uv run --no-sync pytest -q \
 
 ### 完整实现验收
 
-本地验证使用 Python 3.12、Node 22/pnpm 9、临时 fixture 状态与一次性 PostgreSQL/Redis 服务：
+集成 `main` 的 `5be8d37` 后，本地验证使用 Python 3.12、Node 22/pnpm 9、临时 fixture 状态与一次性 PostgreSQL/Redis 服务：
 
 | 检查 | 结果 |
 |---|---|
-| 配置隔离测试数据库/Redis URL 后运行 `uv run --no-sync pytest -q -rs` | 2743 项通过、73 个 subtest 通过、5 项跳过；包含架构、存储、恢复、API 集成及 Desktop 生命周期覆盖 |
+| 配置隔离测试数据库/Redis URL 后运行 `uv run --no-sync pytest -q` | 2752 项通过、73 个 subtest 通过、5 项跳过；包含架构、存储、恢复、API 集成及 Desktop 生命周期覆盖 |
 | 两端 `typecheck`、`typecheck:tests`、`build` | 全部通过 |
-| 两端完整 `test:e2e --workers=2 --max-failures=1` | Web 285 项通过；Desktop 加 `--trace=retain-on-failure` 全量复跑后 246 项通过 |
+| 两端完整 `test:e2e --workers=2 --max-failures=1`，通过临时 `--config` 隔离端口与结果目录 | Web 285 项通过、Desktop 246 项通过；使用 bundled Chromium 153.0.8010.12 |
 | 两端构建后运行 `pnpm check:schema`、`pnpm test:frontend-boundaries` | schema 未漂移，13 项边界测试通过 |
-| Ruff check/format、抽取的 Core/backend 服务及适配器定向 Pyright、`git diff --check` | 通过；Pyright 无错误或警告 |
+| 全范围 Ruff check/format、`pyright --project pyrightconfig.json --warnings`、`git diff --check` | 通过；Pyright 1.1.412 在配置的源码/测试范围内零错误、零警告 |
 | 五个 Python 包 sdist/wheel 构建，资源/版本与干净安装检查 | 通过；验证了 66 个语言资源及 CLI/shared/Web/Desktop 依赖隔离 |
 | 新环境默认 `uv sync --locked` | 仅安装 CLI/Core 产品包；刷新 editable 包元数据后，与构建产物的 Git 派生版本一致 |
 

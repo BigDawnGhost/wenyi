@@ -20,7 +20,7 @@ No database/state migration, new runtime service, new workspace package, prompt 
 
 - Core owns translation behavior; CLI, shared Backend and platform adapters depend on it, not the reverse.
 - The [Orchestrator](../../packages/core/wenyi_core/pipeline/orchestrator.py#L30) already delegates to services. Its stage routing and lock scopes are legitimate responsibilities, not another reason to split it.
-- [BackendContext](../../packages/backend/wenyi_backend/context.py#L89) supplies per-application adapters. Its ContextVar is request/task scoped, **not** a process-wide Web/Desktop selector. Retain context propagation to threads and callbacks.
+- [BackendContext](../../packages/backend/wenyi_backend/context.py#L96) supplies per-application adapters. Its ContextVar is request/task scoped, **not** a process-wide Web/Desktop selector. Retain context propagation to threads and callbacks.
 - Web owns PostgreSQL and Redis/Arq; Desktop owns its workspace, SQLite catalog, credentials and local runner. PostgreSQL adapters must remain in `apps/api`, never move into Core.
 - Shared UI already uses feature directories and injected host capabilities. Keep routes, shell, primitives and features separate; do not move every page merely to rename its parent directory.
 - `ArtifactStorage`, review evidence/models, markup, DOCX style policy, language policies and independent SRT execution already have useful boundaries. Extend these rather than introduce parallel abstractions.
@@ -36,9 +36,11 @@ Priorities below describe migration order, not confirmed production failures. Fi
 
 **Risk:** changing scheduler invocation or terminal-state handling touches the business execution path. Late completion and duplicate delivery depend on job identity and lock checks embedded in that path.
 
-**Implemented P1 seam:** [ExecutionRequest and dependencies](../../packages/backend/wenyi_backend/execution/contracts.py#L20) are explicit inputs to the [runner](../../packages/backend/wenyi_backend/execution/runner.py#L63), which owns admission rechecks, interruption, cleanup and terminal-state handling. [Operations](../../packages/backend/wenyi_backend/execution/operations.py#L108) own preview/book/subtitle work; `workers/tasks.py` retains the existing task names and signatures as thin wrappers. Web Arq and Desktop scheduling remain platform adapters. CLI continues to call Core directly, not this HTTP application layer.
+**Implemented P1 seam:** [ExecutionRequest and dependencies](../../packages/backend/wenyi_backend/execution/contracts.py#L20) are explicit inputs to the [runner](../../packages/backend/wenyi_backend/execution/runner.py#L64), which owns admission rechecks, interruption, cleanup and terminal-state handling. [Operations](../../packages/backend/wenyi_backend/execution/operations.py#L108) own preview/book/subtitle work; `workers/tasks.py` retains the existing task names and signatures as thin wrappers. Web Arq and Desktop scheduling remain platform adapters. CLI continues to call Core directly, not this HTTP application layer.
 
 The runner owns the long book lock from durable identity rechecks through recovery and domain execution. Successful catalog status writes follow live-statistics cleanup and lock exit, preserving the existing execution contract rather than the original plan's proposed wider lock. Resource cleanup is registered at acquisition, including startup failures; async cancellation drains synchronous work before returning. Read routes also close per-operation storage on success and error.
+
+The synchronous dispatcher is injected through execution dependencies: Web retains its default executor, while Desktop retains the independent per-workflow threads introduced on `main`. Context propagation, parallel shutdown, pause/failure isolation and resumed usage are covered after integrating that change.
 
 The separate export coordinator retains the same `export_lock` across claim, render, publish and terminal status. Book rendering uses the consistent Core snapshot and assemble lock; SRT retains its independent state-lock snapshot path. Rendering does not update catalog status, and publication does not invoke a writer. Existing export plan/path/response helpers are reused rather than creating a second export policy.
 
@@ -232,15 +234,15 @@ These establish the initial audit's limited baseline, **not** implementation or 
 
 ### Completed implementation acceptance
 
-Local validation used Python 3.12 and Node 22/pnpm 9, temporary fixture state and disposable PostgreSQL/Redis services:
+Local validation after integrating `main` at `5be8d37` used Python 3.12 and Node 22/pnpm 9, temporary fixture state and disposable PostgreSQL/Redis services:
 
 | Check | Result |
 |---|---|
-| `uv run --no-sync pytest -q -rs` with isolated test database/Redis URLs | 2743 passed, 73 subtests passed, 5 skipped; includes architecture, storage, recovery, API integration and Desktop lifecycle coverage |
+| `uv run --no-sync pytest -q` with isolated test database/Redis URLs | 2752 passed, 73 subtests passed, 5 skipped; includes architecture, storage, recovery, API integration and Desktop lifecycle coverage |
 | Both hosts: `typecheck`, `typecheck:tests`, `build` | Passed |
-| Both hosts: full `test:e2e --workers=2 --max-failures=1` | Web 285 passed; Desktop 246 passed on full rerun with `--trace=retain-on-failure` |
+| Both hosts: full `test:e2e --workers=2 --max-failures=1` with temporary `--config` overrides for isolated ports/results | Web 285 passed; Desktop 246 passed; bundled Chromium 153.0.8010.12 |
 | `pnpm check:schema` and `pnpm test:frontend-boundaries` after both builds | Schema unchanged; 13 boundary tests passed |
-| Ruff check/format, targeted Pyright on extracted Core/backend services and adapters, `git diff --check` | Passed; Pyright reported no errors or warnings |
+| Full-scope Ruff check/format, `pyright --project pyrightconfig.json --warnings`, `git diff --check` | Passed; Pyright 1.1.412 reported zero errors and zero warnings across the configured source/test scope |
 | Five Python package sdist/wheel builds; resource/version and clean-install checks | Passed; 66 bundled language resources and CLI/shared/Web/Desktop dependency isolation verified |
 | Default `uv sync --locked` in a fresh environment | CLI/Core only; refreshed editable-package metadata matches the built Git-derived version |
 
