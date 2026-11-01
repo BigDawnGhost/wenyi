@@ -1,7 +1,7 @@
 import { useI18n } from "../../i18n";
-import { Disclosure } from "../../components/ui/disclosure";
 import { Input, Label } from "../../components/ui/form";
 import { Select, SelectItem } from "../../components/ui/select";
+import { SettingsGroup } from "./SettingsSection";
 
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;
@@ -67,7 +67,7 @@ export function WorkflowSettings({
           ))}
         </div>
       )}
-      <Disclosure title={tr("settings.performance")} error={error}>
+      <SettingsGroup title={tr("settings.performance")} error={error} collapsible={scope === "project"}>
         {!subtitles && (
           <label className="flex gap-2 items-center text-sm">
             <input
@@ -170,7 +170,7 @@ export function WorkflowSettings({
             </div>
           )}
         </div>
-      </Disclosure>
+      </SettingsGroup>
     </fieldset>
   );
 }

@@ -11,6 +11,7 @@ import {
 import { useDesktopI18n } from "./i18n";
 import type { CredentialFieldProps } from "@wenyi/ui/platform";
 import { ErrorNotice, Button, Label, PasswordInput } from "@wenyi/ui/primitives";
+import { SettingsGroup } from "@wenyi/ui/settings";
 
 /**
  * API key field. A saved manual key is loaded into the field masked with dots;
@@ -73,9 +74,8 @@ export function DesktopCredential({ connection, children }: CredentialFieldProps
         <p className="text-xs text-muted-foreground">{t("credentials.sessionHelp")}</p>
       )}
       {error && <p role="alert" className="text-sm text-destructive">{t("credentials.failed")}</p>}
-      <details className="text-sm">
-        <summary className="cursor-pointer text-muted-foreground">{t("credentials.advanced")}</summary>
-        <fieldset className="space-y-3 pt-3" disabled={pending}>
+      <SettingsGroup title={t("credentials.advanced")}>
+        <fieldset className="space-y-3" disabled={pending}>
           {children}
           <div className="flex flex-wrap gap-2">
             <Button
@@ -92,7 +92,7 @@ export function DesktopCredential({ connection, children }: CredentialFieldProps
             </Button>
           </div>
         </fieldset>
-      </details>
+      </SettingsGroup>
     </div>
   );
 }

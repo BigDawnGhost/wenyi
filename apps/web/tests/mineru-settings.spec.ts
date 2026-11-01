@@ -9,7 +9,7 @@ test("MinerU is an informational deployment setting, including Chinese desktop",
   page.on("request", request => {
     if (request.url().includes("/desktop/")) nativeRequests.push(request.url());
   });
-  await page.goto("/settings");
+  await page.goto("/settings/mineru");
   const card = page.getByTestId("mineru-settings");
   await expect(card).toContainText("MinerU");
   await expect(card).toContainText("MINERU_API_KEY");
