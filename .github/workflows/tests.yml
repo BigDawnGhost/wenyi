@@ -212,7 +212,7 @@ jobs:
 
   web:
     needs: [changes, contract]
-    # A manual or scheduled run is always full; a filtered run is decided below.
+    # A manual or scheduled run is always full; a filtered run is decided here.
     if: |
       always() &&
       (github.event_name == 'workflow_dispatch' ||
@@ -220,7 +220,7 @@ jobs:
        needs.changes.outputs.web == 'true' ||
        needs.changes.outputs.force == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v5
@@ -238,39 +238,85 @@ jobs:
       - run: pnpm -C apps/web build
       - run: pnpm -C apps/desktop/frontend build
       - run: pnpm test:frontend-boundaries
-      # The browser specs only run when the contract they exercise could have
-      # moved: a watched path, a forced path, or an OpenAPI document that no
-      # longer matches the base revision. Typecheck and build always run.
+      # The browser specs need the built frontends and the installed browsers,
+      # so this job hands both over instead of rebuilding them twice.
+      - uses: actions/upload-artifact@v6
+        with:
+          name: web-dist
+          path: |
+            apps/web/dist/
+            apps/desktop/frontend/dist/
+          if-no-files-found: error
+          retention-days: 1
+
+  e2e:
+    needs: [changes, contract, web]
+    # The browser specs run when the contract they exercise could have moved:
+    # a watched path, a forced path, or an OpenAPI document that no longer
+    # matches the base revision. Typecheck and build always run in `web`.
+    if: |
+      always() &&
+      needs.web.result == 'success' &&
+      (github.event_name != 'pull_request' ||
+       needs.changes.outputs.e2e == 'true' ||
+       needs.changes.outputs.force == 'true' ||
+       needs.contract.outputs.changed == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      # Both ends go in one matrix so they run side by side: the wall clock is
+      # the slower of the two suites instead of their sum.
+      matrix:
+        include:
+          - name: web
+            command: pnpm -C apps/web test:e2e
+            results: apps/web/test-results/
+            report: apps/web/playwright-report/
+          - name: desktop
+            command: pnpm -C apps/desktop/frontend test:e2e
+            results: apps/desktop/frontend/test-results/
+            report: apps/desktop/frontend/playwright-report/
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v7
+        with:
+          name: web-dist
       - uses: actions/cache@v5
         id: playwright-cache
-        if: github.event_name != 'pull_request' || needs.changes.outputs.e2e == 'true' || needs.changes.outputs.force == 'true' || needs.contract.outputs.changed == 'true'
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-1.63.0-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm -C apps/web exec playwright install --with-deps chromium
-        if: (github.event_name != 'pull_request' || needs.changes.outputs.e2e == 'true' || needs.changes.outputs.force == 'true' || needs.contract.outputs.changed == 'true') && steps.playwright-cache.outputs.cache-hit != 'true'
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
       - name: Install Playwright system dependencies
-        if: github.event_name != 'pull_request' || needs.changes.outputs.e2e == 'true' || needs.changes.outputs.force == 'true' || needs.contract.outputs.changed == 'true'
         run: pnpm -C apps/web exec playwright install-deps chromium
-      - name: Web end-to-end specs
-        if: github.event_name != 'pull_request' || needs.changes.outputs.e2e == 'true' || needs.changes.outputs.force == 'true' || needs.contract.outputs.changed == 'true'
-        run: pnpm -C apps/web test:e2e
-      - name: Desktop end-to-end specs
-        if: github.event_name != 'pull_request' || needs.changes.outputs.e2e == 'true' || needs.changes.outputs.force == 'true' || needs.contract.outputs.changed == 'true'
-        run: pnpm -C apps/desktop/frontend test:e2e
+      - name: Run the ${{ matrix.name }} specs
+        env:
+          # Three workers instead of the two a four-core runner derives: the
+          # retry-and-report path already catches a flaky pass.
+          PLAYWRIGHT_WORKERS: "3"
+        run: ${{ matrix.command }}
       - uses: actions/upload-artifact@v6
         if: failure()
         with:
-          name: playwright-results
+          name: playwright-results-${{ matrix.name }}
           path: |
-            apps/web/test-results/
-            apps/desktop/frontend/test-results/
+            ${{ matrix.results }}
+            ${{ matrix.report }}
           if-no-files-found: ignore
-
   nightly:
-    # Not gated on the filter: a scheduled run is always the full sweep.
-    # The nightly run is the safety net T-35 traded the unconditional push run
-    # for: everything the filtered run skips, once a day, on the same commit.
+    # Not gated on the filter: a scheduled run is always the full sweep. This is
+    # the safety net T-35 traded the unconditional push run for: everything the
+    # filtered run skips, once a day, on the same commit.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -298,10 +344,12 @@ jobs:
       - name: Web end-to-end specs including the performance measurement
         env:
           PLAYWRIGHT_PERF: "1"
+          PLAYWRIGHT_WORKERS: "3"
         run: pnpm -C apps/web test:e2e
       - name: Desktop end-to-end specs including the performance measurement
         env:
           PLAYWRIGHT_PERF: "1"
+          PLAYWRIGHT_WORKERS: "3"
         run: pnpm -C apps/desktop/frontend test:e2e
       - uses: actions/upload-artifact@v6
         if: failure()

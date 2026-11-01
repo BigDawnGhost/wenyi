@@ -21,6 +21,9 @@ const perfProjects: Project[] = [
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
+  // A four-core runner derives two workers; CI raises this to three because a
+  // retried pass is already reported as flaky instead of passing silently.
+  workers: Number(process.env.PLAYWRIGHT_WORKERS) || undefined,
   // Retry once in CI only: a retried pass is reported as flaky, never as green.
   retries: process.env.CI ? 1 : 0,
   projects: perfEnabled ? [...gateProjects, ...perfProjects] : gateProjects,
