@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from wenyi_core.pdf_bridge.client import BabeldocBridgeError
 from wenyi_core.pdf_bridge.connection import BridgeConnection
 
+from . import paths
 from . import plugin_packages as packages
 
 if TYPE_CHECKING:
@@ -72,7 +73,7 @@ async def finish_thread(function, *args):
 
 class BabeldocPlugin:
     def __init__(self, workspace: Path):
-        self.root = workspace / "plugins" / "babeldoc"
+        self.root = paths.plugins(workspace)
         self.target = packages.platform_key()
         self.enabled = False
         self.installation: str | None = None

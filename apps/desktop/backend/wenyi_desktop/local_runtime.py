@@ -27,6 +27,7 @@ from wenyi_backend.context import BackendContext
 from wenyi_backend.live_statistics import read_live_statistics
 from wenyi_core.storage.locks import FileLockHandle, StorageBusyError
 
+from . import paths
 from .diagnostics import Reporter, emit, failure_attributes, scope
 from .local_backend import LocalBackend
 
@@ -46,10 +47,8 @@ TASK_NAMES = frozenset(
 class WorkspaceLock:
     """Keep one task-owning Desktop process per workspace, including after crashes."""
 
-    _PATH_NAME = ".desktop.lock"
-
     def __init__(self, workspace: Path):
-        self.path = workspace / self._PATH_NAME
+        self.path = paths.instance_lock(workspace)
         self._lock: FileLockHandle | None = None
 
     def acquire(self) -> None:

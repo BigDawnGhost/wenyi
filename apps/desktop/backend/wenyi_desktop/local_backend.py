@@ -21,6 +21,8 @@ from fastapi import HTTPException
 from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_core.config import Config
 
+from . import paths
+
 if TYPE_CHECKING:
     from wenyi_core.storage.sqlite import SqliteStorage
 
@@ -45,7 +47,7 @@ class LocalBackend:
         self.workspace = Path(_plain_windows_path(str(resolved)))
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.config_path = config_path
-        self.database = self.workspace / "local.sqlite3"
+        self.database = paths.catalog(self.workspace)
         # Releasing memory must not depend on an available project directory.
         self._export_leases_lock = Lock()
         self._export_leases: dict[int, int] = {}
@@ -102,7 +104,7 @@ class LocalBackend:
     def project_dir(self, pid: str) -> Path:
         if not re.fullmatch(r"[A-Za-z0-9_-]+", pid):
             raise ValueError("Invalid project ID")
-        return self.workspace / "projects" / pid
+        return paths.project(self.workspace, pid)
 
     def storage_for(self, pid: str, *, create: bool = True) -> SqliteStorage:
         from wenyi_core.storage.sqlite import SqliteStorage
@@ -303,7 +305,7 @@ class LocalBackend:
         from wenyi_backend.project_service import project_write
 
         directory = self.project_dir(pid)
-        if directory.is_symlink() or directory.resolve().parent != self.workspace / "projects":
+        if directory.is_symlink() or directory.resolve().parent != paths.projects(self.workspace):
             raise HTTPException(409, "Project directory is outside the Desktop workspace")
         self._reject_removing(pid)
         admitted = False
@@ -663,7 +665,7 @@ class LocalBackend:
     def publish_export(self, pid: str, export_id: int, output: str) -> None:
         from wenyi_backend.export_paths import EXPORT_LIMIT, export_path
 
-        root = str(self.workspace / "projects")
+        root = str(paths.projects(self.workspace))
         with self._export_history_lock(pid):
             file = export_path(root, pid, str(Path(output).absolute()))
             if file is None or not file.is_file():
@@ -705,7 +707,7 @@ class LocalBackend:
         """Called under the history lock, never inside a catalog transaction."""
         from wenyi_backend.export_paths import export_path, log
 
-        root = str(self.workspace / "projects")
+        root = str(paths.projects(self.workspace))
         for old in self._list("exports", pid=pid):
             with self._export_leases_lock:
                 leased = bool(self._export_leases.get(old["id"], 0))
@@ -759,7 +761,7 @@ class LocalBackend:
             self._reject_removing(pid)
             export = self._get("exports", export_id)
             file = (
-                export_path(str(self.workspace / "projects"), pid, export["path"])
+                export_path(str(paths.projects(self.workspace)), pid, export["path"])
                 if export
                 and export["project_id"] == pid
                 and export["status"] == "done"

@@ -12,6 +12,7 @@ from wenyi_backend.application import create_app as create_http_app
 from wenyi_backend.context import BackendContext, use_context
 from wenyi_core.observability import configure_logging
 
+from . import paths
 from .babeldoc_plugin import BabeldocPlugin
 from .diagnostics import DiagnosticsMiddleware, Reporter, scope
 from .local_backend import LocalBackend
@@ -114,7 +115,7 @@ def create_context(
         babeldoc_connection=services.babeldoc.connection,
         run_workflow_sync=run_workflow_sync,
         enqueue=services.enqueue,
-        data_dir=str(backend.workspace / "projects"),
+        data_dir=str(paths.projects(backend.workspace)),
         project_dir=lambda pid: str(backend.project_dir(pid)),
         health=services.health,
         update_term=lambda pid, storage, source, term: storage.update_term(source, term),

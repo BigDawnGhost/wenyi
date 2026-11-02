@@ -19,6 +19,7 @@ from wenyi_core.llm.credentials import validate_credential
 from wenyi_core.llm.registry import provider_spec
 from wenyi_core.llm.router import RoutedLLMClient
 
+from . import paths
 from .diagnostic_client import DesktopLLMClient
 
 SERVICE = "org.wenyi.desktop"
@@ -70,7 +71,7 @@ def system_keyring():
 
 class CredentialStore:
     def __init__(self, workspace: Path, *, vault=None, vault_factory: Callable | None = None):
-        self.database = workspace / "local.sqlite3"
+        self.database = paths.catalog(workspace)
         self._vault = vault
         self._vault_factory = vault_factory
         self._lock = RLock()

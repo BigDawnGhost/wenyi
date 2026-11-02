@@ -15,6 +15,8 @@ from wenyi_backend.source_upload import format_for_suffix
 from wenyi_core.config import Config
 from wenyi_core.ingest.source_hash import source_sha256
 
+from . import paths
+
 if TYPE_CHECKING:
     from .local_backend import LocalBackend
 
@@ -103,7 +105,7 @@ def recover_empty_catalog(backend: LocalBackend) -> None:
     with backend.transaction(write=False) as connection:
         if connection.execute("SELECT 1 FROM projects LIMIT 1").fetchone():
             return
-    root = backend.workspace / "projects"
+    root = paths.projects(backend.workspace)
     if not root.is_dir():
         return
     saved = backend.load_settings()
