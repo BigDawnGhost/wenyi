@@ -156,6 +156,7 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
     ):
         """Export translations from existing state without calling a model."""
         from wenyi_core.ingest.errors import IngestError
+
         console = context().console
         from wenyi_core.llm.providers.fake import FakeClient
         from wenyi_core.pipeline.orchestrator import Orchestrator
