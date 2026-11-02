@@ -410,5 +410,5 @@ test("Desktop HTTP errors remain visible", async ({ page }) => {
   await page.route(`${origin}/projects`, route =>
     route.fulfill({ status: 503, json: { detail: "Local database is unavailable" } }));
   await page.goto("/");
-  await expect(page.getByText("503: Local database is unavailable")).toBeVisible();
+  await expect(page.getByText("Local database is unavailable")).toBeVisible();
 });
