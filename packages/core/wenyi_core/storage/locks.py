@@ -21,6 +21,17 @@ from pathlib import Path
 
 from ..errors import WenyiError
 
+# Named lock files, one per mutual-exclusion domain. They are created on demand
+# in the run directory and never deleted, so the names are part of the on-disk
+# format: external tooling and long-lived state directories refer to them.
+RUN_LOCK = ".run.lock"  # book-level long workflow; serializes whole runs
+STATE_LOCK = ".state.lock"  # short consistent read/write transactions
+EVENTS_LOCK = ".events.lock"  # append serialization for JSONL event logs
+ASSEMBLE_LOCK = ".assemble.lock"  # artifact assembly versus ongoing translation
+TIMING_LOCK = ".timing.lock"  # timing ledger merges
+USAGE_LOCK = ".usage.lock"  # token usage read-merge-write
+EXPORT_HISTORY_LOCK = ".export-history.lock"  # export history appends
+
 _RETRY_SECONDS = 0.05
 _FORCED_BACKEND: str | None = None
 

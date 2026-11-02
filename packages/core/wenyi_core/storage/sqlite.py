@@ -24,7 +24,13 @@ from ..errors import ArtifactCorrupt
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..ingest.models import Chapter, Document
 from ..pipeline.runstore import ExportSnapshotStore, RunStore, source_sha256
-from .locks import StorageBusyError, exclusive_file_lock
+from .locks import (
+    ASSEMBLE_LOCK,
+    EXPORT_HISTORY_LOCK,
+    RUN_LOCK,
+    StorageBusyError,
+    exclusive_file_lock,
+)
 from .protocol import STATUS_DONE, STATUS_PENDING
 
 # Re-exported: the class moved to locks.py, but callers still import it from here.
@@ -249,22 +255,22 @@ class SqliteStorage:
 
     @contextmanager
     def lock(self, blocking: bool = True) -> Iterator[None]:
-        with self._file_lock(".run.lock", blocking=blocking):
+        with self._file_lock(RUN_LOCK, blocking=blocking):
             try:
                 yield
             finally:
-                if self._lock_local.depths[".run.lock"] == 1:
+                if self._lock_local.depths[RUN_LOCK] == 1:
                     # The run lock owns the whole store: every thread's
                     # connection is released when it finally exits.
                     self.close_all()
 
     def assemble_lock(self):
-        return self._file_lock(".assemble.lock")
+        return self._file_lock(ASSEMBLE_LOCK)
 
     @contextmanager
     def export_history_lock(self, blocking: bool = True) -> Iterator[None]:
         """Serialize publication, download opening and retention, not rendering."""
-        with self._file_lock(".export-history.lock", blocking=blocking):
+        with self._file_lock(EXPORT_HISTORY_LOCK, blocking=blocking):
             yield
 
     def export_lock(self, export_id: int, blocking: bool = True):

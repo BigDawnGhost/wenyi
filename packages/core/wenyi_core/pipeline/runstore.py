@@ -25,7 +25,14 @@ from ..i18n.languages import require_language
 from ..ingest.models import Chapter, Document
 from ..ingest.source_hash import source_sha256
 from ..storage.artifacts import FileArtifacts
-from ..storage.locks import exclusive_file_lock
+from ..storage.locks import (
+    ASSEMBLE_LOCK,
+    EVENTS_LOCK,
+    RUN_LOCK,
+    STATE_LOCK,
+    TIMING_LOCK,
+    exclusive_file_lock,
+)
 from ..timing import save_timing
 
 STATUS_PENDING = "pending"
@@ -69,7 +76,7 @@ class RunStore(FileArtifacts):
     @contextmanager
     def lock(self) -> Iterator[None]:
         """Serialize long-running translation and review operations for one book."""
-        with self._file_lock(".run.lock"):
+        with self._file_lock(RUN_LOCK):
             yield
 
     @contextmanager
@@ -81,7 +88,7 @@ class RunStore(FileArtifacts):
         if getattr(self._state_local, "locked", False):
             yield
             return
-        with self._file_lock(".state.lock"):
+        with self._file_lock(STATE_LOCK):
             self._state_local.locked = True
             try:
                 yield
@@ -91,18 +98,18 @@ class RunStore(FileArtifacts):
     @contextmanager
     def event_lock(self) -> Iterator[None]:
         """Serialize JSONL event appends so concurrent commands cannot interleave one line."""
-        with self._file_lock(".events.lock"):
+        with self._file_lock(EVENTS_LOCK):
             yield
 
     @contextmanager
     def assemble_lock(self) -> Iterator[None]:
         """Serialize book artifact writes without blocking ongoing body translation."""
-        with self._file_lock(".assemble.lock"):
+        with self._file_lock(ASSEMBLE_LOCK):
             yield
 
     def record_timing(self, record: dict[str, Any]) -> dict[str, Any]:
         """Merge invocation timing under a dedicated lock, independent of exports."""
-        with self._file_lock(".timing.lock"):
+        with self._file_lock(TIMING_LOCK):
             return save_timing(self.run_dir, record)
 
     # Paths.
