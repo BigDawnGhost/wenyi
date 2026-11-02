@@ -421,10 +421,7 @@ def import_project(
         raise ImportRefused(DESTINATION_BUSY, f"{destination.name} is already in the library.")
     if directory.resolve() != destination.resolve():
         destination.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            shutil.move(str(directory), str(destination))
-        except OSError as error:
-            raise ImportRefused(MOVE_FAILED, f"Could not move the folder into the library: {error}")
+        _adopt_directory(directory, destination)
 
     # The record names the original by its path inside this workspace, which is
     # the directory the rest of the application resolves from.
@@ -439,6 +436,59 @@ def import_project(
     if stored is None:
         raise ImportRefused(STATE_UNREADABLE, "The imported project could not be read back.")
     return stored
+
+
+def _adopt_directory(directory: Path, destination: Path) -> None:
+    """Move one picked folder into the library without ever risking the original.
+
+    `shutil.move` is not safe for this. Across volumes it copies file by file and
+    unlinks the source as it goes, so a failure halfway (a full disk, a permission
+    error on one file, a removed drive) leaves a partial copy in the library *and*
+    a source that is already missing the files that were moved. The user picked
+    this folder precisely because it is the only copy of their work.
+
+    So the copy, the proof and the removal are three separate steps: copy into a
+    sibling temporary directory, verify the copy against the source, publish it
+    with one rename, and only then remove the original. A failure at any point
+    before the rename leaves the source untouched; a failure after it leaves a
+    complete library copy and a source that can still be removed by hand.
+    """
+    staging = destination.with_name(destination.name + ".importing")
+    if staging.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+    try:
+        shutil.copytree(directory, staging, symlinks=True)
+        _verify_copy(directory, staging)
+        staging.rename(destination)
+    except OSError as error:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise ImportRefused(
+            MOVE_FAILED, f"Could not copy the folder into the library: {error}"
+        ) from error
+    except ImportRefused:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
+    # The library copy is complete and published; the original is now redundant.
+    # A failure here is not fatal: the project works, and the leftover folder is
+    # something the user can remove. Reporting it as a failed import would be a
+    # lie about a project that was in fact imported.
+    shutil.rmtree(directory, ignore_errors=True)
+
+
+def _verify_copy(source: Path, copy: Path) -> None:
+    """Refuse a copy whose file set or sizes disagree with the original."""
+    expected = {
+        item.relative_to(source).as_posix(): item.stat().st_size
+        for item in source.rglob("*")
+        if item.is_file()
+    }
+    actual = {
+        item.relative_to(copy).as_posix(): item.stat().st_size
+        for item in copy.rglob("*")
+        if item.is_file()
+    }
+    if expected != actual:
+        raise ImportRefused(MOVE_FAILED, "The copy does not match the original folder.")
 
 
 def _describe(reason: str | None) -> str:
