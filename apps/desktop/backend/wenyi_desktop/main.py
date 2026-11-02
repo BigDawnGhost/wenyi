@@ -28,6 +28,12 @@ from .settings import DesktopSettings
 from .updates import UpdateAdmissionMiddleware, UpdateGuard
 from .updates import router as updates_router
 
+# A local run can legitimately publish nothing for minutes (one long model call),
+# and an idle socket looks exactly like a dead one to the renderer. The frame is
+# the only proof that the link is still carrying data.
+HEARTBEAT_SECONDS = 30.0
+HEARTBEAT_FRAME = '{"kind": "heartbeat"}'
+
 
 class DesktopServices:
     def __init__(self, backend: LocalBackend, runtime_dir: Path | None = None):
@@ -70,10 +76,17 @@ class DesktopServices:
                 while not disconnected.done():
                     received = asyncio.create_task(queue.get())
                     done, _ = await asyncio.wait(
-                        {disconnected, received}, return_when=asyncio.FIRST_COMPLETED
+                        {disconnected, received},
+                        timeout=HEARTBEAT_SECONDS,
+                        return_when=asyncio.FIRST_COMPLETED,
                     )
                     if disconnected in done:
                         break
+                    if received not in done:
+                        # The wait stays pending, so a later event is still
+                        # delivered on the next pass through the loop.
+                        await ws.send_text(HEARTBEAT_FRAME)
+                        continue
                     data = received.result()
                     if data is None:
                         break

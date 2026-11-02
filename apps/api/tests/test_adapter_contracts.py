@@ -63,6 +63,62 @@ def test_progress_snapshot_reads_a_synchronous_redis_value(monkeypatch, raw, exp
     assert keys == ["project:project:progress"]
 
 
+def test_a_silent_progress_channel_still_proves_the_link_is_alive(monkeypatch):
+    import asyncio
+    import json
+
+    from wenyi_api import telemetry as module
+
+    sent = []
+    # A short deadline keeps the test fast; the interval itself is the constant
+    # the relay reads, so overriding it still exercises the real branch.
+    monkeypatch.setattr(module, "HEARTBEAT_SECONDS", 0.05)
+
+    class PubSub:
+        async def subscribe(self, channel):
+            return None
+
+        async def get_message(self, **_):
+            # An idle channel: the run is inside one long model call.
+            return None
+
+        async def aclose(self):
+            return None
+
+    class Redis:
+        def pubsub(self):
+            return PubSub()
+
+        async def aclose(self):
+            return None
+
+    class Socket:
+        async def send_json(self, payload):
+            sent.append(payload)
+
+        async def send_text(self, payload):
+            sent.append(json.loads(payload))
+
+        async def receive(self):
+            # Heartbeats alone end the relay, so no peer is needed to close it.
+            while sum(frame.get("kind") == "heartbeat" for frame in sent) < 2:
+                await asyncio.sleep(0.01)
+            return {"type": "websocket.disconnect"}
+
+    class Projects:
+        def get_project(self, pid):
+            return {"id": pid}
+
+        def chapter_summaries(self, pid):
+            return []
+
+    monkeypatch.setattr(module.AsyncRedis, "from_url", classmethod(lambda cls, url: Redis()))
+    telemetry = module.RedisTelemetry("redis://fixture/0", Projects())
+    asyncio.run(telemetry.relay(Socket(), "project"))
+    assert sent[0] == {"kind": "snapshot", "project": {"id": "project"}, "chapters": []}
+    assert [frame for frame in sent if frame.get("kind") == "heartbeat"]
+
+
 def test_recovery_lock_contract_is_specific_to_database_storage(tmp_path):
     # An unopened pool and lazy SQLite store exercise contracts without services or writes.
     pool: ConnectionPool = ConnectionPool(open=False)

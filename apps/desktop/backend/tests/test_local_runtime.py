@@ -435,6 +435,41 @@ def test_websocket_first_frame_auth_snapshot_and_project_run_identity(desktop):
     store.close()
 
 
+def test_an_idle_progress_hub_still_sends_a_heartbeat(catalog, monkeypatch):
+    from wenyi_desktop import main as module
+    from wenyi_desktop.main import DesktopServices
+
+    async def run():
+        pid = project()
+        hub = ProgressHub(catalog, asyncio.get_running_loop())
+        services = DesktopServices(catalog)
+        services.runtime = SimpleNamespace(hub=hub)
+        # A short deadline keeps the test fast; the relay reads this constant.
+        monkeypatch.setattr(module, "HEARTBEAT_SECONDS", 0.05)
+        sent = []
+
+        async def send_json(payload):
+            sent.append(payload)
+
+        async def send_text(payload):
+            sent.append(json.loads(payload))
+
+        async def receive():
+            # Heartbeats alone end the relay, so no peer is needed to close it.
+            while sum(frame.get("kind") == "heartbeat" for frame in sent) < 2:
+                await asyncio.sleep(0.01)
+            return {"type": "websocket.disconnect"}
+
+        await services.relay(
+            SimpleNamespace(send_json=send_json, send_text=send_text, receive=receive), pid
+        )
+        assert sent[0]["kind"] == "snapshot"
+        assert [frame for frame in sent if frame.get("kind") == "heartbeat"]
+        assert hub._subscribers == {}
+
+    anyio.run(run)
+
+
 def test_progress_relay_cancellation_drains_children_and_unsubscribes(catalog, monkeypatch):
     from wenyi_desktop.main import DesktopServices
 
