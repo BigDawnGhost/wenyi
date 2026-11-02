@@ -8,6 +8,7 @@ mod graphics;
 mod instance;
 mod ipc_error;
 mod local_connection;
+mod migration;
 mod mutex;
 mod native_drop;
 mod native_export;
