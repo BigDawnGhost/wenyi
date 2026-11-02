@@ -80,6 +80,11 @@ Custom WebSocket clients must send a JSON first packet `{"token":"…"}` within 
 
 PostgreSQL stores projects, chapters, segments, glossary, review evidence/checkpoints, Autofix publish indexes, subtitle caches, usage, and timing. `DATA_DIR` does not keep JSON/SQLite copies of that mutable state.
 
+Deleting from the project list opens an in-app confirmation with Cancel focused.
+Prepared projects without active tasks can also be deleted. While a request is
+pending, duplicate submissions are disabled; failures keep the dialog open for
+retry or cancellation.
+
 **Deleting a project is permanent**, in Web and Desktop alike. The confirmation
 covers uploaded originals, translations, history, caches, and project exports.
 Web removes the project's directory under `DATA_DIR` and cascades deletion of its

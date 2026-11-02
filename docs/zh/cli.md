@@ -172,7 +172,9 @@ MinerU 转换生成的 HTML 会保存到
 #### PDF 导出
 
 PDF 导出仅支持由 BabelDOC 解析的项目，通过外部 bridge 的 `/fillback`
-接口回填已保存的译文并保留原始 PDF 排版，无需安装本地 PDF 渲染依赖或选择引擎：
+接口回填已保存的译文并保留原始 PDF 排版。缺失、空字符串或仅含空白的译文会在
+回填时使用该段原文，以保留接口要求的全部段落编号；此导出回退不会修改已保存的译文。
+无需安装本地 PDF 渲染依赖或选择引擎：
 
 ```bash
 uv run wenyi assemble book.pdf --format pdf
