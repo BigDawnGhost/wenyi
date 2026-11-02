@@ -1,14 +1,17 @@
 import { useI18n, type MessageKey } from "../../i18n";
 import { statusLabel } from "../../i18n/status";
+import { errorMessage } from "../../lib/error-codes";
 import { Lock } from "lucide-react";
 export function ErrorNotice({ error }: { error?: unknown }) {
+  // The hook runs before the early return so the call order stays stable.
+  const { t } = useI18n();
   if (!error) return null;
   return (
     <div
       role="alert"
       className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
     >
-      {error instanceof Error ? error.message : String(error)}
+      {errorMessage(error, t)}
     </div>
   );
 }
