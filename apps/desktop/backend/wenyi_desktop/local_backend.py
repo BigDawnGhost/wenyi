@@ -465,7 +465,7 @@ class LocalBackend:
         return self._get("jobs", job_id)
 
     def get_job_by_arq_id(self, arq_job_id: str) -> dict | None:
-        with self.transaction() as conn:
+        with self.transaction(write=False) as conn:
             row = conn.execute("SELECT id FROM jobs WHERE arq_job_id=?", (arq_job_id,)).fetchone()
             return self._get("jobs", row[0], conn) if row else None
 

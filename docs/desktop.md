@@ -117,6 +117,9 @@ The default Desktop workspace is:
 
 The workspace contains a SQLite catalog, per-project SQLite state, uploaded originals, parse caches, and generated exports. Keep the entire workspace when backing up; stop Desktop before taking a filesystem backup. Do not copy only a live SQLite database while omitting its WAL.
 
+Job-status polling reads committed catalog snapshots without reserving a write
+lock, so an active catalog writer does not block status lookups.
+
 Deleting from the project list opens an in-app confirmation with Cancel focused.
 Prepared projects without active tasks can also be deleted. While a request is
 pending, duplicate submissions are disabled; failures keep the dialog open for
