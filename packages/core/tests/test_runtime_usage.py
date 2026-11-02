@@ -1,5 +1,6 @@
 """One coordinator owns the client checkpoint without constructing a pipeline or agents."""
 
+import threading
 from unittest.mock import Mock
 
 import pytest
@@ -49,3 +50,55 @@ def test_initial_checkpoint_excludes_previous_client_calls_and_creates_empty_rev
     assert store.load_usage() is None
     record(tracker)
     assert coordinator.flush(store, scope="next")["totals"]["calls"] == 1
+
+
+def test_concurrent_flushes_bill_every_increment_once(tmp_path):
+    """Two racing flushes lose no increment from a cumulative ledger.
+
+    Both coordinators read the ledger before either commits. Without a lock
+    around the read-merge-write both publish the same baseline, so one
+    increment silently disappears from a ledger that is meant to accumulate.
+    """
+    store = FileStorage(str(tmp_path))
+    trackers = [UsageTracker(), UsageTracker()]
+    coordinators = [UsageCoordinator(UsageSource(tracker)) for tracker in trackers]
+    for tracker in trackers:
+        record(tracker)
+
+    original_load = store.load_usage
+    reads = 0
+    read_guard = threading.Lock()
+    both_read = threading.Barrier(2, timeout=5)
+
+    def delayed_load():
+        nonlocal reads
+        value = original_load()
+        with read_guard:
+            reads += 1
+            first_round = reads <= 2
+        if first_round:
+            # Unlocked code reaches here from both threads at once; locked code
+            # reaches it one at a time, so the barrier times out harmlessly.
+            try:
+                both_read.wait()
+            except threading.BrokenBarrierError:
+                pass
+        return value
+
+    store.load_usage = delayed_load
+    errors: list[BaseException] = []
+
+    def flush(index: int) -> None:
+        try:
+            coordinators[index].flush(store, scope=f"thread-{index}")
+        except BaseException as error:  # noqa: BLE001 - asserted below
+            errors.append(error)
+
+    threads = [threading.Thread(target=flush, args=(index,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert not errors, errors
+    assert store.load_usage()["totals"]["calls"] == 2

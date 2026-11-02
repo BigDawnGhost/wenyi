@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from typing import Any, Protocol
 
 from ..llm.usage import empty_usage, merge_usage_summaries, usage_delta
@@ -16,6 +17,7 @@ class UsageLedger(Protocol):
     def prepare_usage_commit(self, ledgers: dict[str, dict]) -> None: ...
     def recover_usage(self) -> None: ...
     def log_event(self, event: str, **payload: Any) -> None: ...
+    def state_lock(self) -> AbstractContextManager[Any]: ...
 
 
 class ReviewUsageLedger(Protocol):
@@ -30,7 +32,8 @@ class UsageCoordinator:
 
     The durable journal must precede the in-memory checkpoint. Once prepared, recovery
     publishes absolute totals, so retries in this process or a new one cannot replay a delta.
-    Callers serialize flushes under the existing run lock; this adds no second lock domain.
+    The whole read-merge-write runs under the store's state lock: two flushes that both read
+    before either wrote would publish the same baseline and drop one increment.
     """
 
     def __init__(self, source: UsageSource):
@@ -44,27 +47,28 @@ class UsageCoordinator:
         scope: str,
         review: ReviewUsageLedger | None = None,
     ) -> dict[str, Any]:
-        store.recover_usage()
-        current = self._source.usage_summary()
-        increment = usage_delta(current, self._checkpoint)
-        accumulated = store.load_usage() or empty_usage()
-        if not increment["totals"]["calls"]:
-            if review is not None and review.load_usage() is None:
-                review.save_usage(empty_usage())
-            return merge_usage_summaries(accumulated, increment)
-        cumulative = merge_usage_summaries(accumulated, increment)
-        ledgers = {"usage.json": cumulative}
-        if review is not None:
-            ledgers[f"reviews/{review.review_id}/usage.json"] = merge_usage_summaries(
-                review.load_usage() or empty_usage(), increment
+        with store.state_lock():
+            store.recover_usage()
+            current = self._source.usage_summary()
+            increment = usage_delta(current, self._checkpoint)
+            accumulated = store.load_usage() or empty_usage()
+            if not increment["totals"]["calls"]:
+                if review is not None and review.load_usage() is None:
+                    review.save_usage(empty_usage())
+                return merge_usage_summaries(accumulated, increment)
+            cumulative = merge_usage_summaries(accumulated, increment)
+            ledgers = {"usage.json": cumulative}
+            if review is not None:
+                ledgers[f"reviews/{review.review_id}/usage.json"] = merge_usage_summaries(
+                    review.load_usage() or empty_usage(), increment
+                )
+            store.prepare_usage_commit(ledgers)
+            self._checkpoint = current
+            store.recover_usage()
+            store.log_event(
+                "usage_summary",
+                scope=scope,
+                increment=increment,
+                cumulative=cumulative,
             )
-        store.prepare_usage_commit(ledgers)
-        self._checkpoint = current
-        store.recover_usage()
-        store.log_event(
-            "usage_summary",
-            scope=scope,
-            increment=increment,
-            cumulative=cumulative,
-        )
-        return cumulative
+            return cumulative
