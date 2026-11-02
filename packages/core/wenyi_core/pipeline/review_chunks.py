@@ -18,6 +18,35 @@ from ..review.models import integer_index
 from ..review.run_store import ReviewRunStore
 from .review_checkpoint import ReviewTraceStore
 
+# Events a chunk emits while producing its result, ordered relative to each other.
+# A chunk's own completion comes last: it summarises what happened before it.
+_EVENT_ORDER = {
+    "review_json_repaired": 0,
+    "review_chunk_split": 0,
+    "review_singleton_retry": 1,
+    "review_singleton_recovered": 2,
+    "review_singleton_failed": 2,
+    "review_leaf_finished": 3,
+}
+
+
+def order_buffered_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Order buffered review events by position in the book, not by arrival.
+
+    Workers finish in whatever order the pool schedules them. Writing straight
+    from a worker would put the log in completion order, and resume plus audit
+    both read that log as if it followed the source.
+    """
+    return sorted(
+        events,
+        key=lambda row: (
+            row.get("start_index", row.get("chunk_base", -1)),
+            -row.get("count", row.get("segment_count", 0)),
+            _EVENT_ORDER.get(row.get("event", ""), 99),
+            row.get("attempt", 0),
+        ),
+    )
+
 
 class ReviewChunkService:
     """Execute fixed chapter snapshots without owning session policy or book state."""
@@ -59,15 +88,18 @@ class ReviewChunkService:
             jobs.append((base, chunk))
             base += len(chunk)
 
-        recovery_events: list[dict[str, Any]] = []
-        recovery_lock = Lock()
+        buffered_events: list[dict[str, Any]] = []
+        buffer_lock = Lock()
 
-        def record_recovery(event: str, **data: Any) -> None:
-            """Buffer recovery events under a lock; write them from the main thread after
-            workers finish.
+        def buffer_event(event: str, **data: Any) -> None:
+            """Buffer an event under a lock; the main thread writes them in source order.
+
+            Workers finish in whatever order the pool schedules them, so anything they
+            record directly would leave the log ordered by completion instead of by
+            position in the book.
             """
-            with recovery_lock:
-                recovery_events.append({"event": event, **data})
+            with buffer_lock:
+                buffered_events.append({"event": event, **data})
 
         def review_once(chunk_base: int, chunk: list, *, attempt: int = 1) -> list[dict]:
             """Run one review call and map valid block-local indices to chapter indices."""
@@ -163,7 +195,7 @@ class ReviewChunkService:
                 local_issues = [dict(issue) for issue in reused_initial["issues"]]
                 repaired = bool(reused_initial.get("json_repaired"))
                 if repaired:
-                    record_recovery(
+                    buffer_event(
                         "review_json_repaired",
                         start_index=chunk_base,
                         count=len(chunk),
@@ -205,7 +237,7 @@ class ReviewChunkService:
                     raise
                 repaired = review_result.repaired
                 if repaired:
-                    record_recovery(
+                    buffer_event(
                         "review_json_repaired",
                         start_index=chunk_base,
                         count=len(chunk),
@@ -279,9 +311,8 @@ class ReviewChunkService:
                         issue["fallback_reason"] = fallback_reason
                     mapped.append(issue)
             if debug is not None:
-                debug.log_event(
+                buffer_event(
                     "review_leaf_finished",
-                    chapter=chapter_index,
                     chunk_base=chunk_base,
                     segment_count=len(chunk),
                     initial_issue_count=initial_issue_count,
@@ -311,7 +342,7 @@ class ReviewChunkService:
             except ReviewOutputError as error:
                 if len(chunk) > 1:
                     mid = len(chunk) // 2
-                    record_recovery(
+                    buffer_event(
                         "review_chunk_split",
                         start_index=chunk_base,
                         count=len(chunk),
@@ -326,7 +357,7 @@ class ReviewChunkService:
                 last_error = error
                 retries = self._config.pipeline.review_output_retries
                 for attempt in range(1, retries + 1):
-                    record_recovery(
+                    buffer_event(
                         "review_singleton_retry",
                         start_index=chunk_base,
                         count=1,
@@ -339,14 +370,14 @@ class ReviewChunkService:
                     except ReviewOutputError as retry_error:
                         last_error = retry_error
                         continue
-                    record_recovery(
+                    buffer_event(
                         "review_singleton_recovered",
                         start_index=chunk_base,
                         count=1,
                         attempt=attempt,
                     )
                     return result
-                record_recovery(
+                buffer_event(
                     "review_singleton_failed",
                     start_index=chunk_base,
                     count=1,
@@ -386,23 +417,8 @@ class ReviewChunkService:
                 results = [result for result in ordered_results if result is not None]
         finally:
             if debug is not None:
-                with recovery_lock:
-                    event_order = {
-                        "review_json_repaired": 0,
-                        "review_chunk_split": 0,
-                        "review_singleton_retry": 1,
-                        "review_singleton_recovered": 2,
-                        "review_singleton_failed": 2,
-                    }
-                    pending_events = sorted(
-                        recovery_events,
-                        key=lambda row: (
-                            row.get("start_index", -1),
-                            -row.get("count", 0),
-                            event_order.get(row.get("event", ""), 99),
-                            row.get("attempt", 0),
-                        ),
-                    )
+                with buffer_lock:
+                    pending_events = order_buffered_events(buffered_events)
                 for row in pending_events:
                     event = row["event"]
                     payload = {

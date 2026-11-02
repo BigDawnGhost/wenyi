@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from wenyi_core.pipeline.review_checkpoint import ReviewCheckpoint, ReviewTraceStore
-from wenyi_core.pipeline.review_chunks import ReviewChunkService
+from wenyi_core.pipeline.review_chunks import ReviewChunkService, order_buffered_events
 from wenyi_core.review.contracts import ReviewTrace
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.review.session import ReviewRoundResult, ReviewSessionState
@@ -118,3 +118,30 @@ class TestReviewChunkCheckpoint(unittest.TestCase):
             self.assertEqual(len(hit), 2)
             initial, _dismissed = debug.result_snapshots(1)
             self.assertEqual(len(initial), 2)
+
+
+def test_review_events_are_written_in_source_order():
+    """Chunk completion order must not reach the event log.
+
+    The pool reports chunks in whatever order they finish, so buffered events
+    are reordered by position in the chapter before they are written. Resume and
+    audit both read the log as if it followed the source.
+    """
+    finished_out_of_order = [
+        {"event": "review_leaf_finished", "chunk_base": 30, "segment_count": 5},
+        {"event": "review_leaf_finished", "chunk_base": 0, "segment_count": 7},
+        {"event": "review_singleton_retry", "start_index": 0, "count": 7, "attempt": 1},
+        {"event": "review_leaf_finished", "chunk_base": 10, "segment_count": 6},
+    ]
+
+    ordered = order_buffered_events(finished_out_of_order)
+
+    # Sorted by position in the chapter, not by the order the pool returned.
+    assert [row.get("chunk_base", row.get("start_index")) for row in ordered] == [0, 0, 10, 30]
+    # Within one position a chunk's recovery event precedes its completion.
+    assert [row["event"] for row in ordered] == [
+        "review_singleton_retry",
+        "review_leaf_finished",
+        "review_leaf_finished",
+        "review_leaf_finished",
+    ]
