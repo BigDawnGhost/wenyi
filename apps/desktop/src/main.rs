@@ -220,6 +220,18 @@ fn main() {
     };
     let diagnostics = diagnostics::Diagnostics::for_workspace(&workspace);
     diagnostics.record(diagnostics::Source::Native, diagnostics::Event::AppStarted, serde_json::json!({}));
+    // An installation the registry places somewhere other than this executable is
+    // reported here and nowhere else. Acting on it would move a user's projects
+    // during a start that never asked to, so the detection stays a record until
+    // the batch that owns the project location decides what to do about it.
+    let install = paths::current_install();
+    if install.is_changed() {
+        diagnostics.record(
+            diagnostics::Source::Native,
+            diagnostics::Event::InstallLocationChanged,
+            serde_json::json!({}),
+        );
+    }
     let panic_diagnostics = diagnostics.clone();
     let previous_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {

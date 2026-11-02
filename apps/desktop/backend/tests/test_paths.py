@@ -14,6 +14,7 @@ weight: the engine opens `user_catalog()` while the old workspace still holds
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -85,11 +86,112 @@ def test_projects_holds_one_directory_per_project(tmp_path: Path) -> None:
     assert paths.projects(workspace) == workspace / "projects"
 
 
+@pytest.mark.parametrize(
+    ("id", "expected"),
+    [
+        ("0123456789abcdef", "0123456789abcdef"),
+        ("0123456789ABCDEF", ""),
+        ("0123456789abcde", ""),
+        ("0123456789abcdef0", ""),
+        ("not-an-identifier", ""),
+        ("", ""),
+        ("../escape", ""),
+    ],
+)
+def test_one_pattern_decides_what_a_project_identifier_is(id, expected) -> None:
+    # The deletion gate, the recovery scan and the marker reader all ask this one
+    # question. They used to answer it with two different patterns, and the wider
+    # one admitted names the narrower one then skipped without a log line.
+    assert paths.project_id(id) == expected
+
+
+def test_a_project_directory_name_keeps_the_identifier_first() -> None:
+    # design M-2: the identifier survives the readable suffix, so a directory
+    # name alone is enough to rebuild the catalog entry it belongs to.
+    assert paths.project_name(PROJECT, "my book") == f"{PROJECT}-my_book"
+    assert paths.project_name(PROJECT, "第一章 / 开端") == f"{PROJECT}-第一章_开端"
+    # An empty title still yields a usable directory rather than a bare id.
+    assert paths.project_name(PROJECT, "  ") == f"{PROJECT}-book"
+
+
+def test_a_title_with_hyphens_survives_the_round_trip() -> None:
+    # slugify() keeps hyphens, so a name split on the separator would cut at the
+    # first hyphen of the title and report a project id of "a1b2c3".
+    name = paths.project_name(PROJECT, "a-b-c")
+    assert name == f"{PROJECT}-a-b-c"
+    assert paths.split_project_name(name) == (PROJECT, "a-b-c")
+
+
+def test_a_long_title_is_truncated_rather_than_refused() -> None:
+    # The directory name is only the first component of the paths to a project's
+    # chapters and exports. An unbounded title makes those paths unusable rather
+    # than merely ugly, and Windows refuses them outright.
+    name = paths.project_name(PROJECT, "x" * 200)
+    assert len(name) == len(PROJECT) + 1 + 64
+    assert paths.split_project_name(name) == (PROJECT, "x" * 64)
+
+
+def test_a_name_that_does_not_start_with_an_identifier_is_not_a_project() -> None:
+    for name in ("a1b2c3d4e5f60718abc", "1.2", "projects", "", "a1b2c3d4e5f6071g-x"):
+        assert paths.split_project_name(name) == ("", "")
+
+
+def test_an_identifier_on_its_own_is_a_project_without_a_title() -> None:
+    # Every directory the current layout writes is exactly this shape, so a
+    # recovery scan has to read it as a project rather than reject it.
+    assert paths.split_project_name(PROJECT) == (PROJECT, "")
+    assert paths.project_id(PROJECT) == PROJECT
+
+
+def test_the_marker_is_named_the_same_way_by_every_reader() -> None:
+    # The recovery scan reads this file out of a directory it found without a
+    # catalog, so the two sides cannot name it differently.
+    workspace = Path("C:/workspace")
+    assert paths.project_marker(workspace, PROJECT) == (
+        workspace / "projects" / PROJECT / "project.json"
+    )
+    assert paths.project_marker(workspace, PROJECT).name == "project.json"
+
+
 def test_a_project_directory_is_below_the_projects_directory(tmp_path: Path) -> None:
     workspace = tmp_path / "Wenyi Desktop"
     assert paths.project(workspace, PROJECT) == workspace / "projects" / PROJECT
     # One join, so a project path can never come from another directory.
     assert paths.project(workspace, PROJECT).parent == paths.projects(workspace)
+
+
+def test_a_created_project_writes_its_own_marker(tmp_path: Path) -> None:
+    # design §5.3 S5: the marker is what lets a scan rebuild a catalog entry it has
+    # no record of, so it has to exist before anything else in the directory does.
+    home = tmp_path / "profile"
+    backend = LocalBackend(tmp_path / "Wenyi Desktop", user_home=home)
+    try:
+        pid = backend.create_project("A book", "en", "zh", {})
+        backend.storage_for(pid).close()
+        marker = paths.project_marker(backend.workspace, pid)
+        document = json.loads(marker.read_text(encoding="utf-8"))
+        assert document["pid"] == pid
+        assert document["name"] == "A book"
+        assert document["library_root"] == str(paths.projects(backend.workspace))
+        assert document["schema_version"] == paths.PROJECT_SCHEMA_VERSION
+    finally:
+        backend.close()
+
+
+def test_the_marker_of_a_missing_project_is_not_invented(tmp_path: Path) -> None:
+    # Reading a project must never create the directory it names: a listing call
+    # that wrote to disk would make every catalog read a mutation.
+    home = tmp_path / "profile"
+    backend = LocalBackend(tmp_path / "Wenyi Desktop", user_home=home)
+    try:
+        pid = backend.create_project("A book", "en", "zh", {})
+        backend.storage_for(pid).close()
+        marker = paths.project_marker(backend.workspace, pid)
+        marker.unlink()
+        backend.storage_for(pid, create=False).close()
+        assert not marker.exists()
+    finally:
+        backend.close()
 
 
 def test_the_project_directory_is_the_one_deletion_admits(tmp_path: Path) -> None:

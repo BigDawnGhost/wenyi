@@ -111,14 +111,60 @@ class LocalBackend:
             conn.close()
 
     def project_dir(self, pid: str) -> Path:
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", pid):
+        # One pattern for the identifier, shared with the recovery scan: the two
+        # used to disagree, and the wider one here meant a directory the scan
+        # then refused could still be opened, written to, and deleted by id.
+        if not paths.project_id(pid):
             raise ValueError("Invalid project ID")
         return paths.project(self.workspace, pid)
+
+    def mark_project(self, pid: str, *, library_root: Path | None = None) -> Path:
+        """Write the self-describing marker for one project directory.
+
+        The catalog records where a project is, and the catalog can be lost. The
+        marker is what lets a scan that has no catalog rebuild the entry, and it is
+        what a later deletion checks the catalog against: the directory carries its
+        own identity rather than depending on the name someone gave it.
+
+        The file sits beside the project's own state rather than inside the store
+        that state lives in: it describes the directory, and the domain database
+        owns everything the directory's contents mean.
+
+        A failure to write it propagates. A project without a marker still works,
+        but it is no longer recoverable by scan, and that silent degradation is
+        exactly what the marker exists to end.
+        """
+        directory = self.project_dir(pid)
+        directory.mkdir(parents=True, exist_ok=True)
+        document = {
+            "schema_version": paths.PROJECT_SCHEMA_VERSION,
+            "pid": pid,
+            "name": (self._get("projects", pid) or {}).get("name"),
+            "library_root": str(library_root if library_root is not None else directory.parent),
+            "created_at": _now(),
+        }
+        destination = paths.project_marker(self.workspace, pid)
+        temporary = destination.with_name(destination.name + ".writing")
+        try:
+            temporary.write_text(
+                json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            # A half-written marker would describe a directory that is not this
+            # project's, so it is published only once it is complete.
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return destination
 
     def storage_for(self, pid: str, *, create: bool = True) -> SqliteStorage:
         from wenyi_core.storage.sqlite import SqliteStorage
 
-        return SqliteStorage(str(self.project_dir(pid)), create=create)
+        directory = self.project_dir(pid)
+        if create and not paths.project_marker(self.workspace, pid).is_file():
+            # A store is only ever created for a project the catalog already has,
+            # so this is the one place every project directory passes through.
+            self.mark_project(pid)
+        return SqliteStorage(str(directory), create=create)
 
     def defaults(self) -> Config:
         # Config() uses built-in defaults, never the CLI's cwd config.yaml.
@@ -309,13 +355,83 @@ class LocalBackend:
             if pid in self._removing_projects:
                 raise HTTPException(409, "Project deletion is in progress")
 
+    def project_roots(self) -> tuple[Path, ...]:
+        """Every directory a project directory may be recorded under.
+
+        Deletion recurses into whatever this list admits, so it is deliberately a
+        list of roots rather than one root with a prefix test: the batch that lets
+        a project be created anywhere adds its root here, and nothing else in the
+        gate below has to change. A root on another drive is simply another entry;
+        containment is decided per root, never by comparing strings.
+        """
+        return (paths.projects(self.workspace),)
+
+    def _admitted_project_directory(self, pid: str, project: dict) -> Path:
+        """The directory deletion may remove for `pid`, or a refusal.
+
+        Deletion is recursive, so the path it recurses into has to be argued for
+        rather than read and trusted. **The path is derived here, from the
+        identifier, and never taken from the record.** A catalog is editable data
+        -- a user can open it, a corrupted migration can write it, an import can
+        fill it -- so a path read from it is a path an attacker chooses. Deriving
+        it means the worst a tampered record can do is refuse its own deletion.
+
+        The record is then used as a *claim to check*: when it names a directory,
+        that directory has to be the one this backend derived. A disagreement is
+        refused rather than resolved, because the two disagreeing means one of them
+        is describing a project that is not this one.
+
+        What is left to check about the derived path is where it lands. It is
+        resolved and compared against the roots this backend actually owns rather
+        than against its own spelling, so a linked root or a linked project entry
+        is refused: `rmtree` follows both. This is the same containment test
+        `export_path()` makes for a downloaded file, in the opposite direction.
+
+        The marker is the last check and the only one that reads the directory. It
+        is skipped when absent, because a project directory written by the version
+        that had no marker is still this project's directory -- the identifier in
+        its name is, in that layout, the entire identity.
+        """
+        directory = self.project_dir(pid)
+        try:
+            resolved = directory.resolve()
+            roots = tuple(root.resolve() for root in self.project_roots())
+        except (OSError, RuntimeError) as error:
+            raise HTTPException(409, "Project directory cannot be resolved") from error
+        recorded = project.get("location")
+        if recorded:
+            claimed = Path(str(recorded))
+            try:
+                agrees = claimed.is_absolute() and claimed.resolve() == resolved
+            except (OSError, RuntimeError):
+                agrees = False
+            if not agrees:
+                raise HTTPException(409, "Project directory is outside the Desktop workspace")
+        if resolved.parent not in roots:
+            raise HTTPException(409, "Project directory is outside the Desktop workspace")
+        if directory.is_symlink():
+            raise HTTPException(409, "Project directory is outside the Desktop workspace")
+        marker = resolved / paths.PROJECT_MARKER
+        if marker.is_file():
+            try:
+                embedded = json.loads(marker.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error:
+                raise HTTPException(
+                    409, "Project directory does not belong to this project"
+                ) from error
+            embedded_pid = str(embedded.get("pid", "")) if isinstance(embedded, dict) else ""
+            if embedded_pid and embedded_pid != pid:
+                raise HTTPException(409, "Project directory does not belong to this project")
+        return resolved
+
     def remove_project(self, pid: str) -> None:
         """Close owned handles before file removal, retaining the catalog on failure."""
         from wenyi_backend.project_service import project_write
 
-        directory = self.project_dir(pid)
-        if directory.is_symlink() or directory.resolve().parent != paths.projects(self.workspace):
-            raise HTTPException(409, "Project directory is outside the Desktop workspace")
+        project = self._get("projects", pid)
+        if project is None:
+            raise HTTPException(404, "project not found")
+        directory = self._admitted_project_directory(pid, project)
         self._reject_removing(pid)
         admitted = False
         try:

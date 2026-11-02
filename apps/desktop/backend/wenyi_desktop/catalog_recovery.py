@@ -23,6 +23,40 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
+def project_id(directory: Path) -> str:
+    """The identifier of one project directory, or "" when it is not one.
+
+    The marker is the authority, because a directory can be renamed by hand and
+    the readable suffix carries no identity of its own. A directory written by
+    the version that had no marker falls back to its name, which is what that
+    version used as the whole identity.
+
+    A marker that names a different identifier than its own directory rejects the
+    directory rather than choosing one of the two. The two disagreeing means the
+    pair was assembled by hand, and rebuilding a catalog entry from it would put
+    a project id in front of files that do not belong to it.
+    """
+    embedded = _marker(directory)
+    embedded_id = paths.project_id(str(embedded.get("pid", ""))) if embedded else ""
+    named_id, _ = paths.split_project_name(directory.name)
+    if embedded_id and named_id and embedded_id != named_id:
+        return ""
+    return embedded_id or named_id
+
+
+def _marker(directory: Path) -> dict:
+    """Read one project directory's marker, treating an unreadable one as absent.
+
+    Discovery must not stop over a single damaged directory: the rest of the scan
+    is still able to rebuild a catalog, and the caller reports this one.
+    """
+    try:
+        document = json.loads((directory / paths.PROJECT_MARKER).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return document if isinstance(document, dict) else {}
+
+
 def _metadata(directory: Path) -> dict[str, dict]:
     # Discovery must not initialize a missing DB, change journal mode, or acquire
     # writable schema locks. Read only the small metadata artifacts, including WAL.
@@ -117,11 +151,10 @@ def recover_empty_catalog(backend: LocalBackend) -> None:
         log.warning("Could not inspect Desktop projects for catalog repair", exc_info=True)
         return
     for directory in directories:
-        if (
-            not re.fullmatch(r"[0-9a-f]{16}", directory.name)
-            or directory.is_symlink()
-            or not directory.is_dir()
-        ):
+        if directory.is_symlink() or not directory.is_dir():
+            continue
+        pid = project_id(directory)
+        if not pid:
             continue
         try:
             project = _project(directory, defaults)
@@ -129,7 +162,7 @@ def recover_empty_catalog(backend: LocalBackend) -> None:
             log.warning("Skipping unreadable Desktop project %s", directory.name, exc_info=True)
             continue
         if project:
-            projects.append((directory.name, project))
+            projects.append((pid, project))
     if not projects:
         return
     # Hashing and state reads happen outside the short catalog transaction.

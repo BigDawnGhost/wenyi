@@ -1,5 +1,6 @@
 """Exercise CI admission with the same signals consumed by the workflow jobs."""
 
+import json
 from fnmatch import fnmatchcase
 from pathlib import Path
 from types import SimpleNamespace
@@ -65,6 +66,51 @@ def test_both_python_versions_run_the_full_workspace(name):
     # The interpreter matrix must not silently narrow the testpaths from pyproject.toml.
     assert step["run"].strip().startswith("uv run --no-sync pytest ")
     assert "packages/core/tests" not in step["run"]
+
+
+def _bundle_entries() -> list[tuple[str, str]]:
+    """Every (key, value) pair of the bundle members that name paths.
+
+    `resources` maps a source to a destination and `binaries` names a destination
+    only, so both spellings of one path can appear in either place. Flattening
+    them first is what lets one assertion cover every form the configuration can
+    take.
+    """
+    bundle = json.loads((ROOT / "apps/desktop/tauri.bundle.conf.json").read_text())["bundle"]
+    entries: list[tuple[str, str]] = []
+    for member in ("resources", "binaries"):
+        declared = bundle.get(member)
+        if isinstance(declared, dict):
+            entries.extend((str(key), str(value)) for key, value in declared.items())
+        elif isinstance(declared, list):
+            entries.extend((str(item), str(item)) for item in declared)
+    return entries
+
+
+def test_a_bundle_entry_never_names_project_data():
+    # design §4.1 P2. Upgrading deletes exactly the files the installer recorded,
+    # so a project directory listed here is deleted by the next upgrade. The
+    # installer's own record is derived from this list, which makes the list the
+    # only place the mistake can be made -- and the only place it can be caught
+    # before a user's documents are.
+    forbidden = ("workspace", "projects")
+    found = [
+        spelling
+        for entry in _bundle_entries()
+        for spelling in entry
+        if any(word in spelling.lower() for word in forbidden)
+    ]
+    assert found == [], (
+        "bundle.resources and bundle.binaries must never name project data: " + repr(found)
+    )
+
+
+def test_the_bundle_assertion_reads_a_real_configuration():
+    # A guard that silently asserts nothing is worse than no guard. The file is
+    # present, and it declares at least one entry for the check above to examine.
+    entries = _bundle_entries()
+    assert entries, "tauri.bundle.conf.json declares no resources or binaries"
+    assert any("sidecar" in value for _, value in entries)
 
 
 def test_windows_full_tier_uses_bash_for_the_tls_graph_check():

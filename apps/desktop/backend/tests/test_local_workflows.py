@@ -736,7 +736,9 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
     from wenyi_desktop.main import create_app
 
     contexts, clients, lifespans = [], [], []
-    pid, run_id = "same-project", "same-run"
+    # A project identifier is always the first 16 characters of a version 4 UUID,
+    # and the workspace no longer accepts one that could not have been generated.
+    pid, run_id = "0123456789abcdef", "same-run"
     entered = Barrier(2)
     parse = operations.parse_source
 

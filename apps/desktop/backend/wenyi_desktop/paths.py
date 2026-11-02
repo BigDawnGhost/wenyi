@@ -46,8 +46,11 @@ tests pin them so that neither side can be renamed alone:
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
+
+from wenyi_core.pipeline.runstore import slugify
 
 #: Catalog database of the old layout, holding both project records and the
 #: credential tables.
@@ -82,6 +85,32 @@ _WORKSPACE_INDEX = "workspace.json"
 #: Serializes the one-time move into layer two.
 _MIGRATION_LOCK = ".migration.lock"
 
+#: A project identifier is the first 16 characters of a version 4 UUID.
+#:
+#: Exactly one pattern describes it. Two call sites used to disagree -- the
+#: catalog accepted any run of word characters while the recovery scan demanded
+#: 16 hex digits -- and the disagreement was invisible until the scan found
+#: nothing to recover. A project id is never generated any other way, so the
+#: narrow pattern is the true one.
+_PROJECT_ID = re.compile(r"[0-9a-f]{16}")
+#: Length of a project id, and therefore where the readable suffix starts.
+_PROJECT_ID_LENGTH = 16
+#: Separator between the identifier and the readable suffix.
+_PROJECT_SEPARATOR = "-"
+#: Longest readable suffix kept in a directory name.
+#:
+#: A title has no length limit, and the directory name becomes the first of many
+#: path components (chapters, source, exports) below it. Windows still refuses
+#: paths past 260 characters unless long paths are enabled, so an unbounded title
+#: turns into a project that cannot be written to. The identifier already makes
+#: the name unique; the suffix only has to stay readable.
+_PROJECT_SLUG_LIMIT = 64
+#: Self-describing marker inside every project directory. Public because the
+#: recovery scan reads it out of a directory it found without a catalog.
+PROJECT_MARKER = "project.json"
+#: Schema of that marker.
+PROJECT_SCHEMA_VERSION = 1
+
 
 def catalog(workspace: Path) -> Path:
     """The catalog database of the old layout, at the workspace root.
@@ -112,6 +141,71 @@ def project(workspace: Path, pid: str) -> Path:
     `projects()` names.
     """
     return projects(workspace) / pid
+
+
+def project_id(value: str) -> str:
+    """The identifier a project directory name carries, or `""` when it carries none.
+
+    One pattern answers for every caller that has to recognise a project: the
+    deletion gate, the recovery scan, and the marker reader. They used to spell
+    two different patterns, and the wider one accepted names the narrower one
+    then skipped in silence.
+    """
+    return value if _PROJECT_ID.fullmatch(value) else ""
+
+
+def _slug(value: str) -> str:
+    """A bounded, filesystem-safe suffix for a project directory name."""
+    return slugify(value)[:_PROJECT_SLUG_LIMIT]
+
+
+def project_name(pid: str, slug: str) -> str:
+    """The directory name of one project: its identifier, then a readable suffix.
+
+    The identifier comes first and is fixed width, so the readable half can
+    contain the separator itself. Titles do, because `slugify()` keeps hyphens;
+    a name split on the separator would therefore find the wrong boundary, which
+    is why `split_project_name()` counts characters instead.
+
+    The suffix is truncated rather than rejected. A title with no length limit
+    would otherwise decide how deep the paths below it may go, and the directory
+    is only the first component of the paths to a project's chapters and exports.
+    The identifier already makes the directory unique, so truncation costs
+    readability and nothing else.
+    """
+    return f"{pid}{_PROJECT_SEPARATOR}{_slug(slug)}"
+
+
+def split_project_name(name: str) -> tuple[str, str]:
+    """Split a project directory name into its identifier and its suffix.
+
+    Answers `("", "")` for a name that does not start with an identifier, so a
+    caller never has to build a project path out of a directory it does not own.
+
+    The boundary is the identifier's fixed length, not a search for the
+    separator: a title may contain hyphens, and searching would cut at the first
+    one. Both halves are re-validated here even though `project_name()` wrote
+    them, because a directory can be renamed by hand.
+    """
+    head = name[:_PROJECT_ID_LENGTH]
+    pid = project_id(head)
+    if not pid:
+        return "", ""
+    if len(name) == _PROJECT_ID_LENGTH:
+        return pid, ""
+    if name[_PROJECT_ID_LENGTH] != _PROJECT_SEPARATOR:
+        return "", ""
+    return pid, name[_PROJECT_ID_LENGTH + 1 :]
+
+
+def project_marker(workspace: Path, pid: str) -> Path:
+    """The self-describing marker inside one project directory.
+
+    A directory can be moved, imported by hand, or found by a scan that has no
+    catalog to consult. The marker is what carries the identifier across those
+    moves, and it is the authority the catalog's own record is checked against.
+    """
+    return project(workspace, pid) / PROJECT_MARKER
 
 
 def plugins(workspace: Path, runtime: Path | None = None) -> Path:

@@ -68,6 +68,7 @@ pub enum Event {
     DetailChanged,
     PreviousUnclean,
     NativePanic,
+    InstallLocationChanged,
 }
 
 impl Event {
@@ -84,7 +85,8 @@ impl Event {
             | LlmModelFailover
             | CredentialsDegraded
             | LoggerDropped
-            | PreviousUnclean => "WARN",
+            | PreviousUnclean
+            | InstallLocationChanged => "WARN",
             HttpCompleted | LlmRequestStarted | LlmUsage => "DEBUG",
             _ => "INFO",
         }
@@ -141,6 +143,7 @@ impl Event {
                     | DetailChanged
                     | PreviousUnclean
                     | NativePanic
+                    | InstallLocationChanged
             ),
         }
     }

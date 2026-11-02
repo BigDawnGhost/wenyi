@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
@@ -14,7 +15,7 @@ from fastapi.testclient import TestClient
 from wenyi_backend.context import use_context
 from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.storage.sqlite import SqliteStorage
-from wenyi_desktop import local_runtime
+from wenyi_desktop import local_runtime, paths
 from wenyi_desktop.local_runtime import LocalRuntime
 from wenyi_desktop.main import create_app, create_context
 
@@ -88,6 +89,49 @@ def test_windows_startup_repairs_empty_catalog_through_http(tmp_path, windows, i
     # Repeated starts neither duplicate records nor invent scheduling history.
     with TestClient(create_app(workspace)) as client:
         assert len(client.get("/projects").json()) == 1
+
+
+def test_a_directory_with_a_readable_suffix_recovers_its_identifier(tmp_path, windows):
+    # This is the name the layer-three layout writes. A name-based scan must read
+    # the identifier out of it rather than skip the directory, which is what the
+    # old 16-hex-digit pattern did -- in silence, and only when a user had already
+    # lost the catalog that would have told them a project was missing.
+    workspace = tmp_path / "workspace"
+    directory, _, _ = orphan(workspace)
+    named = directory.with_name(paths.project_name(directory.name, "A example book"))
+    directory.rename(named)
+    context = create_context(workspace)
+    run_recovery(context)
+    assert [row["id"] for row in context.repository.list_projects()] == [directory.name]
+
+
+def test_a_marker_carries_the_identifier_past_a_rename(tmp_path, windows):
+    # The name is for people. The marker is what survives a directory someone
+    # renamed by hand, which is the case the catalog cannot answer for.
+    workspace = tmp_path / "workspace"
+    directory, _, _ = orphan(workspace)
+    (directory / paths.PROJECT_MARKER).write_text(
+        json.dumps({"pid": directory.name, "schema_version": 1}), encoding="utf-8"
+    )
+    renamed = directory.with_name("renamed by hand")
+    directory.rename(renamed)
+    context = create_context(workspace)
+    run_recovery(context)
+    assert [row["id"] for row in context.repository.list_projects()] == [directory.name]
+
+
+def test_a_marker_that_contradicts_its_directory_is_refused(tmp_path, windows):
+    # Two sources disagreeing means the pair was assembled by hand. Rebuilding a
+    # catalog entry would put a project id in front of files it does not own.
+    workspace = tmp_path / "workspace"
+    directory, _, _ = orphan(workspace)
+    (directory / paths.PROJECT_MARKER).write_text(
+        json.dumps({"pid": "0" * 16, "schema_version": 1}), encoding="utf-8"
+    )
+    context = create_context(workspace)
+    run_recovery(context)
+    assert context.repository.list_projects() == []
+    assert context.repository.get_project(directory.name) is None
 
 
 def run_recovery(context, *, startup=True):
