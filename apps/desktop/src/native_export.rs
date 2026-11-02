@@ -15,6 +15,7 @@ use tauri::Manager;
 
 use crate::local_connection::Connection;
 use crate::mutex::lock;
+use crate::publish::{publish_new, Temporary};
 
 type Result<T> = std::result::Result<T, crate::ipc_error::IpcError>;
 const CHUNK: usize = 64 * 1024;
@@ -814,7 +815,7 @@ impl Target {
         // process can still replace an entry after inspection. New destinations
         // use no-replace publication; no exchange-and-rollback is attempted.
         if self.existing.is_none() {
-            self.publish_new(&temporary.name)
+            publish_new(&self.dir, &self.name, &self.path, &temporary.name)
                 .map_err(|_| "Cannot publish without replacing another file. Choose a different destination or filesystem.")?;
         } else {
             self.dir
@@ -824,70 +825,6 @@ impl Target {
         Ok(())
     }
 
-    fn publish_new(&self, temporary: &str) -> std::io::Result<()> {
-        // No check-then-overwriting-rename fallback: a file appearing after the
-        // confirmation/validation must remain untouched, including on FAT/exFAT.
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        {
-            use std::{
-                ffi::CString,
-                os::unix::{ffi::OsStrExt, io::AsRawFd},
-            };
-            let from = CString::new(temporary)?;
-            let to = CString::new(self.name.as_os_str().as_bytes())?;
-            let directory = self.dir.as_raw_fd();
-            #[cfg(target_os = "linux")]
-            let result = unsafe {
-                libc::renameat2(
-                    directory,
-                    from.as_ptr(),
-                    directory,
-                    to.as_ptr(),
-                    libc::RENAME_NOREPLACE,
-                )
-            };
-            #[cfg(target_os = "macos")]
-            let result = unsafe {
-                libc::renameatx_np(
-                    directory,
-                    from.as_ptr(),
-                    directory,
-                    to.as_ptr(),
-                    libc::RENAME_EXCL,
-                )
-            };
-            if result != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::ffi::OsStrExt;
-            use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
-            let from: Vec<u16> = self
-                .path
-                .parent()
-                .unwrap()
-                .join(temporary)
-                .as_os_str()
-                .encode_wide()
-                .chain(Some(0))
-                .collect();
-            let to: Vec<u16> = self.path.as_os_str().encode_wide().chain(Some(0)).collect();
-            // Deliberately omit MOVEFILE_REPLACE_EXISTING and COPY_ALLOWED.
-            let result = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) };
-            if result == 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-        {
-            // Safe fallback on other targets, without overwriting an unconfirmed file.
-            self.dir.hard_link(temporary, &self.dir, &self.name)
-        }
-    }
 }
 
 #[cfg(windows)]
@@ -924,15 +861,6 @@ fn pin_windows_parents(parent: &Path) -> Result<Vec<File>> {
         .collect()
 }
 
-struct Temporary<'a> {
-    dir: &'a Dir,
-    name: String,
-}
-impl Drop for Temporary<'_> {
-    fn drop(&mut self) {
-        let _ = self.dir.remove_file(&self.name);
-    }
-}
 
 #[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -1983,7 +1911,7 @@ mod tests {
         let target = Target::new(path.clone(), &saves, &[]).unwrap();
         fixture.file("temporary", b"complete");
         std::fs::write(&path, b"arrived later").unwrap();
-        assert!(target.publish_new("temporary").is_err());
+        assert!(publish_new(&target.dir, &target.name, &target.path, "temporary").is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"arrived later");
         assert_eq!(
             std::fs::read(fixture.0.join("temporary")).unwrap(),
@@ -1991,7 +1919,7 @@ mod tests {
         );
         let new = fixture.0.join("other.txt");
         let target = Target::new(new.clone(), &saves, &[]).unwrap();
-        target.publish_new("temporary").unwrap();
+        publish_new(&target.dir, &target.name, &target.path, "temporary").unwrap();
         assert_eq!(std::fs::read(new).unwrap(), b"complete");
     }
 

@@ -12,6 +12,7 @@ mod mutex;
 mod native_drop;
 mod native_export;
 mod process;
+mod publish;
 mod updates;
 
 use std::sync::{
