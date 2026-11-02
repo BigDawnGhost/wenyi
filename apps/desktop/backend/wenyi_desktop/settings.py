@@ -49,7 +49,9 @@ class DesktopSettings:
         with self.guard(exclusive=True) as conn:
             current = self.load(connection=conn)
             if revision != current.revision:
-                raise ApiError(SETTINGS_CONFLICT, 409, "Global settings changed; reload before saving again")
+                raise ApiError(
+                    SETTINGS_CONFLICT, 409, "Global settings changed; reload before saving again"
+                )
             renames = provider_renames or {}
             old_providers = current.config.llm.providers
             new_providers = config.llm.providers
