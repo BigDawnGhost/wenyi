@@ -21,22 +21,14 @@ impl Drop for Temporary<'_> {
     }
 }
 
-/// Move `temporary` to `name`, failing if the destination already exists.
+/// Move `temporary` onto `name` inside `dir`, refusing to replace an existing file.
 ///
-/// Each platform branch reads a different subset of the arguments: the unix
-/// renames use the directory handle, Windows renames by path, and the portable
-/// fallback links inside the directory. The signature stays the same on every
-/// target so call sites do not fork, which leaves some arguments unread on some
-/// platforms.
-#[allow(unused_variables)]
-pub(crate) fn publish_new(
-    dir: &Dir,
-    name: &Path,
-    path: &Path,
-    temporary: &str,
-) -> std::io::Result<()> {
-    // No check-then-overwriting-rename fallback: a file appearing after the
-    // confirmation/validation must remain untouched, including on FAT/exFAT.
+/// This is the unix form: both names are relative to the directory descriptor,
+/// which is what keeps the rename anchored to the folder the caller inspected.
+#[cfg(not(windows))]
+pub(crate) fn publish_new(dir: &Dir, name: &Path, temporary: &str) -> std::io::Result<()> {
+    // A file appearing after confirmation must remain untouched, including on
+    // FAT/exFAT: no check-then-overwriting-rename fallback.
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         use std::{
@@ -71,29 +63,35 @@ pub(crate) fn publish_new(
         }
         Ok(())
     }
-    #[cfg(windows)]
-    {
-        use std::os::windows::ffi::OsStrExt;
-        use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
-        let from: Vec<u16> = path
-            .parent()
-            .unwrap()
-            .join(temporary)
-            .as_os_str()
-            .encode_wide()
-            .chain(Some(0))
-            .collect();
-        let to: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-        // Deliberately omit MOVEFILE_REPLACE_EXISTING and COPY_ALLOWED.
-        let result = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) };
-        if result == 0 {
-            return Err(std::io::Error::last_os_error());
-        }
-        Ok(())
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
         // Safe fallback on other targets, without overwriting an unconfirmed file.
         dir.hard_link(temporary, dir, name)
     }
+}
+
+/// Move `temporary` onto `path`, refusing to replace an existing file.
+///
+/// Windows has no descriptor-relative rename, so the destination travels as a
+/// full path and the temporary is resolved as its sibling.
+#[cfg(windows)]
+pub(crate) fn publish_new(path: &Path, temporary: &str) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
+
+    let from: Vec<u16> = path
+        .parent()
+        .unwrap_or_else(|| Path::new(""))
+        .join(temporary)
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
+    let to: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    // Deliberately omit MOVEFILE_REPLACE_EXISTING and COPY_ALLOWED.
+    let result = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) };
+    if result == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }
