@@ -76,10 +76,14 @@ class SrtRunStore:
 
     @contextmanager
     def _file_lock(self, filename: str) -> Iterator[None]:
-        """Serialize cross-process operations using the named lock file within state."""
+        """Serialize cross-process operations using the named lock file within state.
+
+        An injected storage owns its own concurrency: SqliteStorage appends through
+        SQL, where the database serializes the write, and a caller-provided backend
+        may have no directory at all. Only a standalone store creates lock files.
+        """
         if self._storage is not None:
-            with self._storage.state_lock():
-                yield
+            yield
             return
         os.makedirs(self.run_dir, exist_ok=True)
         with exclusive_file_lock(os.path.join(self.run_dir, filename)):
