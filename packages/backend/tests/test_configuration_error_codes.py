@@ -1,8 +1,7 @@
 """Migrated configuration raises carry codes without changing their text."""
 
-import pytest
 from fastapi import HTTPException
-from wenyi_backend.errors import INVALID_CONFIGURATION, SETTINGS_CONFLICT, ApiError
+from wenyi_backend.errors import INVALID_CONFIGURATION, ApiError
 
 
 def _client(backend_context, monkeypatch, project):
@@ -30,20 +29,6 @@ def test_configuration_raise_is_still_an_http_exception():
     assert error.status_code == 422
     assert error.detail == "bad config"
     assert str(error) == "bad config"
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Global settings changed; reload before saving again",
-    ],
-)
-def test_global_settings_conflict_has_its_own_code(text):
-    from wenyi_backend.errors import code_for
-
-    # A dedicated code: settings conflict is not an invalid configuration, and
-    # clients branch on the difference.
-    assert code_for(409, text) == SETTINGS_CONFLICT
 
 
 def test_settings_adapter_raises_its_own_code():

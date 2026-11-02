@@ -1,23 +1,11 @@
 """Error codes are additive: every old client still sees its ``detail`` text."""
 
-import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from wenyi_backend.errors import (
-    CHAPTER_NOT_FOUND,
-    EXPORT_NOT_FOUND,
-    INVALID_CONFIGURATION,
-    LEGACY_ERRORS,
     PROJECT_BUSY,
-    PROJECT_NOT_FOUND,
-    QUEUE_UNAVAILABLE,
-    SEGMENT_NOT_FOUND,
-    SETTINGS_CONFLICT,
-    SOURCE_NOT_READY,
-    UNSUPPORTED_CLIENT,
     ApiError,
     api_error_handler,
-    code_for,
     error_envelope,
     http_exception_handler,
 )
@@ -47,17 +35,23 @@ def _client():
     return TestClient(app)
 
 
-def test_known_legacy_failure_gains_a_code_and_keeps_its_detail():
-    body = _client().get("/busy").json()
-    assert body["code"] == PROJECT_BUSY
-    assert body["detail"] == "project already has a running task"
-    assert body["message"] == body["detail"]
+def test_a_bare_http_exception_keeps_the_original_shape():
+    """Text alone is no longer translated into a code; raising ApiError is.
+
+    The wording used to be matched against a table, which meant any copy edit
+    silently dropped the code. Both routes below now answer with the plain
+    FastAPI shape, and the coded path is the one that raises ApiError.
+    """
+    for path in ("/busy", "/missing"):
+        body = _client().get(path).json()
+        assert "code" not in body, path
+        assert set(body) == {"detail"}, path
 
 
-def test_missing_project_is_reported_by_code():
-    response = _client().get("/missing")
-    assert response.status_code == 404
-    assert response.json()["code"] == PROJECT_NOT_FOUND
+def test_a_raised_api_error_is_reported_by_code():
+    response = _client().get("/api-error")
+    assert response.status_code == 409
+    assert response.json()["code"] == PROJECT_BUSY
 
 
 def test_unrecognised_failure_keeps_the_original_detail_only_shape():
@@ -72,49 +66,7 @@ def test_api_error_renders_its_code_alongside_the_legacy_detail():
     assert body["detail"] == "project already has a running task"
 
 
-@pytest.mark.parametrize("status, detail, code", LEGACY_ERRORS)
-def test_every_registered_legacy_pair_maps_to_its_code(status, detail, code):
-    assert code_for(status, detail) == code
-
-
-def test_unknown_or_non_string_details_do_not_get_a_code():
-    assert code_for(500, "boom") is None
-    assert code_for(404, {"nested": "detail"}) is None
-
-
 def test_envelope_omits_request_id_when_absent_but_always_writes_detail():
     assert error_envelope(code="x", message="m") == {"code": "x", "message": "m", "detail": "m"}
     with_id = error_envelope(code="x", message="m", request_id="r1")
     assert with_id["request_id"] == "r1"
-
-
-def test_first_batch_codes_are_the_agreed_five():
-    codes = {code for _, _, code in LEGACY_ERRORS}
-    # The first batch stays present and unchanged; later domain migrations may
-    # add codes (export added export_not_found), never remove the original five.
-    assert {
-        PROJECT_NOT_FOUND,
-        PROJECT_BUSY,
-        QUEUE_UNAVAILABLE,
-        INVALID_CONFIGURATION,
-        UNSUPPORTED_CLIENT,
-    } <= codes
-
-
-def test_domain_migrations_added_only_the_expected_codes():
-    codes = {code for _, _, code in LEGACY_ERRORS}
-    # Every code beyond the first batch must be one a migration deliberately
-    # introduced, so an accidental borrow (or a typo) fails this list.
-    assert codes - {
-        PROJECT_NOT_FOUND,
-        PROJECT_BUSY,
-        QUEUE_UNAVAILABLE,
-        INVALID_CONFIGURATION,
-        UNSUPPORTED_CLIENT,
-    } == {
-        EXPORT_NOT_FOUND,
-        SOURCE_NOT_READY,
-        SETTINGS_CONFLICT,
-        CHAPTER_NOT_FOUND,
-        SEGMENT_NOT_FOUND,
-    }
