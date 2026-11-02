@@ -182,6 +182,9 @@ fn release_metadata(
 fn manual_check() -> Result<Option<(String, String)>> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(concat!("Wenyi Desktop/", env!("WENYI_DESKTOP_VERSION")))
+        // The release asset list is checked against a fixed host afterwards, so a
+        // redirect must not be followed first: it would move the check elsewhere.
+        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
         .build()
