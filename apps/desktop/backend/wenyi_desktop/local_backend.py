@@ -18,6 +18,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, BinaryIO, Iterator
 
 from fastapi import HTTPException
+from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_core.config import Config
 
 if TYPE_CHECKING:
@@ -388,9 +389,9 @@ class LocalBackend:
             self._reject_removing(pid)
             project = self._get("projects", pid, connection)
             if project is None:
-                raise HTTPException(404, "project not found")
+                raise ApiError(PROJECT_NOT_FOUND, 404, "project not found")
             if project["status"] in RUNNING_PROJECT_STATUSES:
-                raise HTTPException(409, "project already has a running task")
+                raise ApiError(PROJECT_BUSY, 409, "project already has a running task")
             identity = self.create_job(
                 pid,
                 kind,
@@ -432,7 +433,7 @@ class LocalBackend:
         with self.transaction() as connection:
             self._reject_removing(pid)
             if self._get("projects", pid, connection) is None:
-                raise HTTPException(404, "project not found")
+                raise ApiError(PROJECT_NOT_FOUND, 404, "project not found")
             export_id = self.create_export(pid, fmt, options, connection=connection)
             job_id = self.create_job(
                 pid,

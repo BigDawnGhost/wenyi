@@ -12,6 +12,7 @@ from wenyi_core.llm.registry import provider_spec
 
 from ..config_documents import global_document
 from ..context import current_context
+from ..errors import INVALID_CONFIGURATION, ApiError
 from ..global_settings import (
     GlobalSettings,
     load_settings,
@@ -108,7 +109,7 @@ async def list_models(request: Request) -> dict:
     try:
         body = ModelListRequest.model_validate(await request.json())
     except Exception:
-        raise HTTPException(422, "Invalid model list request") from None
+        raise ApiError(INVALID_CONFIGURATION, 422, "Invalid model list request") from None
     return await run_in_threadpool(_list_models, body)
 
 
@@ -134,7 +135,7 @@ def _list_models(body: ModelListRequest) -> dict:
             provider, credential=credential, use_credential=injected, timeout=body.timeout
         )
     except ValidationError:
-        raise HTTPException(422, "Invalid connection settings") from None
+        raise ApiError(INVALID_CONFIGURATION, 422, "Invalid connection settings") from None
     except ValueError as error:
         raise HTTPException(422, str(error)) from None
     return result.describe()
