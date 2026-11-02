@@ -41,6 +41,14 @@
 ; Layer two, under the user profile. It is deliberately not $LOCALAPPDATA: the
 ; original isolation review had that wrong, and the wrong value deletes the
 ; disposable runtime layer while leaving the user's real data in place.
+;
+; $PROFILE is the profile of the account running this installer, which is the
+; right one only while the bundle stays in the currentUser install mode. Under
+; perMachine, or when setup is launched from an elevated shell, it names the
+; administrator instead: this would then delete a directory the user never owned
+; and leave their real data behind. The bundle currently inherits currentUser
+; from tauri-bundler's default; the batch that declares the mode explicitly is
+; what keeps that from being an accident.
 !define WENYI_USER_ROOT "$PROFILE\Wenyi"
 ; One directory per completed pre-upgrade backup, written by src/updates.rs.
 !define WENYI_BACKUP_ROOT "$PROFILE\Wenyi\backup"
