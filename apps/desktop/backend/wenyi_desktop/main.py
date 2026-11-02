@@ -13,7 +13,7 @@ from wenyi_backend.context import BackendContext, use_context
 from wenyi_core.observability import configure_logging
 
 from .babeldoc_plugin import BabeldocPlugin
-from .diagnostics import DiagnosticsMiddleware, Reporter, scope
+from .diagnostics import DiagnosticsMiddleware, EngineDiagnostics, Reporter, scope
 from .local_backend import LocalBackend
 from .local_credentials import CredentialStore, build_local_client, system_keyring
 from .local_runtime import (
@@ -129,6 +129,7 @@ def create_app(
     context: BackendContext | None = None,
     api_token: str | None = None,
     diagnostics: Reporter | None = None,
+    engine_diagnostics: EngineDiagnostics | None = None,
 ):
     from .desktop import ORIGINS
     from .routers import babeldoc_plugin, credentials, desktop_export, external_credentials
@@ -141,24 +142,29 @@ def create_app(
             raise ValueError("Desktop requires an explicit workspace")
         context = create_context(workspace, api_token=api_token)
     services = context.telemetry
+    lifecycle = engine_diagnostics or EngineDiagnostics(diagnostics)
 
     @asynccontextmanager
     async def lifespan(app):
         with use_context(context), scope(diagnostics):
-            runtime = LocalRuntime(context.repository, context, diagnostics=diagnostics)
+            with lifecycle.observe("runtime"):
+                runtime = LocalRuntime(context.repository, context, diagnostics=diagnostics)
             services.runtime = runtime
             try:
-                await runtime.start()
-                services.babeldoc.restore()
+                with lifecycle.observe("runtime"):
+                    await runtime.start()
+                with lifecycle.observe("plugins"):
+                    services.babeldoc.restore()
                 yield
             finally:
-                try:
-                    await runtime.stop()
-                finally:
-                    await services.babeldoc.stop()
-                    services.runtime = None
-                    context.settings_store.credentials.clear_session()
-                    context.repository.close()
+                with lifecycle.observe("shutdown"):
+                    try:
+                        await runtime.stop()
+                    finally:
+                        await services.babeldoc.stop()
+                        services.runtime = None
+                        context.settings_store.credentials.clear_session()
+                        context.repository.close()
 
     app = create_http_app(
         context,

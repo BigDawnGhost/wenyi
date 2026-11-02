@@ -53,5 +53,49 @@
       "request_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "error_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     }
+  },
+  {
+    "input": {
+      "stage": "runtime",
+      "reason": "failed",
+      "exception": "RuntimeError",
+      "cause_exception": "PermissionError",
+      "module": "local_runtime",
+      "line": 61,
+      "category": "permission",
+      "os_error": 13,
+      "win_error": 5,
+      "exit_code": -1073741819,
+      "signal": 9,
+      "message": "fake-private-path-and-key",
+      "traceback": "fake-private-book"
+    },
+    "expected": {
+      "stage": "runtime",
+      "reason": "failed",
+      "exception": "RuntimeError",
+      "cause_exception": "PermissionError",
+      "module": "local_runtime",
+      "line": 61,
+      "category": "permission",
+      "os_error": 13,
+      "win_error": 5,
+      "exit_code": -1073741819,
+      "signal": 9
+    }
+  },
+  {
+    "input": {
+      "stage": "fake-private-path",
+      "reason": {"secret": "fake-private-key"},
+      "exception": "FakePrivateException",
+      "cause_exception": ["PermissionError"],
+      "exit_code": 4294967296,
+      "os_error": true,
+      "win_error": -2147483649,
+      "sqlite_error": "fake-private-key",
+      "signal": 256
+    },
+    "expected": {}
   }
 ]

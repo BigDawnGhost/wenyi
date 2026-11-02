@@ -5,8 +5,10 @@ import io
 import json
 from pathlib import Path
 
+import pytest
 from wenyi_desktop.diagnostics import (
     DiagnosticsMiddleware,
+    EngineDiagnostics,
     Reporter,
     emit,
     failure_attributes,
@@ -51,7 +53,67 @@ def test_failure_classifier_does_not_stringify_exception():
         def __str__(self):
             raise AssertionError("Do not stringify provider errors")
 
-    assert failure_attributes(UnsafeError()) == {"category": "timeout"}
+    assert failure_attributes(UnsafeError()) == {"category": "timeout", "exception": "TimeoutError"}
+
+
+@pytest.mark.parametrize("code", [0, 3, "fake-private-key"])
+def test_system_exit_is_recorded_without_serializing_its_payload(code):
+    stream = io.StringIO()
+    reporter = Reporter(stream)
+    lifecycle = EngineDiagnostics(reporter)
+    with pytest.raises(SystemExit):
+        with lifecycle.observe("application"):
+            raise SystemExit(code)
+    lifecycle.stopped()
+    reporter.close()
+    rows = records(stream)
+    assert rows[0]["event"] == "engine_bootstrap_failed"
+    assert rows[0]["attributes"]["exception"] == "SystemExit"
+    assert rows[-1]["attributes"]["exit_code"] == (code if type(code) is int else 1)
+    assert "fake-private" not in stream.getvalue()
+
+
+def test_first_startup_failure_survives_cleanup_and_uvicorn_system_exit():
+    stream = io.StringIO()
+    reporter = Reporter(stream)
+    lifecycle = EngineDiagnostics(reporter)
+    with pytest.raises(SystemExit):
+        with lifecycle.observe("bootstrap"):
+            try:
+                with lifecycle.observe("runtime"):
+                    raise PermissionError(13, "fake-private-path")
+            except PermissionError:
+                with pytest.raises(RuntimeError):
+                    with lifecycle.observe("shutdown"):
+                        raise RuntimeError("fake-private-cleanup")
+                raise SystemExit(3)
+    lifecycle.stopped()
+    reporter.close()
+    rows = records(stream)
+    assert len(rows) == 2
+    assert rows[0]["attributes"] == {
+        "stage": "runtime",
+        "category": "permission",
+        "exception": "PermissionError",
+        "os_error": 13,
+    }
+    assert rows[-1]["attributes"] == {"stage": "bootstrap", "reason": "failed", "exit_code": 3}
+    assert "fake-private" not in stream.getvalue()
+
+
+def test_running_failure_is_not_misreported_as_bootstrap_failure():
+    stream = io.StringIO()
+    reporter = Reporter(stream)
+    lifecycle = EngineDiagnostics(reporter)
+    lifecycle.ready = True
+    with pytest.raises(ValueError):
+        with lifecycle.observe("running"):
+            raise ValueError("fake-private-error")
+    lifecycle.stopped()
+    reporter.close()
+    rows = records(stream)
+    assert rows[0]["event"] == "engine_runtime_failed"
+    assert rows[-1]["attributes"] == {"stage": "running", "reason": "failed", "exit_code": 1}
 
 
 def test_ready_frame_is_serialized_and_scopes_do_not_leak():

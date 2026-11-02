@@ -6,11 +6,13 @@ The native owner validates these records again and owns persistence/retention.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
 import queue
 import secrets
+import sqlite3
 import threading
 import time
 from contextlib import contextmanager
@@ -22,6 +24,7 @@ EVENTS = frozenset(
     {
         "engine_bootstrap",
         "engine_bootstrap_failed",
+        "engine_runtime_failed",
         "engine_stopped",
         "task_started",
         "task_completed",
@@ -47,10 +50,65 @@ EVENTS = frozenset(
 COUNTS = frozenset({"duration_ms", "status_code", "attempt", "wait_ms", "tokens", "count", "line"})
 REFERENCES = frozenset({"project_ref", "run_ref", "call_ref"})
 IDENTITIES = frozenset({"request_id", "error_id"})
-CATEGORIES = frozenset({"timeout", "permission", "io", "invalid", "dependency", "unknown"})
-MODULES = frozenset(
-    {"desktop", "main", "local_runtime", "tasks", "router", "retrying", "translation", "sqlite"}
+CATEGORIES = frozenset(
+    {"timeout", "permission", "io", "invalid", "dependency", "interrupted", "unknown"}
 )
+MODULES = frozenset(
+    {
+        "desktop",
+        "main",
+        "local_runtime",
+        "local_backend",
+        "catalog_recovery",
+        "local_credentials",
+        "babeldoc_plugin",
+        "locks",
+        "tasks",
+        "router",
+        "retrying",
+        "translation",
+        "sqlite",
+    }
+)
+STAGES = frozenset(
+    {"bootstrap", "application", "runtime", "plugins", "listen", "running", "shutdown"}
+)
+REASONS = frozenset(
+    {
+        "failed",
+        "completed",
+        "setup_failed",
+        "spawn_failed",
+        "protocol_invalid",
+        "protocol_read_failed",
+        "protocol_eof",
+        "ready_timeout",
+        "channel_closed",
+        "process_exited",
+        "shutdown_requested",
+        "forced",
+        "wait_failed",
+    }
+)
+# Match known base classes, never serialize a user-defined exception class name.
+EXCEPTIONS = (
+    TimeoutError,
+    PermissionError,
+    FileNotFoundError,
+    FileExistsError,
+    IsADirectoryError,
+    NotADirectoryError,
+    OSError,
+    sqlite3.Error,
+    ImportError,
+    ValueError,
+    TypeError,
+    RuntimeError,
+    SystemExit,
+    KeyboardInterrupt,
+    asyncio.CancelledError,
+)
+EXCEPTION_NAMES = frozenset(cls.__name__ for cls in EXCEPTIONS) | {"BaseException"}
 PHASES = frozenset(
     {
         "language",
@@ -77,6 +135,11 @@ def project_attributes(data: dict[str, Any]) -> dict:
     for key, value in data.items():
         if key in COUNTS and type(value) is int and 0 <= value <= 2**53 - 1:
             result[key] = value
+        elif key in {"exit_code", "os_error", "win_error", "sqlite_error"}:
+            if type(value) is int and -(2**31) <= value <= 2**32 - 1:
+                result[key] = value
+        elif key == "signal" and type(value) is int and 1 <= value <= 255:
+            result[key] = value
         elif key in REFERENCES | IDENTITIES and isinstance(value, str):
             if len(value) == 32 and all(char in "0123456789abcdef" for char in value):
                 result[key] = value
@@ -88,6 +151,13 @@ def project_attributes(data: dict[str, Any]) -> dict:
             result[key] = value
         elif key == "kind" and isinstance(value, str) and value in KINDS:
             result[key] = value
+        elif key == "stage" and isinstance(value, str) and value in STAGES:
+            result[key] = value
+        elif key == "reason" and isinstance(value, str) and value in REASONS:
+            result[key] = value
+        elif key in {"exception", "cause_exception"} and isinstance(value, str):
+            if value in EXCEPTION_NAMES:
+                result[key] = value
     return result
 
 
@@ -99,14 +169,29 @@ def failure_attributes(error: BaseException) -> dict:
         else "permission"
         if isinstance(error, PermissionError)
         else "io"
-        if isinstance(error, OSError)
+        if isinstance(error, (OSError, sqlite3.Error))
         else "invalid"
         if isinstance(error, ValueError)
         else "dependency"
         if isinstance(error, ImportError)
+        else "interrupted"
+        if isinstance(error, (KeyboardInterrupt, asyncio.CancelledError))
         else "unknown"
     )
-    result: dict = {"category": category}
+    result: dict = {
+        "category": category,
+        "exception": next(
+            (cls.__name__ for cls in EXCEPTIONS if isinstance(error, cls)), "BaseException"
+        ),
+    }
+    for field, attribute in (
+        ("os_error", "errno"),
+        ("win_error", "winerror"),
+        ("sqlite_error", "sqlite_errorcode"),
+    ):
+        value = getattr(error, attribute, None)
+        if type(value) is int:
+            result[field] = value
     tb = error.__traceback__
     while tb is not None:
         name = tb.tb_frame.f_globals.get("__name__", "")
@@ -118,6 +203,59 @@ def failure_attributes(error: BaseException) -> dict:
                 result.update(module=module, line=tb.tb_lineno)
         tb = tb.tb_next
     return result
+
+
+class EngineDiagnostics:
+    """One launch's first failure, captured before ASGI or cleanup can replace it."""
+
+    def __init__(self, reporter: Reporter | None):
+        self.reporter = reporter
+        self.ready = False
+        self.failed = False
+        self.exit_code = 0
+
+    @contextmanager
+    def observe(self, stage: str):
+        try:
+            yield
+        except BaseException as error:
+            # SystemExit may be Uvicorn's replacement for an already recorded
+            # lifespan exception. Keep its exit code, not a second generic error.
+            self.exit_code = 1
+            if isinstance(error, SystemExit):
+                if error.code is None:
+                    self.exit_code = 0
+                elif type(error.code) is int:
+                    self.exit_code = error.code
+            if not self.failed:
+                self.failed = True
+                fields = failure_attributes(error)
+                # A lock wrapper often carries the actionable OS error as its cause.
+                cause = error.__cause__
+                if cause is not None:
+                    original = failure_attributes(cause)
+                    fields["cause_exception"] = original["exception"]
+                    if fields["category"] == "unknown":
+                        fields["category"] = original["category"]
+                    for key in ("os_error", "win_error", "sqlite_error"):
+                        if key in original:
+                            fields[key] = original[key]
+                if self.reporter is not None:
+                    self.reporter.emit(
+                        "engine_runtime_failed" if self.ready else "engine_bootstrap_failed",
+                        stage=stage,
+                        **fields,
+                    )
+            raise
+
+    def stopped(self) -> None:
+        if self.reporter is not None:
+            self.reporter.emit(
+                "engine_stopped",
+                stage="running" if self.ready else "bootstrap",
+                reason="failed" if self.failed else "completed",
+                exit_code=self.exit_code,
+            )
 
 
 class Reporter:

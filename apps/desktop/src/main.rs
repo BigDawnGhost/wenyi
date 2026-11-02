@@ -75,9 +75,10 @@ struct Engine {
 
 /// The same launch path is used at startup and to recover a failed installation.
 fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Result<(), &'static str> {
-    let resources = app.path().resource_dir().map_err(|_| "Local resources unavailable.")?;
     let diagnostics = app.state::<diagnostics::Diagnostics>();
-    diagnostics.record(diagnostics::Source::Native, diagnostics::Event::EngineSpawned, serde_json::json!({}));
+    let resources = app.path().resource_dir().map_err(|_| {
+        process::Failure::Setup("Local resources unavailable.").report(&diagnostics)
+    })?;
     let ready = {
         let mut owner = lock(&engine.child);
         if engine.closed.load(Ordering::SeqCst)
@@ -85,23 +86,28 @@ fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Res
         {
             return Err("Wenyi is closing.");
         }
-        let (backend, ready) = process::Backend::spawn(&resources, engine.workspace.as_deref(), diagnostics.inner().clone())?;
+        let (backend, ready) = process::Backend::spawn(&resources, engine.workspace.as_deref(), diagnostics.inner().clone())
+            .map_err(|failure| failure.report(&diagnostics))?;
         *owner = Some(backend);
         ready
     };
-    match ready.recv_timeout(std::time::Duration::from_secs(60)) {
-        Ok(Ok(connection)) => {
+    match process::wait_ready(&ready, std::time::Duration::from_secs(60)) {
+        Ok(connection) => {
+            if let Some(backend) = lock(&engine.child).as_mut() {
+                backend.mark_ready();
+            }
             diagnostics.record(diagnostics::Source::Native, diagnostics::Event::EngineReady, serde_json::json!({}));
             let state = app.state::<Arc<Mutex<State>>>();
             let mut state = lock(&state);
             state.connected(connection);
             Ok(())
         }
-        _ => {
+        Err(failure) => {
+            let message = failure.report(&diagnostics);
             if let Some(mut backend) = lock(&engine.child).take() {
                 backend.shutdown();
             }
-            Err("The local engine did not become ready. Quit and reopen Wenyi to retry.")
+            Err(message)
         }
     }
 }
@@ -127,7 +133,6 @@ fn publish_background(app: &tauri::AppHandle, state: &Mutex<State>) {
 }
 
 fn fail(app: &tauri::AppHandle, state: &Mutex<State>, error: &'static str) {
-    app.state::<diagnostics::Diagnostics>().record(diagnostics::Source::Native, diagnostics::Event::EngineFailed, serde_json::json!({}));
     lock(state).error = Some(error);
     publish(app, state);
 }
@@ -313,8 +318,12 @@ fn main() {
                         health_ticks = 0;
                         background::recover_if_unreachable(&monitor_handle);
                     }
-                    if !reported_exit && lock(&monitor_engine.child).as_mut().is_some_and(|backend| backend.exited()) {
+                    if !reported_exit && lock(&monitor_engine.child).as_mut().is_some_and(|backend| backend.is_ready() && backend.exited()) {
                         reported_exit = true;
+                        monitor_handle.state::<diagnostics::Diagnostics>().record(
+                            diagnostics::Source::Native, diagnostics::Event::EngineFailed,
+                            serde_json::json!({"stage": "running", "reason": "process_exited"}),
+                        );
                         fail(&monitor_handle, &monitor_state, "The local engine stopped unexpectedly. Quit and reopen Wenyi to recover saved work.");
                     }
                     std::thread::sleep(std::time::Duration::from_millis(250));
