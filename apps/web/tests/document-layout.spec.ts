@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
-import { chapter, fakeApi, pid, project } from "../../../packages/ui/tests/e2e/fixtures";
+import { chapter, fakeApi, pid, project } from "../../../packages/ui/sandbox/fixtures";
 
 const longTitle =
   "Lịch sử và văn hóa Việt Nam / Études sur les échanges et les traditions régionales — ".repeat(

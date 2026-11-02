@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, globalConfiguration } from "../../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi, globalConfiguration } from "../../../../packages/ui/sandbox/fixtures";
 
 const releaseNotes = `# Wenyi 1.1.0
 

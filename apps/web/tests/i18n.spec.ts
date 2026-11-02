@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { locales, createTranslator } from "../../../packages/ui/src/i18n/catalog";
 import { workflowStageLabel } from "../../../packages/ui/src/i18n/labels";
 import { statusLabel, statusTone } from "../../../packages/ui/src/i18n/status";
-import { fakeApi, pid } from "../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi, pid } from "../../../packages/ui/sandbox/fixtures";
 import { chooseOption } from "../../../packages/ui/tests/e2e/select-helper";
 
 test("locale catalogs have matching keys and interpolation parameters", () => {

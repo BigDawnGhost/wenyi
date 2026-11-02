@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi } from "../../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi } from "../../../../packages/ui/sandbox/fixtures";
 
 test("MinerU saves automatically, shows the saved key masked, and environment wins", async ({ page }) => {
   await page.addInitScript(() => Object.assign(window, {

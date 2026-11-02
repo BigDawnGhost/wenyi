@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../sandbox/fixtures";
 
 export function registerTests() {
 test("collapsed chapter review notes mount only after expansion", async ({ page }) => {

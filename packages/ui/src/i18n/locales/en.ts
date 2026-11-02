@@ -185,7 +185,10 @@ const en = {
   "glossary.deleted": "Deleted",
   "glossary.conflictResolved": "Conflict resolved",
   "glossary.selectedTermsDeleted": "Selected terms deleted",
-  "glossary.couldNotDeleteSelectedTerms": "Could not delete selected terms",
+  "glossary.couldNotDeleteSelectedTerms":
+    "Could not delete selected terms: {error}",
+  "glossary.couldNotDeleteSelectedTermsPartially":
+    "Deleted {deleted}, failed {failed}: {error}",
   "glossary.csvFile": "CSV file",
   "glossary.jsonFile": "JSON file",
   "glossary.ankiDeck": "Anki deck (.apkg)",
@@ -230,6 +233,7 @@ const en = {
   "glossary.aliasPlaceholder": "alias1, alias2",
   "common.save": "Save",
   "glossary.couldNotParseJson": "Could not parse JSON",
+  "glossary.couldNotReadFile": "Could not read the selected file",
   "glossary.theTermFileMustBeAList":
     "The term file must be a list of entries with source and target fields.",
   "glossary.theFileIsEmptyOrHasAn":

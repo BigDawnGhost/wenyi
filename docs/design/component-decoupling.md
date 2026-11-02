@@ -96,7 +96,7 @@ Keep query/mutation ownership with its feature. Split endpoint modules only as c
 
 **Implemented guardrails:** [offline schema export](../../scripts/export_openapi.py#L21) uses the shared app factory and unavailable runtime ports without a production lifespan. `pnpm check:schema` generates temporary types and compares them with the committed file; CI runs it before frontend checks. [Route-loader inspection](../../packages/ui/tests/source-contracts.mjs#L43) derives chunks from the manifest, with separate required-URL/redirect assertions and existing audience/shell E2E coverage.
 
-**Implemented test ownership:** all 20 cross-host suites, API fixtures, select helpers and the select harness live in UI test support. Each host explicitly registers suites with its own bootstrap and capability options; no host imports another host's tests. Host fixture forwarders are removed. Boundary checks require both hosts to register every shared suite and forbid native bootstrap in shared support. Native save/drop/credentials/bootstrap and browser behavior remain separate; test support is not a runtime export.
+**Implemented test ownership:** all 20 cross-host suites, select helpers and the select harness live in UI test support, while the API fixtures live in `packages/ui/sandbox/` so the Web dev server can serve mock data without a host build config importing test files. Each host explicitly registers suites with its own bootstrap and capability options; no host imports another host's tests. Host fixture forwarders are removed. Boundary checks require both hosts to register every shared suite and forbid native bootstrap in shared support. Native save/drop/credentials/bootstrap and browser behavior remain separate; test support is not a runtime export.
 
 ### F7 — CLI migration reaches a private file-store method
 
@@ -152,8 +152,9 @@ packages/
       components/ui/index.ts         # implemented approved host-facing primitives
       features/                      # retained; feature-local queries/components
       i18n/                          # retained
+    sandbox/
+      fixtures.ts                    # shared API fixtures, outside test-owned imports
     tests/e2e/
-      fixtures.ts                    # shared API fixtures
       shell.ts / ...                 # 20 explicitly registered cross-host suites
       select-helper.ts / select-harness.tsx
   shared-schema/src/api.d.ts          # retained generated contract

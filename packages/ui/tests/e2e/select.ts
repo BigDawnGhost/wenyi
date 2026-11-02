@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { fakeApi } from "./fixtures";
+import { fakeApi } from "../../sandbox/fixtures";
 import { chooseOption } from "./select-helper";
 
 export function registerTests() {

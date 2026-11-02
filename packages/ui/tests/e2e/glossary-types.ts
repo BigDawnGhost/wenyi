@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../sandbox/fixtures";
 import { chooseOption } from "./select-helper";
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {

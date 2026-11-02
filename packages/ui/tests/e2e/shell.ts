@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid, project, resolveFixture } from "./fixtures";
+import { fakeApi, pid, project, resolveFixture } from "../../sandbox/fixtures";
 
 /** Hosts register these checks after installing their own bootstrap hooks. */
 export function registerShellTests({ apiOrigin }: { apiOrigin?: string } = {}) {

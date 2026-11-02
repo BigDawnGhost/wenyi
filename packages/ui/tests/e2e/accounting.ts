@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../sandbox/fixtures";
 import { cacheRate, tokenParts, usageRows } from "../../src/features/progress/accountingData";
 
 export function registerTests() {

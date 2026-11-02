@@ -26,7 +26,7 @@ test("shared UI cannot import hosts or own platform transports/storage", () => {
       const specifier = match[1];
       const target = specifier.startsWith(".") ? resolve(dirname(file), specifier) : specifier;
       assert(!/[/\\]apps[/\\]|@wenyi\/(?:web|desktop)/.test(target), `${file} imports host ${specifier}`);
-      assert(!/[/\\]tests[/\\]/.test(target), `${file} imports test support ${specifier}`);
+      assert(!/[/\\](?:tests|sandbox)[/\\]/.test(target), `${file} imports test support ${specifier}`);
     }
   }
 });

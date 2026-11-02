@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { fakeApi, pid, project } from "../../sandbox/fixtures";
 import { chooseOption } from "./select-helper";
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {

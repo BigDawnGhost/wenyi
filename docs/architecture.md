@@ -54,10 +54,12 @@ the old `lib/api.ts` implementation/type forwarder is removed.
 without platform entry points or a production lifespan. `pnpm check:schema` compares
 offline-generated types against the committed contract in CI. Frontend boundary tests
 resolve host imports and derive lazy chunks from the route manifest while retaining
-independent URL checks. All 20 cross-host suites, API fixtures and select test support
-live in `packages/ui/tests/e2e/`, outside runtime exports. Hosts register them explicitly
-with their own bootstrap and capability options; cross-host test imports and fixture
-forwarders are forbidden.
+independent URL checks. All 20 cross-host suites and select test support live in
+`packages/ui/tests/e2e/`; the API fixtures live in `packages/ui/sandbox/`, outside runtime
+exports, so the Web dev server can serve mock data without importing test files. Hosts
+register the suites explicitly with their own bootstrap and capability options; cross-host
+test imports, test-directory imports from a host build config, and fixture forwarders are
+forbidden.
 
 Backend execution, project, job-admission and source-view services receive explicit
 dependencies rather than discovering them through ambient context or dynamic DAL

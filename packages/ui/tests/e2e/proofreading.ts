@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { fakeApi, pid, project, chapter } from "./fixtures";
+import { fakeApi, pid, project, chapter } from "../../sandbox/fixtures";
 
 export function registerTests() {
 test("proofreading is separate and refreshes saved batches before a chapter finishes", async ({

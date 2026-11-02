@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, project } from "../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi, project } from "../../../packages/ui/sandbox/fixtures";
 
 // The Web host has no folder picker, so the entry point must be absent rather
 // than present and broken. Both locales are checked because the label is copy.

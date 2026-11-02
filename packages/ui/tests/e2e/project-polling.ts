@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { fakeApi, pid, project } from "../../sandbox/fixtures";
 
 async function waitForProjectReconciliation(
   page: Page,

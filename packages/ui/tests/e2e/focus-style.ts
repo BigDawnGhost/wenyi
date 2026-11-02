@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../sandbox/fixtures";
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
   test("keyboard and pointer use the same rounded dialog controls", async ({

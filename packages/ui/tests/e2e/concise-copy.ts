@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { createTranslator } from "../../src/i18n/catalog";
-import { chapter, fakeApi, pid, project, workflow } from "./fixtures";
+import { chapter, fakeApi, pid, project, workflow } from "../../sandbox/fixtures";
 
 export function registerTests(
   { apiOrigin, exportAction = "download" }: { apiOrigin?: string; exportAction?: "download" | "saveAs" } = {},

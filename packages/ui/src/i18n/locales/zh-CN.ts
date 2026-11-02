@@ -180,7 +180,9 @@ const zhCN = {
   "glossary.deleted": "已删除",
   "glossary.conflictResolved": "已解决冲突",
   "glossary.selectedTermsDeleted": "批量删除完成",
-  "glossary.couldNotDeleteSelectedTerms": "批量删除失败",
+  "glossary.couldNotDeleteSelectedTerms": "批量删除失败：{error}",
+  "glossary.couldNotDeleteSelectedTermsPartially":
+    "成功删除 {deleted} 条、失败 {failed} 条：{error}",
   "glossary.csvFile": "CSV 文件",
   "glossary.jsonFile": "JSON 文件",
   "glossary.ankiDeck": "Anki 牌组（.apkg）",
@@ -223,6 +225,7 @@ const zhCN = {
   "glossary.aliasPlaceholder": "别名1, 别名2",
   "common.save": "保存",
   "glossary.couldNotParseJson": "JSON 解析失败",
+  "glossary.couldNotReadFile": "无法读取所选文件",
   "glossary.theTermFileMustBeAList":
     "术语文件必须是包含 source 和 target 的列表",
   "glossary.theFileIsEmptyOrHasAn": "文件为空或格式不正确",

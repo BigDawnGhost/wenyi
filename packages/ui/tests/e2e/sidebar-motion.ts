@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../sandbox/fixtures";
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 const sidebarSelector = 'aside[data-slot="sidebar"]';

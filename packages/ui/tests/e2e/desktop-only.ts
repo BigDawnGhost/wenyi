@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { createTranslator } from "../../src/i18n/catalog";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../sandbox/fixtures";
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 test.beforeEach(async ({ page }) => {

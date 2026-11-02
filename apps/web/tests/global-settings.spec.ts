@@ -6,7 +6,7 @@ import {
   configuration,
   pid,
   project,
-} from "../../../packages/ui/tests/e2e/fixtures";
+} from "../../../packages/ui/sandbox/fixtures";
 
 const models = {
   ...configuration.registered_models,

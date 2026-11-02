@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { chapter, fakeApi, pid, project } from "./fixtures";
+import { chapter, fakeApi, pid, project } from "../../sandbox/fixtures";
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 for (const { locale, entry } of [

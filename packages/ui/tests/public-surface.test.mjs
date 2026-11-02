@@ -27,6 +27,12 @@ test("hosts resolve shared UI only through explicit package exports", () => {
       for (const specifier of imports(file)) checkHostImport(file, specifier, options);
     const vite = readFileSync(resolve(root, host, "vite.config.ts"), "utf8");
     assert(!vite.includes('"@wenyi/ui"') && !vite.includes("packages/ui/src"), "Vite must honor package exports");
+    // The dev server serves fixture data, but a host build must not depend on
+    // test-owned modules: sandbox support is what the mock middleware may use.
+    for (const specifier of imports(resolve(root, host, "vite.config.ts")))
+      assert(!/(?:^|[\\/])tests[\\/]/.test(
+        specifier.startsWith(".") ? resolve(root, host, specifier) : specifier),
+        host + " vite.config.ts imports test support: " + specifier);
   }
 });
 

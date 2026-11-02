@@ -129,7 +129,7 @@ pnpm -C apps/web dev
 
 The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the API. The API initializes a fresh database schema. Starting only the ordinary worker does not consume the export queue.
 
-To click through the UI without starting any backend, run `MOCK_API=1 pnpm -C apps/web dev`. Vite then answers `/api` with the same fixture data the Playwright suites use (`packages/ui/tests/e2e/fixtures.ts`), so every page opens with sample data and action buttons complete against the mock instead of a real service. The progress WebSocket stays unavailable and the UI falls back to polling the mock API. Leave `MOCK_API` unset for normal proxied development.
+To click through the UI without starting any backend, run `MOCK_API=1 pnpm -C apps/web dev`. Vite then answers `/api` with the same fixture data the Playwright suites use (`packages/ui/sandbox/fixtures.ts`), so every page opens with sample data and action buttons complete against the mock instead of a real service. The progress WebSocket stays unavailable and the UI falls back to polling the mock API. Leave `MOCK_API` unset for normal proxied development.
 
 ## Supported devices
 
