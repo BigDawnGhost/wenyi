@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import shutil
 import sqlite3
 import uuid
@@ -21,6 +20,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO, Iterator
 from fastapi import HTTPException
 from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_core.config import Config
+from wenyi_core.storage.io_path import plain_path
 
 from . import library_location, paths
 
@@ -68,11 +68,7 @@ def _same(left: Path, right: Path) -> bool:
 
 def _plain_windows_path(path: str) -> str:
     """Use ordinary Win32 drive/UNC spelling without changing other path types."""
-    if path.startswith("\\\\?\\UNC\\"):
-        return "\\\\" + path[8:]
-    if re.match(r"^\\\\\?\\[A-Za-z]:\\", path):
-        return path[4:]
-    return path
+    return plain_path(path)
 
 
 class LocalBackend:

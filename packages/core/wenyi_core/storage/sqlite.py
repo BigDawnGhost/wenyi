@@ -24,6 +24,7 @@ from ..errors import ArtifactCorrupt
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..ingest.models import Chapter, Document
 from ..pipeline.runstore import ExportSnapshotStore, RunStore, source_sha256
+from .io_path import require_sqlite_path
 from .locks import (
     ASSEMBLE_LOCK,
     EXPORT_HISTORY_LOCK,
@@ -60,6 +61,9 @@ class SqliteStorage:
         self._connections_guard = threading.Condition()
         self._readers = 0
         self._closing = False
+        # Fail on an unopenable path before any directory is created, so a
+        # rejected project leaves nothing behind to clean up.
+        require_sqlite_path(self.database_path)
         if create:
             with self._mutex:
                 self._connection()
@@ -98,7 +102,12 @@ class SqliteStorage:
 
     def _open_connection(self) -> sqlite3.Connection:
         """Called under the short schema initialization lock."""
-        uri = Path(self.database_path).as_uri() + ("?mode=rwc" if self._create else "?mode=rw")
+        # SQLite rejects the extended-length prefix, so a long database path
+        # cannot be rescued the way an ordinary file path can. Checking first
+        # replaces "unable to open database file" with a message naming the limit.
+        uri = Path(require_sqlite_path(self.database_path)).as_uri() + (
+            "?mode=rwc" if self._create else "?mode=rw"
+        )
         conn = sqlite3.connect(uri, uri=True, isolation_level=None, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         try:

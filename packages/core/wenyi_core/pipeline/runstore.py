@@ -25,6 +25,8 @@ from ..i18n.languages import require_language
 from ..ingest.models import Chapter, Document
 from ..ingest.source_hash import source_sha256
 from ..storage.artifacts import FileArtifacts
+from ..storage.atomic_write import sweep_temporary, write_text_atomic
+from ..storage.io_path import to_io_path
 from ..storage.locks import (
     ASSEMBLE_LOCK,
     EVENTS_LOCK,
@@ -33,6 +35,7 @@ from ..storage.locks import (
     TIMING_LOCK,
     exclusive_file_lock,
 )
+from ..storage.names import DEFAULT_COMPONENT, escape_reserved, strip_trailing
 from ..timing import save_timing
 
 STATUS_PENDING = "pending"
@@ -42,7 +45,9 @@ STATUS_DONE = "done"
 def slugify(name: str) -> str:
     """Convert a book title into a stable short state-directory name."""
     s = re.sub(r"[^\w一-鿿぀-ヿ-]+", "_", name).strip("_")
-    return s or "book"
+    # The reserved-name escape prefixes an underscore, so it has to come after
+    # the separator trim that would otherwise remove it again.
+    return escape_reserved(strip_trailing(s)) or DEFAULT_COMPONENT
 
 
 def translation_run_dir(state_dir: str, title: str, target_lang: str) -> str:
@@ -64,13 +69,13 @@ class RunStore(FileArtifacts):
 
     def ensure_dirs(self) -> None:
         """Create run and chapter-state directories."""
-        os.makedirs(self.chapters_dir, exist_ok=True)
+        os.makedirs(to_io_path(self.chapters_dir), exist_ok=True)
 
     @contextmanager
     def _file_lock(self, filename: str) -> Iterator[None]:
         """Serialize cross-process operations using the named lock file within state."""
         self.ensure_dirs()
-        with exclusive_file_lock(os.path.join(self.run_dir, filename)):
+        with exclusive_file_lock(to_io_path(os.path.join(self.run_dir, filename))):
             yield
 
     @contextmanager
@@ -166,22 +171,35 @@ class RunStore(FileArtifacts):
     @staticmethod
     def _write_json(path: str, data) -> None:
         """Write formatted JSON atomically through a temporary file in the same directory."""
-        os.makedirs(RunStore._io_path(os.path.dirname(path)), exist_ok=True)
-        tmp = path + ".tmp"
-        with open(RunStore._io_path(tmp), "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        # Atomic replacement prevents partial files after interruption.
-        os.replace(RunStore._io_path(tmp), RunStore._io_path(path))
+        write_text_atomic(path, json.dumps(data, ensure_ascii=False, indent=2))
 
     @staticmethod
     def _read_json(path: str):
         """Read and parse UTF-8 JSON."""
-        with open(RunStore._io_path(path), "r", encoding="utf-8") as f:
+        with open(to_io_path(path), "r", encoding="utf-8") as f:
             return json.load(f)
+
+    def _exists(self, path: str) -> bool:
+        """Check for one run file through the same namespace the writer used."""
+        return os.path.isfile(to_io_path(path))
+
+    def _remove(self, path: str) -> None:
+        """Delete one run file, tolerating a file another process already removed."""
+        try:
+            os.remove(to_io_path(path))
+        except FileNotFoundError:
+            pass
+
+    def _listdir(self, directory: str) -> list[str]:
+        """List one run directory; a missing directory is an empty one."""
+        try:
+            return os.listdir(to_io_path(directory))
+        except FileNotFoundError:
+            return []
 
     def exists(self) -> bool:
         """Check whether initialization completed and committed a manifest."""
-        return os.path.isfile(self.manifest_path)
+        return self._exists(self.manifest_path)
 
     def begin_initialization(self, source_hash: str) -> None:
         """Clear incomplete derived state and record the current source identity.
@@ -195,7 +213,7 @@ class RunStore(FileArtifacts):
             raise ValueError("Invalid source SHA-256 format")
 
         previous_hash: str | None = None
-        if os.path.isfile(self.initialization_path):
+        if self._exists(self.initialization_path):
             try:
                 marker = self._read_json(self.initialization_path)
             except (OSError, json.JSONDecodeError, TypeError):
@@ -208,13 +226,10 @@ class RunStore(FileArtifacts):
         else:
             # Discard the old journal first so interruption cannot replay it into a new run.
             for path in (os.path.join(self.run_dir, "usage-pending.json"), self.usage_path):
-                try:
-                    os.remove(path)
-                except FileNotFoundError:
-                    pass
+                self._remove(path)
 
-        shutil.rmtree(self.chapters_dir, ignore_errors=True)
-        os.makedirs(self.chapters_dir, exist_ok=True)
+        shutil.rmtree(to_io_path(self.chapters_dir), ignore_errors=True)
+        os.makedirs(to_io_path(self.chapters_dir), exist_ok=True)
         for path in (
             self.analysis_path,
             self.annotation_contexts_path,
@@ -222,32 +237,36 @@ class RunStore(FileArtifacts):
             f"{self.glossary_path}-wal",
             f"{self.glossary_path}-shm",
             f"{self.glossary_path}-journal",
-            f"{self.manifest_path}.tmp",
         ):
-            try:
-                os.remove(path)
-            except FileNotFoundError:
-                pass
+            self._remove(path)
 
         if previous_hash != source_hash:
-            shutil.rmtree(self.reviews_dir, ignore_errors=True)
-            try:
-                os.remove(self.event_log_path)
-            except FileNotFoundError:
-                pass
+            shutil.rmtree(to_io_path(self.reviews_dir), ignore_errors=True)
+            self._remove(self.event_log_path)
 
+        # Every temporary file here belongs to an interrupted write of this run.
+        # The sweep runs after the derived state is discarded so a temporary file
+        # written before the crash cannot be mistaken for current state.
+        self.sweep_temporary_files()
         self._batch_glossary_event_cache = None
         self._write_json(
             self.initialization_path,
             {"source_sha256": source_hash},
         )
 
+    def sweep_temporary_files(self) -> list[str]:
+        """Delete temporary files left by an interrupted write in the run directory.
+
+        Only the names `write_text_atomic` produces and the legacy single
+        `<name>.tmp` form it replaced are removed. The run directory also holds
+        exported documents and cached sources, so matching every `*.tmp` would
+        eventually delete a file this program never wrote.
+        """
+        return sweep_temporary(self.run_dir)
+
     def finish_initialization(self) -> None:
         """Remove temporary initialization identity after the manifest commits successfully."""
-        try:
-            os.remove(self.initialization_path)
-        except FileNotFoundError:
-            pass
+        self._remove(self.initialization_path)
 
     # ── manifest ──────────────────────────────────────────────────────────
     def stage_document(
@@ -268,10 +287,7 @@ class RunStore(FileArtifacts):
         if isinstance(annotation_contexts, dict) and annotation_contexts:
             self.save_annotation_contexts(annotation_contexts)
         else:
-            try:
-                os.remove(self.annotation_contexts_path)
-            except FileNotFoundError:
-                pass
+            self._remove(self.annotation_contexts_path)
 
         manifest = {
             "title": doc.title,
@@ -401,13 +417,14 @@ class RunStore(FileArtifacts):
     # Annotation contexts and analysis.
     def save_annotation_contexts(self, data: dict) -> None:
         """Atomically save the deduplicated EPUB annotation-source index."""
-        self._write_json(self.annotation_contexts_path, data)
+        with self.state_lock():
+            self._write_json(self.annotation_contexts_path, data)
 
     def load_annotation_contexts(self) -> dict | None:
         """Read EPUB annotation context, or return None for non-EPUB/missing indices."""
         return (
             self._read_json(self.annotation_contexts_path)
-            if os.path.isfile(self.annotation_contexts_path)
+            if self._exists(self.annotation_contexts_path)
             else None
         )
 
@@ -418,7 +435,7 @@ class RunStore(FileArtifacts):
 
     def load_analysis(self) -> dict | None:
         """Read book analysis, or return None if absent."""
-        return self._read_json(self.analysis_path) if os.path.isfile(self.analysis_path) else None
+        return self._read_json(self.analysis_path) if self._exists(self.analysis_path) else None
 
     def save_usage(self, data: dict) -> None:
         """Atomically save cumulative token usage under the state lock."""
@@ -427,7 +444,7 @@ class RunStore(FileArtifacts):
 
     def load_usage(self) -> dict | None:
         """Read cumulative token usage, or return None if absent."""
-        return self._read_json(self.usage_path) if os.path.isfile(self.usage_path) else None
+        return self._read_json(self.usage_path) if self._exists(self.usage_path) else None
 
     def prepare_usage_commit(self, ledgers: dict[str, dict]) -> None:
         """Journal complete ledger snapshots before publication, under the book run lock."""
@@ -436,7 +453,7 @@ class RunStore(FileArtifacts):
         entries = []
         for relative, value in ledgers.items():
             path = self._usage_commit_path(relative)
-            before = self._read_json(path) if os.path.isfile(path) else None
+            before = self._read_json(path) if self._exists(path) else None
             entries.append({"path": relative, "before": identity(before), "value": value})
         self._write_json(
             os.path.join(self.run_dir, "usage-pending.json"), {"version": 1, "entries": entries}
@@ -460,7 +477,7 @@ class RunStore(FileArtifacts):
         from ..llm.usage import validate_usage
 
         pending = os.path.join(self.run_dir, "usage-pending.json")
-        if not os.path.isfile(pending):
+        if not self._exists(pending):
             return
         transaction = self._read_json(pending)
         if transaction.get("version") != 1 or not isinstance(transaction.get("entries"), list):
@@ -469,23 +486,21 @@ class RunStore(FileArtifacts):
         for entry in transaction["entries"]:
             path = self._usage_commit_path(entry["path"])
             value = validate_usage(entry["value"])
-            current = self._read_json(path) if os.path.isfile(path) else None
+            current = self._read_json(path) if self._exists(path) else None
             if identity(current) not in {entry["before"], identity(value)}:
                 raise ValueError("Usage ledger changed outside its pending commit")
             writes.append((path, value))
         for path, value in writes:
             self._write_json(path, value)
-        os.unlink(pending)
+        os.unlink(to_io_path(pending))
 
     def load_latest_review_result(self) -> dict[str, Any] | None:
         """Read the latest completed or failed review result by directory time order."""
-        if not os.path.isdir(self.reviews_dir):
-            return None
-        for name in sorted(os.listdir(self.reviews_dir), reverse=True):
+        for name in sorted(self._listdir(self.reviews_dir), reverse=True):
             if not name.startswith("review-"):
                 continue
             path = os.path.join(self.reviews_dir, name, "result.json")
-            if not os.path.isfile(path):
+            if not self._exists(path):
                 continue
             try:
                 result = self._read_json(path)
@@ -509,8 +524,8 @@ class RunStore(FileArtifacts):
         """
         if self._batch_glossary_event_cache is None:
             completed: dict[int, set[str]] = {}
-            if os.path.isfile(self.event_log_path):
-                with open(self.event_log_path, "r", encoding="utf-8") as f:
+            if self._exists(self.event_log_path):
+                with open(to_io_path(self.event_log_path), "r", encoding="utf-8") as f:
                     for line in f:
                         try:
                             row = json.loads(line)
@@ -543,7 +558,7 @@ class RunStore(FileArtifacts):
             **data,
         }
         with self.event_lock():
-            with open(self.event_log_path, "a", encoding="utf-8") as f:
+            with open(to_io_path(self.event_log_path), "a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
         if event == "batch_glossary_extracted" and self._batch_glossary_event_cache is not None:
             chapter = data.get("chapter")

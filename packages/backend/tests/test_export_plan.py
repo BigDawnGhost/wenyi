@@ -49,3 +49,40 @@ def test_babeldoc_pdf_export_needs_no_local_rendering_engine(meta):
 def test_removed_pdf_engine_request_field_is_rejected():
     with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
         ExportRequest.model_validate({"format": "pdf", "pdf_engine": "removed-engine"})
+
+
+@pytest.mark.parametrize(
+    ("filename", "expected"),
+    [
+        ("book.tar.gz", "book"),
+        ("book.txt", "book"),
+        # A trailing dot is discarded by the filesystem, so "book." and "book"
+        # name one file and the plan has to say which of them it means.
+        ("book.", "book"),
+        ("book .txt", "book"),
+        # A reserved device name is refused by Windows no matter what follows it.
+        ("CON", "_CON"),
+        ("CON.txt", "_CON"),
+        ("nul", "_nul"),
+        # Only an exact device name is reserved; these are ordinary files.
+        ("CONSOLE.txt", "CONSOLE"),
+        ("COM10.txt", "COM10"),
+        ("", "translation"),
+        (".", "translation"),
+    ],
+)
+def test_export_filename_reduces_the_stem_to_a_windows_safe_name(filename, expected):
+    """The target name is the last place a bad source name can be repaired.
+
+    The check is a pure function on purpose: this drive is ReFS, which accepts
+    names NTFS refuses, so relying on the write failing would be green here and
+    red on a user's NTFS machine.
+    """
+    project = {"source_meta": {"original_filename": filename}}
+    assert export_plan.export_stem(filename) == expected
+    assert export_plan.export_filename(project, "zh", "docx", False) == f"{expected}.zh.docx"
+
+
+def test_export_filename_without_source_metadata_stays_usable():
+    """A project that never recorded a source name still gets a nameable export."""
+    assert export_plan.export_filename({}, "zh", "docx", True) == "translation.zh-bi.docx"

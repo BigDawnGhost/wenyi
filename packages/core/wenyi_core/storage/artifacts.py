@@ -12,6 +12,8 @@ from threading import RLock
 from typing import Any
 
 from ..errors import ArtifactCorrupt
+from .atomic_write import write_text_atomic
+from .io_path import to_io_path
 
 
 class FileArtifacts:
@@ -30,15 +32,7 @@ class FileArtifacts:
     @staticmethod
     def _io_path(path: str | Path) -> str:
         """Use absolute extended-length drive/UNC paths on Windows; leave POSIX unchanged."""
-        text = str(path)
-        if os.name != "nt":
-            return text
-        text = os.path.abspath(text)
-        if text.startswith("\\\\?\\"):
-            return text
-        if text.startswith("\\\\"):
-            return "\\\\?\\UNC\\" + text[2:]
-        return "\\\\?\\" + text
+        return to_io_path(path)
 
     def read_artifact(self, key: str) -> Any | None:
         try:
@@ -54,11 +48,8 @@ class FileArtifacts:
 
     def write_artifact(self, key: str, value: Any) -> None:
         path = self._artifact_path(key)
-        path.parent.mkdir(parents=True, exist_ok=True)
         with self._artifact_lock:
-            tmp = path.with_name(path.name + ".tmp")
-            tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-            os.replace(tmp, path)
+            write_text_atomic(path, json.dumps(value, ensure_ascii=False, indent=2))
 
     def delete_artifact(self, key: str) -> None:
         self._artifact_path(key).unlink(missing_ok=True)
@@ -76,7 +67,7 @@ class FileArtifacts:
     def append_artifact_record(self, key: str, record: dict) -> None:
         path = self._artifact_path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with self._artifact_lock, path.open("a", encoding="utf-8") as handle:
+        with self._artifact_lock, open(to_io_path(path), "a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
 
     def read_artifact_records(self, key: str) -> list[dict]:

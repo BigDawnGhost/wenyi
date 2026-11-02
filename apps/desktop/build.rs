@@ -69,5 +69,41 @@ fn main() {
     let config = config.to_string();
     std::env::set_var("TAURI_CONFIG", &config);
     println!("cargo:rustc-env=TAURI_CONFIG={config}");
-    tauri_build::build();
+    tauri_build::try_build(
+        tauri_build::Attributes::new()
+            .windows_attributes(tauri_build::WindowsAttributes::new().app_manifest(APP_MANIFEST)),
+    )
+    .expect("failed to run tauri-build");
 }
+
+/// The Windows application manifest embedded in the executable.
+///
+/// `longPathAware` is what makes the process use the extended-length path rules
+/// instead of the legacy 260-character limit. Without it, a path that Python can
+/// open through the extended-length prefix is still refused by every Win32 call the
+/// native side makes, so a deep workspace would work in one layer and fail in
+/// the other.
+///
+/// The Common-Controls v6 dependency is kept verbatim from the manifest
+/// `tauri-build` ships by default: without it the file dialogs fall back to the
+/// legacy control set and lose their modern layout.
+const APP_MANIFEST: &str = r#"<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <longPathAware xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">true</longPathAware>
+    </windowsSettings>
+  </application>
+</assembly>
+"#;

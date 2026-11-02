@@ -29,6 +29,7 @@ from uuid import uuid4
 from wenyi_backend.source_upload import format_for_suffix
 from wenyi_core.config import Config
 from wenyi_core.ingest.source_hash import source_sha256
+from wenyi_core.storage.io_path import require_sqlite_path
 
 from . import paths
 
@@ -101,11 +102,18 @@ def _marker(directory: Path) -> dict:
     return document if isinstance(document, dict) else {}
 
 
+def _state_uri(directory: Path) -> str:
+    """Read-only SQLite URI for one project directory, refusing unopenable paths.
+
+    Discovery must not initialize a missing DB, change journal mode, or acquire
+    writable schema locks. SQLite also rejects the extended-length prefix, so a
+    path too long to open is reported here rather than as a URI failure.
+    """
+    return Path(require_sqlite_path(directory / "state.sqlite3")).as_uri() + "?mode=ro"
+
+
 def _metadata(directory: Path) -> dict[str, dict]:
-    # Discovery must not initialize a missing DB, change journal mode, or acquire
-    # writable schema locks. Read only the small metadata artifacts, including WAL.
-    uri = (directory / "state.sqlite3").as_uri() + "?mode=ro"
-    with closing(sqlite3.connect(uri, uri=True)) as connection:
+    with closing(sqlite3.connect(_state_uri(directory), uri=True)) as connection:
         rows = connection.execute(
             "SELECT key,value FROM artifacts WHERE key IN (?,?,?)",
             ("manifest.json", "preview.json", "initializing.json"),
@@ -131,9 +139,8 @@ def _newest_job(directory: Path) -> dict | None:
     is the ordinary case rather than a fault: the caller falls back to what the
     chapter statuses can prove.
     """
-    uri = (directory / "state.sqlite3").as_uri() + "?mode=ro"
     try:
-        with closing(sqlite3.connect(uri, uri=True)) as connection:
+        with closing(sqlite3.connect(_state_uri(directory), uri=True)) as connection:
             row = connection.execute(
                 "SELECT kind, status, error FROM jobs ORDER BY id DESC LIMIT 1"
             ).fetchone()
