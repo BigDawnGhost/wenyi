@@ -30,6 +30,7 @@ class WenyiError(Exception):
     def __str__(self) -> str:
         return self.message
 
+
 class ArtifactCorrupt(WenyiError):
     """A stored artifact exists but cannot be decoded.
 
