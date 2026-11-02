@@ -547,7 +547,6 @@ def test_export_lock_uses_the_api_integer_identity(store):
             store.export_lock(invalid)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="Windows lock compatibility is exercised in CI")
 def test_run_lock_compatible_with_legacy_runstore(store):
     legacy = RunStore(store.run_dir)
     with legacy.lock():

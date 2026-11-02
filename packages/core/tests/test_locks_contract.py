@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import errno
+import logging
 import os
 import subprocess
 import sys
@@ -223,3 +225,171 @@ def test_incompatible_native_library_is_not_called(monkeypatch):
     monkeypatch.setattr(locks, "_library_candidates", lambda: iter(["old-library"]))
     monkeypatch.setattr(locks.ctypes, "CDLL", lambda _: legacy)
     assert locks._native_library() is None
+
+
+def test_native_backend_is_actually_loaded():
+    """The guard the parameterised cases cannot provide.
+
+    The `rust` parameter skips when the library is missing, so a machine without a
+    build reports "the native contract is covered" while never running it. When the
+    environment names a library, loading it is a hard requirement instead.
+    """
+    declared = os.environ.get("WENYI_LOCKS_LIB")
+    if not declared:
+        pytest.skip("WENYI_LOCKS_LIB is not set; no native library was named to verify")
+    library = locks._native_library()
+    assert library is not None, f"WENYI_LOCKS_LIB={declared} did not load"
+    assert locks._use_native() is True
+
+
+def test_backend_reports_the_server_and_survives_release(tmp_path, backend):
+    path = str(tmp_path / ".run.lock")
+    handle = FileLockHandle(path)
+    assert handle.backend is None  # nothing has served it yet
+    handle.acquire()
+    try:
+        assert handle.backend == backend
+    finally:
+        handle.release()
+    assert handle.backend == backend
+
+
+def test_backend_reports_the_fallback_when_rust_is_forced_without_a_library(tmp_path, monkeypatch):
+    if locks._native_library() is not None:
+        pytest.skip("this case needs a machine without the native library")
+    monkeypatch.setattr(locks, "_FORCED_BACKEND", "rust")
+    handle = FileLockHandle(str(tmp_path / ".run.lock"))
+    handle.acquire()
+    try:
+        assert handle.backend == "python", "a handle must name who served it, not who was asked"
+    finally:
+        handle.release()
+
+
+@pytest.mark.parametrize("value", ["zsh", "RUST", "Python", "auto ", " rust", "native"])
+def test_unknown_backend_value_is_rejected(value, tmp_path, monkeypatch):
+    monkeypatch.delenv("WENYI_LOCKS_LIB", raising=False)
+    monkeypatch.setenv("WENYI_LOCKS_BACKEND", value)
+    with pytest.raises(ValueError, match="lock backend"):
+        with locks.exclusive_file_lock(str(tmp_path / ".run.lock")):
+            pytest.fail("an unknown backend must not be treated as auto")
+
+
+@pytest.mark.parametrize("value", ["auto", "rust", "python"])
+def test_supported_backend_values_are_accepted(value, monkeypatch):
+    monkeypatch.setenv("WENYI_LOCKS_BACKEND", value)
+    assert locks._backend_choice() == value
+
+
+def _raising_cdll(error: Exception):
+    def load(_: str):
+        raise error
+
+    return load
+
+
+def test_missing_library_warns_once(monkeypatch, caplog):
+    monkeypatch.setattr(locks, "_native_probed", False)
+    monkeypatch.setattr(locks, "_native", None)
+    monkeypatch.delenv("WENYI_LOCKS_LIB", raising=False)
+    monkeypatch.setattr(locks, "_library_candidates", lambda: iter(["absent-one", "absent-two"]))
+    monkeypatch.setattr(locks.ctypes, "CDLL", _raising_cdll(OSError("cannot load")))
+    with caplog.at_level(logging.WARNING, logger=locks.__name__):
+        assert locks._native_library() is None
+        assert locks._native_library() is None
+    records = [record for record in caplog.records if record.name == locks.__name__]
+    assert [record.levelname for record in records] == ["WARNING"]
+    assert "absent-two" in records[0].getMessage()
+
+
+def test_explicit_library_that_does_not_load_is_an_error(monkeypatch, caplog):
+    monkeypatch.setattr(locks, "_native_probed", False)
+    monkeypatch.setattr(locks, "_native", None)
+    monkeypatch.setenv("WENYI_LOCKS_LIB", "broken-library")
+    monkeypatch.setattr(locks, "_library_candidates", lambda: iter(["broken-library"]))
+    monkeypatch.setattr(locks.ctypes, "CDLL", _raising_cdll(OSError("cannot load")))
+    with caplog.at_level(logging.ERROR, logger=locks.__name__):
+        assert locks._native_library() is None
+    records = [record for record in caplog.records if record.name == locks.__name__]
+    assert [record.levelname for record in records] == ["ERROR"]
+    assert "WENYI_LOCKS_LIB=broken-library" in records[0].getMessage()
+
+
+@pytest.mark.parametrize("as_bytes", [False, True], ids=["str", "bytes"])
+def test_bytes_lock_path_matches_the_text_path(tmp_path, backend, as_bytes):
+    path = str(tmp_path / ".run.lock")
+    lock_path = os.fsencode(path) if as_bytes else path
+    with exclusive_file_lock(lock_path, blocking=False):
+        with pytest.raises(StorageBusyError):
+            with exclusive_file_lock(path, blocking=False):
+                pytest.fail("the text path should contend with the bytes path")
+
+
+def test_non_contention_os_error_is_not_reported_as_busy(tmp_path, backend):
+    # A missing parent directory refuses the open outright. Calling that "busy"
+    # hides a real failure behind a message about a workflow that never started.
+    missing = tmp_path / "missing" / ".run.lock"
+    with pytest.raises(OSError) as raised:
+        with exclusive_file_lock(str(missing), blocking=False):
+            pytest.fail("acquired a lock inside a directory that does not exist")
+    assert not isinstance(raised.value, StorageBusyError)
+
+
+@pytest.mark.parametrize(
+    "blocking, expected",
+    [
+        (False, False),
+        (True, True),
+    ],
+    ids=["non-blocking", "blocking"],
+)
+def test_contention_errnos_are_classified_the_same_for_both_modes(blocking, expected):
+    for number in (errno.EACCES, errno.EAGAIN, errno.EDEADLK, errno.EWOULDBLOCK):
+        assert locks._is_contention(OSError(number, "contended")) is True
+        assert locks._still_waiting(OSError(number, "contended"), blocking, None) is expected
+
+
+@pytest.mark.parametrize("number", [errno.ENOSPC, errno.ENOENT, errno.EPERM, errno.EROFS])
+def test_other_errnos_are_failures_rather_than_contention(number):
+    error = OSError(number, "not contention")
+    assert locks._is_contention(error) is False
+    assert locks._still_waiting(error, True, None) is False
+
+
+def test_same_path_reentry_contends_instead_of_being_detected(tmp_path, backend):
+    """Pin the pass-through ruling: the primitive never inspects process-local state."""
+    path = str(tmp_path / ".run.lock")
+    entered = threading.Event()
+    outcome = []
+
+    def contender() -> None:
+        try:
+            with exclusive_file_lock(path, timeout_ms=200):
+                entered.set()
+        except StorageBusyError:
+            outcome.append("busy")
+
+    with exclusive_file_lock(path):
+        thread = threading.Thread(target=contender)
+        thread.start()
+        thread.join(timeout=5)
+    assert not entered.is_set(), "a second handle must contend, not reuse the outer lock"
+    assert outcome == ["busy"], "re-entry must look like any other contender"
+    with exclusive_file_lock(path, blocking=False):
+        pass
+
+
+def test_cargo_target_dir_contributes_library_candidates(tmp_path, monkeypatch):
+    monkeypatch.setenv("CARGO_TARGET_DIR", str(tmp_path))
+    # An override would short-circuit the search order being checked here.
+    monkeypatch.delenv("WENYI_LOCKS_LIB", raising=False)
+    candidates = list(locks._library_candidates())
+    assert candidates[0] == str(tmp_path / "release" / locks._library_name())
+    assert str(tmp_path / "debug" / locks._library_name()) in candidates
+
+
+def test_checkout_candidates_remain_when_cargo_target_dir_is_unset(monkeypatch):
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
+    monkeypatch.delenv("WENYI_LOCKS_LIB", raising=False)
+    candidates = list(locks._library_candidates())
+    assert any("wenyi-locks" in candidate for candidate in candidates)
