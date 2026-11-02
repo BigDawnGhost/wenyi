@@ -1,4 +1,5 @@
 import { StatusBadge } from "../../components/StatusBadge";
+import { useRef, useState } from "react";
 import { useI18n } from "../../i18n";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "../../lib/toast";
@@ -9,6 +10,7 @@ import { Button } from "../../components/ui/button";
 import { LazyBoundary } from "../../routes/LazyBoundary";
 import { Card, CardContent } from "../../components/ui/card";
 import { ErrorNotice } from "../../components/ui/data";
+import { Dialog } from "../../components/ui/misc";
 import { api, isProjectBusy } from "../../api/client";
 import type { Project } from "../../api/types";
 import { LoaderCircle, Trash2 } from "lucide-react";
@@ -16,6 +18,8 @@ import { LoaderCircle, Trash2 } from "lucide-react";
 export default function Dashboard() {
   const { t: tr, locale } = useI18n();
   const queryClient = useQueryClient();
+  const [pendingDelete, setPendingDelete] = useState<Project | null>(null);
+  const cancelDeleteRef = useRef<HTMLButtonElement>(null);
   const {
     data: projects,
     isLoading,
@@ -30,6 +34,7 @@ export default function Dashboard() {
     mutationFn: (project: Project) => api.deleteProject(project.id),
     onSuccess: async (_, project) => {
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
+      setPendingDelete(null);
       toast.success(tr("dashboard.projectDeleted", { name: project.name }));
     },
     onError: (error) =>
@@ -37,16 +42,6 @@ export default function Dashboard() {
         tr("dashboard.couldNotDeleteProject", { error: errorMessage(error, tr) }),
       ),
   });
-
-  const requestDelete = (project: Project) => {
-    if (
-      window.confirm(
-        tr("dashboard.deleteProjectThisCannotBeUndone", { name: project.name }),
-      )
-    ) {
-      deleteProject.mutate(project);
-    }
-  };
 
   return (
     <>
@@ -93,7 +88,7 @@ export default function Dashboard() {
                         })}
                         title={tr("dashboard.deleteAction")}
                         disabled={deleteProject.isPending}
-                        onClick={() => requestDelete(p)}
+                        onClick={() => setPendingDelete(p)}
                       >
                         {deleteProject.isPending &&
                         deleteProject.variables?.id === p.id ? (
@@ -121,6 +116,41 @@ export default function Dashboard() {
           </div>
         )}
       </PageContainer>
+      <Dialog
+        open={pendingDelete !== null}
+        onClose={() => setPendingDelete(null)}
+        title={tr("dashboard.deleteAction")}
+        closeDisabled={deleteProject.isPending}
+        initialFocus={cancelDeleteRef}
+        footer={
+          <>
+            <Button
+              ref={cancelDeleteRef}
+              variant="outline"
+              disabled={deleteProject.isPending}
+              onClick={() => setPendingDelete(null)}
+            >
+              {tr("common.cancel")}
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={deleteProject.isPending || !pendingDelete}
+              onClick={() => {
+                if (pendingDelete && !deleteProject.isPending) {
+                  deleteProject.mutate(pendingDelete);
+                }
+              }}
+            >
+              {deleteProject.isPending && <LoaderCircle className="h-4 w-4 animate-spin" />}
+              {tr("dashboard.deleteAction")}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm">
+          {tr("dashboard.deleteProjectThisCannotBeUndone", { name: pendingDelete?.name ?? "" })}
+        </p>
+      </Dialog>
       <LazyBoundary fallback={null}>
         <Outlet />
       </LazyBoundary>
