@@ -77,6 +77,7 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
         Section: DesktopDiagnostics,
         ExportButton: DiagnosticExportButton,
         reportRenderFailure: () => reportDiagnostic("frontend_render_failed"),
+        reportDiagnostic: () => reportDiagnostic("frontend_message_failed"),
       },
       externalCredentials: { MinerU: MinerUCredential },
       updates: {

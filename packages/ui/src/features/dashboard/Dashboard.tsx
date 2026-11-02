@@ -188,17 +188,17 @@ export default function Dashboard() {
         open={pendingDelete !== null}
         onClose={() => setPendingDelete(null)}
         title={tr("dashboard.deleteAction")}
-        closeDisabled={deleteProject.isPending}
         initialFocus={cancelDeleteRef}
         footer={
           <>
             <Button
               ref={cancelDeleteRef}
               variant="outline"
-              disabled={deleteProject.isPending}
               onClick={() => setPendingDelete(null)}
             >
-              {tr("common.cancel")}
+              {/* Dismissing the dialog does not stop a delete that is already
+                  running, so the label must not promise that it does. */}
+              {tr(deleteProject.isPending ? "common.close" : "common.cancel")}
             </Button>
             <Button
               variant="destructive"

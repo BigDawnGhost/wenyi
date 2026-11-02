@@ -59,6 +59,12 @@ pub enum Event {
     FrontendRejection,
     FrontendRenderFailed,
     FrontendRequestFailed,
+    /// The shared client could not read a progress frame.
+    ///
+    /// Distinct from a failed request: the transport worked, and what arrived
+    /// was unusable. The frame is never recorded, because it can carry
+    /// translated text and provider messages.
+    FrontendMessageFailed,
     ExportCompleted,
     ExportFailed,
     UpdateFailed,
@@ -87,6 +93,7 @@ impl Event {
             | UpdateFailed | HttpError => "ERROR",
             HttpFailed
             | FrontendRequestFailed
+            | FrontendMessageFailed
             | LlmRetryWait
             | LlmModelFailover
             | CredentialsDegraded
@@ -109,6 +116,7 @@ impl Event {
                     | FrontendRejection
                     | FrontendRenderFailed
                     | FrontendRequestFailed
+                    | FrontendMessageFailed
             ),
             Source::Engine => matches!(
                 self,

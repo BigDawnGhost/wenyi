@@ -607,6 +607,7 @@ const zhCN = {
   "settings.sectionPdf": "PDF 解析",
   "settings.sectionAdvanced": "高级",
   "settings.credentialsFailed": "配置已保存，但有 API 密钥未能保存。请再次保存重试。",
+  "settings.credentialsFailedNotice": "仍有 API 密钥未保存，在配置保存成功前只在本次会话内有效。",
   "providerSettings.connections": "API 连接",
   "providerSettings.models": "模型",
   "settings.restoreDefaults": "恢复默认配置",
@@ -664,6 +665,7 @@ const zhCN = {
   "error.segmentNotFound": "该段落已不存在。",
   "error.invalidConfiguration": "配置无效，请检查设置。",
   "error.unsupportedClient": "当前客户端版本不受支持，请更新文翼。",
+  "error.requestTimeout": "服务器未在规定时间内响应，请重试。",
 } satisfies Messages;
 
 export default zhCN;

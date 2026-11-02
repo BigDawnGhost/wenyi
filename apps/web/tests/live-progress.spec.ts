@@ -354,6 +354,10 @@ test("an error event from the worker keeps the last stage readable", async ({
   await expect(page.getByRole("status")).not.toContainText(
     "Waiting for progress updates",
   );
+  // The frame's own reason has to reach the page. The code is unknown to the
+  // client, so the text that survives is the message the worker sent; losing
+  // either field used to leave the progress bar simply stopped here.
+  await expect(page.getByRole("alert")).toContainText("Provider connection failed");
   socket!.send(
     JSON.stringify({
       kind: "translation",
@@ -365,4 +369,55 @@ test("an error event from the worker keeps the last stage readable", async ({
     }),
   );
   await expect(page.getByRole("status")).toContainText("Recovered after error");
+});
+
+test("a known failure code is shown in the interface language on any project page", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await fakeApi(page);
+  let socket: WebSocketRoute | undefined;
+  // A failed project stays failed wherever the user navigates next, so the
+  // reason is served on every project read rather than only on the progress page.
+  await page.route(`**/api/projects/${pid}`, (route) =>
+    route.fulfill({
+      json: {
+        ...project,
+        status: "error",
+        error: "Provider connection failed",
+      },
+    }),
+  );
+  await page.route(`**/api/projects/${pid}/workflow`, (route) =>
+    route.fulfill({
+      json: { ...workflow, status: "failed", run_id: "run-a", progress: null },
+    }),
+  );
+  await page.routeWebSocket("**/ws/projects/*/progress", (ws) => {
+    ws.onMessage(() => { socket = ws; });
+  });
+  await page.goto(`/projects/${pid}`);
+  await expect.poll(() => !!socket).toBe(true);
+  socket!.send(
+    JSON.stringify({
+      kind: "error",
+      project_id: pid,
+      run_id: "run-a",
+      code: "project_busy",
+      // Deliberately not the localized copy: a per-code translation must win,
+      // which is the only thing that distinguishes this from echoing the frame.
+      message: "raw worker text",
+    }),
+  );
+  const banner = page
+    .getByRole("alert")
+    .filter({ hasText: "The project is busy. Try again when the current task finishes." });
+  await expect(banner).toBeVisible();
+  // The frame's own message must not leak through next to the localized copy.
+  await expect(banner).not.toContainText("raw worker text");
+  // The page that never rendered the failure itself must still show it.
+  await page.goto(`/projects/${pid}/glossary`);
+  await expect(
+    page.getByRole("alert").filter({ hasText: "Provider connection failed" }),
+  ).toBeVisible();
 });

@@ -79,6 +79,14 @@ export interface OptionalCapabilities {
     ExportButton: ComponentType;
     /** No exception object or user text crosses this optional observation hook. */
     reportRenderFailure: () => void;
+    /**
+     * Record a defect in data a host delivered, never the payload itself.
+     *
+     * The channel is a fixed name so a native diagnostic log stays free of
+     * translated text, frame contents and user input. Hosts without a
+     * diagnostic sink omit it; the shared UI then reports nothing.
+     */
+    reportDiagnostic?: (channel: string, error: unknown) => void;
   };
   externalCredentials?: {
     MinerU: ComponentType;

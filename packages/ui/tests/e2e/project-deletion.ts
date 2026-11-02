@@ -90,17 +90,36 @@ for (const locale of ["en", "zh-CN"]) {
     });
     await confirm.click();
     await expect(confirm).toBeDisabled();
-    await expect(confirmation.getByRole("button", {
-      name: chinese ? "取消" : "Cancel", exact: true,
-    })).toBeDisabled();
+    // A delete that is already running cannot be recalled, but the dialog is
+    // only a view of it, so dismissing stays available and the label stops
+    // promising a cancel it cannot perform.
+    // The footer action is the one under test; the header also has a Close
+    // control with the same accessible name.
+    const dismiss = confirmation.getByRole("button", {
+      name: chinese ? "关闭" : "Close", exact: true,
+    }).last();
+    await expect(dismiss).toBeEnabled();
+    // Escape must actually close the dialog now, and must not send a second
+    // request for a delete that is still running.
     await page.keyboard.press("Escape");
-    await expect(confirmation).toBeVisible();
-    expect(deleteRequests).toBe(1);
-    releaseFailure();
-    await expect(confirm).toBeEnabled();
-    await expect(page.getByText(chinese ? /删除失败/ : /Could not delete project/)).toBeVisible();
-    await confirm.click();
     await expect(confirmation).toHaveCount(0);
+    expect(deleteRequests).toBe(1);
+    // The delete is still in flight while the dialog is closed, so only one
+    // failure notice may follow and no duplicate request may be sent.
+    releaseFailure();
+    await expect(page.getByText(chinese ? /删除失败/ : /Could not delete project/)).toBeVisible();
+    expect(deleteRequests).toBe(1);
+    // A retry reopens the dialog and sends exactly one more request.
+    await page.getByRole("button", {
+      name: chinese ? `删除项目 ${project.name}` : `Delete project ${project.name}`, exact: true,
+    }).click();
+    const retry = page.getByRole("dialog", {
+      name: chinese ? "删除项目" : "Delete project", exact: true,
+    });
+    await retry.getByRole("button", {
+      name: chinese ? "删除项目" : "Delete project", exact: true,
+    }).click();
+    await expect(retry).toHaveCount(0);
     expect(deleteRequests).toBe(2);
     await expect(page.getByRole("button", {
       name: chinese ? `删除项目 ${other.name}` : `Delete project ${other.name}`, exact: true,

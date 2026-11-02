@@ -43,13 +43,13 @@ Use **Create project** in the shared sidebar to open the centered dialog over th
 
 **Project folder** names where the new project's directory is created, and defaults to a folder beside the installed application (`Wenyi Desktop Data`). Choose **Choose folder** to put this project somewhere else; **Use default** returns to the default location. A folder that cannot hold project data is refused with the reason shown beside the control: the application's own program folder, a parent of it, Wenyi's cache and settings folders, a drive or user folder, and system folders. The choice applies to this project only, and existing projects keep the folder they already have.
 
-Drag in a supported book or choose it with **Browse files**, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost. During upload, source replacement and dialog dismissal are disabled; this is not a task cancellation action. Failed uploads retain the form and source selection; a failed native upload requires re-dropping the file to renew its single-use grant before retrying. Successful creation enters the project overview while parsing or optional preparation continues in the background. Legacy `/projects/new?project=<id>` links retain read-only source preview/resume controls.
+Drag in a supported book or choose it with **Browse files**, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost. During upload, source replacement is locked and **Cancel** becomes **Close**; dismissing stays available but is not a task cancellation action. Failed uploads retain the form and source selection; a failed native upload requires re-dropping the file to renew its single-use grant before retrying. Successful creation enters the project overview while parsing or optional preparation continues in the background. Legacy `/projects/new?project=<id>` links retain read-only source preview/resume controls.
 
 Browser Back can still leave during an upload; it does not cancel the request. The source resource remains available until the request settles, then is released. The project may be created in the background, and completion will not redirect you away from the list.
 
 Once parsing finishes, **Read contents & source** opens the chapter list and original text without waiting for AI preparation. The parsed source remains readable during preparation or after a model failure; title and translation editing require completed initialization. Parsing itself needs no translation-model credentials, although PDF conversion still uses the selected parser service.
 
-Start translation from the project page. Wenyi parses the source, prepares whole-book context, and translates in batches. Progress, usage, and completed chapters are visible in the application; polishing and whole-book review are configurable.
+Start translation from the project page. Wenyi parses the source, prepares whole-book context, and translates in batches. Progress, usage, and completed chapters are visible in the application; polishing and whole-book review are configurable. A failed task shows the reason the run ended beside the last readable stage, and every project page keeps a banner naming the failure. A request that never receives a response fails after its deadline instead of waiting indefinitely, and a progress socket that stays silent for 60 seconds reconnects while the local engine sends a heartbeat every 30 seconds during idle runs.
 
 **Current workflow** directly shows the task type, status, and reported stage in a flat section. There is no nested step checklist or project-report panel. Completed tasks show only their completion status; paused or failed tasks retain the last reported stage when available. Usage, chapter status, and **Read contents & source** remain available.
 
@@ -185,8 +185,9 @@ lock, so an active catalog writer does not block status lookups.
 
 Deleting from the project list opens an in-app confirmation with Cancel focused.
 Prepared projects without active tasks can also be deleted. While a request is
-pending, duplicate submissions are disabled; failures keep the dialog open for
-retry or cancellation.
+pending, duplicate submissions are disabled and the dismiss action is relabelled
+**Close**, because a delete in progress cannot be recalled; failures keep the
+dialog open for retry.
 
 **Deleting a Desktop project is permanent.** The confirmation covers its uploaded
 originals, translations, history, caches, and exports inside the workspace. Files

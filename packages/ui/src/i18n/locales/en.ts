@@ -629,6 +629,7 @@ const en = {
   "settings.sectionPdf": "PDF parsing",
   "settings.sectionAdvanced": "Advanced",
   "settings.credentialsFailed": "Configuration saved, but an API key could not be saved. Save again to retry.",
+  "settings.credentialsFailedNotice": "Some API keys are still unsaved. They stay only for this session until you save the configuration successfully.",
   "providerSettings.connections": "Connections",
   "providerSettings.models": "Models",
   "settings.restoreDefaults": "Restore defaults",
@@ -686,6 +687,7 @@ const en = {
   "error.segmentNotFound": "That paragraph no longer exists.",
   "error.invalidConfiguration": "The configuration is not valid. Check the settings.",
   "error.unsupportedClient": "This client version is not supported. Update Wenyi.",
+  "error.requestTimeout": "The server did not answer in time. Try again.",
 } as const;
 
 export default en;

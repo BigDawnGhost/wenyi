@@ -161,8 +161,10 @@ export default function CreateProjectDialog() {
     project?.status === "error" || project?.status === "paused";
   const filename = file?.name || project?.source_meta?.original_filename;
   const pending = create.isPending || resume.isPending || start.isPending;
+  // Closing never cancels a request that is already in flight. The dialog is
+  // only a view of it, so dismissing stays available and the result still
+  // arrives in the query cache; `mounted` below decides whether to redirect.
   const close = () => {
-    if (pending) return;
     if (location.state?.fromAppNavigation || location.state?.fromProjectList)
       navigate(-1);
     else navigate("/", { replace: true });
@@ -202,8 +204,8 @@ export default function CreateProjectDialog() {
           {tr("createProject.selectSourceAgain")}
         </p>
       )}
-      <Button variant="outline" disabled={pending} onClick={close}>
-        {tr("common.cancel")}
+      <Button variant="outline" onClick={close}>
+        {tr(pending ? "common.close" : "common.cancel")}
       </Button>
       <Button onClick={() => create.mutate()} disabled={createDisabled}>
         {create.isPending ? tr("createProject.uploading") : tr("common.createProject")}
@@ -216,7 +218,6 @@ export default function CreateProjectDialog() {
       open
       title={tr("common.createProject")}
       onClose={close}
-      closeDisabled={pending}
       initialFocus={nameRef}
       returnFocus={() =>
         document.getElementById(location.state?.returnFocusId || "create-project-trigger")
