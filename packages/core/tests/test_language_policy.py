@@ -76,6 +76,40 @@ def test_fingerprints_exclude_export_options_from_paid_phases():
     assert a.to_dict()["fingerprint"] == a.fingerprint
 
 
+@pytest.mark.parametrize("target", ["zh", "en", "zh-Hant"])
+@pytest.mark.parametrize(
+    "phase,fmt,about_page,invalidates",
+    [
+        ("analysis", "", True, False),
+        ("translation", "", True, False),
+        ("review", "", True, False),
+        ("export", "epub", True, True),
+        ("export", "epub", False, False),
+        ("export", "txt", True, False),
+        ("export", "docx", True, False),
+    ],
+)
+def test_about_page_copy_only_invalidates_enabled_epub_exports(
+    monkeypatch, target, phase, fmt, about_page, invalidates
+):
+    from wenyi_core.i18n.policy import resolver
+
+    context = PolicyContext("en", target, phase=phase, format=fmt, about_page=about_page)
+    before = resolve_policy(context)
+    original = resolver.read_text
+
+    def updated_text(path: str) -> str:
+        text = original(path)
+        if path.startswith("export/about."):
+            return text + "\n<!-- Updated project description. -->"
+        return text
+
+    monkeypatch.setattr(resolver, "read_text", updated_text)
+    after = resolve_policy(context)
+    assert (before.fingerprint != after.fingerprint) == invalidates
+    assert (before.semantic_fingerprint != after.semantic_fingerprint) == invalidates
+
+
 def test_sort_uses_stable_ids_and_rejects_invalid_graphs():
     a = OperationSpec("a", "export.text", roles=("target",))
     b = replace(a, id="b", after=("a",))
