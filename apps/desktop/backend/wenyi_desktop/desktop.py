@@ -12,7 +12,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .diagnostics import Reporter, failure_attributes
+from .diagnostics import EngineDiagnostics, Reporter
 
 if TYPE_CHECKING:
     import uvicorn
@@ -78,29 +78,36 @@ def watch_parent(server: uvicorn.Server) -> None:
     watchdog.start()
 
 
-async def serve(workspace: Path, protocol_stream, reporter: Reporter | None = None) -> None:
-    import uvicorn
+async def serve(workspace: Path, protocol_stream, lifecycle: EngineDiagnostics) -> None:
+    with lifecycle.observe("application"):
+        import uvicorn
 
-    from .main import create_app
+        from .main import create_app
 
-    app = create_app(workspace, api_token=os.environ.get("WENYI_API_TOKEN"), diagnostics=reporter)
+        app = create_app(
+            workspace,
+            api_token=os.environ.get("WENYI_API_TOKEN"),
+            diagnostics=lifecycle.reporter,
+            engine_diagnostics=lifecycle,
+        )
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-            listener.bind(("127.0.0.1", 0))
-            port = listener.getsockname()[1]
-            config = uvicorn.Config(
-                LocalBoundary(app, port),
-                host="127.0.0.1",
-                port=port,
-                access_log=False,
-                log_config=None,
-                timeout_graceful_shutdown=25,
-            )
-            server = uvicorn.Server(config)
-            threading.Thread(target=watch_parent, args=(server,), daemon=True).start()
-            task = asyncio.create_task(server.serve(sockets=[listener]))
-            while not server.started and not task.done():
-                await asyncio.sleep(0.01)
+            with lifecycle.observe("listen"):
+                listener.bind(("127.0.0.1", 0))
+                port = listener.getsockname()[1]
+                config = uvicorn.Config(
+                    LocalBoundary(app, port),
+                    host="127.0.0.1",
+                    port=port,
+                    access_log=False,
+                    log_config=None,
+                    timeout_graceful_shutdown=25,
+                )
+                server = uvicorn.Server(config)
+                threading.Thread(target=watch_parent, args=(server,), daemon=True).start()
+                task = asyncio.create_task(server.serve(sockets=[listener]))
+                while not server.started and not task.done():
+                    await asyncio.sleep(0.01)
             if server.started and not server.should_exit:
                 try:
                     ready = (
@@ -108,16 +115,19 @@ async def serve(workspace: Path, protocol_stream, reporter: Reporter | None = No
                         + json.dumps({"protocol": 1, "port": port, "pid": os.getpid()})
                         + "\n"
                     )
-                    if reporter is not None:
-                        reporter.protocol(ready)
+                    if lifecycle.reporter is not None:
+                        lifecycle.reporter.protocol(ready)
                     else:
                         protocol_stream.write(ready)
                         protocol_stream.flush()
+                    lifecycle.ready = True
                 except (BrokenPipeError, OSError):
                     server.should_exit = True
-            await task
+            with lifecycle.observe("running" if lifecycle.ready else "listen"):
+                await task
     finally:
-        app.state.backend.repository.close()
+        with lifecycle.observe("shutdown"):
+            app.state.backend.repository.close()
 
 
 def main() -> None:
@@ -133,15 +143,17 @@ def main() -> None:
     )
     if reporter is not None:
         reporter.emit("engine_bootstrap")
+    lifecycle = EngineDiagnostics(reporter)
     try:
-        asyncio.run(serve(args.data_dir or default_workspace(), protocol_stream, reporter))
-    except Exception as error:
-        if reporter is not None:
-            reporter.emit("engine_bootstrap_failed", **failure_attributes(error))
-        raise
+        with lifecycle.observe("bootstrap"):
+            asyncio.run(serve(args.data_dir or default_workspace(), protocol_stream, lifecycle))
+            # ASGI can consume shutdown failures too. Do not report failure and
+            # then let the interpreter return a misleading successful exit code.
+            if lifecycle.failed:
+                raise SystemExit(lifecycle.exit_code or 1)
     finally:
+        lifecycle.stopped()
         if reporter is not None:
-            reporter.emit("engine_stopped")
             reporter.close()
 
 

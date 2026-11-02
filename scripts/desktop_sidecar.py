@@ -64,37 +64,93 @@ def smoke_test(executable: Path) -> None:
             env[key] = "http://127.0.0.1:1"
         env["NO_PROXY"] = "127.0.0.1,localhost"
         env["WENYI_API_TOKEN"] = token
-        with subprocess.Popen(
-            [str(executable), "--data-dir", str(Path(temporary) / "workspace")],
-            cwd=temporary,
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        ) as child:
-            lines: queue.Queue[str] = queue.Queue()
-            threading.Thread(target=lambda: lines.put(child.stdout.readline()), daemon=True).start()
-            try:
-                line = lines.get(timeout=60)
-                assert line.startswith("WENYI_READY "), "Sidecar failed before ready"
+        env["WENYI_DIAGNOSTICS_PROTOCOL"] = "1"
+        smoke_launch(executable, Path(temporary) / "workspace", env)
+        # A real filesystem error exercises ASGI startup failure in the frozen
+        # engine, without shipping a test-only fault switch or touching user data.
+        blocked = Path(temporary) / "fake-private-workspace"
+        (blocked / ".desktop.lock").mkdir(parents=True)
+        smoke_launch(executable, blocked, env, failed_stage="runtime")
+
+
+def smoke_launch(
+    executable: Path, workspace: Path, env: dict[str, str], *, failed_stage: str | None = None
+) -> None:
+    token = env["WENYI_API_TOKEN"]
+    with subprocess.Popen(
+        [str(executable), "--data-dir", str(workspace)],
+        cwd=workspace.parent,
+        env=env,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        # Match the native parent: diagnosis must work with stderr discarded.
+        stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        text=True,
+    ) as child:
+        lines: queue.Queue[str] = queue.Queue()
+
+        def collect() -> None:
+            while True:
+                line = child.stdout.readline(16 * 1024 + 1)
+                lines.put(line)
+                if not line:
+                    return
+
+        reader = threading.Thread(target=collect, daemon=True)
+        reader.start()
+        observations = []
+        ready_seen = False
+        deadline = time.monotonic() + 60
+        try:
+            while True:
+                line = lines.get(timeout=max(0, deadline - time.monotonic()))
+                if not line:
+                    break
+                assert len(line) <= 16 * 1024, "Oversized sidecar protocol frame"
+                assert token not in line and str(workspace) not in line
+                if line.startswith("WENYI_DIAGNOSTIC "):
+                    observations.append(json.loads(line.removeprefix("WENYI_DIAGNOSTIC ")))
+                    continue
+                assert line.startswith("WENYI_READY "), "Unexpected sidecar protocol frame"
+                assert failed_stage is None and not ready_seen, "Unexpected ready frame"
                 ready = json.loads(line.removeprefix("WENYI_READY "))
                 assert ready["protocol"] == 1 and ready["pid"] == child.pid
-                assert token not in line
-                with urllib.request.urlopen(
-                    f"http://127.0.0.1:{ready['port']}/health", timeout=10
-                ) as response:
+                ready_seen = True
+                base = f"http://127.0.0.1:{ready['port']}"
+                http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+                with http.open(f"{base}/health", timeout=10) as response:
                     assert response.status == 200
-                smoke_parse(f"http://127.0.0.1:{ready['port']}", token)
+                smoke_parse(base, token)
                 child.stdin.write('{"command":"shutdown"}\n')
                 child.stdin.flush()
-                child.wait(timeout=35)
-                assert child.returncode == 0
-            except BaseException:
-                child.kill()
-                child.wait()
-                # Do not echo arbitrary process output or its environment.
-                raise
+                deadline = time.monotonic() + 35
+            child.wait(timeout=5)
+            reader.join(timeout=5)
+            assert observations[0]["event"] == "engine_bootstrap"
+            assert observations[-1]["event"] == "engine_stopped"
+            stopped = observations[-1]["attributes"]
+            assert stopped["exit_code"] == child.returncode
+            failures = [
+                row
+                for row in observations
+                if row["event"] in {"engine_bootstrap_failed", "engine_runtime_failed"}
+            ]
+            if failed_stage is None:
+                assert ready_seen and child.returncode == 0 and not failures
+                assert stopped["reason"] == "completed" and stopped["stage"] == "running"
+            else:
+                assert not ready_seen and child.returncode != 0
+                assert len(failures) == 1
+                assert failures[0]["attributes"]["stage"] == failed_stage
+                assert failures[0]["attributes"]["module"] == "local_runtime"
+                assert failures[0]["attributes"]["line"] > 0
+                assert stopped["reason"] == "failed" and stopped["stage"] == "bootstrap"
+        except BaseException:
+            child.kill()
+            child.wait()
+            # Do not echo arbitrary process output or its environment.
+            raise
 
 
 def smoke_parse(base_url: str, token: str) -> None:
@@ -225,7 +281,10 @@ def build() -> None:
     directory = DESTINATION / "wenyi-engine"
     verify_bundle(directory)
     smoke_test(directory / ("wenyi-engine.exe" if sys.platform == "win32" else "wenyi-engine"))
-    print("Desktop sidecar: metadata, resources, offline TXT parse/preview and shutdown verified.")
+    print(
+        "Desktop sidecar: metadata, resources, diagnostics, offline TXT parse/preview, "
+        "shutdown and startup failure verified."
+    )
 
 
 def main() -> None:
