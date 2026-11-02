@@ -18,6 +18,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use crate::mutex::lock;
 
 pub const MAX_RECORD: usize = 16 * 1024;
 const QUEUE: usize = 4096;
@@ -558,7 +559,7 @@ impl Diagnostics {
     fn with_paths(candidates: Vec<PathBuf>, limits: Limits) -> Self {
         let session = id();
         let store = Arc::new(Mutex::new(Store::new(candidates, session.clone(), limits)));
-        let previous_unclean = store.lock().unwrap().previous_unclean;
+        let previous_unclean = lock(&store).previous_unclean;
         let pending = Arc::new(AtomicUsize::new(0));
         let (sender, receiver) = mpsc::sync_channel::<Record>(QUEUE);
         let target = store.clone();
@@ -1042,7 +1043,7 @@ mod tests {
     #[test]
     fn full_queue_never_blocks_and_reserves_capacity_for_failures() {
         let diagnostics = Diagnostics::new(None);
-        let store = diagnostics.0.store.lock().unwrap();
+        let store = lock(&diagnostics.0.store);
         for _ in 0..QUEUE {
             diagnostics.record(Source::Native, Event::AppStarted, json!({}));
         }
@@ -1114,7 +1115,7 @@ mod tests {
         assert!(!diagnostics.ingest(Source::Frontend, r#"{"event":"engine_failed"}"#));
         assert!(!diagnostics.ingest(Source::Engine, &"x".repeat(MAX_RECORD + 1)));
         diagnostics.drain();
-        let memory = diagnostics.0.store.lock().unwrap().memory.clone();
+        let memory = lock(&diagnostics.0.store).memory.clone();
         let text = serde_json::to_string(&memory).unwrap();
         assert!(!text.contains("fake-secret"));
         assert!(text.contains("429"));
@@ -1125,14 +1126,14 @@ mod tests {
         let diagnostics = Diagnostics::new(None);
         diagnostics.record(Source::Engine, Event::HttpCompleted, json!({}));
         diagnostics.drain();
-        assert!(diagnostics.0.store.lock().unwrap().memory.is_empty());
+        assert!(lock(&diagnostics.0.store).memory.is_empty());
         diagnostics.detail(true);
         assert!(diagnostics.detail_seconds() > 1700);
         for _ in 0..300 {
             diagnostics.record(Source::Engine, Event::HttpCompleted, json!({}));
         }
         diagnostics.drain();
-        assert_eq!(diagnostics.0.store.lock().unwrap().memory.len(), 256);
+        assert_eq!(lock(&diagnostics.0.store).memory.len(), 256);
         diagnostics.detail(false);
         assert_eq!(diagnostics.detail_seconds(), 0);
         assert!(diagnostics.status().degraded);

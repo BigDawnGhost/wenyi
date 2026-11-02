@@ -3,6 +3,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
+use crate::mutex::lock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseAction {
@@ -99,12 +100,12 @@ pub fn recover_if_unreachable(app: &tauri::AppHandle) {
     #[cfg(target_os = "linux")]
     {
         let state = app.state::<std::sync::Arc<std::sync::Mutex<crate::State>>>();
-        let background = state.lock().unwrap().background;
+        let background = lock(&state).background;
         // Run the optional bus probe off the UI thread, only while backgrounded.
         if background && !tray_host_available() {
             let handle = app.clone();
             let _ = app.run_on_main_thread(move || {
-                if handle.state::<std::sync::Arc<std::sync::Mutex<crate::State>>>().lock().unwrap().closing {
+                if lock(&handle.state::<std::sync::Arc<std::sync::Mutex<crate::State>>>()).closing {
                     return;
                 }
                 if let Some(window) = handle.get_webview_window("main") {
@@ -125,7 +126,7 @@ pub fn refresh(app: &tauri::AppHandle) {
         if let (Ok(visible), Ok(minimized)) = (window.is_visible(), window.is_minimized()) {
             let state = app.state::<std::sync::Arc<std::sync::Mutex<crate::State>>>();
             let changed = {
-                let mut state = state.lock().unwrap();
+                let mut state = lock(&state);
                 let background = is_background(visible, minimized);
                 let changed = state.background != background;
                 state.background = background;

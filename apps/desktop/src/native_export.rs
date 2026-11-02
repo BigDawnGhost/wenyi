@@ -14,6 +14,7 @@ use serde_json::Value;
 use tauri::Manager;
 
 use crate::local_connection::Connection;
+use crate::mutex::lock;
 
 type Result<T> = std::result::Result<T, crate::ipc_error::IpcError>;
 const CHUNK: usize = 64 * 1024;
@@ -119,7 +120,7 @@ pub struct Saves(Arc<(Mutex<Activity>, Condvar)>);
 impl Saves {
     #[cfg(test)]
     pub fn source_count(&self) -> usize {
-        self.0 .0.lock().unwrap().sources.len()
+        lock(&self.0.0).sources.len()
     }
 
     /// Reserve protection before POST, including failed or uncertain uploads.
@@ -131,7 +132,7 @@ impl Saves {
             .canonicalize()
             .map_err(|_| "Cannot identify source path.")?
             .join(path.file_name().ok_or("Cannot identify source path.")?);
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0.0);
         let new_identity = !state.sources.contains(&identity);
         let new_alias = !state.aliases.iter().any(|alias| same_alias(alias, &path));
         if (new_identity && state.sources.len() >= MAX_SOURCE_IDENTITIES)
@@ -163,7 +164,7 @@ impl Saves {
     /// with one real identity, the identity cap with no extra aliases.
     #[cfg(test)]
     pub fn prefill_identities(&self, cap: usize) {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0.0);
         // Start well above the real volume and file numbers so a synthetic entry
         // cannot collide with the file the test registers for real.
         let base: u64 = 1 << 40;
@@ -179,7 +180,7 @@ impl Saves {
     /// Fill the alias channel to its cap; see `prefill_identities`.
     #[cfg(test)]
     pub fn prefill_aliases(&self, cap: usize) {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0.0);
         while state.aliases.len() < cap {
             let index = state.aliases.len();
             // A relative name keeps `same_alias` off the filesystem: it only
@@ -191,12 +192,12 @@ impl Saves {
     }
 
     pub fn close(&self) {
-        self.0 .0.lock().unwrap().closing = true;
+        lock(&self.0.0).closing = true;
     }
 
     /// Updating must not interrupt a native dialog, transfer or atomic publish.
     pub fn close_if_idle(&self) -> bool {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0.0);
         if state.closing || state.active != 0 || state.pending != 0 {
             return false;
         }
@@ -205,18 +206,18 @@ impl Saves {
     }
 
     pub fn reopen(&self) {
-        self.0 .0.lock().unwrap().closing = false;
+        lock(&self.0.0).closing = false;
     }
 
     pub fn wait(&self) {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0.0);
         while state.active != 0 {
             state = self.0 .1.wait(state).unwrap();
         }
     }
 
     fn check(&self) -> Result<()> {
-        if self.0 .0.lock().unwrap().closing {
+        if lock(&self.0.0).closing {
             Err(crate::ipc_error::IpcError::new(
                 "export_closing",
                 "Saving stopped because Wenyi is closing.",
@@ -227,7 +228,7 @@ impl Saves {
     }
 
     fn begin(&self) -> Result<Active> {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0.0);
         if state.closing {
             return Err(crate::ipc_error::IpcError::new(
                 "export_closing",
@@ -241,7 +242,7 @@ impl Saves {
     /// Dialogs/planning block installation, but normal quit may cancel them.
     /// Only transfers/publishes need to be drained by `wait`.
     fn reserve(&self) -> Result<Pending> {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0.0);
         if state.closing {
             return Err(crate::ipc_error::IpcError::new(
                 "export_closing",
@@ -253,7 +254,7 @@ impl Saves {
     }
 
     fn protect(&self, path: &Path, roots: &[PathBuf]) -> Result<()> {
-        Self::protect_locked(&self.0 .0.lock().unwrap(), path, roots)
+        Self::protect_locked(&lock(&self.0.0), path, roots)
     }
 
     fn protect_locked(state: &Activity, path: &Path, roots: &[PathBuf]) -> Result<()> {
@@ -300,7 +301,7 @@ impl Saves {
 struct Active(Saves);
 impl Drop for Active {
     fn drop(&mut self) {
-        self.0 .0 .0.lock().unwrap().active -= 1;
+        lock(&self.0.0.0).active -= 1;
         self.0 .0 .1.notify_all();
     }
 }
@@ -308,7 +309,7 @@ impl Drop for Active {
 struct Pending(Saves);
 impl Drop for Pending {
     fn drop(&mut self) {
-        self.0 .0 .0.lock().unwrap().pending -= 1;
+        lock(&self.0.0.0).pending -= 1;
     }
 }
 
@@ -709,7 +710,7 @@ impl Target {
     }
 
     fn validate(&self, saves: &Saves, roots: &[PathBuf]) -> Result<()> {
-        self.validate_locked(&saves.0 .0.lock().unwrap(), roots)
+        self.validate_locked(&lock(&saves.0.0), roots)
     }
 
     fn validate_locked(&self, state: &Activity, roots: &[PathBuf]) -> Result<()> {
@@ -790,7 +791,7 @@ impl Target {
         drop(file);
         // Serialize all final checks and publication with other saves, source
         // reservations and shutdown. Never reacquire this mutex in validation.
-        let state = saves.0 .0.lock().unwrap();
+        let state = lock(&saves.0.0);
         if state.closing {
             return Err(crate::ipc_error::IpcError::new(
                 "export_closing",
@@ -1116,7 +1117,7 @@ async fn save_native(
     }
     let raw = {
         let state = window.state::<Arc<Mutex<crate::State>>>();
-        let state = state.lock().unwrap();
+        let state = lock(&state);
         if state.closing || state.error.is_some() {
             return Err(crate::ipc_error::IpcError::new(
                 "export_engine_unavailable",
@@ -1836,7 +1837,7 @@ mod tests {
             .protect_source(path.clone(), retained.try_clone().unwrap())
             .unwrap();
         saves.protect_source(path.clone(), retained).unwrap();
-        assert_eq!(saves.0 .0.lock().unwrap().sources.len(), 1);
+        assert_eq!(lock(&saves.0.0).sources.len(), 1);
         assert!(Target::new(path.clone(), &saves, &[]).is_err());
         let alias = fixture.0.join("alias.txt");
         std::fs::hard_link(&path, &alias).unwrap();
@@ -2174,7 +2175,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(saves.source_count(), 1);
-        assert_eq!(saves.0 .0.lock().unwrap().aliases.len(), 2);
+        assert_eq!(lock(&saves.0.0).aliases.len(), 2);
         std::fs::remove_file(&second).unwrap();
         std::fs::write(&second, b"replacement").unwrap();
         assert!(Target::new(second, &saves, &[]).is_err());
