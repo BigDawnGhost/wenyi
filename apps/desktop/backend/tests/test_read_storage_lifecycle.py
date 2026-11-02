@@ -25,7 +25,7 @@ def inspected_project(desktop_context, monkeypatch):
             yield pid, client, instances
     finally:
         for instance in instances:
-            instance.close()
+            instance.close_all()
 
 
 @pytest.mark.parametrize(
@@ -54,7 +54,8 @@ def test_inspection_releases_all_storage_handles(inspected_project, path, status
     response = client.get(f"/projects/{pid}{path}")
     assert response.status_code == status, response.text
     assert instances, "The route must actually inspect persisted state"
-    assert all(instance._conn is None for instance in instances)
+    # Request handlers run on other threads; this test's TLS cannot prove they closed.
+    assert all(not instance._connections for instance in instances)
 
 
 @pytest.mark.parametrize("method", ["GET", "POST"])
@@ -73,4 +74,4 @@ def test_read_failure_still_closes_storage(inspected_project, monkeypatch):
     monkeypatch.setattr(SqliteStorage, "all_terms", fail)
     with pytest.raises(OSError, match="Read failed"):
         client.get(f"/projects/{pid}/glossary/terms")
-    assert all(instance._conn is None for instance in instances)
+    assert all(not instance._connections for instance in instances)

@@ -298,6 +298,18 @@ def test_catalog_reads_use_wal_snapshot_while_writer_is_active(backend):
     assert backend._get("projects", pid)["name"] == "uncommitted"
 
 
+def test_job_lookup_reads_committed_snapshot_while_writer_is_active(backend):
+    pid = new_project()
+    identity = backend.create_job(pid, "translation", "task", run_id="run")
+    saved = backend.get_job(identity)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with backend.transaction() as connection:
+            backend._put("jobs", identity, {**saved, "status": "running"}, connection)
+            assert executor.submit(backend.get_job_by_arq_id, "task").result(2) == saved
+            assert executor.submit(backend.get_job_by_arq_id, "missing").result(2) is None
+    assert backend.get_job_by_arq_id("task")["status"] == "running"
+
+
 @pytest.mark.parametrize("recovery", ["explicit", "publish"])
 def test_failed_removal_leaves_retryable_hidden_tombstone(backend, monkeypatch, recovery):
     pid = new_project()

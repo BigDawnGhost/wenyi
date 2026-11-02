@@ -74,9 +74,30 @@ jobs:
       - name: Install build dependencies
         run: python -m pip install ./packages/core ./packages/cli pyinstaller
 
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the wenyi-locks native library
+        shell: bash
+        run: |
+          cargo build --release --manifest-path native/wenyi-locks/Cargo.toml
+          python - <<'PY'
+          import os
+          import sys
+          name = {
+              "win32": "wenyi_locks.dll",
+              "darwin": "libwenyi_locks.dylib",
+          }.get(sys.platform, "libwenyi_locks.so")
+          path = os.path.join("native", "wenyi-locks", "target", "release", name)
+          if not os.path.isfile(path):
+              raise SystemExit(f"Missing {path}; the cargo build above did not run")
+          absolute = os.path.abspath(path)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+              handle.write(f"LOCKS_LIB={absolute}\n")
+          print(f"LOCKS_LIB={absolute}")
+          PY
       - name: Build single-file executable
         run: >
           python -m PyInstaller --name wenyi --onefile --clean --noconfirm
+          --add-binary "${{ env.LOCKS_LIB }}${{ runner.os == 'Windows' && ';' || ':' }}."
           --paths packages/core --paths packages/cli
           --collect-all ebooklib --collect-all bs4 --collect-all lxml
           --collect-all openai --collect-all pydantic --collect-all yaml

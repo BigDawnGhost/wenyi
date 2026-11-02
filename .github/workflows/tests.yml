@@ -42,6 +42,9 @@ jobs:
               - "apps/api/**"
               - "apps/desktop/backend/**"
               - "scripts/**"
+              # The lock crate is a runtime dependency of the Python suite: the
+              # contract test loads it, so a crate change must run the suite.
+              - "native/**"
             # Anything that can affect typecheck, build or the browser specs.
             web:
               - "apps/web/**"
@@ -60,6 +63,9 @@ jobs:
               - "uv.lock"
               - "config.yaml"
               - ".github/workflows/**"
+              # A native build change reaches every job through the shared cache
+              # and the bundled binaries, so it never gets a filtered run.
+              - "native/**"
             # The browser specs exercise the HTTP contract as well as the shared
             # components, so a backend or schema change has to run them.
             e2e:
@@ -180,6 +186,15 @@ jobs:
           uv run --no-sync wenyi --help
       - name: Install workspace
         run: uv sync --locked --all-packages --group dev --python ${{ matrix.python-version }}
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and test the wenyi-locks native library
+        # The lock contract tests exercise both backends; without the crate the
+        # rust parameter would silently skip and the native path would go untested.
+        # The crate's own tests cover what Python cannot see: the platform lock
+        # structures and the handle registry.
+        run: |
+          cargo build --release --manifest-path native/wenyi-locks/Cargo.toml
+          cargo test --manifest-path native/wenyi-locks/Cargo.toml
       - name: Prepare token-budget vocabulary
         run: uv run --no-sync python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
       - name: Python style
@@ -190,6 +205,8 @@ jobs:
       - name: Offline Python regression tests
         # loadgroup keeps tests that share a group on one worker; -n auto sizes
         # to the runner. Both supported interpreters verify the full workspace.
+        env:
+          WENYI_LOCKS_LIB: ${{ github.workspace }}/native/wenyi-locks/target/release/libwenyi_locks.so
         run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration"
       - name: Service integration tests (PostgreSQL and Redis enabled)
         # Two workers bound connections against the shared postgres service.
@@ -199,6 +216,7 @@ jobs:
         # pull request skips because it needs a running Docker daemon.
         env:
           WENYI_TEST_DOCKER: ${{ github.event_name == 'schedule' && '1' || '0' }}
+          WENYI_LOCKS_LIB: ${{ github.workspace }}/native/wenyi-locks/target/release/libwenyi_locks.so
         run: uv run --no-sync pytest -q -n 2 --dist loadgroup --reruns 1 -m integration
       - name: Build distributable packages and verify bundled resources
         if: matrix.python-version == '3.12'

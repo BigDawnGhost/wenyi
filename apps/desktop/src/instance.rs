@@ -14,6 +14,7 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
+use crate::mutex::lock;
 
 const LOCK: &str = ".desktop-instance.lock";
 const ENDPOINT: &str = ".desktop-instance.json";
@@ -116,7 +117,7 @@ pub struct Activation(Arc<Mutex<Dispatch>>);
 impl Activation {
     fn request(&self) -> Reply {
         let handler = {
-            let mut dispatch = self.0.lock().unwrap();
+            let mut dispatch = lock(&self.0);
             match dispatch.handler.clone() {
                 Some(handler) => handler,
                 None => {
@@ -130,7 +131,7 @@ impl Activation {
 
     /// Installing the handler and consuming startup requests must be atomic.
     pub fn ready(&self, handler: Handler) -> bool {
-        let mut dispatch = self.0.lock().unwrap();
+        let mut dispatch = lock(&self.0);
         dispatch.handler = Some(handler);
         std::mem::take(&mut dispatch.pending)
     }
@@ -157,7 +158,7 @@ impl Drop for Instance {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
         // Release the AppHandle captured by the handler before joining the worker.
-        self.activation.0.lock().unwrap().handler = Some(Arc::new(|| Reply::Closing));
+        lock(&self.activation.0).handler = Some(Arc::new(|| Reply::Closing));
         // Wake blocking accept without an idle polling loop.
         let _ = TcpStream::connect_timeout(&self.address, SOCKET_TIMEOUT);
         if let Some(worker) = self.worker.take() {

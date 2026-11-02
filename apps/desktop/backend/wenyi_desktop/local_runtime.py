@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import threading
 import time
 from collections import OrderedDict
@@ -26,6 +25,7 @@ from typing import Any, Iterator
 
 from wenyi_backend.context import BackendContext
 from wenyi_backend.live_statistics import read_live_statistics
+from wenyi_core.storage.locks import FileLockHandle, StorageBusyError
 
 from .diagnostics import Reporter, emit, failure_attributes, scope
 from .local_backend import LocalBackend
@@ -46,48 +46,26 @@ TASK_NAMES = frozenset(
 class WorkspaceLock:
     """Keep one task-owning Desktop process per workspace, including after crashes."""
 
+    _PATH_NAME = ".desktop.lock"
+
     def __init__(self, workspace: Path):
-        self.path = workspace / ".desktop.lock"
-        self._handle = None
+        self.path = workspace / self._PATH_NAME
+        self._lock: FileLockHandle | None = None
 
     def acquire(self) -> None:
-        handle = self.path.open("a+b")
+        lock = FileLockHandle(str(self.path))
         try:
-            if os.name == "nt":  # pragma: no cover - Windows-specific
-                import msvcrt
-
-                if handle.seek(0, os.SEEK_END) == 0:
-                    handle.write(b"\0")
-                    handle.flush()
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as error:
-            handle.close()
+            lock.acquire(blocking=False)
+        except (StorageBusyError, OSError) as error:
             raise RuntimeError(
                 "This Desktop workspace is already open or cannot be locked."
             ) from error
-        self._handle = handle
+        self._lock = lock
 
     def close(self) -> None:
-        handle, self._handle = self._handle, None
-        if handle is None:
-            return
-        try:
-            if os.name == "nt":  # pragma: no cover - Windows-specific
-                import msvcrt
-
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        finally:
-            handle.close()
+        lock, self._lock = self._lock, None
+        if lock is not None:
+            lock.release()
 
 
 class ProgressHub:

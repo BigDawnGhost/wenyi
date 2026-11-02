@@ -14,6 +14,8 @@ use serde_json::Value;
 use tauri::Manager;
 
 use crate::local_connection::Connection;
+use crate::mutex::lock;
+use crate::publish::Temporary;
 
 type Result<T> = std::result::Result<T, crate::ipc_error::IpcError>;
 const CHUNK: usize = 64 * 1024;
@@ -119,7 +121,7 @@ pub struct Saves(Arc<(Mutex<Activity>, Condvar)>);
 impl Saves {
     #[cfg(test)]
     pub fn source_count(&self) -> usize {
-        self.0 .0.lock().unwrap().sources.len()
+        lock(&self.0 .0).sources.len()
     }
 
     /// Reserve protection before POST, including failed or uncertain uploads.
@@ -131,7 +133,7 @@ impl Saves {
             .canonicalize()
             .map_err(|_| "Cannot identify source path.")?
             .join(path.file_name().ok_or("Cannot identify source path.")?);
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0 .0);
         let new_identity = !state.sources.contains(&identity);
         let new_alias = !state.aliases.iter().any(|alias| same_alias(alias, &path));
         if (new_identity && state.sources.len() >= MAX_SOURCE_IDENTITIES)
@@ -163,7 +165,7 @@ impl Saves {
     /// with one real identity, the identity cap with no extra aliases.
     #[cfg(test)]
     pub fn prefill_identities(&self, cap: usize) {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0 .0);
         // Start well above the real volume and file numbers so a synthetic entry
         // cannot collide with the file the test registers for real.
         let base: u64 = 1 << 40;
@@ -179,7 +181,7 @@ impl Saves {
     /// Fill the alias channel to its cap; see `prefill_identities`.
     #[cfg(test)]
     pub fn prefill_aliases(&self, cap: usize) {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0 .0);
         while state.aliases.len() < cap {
             let index = state.aliases.len();
             // A relative name keeps `same_alias` off the filesystem: it only
@@ -191,12 +193,12 @@ impl Saves {
     }
 
     pub fn close(&self) {
-        self.0 .0.lock().unwrap().closing = true;
+        lock(&self.0 .0).closing = true;
     }
 
     /// Updating must not interrupt a native dialog, transfer or atomic publish.
     pub fn close_if_idle(&self) -> bool {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0 .0);
         if state.closing || state.active != 0 || state.pending != 0 {
             return false;
         }
@@ -205,18 +207,18 @@ impl Saves {
     }
 
     pub fn reopen(&self) {
-        self.0 .0.lock().unwrap().closing = false;
+        lock(&self.0 .0).closing = false;
     }
 
     pub fn wait(&self) {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0 .0);
         while state.active != 0 {
             state = self.0 .1.wait(state).unwrap();
         }
     }
 
     fn check(&self) -> Result<()> {
-        if self.0 .0.lock().unwrap().closing {
+        if lock(&self.0 .0).closing {
             Err(crate::ipc_error::IpcError::new(
                 "export_closing",
                 "Saving stopped because Wenyi is closing.",
@@ -227,7 +229,7 @@ impl Saves {
     }
 
     fn begin(&self) -> Result<Active> {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0 .0);
         if state.closing {
             return Err(crate::ipc_error::IpcError::new(
                 "export_closing",
@@ -241,7 +243,7 @@ impl Saves {
     /// Dialogs/planning block installation, but normal quit may cancel them.
     /// Only transfers/publishes need to be drained by `wait`.
     fn reserve(&self) -> Result<Pending> {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0 .0);
         if state.closing {
             return Err(crate::ipc_error::IpcError::new(
                 "export_closing",
@@ -253,7 +255,7 @@ impl Saves {
     }
 
     fn protect(&self, path: &Path, roots: &[PathBuf]) -> Result<()> {
-        Self::protect_locked(&self.0 .0.lock().unwrap(), path, roots)
+        Self::protect_locked(&lock(&self.0 .0), path, roots)
     }
 
     fn protect_locked(state: &Activity, path: &Path, roots: &[PathBuf]) -> Result<()> {
@@ -300,7 +302,7 @@ impl Saves {
 struct Active(Saves);
 impl Drop for Active {
     fn drop(&mut self) {
-        self.0 .0 .0.lock().unwrap().active -= 1;
+        lock(&self.0 .0 .0).active -= 1;
         self.0 .0 .1.notify_all();
     }
 }
@@ -308,7 +310,7 @@ impl Drop for Active {
 struct Pending(Saves);
 impl Drop for Pending {
     fn drop(&mut self) {
-        self.0 .0 .0.lock().unwrap().pending -= 1;
+        lock(&self.0 .0 .0).pending -= 1;
     }
 }
 
@@ -708,8 +710,21 @@ impl Target {
         }
     }
 
+    /// Publish a staged sibling, refusing to replace an unconfirmed file.
+    fn publish(&self, temporary: &str) -> std::io::Result<()> {
+        crate::publish::publish_new(
+            #[cfg(not(windows))]
+            &self.dir,
+            #[cfg(not(windows))]
+            &self.name,
+            #[cfg(windows)]
+            &self.path,
+            temporary,
+        )
+    }
+
     fn validate(&self, saves: &Saves, roots: &[PathBuf]) -> Result<()> {
-        self.validate_locked(&saves.0 .0.lock().unwrap(), roots)
+        self.validate_locked(&lock(&saves.0 .0), roots)
     }
 
     fn validate_locked(&self, state: &Activity, roots: &[PathBuf]) -> Result<()> {
@@ -790,7 +805,7 @@ impl Target {
         drop(file);
         // Serialize all final checks and publication with other saves, source
         // reservations and shutdown. Never reacquire this mutex in validation.
-        let state = saves.0 .0.lock().unwrap();
+        let state = lock(&saves.0 .0);
         if state.closing {
             return Err(crate::ipc_error::IpcError::new(
                 "export_closing",
@@ -813,79 +828,16 @@ impl Target {
         // process can still replace an entry after inspection. New destinations
         // use no-replace publication; no exchange-and-rollback is attempted.
         if self.existing.is_none() {
-            self.publish_new(&temporary.name)
-                .map_err(|_| "Cannot publish without replacing another file. Choose a different destination or filesystem.")?;
+            self.publish(&temporary.name).map_err(|_| {
+                "Cannot publish without replacing another file. \
+                 Choose a different destination or filesystem."
+            })?;
         } else {
             self.dir
                 .rename(&temporary.name, &self.dir, &self.name)
                 .map_err(|_| "Cannot publish export; the destination was not changed.")?;
         }
         Ok(())
-    }
-
-    fn publish_new(&self, temporary: &str) -> std::io::Result<()> {
-        // No check-then-overwriting-rename fallback: a file appearing after the
-        // confirmation/validation must remain untouched, including on FAT/exFAT.
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        {
-            use std::{
-                ffi::CString,
-                os::unix::{ffi::OsStrExt, io::AsRawFd},
-            };
-            let from = CString::new(temporary)?;
-            let to = CString::new(self.name.as_os_str().as_bytes())?;
-            let directory = self.dir.as_raw_fd();
-            #[cfg(target_os = "linux")]
-            let result = unsafe {
-                libc::renameat2(
-                    directory,
-                    from.as_ptr(),
-                    directory,
-                    to.as_ptr(),
-                    libc::RENAME_NOREPLACE,
-                )
-            };
-            #[cfg(target_os = "macos")]
-            let result = unsafe {
-                libc::renameatx_np(
-                    directory,
-                    from.as_ptr(),
-                    directory,
-                    to.as_ptr(),
-                    libc::RENAME_EXCL,
-                )
-            };
-            if result != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::ffi::OsStrExt;
-            use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
-            let from: Vec<u16> = self
-                .path
-                .parent()
-                .unwrap()
-                .join(temporary)
-                .as_os_str()
-                .encode_wide()
-                .chain(Some(0))
-                .collect();
-            let to: Vec<u16> = self.path.as_os_str().encode_wide().chain(Some(0)).collect();
-            // Deliberately omit MOVEFILE_REPLACE_EXISTING and COPY_ALLOWED.
-            let result = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) };
-            if result == 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-        {
-            // Safe fallback on other targets, without overwriting an unconfirmed file.
-            self.dir.hard_link(temporary, &self.dir, &self.name)
-        }
     }
 }
 
@@ -921,16 +873,6 @@ fn pin_windows_parents(parent: &Path) -> Result<Vec<File>> {
             Ok(file)
         })
         .collect()
-}
-
-struct Temporary<'a> {
-    dir: &'a Dir,
-    name: String,
-}
-impl Drop for Temporary<'_> {
-    fn drop(&mut self) {
-        let _ = self.dir.remove_file(&self.name);
-    }
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -1116,7 +1058,7 @@ async fn save_native(
     }
     let raw = {
         let state = window.state::<Arc<Mutex<crate::State>>>();
-        let state = state.lock().unwrap();
+        let state = lock(&state);
         if state.closing || state.error.is_some() {
             return Err(crate::ipc_error::IpcError::new(
                 "export_engine_unavailable",
@@ -1836,7 +1778,7 @@ mod tests {
             .protect_source(path.clone(), retained.try_clone().unwrap())
             .unwrap();
         saves.protect_source(path.clone(), retained).unwrap();
-        assert_eq!(saves.0 .0.lock().unwrap().sources.len(), 1);
+        assert_eq!(lock(&saves.0 .0).sources.len(), 1);
         assert!(Target::new(path.clone(), &saves, &[]).is_err());
         let alias = fixture.0.join("alias.txt");
         std::fs::hard_link(&path, &alias).unwrap();
@@ -1981,7 +1923,7 @@ mod tests {
         let target = Target::new(path.clone(), &saves, &[]).unwrap();
         fixture.file("temporary", b"complete");
         std::fs::write(&path, b"arrived later").unwrap();
-        assert!(target.publish_new("temporary").is_err());
+        assert!(target.publish("temporary").is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"arrived later");
         assert_eq!(
             std::fs::read(fixture.0.join("temporary")).unwrap(),
@@ -1989,7 +1931,7 @@ mod tests {
         );
         let new = fixture.0.join("other.txt");
         let target = Target::new(new.clone(), &saves, &[]).unwrap();
-        target.publish_new("temporary").unwrap();
+        target.publish("temporary").unwrap();
         assert_eq!(std::fs::read(new).unwrap(), b"complete");
     }
 
@@ -2173,7 +2115,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(saves.source_count(), 1);
-        assert_eq!(saves.0 .0.lock().unwrap().aliases.len(), 2);
+        assert_eq!(lock(&saves.0 .0).aliases.len(), 2);
         std::fs::remove_file(&second).unwrap();
         std::fs::write(&second, b"replacement").unwrap();
         assert!(Target::new(second, &saves, &[]).is_err());

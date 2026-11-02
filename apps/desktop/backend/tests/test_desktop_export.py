@@ -139,7 +139,7 @@ def test_pdf_plan_and_format_choices_follow_saved_babeldoc_state(desktop_exports
         assert plan.json()["request"]["format"] == "pdf"
         assert "pdf_engine" not in plan.json()["request"]
     else:
-        assert "PDF export is only available for BabelDOC" in plan.json()["detail"]
+        assert "PDF export is only available for BabelDOC" in plan.json()["message"]
         request = client.post(f"/projects/{pid}/exports", json={"format": "pdf"})
         assert request.status_code == 422, request.text
     assert (backend.list_exports(pid), backend.all_jobs()) == before

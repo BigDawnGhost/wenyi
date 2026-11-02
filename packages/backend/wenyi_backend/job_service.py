@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from wenyi_core.config import Config
 
 from .context import BackendStorage
+from .errors import QUEUE_UNAVAILABLE, ApiError
 from .ports.jobs import JobAdmission
 from .ports.projects import ProjectReader
 from .project_service import config_document, project_write
@@ -70,5 +71,7 @@ async def start_job(
                 raise RuntimeError("The queue did not accept this task")
         except Exception as error:
             jobs.fail_admission(db_id, project["status"], str(error))
-            raise HTTPException(503, "Task queue is unavailable; retry the operation") from error
+            raise ApiError(
+                QUEUE_UNAVAILABLE, 503, "Task queue is unavailable; retry the operation"
+            ) from error
     return {"job_id": run_id, "project_id": pid, "kind": kind}

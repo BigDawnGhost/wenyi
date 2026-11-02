@@ -29,3 +29,15 @@ class WenyiError(Exception):
 
     def __str__(self) -> str:
         return self.message
+
+
+class ArtifactCorrupt(WenyiError):
+    """A stored artifact exists but cannot be decoded.
+
+    Corruption is never reported as a missing key: callers treat a missing
+    artifact as "recompute this", and for a paid model product that silently
+    bills the user twice. Callers let this propagate so a person can decide
+    whether to delete the key and rerun.
+    """
+
+    code = "artifact_corrupt"

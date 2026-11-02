@@ -8,9 +8,11 @@ mod graphics;
 mod instance;
 mod ipc_error;
 mod local_connection;
+mod mutex;
 mod native_drop;
 mod native_export;
 mod process;
+mod publish;
 mod updates;
 
 use std::sync::{
@@ -18,6 +20,7 @@ use std::sync::{
     Arc, Mutex,
 };
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use crate::mutex::lock;
 
 fn trusted(url: &tauri::Url) -> bool {
     url.username().is_empty()
@@ -76,7 +79,7 @@ fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Res
     let diagnostics = app.state::<diagnostics::Diagnostics>();
     diagnostics.record(diagnostics::Source::Native, diagnostics::Event::EngineSpawned, serde_json::json!({}));
     let ready = {
-        let mut owner = engine.child.lock().unwrap();
+        let mut owner = lock(&engine.child);
         if engine.closed.load(Ordering::SeqCst)
             || (!recovery && engine.closing.load(Ordering::SeqCst))
         {
@@ -90,12 +93,12 @@ fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Res
         Ok(Ok(connection)) => {
             diagnostics.record(diagnostics::Source::Native, diagnostics::Event::EngineReady, serde_json::json!({}));
             let state = app.state::<Arc<Mutex<State>>>();
-            let mut state = state.lock().unwrap();
+            let mut state = lock(&state);
             state.connected(connection);
             Ok(())
         }
         _ => {
-            if let Some(mut backend) = engine.child.lock().unwrap().take() {
+            if let Some(mut backend) = lock(&engine.child).take() {
                 backend.shutdown();
             }
             Err("The local engine did not become ready. Quit and reopen Wenyi to retry.")
@@ -110,7 +113,7 @@ fn begin_shutdown(explicit_quit: bool, closing: &AtomicBool) -> bool {
 fn publish(app: &tauri::AppHandle, state: &Mutex<State>) {
     if let Some(window) = app.get_webview_window("main") {
         if window.url().is_ok_and(|url| trusted(&url)) {
-            let _ = window.eval(state.lock().unwrap().script());
+            let _ = window.eval(lock(state).script());
         }
     }
 }
@@ -118,14 +121,14 @@ fn publish(app: &tauri::AppHandle, state: &Mutex<State>) {
 fn publish_background(app: &tauri::AppHandle, state: &Mutex<State>) {
     if let Some(window) = app.get_webview_window("main") {
         if window.url().is_ok_and(|url| trusted(&url)) {
-            let _ = window.eval(state.lock().unwrap().background_script());
+            let _ = window.eval(lock(state).background_script());
         }
     }
 }
 
 fn fail(app: &tauri::AppHandle, state: &Mutex<State>, error: &'static str) {
     app.state::<diagnostics::Diagnostics>().record(diagnostics::Source::Native, diagnostics::Event::EngineFailed, serde_json::json!({}));
-    state.lock().unwrap().error = Some(error);
+    lock(state).error = Some(error);
     publish(app, state);
 }
 
@@ -274,14 +277,14 @@ fn main() {
             let reload_state = startup_state.clone();
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Wenyi").inner_size(1280.0, 850.0).min_inner_size(800.0, 600.0)
-                .initialization_script(startup_state.lock().unwrap().script())
+                .initialization_script(lock(&startup_state).script())
                 .on_navigation(trusted)
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                 .on_page_load(move |window, payload| {
                     if trusted(payload.url()) {
                         window.state::<native_drop::Grants>().clear();
                         background::refresh(window.app_handle());
-                        let _ = window.eval(reload_state.lock().unwrap().script());
+                        let _ = window.eval(lock(&reload_state).script());
                     }
                 })
                 .build()?;
@@ -310,7 +313,7 @@ fn main() {
                         health_ticks = 0;
                         background::recover_if_unreachable(&monitor_handle);
                     }
-                    if !reported_exit && monitor_engine.child.lock().unwrap().as_mut().is_some_and(|backend| backend.exited()) {
+                    if !reported_exit && lock(&monitor_engine.child).as_mut().is_some_and(|backend| backend.exited()) {
                         reported_exit = true;
                         fail(&monitor_handle, &monitor_state, "The local engine stopped unexpectedly. Quit and reopen Wenyi to recover saved work.");
                     }
@@ -371,14 +374,14 @@ fn main() {
         if begin_shutdown(requested, &closing) {
             handle.state::<native_drop::Grants>().clear();
             handle.state::<native_export::Saves>().close();
-            state.lock().unwrap().closing = true;
+            lock(&state).closing = true;
             publish(handle, &state);
             let child = child.clone();
             let closed = closed.clone();
             let handle = handle.clone();
             std::thread::spawn(move || {
                 handle.state::<native_export::Saves>().wait();
-                if let Some(mut backend) = child.lock().unwrap().take() {
+                if let Some(mut backend) = lock(&child).take() {
                     backend.shutdown();
                 }
                 let diagnostics = handle.state::<diagnostics::Diagnostics>();

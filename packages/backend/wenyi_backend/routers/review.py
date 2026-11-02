@@ -135,7 +135,7 @@ def segment_history(pid: str, ci: int, seg_idx: int) -> list[dict]:
     try:
         return storage.load_segment_history(ci, seg_idx)
     except KeyError:
-        raise HTTPException(404, "segment not found") from None
+        raise ApiError(SEGMENT_NOT_FOUND, 404, "segment not found") from None
     finally:
         storage.close()
 

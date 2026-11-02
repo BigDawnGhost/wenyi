@@ -33,7 +33,9 @@ export type ApiFailure = Error & {
 };
 
 export function isApiFailure(error: unknown): error is ApiFailure {
-  return error instanceof Error;
+  // A real envelope carries the HTTP status; a plain Error does not, and must
+  // keep its own message instead of being treated as a failed request.
+  return error instanceof Error && typeof (error as ApiFailure).status === "number";
 }
 
 /**
@@ -47,10 +49,11 @@ export function errorMessage(
   error: unknown,
   translate: (key: MessageKey, values?: Record<string, unknown>) => string,
 ): string {
-  const failure = isApiFailure(error) ? error : undefined;
-  const key = failure?.code ? errorCodeMessages[failure.code] : undefined;
-  if (key) return translate(key);
-  if (failure?.detail) return failure.detail;
-  if (failure?.message) return failure.message;
-  return String(error);
+  if (isApiFailure(error)) {
+    const key = error.code ? errorCodeMessages[error.code] : undefined;
+    if (key) return translate(key);
+    if (error.detail) return error.detail;
+    return error.message;
+  }
+  return error instanceof Error ? error.message : String(error);
 }

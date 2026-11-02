@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from contextlib import closing
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
+from ..errors import CHAPTER_NOT_FOUND, ApiError
 from ..schemas import AnalysisOut, AnalysisUpdate, DigestUpdate
 from .dependencies import project_write, require_project, storage_for
 
@@ -43,7 +44,7 @@ def update_chapter_digest(pid: str, ci: int, body: DigestUpdate) -> dict:
         try:
             chapter = storage.load_chapter(ci)
         except KeyError:
-            raise HTTPException(404, "chapter not found") from None
+            raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found") from None
         chapter.meta["source_digest"] = body.digest
         storage.save_chapter(chapter)
         storage.log_event("chapter_digest_edited", chapter=ci)

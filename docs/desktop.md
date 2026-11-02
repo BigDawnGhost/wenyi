@@ -117,6 +117,9 @@ The default Desktop workspace is:
 
 The workspace contains a SQLite catalog, per-project SQLite state, uploaded originals, parse caches, and generated exports. Keep the entire workspace when backing up; stop Desktop before taking a filesystem backup. Do not copy only a live SQLite database while omitting its WAL.
 
+Job-status polling reads committed catalog snapshots without reserving a write
+lock, so an active catalog writer does not block status lookups.
+
 Deleting from the project list opens an in-app confirmation with Cancel focused.
 Prepared projects without active tasks can also be deleted. While a request is
 pending, duplicate submissions are disabled; failures keep the dialog open for
@@ -178,7 +181,7 @@ Build a native release on the target platform with:
 pnpm desktop:build
 ```
 
-The build freezes the Python engine as an onedir sidecar, then bundles it with the UI and native executable. Onedir avoids unpacking the entire runtime on every launch. Installers, signing, and platform-specific runtime dependencies must be verified for each release; a successful Linux build is not evidence of Windows/macOS validation.
+The build freezes the Python engine as an onedir sidecar, then bundles it with the UI and native executable. Onedir avoids unpacking the entire runtime on every launch. The sidecar bundles `wenyi_locks` from `native/wenyi-locks`; build it first with `cargo build --release --manifest-path native/wenyi-locks/Cargo.toml`. A plain wheel install carries no native library and falls back to the Python lock backend, and `test_locks_contract.py` pins both backends to the same behaviour. Installers, signing, and platform-specific runtime dependencies must be verified for each release; a successful Linux build is not evidence of Windows/macOS validation.
 
 macOS packages are built separately on Apple Silicon and Intel runners. When
 building locally, use a native Python interpreter and Rust toolchain matching

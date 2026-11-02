@@ -6,6 +6,7 @@ from pathlib import Path, PureWindowsPath
 from types import SimpleNamespace
 
 import pytest
+from wenyi_core.errors import ArtifactCorrupt, WenyiError
 from wenyi_core.storage.artifacts import FileArtifacts
 
 LONG_PREFIX = "precision/" + "a" * 100 + "/" + "b" * 100 + "/" + "c" * 50 + "/"
@@ -225,3 +226,23 @@ def test_artifact_listing_keeps_prefix_semantics(tmp_path):
     assert storage.list_artifacts("reviews/review-") == sorted(keys[:2])
     assert storage.list_artifacts("reviews/review-a/manifest.json") == [keys[1]]
     assert storage.list_artifacts("reviews/missing/") == []
+
+
+def test_corrupt_artifact_raises_instead_of_reading_as_missing(tmp_path):
+    """Corruption must surface, never masquerade as a cache miss.
+
+    A cache miss means recompute, and recomputing a paid model product bills
+    the user again. Corrupt data has to be visible so a person can decide.
+    """
+    artifacts = FileArtifacts(str(tmp_path))
+    artifacts.write_artifact("precision/ch0.json", {"targets": ["a"]})
+
+    assert artifacts.read_artifact("precision/missing.json") is None
+
+    path = Path(tmp_path) / "precision" / "ch0.json"
+    path.write_text('{"targets": ["a"', encoding="utf-8")
+
+    with pytest.raises(ArtifactCorrupt) as error:
+        artifacts.read_artifact("precision/ch0.json")
+    assert isinstance(error.value, WenyiError)
+    assert error.value.code == "artifact_corrupt"

@@ -392,6 +392,8 @@ Each completed translation batch is persisted immediately. When polishing is ena
 
 On Windows, local JSON state reads/writes and artifact access use extended-length drive and UNC paths. Artifact keys remain relative to the run directory, and listings and resume operations retain portable `/`-separated keys. This does not guarantee arbitrarily long path support across all CLI operations or dependencies.
 
+Local workflow lock waits can be interrupted with Ctrl+C with either the native or Python lock backend. SQLite run cleanup waits for active read snapshots before closing connections; surviving worker threads reopen their connections on the next operation rather than reusing closed handles.
+
 ## Model registration and usage
 
 All model calls use stable operation IDs from `llm/operations.py`; `llm/registry.py` registers provider adapters. Runtime owns one routed client, reusing SDK connections and sharing invocation concurrency, quotas and usage. Agents select no provider or tier; Orchestrator retains only assembly and workflow routing.
@@ -399,3 +401,5 @@ All model calls use stable operation IDs from `llm/operations.py`; `llm/registry
 To add a model operation, register an `OperationSpec` with its ID, default tier or inherited operation, workflow flags and protocol version, then call `complete(..., operation="domain.operation")` in the domain service. Operations do not impose their own output-token caps; use explicit model profiles when a cap is needed. Validation, CLI previews and inference fingerprints read the same registry. To add a provider, implement its options, request builder, usage normalization and `ProviderAdapter` under `llm/providers/`, then register a `ProviderSpec`. Keep SDK initialization lazy and SDK retries disabled. Change the relevant protocol version when request semantics change, and cover requests, usage and resume behavior with offline tests. Registries are immutable after startup.
 
 Review compares the effective inference identity of reachable operations. Model, endpoint or option changes create a new Review, while unrelated routes or concurrency changes preserve caches. Pending Autofix publication takes priority; evidence traces are never replayed under another model. Book and Review ledgers journal their snapshots in `usage-pending.json` before updating each `usage.json`, allowing idempotent recovery.
+
+Usage flushing serializes recovery, baseline reads and journal preparation under the state lock. On SQL backends, that transaction commits before the in-memory usage checkpoint advances; publication runs in a separate short transaction. A publication or event-write failure therefore leaves a committed journal for retry, without losing or counting the same increment twice. Concurrent flushes recover any previous journal before preparing their own.

@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from wenyi_backend.context import current_context
+from wenyi_backend.errors import EXPORT_NOT_FOUND, SOURCE_NOT_READY, ApiError
 from wenyi_backend.export_plan import export_filename, resolve_export
 from wenyi_backend.export_response import ExportResponse
 from wenyi_backend.routers.dependencies import effective_config, require_project
@@ -50,7 +51,7 @@ def plan_export(pid: str, body: ExportRequest) -> NativeExportPlan:
     _backend()
     project = require_project(pid)
     if not project.get("initialized"):
-        raise HTTPException(409, "Prepare or translate the source before exporting")
+        raise ApiError(SOURCE_NOT_READY, 409, "Prepare or translate the source before exporting")
     store = _backend().storage_for(pid, create=False)
     try:
         fmt, options = resolve_export(project, store.load_manifest(), body)
@@ -69,7 +70,7 @@ def plan_history(pid: str, export_id: int) -> NativeExportPlan:
     try:
         stream, file = backend.open_export(pid, export_id)
     except FileNotFoundError as error:
-        raise HTTPException(404, "Completed export not found") from error
+        raise ApiError(EXPORT_NOT_FOUND, 404, "Completed export not found") from error
     with stream:
         return _plan(file.name, file.suffix.lstrip("."))
 
@@ -81,7 +82,7 @@ def save_content(pid: str, export_id: int) -> ExportResponse:
     try:
         stream, _ = backend.open_export(pid, export_id, bundle_html=True)
     except FileNotFoundError as error:
-        raise HTTPException(404, "Completed export not found") from error
+        raise ApiError(EXPORT_NOT_FOUND, 404, "Completed export not found") from error
     except (OSError, ValueError) as error:
         raise HTTPException(409, "Export assets changed or contain unsafe paths") from error
 

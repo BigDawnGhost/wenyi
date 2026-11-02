@@ -13,6 +13,7 @@ use tauri_plugin_updater::{Update, UpdaterExt};
 use crate::{
     ipc_error::IpcError, local_connection::Connection, native_export::Saves, Engine, State,
 };
+use crate::mutex::lock;
 
 const MANIFEST: &str = "https://github.com/BigDawnGhost/wenyi/releases/latest/download/latest.json";
 const RELEASE_API: &str = "https://api.github.com/repos/BigDawnGhost/wenyi/releases/latest";
@@ -128,7 +129,7 @@ fn trusted(window: &tauri::WebviewWindow) -> Result<()> {
 #[tauri::command]
 pub fn desktop_update_status(window: tauri::WebviewWindow) -> Result<Snapshot> {
     trusted(&window)?;
-    Ok(window.state::<Updates>().0.lock().unwrap().snapshot.clone())
+    Ok(lock(&window.state::<Updates>().0).snapshot.clone())
 }
 
 fn release_metadata(
@@ -181,6 +182,9 @@ fn release_metadata(
 fn manual_check() -> Result<Option<(String, String)>> {
     let client = reqwest::blocking::Client::builder()
         .user_agent(concat!("Wenyi Desktop/", env!("WENYI_DESKTOP_VERSION")))
+        // The release asset list is checked against a fixed host afterwards, so a
+        // redirect must not be followed first: it would move the check elsewhere.
+        .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
         .build()
@@ -248,7 +252,7 @@ fn begin_check(state: &mut UpdateState) -> Result<()> {
 fn start_check(app: &tauri::AppHandle) -> Result<()> {
     let automatic = {
         let updates = app.state::<Updates>();
-        let mut state = updates.0.lock().unwrap();
+        let mut state = lock(&updates.0);
         begin_check(&mut state)?;
         state.snapshot.mode == Mode::Automatic
     };
@@ -302,7 +306,7 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
                 .map(|release| (release, None))
         };
         let updates = app.state::<Updates>();
-        let mut state = updates.0.lock().unwrap();
+        let mut state = lock(&updates.0);
         match checked {
             Ok((release, update)) => {
                 state.update = update;
@@ -331,7 +335,7 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
 }
 
 pub fn check_on_startup(app: &tauri::AppHandle) {
-    if app.state::<Updates>().0.lock().unwrap().snapshot.mode == Mode::Automatic {
+    if lock(&app.state::<Updates>().0).snapshot.mode == Mode::Automatic {
         let _ = start_check(app);
     }
 }
@@ -347,7 +351,7 @@ pub fn desktop_update_download(window: tauri::WebviewWindow) -> Result<()> {
     trusted(&window)?;
     let mut update = {
         let updates = window.state::<Updates>();
-        let mut state = updates.0.lock().unwrap();
+        let mut state = lock(&updates.0);
         if state.snapshot.phase.busy() {
             return Err(IpcError::new(
                 "update_busy",
@@ -378,7 +382,7 @@ pub fn desktop_update_download(window: tauri::WebviewWindow) -> Result<()> {
             .download(
                 move |chunk, total| {
                     let updates = progress.state::<Updates>();
-                    let mut state = updates.0.lock().unwrap();
+                    let mut state = lock(&updates.0);
                     state.snapshot.downloaded += chunk as u64;
                     state.snapshot.total = total;
                 },
@@ -386,7 +390,7 @@ pub fn desktop_update_download(window: tauri::WebviewWindow) -> Result<()> {
             )
             .await;
         let updates = app.state::<Updates>();
-        let mut state = updates.0.lock().unwrap();
+        let mut state = lock(&updates.0);
         match downloaded {
             Ok(bytes) => {
                 state.bytes = Some(Arc::new(bytes));
@@ -438,7 +442,7 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
     let engine = app.state::<Engine>();
     let state = app.state::<Arc<Mutex<State>>>();
     let raw = {
-        let state = state.lock().unwrap();
+        let state = lock(&state);
         if state.closing || state.error.is_some() {
             return Err(IpcError::new(
                 "update_unavailable",
@@ -466,28 +470,28 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
             "Wenyi is busy. Try again when the current task finishes.",
         ));
     }
-    state.lock().unwrap().closing = true;
+    lock(&state).closing = true;
     crate::publish(app, &state);
     if let Err(error) = prepare_engine(&connection) {
         // A timed-out response may still have closed admission on the engine.
         cancel_prepare(&connection);
-        state.lock().unwrap().closing = false;
+        lock(&state).closing = false;
         saves.reopen();
         engine.closing.store(false, Ordering::SeqCst);
         crate::publish(app, &state);
         return Err(error);
     }
     app.state::<crate::native_drop::Grants>().clear();
-    if let Some(mut backend) = engine.child.lock().unwrap().take() {
+    if let Some(mut backend) = lock(&engine.child).take() {
         backend.shutdown();
     }
     if update.install(bytes.as_slice()).is_err() {
         // Preserve verified download for a retry, but restore the engine first.
         // Do not publish stale credentials or reopen the UI during recovery.
-        state.lock().unwrap().connection = None;
+        lock(&state).connection = None;
         let recovery = crate::start_backend(app, &engine, true);
         {
-            let mut state = state.lock().unwrap();
+            let mut state = lock(&state);
             state.closing = false;
             if let Err(error) = recovery {
                 state.error = Some(error);
@@ -517,7 +521,7 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
     trusted(&window)?;
     let (update, bytes) = {
         let updates = window.state::<Updates>();
-        let mut state = updates.0.lock().unwrap();
+        let mut state = lock(&updates.0);
         if state.snapshot.phase.busy() {
             return Err(IpcError::new(
                 "update_busy",
@@ -552,7 +556,7 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
                 serde_json::json!({}),
             );
             let updates = app.state::<Updates>();
-            let mut state = updates.0.lock().unwrap();
+            let mut state = lock(&updates.0);
             state.snapshot.phase = Phase::Ready;
             state.snapshot.error = Some("install_failed");
         }
@@ -587,7 +591,7 @@ mod tests {
     #[test]
     fn status_matches_frontend_fields_without_null_optional_values() {
         let updates = Updates::new();
-        let value = serde_json::to_value(&updates.0.lock().unwrap().snapshot).unwrap();
+        let value = serde_json::to_value(&lock(&updates.0).snapshot).unwrap();
         assert_eq!(value["currentVersion"], env!("WENYI_DESKTOP_VERSION"));
         assert_eq!(value["phase"], "idle");
         assert_eq!(value["downloaded"], 0);
@@ -671,7 +675,7 @@ mod tests {
     #[test]
     fn checks_cannot_replace_an_inflight_download_or_install() {
         let updates = Updates::new();
-        let mut state = updates.0.lock().unwrap();
+        let mut state = lock(&updates.0);
         for phase in [Phase::Checking, Phase::Downloading, Phase::Installing] {
             state.snapshot.phase = phase;
             state.bytes = Some(Arc::new(vec![1, 2, 3]));
