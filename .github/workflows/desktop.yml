@@ -17,6 +17,8 @@ on:
     paths:
       - "apps/desktop/**"
       - "apps/api/**"
+      # The sidecar bundles the lock crate, so its changes reach this workflow.
+      - "native/**"
       - "packages/core/**"
       - "packages/backend/**"
       - "packages/ui/**"
@@ -199,8 +201,12 @@ jobs:
       # nextest runs every test in its own process and reports per-test timings,
       # which the plain harness cannot do.
       - uses: taiki-e/install-action@nextest
-      - name: Build the wenyi-locks native library
-        run: cargo build --release --manifest-path native/wenyi-locks/Cargo.toml
+      - name: Build and test the wenyi-locks native library
+        # Runs per platform so each target's own lock implementation is executed,
+        # not just compiled.
+        run: |
+          cargo build --release --manifest-path native/wenyi-locks/Cargo.toml
+          cargo test --manifest-path native/wenyi-locks/Cargo.toml
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop -> target
