@@ -28,10 +28,10 @@ from .updates import router as updates_router
 
 
 class DesktopServices:
-    def __init__(self, backend: LocalBackend):
+    def __init__(self, backend: LocalBackend, runtime_dir: Path | None = None):
         self.backend = backend
         self.runtime: LocalRuntime | None = None
-        self.babeldoc = BabeldocPlugin(backend.workspace)
+        self.babeldoc = BabeldocPlugin(backend.workspace, runtime_dir)
 
     def connect(self):
         if self.runtime is None:
@@ -97,10 +97,13 @@ def create_context(
     api_token: str | None = None,
     config_path: str | None = None,
     credentials: CredentialStore | None = None,
+    runtime_dir: str | Path | None = None,
 ) -> BackendContext:
     backend = LocalBackend(workspace, config_path)
     credentials = credentials or CredentialStore(backend.workspace, vault_factory=system_keyring)
-    services = DesktopServices(backend)
+    # Layer one is injected by the native parent; None keeps a standalone engine
+    # on the workspace so existing data and tests resolve exactly as before.
+    services = DesktopServices(backend, Path(runtime_dir) if runtime_dir is not None else None)
     return BackendContext(
         repository=backend,
         settings_store=DesktopSettings(backend, credentials),
@@ -129,6 +132,7 @@ def create_app(
     context: BackendContext | None = None,
     api_token: str | None = None,
     diagnostics: Reporter | None = None,
+    runtime_dir: str | Path | None = None,
 ):
     from .desktop import ORIGINS
     from .routers import babeldoc_plugin, credentials, desktop_export, external_credentials
@@ -139,7 +143,7 @@ def create_app(
     if context is None:
         if workspace is None:
             raise ValueError("Desktop requires an explicit workspace")
-        context = create_context(workspace, api_token=api_token)
+        context = create_context(workspace, api_token=api_token, runtime_dir=runtime_dir)
     services = context.telemetry
 
     @asynccontextmanager

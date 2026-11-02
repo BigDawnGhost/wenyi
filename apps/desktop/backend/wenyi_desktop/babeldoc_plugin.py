@@ -70,9 +70,33 @@ async def finish_thread(function, *args):
         raise
 
 
+def _plugin_root(workspace: Path, runtime_dir: Path | None) -> Path:
+    """Resolve the plugin installation root without moving or removing anything.
+
+    Layer one is the application-owned root, but a workspace that already holds a
+    working installation keeps using it: enabling the plugin after an upgrade must
+    not hide the runtime and the state the user already has. Both roots are only
+    inspected, so a downgrade back to the previous version keeps working.
+    """
+    legacy = workspace / "plugins" / "babeldoc"
+    if runtime_dir is None:
+        return legacy
+    current = runtime_dir / "plugins" / "babeldoc"
+    if _is_installed(current):
+        return current
+    if _is_installed(legacy):
+        return legacy
+    return current
+
+
+def _is_installed(root: Path) -> bool:
+    """Saved state or a completed installation is what makes a root authoritative."""
+    return root.is_dir() and ((root / "plugin.json").is_file() or (root / "installed").is_dir())
+
+
 class BabeldocPlugin:
-    def __init__(self, workspace: Path):
-        self.root = workspace / "plugins" / "babeldoc"
+    def __init__(self, workspace: Path, runtime_dir: Path | None = None):
+        self.root = _plugin_root(workspace, runtime_dir)
         self.target = packages.platform_key()
         self.enabled = False
         self.installation: str | None = None

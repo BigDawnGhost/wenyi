@@ -91,15 +91,17 @@ async def serve(
     reporter: Reporter | None = None,
     runtime_dir: Path | None = None,
 ) -> None:
-    # The native parent injects the layer-one directory so the engine never
-    # derives it. Consuming it belongs to the layer-one batch; until then the
-    # value is carried here unused and no path changes.
-    del runtime_dir
     import uvicorn
 
     from .main import create_app
 
-    app = create_app(workspace, api_token=os.environ.get("WENYI_API_TOKEN"), diagnostics=reporter)
+    # The native parent injects the layer-one directory so the engine never derives it.
+    app = create_app(
+        workspace,
+        api_token=os.environ.get("WENYI_API_TOKEN"),
+        diagnostics=reporter,
+        runtime_dir=runtime_dir,
+    )
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.bind(("127.0.0.1", 0))

@@ -60,6 +60,51 @@ def test_default_is_off_and_does_not_create_plugin_files(tmp_path):
         plugin.connection(DEFAULT_BRIDGE)
 
 
+def test_workspace_installation_is_still_used_when_layer_one_is_empty(tmp_path):
+    workspace, runtime = tmp_path / "workspace", tmp_path / "runtime"
+    legacy = workspace / "plugins" / "babeldoc"
+    legacy.mkdir(parents=True)
+    # An empty directory is not an installation, so layer one still wins.
+    assert BabeldocPlugin(workspace, runtime).root == runtime / "plugins" / "babeldoc"
+    (legacy / "plugin.json").write_text(json.dumps({"enabled": True, "installation": None}))
+
+    plugin = BabeldocPlugin(workspace, runtime)
+
+    assert plugin.root == legacy and plugin.enabled
+    assert not (runtime / "plugins").exists()
+
+
+def test_installation_in_both_roots_prefers_layer_one(tmp_path):
+    workspace, runtime = tmp_path / "workspace", tmp_path / "runtime"
+    legacy = workspace / "plugins" / "babeldoc"
+    (legacy / "installed" / ("a" * 32)).mkdir(parents=True)
+    current = runtime / "plugins" / "babeldoc"
+    (current / "installed" / ("b" * 32)).mkdir(parents=True)
+
+    assert BabeldocPlugin(workspace, runtime).root == current
+
+
+def test_layer_one_is_the_root_when_neither_root_is_installed(tmp_path):
+    workspace, runtime = tmp_path / "workspace", tmp_path / "runtime"
+    plugin = BabeldocPlugin(workspace, runtime)
+    plugin.restore()
+
+    assert plugin.root == runtime / "plugins" / "babeldoc"
+    assert plugin.phase == "disabled"
+    assert not plugin.root.exists() and not (workspace / "plugins").exists()
+
+
+def test_the_injected_runtime_directory_reaches_the_plugin(tmp_path):
+    workspace, runtime = tmp_path / "workspace", tmp_path / "runtime"
+
+    app = create_app(workspace, runtime_dir=runtime)
+
+    try:
+        assert app.state.babeldoc_plugin.root == runtime / "plugins" / "babeldoc"
+    finally:
+        app.state.backend.repository.close()
+
+
 def test_child_environment_excludes_provider_secrets_and_loader_state(monkeypatch):
     for name in (
         "WENYI_API_TOKEN",
