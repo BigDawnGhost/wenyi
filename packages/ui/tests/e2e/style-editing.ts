@@ -171,6 +171,48 @@ test("a pending analysis save stays read-only after glossary navigation and Back
   expect(submitted[1].tone).toBe("Second saved tone");
 });
 
+test("a second click before the button disables does not submit the same save twice", async ({ page }) => {
+  const submitted = await analysisFixture(page);
+  await page.route(`**/projects/${pid}/analysis`, async (route) => {
+    if (route.request().method() === "PUT") await new Promise(r => setTimeout(r, 500));
+    return route.fallback();
+  });
+  await page.goto(`/projects/${pid}/style`);
+  await page.getByRole("textbox", { name: "Tone", exact: true }).fill("Double tone");
+  // Both clicks run before React re-renders the button as disabled, which is
+  // exactly the window the guard in saveFields exists to cover.
+  await page.evaluate(() => {
+    for (const button of document.querySelectorAll("button"))
+      if (button.textContent?.trim() === "Save") { button.click(); button.click(); }
+  });
+  await expect.poll(() => submitted.length).toBe(1);
+  await page.waitForTimeout(1000);
+  expect(submitted.length).toBe(1);
+});
+
+test("a running save says so next to the button it disabled", async ({ page }) => {
+  const submitted = await analysisFixture(page);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(`**/projects/${pid}/analysis`, async (route) => {
+    if (route.request().method() === "PUT") await held;
+    return route.fallback();
+  });
+  await page.goto(`/projects/${pid}/style`);
+  const saving = page.getByRole("status").filter({ hasText: "Saving…" });
+  await expect(saving).toHaveCount(0);
+  await page.getByRole("textbox", { name: "Tone", exact: true }).fill("Slow tone");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  // The button keeps its name and becomes disabled; the status line is what
+  // explains why the click no longer does anything.
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  await expect(saving).toBeVisible();
+  release();
+  await expect.poll(() => submitted.length).toBe(1);
+  await expect(saving).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Tone", exact: true })).toBeEnabled();
+});
+
 test("failed saves retain drafts for retry and busy projects remain read-only", async ({ page }) => {
   await page.clock.setFixedTime(new Date("2025-01-01T00:00:00Z"));
   const submitted = await analysisFixture(page);

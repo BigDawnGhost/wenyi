@@ -4,7 +4,7 @@ import { Badge, Button } from "@wenyi/ui/primitives";
 import { SettingsSection } from "@wenyi/ui/settings";
 import { request } from "./transport";
 import { TransferProgress } from "./TransferProgress";
-import { useDesktopI18n } from "./i18n";
+import { translateDesktop, useDesktopI18n } from "./i18n";
 
 type Status = {
   enabled: boolean;
@@ -23,13 +23,46 @@ type Status = {
 };
 const key = ["desktopBabeldocPlugin"];
 const endpoint = "/desktop/plugins/babeldoc";
+type ActionFailure = Parameters<typeof translateDesktop>[1];
+// The plugin router refuses actions with distinct sentences but no stable code
+// yet, and every refusal shares HTTP 409. Reading a code first leaves room for
+// the router to adopt one; until then the sentence is the only distinguisher,
+// so an unrecognized refusal keeps the generic action message.
+const actionFailures: [string, ActionFailure][] = [
+  ["plugin_update_check_unavailable", "babeldoc.check_failed"],
+  ["plugin_update_unavailable", "babeldoc.update_busy"],
+  ["plugin_unsupported", "babeldoc.unsupported"],
+  ["Plugin update check is unavailable", "babeldoc.check_failed"],
+  ["Plugin update is unavailable", "babeldoc.update_busy"],
+  ["BabelDOC is not available for this platform", "babeldoc.unsupported"],
+];
+/** The message a refused plugin action should show, from its refusal. */
+function actionFailure(error: unknown): ActionFailure {
+  if (typeof error !== "object" || error === null) return "babeldoc.action_failed";
+  const candidate = error as { code?: unknown; detail?: unknown; message?: unknown };
+  for (const value of [candidate.code, candidate.detail, candidate.message]) {
+    const match = actionFailures.find(([text]) => value === text);
+    if (match) return match[1];
+  }
+  return "babeldoc.action_failed";
+}
 
 export function BabeldocPlugin({ disabled }: { disabled: boolean }) {
   const { t } = useDesktopI18n();
   const client = useQueryClient();
   const [confirm, setConfirm] = useState(false);
   const query = useQuery({
-    queryKey: key, queryFn: () => request<Status>(endpoint), refetchInterval: 1000, retry: false,
+    queryKey: key,
+    queryFn: () => request<Status>(endpoint),
+    // Setup and updates progress on their own; a settled plugin changes only
+    // when the user acts, and each action writes the response back locally.
+    refetchInterval: (query) =>
+      query.state.data?.updating || query.state.data?.checking_update
+        ? 1000
+        : ["disabled", "ready", "error"].includes(query.state.data?.phase ?? "")
+          ? 30_000
+          : 1000,
+    retry: false,
   });
   const action = useMutation({
     mutationFn: (operation: "enable" | "disable" | "check-update" | "update" | "cancel-update") =>
@@ -129,7 +162,8 @@ export function BabeldocPlugin({ disabled }: { disabled: boolean }) {
       {data?.supported === false && <p className="text-sm">{t("babeldoc.unsupported")}</p>}
       {(query.error || action.error || data?.error || data?.update_error) && (
         <p role="alert" className="text-sm text-destructive">
-          {action.error ? t("babeldoc.action_failed")
+          {action.error
+            ? t(actionFailure(action.error))
             : data?.update_error ? t(`babeldoc.${data.update_error}`)
               : data?.error ? t(`babeldoc.${data.error}`) : t("babeldoc.unavailable")}
         </p>

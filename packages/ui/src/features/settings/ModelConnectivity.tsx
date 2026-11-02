@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { ModelPingResult } from "../../api/types";
@@ -22,6 +23,29 @@ const categoryMessages: Record<string, MessageKey> = {
   provider_unavailable: "connectivity.unavailable",
 };
 
+/** Seconds a probe has been open, so a slow provider does not read as a frozen button.
+ *
+ * The probe is bounded by the shared request deadline, so the count always
+ * ends at a failure or at results rather than running forever.
+ */
+function useElapsedSeconds(active: boolean): number | undefined {
+  const [elapsed, setElapsed] = useState<number>();
+  useEffect(() => {
+    if (!active) {
+      setElapsed(undefined);
+      return;
+    }
+    const started = performance.now();
+    setElapsed(0);
+    const timer = window.setInterval(
+      () => setElapsed(Math.floor((performance.now() - started) / 1000)),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return elapsed;
+}
+
 /** Live test of saved connections; unsaved edits must be saved before they can be tested. */
 export function ModelConnectivity({
   saved,
@@ -32,6 +56,7 @@ export function ModelConnectivity({
 }) {
   const { t } = useI18n();
   const ping = useMutation({ mutationFn: () => api.pingModels() });
+  const elapsed = useElapsedSeconds(ping.isPending);
   const results = ping.data;
   const failed = results?.filter((result) => !result.ok).length ?? 0;
   const detail = (result: ModelPingResult) => {
@@ -51,6 +76,11 @@ export function ModelConnectivity({
         >
           {ping.isPending ? t("connectivity.testing") : t("connectivity.test")}
         </Button>
+        {ping.isPending && elapsed !== undefined && (
+          <p className="text-xs tabular-nums text-muted-foreground">
+            {t("connectivity.elapsed", { seconds: elapsed })}
+          </p>
+        )}
         {!saved && (
           <p className="text-xs text-muted-foreground">{t("connectivity.saveFirst")}</p>
         )}

@@ -13,6 +13,7 @@ import { Disclosure } from "../../components/ui/disclosure";
 import { Label } from "../../components/ui/form";
 import { Select, SelectItem } from "../../components/ui/select";
 import { ErrorNotice } from "../../components/ui/data";
+import { Progress } from "../../components/ui/progress";
 import { cn, formatBytes } from "../../lib/utils";
 import { platform } from "../../platform";
 
@@ -223,6 +224,25 @@ export default function ExportPage() {
                 ? tr("common.submitting")
                 : tr("export.generateExport")}
             </Button>
+            {/*
+              The native host reports no per-byte progress for a save, so this
+              stays indeterminate rather than inventing a percentage. It is
+              shown only while the promise is open, which is what tells a user
+              a large book is still being written.
+            */}
+            {saveExport && create.isPending && (
+              <div
+                className="space-y-2"
+                role="status"
+                data-slot="native-export-progress"
+              >
+                <p className="text-sm font-medium">{tr("export.saving")}</p>
+                <Progress
+                  aria-label={tr("export.saving")}
+                  indeterminate
+                />
+              </div>
+            )}
           </CardContent>
         </Card>
         <Card>

@@ -70,6 +70,33 @@ test("plugin setup persists across navigation, retries and shares update progres
   expect(actions).toEqual(["enable", "enable", "disable"]);
 });
 
+for (const [detail, copy] of [
+  ["Plugin update check is unavailable", "Could not check for plugin updates"],
+  ["BabelDOC is not available for this platform", "Supported platforms"],
+] as const) {
+  test(`a refused action shows its own wording for: ${detail}`, async ({ page }) => {
+    await page.addInitScript(() => Object.assign(window, {
+      __WENYI_DESKTOP__: { apiBase: `${location.origin}/api`, token: "fixture" },
+    }));
+    await fakeApi(page);
+    await page.route("**/api/desktop/plugins/babeldoc", route => route.fulfill({
+      json: {
+        enabled: true, installed: true, supported: true, phase: "ready",
+        downloaded: 0, total: null, error: null, version: "0.1.0",
+      },
+    }));
+    // The router refuses with 409 and a bare sentence, which is what it sends today.
+    await page.route("**/api/desktop/plugins/babeldoc/check-update", route =>
+      route.fulfill({ status: 409, json: { detail } }));
+    await page.goto("/settings/plugins");
+    const plugin = page.getByTestId("babeldoc-plugin");
+    await plugin.getByRole("button", { name: "Check for plugin updates" }).click();
+    await expect(plugin.getByRole("alert")).toContainText(copy);
+    await expect(plugin.getByRole("alert"))
+      .not.toContainText("Could not change plugin state");
+  });
+}
+
 test("ready plugin can be disabled but busy jobs keep it enabled with feedback", async ({ page }) => {
   await page.addInitScript(() => Object.assign(window, {
     __WENYI_DESKTOP__: { apiBase: `${location.origin}/api`, token: "fixture" },

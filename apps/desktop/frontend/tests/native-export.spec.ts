@@ -124,6 +124,30 @@ test("Desktop saving completes and reports its path after leaving the export pag
   await expect(page.getByText("Saved to /fixture/destination/book.zh.docx")).toBeVisible();
 });
 
+test("an open native save shows indeterminate progress without a percentage", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
+    window.__TAURI_INTERNALS__ = {
+      invoke: () => new Promise(resolve => Object.assign(window, { finishSave: resolve })),
+    };
+  });
+  await fakeApi(page, {}, origin);
+  await page.goto(`/projects/${pid}/export`);
+  const progress = page.locator('[data-slot="native-export-progress"]');
+  await expect(progress).toHaveCount(0);
+  await page.getByRole("button", { name: "Generate export", exact: true }).click();
+  await expect(progress).toBeVisible();
+  await expect(progress).toContainText("Saving the export…");
+  // The native host reports no byte count for a save, so no percentage may appear.
+  await expect(progress.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+  await page.evaluate(() => {
+    (window as unknown as { finishSave: (value: unknown) => void })
+      .finishSave({ path: "/fixture/book.docx" });
+  });
+  await expect(page.getByText("Saved to /fixture/book.docx", { exact: true })).toBeVisible();
+  await expect(progress).toHaveCount(0);
+});
+
 test("structured native save failures retain their actionable message", async ({ page }) => {
   await page.addInitScript(() => {
     window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
