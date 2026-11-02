@@ -72,8 +72,12 @@ async def finish_thread(function, *args):
 
 
 class BabeldocPlugin:
-    def __init__(self, workspace: Path):
-        self.root = paths.plugins(workspace)
+    def __init__(self, workspace: Path, runtime_dir: Path | None = None):
+        # Which root a plugin lives under is a path question, not a plugin
+        # question: `paths.plugins()` answers it from the workspace and
+        # layer one, and keeping the rule there is what lets a later batch
+        # change where plugins live without touching this class.
+        self.root = paths.plugins(workspace, runtime_dir)
         self.target = packages.platform_key()
         self.enabled = False
         self.installation: str | None = None

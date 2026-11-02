@@ -366,15 +366,19 @@ than claiming it is ready. Old installations and project/session data are not
 deleted. Frozen sessions are not automatically migrated: re-parse affected PDFs
 when a bridge update changes extraction or session compatibility.
 
-Plugin files live under the independent Desktop workspace's `plugins/babeldoc/`:
-`plugin.json` records enablement and the selected installation, `downloads/`
-contains verified archives, `installed/` contains complete runtime/cache pairs,
-and `sessions/` retains frozen PDF snapshots. No CLI or Web state is used. The
-plugin has a separate process, random loopback port, memory-only bearer token,
-and an owner pipe so it exits when Desktop closes. Ports and tokens are not saved
-in projects; the default `http://127.0.0.1:8765` bridge address resolves to the
-managed instance only within Desktop workers. Explicit custom bridge URLs retain
-their existing HTTP behavior.
+Plugin files live in the application-level runtime directory,
+`~/.wenyi/desktop/plugins/babeldoc/` (`%USERPROFILE%\.wenyi\desktop\plugins\babeldoc\`
+on Windows), outside the Desktop workspace: `plugin.json` records enablement and
+the selected installation, `downloads/` contains verified archives, `installed/`
+contains complete runtime/cache pairs, and `sessions/` retains frozen PDF
+snapshots. A plugin directory an earlier version created inside the workspace
+keeps being used while the runtime directory holds no installation, so an
+existing plugin stays enabled; those files are neither copied nor deleted. No CLI
+or Web state is used. The plugin has a separate process, random loopback port,
+memory-only bearer token, and an owner pipe so it exits when Desktop closes.
+Ports and tokens are not saved in projects; the default
+`http://127.0.0.1:8765` bridge address resolves to the managed instance only within
+Desktop workers. Explicit custom bridge URLs retain their existing HTTP behavior.
 
 The plugin installer accepts only protocol-1 release manifests from the fixed
 bridge repository, downloads version-bound HTTPS asset URLs, checks sizes and

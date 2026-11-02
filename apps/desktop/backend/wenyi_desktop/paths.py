@@ -61,6 +61,10 @@ _PROJECTS = "projects"
 _PLUGINS = "plugins"
 #: The only plugin that owns a directory below `_PLUGINS`.
 _BABELDOC = "babeldoc"
+#: Saved plugin state; its presence is what makes a root an installation.
+_PLUGIN_STATE = "plugin.json"
+#: Completed plugin installations live below this directory.
+_PLUGIN_INSTALLED = "installed"
 #: Diagnostic log files written by the native side.
 _DIAGNOSTICS = "diagnostics"
 #: Workspace process lock; the native parent probes the same name.
@@ -284,13 +288,33 @@ def marker_in(directory: Path) -> Path:
 def plugins(workspace: Path, runtime: Path | None = None) -> Path:
     """The app-owned BabelDOC plugin root.
 
-    `runtime` is layer one. The parameter is carried so that the batch which
-    moves plugins out of the workspace changes this function and no call site;
-    until then it is ignored, and the workspace copy the engine has always used
-    is returned unchanged.
+    Layer one is the application-owned root, but a workspace that already holds a
+    working installation keeps using it: enabling the plugin after an upgrade
+    must not hide the runtime and the state the user already has. Both roots are
+    only inspected, never created or moved, so a downgrade back to the previous
+    version keeps working.
+
+    `runtime` is layer one and arrives from the native parent. When it is absent
+    -- a standalone engine, or an older native parent -- the workspace copy is
+    the only root there is, which is also what every call site used before layer
+    one existed.
     """
-    del runtime
-    return workspace / _PLUGINS / _BABELDOC
+    legacy = workspace / _PLUGINS / _BABELDOC
+    if runtime is None:
+        return legacy
+    current = runtime / _PLUGINS / _BABELDOC
+    if _holds_installation(current):
+        return current
+    if _holds_installation(legacy):
+        return legacy
+    return current
+
+
+def _holds_installation(root: Path) -> bool:
+    """Saved state or a completed installation is what makes a root authoritative."""
+    return root.is_dir() and (
+        (root / _PLUGIN_STATE).is_file() or (root / _PLUGIN_INSTALLED).is_dir()
+    )
 
 
 def diagnostics(workspace: Path) -> Path:

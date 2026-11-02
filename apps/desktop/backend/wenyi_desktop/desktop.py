@@ -93,20 +93,19 @@ async def serve(
     library_root: Path | None = None,
     install_root: Path | None = None,
 ) -> None:
-    # The native parent injects the layer-one directory so the engine never
-    # derives it. Consuming it belongs to the layer-one batch; until then the
-    # value is carried here unused and no path changes.
-    del runtime_dir
     import uvicorn
 
     from .main import create_app
 
+    # The native parent resolves all three roots and injects them: the engine
+    # never derives a location of its own.
     app = create_app(
         workspace,
         api_token=os.environ.get("WENYI_API_TOKEN"),
         diagnostics=reporter,
         library_root=library_root,
         install_root=install_root,
+        runtime_dir=runtime_dir,
     )
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:

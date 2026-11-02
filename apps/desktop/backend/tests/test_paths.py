@@ -208,10 +208,34 @@ def test_the_project_directory_is_the_one_deletion_admits(tmp_path: Path) -> Non
 def test_plugins_are_named_inside_the_workspace(tmp_path: Path) -> None:
     workspace = tmp_path / "Wenyi Desktop"
     runtime = tmp_path / "profile" / ".wenyi" / "desktop"
-    # Layer one is carried but unused: plugins still live in the workspace, and
-    # the batch that moves them changes this function rather than a call site.
+    # With no layer one the workspace copy is the only root there is, which is
+    # what a standalone engine and an older native parent both get.
     assert paths.plugins(workspace) == workspace / "plugins" / "babeldoc"
-    assert paths.plugins(workspace, runtime) == workspace / "plugins" / "babeldoc"
+    # With layer one and nothing installed anywhere, the application-owned root
+    # wins: new plugins belong there, not in the workspace.
+    assert paths.plugins(workspace, runtime) == runtime / "plugins" / "babeldoc"
+
+
+def test_an_installation_in_the_workspace_is_still_used(tmp_path: Path) -> None:
+    workspace = tmp_path / "Wenyi Desktop"
+    runtime = tmp_path / "profile" / ".wenyi" / "desktop"
+    legacy = workspace / "plugins" / "babeldoc"
+    legacy.mkdir(parents=True)
+    (legacy / "plugin.json").write_text("{}", encoding="utf-8")
+    # A workspace that already holds a working installation keeps using it: an
+    # upgrade must not hide the runtime and the state the user already has.
+    assert paths.plugins(workspace, runtime) == legacy
+
+
+def test_a_completed_layer_one_installation_wins_over_the_workspace(tmp_path: Path) -> None:
+    workspace = tmp_path / "Wenyi Desktop"
+    runtime = tmp_path / "profile" / ".wenyi" / "desktop"
+    legacy = workspace / "plugins" / "babeldoc"
+    (legacy / "installed" / ("a" * 32)).mkdir(parents=True)
+    current = runtime / "plugins" / "babeldoc"
+    (current / "installed" / ("b" * 32)).mkdir(parents=True)
+    # Both roots hold something; the application-owned one is the future.
+    assert paths.plugins(workspace, runtime) == current
 
 
 def test_diagnostics_name_the_workspace_log_root(tmp_path: Path) -> None:

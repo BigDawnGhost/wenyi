@@ -30,10 +30,10 @@ from .updates import router as updates_router
 
 
 class DesktopServices:
-    def __init__(self, backend: LocalBackend):
+    def __init__(self, backend: LocalBackend, runtime_dir: Path | None = None):
         self.backend = backend
         self.runtime: LocalRuntime | None = None
-        self.babeldoc = BabeldocPlugin(backend.workspace)
+        self.babeldoc = BabeldocPlugin(backend.workspace, runtime_dir)
 
     def connect(self):
         if self.runtime is None:
@@ -103,6 +103,7 @@ def create_context(
     migrate: bool = True,
     library_root: str | Path | None = None,
     install_root: str | Path | None = None,
+    runtime_dir: str | Path | None = None,
 ) -> BackendContext:
     home = Path(user_home) if user_home is not None else None
     if migrate:
@@ -121,7 +122,9 @@ def create_context(
     credentials = credentials or CredentialStore(
         backend.workspace, vault_factory=system_keyring, user_home=home
     )
-    services = DesktopServices(backend)
+    # Layer one is injected by the native parent; None keeps a standalone
+    # engine on the workspace so existing data and tests resolve as before.
+    services = DesktopServices(backend, Path(runtime_dir) if runtime_dir is not None else None)
     return BackendContext(
         repository=backend,
         settings_store=DesktopSettings(backend, credentials),
@@ -153,6 +156,7 @@ def create_app(
     diagnostics: Reporter | None = None,
     library_root: str | Path | None = None,
     install_root: str | Path | None = None,
+    runtime_dir: str | Path | None = None,
 ):
     from .desktop import ORIGINS
     from .routers import (
@@ -175,6 +179,7 @@ def create_app(
             api_token=api_token,
             library_root=library_root,
             install_root=install_root,
+            runtime_dir=runtime_dir,
         )
     services = context.telemetry
 

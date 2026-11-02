@@ -304,11 +304,13 @@ macOS Apple Silicon 和 Intel。
 不会假装已就绪。旧安装和项目／会话数据不会被删除；冻结会话不会自动迁移，
 当 bridge 更新影响提取结果或会话兼容性时，需要重新解析受影响的 PDF。
 
-插件位于独立 Desktop 工作区的 `plugins/babeldoc/`：
+插件位于应用级运行时目录 `~/.wenyi/desktop/plugins/babeldoc/`
+（Windows 为 `%USERPROFILE%\.wenyi\desktop\plugins\babeldoc\`），与 Desktop 工作区分开：
 `plugin.json` 记录启用状态与选中的安装目录，`downloads/` 保存已校验压缩包，
 `installed/` 保存完整的运行环境和资源缓存，`sessions/` 保留冻结 PDF 快照。
-不使用 CLI/Web 状态。插件通过独立进程、随机本地端口、仅内存保存的 Bearer 令牌运行，
-所有者管道关闭后退出。端口和令牌不写入项目；仅在 Desktop worker 内，
+旧版本在工作区内创建的插件目录，在运行时目录尚无安装时继续沿用，已有插件保持启用；
+这些文件不会被复制或删除。不使用 CLI/Web 状态。插件通过独立进程、随机本地端口、
+仅内存保存的 Bearer 令牌运行，所有者管道关闭后退出。端口和令牌不写入项目；仅在 Desktop worker 内，
 默认 bridge 地址 `http://127.0.0.1:8765` 被解析为受管理的插件实例。
 显式配置的其他 bridge URL 保持原有 HTTP 行为。
 
