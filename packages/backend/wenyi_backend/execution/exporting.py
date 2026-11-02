@@ -60,61 +60,35 @@ def render_export(
         out_dir = Path(services.exports_dir(pid)) / str(export_id)
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = str(out_dir / export_filename(project, config.target_lang, fmt, bilingual))
-        if fmt == "srt":
-            if source_digest != project.get("source_sha256"):
-                raise ValueError("Subtitle source no longer matches project state")
-            from wenyi_core.assemble.srt_writer import write_srt_outputs
-            from wenyi_core.ingest.srt_reader import parse_srt
-            from wenyi_core.srt.policy import export_plan as srt_export_plan
-            from wenyi_core.srt.store import SrtRunStore
-
-            with storage.state_lock():
-                srt = SrtRunStore(storage.run_dir, storage=storage)
-                rows = srt.load_cues()
-                translations = srt.translations_from_cues(rows)
-                manifest = srt.load_manifest()
-            if not translations:
-                raise ValueError("No translated subtitles are available")
-            cues = parse_srt(source)
-            persist_plan(
-                storage, srt_export_plan(config, manifest, cues, translations, bilingual=bilingual)
+        snapshot = storage.create_export_snapshot(actual_sha256=source_digest)
+        with storage.assemble_lock():
+            plan = export_plan(
+                snapshot,
+                fmt,
+                punctuation_normalize=config.output.punctuation_normalize
+                if punctuation_normalize is None
+                else punctuation_normalize,
+                bilingual=bilingual,
+                order=order,
+                preserve_source_style=preserve_source_style,
+                about_page=about_page,
             )
-            write_srt_outputs(
-                cues,
-                translations,
-                mono_path=None if bilingual else out_path,
-                bilingual_path=out_path if bilingual else None,
+            persist_plan(storage, plan)
+            assemble(
+                snapshot,
+                source,
+                out_path=out_path,
+                out_format=fmt,
+                bilingual=bilingual,
+                order=order,
+                about_page=about_page,
+                preserve_source_style=preserve_source_style,
+                punctuation_normalize=config.output.punctuation_normalize
+                if punctuation_normalize is None
+                else punctuation_normalize,
+                babeldoc_timeout=config.pipeline.babeldoc_timeout,
+                language_policy=plan,
             )
-        else:
-            snapshot = storage.create_export_snapshot(actual_sha256=source_digest)
-            with storage.assemble_lock():
-                plan = export_plan(
-                    snapshot,
-                    fmt,
-                    punctuation_normalize=config.output.punctuation_normalize
-                    if punctuation_normalize is None
-                    else punctuation_normalize,
-                    bilingual=bilingual,
-                    order=order,
-                    preserve_source_style=preserve_source_style,
-                    about_page=about_page,
-                )
-                persist_plan(storage, plan)
-                assemble(
-                    snapshot,
-                    source,
-                    out_path=out_path,
-                    out_format=fmt,
-                    bilingual=bilingual,
-                    order=order,
-                    about_page=about_page,
-                    preserve_source_style=preserve_source_style,
-                    punctuation_normalize=config.output.punctuation_normalize
-                    if punctuation_normalize is None
-                    else punctuation_normalize,
-                    babeldoc_timeout=config.pipeline.babeldoc_timeout,
-                    language_policy=plan,
-                )
         if source_sha256(source) != source_digest:
             raise ValueError("Source changed during export; ensure the file is stable and retry")
         return out_path

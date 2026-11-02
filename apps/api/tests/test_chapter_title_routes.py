@@ -143,14 +143,6 @@ def test_title_save_validates_input_and_project_identity(domain_client, tmp_path
     ):
         assert client.put(url, json=invalid).status_code == 422
     assert client.put(url, json=body).status_code == 200
-    dal.set_project_source(
-        storage.project_id,
-        source_path="unused.srt",
-        book_title="Subtitles",
-        source_sha256="a" * 64,
-        fmt="srt",
-    )
-    assert client.put(url, json={**body, "expected_title_translated": "Title"}).status_code == 422
 
 
 def test_title_and_event_roll_back_together(domain_client, tmp_path, monkeypatch):

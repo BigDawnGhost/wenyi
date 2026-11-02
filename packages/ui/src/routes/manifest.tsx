@@ -2,7 +2,6 @@ import { lazy, type ReactNode } from "react";
 import {
   Activity,
   BookOpenCheck,
-  Captions,
   Code,
   FileOutput,
   FileScan,
@@ -42,7 +41,6 @@ const loadContentsPage = () => import("../features/contents/ContentsPage");
 const loadInterfaceSettingsPage = () =>
   import("../features/settings/InterfaceSettingsPage");
 const loadSettingsPage = () => import("../features/settings/SettingsPage");
-const loadSubtitlesPage = () => import("../features/subtitles/SubtitlesPage");
 
 const Dashboard = lazy(loadDashboard);
 const CreateProject = lazy(loadCreateProject);
@@ -56,7 +54,6 @@ const EventsPage = lazy(loadEventsPage);
 const ContentsPage = lazy(loadContentsPage);
 const InterfaceSettingsPage = lazy(loadInterfaceSettingsPage);
 const SettingsPage = lazy(loadSettingsPage);
-const SubtitlesPage = lazy(loadSubtitlesPage);
 
 /** One loader per code-split page; warm-up and prefetch iterate this. */
 export const pageLoaders: ReadonlyArray<() => Promise<unknown>> = [
@@ -72,7 +69,6 @@ export const pageLoaders: ReadonlyArray<() => Promise<unknown>> = [
   loadContentsPage,
   loadInterfaceSettingsPage,
   loadSettingsPage,
-  loadSubtitlesPage,
 ];
 
 export interface RouteEntry {
@@ -97,7 +93,6 @@ export const routeEntries: RouteEntry[] = [
   { path: "/projects/:pid/proofreading", element: <ProofreadingPage /> },
   { path: "/projects/:pid/proofreading/:ci", element: <ProofreadingPage /> },
   { path: "/projects/:pid/settings", element: <SettingsPage /> },
-  { path: "/projects/:pid/subtitles", element: <SubtitlesPage /> },
   { path: "/projects/:pid/export", element: <ExportPage /> },
   { path: "/projects/:pid/events", element: <EventsPage /> },
 ];
@@ -142,11 +137,10 @@ export function settingsPath(section: SettingsSectionId) {
 }
 
 /** Which projects a nav link applies to, mirroring the historical rules. */
-export type Audience = "all" | "book" | "srt";
+export type Audience = "all" | "book";
 
 export function isVisibleFor(audience: Audience, format?: string | null): boolean {
-  if (audience === "book") return !!format && format !== "srt";
-  if (audience === "srt") return format === "srt";
+  if (audience === "book") return !!format;
   return true;
 }
 
@@ -173,7 +167,6 @@ export const navEntries: NavEntry[] = [
   { to: "/projects/:pid", label: "common.translationOverview", icon: Sparkles, end: true, group: "project", order: 10, audience: "all", loader: loadProgressPage },
   { to: "/projects/:pid/proofreading", label: "progress.manualProofreading", icon: BookOpenCheck, group: "project", order: 20, audience: "book", loader: loadProofreadingPage },
   { to: "/projects/:pid/review", label: "common.wholeBookReview", icon: ListChecks, group: "project", order: 30, audience: "book", loader: loadReviewPage },
-  { to: "/projects/:pid/subtitles", label: "common.subtitleEditor", icon: Captions, group: "project", order: 40, audience: "srt", loader: loadSubtitlesPage },
   { to: "/projects/:pid/glossary", label: "common.glossary", icon: Library, group: "project", order: 50, audience: "book", loader: loadGlossaryPage },
   { to: "/projects/:pid/style", label: "common.styleSynopsis", icon: Languages, group: "project", order: 60, audience: "book", loader: loadStylePage },
   { to: "/projects/:pid/contents", label: "contents.title", icon: ListTree, group: "project", order: 70, audience: "book", loader: loadContentsPage },

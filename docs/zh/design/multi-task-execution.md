@@ -10,7 +10,7 @@
 
 ## 执行边界
 
-- 解析、准备、翻译、章节翻译、Review、SRT 工作流可以跨项目并行；[项目写入互斥](../../../packages/backend/wenyi_backend/project_service.py#L46)仍然禁止同一项目的冲突操作。
+- 解析、准备、翻译、章节翻译、Review 工作流可以跨项目并行；[项目写入互斥](../../../packages/backend/wenyi_backend/project_service.py#L38)仍然禁止同一项目的冲突操作。
 - [持久化准入](../../../packages/backend/wenyi_backend/job_service.py#L31)仍先创建 job/run 身份和配置快照，再派发任务，并对拒绝提交执行补偿。现有 HTTP 契约和续跑语义不变。
 - [LocalRuntime](../../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L212)不再通过单消费者和长度 128 的准入队列串行处理工作流；每个已接受工作流都有独立异步监管任务。
 - [Desktop 派发器](../../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L198)为每次运行持有一个同步执行线程。单线程 executor 归该次运行独占，不是所有任务共享的固定槽位池；跨线程复制上下文。默认 executor 继续用于控制请求、快照读取和维护。

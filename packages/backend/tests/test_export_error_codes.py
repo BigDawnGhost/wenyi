@@ -21,15 +21,6 @@ def test_uninitialised_project_refuses_export_with_a_code():
     assert caught.value.detail == "Prepare or translate the source before exporting"
 
 
-def test_subtitle_and_book_formats_cannot_be_mixed():
-    with pytest.raises(ApiError) as caught:
-        resolve_export({"fmt": "srt", "initialized": True}, {}, ExportRequest(format="docx"))
-    assert caught.value.code == INVALID_CONFIGURATION
-    assert caught.value.detail == (
-        "Subtitle projects export SRT; book projects export book formats"
-    )
-
-
 def test_writer_rejection_keeps_the_writer_message():
     """The 422 text must stay byte-identical to what the writer raised."""
     with pytest.raises(ApiError) as caught:

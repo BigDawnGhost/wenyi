@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from api_test_support import initialize
-from type_helpers import must
 from wenyi_api import dal
 from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.ingest.models import Chapter, Segment
-from wenyi_core.srt.store import SrtRunStore
 
 
 def test_review_run_listing_and_sparse_segment_mapping(domain_client, tmp_path):
@@ -192,29 +190,6 @@ def test_glossary_edit_keeps_order_and_conflicts_resolve(domain_client, tmp_path
     assert storage.get_term("Zed").target == "泽德三"
 
 
-def test_subtitle_routes_preserve_timeline_and_overlapping_cache(domain_client, tmp_path):
-    client, storage, _ = domain_client
-    source = tmp_path / "clip.srt"
-    source.write_text("1\n00:00:00,100 --> 00:00:01,200\nHello\n", encoding="utf-8")
-    store = SrtRunStore(storage.run_dir, storage=storage)
-    store.ensure_manifest(str(source), cue_count=1, source_lang="en", target_lang="zh")
-    store.ensure_cues([("1", "00:00:00,100 --> 00:00:01,200", "Hello")])
-    store.save_batch(0, {"1": "缓存一"})
-    store.save_batch(10, {"1": "缓存二"})
-    root = f"/projects/{storage.project_id}"
-    cue = client.get(root + "/subtitles").json()["cues"][0]
-    assert cue["id"] == "1" and cue["start"] == "00:00:00,100"
-    assert cue["end"] == "00:00:01,200"
-    assert client.put(root + "/subtitles/1", json={"target": "人工字幕"}).status_code == 200
-    assert must(store.load_batch(0))["1"] == must(store.load_batch(10))["1"] == "人工字幕"
-    assert client.get(root + "/subtitles").json()["completed"] == 1
-    for path in ("/chapters", "/review/runs", "/glossary/terms", "/analysis"):
-        assert client.get(root + path).status_code == 422
-    assert client.post(root + "/review/run", json={}).status_code == 422
-    dal.set_project_status(storage.project_id, "translating")
-    assert client.put(root + "/subtitles/1", json={"target": "blocked"}).status_code == 409
-
-
 def test_review_status_follows_edit_manual_completion_and_new_ai_review(domain_client, tmp_path):
     from datetime import datetime, timedelta, timezone
 
@@ -260,22 +235,6 @@ def test_review_status_follows_edit_manual_completion_and_new_ai_review(domain_c
     summary = client.get(root + "/chapters").json()[0]
     assert summary["review_status"] == "completed" and summary["review_issue_count"] == 1
     assert client.get(root + "/chapters/0").json()["review_issues"][0]["index"] == 0
-
-
-def test_subtitle_preview_visible_before_first_translation(domain_client, pg_pool):
-    client, storage, _ = domain_client
-    with pg_pool.connection() as conn:
-        conn.execute("UPDATE projects SET fmt='srt' WHERE id=%s", (storage.project_id,))
-    storage.write_artifact(
-        "subtitle_preview.json",
-        [{"index": "1", "timestamp": "00:00:00,100 --> 00:00:01,200", "source": "Hello"}],
-    )
-    root = f"/projects/{storage.project_id}"
-    response = client.get(root + "/subtitles")
-    assert response.status_code == 200
-    assert response.json()["total"] == 1 and response.json()["completed"] == 0
-    assert response.json()["cues"][0]["source"] == "Hello"
-    assert client.put(root + "/subtitles/1", json={"target": "not initialized"}).status_code == 404
 
 
 def test_workflow_review_association_is_scoped_to_job_interval(pg_storage, pg_pool, monkeypatch):

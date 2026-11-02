@@ -65,7 +65,7 @@ def uploaded_project(api):
     source.write_text("Original source.", encoding="utf-8")
     dal.set_project_source(pid, str(source), "Original", fmt="text")
     storage = storage_for(pid)
-    for key in ("preview.json", "parsed_document.json", "subtitle_preview.json"):
+    for key in ("preview.json", "parsed_document.json"):
         storage.write_artifact(key, {"original": key})
     storage.close()
     return pid, source
@@ -95,7 +95,7 @@ def test_cache_invalidation_failure_rolls_back_before_source_publication(
     assert not list(source.parent.glob("source-*"))
     storage = storage_for(pid)
     try:
-        for key in ("preview.json", "parsed_document.json", "subtitle_preview.json"):
+        for key in ("preview.json", "parsed_document.json"):
             assert storage.read_artifact(key) == {"original": key}
     finally:
         storage.close()

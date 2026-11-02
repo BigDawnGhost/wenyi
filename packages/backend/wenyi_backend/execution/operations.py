@@ -1,11 +1,9 @@
-"""Book, source-preview and subtitle work, without scheduler or task-state ownership."""
+"""Book and source-preview work, without scheduler or task-state ownership."""
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
-from uuid import uuid4
 
 from wenyi_core.config import Config
 from wenyi_core.events import ProgressFn
@@ -24,8 +22,6 @@ class OperationServices:
     source_for: Callable[[str], str]
     build_client: Callable[[Config], LLMClient]
     exports_dir: Callable[[str], str]
-    create_export: Callable[[str, str, dict], int]
-    publish_export: Callable[[str, int, str], object]
     mineru_token_resolver: Callable[[], str | None] | None = None
 
 
@@ -43,27 +39,10 @@ def parse_source(
     if project is None:
         raise ValueError(f"Project not found: {pid}")
     progress(0, 1, "解析原文")
-    if project["fmt"] == "srt":
-        from wenyi_core.ingest.srt_reader import parse_srt
-
-        cues = parse_srt(source)
-        storage.write_artifact(
-            "subtitle_preview.json",
-            [{"index": cue.index, "timestamp": cue.timestamp, "source": cue.text} for cue in cues],
-        )
-        preview = {
-            "title": (project.get("source_meta") or {}).get("original_filename", "Subtitles"),
-            "fmt": "srt",
-            "chapter_count": 0,
-            "total_word_count": len(cues),
-            "source_lang": config.source_lang,
-            "chapters": [],
-        }
-    else:
-        doc = parse_document(
-            storage, source, config, mineru_token_resolver=services.mineru_token_resolver
-        )
-        preview = book_preview(doc, project["fmt"])
+    doc = parse_document(
+        storage, source, config, mineru_token_resolver=services.mineru_token_resolver
+    )
+    preview = book_preview(doc, project["fmt"])
     storage.write_artifact("preview.json", preview)
     progress(1, 1, "原文预览已就绪")
     return "uploaded"
@@ -122,25 +101,6 @@ def run_operation(
     client = services.build_client(config)
     bind_client(client)
     with client.interrupt_scope():
-        if kind == "srt":
-            from wenyi_core.srt.translate import translate_srt
-
-            client.validate_credentials(("srt.translate",))
-            output_dir = Path(services.exports_dir(pid)) / (request.run_id or uuid4().hex)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            base = output_dir / f"subtitles.{config.target_lang}.srt"
-            result = translate_srt(
-                services.source_for(pid),
-                config,
-                client=client,
-                out=str(base),
-                progress=progress,
-                storage=storage,
-            )
-            for output in result["outputs"]:
-                eid = services.create_export(pid, "srt", {"bilingual": "-bi.srt" in output})
-                services.publish_export(pid, eid, output)
-            return "done"
         from wenyi_core.llm.operations import configured_operations
 
         if request.params.get("autofix") is not None:

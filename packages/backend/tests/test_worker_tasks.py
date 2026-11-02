@@ -196,7 +196,7 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
 
 @pytest.mark.parametrize(
     "kind",
-    ["parse", "prepare", "translation", "chapter_translation", "review", "srt"],
+    ["parse", "prepare", "translation", "chapter_translation", "review"],
 )
 def test_startup_failure_is_persisted(monkeypatch, kind):
     statuses = []

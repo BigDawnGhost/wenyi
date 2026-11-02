@@ -63,20 +63,15 @@ export default function ExportPage() {
       setDefaultsLoaded(true);
     }
   }, [config, defaultsLoaded]);
-  const subtitle = project?.fmt === "srt";
-  const formats: ExportFormat[] = subtitle
-    ? ["srt"]
-    : ((project?.output_formats || []).filter(
-        (f) => f !== "srt",
-      ) as ExportFormat[]);
-  const fmt = subtitle ? "srt" : formats.includes(format as ExportFormat) ? format : "";
+  const formats = (project?.output_formats || []) as ExportFormat[];
+  const fmt = formats.includes(format as ExportFormat) ? format : "";
   const create = useMutation({
     mutationFn: async () => {
       const options = {
         format: fmt || undefined,
         bilingual,
         order,
-        about_page: subtitle ? false : about,
+        about_page: about,
         preserve_source_style: preserveStyle,
         punctuation_normalize: punctuation,
       };
@@ -119,18 +114,16 @@ export default function ExportPage() {
             <div>
               <Label>{tr("export.outputFormat")}</Label>
               <div className="grid grid-cols-4 gap-2 mt-2">
-                {!subtitle && (
-                  <button
-                    onClick={() => setFormat("")}
-                    aria-pressed={!fmt}
-                    className={cn(
-                      "rounded border p-3 text-left text-sm",
-                      !fmt && "border-muted-foreground bg-accent",
-                    )}
-                  >
-                    {tr("export.automatic")}
-                  </button>
-                )}
+                <button
+                  onClick={() => setFormat("")}
+                  aria-pressed={!fmt}
+                  className={cn(
+                    "rounded border p-3 text-left text-sm",
+                    !fmt && "border-muted-foreground bg-accent",
+                  )}
+                >
+                  {tr("export.automatic")}
+                </button>
                 {formats.map((f) => (
                   <button
                     key={f}
@@ -169,57 +162,53 @@ export default function ExportPage() {
                 {tr("export.bilingual")}
               </label>
             </fieldset>
-            {!subtitle && (
-              <Disclosure title={tr("export.advanced")} error={create.error}>
+            <Disclosure title={tr("export.advanced")} error={create.error}>
+              <label className="flex gap-2 items-center text-sm">
+                <input
+                  type="checkbox"
+                  checked={punctuation}
+                  onChange={(e) => setPunctuation(e.target.checked)}
+                />
+                {tr("settings.normalizePunctuationOnExport")}
+              </label>
+              {bilingual && (
+                <Select
+                  aria-label={tr("export.bilingualOrder")}
+                  value={order}
+                  onValueChange={(value) =>
+                    setOrder(
+                      value as "target_first" | "source_first",
+                    )
+                  }
+                  className="max-w-40"
+                >
+                  <SelectItem value="target_first">
+                    {tr("export.translationFirst")}
+                  </SelectItem>
+                  <SelectItem value="source_first">
+                    {tr("export.sourceFirst")}
+                  </SelectItem>
+                </Select>
+              )}
+              <label className="flex gap-2 items-center text-sm">
+                <input
+                  type="checkbox"
+                  checked={about}
+                  onChange={(e) => setAbout(e.target.checked)}
+                />
+                {tr("export.includeAnAboutThisTranslationPage")}
+              </label>
+              {bilingual && (
                 <label className="flex gap-2 items-center text-sm">
                   <input
                     type="checkbox"
-                    checked={punctuation}
-                    onChange={(e) => setPunctuation(e.target.checked)}
+                    checked={preserveStyle}
+                    onChange={(e) => setPreserveStyle(e.target.checked)}
                   />
-                  {tr("settings.normalizePunctuationOnExport")}
+                  {tr("export.preserveSourceFormattingInBilingualOutput")}
                 </label>
-                {bilingual && !subtitle && (
-                  <Select
-                    aria-label={tr("export.bilingualOrder")}
-                    value={order}
-                    onValueChange={(value) =>
-                      setOrder(
-                        value as "target_first" | "source_first",
-                      )
-                    }
-                    className="max-w-40"
-                  >
-                    <SelectItem value="target_first">
-                      {tr("export.translationFirst")}
-                    </SelectItem>
-                    <SelectItem value="source_first">
-                      {tr("export.sourceFirst")}
-                    </SelectItem>
-                  </Select>
-                )}
-                {!subtitle && (
-                  <label className="flex gap-2 items-center text-sm">
-                    <input
-                      type="checkbox"
-                      checked={about}
-                      onChange={(e) => setAbout(e.target.checked)}
-                    />
-                    {tr("export.includeAnAboutThisTranslationPage")}
-                  </label>
-                )}
-                {!subtitle && bilingual && (
-                  <label className="flex gap-2 items-center text-sm">
-                    <input
-                      type="checkbox"
-                      checked={preserveStyle}
-                      onChange={(e) => setPreserveStyle(e.target.checked)}
-                    />
-                    {tr("export.preserveSourceFormattingInBilingualOutput")}
-                  </label>
-                )}
-              </Disclosure>
-            )}
+              )}
+            </Disclosure>
             <Button
               onClick={() => create.mutate()}
               disabled={

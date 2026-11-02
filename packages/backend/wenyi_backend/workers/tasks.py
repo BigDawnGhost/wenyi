@@ -57,11 +57,6 @@ async def run_review(ctx, *, project_id: str, run_id: str | None = None, **param
 
 
 @_worker_entry
-async def run_srt(ctx, *, project_id: str, run_id: str | None = None, **params):
-    await _run("srt", project_id, run_id, params)
-
-
-@_worker_entry
 async def run_export(
     ctx, *, project_id: str, export_id: int, run_id: str | None = None, **params
 ) -> int:

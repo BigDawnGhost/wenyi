@@ -3,7 +3,7 @@
 from typing import Any, Protocol
 
 RUNNING_PROJECT_STATUSES = frozenset(
-    {"preparing", "translating", "reviewing", "translating_subtitles", "parsing", "pausing"}
+    {"preparing", "translating", "reviewing", "parsing", "pausing"}
 )
 
 

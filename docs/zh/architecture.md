@@ -32,8 +32,7 @@
 | CLI 文件迁移 | `storage/file_migrations.py` 拥有显式本地账本枚举、校验、原始字节备份、运行锁与原子发布；CLI 处理参数和展示，不发现 Web/Desktop 状态。 |
 
 Core 不依赖 CLI 或 HTTP 框架；Agent 不依赖 pipeline 或具体状态存储。
-共享标记处理和样式策略不依赖 LLM 或特定 Writer。SRT 保持独立轻量流程，
-BabelDOC 保持外部 HTTP 服务。
+共享标记处理和样式策略不依赖 LLM 或特定 Writer。BabelDOC 保持外部 HTTP 服务。
 
 Web 与 Desktop 共享行为，不共享项目状态或基础设施。Web 使用 PostgreSQL 与
 Redis/Arq；Desktop 使用独立 SQLite 目录库、各项目 SQLite 状态及本地运行器，

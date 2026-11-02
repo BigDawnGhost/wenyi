@@ -8,9 +8,9 @@ Thank you for helping improve Wenyi. The project prioritizes the quality and rel
 
 Contributions are welcome in the following areas:
 
-- Input parsing: compatibility improvements and new support for EPUB, FB2, TXT, DOCX, SRT, and related formats.
-- Translation pipeline: context handling, terminology, review, polishing, and consistency checks. Subtitle work belongs in the independent `wenyi_core.srt` pipeline.
-- Export: EPUB/DOCX output, tables of contents, metadata, layout preservation, and SRT writers.
+- Input parsing: compatibility improvements and new support for EPUB, FB2, TXT, DOCX, and related formats.
+- Translation pipeline: context handling, terminology, review, polishing, and consistency checks.
+- Export: EPUB/DOCX output, tables of contents, metadata, and layout preservation.
 - Tests: real-world failure cases, regression tests, and offline fake-LLM tests.
 - Documentation: usage instructions, configuration explanations, troubleshooting, and translations.
 

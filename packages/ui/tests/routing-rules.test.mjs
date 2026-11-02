@@ -72,11 +72,11 @@ test("route manifest is complete and consistent", () => {
   const manifest = readFileSync(join(uiSrc, "routes", "manifest.tsx"), "utf8");
 
   const paths = [...manifest.matchAll(/path:\s*"([^"]+)"/g)].map((m) => m[1]);
-  assert(paths.length >= 14, `expected the full route table, found ${paths.length}`);
+  assert(paths.length >= 13, `expected the full route table, found ${paths.length}`);
   assert.equal(new Set(paths).size, paths.length, "route paths must be unique");
   for (const required of [
     "/", "/projects/new", "/settings/:section?", "/projects/:pid",
-    "/projects/:pid/proofreading/:ci", "/projects/:pid/review", "/projects/:pid/subtitles",
+    "/projects/:pid/proofreading/:ci", "/projects/:pid/review",
   ]) assert(paths.includes(required), `Required URL disappeared: ${required}`);
   assert(
     manifest.includes('{ path: "/settings/:section?", element: <InterfaceSettingsPage /> }'),
@@ -89,12 +89,12 @@ test("route manifest is complete and consistent", () => {
   const navLines = manifest
     .split("\n")
     .filter((line) => /group:\s*"(global|project)"/.test(line) && line.includes('to: "'));
-  assert.equal(navLines.length, 13, "three global + ten project nav entries");
+  assert.equal(navLines.length, 12, "three global + nine project nav entries");
   const seen = new Set();
   for (const line of navLines) {
     const to = line.match(/to:\s*"([^"]+)"/)?.[1];
     const order = line.match(/order:\s*(\d+)/)?.[1];
-    const audience = line.match(/audience:\s*"(all|book|srt)"/)?.[1];
+    const audience = line.match(/audience:\s*"(all|book)"/)?.[1];
     const loader = line.match(/loader:\s*(load[A-Z]\w*)/)?.[1];
     const group = line.match(/group:\s*"(global|project)"/)?.[1];
     const slot = line.match(/slot:\s*"(action|panel|foot)"/)?.[1];

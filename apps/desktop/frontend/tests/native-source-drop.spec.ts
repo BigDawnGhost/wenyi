@@ -190,11 +190,13 @@ test("Desktop bridge selects without upload, highlights/leaves and preserves sel
   });
   let browserUpload = false;
   await page.route(`${origin}/projects`, async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
     browserUpload = route.request().postData()!.includes("browse.docx");
     await route.fulfill({ status: 503, json: { detail: "Browser upload fixture" } });
   });
   await page.getByRole("button", { name: "Create project", exact: true }).click();
-  await expect(page.getByText("503: Browser upload fixture")).toBeVisible();
+  await expect(zone.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("alert")).toHaveText("Browser upload fixture");
   expect(browserUpload).toBe(true);
   expect((await calls(page)).some(call => call.command === "native_drop_upload")).toBe(false);
 });

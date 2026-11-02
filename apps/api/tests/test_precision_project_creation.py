@@ -116,7 +116,6 @@ def test_creation_defaults_to_standard_even_with_legacy_global_precision(creatio
         ('"precision_concurrency":1', "book.txt"),
         ('"precision_concurrency":0', "book.txt"),
         ('"precision_concurrency":4', "book.txt"),
-        ('"translation_mode":"best_of_three"', "video.srt"),
         ('"strategy":{"template":"快速出稿"}', "book.txt"),
     ],
 )
@@ -130,26 +129,6 @@ def test_invalid_creation_choices_publish_nothing(creation_api, choice, filename
     assert response.status_code == 422, response.text
     assert not saved and not queued
     assert not list(tmp_path.iterdir())
-
-
-@pytest.mark.parametrize("method,suffix", [("post", "/validate"), ("put", "")])
-def test_srt_project_yaml_cannot_enable_precision(creation_api, method, suffix):
-    client, _, saved, _, _ = creation_api
-    created = client.post(
-        "/projects",
-        data={"project": '{"name":"Subtitles"}'},
-        files={"file": ("video.srt", b"1\n00:00:01,000 --> 00:00:02,000\nHello\n")},
-    )
-    assert created.status_code == 201, created.text
-    pid = created.json()["id"]
-    before = deepcopy(saved[pid])
-    response = getattr(client, method)(
-        f"/projects/{pid}/config{suffix}",
-        json={"yaml": "pipeline: {translation_mode: best_of_three, polish: true}"},
-    )
-    assert response.status_code == 422, response.text
-    assert "Create a new project" in response.text
-    assert saved[pid] == before
 
 
 @pytest.mark.parametrize("method,suffix", [("post", "/validate"), ("put", "")])
@@ -189,26 +168,6 @@ def test_project_yaml_rejects_malformed_pipeline_sections(creation_api, method, 
     assert response.status_code == 422, response.text
     assert "mapping" in response.text
     assert saved[pid] == before
-
-
-def test_precision_project_cannot_replace_source_with_srt(creation_api):
-    client, _, saved, queued, tmp_path = creation_api
-    created = client.post(
-        "/projects",
-        data={"project": '{"name":"Book","translation_mode":"best_of_three"}'},
-        files={"file": ("book.txt", b"A fictional traveler crossed a bridge.")},
-    )
-    assert created.status_code == 201, created.text
-    pid = created.json()["id"]
-    before, files = deepcopy(saved[pid]), set(tmp_path.iterdir())
-    response = client.post(
-        f"/projects/{pid}/upload",
-        files={"file": ("video.srt", b"1\n00:00:01,000 --> 00:00:02,000\nHello\n")},
-    )
-    assert response.status_code == 422, response.text
-    assert saved[pid] == before
-    assert set(tmp_path.iterdir()) == files
-    assert queued == [(pid, "parse")]
 
 
 def test_postgres_settings_normalize_legacy_global_precision():

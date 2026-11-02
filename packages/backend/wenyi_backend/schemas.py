@@ -220,7 +220,7 @@ class StrategyTemplateOut(BaseModel):
 
 # Exports.
 class ExportRequest(RequestModel):
-    format: Literal["epub", "txt", "html", "markdown", "pdf", "docx", "srt"] | None = None
+    format: Literal["epub", "txt", "html", "markdown", "pdf", "docx"] | None = None
     bilingual: bool = False
     order: Literal["target_first", "source_first"] = "target_first"
     about_page: bool = True
@@ -277,11 +277,8 @@ class DigestUpdate(RequestModel):
     digest: str
 
 
-class TargetEdit(RequestModel):
+class SegmentEdit(RequestModel):
     target: str
-
-
-class SegmentEdit(TargetEdit):
     expected_target: str | None
 
 
@@ -333,23 +330,6 @@ class ReviewRun(BaseModel):
     items: list[ReviewItem] = Field(default_factory=list)
 
 
-class SubtitleCue(BaseModel):
-    id: str
-    index: int
-    timestamp: str
-    start: str
-    end: str
-    source: str
-    target: str | None = None
-    status: str = "pending"
-
-
-class SubtitleResult(BaseModel):
-    cues: list[SubtitleCue]
-    completed: int
-    total: int
-
-
 class LanguageOption(BaseModel):
     code: str
     name: str
@@ -396,7 +376,7 @@ class GlobalConfigOut(BaseModel):
 
 
 class ModelCheckRequest(RequestModel):
-    workflow: Literal["prepare", "translate", "review", "srt"] = "translate"
+    workflow: Literal["prepare", "translate", "review"] = "translate"
 
 
 class ModelCheckResult(BaseModel):

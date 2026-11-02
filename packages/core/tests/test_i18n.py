@@ -27,7 +27,6 @@ from wenyi_core.i18n.resources import read_text
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import translation_run_dir
-from wenyi_core.srt.translate import translate_srt
 
 from tests.fake_llm import routing_handler
 from tests.pipeline_fixtures import require_file_storage
@@ -286,44 +285,6 @@ def test_state_rejects_invalid_language_fields(key, value):
     manifest = {"source_lang": "en", "target_lang": "zh", key: value}
     with pytest.raises(ValueError, match="missing source_lang or target_lang"):
         validate_run_languages(manifest, "auto", "zh")
-
-
-def test_srt_target_isolation_traditional_script_and_resume():
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        source = root / "captions.srt"
-        source.write_text("7\n00:00:01,000 --> 00:00:02,000\nThe door opened.\n", encoding="utf-8")
-        results = []
-        for target, text in (
-            ("zh", "门打开了。"),
-            ("zh-Hant", "「門打開了！」"),
-            ("ja", "扉が開いた。"),
-        ):
-
-            def handler(messages, tier, json_mode):
-                assert profile(target)["english_name"] in messages[0]["content"]
-                if target == "zh-Hant":
-                    assert "Use Traditional Chinese" in messages[0]["content"]
-                return json.dumps({"7": text})
-
-            config = Config.from_dict(
-                {
-                    "language": {"source": "en", "target": target},
-                    "paths": {"state_dir": str(root / "state")},
-                    "output": {"bilingual": True},
-                }
-            )
-            client = FakeClient(handler=handler)
-            result = translate_srt(str(source), config, client=client)
-            for output in result["outputs"]:
-                assert text in Path(output).read_text(encoding="utf-8")
-                assert "00:00:01,000 --> 00:00:02,000" in Path(output).read_text(encoding="utf-8")
-                assert f".{target}" in Path(output).name
-            calls_before = len(client.calls)
-            translate_srt(str(source), config, client=client)
-            assert len(client.calls) == calls_before
-            results.append(result["run_dir"])
-        assert len(set(results)) == 3
 
 
 def test_language_list_needs_no_api_and_reads_packaged_templates():

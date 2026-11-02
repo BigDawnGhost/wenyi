@@ -5,7 +5,7 @@ import type {
   ChapterSegments, SegmentRevision, PrecisionDrafts, Term, TermPage, Conflict,
   StrategyTemplate, ExportOut, EventOut, JobEnqueued, Capabilities, GlobalConfig,
   GlobalConfigInput, ModelPingResult, ModelListResult, ModelListRequest,
-  ProjectConfig, ReviewRun, SubtitleData, UploadPreview, AnalysisPayload,
+  ProjectConfig, ReviewRun, UploadPreview, AnalysisPayload,
   GlossaryExportFormat,
 } from "./types";
 
@@ -59,7 +59,7 @@ export const api = {
   modelRoutes: (pid: string) => request<unknown>(`/projects/${pid}/models`),
   checkModels: (
     pid: string,
-    workflow: "prepare" | "translate" | "review" | "srt" = "translate",
+    workflow: "prepare" | "translate" | "review" = "translate",
   ) =>
     request<unknown>(`/projects/${pid}/models/check`, {
       method: "POST",
@@ -72,13 +72,6 @@ export const api = {
   getReviewRun: (pid: string, rid: string) =>
     request<ReviewRun>(
       `/projects/${pid}/review/runs/${encodeURIComponent(rid)}`,
-    ),
-  getSubtitles: (pid: string) =>
-    request<SubtitleData>(`/projects/${pid}/subtitles`),
-  editSubtitle: (pid: string, id: string, target: string) =>
-    request<{ ok: boolean }>(
-      `/projects/${pid}/subtitles/${encodeURIComponent(id)}`,
-      { method: "PUT", body: JSON.stringify({ target }) },
     ),
   listProjects: () => request<Project[]>("/projects"),
   createProject: (

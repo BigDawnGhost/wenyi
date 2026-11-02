@@ -109,12 +109,10 @@ uv run wenyi translate book.epub
 | 输入 | 输出 |
 |---|---|
 | EPUB、FB2、TXT、Markdown、HTML、PDF、DOCX | EPUB（单语 / 双语）、TXT、HTML、Markdown、DOCX |
-| SRT（影视字幕） | SRT（单语 / 双语） |
 
 - PDF 输入默认走 MinerU，首次转换需配置其 API Key，生成的 HTML 会缓存复用。可选 BabelDOC bridge 用于尽量保留版式。详见 [PDF 配置](configuration.md#流水线)。
 - PDF 导出仅支持已保存的 BabelDOC 项目，通过 bridge 回填保留排版；其他项目使用上表中的书籍输出格式。
 - EPUB 输出尽量保留原书样式、图片、目录和锚点，竖排转为横排以适配中文阅读。
-- SRT 项目使用轻量字幕流程，不建术语库、不做润色与全书审校。
 - DOCX 走完整书籍管线：尽量保留标题导航、简易表格、列表与常见字符/段落样式；已译中文用宋体。
 
 ### 语言支持
@@ -153,7 +151,7 @@ uv run wenyi translate book.epub
 
 ## 当前限制
 
-本项目为作者个人兴趣所开发，旨在为长文本书籍的译介做出一份微薄的努力。现阶段翻译质量仍受限于所选模型的能力：润色和审校阶段会显著增加 token 消耗，开启影子修订后还可能执行多次全书审校与额外 Fixer 调用；极长的书籍可能产生较大的工作区，PDF 输入默认依赖 MinerU 外部服务（首次转换需 API Key），可选 BabelDOC bridge 保留版式。SRT 字幕不建术语库、不做润色与全书审校。多语言互译仍属实验性功能；提示词指令使用英语，模型生成的说明性元数据使用翻译目标语言。
+本项目为作者个人兴趣所开发，旨在为长文本书籍的译介做出一份微薄的努力。现阶段翻译质量仍受限于所选模型的能力：润色和审校阶段会显著增加 token 消耗，开启影子修订后还可能执行多次全书审校与额外 Fixer 调用；极长的书籍可能产生较大的工作区，PDF 输入默认依赖 MinerU 外部服务（首次转换需 API Key），可选 BabelDOC bridge 保留版式。多语言互译仍属实验性功能；提示词指令使用英语，模型生成的说明性元数据使用翻译目标语言。
 
 如果你发现了问题，欢迎提交 [Issue](https://github.com/BigDawnGhost/wenyi/issues)；如果你有想法，欢迎在[讨论区](https://github.com/BigDawnGhost/wenyi/discussions)提出；如果你有一定的编程能力，欢迎提交 PR，让这个项目变得更好。👏
 

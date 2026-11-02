@@ -77,13 +77,11 @@ export default function SettingsPage() {
     },
   });
   const check = useMutation({
-    mutationFn: () =>
-      api.checkModels(pid, project?.fmt === "srt" ? "srt" : "translate"),
+    mutationFn: () => api.checkModels(pid),
   });
   const busy =
     isProjectBusy(project?.status) ||
     (!project && config.data?.editable === false);
-  const subtitles = project?.fmt === "srt";
   const setField = (group: string, key: string, value: unknown) => {
     const next = workflowField(effective, group, key, value);
     setEffective(next);
@@ -130,7 +128,6 @@ export default function SettingsPage() {
             config={effective}
             disabled={formDisabled}
             error={configurationError}
-            subtitles={subtitles}
             pdf={project?.fmt === "pdf"}
             onField={setField}
           />

@@ -33,8 +33,7 @@ Desktop owns collection and native publication; shared components expose optiona
 
 Keep Core independent of CLI and HTTP frameworks. Agents must not depend on the pipeline
 or concrete state stores. Shared markup and style policy must not depend on LLMs or a
-particular writer. SRT remains an independent lightweight path; BabelDOC remains an
-external HTTP service.
+particular writer. BabelDOC remains an external HTTP service.
 
 Web and Desktop share behavior, not project state or infrastructure. Web uses PostgreSQL
 and Redis/Arq; Desktop owns a SQLite catalog, per-project SQLite stores, and a local runner.

@@ -25,7 +25,6 @@ from .routers import (
     settings,
     strategies,
     style,
-    subtitles,
     ws,
 )
 
@@ -77,7 +76,6 @@ def create_app(
         projects,
         configuration,
         settings,
-        subtitles,
         chapters,
         glossary,
         review,

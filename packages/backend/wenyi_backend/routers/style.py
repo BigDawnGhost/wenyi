@@ -6,7 +6,6 @@ from contextlib import closing
 
 from fastapi import APIRouter, HTTPException
 
-from ..project_service import require_book
 from ..schemas import AnalysisOut, AnalysisUpdate, DigestUpdate
 from .dependencies import project_write, require_project, storage_for
 
@@ -15,7 +14,7 @@ router = APIRouter(prefix="/projects/{pid}", tags=["style"])
 
 @router.get("/analysis", response_model=AnalysisOut)
 def get_analysis(pid: str) -> dict:
-    require_book(require_project(pid))
+    require_project(pid)
     with closing(storage_for(pid)) as storage:
         digests = []
         for entry in storage.load_manifest().get("chapters", []):
@@ -32,8 +31,7 @@ def get_analysis(pid: str) -> dict:
 
 @router.put("/analysis")
 def update_analysis(pid: str, body: AnalysisUpdate) -> dict:
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         storage.save_analysis(body.analysis)
         storage.log_event("analysis_edited")
     return {"ok": True}
@@ -41,8 +39,7 @@ def update_analysis(pid: str, body: AnalysisUpdate) -> dict:
 
 @router.put("/chapter-digests/{ci}")
 def update_chapter_digest(pid: str, ci: int, body: DigestUpdate) -> dict:
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         try:
             chapter = storage.load_chapter(ci)
         except KeyError:

@@ -97,7 +97,6 @@ export default function CreateProjectDialog() {
           : [format],
   );
   const extension = file?.name.split(".").pop()?.toLowerCase();
-  const subtitle = extension === "srt";
   const fileError =
     file &&
     (file.size === 0
@@ -116,8 +115,8 @@ export default function CreateProjectDialog() {
             name: name.trim(),
             source_lang: source,
             target_lang: target,
-            prepare: !subtitle && prepare,
-            translation_mode: subtitle ? "standard" : translationMode,
+            prepare,
+            translation_mode: translationMode,
             pdf_backend: extension === "pdf" && pdfBackend ? pdfBackend : null,
           },
           file,
@@ -307,7 +306,7 @@ export default function CreateProjectDialog() {
             </Select>
           </div>
         )}
-        {!subtitle && project?.fmt !== "srt" && (!pid || savedPipeline) && (
+        {(!pid || savedPipeline) && (
           <fieldset disabled={locked} className="min-w-0 space-y-2">
             <legend className="mb-2 text-sm font-medium leading-none">
               {tr("createProject.translationMode")}
@@ -344,7 +343,7 @@ export default function CreateProjectDialog() {
             </div>
           </fieldset>
         )}
-        {!pid && !subtitle && (
+        {!pid && (
           <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
             <input
               type="checkbox"

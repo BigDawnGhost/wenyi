@@ -34,7 +34,6 @@ TASK_GROUPS = {
         "annotation_aligner",
     ),
     "review": ("reviewer", "review_agent", "review_arbiter", "review_fixer"),
-    "srt": ("srt_batch", "srt_single"),
 }
 
 
@@ -132,7 +131,7 @@ def _template_path(task: str, *, terminology: bool) -> str:
 def _templates(context: PolicyContext, *, terminology: bool) -> tuple[tuple[str, str], ...]:
     if context.phase == "export":
         return ()
-    groups = context.task_groups or TASK_GROUPS["srt" if context.path == "srt" else context.phase]
+    groups = context.task_groups or TASK_GROUPS[context.phase]
     if not terminology:
         groups = tuple(group for group in groups if not group.startswith("terminology_"))
     if terminology and context.phase in {"analysis", "translation"}:
@@ -157,17 +156,22 @@ def resolve_policy(
         source=require_language(context.source, allow_auto=True),
         target=require_language(context.target),
     )
-    if context.phase not in {"analysis", "translation", "review", "export"} or context.path not in {
-        "book",
-        "srt",
-    }:
+    if (
+        context.phase not in {"analysis", "translation", "review", "export"}
+        or context.path != "book"
+    ):
         raise ValueError("Unsupported language policy phase or workflow")
     if context.order not in {"target_first", "source_first"}:
         raise ValueError("Unsupported bilingual output order")
     overrides = overrides or {}
     validate_bindings(overrides)
     if context.phase == "export" and context.format not in (
-        ("srt",) if context.path == "srt" else ("epub", "docx", "html", "txt", "markdown", "pdf")
+        "epub",
+        "docx",
+        "html",
+        "txt",
+        "markdown",
+        "pdf",
     ):
         raise ValueError(f"Unsupported language policy export format: {context.format}")
     if context.backend not in {"native", "babeldoc"}:

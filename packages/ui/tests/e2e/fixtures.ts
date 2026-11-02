@@ -18,10 +18,10 @@ export const project = {
 // Specs build their own chapter variants from this base; keep it free of
 // presentation-only fields so overrides stay fully deterministic.
 // Extra sandbox projects so sidebar recall/switching can be exercised by
-// hand: a busy book and an srt project (fewer sidebar links via audience).
+// hand: a busy book and a completed book with a different language pair.
 const projectNames: Record<string, string> = {
   "book-2": "雾谷试译",
-  "book-3": "字幕样例",
+  "book-3": "短篇样例",
 };
 const extraProjects = [
   {
@@ -41,9 +41,8 @@ const extraProjects = [
     ...project,
     id: "book-3",
     name: projectNames["book-3"],
-    title: "Subtitle sample",
-    fmt: "srt",
-    output_formats: ["srt"],
+    title: "Short story sample",
+    fmt: "text",
     source_lang: "en",
     target_lang: "zh",
     status: "done",
@@ -147,7 +146,7 @@ export const capabilities = {
     { code: "en", name: "英语" },
     { code: "ja", name: "日语" },
   ],
-  input_formats: ["epub", "docx", "srt", "pdf"],
+  input_formats: ["epub", "docx", "txt", "pdf"],
   output_formats: ["epub", "txt", "html", "markdown", "docx", "pdf"],
   pdf: {
     backends: ["mineru", "babeldoc"],
@@ -338,22 +337,6 @@ function tableData(): Record<string, unknown> {
       ],
       review_issues: [],
     },
-    [`/projects/${pid}/subtitles`]: {
-      cues: [
-        {
-          id: "007",
-          index: 0,
-          start: "00:00:01,000",
-          end: "00:00:03,000",
-          timestamp: "00:00:01,000 --> 00:00:03,000",
-          source: "Hello",
-          target: "你好",
-          status: "done",
-        },
-      ],
-      completed: 1,
-      total: 1,
-    },
   };
 }
 
@@ -449,12 +432,6 @@ function evolveSandbox(json: unknown, path: string, state: SandboxState): unknow
         updated_at: new Date().toISOString(),
       },
     };
-  }
-  if (rest === "/subtitles") {
-    const subtitles = json as { completed?: number; total?: number };
-    if (ratio === null) return { ...subtitles, completed: 0 };
-    if (ratio >= 1) return subtitles;
-    return { ...subtitles, completed: Math.round((ratio as number) * (subtitles.total || 0)) };
   }
   return json;
 }

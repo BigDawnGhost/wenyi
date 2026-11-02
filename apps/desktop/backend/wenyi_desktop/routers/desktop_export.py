@@ -9,7 +9,6 @@ from pydantic import BaseModel
 from wenyi_backend.context import current_context
 from wenyi_backend.export_plan import export_filename, resolve_export
 from wenyi_backend.export_response import ExportResponse
-from wenyi_backend.project_service import require_book
 from wenyi_backend.routers.dependencies import effective_config, require_project
 from wenyi_backend.schemas import ExportRequest, GlossaryExportFormat
 
@@ -42,7 +41,7 @@ def _plan(filename: str, fmt: str, request: ExportRequest | None = None) -> Nati
 
 @router.get("/glossary/plan")
 def plan_glossary(pid: str, format: GlossaryExportFormat = "json") -> NativeExportPlan:
-    require_book(require_project(pid))
+    require_project(pid)
     return _plan(f"glossary-{pid}.{format}", format)
 
 

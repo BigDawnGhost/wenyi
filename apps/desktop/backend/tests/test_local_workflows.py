@@ -669,32 +669,6 @@ def test_parallel_translation_isolates_pause_failure_resume_and_usage(
                 store.close()
 
 
-def test_fake_srt_translation_edit_and_export(desktop):
-    client, backend, fake = desktop
-
-    def subtitles(messages, tier, json_mode):
-        return json.dumps({"1": "字幕"}, ensure_ascii=False) if json_mode else "字幕"
-
-    fake.handler = subtitles
-    pid = upload(client, name="clip.srt", content=b"1\n00:00:00,100 --> 00:00:01,200\nHello\n")
-    response = client.post(f"/projects/{pid}/translate")
-    assert response.status_code == 200, response.text
-    job = wait_job(response.json()["job_id"])
-    assert job["status"] == "done", job
-    root = f"/projects/{pid}"
-    cues = client.get(root + "/subtitles").json()
-    assert cues["completed"] == 1
-    assert client.put(root + "/subtitles/1", json={"target": "人工字幕"}).status_code == 200
-    response = client.post(root + "/exports", json={"format": "srt"})
-    assert response.status_code == 200, response.text
-    assert wait_job(response.json()["job_id"])["status"] == "done"
-    text = client.get(root + f"/exports/{response.json()['export_id']}/download").text
-    assert "00:00:00,100 --> 00:00:01,200" in text
-    assert "人工字幕" in text
-    assert all(call["operation"] == "srt.translate" for call in fake.calls)
-    assert not list(backend.workspace.rglob("manifest.json"))
-
-
 def test_shutdown_waits_for_saved_translation_checkpoint(desktop, monkeypatch):
     import asyncio
     import threading

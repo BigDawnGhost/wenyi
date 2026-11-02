@@ -9,7 +9,6 @@ from wenyi_core.storage.precision_drafts import read_precision_drafts
 
 from ..chapter_state import chapter_review_state
 from ..context import current_context
-from ..project_service import require_book
 from ..schemas import (
     ChapterSegments,
     ChapterSummary,
@@ -85,14 +84,12 @@ def chapter_payload(storage, ci: int, *, project: dict) -> dict:
 @router.get("", response_model=list[ChapterSummary])
 def list_chapters(pid: str) -> list[dict]:
     project = require_project(pid)
-    require_book(project)
     return chapter_summaries(project)
 
 
 @router.get("/{ci}", response_model=ChapterSegments)
 def get_chapter(pid: str, ci: int) -> dict:
     project = require_project(pid)
-    require_book(project)
     storage = read_storage_for(pid)
     try:
         return chapter_payload(storage, ci, project=project)
@@ -104,7 +101,6 @@ def get_chapter(pid: str, ci: int) -> dict:
 def get_precision_drafts(pid: str, ci: int, si: int) -> dict:
     """Inspect archived drafts without editing or regenerating the formal translation."""
     project = require_project(pid)
-    require_book(project)
     if not project.get("initialized"):
         raise HTTPException(409, "Prepare the book before inspecting translation drafts")
     storage = read_storage_for(pid)
@@ -146,8 +142,7 @@ def _linked_toc_entries(manifest: dict, chapter: dict) -> list[dict]:
 
 @router.put("/{ci}/title", response_model=ChapterTitleOut)
 def update_chapter_title(pid: str, ci: int, body: ChapterTitleUpdate) -> dict:
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         if not storage.exists():
             raise HTTPException(409, "Prepare the book before editing chapter titles")
         with storage.state_lock():
@@ -185,7 +180,7 @@ def update_chapter_title(pid: str, ci: int, body: ChapterTitleUpdate) -> dict:
 
 @router.post("/{ci}/translate", response_model=JobEnqueued)
 async def translate_chapter(pid: str, ci: int) -> dict:
-    require_book(require_project(pid))
+    require_project(pid)
     chapter = next(
         (row for row in current_context().repository.chapter_summaries(pid) if row["index"] == ci),
         None,

@@ -61,7 +61,7 @@ uv run wenyi --config config.yaml translate book.epub --bilingual
 
 Outputs are `output/book.en.epub` and `output/book.en-bi.epub`. For Japanese-to-English use `source: ja`, `target: en`; for English-to-Japanese use `source: en`, `target: ja`. A reverse run takes a file in the corresponding source language; each run selects one direction. Explicit `--out` names and their `-bi` derivatives retain their existing behavior.
 
-The `.zh.*` examples below describe the default Simplified Chinese target. All book targets use `state/<book>/targets/<target-language>/`; subtitles use `state/srt/<slug>/targets/<target-language>/`. Resume and standalone stages use the same target configuration; switching back does not retranslate completed work. The EPUB about page is Chinese for Simplified Chinese targets and otherwise temporarily falls back to an English page tagged as English; disable it with `about_page: false`.
+The `.zh.*` examples below describe the default Simplified Chinese target. All book targets use `state/<book>/targets/<target-language>/`. Resume and standalone stages use the same target configuration; switching back does not retranslate completed work. The EPUB about page is Chinese for Simplified Chinese targets and otherwise temporarily falls back to an English page tagged as English; disable it with `about_page: false`.
 
 The CLI uses English for help, progress, tables, and errors. Translation and generated descriptive metadata follow `language.target`; original names in `source` and `aliases` remain available for matching. Existing analysis and glossary notes are reused when resuming and are not automatically translated by this update. This version does not support RTL targets such as Arabic or Hebrew. PDF fonts and external bridge language capabilities require separate validation. Real-model long-form before/after quality evaluation remains outstanding.
 
@@ -123,16 +123,16 @@ checksum, approve it in **System Settings → Privacy & Security** if prompted.
 
 ## Input and output
 
-- Input formats: EPUB, FB2, TXT, Markdown, HTML, PDF, DOCX, and SRT.
+- Input formats: EPUB, FB2, TXT, Markdown, HTML, PDF, and DOCX.
 - For Markdown input, headings starting with `#` through `######`, followed by whitespace and title text, start new chapters. Their original levels are recorded during import; plain-text contents lists with page numbers remain body text.
 - Markdown heading levels are preserved in EPUB body headings, the generated EPUB navigation tree, and DOCX outline styles. Navigation nests each heading under the nearest preceding heading with a smaller level number; skipped levels do not create synthetic entries. Existing state with correct chapter divisions and stored heading levels only needs a fresh export, not retranslation.
 - Default book output: a monolingual `<book-name>.zh.epub` under the source file's `output/` directory (`.docx` inputs default to `<book-name>.zh.docx`, and BabelDOC PDF state defaults to `<book-name>.zh.pdf`). The bilingual `*.zh-bi.*` edition is optional.
-- `--format epub|txt|html|markdown|pdf|docx`: export the selected format for book inputs; `pdf` is only available for saved BabelDOC projects. When omitted, BabelDOC PDF state → `pdf`, `.docx` → `docx`, and other books (including MinerU PDF state) → `epub`. An explicit supported format takes precedence; PDF availability and defaults follow the saved backend, even if the current `pdf_backend` setting has changed. This flag does not apply to SRT.
+- `--format epub|txt|html|markdown|pdf|docx`: export the selected format for book inputs; `pdf` is only available for saved BabelDOC projects. When omitted, BabelDOC PDF state → `pdf`, `.docx` → `docx`, and other books (including MinerU PDF state) → `epub`. An explicit supported format takes precedence; PDF availability and defaults follow the saved backend, even if the current `pdf_backend` setting has changed.
 - For EPUB input, Wenyi attempts to write translated text back into the original XHTML templates while preserving styles, images, the table of contents, and anchors.
 - The bilingual edition displays the translation and source text together. EPUB/HTML source text is visually subdued by default; set `output.bilingual_preserve_source_style: true` to inherit the book's normal text style. DOCX source text uses normal body styling by default, without added gray text, highlighting, or reduced font sizes; enabling the same option restores recorded source character styles, including mixed-style spans, in paragraphs and tables. Their order is controlled independently by `output.bilingual_order`. Existing translated state only needs a fresh export.
 - Untranslated EPUB paragraphs appear once as the original text, retaining ruby readings and links. This also applies to Web exports and partially translated chapters; bilingual ordering and source styling do not add a second copy.
 - EPUB output includes an “About this translation” page by default. Set `output.about_page: false` to disable it.
-- Book runtime data is stored under `state/<book>/targets/<target-language>/`, including chapter intermediates, the SQLite glossary, usage data, and reports. Subtitle runs use a separate tree under `state/srt/` (see [SRT subtitles](#srt-subtitles)).
+- Book runtime data is stored under `state/<book>/targets/<target-language>/`, including chapter intermediates, the SQLite glossary, usage data, and reports.
 
 ### Experimental PDF support
 
@@ -225,39 +225,6 @@ uv run wenyi translate book.docx --bilingual
 uv run wenyi translate book.docx --format epub
 ```
 
-## SRT subtitles
-
-`translate` routes `.srt` files automatically. The subtitle path is intentionally
-lighter than the book pipeline:
-
-- sliding windows of 20 cues with overlap 10, up to 100 concurrent strong-tier calls;
-- no glossary, polishing, or whole-book review;
-- `--chapter`, `--polish`, `--review`, and `--format` are ignored or rejected where they do not apply;
-- monolingual `output/<stem>.zh.srt` by default; add `--bilingual` for `.zh-bi.srt`.
-
-```bash
-uv run wenyi translate movie.srt
-uv run wenyi translate movie.srt --bilingual
-uv run wenyi translate movie.srt --no-mono --bilingual
-```
-
-Resume by running the same source file again. Cached batches under
-`state/srt/<slug>/targets/<target-language>/batches/` are skipped. Layout:
-
-```text
-state/srt/<slug>/targets/<target-language>/
-  manifest.json    # source identity, cue counts, window settings
-  cues.jsonl       # one cue per line: index, timestamp, source, target, status
-  batches/         # raw model results for resume
-  usage.json       # cumulative token usage across resumes
-  timing.json      # cumulative execution time and individual invocation durations
-  events.jsonl     # run events and LLM retry observations
-```
-
-There is no `glossary.db` or `reviews/` tree for subtitles. Package code lives in
-`trans_novel.srt` (store + translate), with I/O in `ingest.srt_reader` and
-`assemble.srt_writer`.
-
 ## Usage and event logs
 
 Each target directory stores cumulative token usage in `usage.json` and appends stage events and retries to `events.jsonl`. Review directories also record session usage; each increment is merged into the cumulative ledger once.
@@ -309,7 +276,7 @@ waits, translation, polishing, review and export. Switching stages, chapters or 
 rounds does not reset it; completing one stage does not stop it while subsequent work
 is pending. Concurrent model requests contribute wall time, not the sum of request durations.
 
-After `prepare`, `translate` (including `--chapter` and SRT), `review` or `assemble`,
+After `prepare`, `translate` (including `--chapter`), `review` or `assemble`,
 the CLI prints the last run's duration and cumulative execution time. Each target's
 `timing.json` stores `total_seconds` and a `runs` list with invocation IDs, operations,
 timestamps, durations and completion statuses. Repeating a command adds only that
@@ -338,7 +305,6 @@ uv run wenyi translate book.epub --chapter 3
 uv run wenyi translate book.epub --format txt
 uv run wenyi prepare book.epub
 uv run wenyi translate book.pdf
-uv run wenyi translate movie.srt
 
 # Override polishing and final review settings
 uv run wenyi translate book.epub --polish --review
@@ -349,7 +315,7 @@ uv run wenyi translate book.epub --bilingual
 uv run wenyi translate book.epub --no-mono --bilingual
 ```
 
-`parse` lists zero-based chapter indices, source titles and paragraph counts, and saves the source document in `parsed_document.json` under the printed target-language state directory. It does not require LLM credentials, detect language with a model, generate digests/style/terms, or mark translation state initialized. `language.source: auto` remains unresolved until preparation. PDF parsing still needs the configured MinerU/BabelDOC service. SRT uses the independent subtitle workflow, not this book command.
+`parse` lists zero-based chapter indices, source titles and paragraph counts, and saves the source document in `parsed_document.json` under the printed target-language state directory. It does not require LLM credentials, detect language with a model, generate digests/style/terms, or mark translation state initialized. `language.source: auto` remains unresolved until preparation. PDF parsing still needs the configured MinerU/BabelDOC service.
 
 Use `prepare` or `translate` afterward with the same source and configuration. Matching cached parsing is reused, including PDF conversion; changed content or parsing options invalidate it. An existing initialized run rejects different source content and keeps saved translations, analysis and usage unchanged.
 
@@ -369,8 +335,8 @@ uv run wenyi translate book.epub --translation-mode best_of_three --polish
 
 The equivalent configuration is `pipeline.translation_mode: best_of_three`
 with `pipeline.polish: true`. `--translation-mode standard` restores the default
-workflow for pending batches. Precision with `--no-polish` is rejected; the option
-does not apply to SRT. When resuming, keep the same mode/configuration to reuse
+workflow for pending batches. Precision with `--no-polish` is rejected.
+When resuming, keep the same mode/configuration to reuse
 precision checkpoints. Existing translations are not automatically reprocessed.
 See [precision workflow](pipeline.md#best-of-three-precision-translation) for
 three independent drafts followed by one source-first synthesis, resume and
@@ -401,7 +367,7 @@ uv run wenyi --config config.yaml translate book.epub
 
 `terminology_context` checks only person entries (`type: person`) discovered before and after translation against all matching whole-book source groups, and adds bounded, relevant read-only notes to translation, polishing, Review, and Fixer requests. Pretranslation discovery is person-only; other types retain ordinary posttranslation extraction and conflict handling without whole-book evidence or merge calls. It keeps the full glossary mappings, preserves existing person translations and protected manual fields, and records differing translations as conflicts. Existing notes are not deleted. `prepare` analyzes style and character voices but does not extract or seed glossary entries; evidence work begins with pending translation batches.
 
-Only CLI `prepare` and `translate` have operation-scoped permission to produce evidence. Ordinary Orchestrator/Runtime callers and the API cannot produce it merely by setting the YAML flag to `true`; Web/UI are not adapted. Review and assemble may consume existing notes without generating evidence. SRT does not use this path.
+Only CLI `prepare` and `translate` have operation-scoped permission to produce evidence. Ordinary Orchestrator/Runtime callers and the API cannot produce it merely by setting the YAML flag to `true`; Web/UI are not adapted. Review and assemble may consume existing notes without generating evidence.
 
 The glossary still stores one source identity and one main target per term. Whole-book notes can explain context and uncertainty, but there is no real sense model or per-occurrence target selection. Notes are source-grounded, supplementary and read-only, not permission to add future plot details or overwrite the authoritative target. Model adherence to these constraints is not guaranteed.
 
@@ -423,7 +389,7 @@ read-only by default; `--autofix` may publish their final revisions.
 Use a new state directory or remove the corresponding state only when you
 intentionally want a fresh translation.
 
-Language policies are built into the source code. When they change or saved state lacks a policy identity, `prepare`/`translate` automatically rebuilds affected analysis before pending work resumes; this may call models. Completed translations remain saved. Font and other export-only changes need a fresh export only. See [built-in language policies](configuration.md#built-in-language-policies) for book/SRT behavior and developer diagnostics.
+Language policies are built into the source code. When they change or saved state lacks a policy identity, `prepare`/`translate` automatically rebuilds affected analysis before pending work resumes; this may call models. Completed translations remain saved. Font and other export-only changes need a fresh export only. See [built-in language policies](configuration.md#built-in-language-policies) for workflow behavior and developer diagnostics.
 
 Chapter digests now cover the complete source in chunks. Their v2 source-hash and policy identity invalidates older caches, so the first resume after upgrading may regenerate analysis. Digests retain source-language character identities; translated names come from the current glossary. With terminology evidence enabled, retry reuses cached discoveries and successful evidence groups after a failure, completes missing admission work, and keeps already translated body text. No partial group result is published as complete knowledge.
 

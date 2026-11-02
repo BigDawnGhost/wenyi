@@ -13,7 +13,6 @@ from wenyi_backend.workers.tasks import (
     run_parse,
     run_prepare,
     run_review,
-    run_srt,
     run_translation,
 )
 
@@ -62,7 +61,6 @@ class WorkerSettings:
         run_translation,
         run_chapter_translation,
         run_review,
-        run_srt,
     ]
     on_startup = startup
     on_shutdown = shutdown

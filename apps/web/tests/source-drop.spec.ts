@@ -163,12 +163,6 @@ test("drops validate files and reject multiple files without replacing the selec
   await zone.dispatchEvent("drop", { dataTransfer: text });
   await text.dispose();
   await expect(zone.getByText("book.PDF", { exact: true })).toBeVisible();
-  await drop([{ name: "movie.srt" }]);
-  await expect(zone.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByLabel("PDF parser", { exact: true })).toHaveCount(0);
-  await expect(
-    page.getByRole("checkbox", { name: "Prepare before translating" }),
-  ).toHaveCount(0);
   await expect(create).toBeEnabled();
 });
 

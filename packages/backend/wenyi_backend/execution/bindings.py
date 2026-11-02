@@ -54,8 +54,6 @@ def operation_services(context: BackendContext) -> OperationServices:
         source_for=partial(resolve_source, context),
         build_client=context.build_client,
         exports_dir=exports_dir,
-        create_export=context.repository.create_export,
-        publish_export=context.exports.publish_export,
         mineru_token_resolver=context.mineru_token_resolver,
     )
 

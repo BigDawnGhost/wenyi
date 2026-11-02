@@ -25,17 +25,10 @@ export default function ProgressPage() {
   const projectQuery = useProjectQuery(pid, progressInterval(connected, 2500));
   const project = projectQuery.data;
   const busy = isProjectBusy(project?.status);
-  const subtitle = project?.fmt === "srt";
   const chapterQuery = useQuery({
     queryKey: ["chapters", pid],
     queryFn: () => api.listChapters(pid),
-    enabled: !!project && !subtitle,
-    refetchInterval: busy ? progressInterval(connected, 3000) : false,
-  });
-  const { data: cues } = useQuery({
-    queryKey: ["subtitles", pid],
-    queryFn: () => api.getSubtitles(pid),
-    enabled: subtitle,
+    enabled: !!project,
     refetchInterval: busy ? progressInterval(connected, 3000) : false,
   });
   const stats = useQuery({
@@ -65,14 +58,11 @@ export default function ProgressPage() {
   });
   const chapters = chapterQuery.data || [];
   // Match CLI translation progress: segment counts, not finished chapters.
-  const done = subtitle
-    ? cues?.completed || 0
-    : chapters.reduce((sum, c) => sum + (c.target_word_count || 0), 0);
-  const total = subtitle
-    ? cues?.total || 0
-    : chapters.reduce((sum, c) => sum + (c.word_count || 0), 0) ||
-      project?.total_word_count ||
-      0;
+  const done = chapters.reduce((sum, c) => sum + (c.target_word_count || 0), 0);
+  const total =
+    chapters.reduce((sum, c) => sum + (c.word_count || 0), 0) ||
+    project?.total_word_count ||
+    0;
   const paused = project?.status === "paused";
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
@@ -131,9 +121,7 @@ export default function ProgressPage() {
           <CardContent className="p-5 space-y-4">
             <div className="flex flex-wrap justify-between items-center gap-3">
               <h2 className="font-medium">
-                {subtitle
-                  ? tr("progress.subtitleTranslationOverview")
-                  : tr("common.translationOverview")}
+                {tr("common.translationOverview")}
               </h2>
               {project && <StatusBadge status={project.status} />}
             </div>
@@ -165,7 +153,7 @@ export default function ProgressPage() {
             {tr("progress.uploadPreviewSource")}
           </Link>
         )}
-        {!subtitle && chapters.length > 0 && (
+        {chapters.length > 0 && (
           <div className="space-y-2">
             <Link
               className="text-sm text-primary underline"
@@ -175,13 +163,11 @@ export default function ProgressPage() {
             </Link>
           </div>
         )}
-        {!subtitle && (
-          <ChapterTable
-            pid={pid}
-            chapters={chapters}
-            busy={busy || !project?.initialized}
-          />
-        )}
+        <ChapterTable
+          pid={pid}
+          chapters={chapters}
+          busy={busy || !project?.initialized}
+        />
       </PageContainer>
     </>
   );

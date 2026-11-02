@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
 from ..errors import CHAPTER_NOT_FOUND, SEGMENT_NOT_FOUND, ApiError
-from ..project_service import require_book
 from ..review_presentation import review_items
 from ..schemas import (
     ChapterSegments,
@@ -50,7 +49,7 @@ def _review_run(storage, rid: str) -> dict:
 
 @router.post("/run", response_model=JobEnqueued)
 async def run_ai_review(pid: str, body: ReviewRunRequest | None = None) -> dict:
-    require_book(require_project(pid))
+    require_project(pid)
     with closing(storage_for(pid)) as storage:
         if not storage.exists():
             raise HTTPException(409, "Prepare and translate the book before review")
@@ -62,7 +61,7 @@ async def run_ai_review(pid: str, body: ReviewRunRequest | None = None) -> dict:
 
 @router.get("/runs", response_model=list[ReviewRun])
 def list_runs(pid: str) -> list[dict]:
-    require_book(require_project(pid))
+    require_project(pid)
     with closing(storage_for(pid)) as storage:
         ids = {
             key.split("/")[1]
@@ -74,7 +73,7 @@ def list_runs(pid: str) -> list[dict]:
 
 @router.get("/runs/{rid}", response_model=ReviewRun)
 def get_run(pid: str, rid: str) -> dict:
-    require_book(require_project(pid))
+    require_project(pid)
     with closing(storage_for(pid)) as storage, storage.state_lock():
         run = _review_run(storage, rid)
         run["items"] = review_items(storage, rid, run["result"], run["autofix"])
@@ -84,7 +83,6 @@ def get_run(pid: str, rid: str) -> dict:
 @router.get("/{ci}", response_model=ChapterSegments)
 def get_chapter_for_review(pid: str, ci: int) -> dict:
     project = require_project(pid)
-    require_book(project)
     storage = read_storage_for(pid)
     try:
         return chapter_payload(storage, ci, project=project)
@@ -94,8 +92,7 @@ def get_chapter_for_review(pid: str, ci: int) -> dict:
 
 @router.put("/{ci}/segments/{seg_idx}")
 def edit_segment(pid: str, ci: int, seg_idx: int, body: SegmentEdit) -> dict:
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         if not storage.exists():
             raise HTTPException(409, "Prepare the book before editing translations")
         try:
@@ -132,7 +129,6 @@ def edit_segment(pid: str, ci: int, seg_idx: int, body: SegmentEdit) -> dict:
 @router.get("/{ci}/segments/{seg_idx}/history", response_model=list[SegmentRevision])
 def segment_history(pid: str, ci: int, seg_idx: int) -> list[dict]:
     project = require_project(pid)
-    require_book(project)
     if not project.get("initialized"):
         raise HTTPException(409, "Prepare the book before inspecting translation history")
     storage = read_storage_for(pid)
@@ -146,8 +142,7 @@ def segment_history(pid: str, ci: int, seg_idx: int) -> list[dict]:
 
 @router.post("/{ci}/complete")
 def mark_reviewed(pid: str, ci: int) -> dict:
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         if not storage.exists():
             raise HTTPException(409, "Prepare the book before marking review complete")
         try:

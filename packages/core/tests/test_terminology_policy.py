@@ -28,13 +28,12 @@ def test_defaults_and_removed_configuration():
 @pytest.mark.parametrize(
     "source,target", [("en", "zh"), ("ja", "zh"), ("fr", "en"), ("auto", "ja")]
 )
-def test_terminology_is_language_independent_and_book_only(source, target):
+def test_terminology_is_language_independent_and_phase_scoped(source, target):
     selected = config(source, target, terminology_context=True)
     for phase in ("analysis", "translation"):
         assert selected.language_policy(phase).enabled("terminology.context")
     for phase in ("review", "export"):
         assert not selected.language_policy(phase, format="epub").enabled("terminology.context")
-    assert not selected.language_policy(path="srt").enabled("terminology.context")
 
 
 def test_task_freezing_and_export_independence():
@@ -54,18 +53,13 @@ def test_task_freezing_and_export_independence():
         selected.language_policy("export", format="epub").fingerprint
         == default.language_policy("export", format="epub").fingerprint
     )
-    assert not any(
-        name.startswith("terminology_")
-        for name, _ in selected.language_policy(path="srt").templates
-    )
     for workflow in ("prepare", "translate"):
         assert {"terminology.discover", "terminology.evidence", "terminology.merge"} <= set(
             configured_operations(selected, workflow)
         )
-    for workflow in ("srt", "review"):
-        assert not any(
-            op.startswith("terminology.") for op in configured_operations(selected, workflow)
-        )
+    assert not any(
+        op.startswith("terminology.") for op in configured_operations(selected, "review")
+    )
 
 
 def test_terminology_templates_are_independent_of_relationship_guidance():

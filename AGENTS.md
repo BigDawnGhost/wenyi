@@ -38,7 +38,6 @@ Wenyi 是支持多语言互译、术语、润色、全书 Review 和多格式导
 | 术语 | `glossary/` SQLite、抽取与冲突裁定 | `test_glossary*.py` |
 | 模型路由与 provider | `llm/`；操作注册 `operations.py`，provider 注册 `registry.py` | `test_llm*.py`、`test_usage.py`、`test_routing_resume.py` |
 | 多语言与提示词 | `i18n/`；语言规则和任务模板统一在 `i18n/data/` | `test_i18n.py`、`test_metadata_language.py` |
-| 字幕 | `srt/` 及 SRT reader/writer | `test_srt.py` |
 
 Web/Desktop 相关入口使用仓库根目录相对路径：
 
@@ -69,7 +68,6 @@ CLI / Web / Desktop → Orchestrator → Runtime / Preparation / Translation / A
 - `agents/` 不得依赖 pipeline 编排、状态机或 RunStore；可使用顶层 `review/` 的纯模型。
 - `markup/` 和 `document_styles/` 不依赖 pipeline、LLM 或具体 writer。拆分时分离决策、执行与状态写入，不通过共享整个 runtime 延续耦合。
 - 并发属于具体领域服务。结果必须按稳定的原始顺序合并，不得让线程完成顺序改变输出。
-- SRT 独立于书籍 Orchestrator，无全书预扫、术语库、润色或 Review。
 - BabelDOC 集成必须保持进程隔离。主仓只发送 HTTP 请求；不要给 MIT 包新增 AGPL Python 依赖。
 
 涉及模块依赖关系时运行 `packages/core/tests/test_architecture_boundaries.py`；涉及 pipeline 装配或依赖关系时同时运行 `packages/core/tests/test_orchestrator_contract.py`。存储适配变更还需运行 `test_storage_injection.py` 和对应后端测试。

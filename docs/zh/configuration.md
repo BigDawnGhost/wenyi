@@ -84,12 +84,11 @@ language:
 
 ```bash
 uv run wenyi language-policy --source ja --format docx --backend native
-uv run wenyi language-policy --source en --subtitles --format srt
 ```
 
 诊断显示选择、资源哈希、版本、模型路由与指纹，不修改策略。自动源语言检测在实际检测前仍未解析；通过 `--source` 查看指定方向。未知内置操作、非法参数或不可用处理器会在消耗工作前报错。
 
-续跑时，语义策略变更会自动重建受影响的章节梗概、风格与全书概览，再继续待完成工作；缺少策略身份时同样重建派生分析。已完成译文和术语库继续保留，未变化的任务缓存可复用，重建中断后可恢复。重建分析可能调用模型。SRT 保留已完成字幕并忽略不兼容的待译窗口缓存。字体、ruby 与导出标点变更只需重新导出；Review 使用绑定新策略的独立会话。导出指纹绑定实际格式、后端及一致的原译文快照。
+续跑时，语义策略变更会自动重建受影响的章节梗概、风格与全书概览，再继续待完成工作；缺少策略身份时同样重建派生分析。已完成译文和术语库继续保留，未变化的任务缓存可复用，重建中断后可恢复。重建分析可能调用模型。字体、ruby 与导出标点变更只需重新导出；Review 使用绑定新策略的独立会话。导出指纹绑定实际格式、后端及一致的原译文快照。
 
 ## 模型与操作路由
 
@@ -185,7 +184,6 @@ DeepSeek 的 `reasoning_effort` 可设为 `low`、`high` 或 `max`；`thinking: 
 | `review.fix` | `strong` | 影子修订 |
 | `autofix.verify` | `review.verify` | 发布前取证核查 |
 | `autofix.fix` | `review.fix` | 正式发布修订 |
-| `srt.translate` | `strong` | 字幕批次与单条恢复 |
 
 ### 预览、限额与显式故障切换
 
@@ -196,7 +194,7 @@ uv run wenyi models explain --operation review.verify
 uv run wenyi models check --for translate
 ```
 
-`list` 和 `explain` 无需密钥；`check --for prepare|translate|review|srt` 只检查当前配置开关下可达操作的密钥。这三个命令均不创建 SDK 客户端、不发送请求。翻译命令先应用 CLI 流程开关，再检查密钥。
+`list` 和 `explain` 无需密钥；`check --for prepare|translate|review` 只检查当前配置开关下可达操作的密钥。这三个命令均不创建 SDK 客户端、不发送请求。翻译命令先应用 CLI 流程开关，再检查密钥。
 
 需要确认 provider 实际可连通时，运行真实连通性测试：
 
@@ -245,7 +243,7 @@ llm:
 
 事件记录路由计划及请求的操作、模型、提供商、配置名、连接名、推理指纹、调用 ID、尝试次数。全书和 Review 账本先写 `usage-pending.json`，再更新正式账本；本地合并中断后能补完且不重复累计。若进程在远端受理后、本地保存前被强杀，仍可能存在无法确定的远端用量。
 
-翻译、分析、概要、SRT 模型变更会保留完成结果，仅后续请求使用新路由。可达的 Review 模型、端点、选项或协议变化会开启新 Review；无关路由、密钥轮换、别名和并发调整不会使其失效。缺少推理身份的旧 Review 缓存保留供检查，但不复用。Autofix 使用独立指纹：已写发布索引的任务按保存的候选补完；未完成的模型规划需恢复原路由后继续。
+翻译、分析、概要模型变更会保留完成结果，仅后续请求使用新路由。可达的 Review 模型、端点、选项或协议变化会开启新 Review；无关路由、密钥轮换、别名和并发调整不会使其失效。缺少推理身份的旧 Review 缓存保留供检查，但不复用。Autofix 使用独立指纹：已写发布索引的任务按保存的候选补完；未完成的模型规划需恢复原路由后继续。
 
 旧配置和非空旧用量账本需要显式转换：
 
@@ -265,8 +263,7 @@ uv run wenyi models migrate-usage state/BOOK/targets/zh
 Web 在创建书籍项目时选择翻译模式；新项目默认 `standard`，不继承全局模式。
 选择精翻会自动开启本项目润色，翻译方式在创建后固定；项目配置可调整其他字段，
 但不能关闭精翻要求的润色，恢复默认配置也保留已保存的翻译方式。
-翻译模式不属于 Web 总设置，全局 YAML 会拒绝它。SRT 不支持精翻；
-项目 YAML 和换源接口也会校验这一限制，不会静默改成普通字幕翻译。
+翻译模式不属于 Web 总设置，全局 YAML 会拒绝它。
 
 精翻始终生成三份初稿，内置三分支并发，不作为用户选项。
 旧配置及冻结任务中的 `pipeline.precision_concurrency` 仍可读取，但其值会被忽略，
@@ -312,7 +309,7 @@ pipeline:
 - 旧键 `rolling_context_segments` 不再接受，请使用 `rolling_context_tokens` 替换，不提供段数到 token 的自动换算。
 - `book_understanding`：完整章节按有界分块预扫，生成章节梗概和全书概览，不受 `terminology_context` 影响。风格分析同时参考梗概与原文样本；摘要保留原文身份，只使用已有权威名称映射。有原文内容的章节必须具备可用梗概才能开始正文翻译；全书概览合成失败时翻译继续。失败的章节梗概会在下次 prepare/translate 时补齐。相较旧版默认取样，完整覆盖会增加长章节首次预扫费用。重试与缓存行为见[流程文档](pipeline.md)。
 - `prescan_concurrency`：预扫章节梗概的并发数。
-- `terminology_context`：仅 CLI 可用、只针对人物条目（`type: person`）的实验性全书原文证据与译前发现，默认关闭，避免旧任务隐性增加模型费用。其他类型保留常规译后抽取和冲突处理，不调用全书取证或合并。译前准备不抽取或建立术语。只有 CLI `prepare` 和 `translate` 显式允许生产证据；仅开启 YAML 设置不授权普通 Orchestrator/Runtime 调用方或 API 生产证据。Review 和 assemble 可以消费已有备注，但不生产证据。仅适用于书籍，不适用于 SRT；Web/UI 未适配。`terminology.discover`、`terminology.evidence`、`terminology.merge` 模型操作复用常规 LLM 路由配置。词条仍为单一原文身份、单一主译名，不是真正的义项模型；参见[限制和缓存行为](pipeline.md#可选全书术语证据)。
+- `terminology_context`：仅 CLI 可用、只针对人物条目（`type: person`）的实验性全书原文证据与译前发现，默认关闭，避免旧任务隐性增加模型费用。其他类型保留常规译后抽取和冲突处理，不调用全书取证或合并。译前准备不抽取或建立术语。只有 CLI `prepare` 和 `translate` 显式允许生产证据；仅开启 YAML 设置不授权普通 Orchestrator/Runtime 调用方或 API 生产证据。Review 和 assemble 可以消费已有备注，但不生产证据。Web/UI 未适配。`terminology.discover`、`terminology.evidence`、`terminology.merge` 模型操作复用常规 LLM 路由配置。词条仍为单一原文身份、单一主译名，不是真正的义项模型；参见[限制和缓存行为](pipeline.md#可选全书术语证据)。
 - `annotation_alignment`：默认开启。EPUB 中存在脚注、尾注等内部链接时，每个含注释的逻辑段在翻译和润色后立即针对正式译文串行调用一次模型定位。开启导出标点规范化时，导出层会在规范化内存副本的同时重映射已保存的偏移。超长续段会先重新合并，不含注释的段落不会调用模型。关闭后，译文侧仍保留链接但退化为段末可点击标记；未翻译原文及双语版原文侧保留源 EPUB 中的原始位置。该选项只控制链接定位；已经解析出的原语言注释正文始终会自动提供给对应翻译段落。
 - `annotation_alignment_concurrency`：当一个逻辑段内注释数超过一条时，不再用一次模型调用要求同时摆对所有标记（一条出错就会连累整段全部标记回退），而是给每条注释单独发起一次并发请求；该项限制同一段内这些逐条请求可同时并发的上限。
 - `review_concurrency`：针对同一份不可变译文快照执行连续审校块和同轮 Fixer 调用的并发上限；设为 `1` 时串行执行。
@@ -383,6 +380,6 @@ paths:
 - `max_tokens_per_batch`：单个模型翻译批次的源文 token 预算，使用 tiktoken `cl100k_base` 计数（通用估算，不等于线上提供商私有分词器）。
 - `max_tokens_per_segment`：超长段落按句拆分的 token 阈值。
 - `honorific.strategy`：日语源文本的敬称处理策略，可选 `keep_style`、`normalize`、`drop`。
-- `state_dir`：书籍断点、章节产物、术语库、用量和报告的位置。字幕运行使用独立目录树 `<state_dir>/srt/<slug>/targets/<目标语言>/`（manifest、cues、batches、usage、events），不会创建术语库或审校目录。
+- `state_dir`：书籍断点、章节产物、术语库、用量和报告的位置。
 
-所有书籍目标（包括默认 `zh`）统一使用 `<state_dir>/<slug>/targets/<目标语言>/`，字幕对应 `<state_dir>/srt/<slug>/targets/<目标语言>/`。每个目录有独立译文、术语、上下文、账本和 Review。不再查找或迁移旧版本保存在书名根目录下的状态。请使用当前配置重新开始翻译，原有文件保持不动。保存的 manifest 必须包含 `source_lang`、`target_lang` 和有效的 `source_sha256`。
+所有书籍目标（包括默认 `zh`）统一使用 `<state_dir>/<slug>/targets/<目标语言>/`。每个目录有独立译文、术语、上下文、账本和 Review。不再查找或迁移旧版本保存在书名根目录下的状态。请使用当前配置重新开始翻译，原有文件保持不动。保存的 manifest 必须包含 `source_lang`、`target_lang` 和有效的 `source_sha256`。

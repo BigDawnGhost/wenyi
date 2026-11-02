@@ -198,7 +198,7 @@ def test_all_model_call_sites_use_operations():
 
     root = Path(__file__).parents[1] / "wenyi_core"
     literal_operations = set()
-    for directory in ("agents", "pipeline", "glossary", "srt"):
+    for directory in ("agents", "pipeline", "glossary"):
         for path in (root / directory).glob("*.py"):
             for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
                 if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
@@ -226,7 +226,6 @@ def test_all_model_call_sites_use_operations():
         "synopsis.book",
         "glossary.extract",
         "glossary.align_history",
-        "srt.translate",
     } <= literal_operations
 
 

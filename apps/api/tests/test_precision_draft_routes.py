@@ -86,14 +86,6 @@ def test_http_drafts_missing_chapter_or_stable_segment_is_404(draft_api, ci, si)
     )
 
 
-def test_http_drafts_reject_subtitles(draft_api):
-    http, _, _, _, project, _ = draft_api
-    project["fmt"] = "srt"
-    assert (
-        http.get("/projects/draft-test/chapters/0/segments/11/precision-drafts").status_code == 422
-    )
-
-
 def test_http_drafts_report_missing_candidate_without_fabricating_it(draft_api):
     http, store, result, _, _, _ = draft_api
     store.delete_artifact(f"{result.precision_key}/drafts/T2.json")

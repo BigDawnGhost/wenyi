@@ -21,19 +21,7 @@ def export_filename(project: dict, target_lang: str, fmt: str, bilingual: bool) 
 def resolve_export(project: dict, manifest: dict, body: ExportRequest) -> tuple[str, dict]:
     if not project.get("initialized"):
         raise ApiError(SOURCE_NOT_READY, 409, "Prepare or translate the source before exporting")
-    fmt = body.format or (
-        "srt"
-        if project["fmt"] == "srt"
-        else "docx"
-        if project["fmt"] == "docx"
-        else default_output_format(manifest)
-    )
-    if (project["fmt"] == "srt") != (fmt == "srt"):
-        raise ApiError(
-            INVALID_CONFIGURATION,
-            422,
-            "Subtitle projects export SRT; book projects export book formats",
-        )
+    fmt = body.format or ("docx" if project["fmt"] == "docx" else default_output_format(manifest))
     try:
         output_backend(manifest, fmt)
     except ValueError as error:

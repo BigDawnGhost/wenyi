@@ -63,12 +63,9 @@ PHASES = frozenset(
         "annotation",
         "review",
         "autofix",
-        "srt",
     }
 )
-KINDS = frozenset(
-    {"parse", "prepare", "translation", "chapter_translation", "review", "srt", "export"}
-)
+KINDS = frozenset({"parse", "prepare", "translation", "chapter_translation", "review", "export"})
 _scope: ContextVar[tuple[Reporter | None, dict[str, str]]] = ContextVar(
     "desktop_diagnostics", default=(None, {})
 )

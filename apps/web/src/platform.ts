@@ -96,7 +96,7 @@ export const webPlatform: PlatformServices = {
   },
   authenticateProgress: (socket) => socket.send(JSON.stringify({ token: authToken() || "" })),
   progressInterval: (_connected, fallback) => fallback,
-  progressKeys: () => ["project", "chapters", "subtitles", "workflow", "stats"],
+  progressKeys: () => ["project", "chapters", "workflow", "stats"],
   bindSourceDrop,
   capabilities: {},
 };

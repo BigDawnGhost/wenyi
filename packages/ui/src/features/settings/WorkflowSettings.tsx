@@ -27,7 +27,6 @@ export function WorkflowSettings({
   scope,
   disabled,
   error,
-  subtitles = false,
   pdf = false,
   onField,
 }: {
@@ -35,7 +34,6 @@ export function WorkflowSettings({
   scope: "global" | "project";
   disabled: boolean;
   error?: unknown;
-  subtitles?: boolean;
   pdf?: boolean;
   onField: (group: string, key: string, value: unknown) => void;
 }) {
@@ -52,36 +50,32 @@ export function WorkflowSettings({
 
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
-      {!subtitles && (
-        <div className="grid grid-cols-2 gap-3">
-          {PIPELINE.map(([key, label]) => (
-            <label key={key} className="flex gap-2 items-center text-sm">
-              <input
-                type="checkbox"
-                disabled={key === "polish" && precision}
-                checked={Boolean(section(config, "pipeline")[key])}
-                onChange={(e) => onField("pipeline", key, e.target.checked)}
-              />
-              {label}
-            </label>
-          ))}
-        </div>
-      )}
-      <SettingsGroup title={tr("settings.performance")} error={error} collapsible={scope === "project"}>
-        {!subtitles && (
-          <label className="flex gap-2 items-center text-sm">
+      <div className="grid grid-cols-2 gap-3">
+        {PIPELINE.map(([key, label]) => (
+          <label key={key} className="flex gap-2 items-center text-sm">
             <input
               type="checkbox"
-              checked={Boolean(
-                section(config, "pipeline").annotation_alignment,
-              )}
-              onChange={(e) =>
-                onField("pipeline", "annotation_alignment", e.target.checked)
-              }
+              disabled={key === "polish" && precision}
+              checked={Boolean(section(config, "pipeline")[key])}
+              onChange={(e) => onField("pipeline", key, e.target.checked)}
             />
-            {tr("settings.paragraphAnnotationAlignment")}
+            {label}
           </label>
-        )}
+        ))}
+      </div>
+      <SettingsGroup title={tr("settings.performance")} error={error} collapsible={scope === "project"}>
+        <label className="flex gap-2 items-center text-sm">
+          <input
+            type="checkbox"
+            checked={Boolean(
+              section(config, "pipeline").annotation_alignment,
+            )}
+            onChange={(e) =>
+              onField("pipeline", "annotation_alignment", e.target.checked)
+            }
+          />
+          {tr("settings.paragraphAnnotationAlignment")}
+        </label>
         <div className="grid grid-cols-2 gap-4">
           <div>
             <Label htmlFor="batch-tokens">
@@ -125,29 +119,27 @@ export function WorkflowSettings({
               className="mt-2"
             />
           </div>
-          {!subtitles && (
-            <div>
-              <Label htmlFor="review-concurrency">
-                {tr("settings.reviewConcurrency")}
-              </Label>
-              <Input
-                id="review-concurrency"
-                type="number"
-                min={1}
-                value={Number(
-                  section(config, "pipeline").review_concurrency ?? 4,
-                )}
-                onChange={(e) =>
-                  onField(
-                    "pipeline",
-                    "review_concurrency",
-                    Number(e.target.value),
-                  )
-                }
-                className="mt-2"
-              />
-            </div>
-          )}
+          <div>
+            <Label htmlFor="review-concurrency">
+              {tr("settings.reviewConcurrency")}
+            </Label>
+            <Input
+              id="review-concurrency"
+              type="number"
+              min={1}
+              value={Number(
+                section(config, "pipeline").review_concurrency ?? 4,
+              )}
+              onChange={(e) =>
+                onField(
+                  "pipeline",
+                  "review_concurrency",
+                  Number(e.target.value),
+                )
+              }
+              className="mt-2"
+            />
+          </div>
           {pdf && (
             <div>
               <Label htmlFor="pdf-backend">{tr("settings.pdfParser")}</Label>

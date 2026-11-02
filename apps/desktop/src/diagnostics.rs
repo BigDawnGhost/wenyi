@@ -210,7 +210,6 @@ fn attributes(input: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
                         | "annotation"
                         | "review"
                         | "autofix"
-                        | "srt"
                 )
             ),
             "kind" => matches!(
@@ -221,7 +220,6 @@ fn attributes(input: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
                         | "translation"
                         | "chapter_translation"
                         | "review"
-                        | "srt"
                         | "export"
                 )
             ),

@@ -55,9 +55,7 @@ def test_unknown_operations_and_parameters_are_rejected():
         )
 
 
-def test_srt_and_bridge_do_not_select_book_layout_operations():
-    srt = resolve_policy(PolicyContext("ja", "en", path="srt"))
-    assert all(op.point == "prompt.compose" for op in srt.operations)
+def test_bridge_does_not_select_native_layout_operations():
     bridge = export("ja", "zh", "pdf", backend="babeldoc")
     assert not bridge.enabled("markup.japanese_ruby")
     assert not bridge.enabled("docx.chinese_font")

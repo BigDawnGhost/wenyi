@@ -35,11 +35,10 @@ void loadDesktopCredential().catch(() => { /* The route retries when opened. */ 
 const progressKeys: Record<string, string[]> = {
   progress: ["workflow"],
   pipeline: ["workflow"],
-  batch: ["chapters", "subtitles", "stats"],
+  batch: ["chapters", "stats"],
   chapter: ["project", "chapters", "stats"],
   translation: ["chapters", "workflow"],
   chapter_translation: ["chapters", "workflow"],
-  srt: ["subtitles", "workflow"],
   parse: ["project", "chapters", "workflow"],
   prepare: ["project", "chapters", "workflow"],
   review: ["workflow", "review-runs", "review-run"],

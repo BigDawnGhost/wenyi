@@ -98,12 +98,11 @@ Developers can inspect the same built-in resolver without credentials or model c
 
 ```bash
 uv run wenyi language-policy --source ja --format docx --backend native
-uv run wenyi language-policy --source en --subtitles --format srt
 ```
 
 Diagnostics report selections, resource hashes, versions, model routes and fingerprints; they do not modify the policy. Automatic source detection remains unresolved until the source is known; use `--source` to inspect a specific direction. Unknown built-in IDs/options or unavailable handlers fail before consuming work.
 
-On resume, changed semantic policies automatically rebuild affected chapter/style/synopsis analysis before pending work continues. Missing policy identities also require rebuilding derived analysis. Completed targets and glossary remain saved; unchanged task caches are reused, and interrupted rebuilds resume safely. Rebuilding analysis may make model calls. SRT preserves completed cues and ignores incompatible pending-window caches. Font, ruby and export punctuation changes require only a fresh export; Review uses a new policy-bound session. Export fingerprints bind the actual format/backend and consistent source/target snapshot.
+On resume, changed semantic policies automatically rebuild affected chapter/style/synopsis analysis before pending work continues. Missing policy identities also require rebuilding derived analysis. Completed targets and glossary remain saved; unchanged task caches are reused, and interrupted rebuilds resume safely. Rebuilding analysis may make model calls. Font, ruby and export punctuation changes require only a fresh export; Review uses a new policy-bound session. Export fingerprints bind the actual format/backend and consistent source/target snapshot.
 
 ## Models and operation routing
 
@@ -201,7 +200,6 @@ DeepSeek accepts `reasoning_effort: low`, `high`, or `max`; `thinking: false` ex
 | `review.fix` | `strong` | Shadow revision |
 | `autofix.verify` | `review.verify` | Publication evidence verification |
 | `autofix.fix` | `review.fix` | Publication revision |
-| `srt.translate` | `strong` | Subtitle batches and single-cue recovery |
 
 ### Preview, limits and explicit failover
 
@@ -212,7 +210,7 @@ uv run wenyi models explain --operation review.verify
 uv run wenyi models check --for translate
 ```
 
-`list` and `explain` need no keys. `check --for prepare|translate|review|srt` validates credentials only for reachable operations, respecting the configuration's stage switches. These three commands construct no SDK clients and send no requests. Translation commands apply their CLI stage overrides before credential validation.
+`list` and `explain` need no keys. `check --for prepare|translate|review` validates credentials only for reachable operations, respecting the configuration's stage switches. These three commands construct no SDK clients and send no requests. Translation commands apply their CLI stage overrides before credential validation.
 
 To confirm that providers are actually reachable, run a live connectivity test:
 
@@ -261,7 +259,7 @@ One ledger tracks totals with independent `by_tier`, `by_stage` (operation IDs),
 
 Events record the routing plan and request operation, model, provider, profile, connection, inference fingerprint, call ID and attempt. Full-book and Review usage updates are journaled in `usage-pending.json` before publication, so an interrupted local merge can recover without counting the increment twice. A process killed after remote acceptance but before local persistence can still leave unknown remote usage.
 
-Changing translation, analysis, synopsis or SRT models keeps completed work and uses the new route for pending calls. Review starts a new run when a reachable review model, endpoint, options or protocol changes; unrelated routes, credential rotation, alias renaming and concurrency changes do not invalidate it. Old Review caches lacking inference identity are retained but not reused. Autofix has its own fingerprint: pending indexed publication finishes from saved candidates; unfinished inference planning requires restoring its original routes before continuing.
+Changing translation, analysis or synopsis models keeps completed work and uses the new route for pending calls. Review starts a new run when a reachable review model, endpoint, options or protocol changes; unrelated routes, credential rotation, alias renaming and concurrency changes do not invalidate it. Old Review caches lacking inference identity are retained but not reused. Autofix has its own fingerprint: pending indexed publication finishes from saved candidates; unfinished inference planning requires restoring its original routes before continuing.
 
 Retired configuration and nonempty old usage ledgers require explicit conversion:
 
@@ -283,8 +281,7 @@ when creating a book project; new projects default to `standard`, independently 
 global settings. Selecting precision enables polishing for that project. Its mode is
 fixed at creation; project settings can adjust other fields but cannot disable the
 polishing required by precision. Restoring defaults also preserves the saved mode.
-Translation mode is not a global Web setting; global YAML rejects it. SRT does not
-support precision; project YAML and source replacement enforce this boundary.
+Translation mode is not a global Web setting; global YAML rejects it.
 
 Precision always creates three drafts with built-in three-branch concurrency; it is
 not a user option. Existing configurations and frozen jobs containing the retired
@@ -334,7 +331,7 @@ pipeline:
 - The former `rolling_context_segments` key is no longer accepted; replace it with `rolling_context_tokens`. There is no automatic segment-to-token conversion.
 - `book_understanding`: prescan complete chapters in bounded chunks to create chapter digests and a whole-book synopsis, independently of `terminology_context`. Style analysis uses the digests alongside original prose samples; summaries preserve source identities and only use existing authoritative name mappings. Chapters with source text require a usable digest before body translation; synopsis synthesis failures allow translation to continue. Failed digests are retried on the next prepare/translate run. Full-source coverage increases initial cost for long chapters compared with the former sampled default. See [Pipeline](pipeline.md) for retry and cache behavior.
 - `prescan_concurrency`: number of chapter-digest requests that may run concurrently.
-- `terminology_context`: CLI-only experimental whole-book source evidence and pre-translation discovery for person entries (`type: person`) only, disabled by default to avoid additional model calls for existing jobs. Other term types retain ordinary posttranslation extraction and conflict handling without whole-book evidence or merge calls. Preparation does not extract or seed glossary entries. Only CLI `prepare` and `translate` opt in to evidence production; enabling the YAML setting alone does not authorize ordinary Orchestrator/Runtime callers or the API to produce evidence. Review and assemble may consume existing notes without producing evidence. Books only, not SRT; Web/UI are not adapted. The `terminology.discover`, `terminology.evidence`, and `terminology.merge` operations use normal LLM routing. Each term still has one source identity and one main target, not a real sense model; see [limits and cache behavior](pipeline.md#optional-whole-book-terminology-evidence).
+- `terminology_context`: CLI-only experimental whole-book source evidence and pre-translation discovery for person entries (`type: person`) only, disabled by default to avoid additional model calls for existing jobs. Other term types retain ordinary posttranslation extraction and conflict handling without whole-book evidence or merge calls. Preparation does not extract or seed glossary entries. Only CLI `prepare` and `translate` opt in to evidence production; enabling the YAML setting alone does not authorize ordinary Orchestrator/Runtime callers or the API to produce evidence. Review and assemble may consume existing notes without producing evidence. Web/UI are not adapted. The `terminology.discover`, `terminology.evidence`, and `terminology.merge` operations use normal LLM routing. Each term still has one source identity and one main target, not a real sense model; see [limits and cache behavior](pipeline.md#optional-whole-book-terminology-evidence).
 - `annotation_alignment`: enabled by default. After each annotated logical paragraph has been fully translated and polished, immediately locate EPUB footnote/endnote links with one sequential model call against the formal target. If export punctuation normalization is enabled, the export layer remaps the persisted offsets together with the normalized in-memory copy. Split continuations are rejoined first, and segments without internal links do not call the model. When disabled, translated links remain clickable but fall back to end-of-paragraph markers; untranslated text and the source side of bilingual output retain the original link positions. This option controls link placement only; resolved source-language note content is supplied to translation automatically.
 - `annotation_alignment_concurrency`: when a paragraph carries more than one annotation, each annotation is aligned through its own independent, concurrently issued request instead of asking one call to place every marker at once (a single mistake used to invalidate the whole paragraph's markers, which is why heavily annotated books tended to fall back to end-of-paragraph placement far more often). This caps how many of those per-annotation requests may run at once for a single paragraph.
 - `review_concurrency`: concurrency limit for contiguous review chunks and same-round Fixer calls against an immutable translation snapshot; set it to `1` for sequential work.
@@ -410,6 +407,6 @@ paths:
 - `max_tokens_per_batch`: source-token budget for one model translation request, counted with tiktoken `cl100k_base` (a universal estimator, not the live provider tokenizer).
 - `max_tokens_per_segment`: token threshold for splitting an exceptionally long source paragraph at sentence boundaries.
 - `honorific.strategy`: Japanese-source honorific policy: `keep_style`, `normalize`, or `drop`.
-- `state_dir`: location of book checkpoints, chapter files, the glossary database, usage data, and reports. Subtitle runs store a separate tree at `<state_dir>/srt/<slug>/targets/<target-language>/` (manifest, cues, batches, usage, events) and never create a glossary or review directory.
+- `state_dir`: location of book checkpoints, chapter files, the glossary database, usage data, and reports.
 
-All book targets, including the default `zh`, use `<state_dir>/<slug>/targets/<target-language>/`; subtitles use `<state_dir>/srt/<slug>/targets/<target-language>/`. Each directory owns its translations, glossary, context, accounting, and Review. Root-level state from earlier versions is no longer discovered or migrated. Start a new translation with the current configuration; existing files remain untouched. Saved manifests must include `source_lang`, `target_lang`, and a valid `source_sha256`.
+All book targets, including the default `zh`, use `<state_dir>/<slug>/targets/<target-language>/`. Each directory owns its translations, glossary, context, accounting, and Review. Root-level state from earlier versions is no longer discovered or migrated. Start a new translation with the current configuration; existing files remain untouched. Saved manifests must include `source_lang`, `target_lang`, and a valid `source_sha256`.

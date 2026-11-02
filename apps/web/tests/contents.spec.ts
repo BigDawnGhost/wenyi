@@ -201,7 +201,9 @@ test("a title changed before saving preserves the editor input and requires the 
   await draft.fill("My edit");
   state.conflictOnSave = true;
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toContainText("409");
+  await expect(dialog.getByRole("alert")).toHaveText(
+    "This title changed; reload its latest value before saving",
+  );
   await expect(draft).toHaveValue("My edit");
   await expect(
     dialog.getByRole("button", { name: "Save", exact: true }),
@@ -268,15 +270,4 @@ test("failed server saves retain input and allow retry without browser draft sto
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(state.rows[0].title_translated).toBe("Keep this edit");
-});
-
-test("subtitle projects do not expose book contents editing", async ({
-  page,
-}) => {
-  await fakeApi(page, { [`/projects/${pid}`]: { ...project, fmt: "srt" } });
-  await page.goto(`/projects/${pid}/contents`);
-  await expect(page).toHaveURL(`/projects/${pid}/subtitles`);
-  await expect(
-    page.getByRole("link", { name: "Contents & titles", exact: true }),
-  ).toHaveCount(0);
 });

@@ -119,7 +119,7 @@ test("creation rejects empty files and recovers from an upload failure without l
   expect(requests).toBe(2);
 });
 
-test("PDF parser is selected before creation and subtitles omit book preparation", async ({
+test("PDF parser is selected before creation", async ({
   page,
 }) => {
   await fakeApi(page);
@@ -148,26 +148,6 @@ test("PDF parser is selected before creation and subtitles omit book preparation
   await expect(page.getByText("503: Upload unavailable")).toBeVisible();
   expect(submitted?.pdf_backend).toBe("babeldoc");
   expect(submitted?.prepare).toBe(true);
-  expect(submitted?.translation_mode).toBe("standard");
-  expect(submitted).not.toHaveProperty("precision_concurrency");
-  await page.getByRole("radio", { name: "Three drafts + synthesis", exact: true }).check();
-  await file.setInputFiles({
-    name: "movie.srt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("fixture"),
-  });
-  await expect(page.getByLabel("PDF parser", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("radio")).toHaveCount(0);
-  await expect(page.getByLabel("Parallel initial drafts (1–3)", { exact: true })).toHaveCount(0);
-  await expect(
-    page.getByRole("checkbox", { name: "Prepare before translating" }),
-  ).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Create project", exact: true })
-    .click();
-  await expect(page.getByText("503: Upload unavailable")).toBeVisible();
-  expect(submitted?.pdf_backend).toBeNull();
-  expect(submitted?.prepare).toBe(false);
   expect(submitted?.translation_mode).toBe("standard");
   expect(submitted).not.toHaveProperty("precision_concurrency");
 });

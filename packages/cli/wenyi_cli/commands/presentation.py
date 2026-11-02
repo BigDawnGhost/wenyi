@@ -137,13 +137,3 @@ def print_translation_summary(
     console.print(
         f"[bold green]Complete[/]: {chapters_done}/{chapters_total} chapters, terms: {terms}."
     )
-
-
-def print_subtitle_summary(
-    console: Console, *, translated: int, cue_count: int, run_dir: str
-) -> None:
-    """Show subtitle coverage and its independent state location."""
-    console.print(
-        f"[bold green]Subtitle translation complete[/]: {translated}/{cue_count} cues, "
-        f"State directory: {run_dir}"
-    )

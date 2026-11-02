@@ -14,7 +14,6 @@ from wenyi_core.assemble.writer_common import output_formats
         ("pdf", {"mineru": True}),
         ("pdf", {"pdf_export": "babeldoc"}),
         ("pdf", {"babeldoc": True}),
-        ("srt", {}),
     ],
 )
 def test_project_formats_follow_manifest_not_current_parser(monkeypatch, source_fmt, meta):
@@ -32,13 +31,11 @@ def test_project_formats_follow_manifest_not_current_parser(monkeypatch, source_
 
     result = projects.get_project("p")
 
-    assert result["output_formats"] == (
-        ["srt"] if source_fmt == "srt" else output_formats({"meta": meta})
-    )
+    assert result["output_formats"] == output_formats({"meta": meta})
     assert ("pdf" in result["output_formats"]) == (
         meta.get("pdf_export") == "babeldoc" or bool(meta.get("babeldoc"))
     )
-    assert closed == ([] if source_fmt == "srt" else ["p"])
+    assert closed == ["p"]
 
 
 def test_capabilities_advertise_only_babeldoc_pdf_export():

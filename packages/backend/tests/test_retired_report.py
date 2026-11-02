@@ -31,8 +31,6 @@ def test_book_tasks_no_longer_generate_reports(monkeypatch, kind, review):
         source_for=lambda pid: "book.txt",
         build_client=Mock(),
         exports_dir=Mock(),
-        create_export=Mock(),
-        publish_export=Mock(),
     )
     config = Config.from_dict({"llm": {"preset": "fake"}, "pipeline": {"review": review}})
     progress = Mock()

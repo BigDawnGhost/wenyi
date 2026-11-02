@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS term_conflicts (
     created_at DOUBLE PRECISION
 );
 -- Durable review metadata, chunks, checkpoints, evidence and publication journals;
--- subtitle manifests/cue maps/batches; usage journals and timing ledgers.
+-- usage journals and timing ledgers.
 -- Keys are normalized relative artifact names, never filesystem destinations.
 CREATE TABLE IF NOT EXISTS artifacts (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

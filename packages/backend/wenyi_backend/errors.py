@@ -66,7 +66,6 @@ LEGACY_ERRORS: tuple[tuple[int, str, str], ...] = (
     (404, "segment not found", SEGMENT_NOT_FOUND),
     (409, "Prepare or translate the source before exporting", SOURCE_NOT_READY),
     (409, "Global settings changed; reload before saving again", SETTINGS_CONFLICT),
-    (422, "Subtitle projects export SRT; book projects export book formats", INVALID_CONFIGURATION),
     (422, "Invalid connection settings", INVALID_CONFIGURATION),
     (422, "Invalid model list request", INVALID_CONFIGURATION),
     (422, "Unsupported client", UNSUPPORTED_CLIENT),

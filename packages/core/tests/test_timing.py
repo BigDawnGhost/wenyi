@@ -10,17 +10,14 @@ from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import RunStore
-from wenyi_core.srt.store import SrtRunStore
-from wenyi_core.srt.translate import translate_srt
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.timing import RunTimer, format_duration, load_timing
 
 from tests.fake_llm import routing_handler
 
 
-@pytest.mark.parametrize("store_type", [RunStore, SrtRunStore])
-def test_timing_accumulates_resumes_and_upserts_once(tmp_path, store_type):
-    store = store_type(str(tmp_path / "run"))
+def test_timing_accumulates_resumes_and_upserts_once(tmp_path):
+    store = RunStore(str(tmp_path / "run"))
     now = 10.0
     with RunTimer("translate", clock=lambda: now) as timer:
         store_before_binding = load_timing(store.run_dir)
@@ -76,10 +73,9 @@ def test_timing_write_failure_preserves_previous_ledger_and_original_error(tmp_p
     assert not list(Path(store.run_dir).glob(".timing-*.tmp"))
 
 
-@pytest.mark.parametrize("store_type", [RunStore, SrtRunStore])
-def test_concurrent_timing_writers_do_not_lose_invocations(tmp_path, store_type):
+def test_concurrent_timing_writers_do_not_lose_invocations(tmp_path):
     def write_record(index):
-        store = store_type(str(tmp_path / "run"))
+        store = RunStore(str(tmp_path / "run"))
         return store.record_timing({"id": str(index), "elapsed_seconds": 5.0})
 
     with ThreadPoolExecutor(max_workers=4) as pool:
@@ -207,36 +203,6 @@ def test_cli_retains_timing_summary_after_translation(timed_book, monkeypatch):
     assert "Time: last run" in result.output
     assert "cumulative" in result.output
     assert "across 1 run." in result.output
-
-
-def test_subtitle_resume_accumulates_time_in_subtitle_state(tmp_path, monkeypatch):
-    source = tmp_path / "book.srt"
-    source.write_text("1\n00:00:01,000 --> 00:00:02,000\nHello world.\n", encoding="utf-8")
-    config = Config.from_dict(
-        {"llm": {"preset": "fake"}, "paths": {"state_dir": str(tmp_path / "state")}}
-    )
-    now = [0.0]
-    monkeypatch.setattr(
-        "wenyi_core.srt.translate.RunTimer",
-        lambda operation: RunTimer(operation, clock=lambda: now[0]),
-    )
-
-    def progress(*args):
-        now[0] += 3.0
-
-    result = translate_srt(
-        str(source),
-        config,
-        client=FakeClient(handler=lambda *args: '{"1": "你好。"}'),
-        progress=progress,
-    )
-    first_elapsed = now[0]
-    now[0] = 10000.0
-    translate_srt(str(source), config, client=FakeClient(), progress=progress)
-    ledger = load_timing(result["run_dir"])
-    assert ledger is not None
-    assert ledger["total_seconds"] == first_elapsed + now[0] - 10000.0
-    assert len(ledger["runs"]) == 2
 
 
 def test_duration_does_not_wrap_after_one_day():

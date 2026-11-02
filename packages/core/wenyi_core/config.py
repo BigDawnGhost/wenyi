@@ -209,26 +209,24 @@ class Config(BaseModel):
         self,
         phase: Phase = "translation",
         *,
-        path: Literal["book", "srt"] = "book",
         format: str = "",
         backend: str = "native",
         source_identity: str = "",
     ) -> PolicyPlan:
         """Reuse the invocation's frozen semantic plan; exports resolve their snapshot."""
-        key = f"{path}:{phase}"
+        key = f"book:{phase}"
         if phase != "export" and key in self._language_plans:
             return self._language_plans[key]
         context = PolicyContext(
             self.source_lang,
             self.target_lang,
             phase=phase,
-            path=path,
             format=format,
             backend=backend,
             punctuation_normalize=self.output.punctuation_normalize,
             honorific_strategy=self.honorific_strategy,
             source_identity=source_identity,
-            task_groups=self._policy_tasks(phase, path),
+            task_groups=self._policy_tasks(phase),
             bilingual=self.output.bilingual,
             order=self.output.bilingual_order,
             preserve_source_style=self.output.bilingual_preserve_source_style,
@@ -237,9 +235,7 @@ class Config(BaseModel):
         )
         return resolve_policy(context)
 
-    def _policy_tasks(self, phase: Phase, path: str) -> tuple[str, ...]:
-        if path == "srt":
-            return ("srt_batch", "srt_single")
+    def _policy_tasks(self, phase: Phase) -> tuple[str, ...]:
         terminology = (
             ("terminology_discover", "terminology_evidence", "terminology_merge")
             if self.pipeline.terminology_context
@@ -290,10 +286,8 @@ class Config(BaseModel):
             "target": self.target_lang,
         }
 
-    def language_policy_revision(self, *, path: Literal["book", "srt"] = "book") -> str:
+    def language_policy_revision(self) -> str:
         """Describe the built-in semantic revision without source-content hashes."""
-        if path == "srt":
-            return self.language_policy("translation", path=path).fingerprint
         return content_hash(
             {
                 phase: self.language_policy(phase).semantic_fingerprint
@@ -306,28 +300,21 @@ class Config(BaseModel):
         *,
         format: str | None = None,
         backend: str = "native",
-        path: Literal["book", "srt"] = "book",
     ) -> dict[str, Any]:
         """Use the execution resolver for diagnostics; auto source remains unresolved."""
-        phases = ("translation",) if path == "srt" else ("analysis", "translation", "review")
-        result = {phase: self.language_policy(phase, path=path).preview() for phase in phases}
-        result["revision"] = {"fingerprint": self.language_policy_revision(path=path)}
+        phases = ("analysis", "translation", "review")
+        result = {phase: self.language_policy(phase).preview() for phase in phases}
+        result["revision"] = {"fingerprint": self.language_policy_revision()}
         from .llm.operations import configured_operations
         from .llm.routing import resolve_routes
 
         routes = resolve_routes(self.llm)
         for phase in phases:
             workflow = (
-                "srt"
-                if path == "srt"
-                else "prepare"
-                if phase == "analysis"
-                else "review"
-                if phase == "review"
-                else "translate"
+                "prepare" if phase == "analysis" else "review" if phase == "review" else "translate"
             )
             operations = configured_operations(self, workflow)
-            if phase == "translation" and path == "book":
+            if phase == "translation":
                 operations = tuple(
                     operation
                     for operation in operations
@@ -340,17 +327,15 @@ class Config(BaseModel):
             ]
         if format is not None:
             result["export"] = self.language_policy(
-                "export", path=path, format=format, backend=backend
+                "export", format=format, backend=backend
             ).preview()
         else:
-            formats = (
-                ("srt",) if path == "srt" else ("epub", "docx", "html", "txt", "markdown", "pdf")
-            )
+            formats = ("epub", "docx", "html", "txt", "markdown", "pdf")
             exports = {}
             for selected in formats:
                 try:
                     exports[selected] = self.language_policy(
-                        "export", path=path, format=selected, backend=backend
+                        "export", format=selected, backend=backend
                     ).preview()
                 except ValueError as error:
                     exports[selected] = {"available": False, "reason": str(error)}
