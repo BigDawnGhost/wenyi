@@ -1,6 +1,6 @@
 """Validate release archives and dependency isolation in clean wheel installations.
 
-Run after building all five workspace packages: python scripts/check_backend_packages.py dist.
+Run after building all five workspace packages: python scripts/release/check_backend_packages.py dist.
 No model, database, Redis, credential-store, or user-workspace access is required.
 """
 
@@ -15,7 +15,7 @@ from email.parser import BytesParser
 from pathlib import Path
 from zipfile import ZipFile
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 PACKAGES = ("wenyi_core", "wenyi_cli", "wenyi_backend", "wenyi_api", "wenyi_desktop")
 PROFILES = {
     "cli": (

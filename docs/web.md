@@ -318,7 +318,7 @@ running API, PostgreSQL, Redis or credentials. After installing the workspace Py
 dependencies and frontend dependencies, generate or check the contract offline:
 
 ```bash
-pnpm gen:schema  # Update shared types from the shared app factory, offline
+pnpm gen:schema  # Update both generated contracts offline
 pnpm check:schema  # Compare temporary generated types; does not change tracked files
 uv run --no-sync ruff check packages/core packages/cli apps/api
 uv run --no-sync pytest -q -n auto
@@ -332,6 +332,12 @@ CI runs `check:schema` before frontend typechecks. Generation uses unavailable r
 ports and no production lifespan; only the schema artifact's installation-dependent
 version is normalized. `GET /capabilities` still reports runtime languages, formats,
 providers and registered operations.
+
+Two documents are generated. `api.d.ts` covers the shared routes from
+`wenyi_backend/schema_export.py`. `desktop.d.ts` covers the routes the Desktop shell
+adds, from `wenyi_desktop/schema_export.py`, and lives in its own file: the shared
+contract stays free of platform routes, and the Desktop frontend imports its
+credential types from the generated document instead of redeclaring them by hand.
 
 Web and Desktop share the chunking rule in `packages/ui/vite.shared.ts`: React,
 React DOM and Scheduler form a separate `react-runtime` chunk, while pages keep

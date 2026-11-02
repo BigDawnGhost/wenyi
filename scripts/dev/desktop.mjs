@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const build = process.argv[2] === 'build';
 const args = process.argv.slice(3);
 const env = { ...process.env };
@@ -53,7 +53,7 @@ function run(command, parameters, cwd = root) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 const identity = spawnSync('uv', [
-  'run', '--no-project', '--with', 'hatch-vcs', 'python', 'scripts/release_version.py',
+  'run', '--no-project', '--with', 'hatch-vcs', 'python', 'scripts/release/release_version.py',
 ], { cwd: root, env, encoding: 'utf8' });
 if (identity.status !== 0) {
   console.error(identity.stderr);
@@ -74,7 +74,7 @@ env.TAURI_CONFIG = versionConfig;
 console.log(`Wenyi Desktop ${version.version} (Python ${version.python})`);
 run('pnpm', ['-C', 'apps/desktop/frontend', 'build']);
 if (build) {
-  run('uv', ['run', '--no-project', 'python', 'scripts/desktop_sidecar.py']);
+  run('uv', ['run', '--no-project', 'python', 'scripts/dev/desktop_sidecar.py']);
   // pnpm 9 exec changes cwd to the nearest package root, outside the native project.
   const tauriCli = createRequire(import.meta.url).resolve('@tauri-apps/cli/tauri.js');
   run(process.execPath, [tauriCli, 'build',

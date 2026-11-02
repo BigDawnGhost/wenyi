@@ -10,6 +10,7 @@ import sys
 import textwrap
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -417,4 +418,10 @@ def test_checkout_candidates_remain_when_cargo_target_dir_is_unset(monkeypatch):
     monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
     monkeypatch.delenv("WENYI_LOCKS_LIB", raising=False)
     candidates = list(locks._library_candidates())
-    assert any("wenyi-locks" in candidate for candidate in candidates)
+    # Both crates share one root workspace, so a checkout build lands in the
+    # root target directory. A crate-local path here would make the native
+    # backend silently fall back locally while CI, which sets the override,
+    # stays green.
+    root = Path(locks.__file__).resolve().parents[4]
+    expected = str(root / "target" / "release" / locks._library_name())
+    assert expected in candidates, candidates

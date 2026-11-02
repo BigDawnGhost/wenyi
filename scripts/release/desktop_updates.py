@@ -170,7 +170,7 @@ def main() -> None:
     if args.command == "collect":
         if not args.platform:
             parser.error("collect requires --platform")
-        config = Path(__file__).resolve().parents[1] / "apps/desktop/tauri.conf.json"
+        config = Path(__file__).resolve().parents[2] / "apps/desktop/tauri.conf.json"
         name = json.loads(config.read_text(encoding="utf-8"))["productName"]
         collect(args.source, args.output, args.version, args.platform, name)
     else:

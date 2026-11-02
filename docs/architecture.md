@@ -50,7 +50,7 @@ imports. `api/types.ts` depends on the generated schema, not the API client, and
 capabilities. `api/client.ts` and the pre-mount `platform()` facade remain single owners;
 the old `lib/api.ts` implementation/type forwarder is removed.
 
-`scripts/export_openapi.py` builds the shared HTTP schema with unavailable runtime ports,
+`wenyi_backend/schema_export.py` builds the shared HTTP schema with unavailable runtime ports,
 without platform entry points or a production lifespan. `pnpm check:schema` compares
 offline-generated types against the committed contract in CI. Frontend boundary tests
 resolve host imports and derive lazy chunks from the route manifest while retaining

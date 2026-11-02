@@ -1,16 +1,26 @@
-"""Export the shared HTTP schema without starting an app or accessing platform services."""
+"""Build the shared HTTP schema offline, without a running server or platform services.
+
+The committed TypeScript contract is derived from here. The module lives in the
+package rather than in a script so the schema becomes an importable, type-checked
+entry point; `scripts/contract/export_openapi.py` is only a command-line wrapper.
+"""
 
 from __future__ import annotations
 
-import json
-import sys
 from typing import Any, NoReturn
 
-from wenyi_backend.application import create_app
-from wenyi_backend.context import BackendContext
+from .application import create_app
+from .context import BackendContext
 
 
-class _UnavailablePorts:
+class UnavailablePorts:
+    """Fail loudly if route assembly reaches for a runtime port.
+
+    Schema generation must describe the contract, not serve it. A port that is
+    actually called would make the document depend on a database, a queue or a
+    credential store, and could then differ between machines.
+    """
+
     def __getattr__(self, name: str) -> NoReturn:
         raise AssertionError(f"Schema generation accessed a runtime port: {name}")
 
@@ -20,7 +30,7 @@ class _UnavailablePorts:
 
 def build_schema() -> dict:
     """Use the shared route assembly, never a Web/Desktop entry point or lifespan."""
-    ports: Any = _UnavailablePorts()
+    ports: Any = UnavailablePorts()
     context = BackendContext(
         repository=ports,
         settings_store=ports,
@@ -40,8 +50,3 @@ def build_schema() -> dict:
     # The installed release version is not part of the generated type contract.
     schema["info"]["version"] = "0.0.0"
     return schema
-
-
-if __name__ == "__main__":
-    json.dump(build_schema(), sys.stdout, ensure_ascii=False, indent=2)
-    sys.stdout.write("\n")

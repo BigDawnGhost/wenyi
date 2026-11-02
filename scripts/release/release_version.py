@@ -14,7 +14,7 @@ from pathlib import Path
 from packaging.version import Version
 from setuptools_scm import get_version
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def git(root: Path, *args: str) -> str:

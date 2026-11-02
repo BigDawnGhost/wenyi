@@ -84,7 +84,7 @@ def main() -> None:
         require_output_names(args.output, {f"{stem}.zip"})
         cli_archive(args.source, args.output / f"{stem}.zip")
     else:
-        config = Path(__file__).resolve().parents[1] / "apps/desktop/tauri.conf.json"
+        config = Path(__file__).resolve().parents[2] / "apps/desktop/tauri.conf.json"
         product_name = json.loads(config.read_text(encoding="utf-8"))["productName"]
         desktop_assets(args.source, args.output, args.version, args.platform, product_name)
 

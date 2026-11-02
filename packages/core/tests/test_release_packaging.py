@@ -17,7 +17,8 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 def script(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
+    path = next((ROOT / "scripts").rglob(f"{name}.py"))
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -382,7 +383,8 @@ def test_desktop_workflow_builds_native_macos_installers_and_updates():
     )
     for expected in (
         "apps/desktop/**",
-        "scripts/desktop*",
+        "scripts/dev/desktop*",
+        "scripts/release/desktop_updates.py",
         "package.json",
         "pnpm-lock.yaml",
         ".github/workflows/desktop.yml",

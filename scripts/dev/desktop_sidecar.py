@@ -1,6 +1,6 @@
 """Build and smoke-test a relocatable PyInstaller onedir desktop engine.
 
-Run with `uv run --no-project python scripts/desktop_sidecar.py`.
+Run with `uv run --no-project python scripts/dev/desktop_sidecar.py`.
 The freezer runs in a temporary desktop-only environment, even when invoked
 from a workspace development environment. Build dependencies never enter the runtime.
 """
@@ -22,7 +22,7 @@ from importlib.metadata import version
 from importlib.util import find_spec
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DESTINATION = ROOT / "apps/desktop/sidecar"
 EXCLUDED_MODULES = ("wenyi_api", "wenyi_cli", "psycopg", "psycopg_pool", "arq", "redis")
 
@@ -156,13 +156,10 @@ def _locks_library() -> str:
         if not os.path.isfile(override):
             raise SystemExit(f"WENYI_LOCKS_LIB points at a missing file: {override}")
         return override
-    candidate = ROOT / "native" / "wenyi-locks" / "target" / "release" / name
+    candidate = ROOT / "target" / "release" / name
     if candidate.is_file():
         return str(candidate)
-    raise SystemExit(
-        "Build the lock library first: "
-        "cargo build --release --manifest-path native/wenyi-locks/Cargo.toml"
-    )
+    raise SystemExit("Build the lock library first: cargo build --release -p wenyi-locks")
 
 
 def build() -> None:
@@ -217,7 +214,7 @@ def build() -> None:
             "--add-data",
             f"{cache}{os.pathsep}tiktoken_cache",
             *(argument for module in EXCLUDED_MODULES for argument in ("--exclude-module", module)),
-            str(ROOT / "scripts/desktop_entry.py"),
+            str(ROOT / "scripts/dev/desktop_entry.py"),
         ],
         check=True,
         cwd=ROOT,
@@ -233,7 +230,7 @@ def main() -> None:
         build()
         return
     if sys.argv[1:]:
-        raise SystemExit("Usage: python scripts/desktop_sidecar.py")
+        raise SystemExit("Usage: python scripts/dev/desktop_sidecar.py")
     with tempfile.TemporaryDirectory(prefix="wenyi-desktop-build-") as temporary:
         environment = Path(temporary) / "venv"
         env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}

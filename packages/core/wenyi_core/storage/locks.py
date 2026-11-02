@@ -5,9 +5,10 @@ Two interchangeable backends satisfy the same contract
 library, loaded through ctypes, and a pure-Python fallback.
 `WENYI_LOCKS_BACKEND` selects one with `auto` | `rust` | `python`;
 `auto` prefers the native library when one is found, and `WENYI_LOCKS_LIB`
-overrides the library search path. The checked-in crate builds into its own
-`target/` directory, so `CARGO_TARGET_DIR` is searched too: without it a
-developer who builds the crate out of tree would silently keep the fallback.
+overrides the library search path. Both crates belong to one root Cargo
+workspace, so a checkout build lands in the root `target/` directory and is
+found without the override; `CARGO_TARGET_DIR` is searched as well, because a
+developer who builds out of tree would otherwise silently keep the fallback.
 """
 
 from __future__ import annotations
@@ -92,9 +93,11 @@ def _library_candidates() -> Iterator[str]:
         for profile in profiles:
             yield str(Path(cargo_target_dir) / profile / name)
     # In-place checkout: packages/core/wenyi_core/storage/locks.py -> repo root.
+    # Both crates share one root workspace, so the artifacts land in the root
+    # target directory rather than beside the crate.
     root = Path(__file__).resolve().parents[4]
     for profile in profiles:
-        yield str(root / "native" / "wenyi-locks" / "target" / profile / name)
+        yield str(root / "target" / profile / name)
 
 
 _native: ctypes.CDLL | None = None

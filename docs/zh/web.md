@@ -278,7 +278,7 @@ Worker 启动独立的异步恢复循环，每 30 秒检查一次数据库中超
 前端依赖后，离线生成或检查契约：
 
 ```bash
-pnpm gen:schema  # Update shared types from the shared app factory, offline
+pnpm gen:schema  # 离线更新两份生成的契约类型
 pnpm check:schema  # Compare temporary generated types; does not change tracked files
 uv run --no-sync ruff check packages/core packages/cli apps/api
 uv run --no-sync pytest -q -n auto
@@ -291,6 +291,11 @@ pnpm -C apps/web test:e2e
 CI 在前端类型检查前执行 `check:schema`。生成过程使用不可调用的运行端口，不启动生产
 lifespan；仅将 schema 产物中依赖安装版本的信息标准化。`GET /capabilities` 继续提供
 运行时语言、格式、提供商和操作注册信息。
+
+生成两份文档：`api.d.ts` 覆盖 `wenyi_backend/schema_export.py` 装配的共享路由；
+`desktop.d.ts` 覆盖 Desktop 外壳追加的路由，来源是 `wenyi_desktop/schema_export.py`，
+并单独成文件——共享契约因此不含平台路由，Desktop 前端的凭据类型改为从生成物导入，
+不再手写一份。
 
 Web 和 Desktop 共用 `packages/ui/vite.shared.ts` 中的分包规则：React、React DOM
 和 Scheduler 独立为 `react-runtime` chunk，页面继续保留现有懒加载分包。构建两端后，

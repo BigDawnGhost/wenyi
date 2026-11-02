@@ -8,12 +8,12 @@
     "dev:desktop-ui": "pnpm -C apps/desktop/frontend dev",
     "build:desktop-ui": "pnpm -C apps/desktop/frontend build",
     "test:frontend-boundaries": "node --test \"packages/ui/tests/*.test.mjs\"",
-    "desktop": "node scripts/desktop.mjs dev",
-    "desktop:build": "node scripts/desktop.mjs build",
+    "desktop": "node scripts/dev/desktop.mjs dev",
+    "desktop:build": "node scripts/dev/desktop.mjs build",
     "dev:api": "uv run uvicorn wenyi_api.main:app --reload --port 8000",
     "dev:worker": "uv run arq wenyi_api.workers.WorkerSettings",
-    "gen:schema": "node scripts/schema.mjs --write",
-    "check:schema": "node scripts/schema.mjs --check",
+    "gen:schema": "node scripts/contract/schema.mjs --write",
+    "check:schema": "node scripts/contract/schema.mjs --check",
     "build": "pnpm build:web"
   },
   "devDependencies": {

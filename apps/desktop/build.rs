@@ -37,7 +37,7 @@ fn main() {
                 "--with",
                 "hatch-vcs",
                 "python",
-                "scripts/release_version.py",
+                "scripts/release/release_version.py",
             ])
             .current_dir(&root)
             .output()

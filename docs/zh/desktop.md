@@ -225,7 +225,7 @@ Windows 发行包只打开应用窗口，不弹出控制台。本地引擎也不
 
 ### 版本与发行下载
 
-Python 元数据继续使用 `hatch-vcs`；`scripts/release_version.py` 使用相同的
+Python 元数据继续使用 `hatch-vcs`；`scripts/release/release_version.py` 使用相同的
 setuptools-scm Git 来源派生原生应用和产物版本。例如，`v1.2.3` 对应 `1.2.3`，
 `v1.2.3rc1` 对应 Python `1.2.3rc1` / 原生 `1.2.3-rc.1`。非标签提交和已跟踪
 文件的本地修改保留明确的开发身份，例如 `1.2.4-dev.2+gabc123`。Cargo 私有 crate
@@ -392,7 +392,7 @@ PR、开发/预发行构建和手动 workflow 运行保持未签名。
 
 签名发行在 Windows `.exe` 和 Linux `.AppImage` 旁增加 `.sig`；
 macOS 为每种架构在现有 `.dmg` 之外增加 `.app.tar.gz` 及 `.sig`，不额外套安装包 ZIP。
-`scripts/desktop_updates.py` 校验完整四平台集合，生成正式 SemVer manifest，
+`scripts/release/desktop_updates.py` 校验完整四平台集合，生成正式 SemVer manifest，
 包含 `windows-x86_64`、`linux-x86_64`、`darwin-aarch64`、`darwin-x86_64`、
 实际重命名后的发行 URL 和签名内容。所有更新包及签名构建、上传成功后才**最后上传**
 含发行说明的 `latest.json`。

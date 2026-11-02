@@ -1,0 +1,6 @@
+# One workspace for both crates so a single Cargo.lock and a single target
+# directory describe every native build. The Desktop bundle and the lock FFI
+# library are built together, and `cargo build --workspace` covers both.
+[workspace]
+members = ["apps/desktop", "native/wenyi-locks"]
+resolver = "2"

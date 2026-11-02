@@ -1,14 +1,8 @@
+import type { desktopComponents } from "@wenyi/shared-schema";
 import { request } from "./transport";
 import { guardCredentialWrite } from "./updateSafety";
 
-export type MinerUCredentialStatus = {
-  mode: "environment" | "manual";
-  storage: "system" | "session" | null;
-  available: boolean;
-  environment: string | null;
-  system_storage_available: boolean;
-  requires_key: boolean;
-};
+export type MinerUCredentialStatus = desktopComponents["schemas"]["MinerUCredentialStatus"];
 
 const endpoint = "/desktop/external-credentials/mineru";
 export const mineruCredentialQuery = {

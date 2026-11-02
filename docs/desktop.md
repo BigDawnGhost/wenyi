@@ -263,7 +263,7 @@ from the repository root, then copy only `icon.ico` and `icon.icns` into `apps/d
 
 ### Versions and release downloads
 
-Python metadata continues to use `hatch-vcs`; `scripts/release_version.py` uses
+Python metadata continues to use `hatch-vcs`; `scripts/release/release_version.py` uses
 the same setuptools-scm Git source to derive the native application and asset
 version. For example, `v1.2.3` becomes `1.2.3`, and `v1.2.3rc1` becomes Python
 `1.2.3rc1` / native `1.2.3-rc.1`. Untagged commits and tracked local edits keep
@@ -478,7 +478,7 @@ signing fails instead of publishing misleading update metadata.
 
 Signed release assets add `.sig` beside Windows `.exe` and Linux `.AppImage`;
 macOS adds `.app.tar.gz` plus `.sig` alongside the existing `.dmg` for each
-architecture. There are no extra installer ZIP wrappers. `scripts/desktop_updates.py`
+architecture. There are no extra installer ZIP wrappers. `scripts/release/desktop_updates.py`
 validates the complete four-platform set and produces a stable SemVer manifest
 with `windows-x86_64`, `linux-x86_64`, `darwin-aarch64` and `darwin-x86_64` entries,
 the actual renamed release URLs, and signature contents. All payloads and signatures must build and

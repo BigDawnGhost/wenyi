@@ -12,7 +12,7 @@ def main() -> None:
     wheels = list(directory.glob("wenyi_core-*.whl"))
     if not wheels:
         raise SystemExit("No wenyi-core wheel found")
-    resource_root = Path(__file__).resolve().parents[1] / "packages/core/wenyi_core/i18n/data"
+    resource_root = Path(__file__).resolve().parents[2] / "packages/core/wenyi_core/i18n/data"
     expected = {
         "wenyi_core/i18n/data/" + path.relative_to(resource_root).as_posix()
         for path in resource_root.rglob("*")

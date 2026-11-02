@@ -26,9 +26,10 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "apps/web/**"
-      - "scripts/desktop*"
-      - "scripts/release_version.py"
-      - "scripts/package_release.py"
+      - "scripts/dev/desktop*"
+      - "scripts/release/release_version.py"
+      - "scripts/release/package_release.py"
+      - "scripts/release/desktop_updates.py"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -59,7 +60,8 @@ jobs:
             # itself is listed so a change to this logic still builds in full.
             desktop:
               - "apps/desktop/**"
-              - "scripts/desktop*"
+              - "scripts/dev/desktop*"
+              - "scripts/release/desktop_updates.py"
               - "package.json"
               - "pnpm-lock.yaml"
               - ".github/workflows/desktop.yml"
@@ -165,7 +167,7 @@ jobs:
         shell: bash
         env:
           WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
-        run: uv run --no-project --with hatch-vcs python scripts/release_version.py --github-output "$GITHUB_OUTPUT"
+        run: uv run --no-project --with hatch-vcs python scripts/release/release_version.py --github-output "$GITHUB_OUTPUT"
       - name: Configure stable release updater signing
         id: updater
         if: github.event_name == 'release' && !github.event.release.prerelease
@@ -222,12 +224,12 @@ jobs:
       - name: Prepare token-budget vocabulary
         run: uv run --no-sync python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
       - run: pnpm install --frozen-lockfile
-      - run: node --test scripts/desktop.test.mjs
+      - run: node --test scripts/dev/desktop.test.mjs
       - run: uv run --no-sync pytest -q packages/core/tests/test_release_packaging.py packages/core/tests/test_desktop_updates.py
       - name: Test Windows local state and artifact paths
         if: runner.os == 'Windows'
         env:
-          WENYI_LOCKS_LIB: ${{ github.workspace }}/native/wenyi-locks/target/release/wenyi_locks.dll
+          WENYI_LOCKS_LIB: ${{ github.workspace }}/target/release/wenyi_locks.dll
         run: >
           uv run --no-sync pytest -q -n auto --dist loadgroup
           packages/core/tests/test_file_artifacts.py
@@ -240,7 +242,7 @@ jobs:
       # defaults to load, which would scatter them and race the scheduler.
       - name: Desktop backend suite
         env:
-          WENYI_LOCKS_LIB: ${{ github.workspace }}/native/wenyi-locks/target/release/${{ runner.os == 'Windows' && 'wenyi_locks.dll' || 'libwenyi_locks.so' }}
+          WENYI_LOCKS_LIB: ${{ github.workspace }}/target/release/${{ runner.os == 'Windows' && 'wenyi_locks.dll' || 'libwenyi_locks.so' }}
         run: uv run --no-sync pytest -q -n auto --dist loadgroup apps/desktop/backend/tests
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
@@ -280,7 +282,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ steps.updater.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
       - name: Verify native Windows GUI subsystem
         if: runner.os == 'Windows' && matrix.tier == 'full'
-        run: uv run --no-project python scripts/desktop_pe.py apps/desktop/target/release/wenyi-desktop.exe
+        run: uv run --no-project python scripts/dev/desktop_pe.py apps/desktop/target/release/wenyi-desktop.exe
       - name: Verify native application version
         if: matrix.tier == 'full'
         shell: bash
@@ -294,7 +296,7 @@ jobs:
       - name: Collect standalone installers (no extra ZIP)
         if: matrix.tier == 'full'
         run: >
-          uv run --no-project python scripts/package_release.py desktop
+          uv run --no-project python scripts/release/package_release.py desktop
           --version "${{ steps.version.outputs.version }}"
           --platform "${{ matrix.platform }}"
           --source apps/desktop/target/release/bundle
@@ -303,7 +305,7 @@ jobs:
         env:
           WENYI_UPDATER_PUBLIC_KEY: ${{ vars.WENYI_UPDATER_PUBLIC_KEY }}
         run: >
-          uv run --no-project python scripts/desktop_updates.py collect
+          uv run --no-project python scripts/release/desktop_updates.py collect
           --version "${{ steps.version.outputs.version }}"
           --platform "${{ matrix.platform }}"
           --source apps/desktop/target/release/bundle
@@ -337,7 +339,7 @@ jobs:
         id: version
         env:
           WENYI_BUILD_TAG: ${{ github.event.release.tag_name }}
-        run: uv run --no-project --with hatch-vcs python scripts/release_version.py --github-output "$GITHUB_OUTPUT"
+        run: uv run --no-project --with hatch-vcs python scripts/release/release_version.py --github-output "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@v7
         with:
           pattern: wenyi-desktop-*
@@ -365,7 +367,7 @@ jobs:
         run: |
           if compgen -G 'release-assets/*.sig' >/dev/null; then
             gh release view "$TAG" --repo "$GH_REPO" --json body --jq '.body' > release-notes.txt
-            uv run --no-project python scripts/desktop_updates.py manifest \
+            uv run --no-project python scripts/release/desktop_updates.py manifest \
               --version "$VERSION" --tag "$TAG" --repository "$GH_REPO" \
               --source release-assets --output updater-manifest --notes-file release-notes.txt
             gh release upload "$TAG" updater-manifest/latest.json --repo "$GH_REPO"
