@@ -242,6 +242,31 @@ def test_native_backend_is_actually_loaded():
     assert locks._use_native() is True
 
 
+def test_a_built_crate_is_found_without_naming_it():
+    """A checkout that built the crate must exercise the native contract too.
+
+    The candidate list ends at the cargo target directory, so a developer who ran
+    `cargo build -p wenyi-locks` gets the native backend without exporting
+    anything. Without this the only machine that ever ran the native contract
+    would be CI, and the silent fallback would stay unobservable everywhere else.
+
+    Conditional on the artifact existing: a checkout that never built the crate
+    has nothing to find, and failing there would make the whole suite depend on
+    an optional build step.
+    """
+    if os.environ.get("WENYI_LOCKS_LIB"):
+        pytest.skip("WENYI_LOCKS_LIB is set; the named-library case covers this")
+    built = [
+        candidate
+        for candidate in locks._library_candidates()
+        if candidate.endswith(locks._library_name()) and os.path.isfile(candidate)
+    ]
+    if not built:
+        pytest.skip("the crate has not been built in this checkout")
+    assert locks._native_library() is not None
+    assert locks._use_native() is True
+
+
 def test_backend_reports_the_server_and_survives_release(tmp_path, backend):
     path = str(tmp_path / ".run.lock")
     handle = FileLockHandle(path)
