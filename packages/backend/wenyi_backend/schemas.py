@@ -21,6 +21,12 @@ class ProjectCreate(RequestModel):
     prepare: bool = False
     pdf_backend: Literal["mineru", "babeldoc"] | None = None
     translation_mode: Literal["standard", "best_of_three"] = "standard"
+    #: Where the project directory is created, when the host lets a person choose.
+    #:
+    #: Omitted means "the default for this installation", which is also what a
+    #: client that never offers a choice sends. The value is validated by the host
+    #: that owns the filesystem; a host with no library concept ignores it.
+    location: str | None = None
 
     @field_validator("name")
     @classmethod

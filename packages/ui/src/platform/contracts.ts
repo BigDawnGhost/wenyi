@@ -61,6 +61,14 @@ export interface LibraryServices {
   choose: () => Promise<string | null>;
   /** Adopt the chosen folder; the message of a refusal is written for a person. */
   importProject: (path: string) => Promise<ProjectDetail>;
+  /**
+   * Say whether a folder may hold a new project, before one is created.
+   *
+   * A picker can name any folder the operating system allows, including ones the
+   * layout must refuse. Asking here is what lets the dialog explain a refusal
+   * while the choice is still on screen, rather than after an upload.
+   */
+  admitLocation?: (path: string) => Promise<string>;
 }
 
 export interface OptionalCapabilities {

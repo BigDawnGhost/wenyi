@@ -101,6 +101,8 @@ def create_context(
     credentials: CredentialStore | None = None,
     user_home: str | Path | None = None,
     migrate: bool = True,
+    library_root: str | Path | None = None,
+    install_root: str | Path | None = None,
 ) -> BackendContext:
     home = Path(user_home) if user_home is not None else None
     if migrate:
@@ -109,7 +111,13 @@ def create_context(
         # instance owns that read, which is a refusal this version cannot fix by
         # waiting: the old application is still writing the data being moved.
         adopt(Path(workspace), home=home)
-    backend = LocalBackend(workspace, config_path, user_home=home)
+    backend = LocalBackend(
+        workspace,
+        config_path,
+        user_home=home,
+        library_root=library_root,
+        install_root=install_root,
+    )
     credentials = credentials or CredentialStore(
         backend.workspace, vault_factory=system_keyring, user_home=home
     )
@@ -129,6 +137,7 @@ def create_context(
         enqueue=services.enqueue,
         data_dir=str(paths.projects(backend.workspace)),
         project_dir=lambda pid: str(backend.project_dir(pid)),
+        new_project_dir=backend.new_project_dir,
         health=services.health,
         update_term=lambda pid, storage, source, term: storage.update_term(source, term),
         api_token=api_token,
@@ -142,6 +151,8 @@ def create_app(
     context: BackendContext | None = None,
     api_token: str | None = None,
     diagnostics: Reporter | None = None,
+    library_root: str | Path | None = None,
+    install_root: str | Path | None = None,
 ):
     from .desktop import ORIGINS
     from .routers import (
@@ -149,6 +160,7 @@ def create_app(
         credentials,
         desktop_export,
         external_credentials,
+        library_location,
         project_import,
     )
 
@@ -158,7 +170,12 @@ def create_app(
     if context is None:
         if workspace is None:
             raise ValueError("Desktop requires an explicit workspace")
-        context = create_context(workspace, api_token=api_token)
+        context = create_context(
+            workspace,
+            api_token=api_token,
+            library_root=library_root,
+            install_root=install_root,
+        )
     services = context.telemetry
 
     @asynccontextmanager
@@ -191,6 +208,7 @@ def create_app(
     app.include_router(updates_router)
     app.include_router(babeldoc_plugin.router)
     app.include_router(project_import.router)
+    app.include_router(library_location.router)
     app.state.babeldoc_plugin = services.babeldoc
     app.state.update_guard = UpdateGuard(services)
     app.add_middleware(

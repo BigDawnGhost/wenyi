@@ -90,6 +90,8 @@ async def serve(
     protocol_stream,
     reporter: Reporter | None = None,
     runtime_dir: Path | None = None,
+    library_root: Path | None = None,
+    install_root: Path | None = None,
 ) -> None:
     # The native parent injects the layer-one directory so the engine never
     # derives it. Consuming it belongs to the layer-one batch; until then the
@@ -99,7 +101,13 @@ async def serve(
 
     from .main import create_app
 
-    app = create_app(workspace, api_token=os.environ.get("WENYI_API_TOKEN"), diagnostics=reporter)
+    app = create_app(
+        workspace,
+        api_token=os.environ.get("WENYI_API_TOKEN"),
+        diagnostics=reporter,
+        library_root=library_root,
+        install_root=install_root,
+    )
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
             listener.bind(("127.0.0.1", 0))
@@ -140,6 +148,15 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None)
     parser.add_argument("--runtime-dir", type=Path, default=None)
+    # Layer three is injected only by an installed native parent. Its absence is
+    # the ordinary state of a development run, and the engine then keeps creating
+    # projects in the workspace it was given (see `LocalBackend.project_roots`).
+    parser.add_argument("--library-root", type=Path, default=None)
+    # The installation the chosen library belongs to. Refusing a location that is
+    # inside it, or that contains it, needs both, and the engine must not derive
+    # the installation directory from its own executable: when it runs as a
+    # sidecar that path is the bundled runtime, not the application.
+    parser.add_argument("--install-root", type=Path, default=None)
     args = parser.parse_args()
     if not os.environ.get("WENYI_API_TOKEN"):
         parser.error("WENYI_API_TOKEN must be supplied by the desktop parent")
@@ -158,6 +175,8 @@ def main() -> None:
                 protocol_stream,
                 reporter,
                 runtime_dir=args.runtime_dir,
+                library_root=args.library_root,
+                install_root=args.install_root,
             )
         )
     except Exception as error:

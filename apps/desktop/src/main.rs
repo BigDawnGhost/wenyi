@@ -73,6 +73,7 @@ struct Engine {
     child: Arc<Mutex<Option<process::Backend>>>,
     workspace: Option<std::path::PathBuf>,
     runtime: Option<std::path::PathBuf>,
+    library: Option<std::path::PathBuf>,
     closing: Arc<AtomicBool>,
     closed: Arc<AtomicBool>,
 }
@@ -93,6 +94,7 @@ fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Res
             &resources,
             engine.workspace.as_deref(),
             engine.runtime.as_deref(),
+            engine.library.as_deref(),
             diagnostics.inner().clone(),
         )?;
         *owner = Some(backend);
@@ -139,6 +141,36 @@ fn fail(app: &tauri::AppHandle, state: &Mutex<State>, error: &'static str) {
     app.state::<diagnostics::Diagnostics>().record(diagnostics::Source::Native, diagnostics::Event::EngineFailed, serde_json::json!({}));
     lock(state).error = Some(error);
     publish(app, state);
+}
+
+/// Layer three for this start, or None when this is not an installed application.
+///
+/// A development run, a test, and an unpacked build all reach this function with
+/// no installer record. They must not receive a library root: the only sibling
+/// this executable has is `target/debug`, and writing a user's projects into a
+/// build directory would be a location nobody chose. The absence of the argument
+/// is what tells the engine to keep the workspace it was given.
+///
+/// A recorded installation whose directory no longer matches is still installed
+/// -- that is the case where the sibling matters most, because the record is the
+/// only thing that still knows where the previous version kept its data.
+fn library_root(
+    workspace: &std::path::Path,
+    install: &paths::InstallCheck,
+) -> Option<std::path::PathBuf> {
+    if matches!(
+        install,
+        paths::InstallCheck::NotInstalled | paths::InstallCheck::Unreadable
+    ) {
+        return None;
+    }
+    let install_dir = paths::running_install_dir().ok()?;
+    let library = paths::library_root(&install_dir).ok()?;
+    // A library directory that is the workspace itself, or contains it, would
+    // make one directory stand for two layers. The refused case keeps the engine
+    // on the workspace it already has rather than inventing a third location.
+    paths::admit_library_root(&library, &install_dir, workspace).ok()?;
+    Some(library)
 }
 
 fn application_context() -> tauri::Context<tauri::Wry> {
@@ -246,9 +278,10 @@ fn main() {
     let child = Arc::new(Mutex::new(None::<process::Backend>));
     let engine = Engine {
         child: child.clone(),
-        workspace: Some(workspace),
+        workspace: Some(workspace.clone()),
         // Resolved once, at startup, and passed through unchanged.
         runtime: paths::runtime_root().ok(),
+        library: library_root(&workspace, &install),
         closing: closing.clone(),
         closed: closed.clone(),
     };

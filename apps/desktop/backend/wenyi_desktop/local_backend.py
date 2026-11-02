@@ -7,6 +7,7 @@ the authority for initialization; catalog jobs describe scheduling, not translat
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import sqlite3
@@ -21,7 +22,7 @@ from fastapi import HTTPException
 from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_core.config import Config
 
-from . import paths
+from . import library_location, paths
 
 if TYPE_CHECKING:
     from wenyi_core.storage.sqlite import SqliteStorage
@@ -29,6 +30,40 @@ if TYPE_CHECKING:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _library_root(value: str | Path | None) -> Path | None:
+    """Layer three as the native parent resolved it, or `None` when it did not.
+
+    An absent root is the ordinary state of a development run and of an engine
+    started by hand: both keep creating projects in the workspace, exactly as
+    they did before layer three existed.
+    """
+    if value is None:
+        return None
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else None
+
+
+def _resolves(path: Path) -> bool:
+    """Whether a directory exists and can be resolved, without raising."""
+    try:
+        path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return True
+
+
+def _same(left: Path, right: Path) -> bool:
+    """Whether two absolute paths name the same directory, by spelling only.
+
+    Neither side is resolved: the roots exist to be compared, and a root that
+    cannot be resolved must still be compared as written rather than skipped.
+    """
+    try:
+        return Path(os.path.normcase(left)) == Path(os.path.normcase(right))
+    except (TypeError, ValueError):
+        return False
 
 
 def _plain_windows_path(path: str) -> str:
@@ -47,11 +82,19 @@ class LocalBackend:
         config_path: str | None = None,
         *,
         user_home: Path | None = None,
+        library_root: str | Path | None = None,
+        install_root: str | Path | None = None,
     ) -> None:
         resolved = Path(workspace).expanduser().resolve()
         # Also accept --data-dir from older native parents or direct engine launches.
         self.workspace = Path(_plain_windows_path(str(resolved)))
         self.workspace.mkdir(parents=True, exist_ok=True)
+        # Layer three, when the native parent resolved one for an installed
+        # application. It is a *default* for new projects, never a migration:
+        # every project already on this machine keeps the directory it has, and
+        # `project_dir()` finds it there. Nothing is copied or moved here.
+        self.library_root = _library_root(library_root)
+        self.install_root = Path(install_root) if install_root else None
         self.config_path = config_path
         # Layer two holds the catalog now. The workspace stays the parent of the
         # project directories and the owner of the workspace locks.
@@ -61,6 +104,11 @@ class LocalBackend:
         self._export_leases_lock = Lock()
         self._export_leases: dict[int, int] = {}
         self._removing_projects: set[str] = set()
+        # Directories already found for a project, so a listing does not walk the
+        # library again per row. Entries are revalidated on read: a directory can
+        # be removed between two calls, and a stale answer must fall through to a
+        # fresh derivation rather than be handed back.
+        self._known_directories: dict[str, Path] = {}
         with self.transaction() as connection:
             connection.executescript("""
                 CREATE TABLE IF NOT EXISTS projects (
@@ -111,12 +159,165 @@ class LocalBackend:
             conn.close()
 
     def project_dir(self, pid: str) -> Path:
+        """One project's directory: derived from the identifier, never read.
+
+        Two layouts are in use on one machine and both have to keep working. A
+        project written before layer three is `<workspace>/projects/<pid>`; a
+        project created afterwards lives under a chosen library root and is named
+        `<pid>-<title>`. Both are *derived* here -- the identifier decides the
+        name and configuration decides the root -- so an edited catalog cannot
+        make this function return a directory of its choosing.
+
+        The old layout is answered first and unconditionally. That is what makes a
+        change of default location safe: the projects a user already has keep the
+        directory they have, this version never moves them, and their entries in
+        the list still open, translate, export and delete exactly as before.
+
+        A directory that derivation does not name is then searched for, because a
+        project can be renamed or moved by hand and the identifier in its name is
+        the only thing that survives that. The search is over roots this backend
+        admits, never over a path from a record.
+        """
         # One pattern for the identifier, shared with the recovery scan: the two
         # used to disagree, and the wider one here meant a directory the scan
         # then refused could still be opened, written to, and deleted by id.
         if not paths.project_id(pid):
             raise ValueError("Invalid project ID")
-        return paths.project(self.workspace, pid)
+        known = self._known_directories.get(pid)
+        if known is not None and known.is_dir():
+            return known
+        derived = self._derived_directories(pid)
+        # A directory is looked for before one is chosen. Renaming a project or
+        # moving its folder by hand leaves the identifier in the name and nothing
+        # else, so the search is what keeps such a project reachable.
+        for candidate in derived:
+            if candidate.is_dir():
+                self._known_directories[pid] = candidate
+                return candidate
+        # The flat layout is checked last rather than first: a project written by
+        # this version records the location it was created under, and that record
+        # has to win over a directory that merely has the right name. A project
+        # with no record entry at all reaches this line, which is where every
+        # project from before the chosen-location batch still lives.
+        plain = paths.project(self.workspace, pid)
+        if plain.is_dir():
+            return plain
+        # Nothing on disk yet. Every caller that creates rather than reads goes
+        # through here first, so the answer is where the project will be written.
+        return derived[0] if derived else plain
+
+    def new_project_dir(self, pid: str, name: str, location: str | None) -> Path:
+        """Where a project's files go, before its record exists.
+
+        `location` is the folder a person chose. It is validated here and the
+        project directory is named from it, so the upload, the record and every
+        later lookup are built from one answer rather than from three guesses.
+        Omitting it keeps the default: the chosen library root, or the workspace
+        when this installation has none.
+        """
+        if location is None or not str(location).strip():
+            if self.library_root is None:
+                return paths.project(self.workspace, pid)
+            return paths.project_in(self.library_root, pid, name)
+        root = library_location.admit(location, self)
+        return paths.project_in(root, pid, name)
+
+    def _derived_directories(self, pid: str) -> list[Path]:
+        """Every directory this project could have, from its own record and config.
+
+        The record contributes the *root it chose*, and that value is only ever
+        used to select one of the roots this backend already owns. It is not
+        joined into a path on its own, so a record naming a directory this
+        installation does not own selects nothing.
+
+        The default comes last, and it is the same answer a project created now
+        would get. Listing it here rather than assuming it means a project whose
+        directory was removed is answered with where it would be recreated, not
+        with an empty list the caller has to interpret.
+        """
+        record = self._get("projects", pid) or {}
+        name = str(record.get("name") or "")
+        found = [paths.project_in(root, pid, name) for root in self._recorded_roots(record)]
+        found.append(self.new_project_dir(pid, name, None))
+        unique: list[Path] = []
+        for candidate in found:
+            if candidate not in unique:
+                unique.append(candidate)
+        return unique
+
+    def _new_project_dir(self, pid: str) -> Path:
+        """Where a project that has no directory yet is created.
+
+        The record names the location when the person chose one, and that value is
+        only ever used to *pick which of the admitted roots* this project belongs
+        to. It is not joined into a path on its own: a root that is not in
+        `project_roots()` is ignored and the default is used, so an edited record
+        can at worst put a new project in the default folder rather than place it
+        wherever the record says.
+
+        The name is read here and nowhere else. It decides the *readable* half of
+        the directory name, and the identifier decides the first half, so a title
+        that is missing or has since been edited cannot change which directory this
+        project is.
+        """
+        derived = self._derived_directories(pid)
+        return derived[0] if derived else paths.project(self.workspace, pid)
+
+    def _admitted_roots(self) -> tuple[Path, ...]:
+        """Every library root this installation owns, derived from configuration.
+
+        Deliberately independent of the project table: a root is admitted because
+        this installation is configured with it, never because a record claims it.
+        That is what lets the directory lookup and the deletion gate agree without
+        either one reading the other.
+
+        Roots remembered in the settings document are included, and they are why a
+        project stays reachable after the installation moves: the default root
+        follows the executable, the chosen ones do not.
+        """
+        roots: list[Path] = []
+        if self.library_root is not None:
+            roots.append(self.library_root)
+        for saved in self._saved_roots():
+            if not any(_same(saved, known) for known in roots):
+                roots.append(saved)
+        workspace = paths.projects(self.workspace)
+        if not any(_same(workspace, known) for known in roots):
+            roots.append(workspace)
+        return tuple(roots)
+
+    def _saved_roots(self) -> list[Path]:
+        """The library roots this installation has written projects under before."""
+        saved = self.load_settings() or {}
+        values = saved.get(paths.LIBRARY_ROOTS)
+        if not isinstance(values, list):
+            return []
+        roots = []
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                path = Path(value)
+                if path.is_absolute():
+                    roots.append(path)
+        return roots
+
+    def _recorded_roots(self, record: dict) -> list[Path]:
+        """The admitted roots a record names, empty when it names none or another.
+
+        A record is editable data, so the value it carries is matched against the
+        roots this installation already owns instead of being trusted as a path.
+        The comparison is spelling-only, with the resolved spelling tried second:
+        a chosen root arrives spelled the way the executable reported it, while a
+        record remembers the spelling it was created under.
+        """
+        recorded = record.get("library_root")
+        if not isinstance(recorded, str) or not recorded.strip():
+            return []
+        named = Path(recorded)
+        matched = []
+        for root in self._admitted_roots():
+            if _same(named, root) or (_resolves(root) and _same(named, root.resolve())):
+                matched.append(root)
+        return matched
 
     def mark_project(self, pid: str, *, library_root: Path | None = None) -> Path:
         """Write the self-describing marker for one project directory.
@@ -143,7 +344,7 @@ class LocalBackend:
             "library_root": str(library_root if library_root is not None else directory.parent),
             "created_at": _now(),
         }
-        destination = paths.project_marker(self.workspace, pid)
+        destination = paths.marker_in(directory)
         temporary = destination.with_name(destination.name + ".writing")
         try:
             temporary.write_text(
@@ -160,7 +361,7 @@ class LocalBackend:
         from wenyi_core.storage.sqlite import SqliteStorage
 
         directory = self.project_dir(pid)
-        if create and not paths.project_marker(self.workspace, pid).is_file():
+        if create and not paths.marker_in(directory).is_file():
             # A store is only ever created for a project the catalog already has,
             # so this is the one place every project directory passes through.
             self.mark_project(pid)
@@ -202,8 +403,22 @@ class LocalBackend:
         source: dict | None = None,
         config: dict | None = None,
         connection: sqlite3.Connection | None = None,
+        library_root: str | Path | None = None,
     ) -> str:
+        """Record one project, in the library the caller chose or the default one.
+
+        `library_root` is the location a person picked for *this* project. It is
+        written into the record rather than into a process-wide setting because
+        every later path is derived from it: two projects on one machine may live
+        in different folders, and neither inherits the other's choice.
+
+        A location that is not admitted raises before anything is written, so a
+        refused choice leaves no record and no directory behind.
+        """
         pid = project_id or uuid.uuid4().hex[:16]
+        # A chosen location is checked before anything is written, so a refusal
+        # leaves no record and no directory behind.
+        chosen = None if library_root is None else library_location.admit(library_root, self)
         document = {
             "id": pid,
             "name": name,
@@ -221,11 +436,53 @@ class LocalBackend:
             "error": None,
             "config": config or {},
             "created_at": _now(),
+            # Only present when the person chose a location. An absent key means
+            # this project uses the default root, which is also what every record
+            # written before this field existed means.
+            **({"library_root": str(chosen)} if chosen is not None else {}),
             **(source or {}),
         }
         with self.transaction(connection) as conn:
             conn.execute("INSERT INTO projects VALUES (?,?)", (pid, json.dumps(document)))
+            if chosen is not None:
+                self._remember_root(chosen, conn)
         return pid
+
+    def _remember_root(self, root: Path, connection: sqlite3.Connection) -> None:
+        """Record a library root so its projects stay findable after a restart.
+
+        The root a project was created under is not recoverable from anything else:
+        the next start resolves a default from its own executable, and a project in
+        a folder the person chose is not below it. Losing this list would leave
+        those projects in place but unreachable, which is the one outcome a change
+        of location must never produce.
+
+        Written inside the caller's transaction so a project and the record of
+        where it lives are committed together or not at all.
+        """
+        saved = self._get("application_settings", 1, connection)
+        if saved is None:
+            # The document has to be complete: the settings store reads its config
+            # key on every load, so a document holding only library roots would
+            # fail the next load for a project that was created successfully.
+            from wenyi_backend.config_documents import global_document
+
+            saved = {
+                "config": global_document(self.defaults()),
+                "template": "标准翻译",
+                "revision": 0,
+            }
+        existing = [
+            value
+            for value in saved.get(paths.LIBRARY_ROOTS) or []
+            if isinstance(value, str) and value.strip()
+        ]
+        if any(_same(Path(value), root) for value in existing):
+            return
+        existing.append(str(root))
+        saved[paths.LIBRARY_ROOTS] = existing
+        saved[paths.LAST_LIBRARY_ROOT] = str(root)
+        self.save_settings(saved, connection)
 
     def get_project(self, pid: str) -> dict | None:
         with self._export_leases_lock:
@@ -369,15 +626,22 @@ class LocalBackend:
                 raise HTTPException(409, "Project deletion is in progress")
 
     def project_roots(self) -> tuple[Path, ...]:
-        """Every directory a project directory may be recorded under.
+        """Every directory a project directory may live under.
 
         Deletion recurses into whatever this list admits, so it is deliberately a
-        list of roots rather than one root with a prefix test: the batch that lets
-        a project be created anywhere adds its root here, and nothing else in the
-        gate below has to change. A root on another drive is simply another entry;
-        containment is decided per root, never by comparing strings.
+        list of roots rather than one root with a prefix test. A root on another
+        drive is simply another entry; containment is decided per root, never by
+        comparing strings.
+
+        Both layouts are listed together, and the old one never drops out. A
+        project created before layer three still lives in the workspace, so a
+        list that named only the chosen library would make exactly the projects
+        the user already has the ones that cannot be opened or deleted. The order
+        is the order `project_dir()` searches in, which is also why the chosen
+        root comes first: a new project is created there, and a name collision is
+        resolved in favour of the directory that is already here.
         """
-        return (paths.projects(self.workspace),)
+        return self._admitted_roots()
 
     def _admitted_project_directory(self, pid: str, project: dict) -> Path:
         """The directory deletion may remove for `pid`, or a refusal.
@@ -791,6 +1055,31 @@ class LocalBackend:
             reverse=True,
         )[:5]
 
+    def _export_location(self, pid: str) -> tuple[str, str]:
+        """The root and the directory name one project's exports live under.
+
+        `export_path()` derives `<root>/<name>/exports` and then checks that the
+        stored path resolves inside it, so both halves have to describe the
+        directory this project actually has. The workspace alone is not that
+        answer any more: a project created under a chosen library is not named by
+        its identifier, and a stored path built from the workspace would fail the
+        containment check against the very file it had just written.
+
+        The name is the directory's own, so the old flat layout keeps answering
+        with the identifier and nothing about it changes.
+
+        The root is resolved because the stored path is later compared against a
+        resolved file. The chosen library comes from the native parent, which
+        spells the installation directory the way the executable reported it, so
+        the two spellings have to be brought together before they are subtracted.
+        """
+        directory = self.project_dir(pid)
+        try:
+            directory = directory.resolve()
+        except OSError:
+            pass
+        return str(directory.parent), directory.name
+
     def _export_history_lock(self, pid: str):
         from wenyi_core.storage.sqlite import SqliteStorage
 
@@ -803,9 +1092,9 @@ class LocalBackend:
     def publish_export(self, pid: str, export_id: int, output: str) -> None:
         from wenyi_backend.export_paths import EXPORT_LIMIT, export_path
 
-        root = str(paths.projects(self.workspace))
+        root, name = self._export_location(pid)
         with self._export_history_lock(pid):
-            file = export_path(root, pid, str(Path(output).absolute()))
+            file = export_path(root, name, str(Path(output).absolute()))
             if file is None or not file.is_file():
                 raise ValueError("Export output must be a file in the project's export directory")
             size = file.stat().st_size
@@ -845,19 +1134,19 @@ class LocalBackend:
         """Called under the history lock, never inside a catalog transaction."""
         from wenyi_backend.export_paths import export_path, log
 
-        root = str(paths.projects(self.workspace))
+        root, name = self._export_location(pid)
         for old in self._list("exports", pid=pid):
             with self._export_leases_lock:
                 leased = bool(self._export_leases.get(old["id"], 0))
             if old["status"] != "deleting" or leased:
                 continue
             try:
-                old_file = export_path(root, pid, old["path"])
+                old_file = export_path(root, name, old["path"])
                 if old_file is None:
                     raise OSError("Export resolves outside its owned directory")
                 if old["format"] == "html":
                     assets = old_file.with_name(f"{old_file.stem}.assets")
-                    if export_path(root, pid, str(assets)) is None:
+                    if export_path(root, name, str(assets)) is None:
                         raise OSError("Export assets resolve outside their owned directory")
                     if assets.exists():
                         shutil.rmtree(assets)
@@ -898,8 +1187,9 @@ class LocalBackend:
         with self._export_history_lock(pid):
             self._reject_removing(pid)
             export = self._get("exports", export_id)
+            root, name = self._export_location(pid)
             file = (
-                export_path(str(paths.projects(self.workspace)), pid, export["path"])
+                export_path(root, name, export["path"])
                 if export
                 and export["project_id"] == pid
                 and export["status"] == "done"

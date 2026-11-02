@@ -13,6 +13,7 @@ import { api, isProjectBusy } from "../../api/client";
 import { cn } from "../../lib/utils";
 import { SourcePreview } from "./SourcePreview";
 import { SourceFilePicker } from "./SourceFilePicker";
+import { ProjectLocationPicker } from "./ProjectLocationPicker";
 import { releaseSource, type ProjectSource } from "../../platform";
 
 export default function CreateProjectDialog() {
@@ -26,6 +27,9 @@ export default function CreateProjectDialog() {
   const [target, setTarget] = useState("zh");
   const [pid] = useState<string | null>(searchParams.get("project"));
   const [file, setFile] = useState<ProjectSource | null>(null);
+  // Null means the installation's default library. Kept out of the project query
+  // cache: it applies to the project being created, not to one that exists.
+  const [folder, setFolder] = useState<string | null>(null);
   const [sourceConsumed, setSourceConsumed] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
   const mounted = useRef(false);
@@ -118,6 +122,10 @@ export default function CreateProjectDialog() {
             prepare,
             translation_mode: translationMode,
             pdf_backend: extension === "pdf" && pdfBackend ? pdfBackend : null,
+            // Omitted rather than sent as null when no folder was chosen: the
+            // request then means "the default", exactly as it did before a
+            // location could be chosen at all.
+            ...(folder ? { location: folder } : {}),
           },
           file,
         );
@@ -278,6 +286,15 @@ export default function CreateProjectDialog() {
         </div>
         {sameLanguage && (
           <ErrorNotice error={tr("createProject.theSourceAndTargetLanguagesAreThe")} />
+        )}
+        {/* Only offered while creating: an existing project keeps the directory it
+            has, so a picker here would promise a move this application never makes. */}
+        {!pid && (
+          <ProjectLocationPicker
+            location={folder}
+            disabled={locked}
+            onChange={setFolder}
+          />
         )}
         <SourceFilePicker
           filename={typeof filename === "string" ? filename : undefined}

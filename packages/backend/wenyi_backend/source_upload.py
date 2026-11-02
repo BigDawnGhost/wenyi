@@ -56,10 +56,28 @@ class UploadedSource:
         }
 
 
-async def save_source(pid: str, file: UploadFile, fmt: str | None = None) -> UploadedSource:
+async def save_source(
+    pid: str,
+    file: UploadFile,
+    fmt: str | None = None,
+    *,
+    directory: Path | str | None = None,
+) -> UploadedSource:
+    """Write one upload into the project directory it will belong to.
+
+    `directory` is the project directory the caller has already resolved. A host
+    that lets a person choose where a project lives knows that answer before the
+    project exists, and the upload has to go into the same directory the record
+    will name -- resolving it twice would let a lookup answer with a different
+    directory than the one the project is then catalogued under.
+
+    It defaults to the context projection, which is what every caller without a
+    location choice uses.
+    """
     fmt_code = input_format(file, fmt)
     suffix = {"markdown": "md", "text": "txt"}.get(fmt_code, fmt_code)
-    destination = Path(paths.project_dir(pid)) / f"source-{uuid4().hex}.{suffix}"
+    root = Path(directory) if directory is not None else Path(paths.project_dir(pid))
+    destination = root / f"source-{uuid4().hex}.{suffix}"
     destination.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
     try:

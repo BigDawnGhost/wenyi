@@ -70,6 +70,12 @@ _NATIVE_INSTANCE_LOCK = ".desktop-instance.lock"
 
 #: Layer two root under the user profile.
 _USER = "Wenyi"
+#: Layer one root under the user profile.
+_RUNTIME = ".wenyi"
+#: Layer one entry for this application inside RUNTIME.
+_RUNTIME_ENTRY = "desktop"
+#: Environment override for layer one, matching `RUNTIME_OVERRIDE` in src/paths.rs.
+_RUNTIME_OVERRIDE = "WENYI_RUNTIME_DIR"
 #: Settings document of layer two.
 _SETTINGS = "settings.yaml"
 #: Layer two directory holding state that every project shares.
@@ -85,7 +91,18 @@ _WORKSPACE_INDEX = "workspace.json"
 #: Serializes the one-time move into layer two.
 _MIGRATION_LOCK = ".migration.lock"
 #: Settings key remembering the library root a person used last.
+#:
+#: The recovery scan already reads this key when it has no catalog, so it is
+#: written back whenever a project is created outside the default root. It holds
+#: one root because a scan starts somewhere; the full set is `LIBRARY_ROOTS`.
 LAST_LIBRARY_ROOT = "last_library_root"
+#: Settings key holding every library root this installation has written under.
+#:
+#: A project's directory is found by looking for its identifier below one of
+#: these roots, so the set has to outlive the catalog: losing it would make every
+#: project created in a chosen folder unreachable, which is exactly the failure
+#: this list exists to prevent. Order is the order they are searched in.
+LIBRARY_ROOTS = "library_roots"
 
 #: A project identifier is the first 16 characters of a version 4 UUID.
 #:
@@ -136,13 +153,58 @@ def projects(workspace: Path) -> Path:
 
 
 def project(workspace: Path, pid: str) -> Path:
-    """One project's directory.
+    """One project directory of the layout that predates layer three.
 
     The caller owns the identifier's own validation; this only joins, so that a
     project path can never be built from a different directory than the one
     `projects()` names.
+
+    This is not the general answer any more. A project may live in any admitted
+    library root, so `LocalBackend.project_dir()` is the call to make; this
+    function keeps naming the workspace layout, which is where every project
+    written before layer three still is.
     """
     return projects(workspace) / pid
+
+
+def project_in(root: Path, pid: str, name: str) -> Path:
+    """One project directory below a library root, named after this project.
+
+    Layer three has no fixed parent per installation: the root is whatever the
+    person chose, so the project is named rather than numbered. The identifier
+    leads the name so the directory still says which project it is once it has
+    been moved, copied, or found by a scan with no catalog to consult.
+    """
+    return root / project_name(pid, name)
+
+
+def find_project(root: Path, pid: str) -> Path | None:
+    """Locate one project below one root, or `None` when it is not there.
+
+    Both layouts are recognised, and neither is read out of a record. A project
+    written before layer three is named by the identifier alone; the layer-three
+    name is the identifier followed by the separator and a readable suffix. The
+    identifier is fixed width, so a prefix test decides which of the two a
+    directory is without guessing at the suffix.
+
+    Scanning is what keeps a path free of catalog data: the roots come from
+    configuration and the name comes from the identifier, so a record edited by
+    hand can at worst point at a directory that is not this project's -- which
+    the caller then refuses to use, rather than one it follows.
+    """
+    plain = root / pid
+    if plain.is_dir():
+        return plain
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return None
+    for entry in entries:
+        # Both spellings begin with the identifier; `split_project_name` has
+        # already answered "is this a project directory at all" for the scan.
+        if split_project_name(entry.name)[0] == pid and entry.is_dir():
+            return entry
+    return None
 
 
 def project_id(value: str) -> str:
@@ -201,13 +263,22 @@ def split_project_name(name: str) -> tuple[str, str]:
 
 
 def project_marker(workspace: Path, pid: str) -> Path:
-    """The self-describing marker inside one project directory.
+    """The self-describing marker of a project in the old workspace layout.
 
     A directory can be moved, imported by hand, or found by a scan that has no
     catalog to consult. The marker is what carries the identifier across those
     moves, and it is the authority the catalog's own record is checked against.
+
+    The marker describes a *directory*, so a caller that already resolved one
+    uses `marker_in()` instead: naming it from the workspace would put the file
+    in a directory the project does not live in once a library root is chosen.
     """
     return project(workspace, pid) / PROJECT_MARKER
+
+
+def marker_in(directory: Path) -> Path:
+    """The self-describing marker of a project directory that is already resolved."""
+    return directory / PROJECT_MARKER
 
 
 def plugins(workspace: Path, runtime: Path | None = None) -> Path:
@@ -251,6 +322,23 @@ def native_instance_lock(workspace: Path) -> Path:
     spelled again in `src/instance.rs`, which owns the lock's lifetime.
     """
     return workspace / _NATIVE_INSTANCE_LOCK
+
+
+def runtime_root(*, home: Path | None = None) -> Path:
+    """Layer one: application runtime that may be discarded and rebuilt.
+
+    Mirrors `runtime_root()` in `src/paths.rs`, including the override, so both
+    halves of the application name the same directory. Only the root itself is
+    named here; nothing in this module creates or writes it.
+
+    `WENYI_RUNTIME_DIR` is honoured because the native parent already honours it.
+    A build that resolved a different layer one would leave the engine writing one
+    cache while the parent cleared another.
+    """
+    configured = Path(os.environ.get(_RUNTIME_OVERRIDE, "").strip())
+    if str(configured) and configured.is_absolute():
+        return configured
+    return (platform_home() if home is None else Path(home)) / _RUNTIME / _RUNTIME_ENTRY
 
 
 def platform_home() -> Path:

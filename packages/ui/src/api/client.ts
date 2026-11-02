@@ -95,6 +95,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
+  admitProjectLocation: (path: string) =>
+    request<{ path: string }>("/desktop/library/admit", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }).then((answer) => answer.path),
   translate: (pid: string, strategy?: Record<string, unknown>) =>
     request<JobEnqueued>(`/projects/${pid}/translate`, {
       method: "POST",

@@ -46,16 +46,17 @@ pub enum Error {
     InstallDirAtVolumeRoot,
     /// Two roots are equal or one contains the other.
     Overlap,
+    /// A chosen library location is one the layout cannot keep data in.
+    LibraryRootInvalid,
 }
 
 impl Error {
-    /// Shown once the batch that enforces the layout turns these into a refusal.
-    #[allow(dead_code)]
     pub fn message(self) -> &'static str {
         match self {
             Self::Base => "Wenyi could not determine where to keep its files on this computer. Check the user profile environment and reopen Wenyi.",
             Self::InstallDirAtVolumeRoot => "Wenyi is installed at a drive root. Reinstall it into a folder so its data can live beside it.",
             Self::Overlap => "Wenyi's data folders overlap. Move one of them and reopen Wenyi.",
+            Self::LibraryRootInvalid => "Wenyi cannot keep project data in that folder. Choose a folder that is not Wenyi's own program folder, a drive or user folder, or a system folder.",
         }
     }
 }
@@ -110,12 +111,14 @@ pub fn user_root() -> Result<PathBuf, Error> {
 
 /// Layer three: the default directory that holds one folder per project.
 ///
-/// Nothing calls this from the startup path yet; layer three arrives with its
-/// own batch. The volume-root defence is already here so that no caller can
-/// invent a path instead: a drive root has no parent of its own, and a bare
-/// drive spelling reports an empty parent, so both are refused rather than
-/// silently resolved to the volume the installation sits in.
-#[allow(dead_code)]
+/// The parent is a *sibling* of the installation, never a child of it: upgrading
+/// or uninstalling touches $INSTDIR, and a directory beside it is one the
+/// installer can never reach by any policy change upstream might make.
+///
+/// A drive root has no parent of its own, and a bare drive spelling reports an
+/// empty parent, so both are refused rather than silently resolved to the volume
+/// the installation sits in. No caller may build this path itself: the defence
+/// only holds while there is one place that names it.
 pub fn library_root(install_dir: &Path) -> Result<PathBuf, Error> {
     let parent = install_dir.parent().ok_or(Error::InstallDirAtVolumeRoot)?;
     if parent == install_dir || parent.as_os_str().is_empty() {
@@ -332,12 +335,128 @@ pub fn current_install() -> InstallCheck {
     }
 }
 
+/// The directory a person may choose for layer three, or the reason they may not.
+///
+/// This is the creation-time half of the same rule the startup assertion applies:
+/// a library root the application accepts here must be one the rest of the layout
+/// can live beside. Six categories are refused, and they are all instances of one
+/// question -- is this directory the installation, the profile, or a root that a
+/// recursive removal would take whole?
+///
+/// No category is spelled as a list of paths to compare against. Every refusal is
+/// derived from the two roots the application already resolves, so a machine
+/// configured differently is judged by the same rule rather than by a copy of one
+/// machine's idea of a dangerous path.
+pub fn admit_library_root(
+    candidate: &Path,
+    install_dir: &Path,
+    workspace: &Path,
+) -> Result<(), Error> {
+    // A relative or empty spelling names nothing, and would resolve against
+    // whatever directory the process happens to be in.
+    if !candidate.is_absolute() || candidate.as_os_str().is_empty() {
+        return Err(Error::LibraryRootInvalid);
+    }
+    // A drive root, a UNC share root, and the user profile are all "roots" in the
+    // sense that matters: everything below them belongs to something else, and a
+    // recursive removal in one takes unrelated work with it.
+    let at_volume_root = candidate
+        .parent()
+        .is_none_or(|parent| parent == candidate || parent.as_os_str().is_empty());
+    if at_volume_root {
+        return Err(Error::LibraryRootInvalid);
+    }
+    let user = home_dir().map_err(|_| Error::Base)?;
+    if same_directory(candidate, &user) {
+        return Err(Error::LibraryRootInvalid);
+    }
+    let system = system_directories();
+    let roots: [(&'static str, PathBuf); 4] = [
+        ("install", install_dir.to_path_buf()),
+        ("layer-one", runtime_root().map_err(|_| Error::Base)?),
+        ("layer-two", user.clone().join(USER)),
+        // The whole profile is refused for the same reason a volume root is: its
+        // children are other applications' directories.
+        ("profile", user),
+    ];
+    // Only the candidate is compared against each root. Asking the pairwise check
+    // to judge the whole set would fail on the roots themselves: layer one and
+    // layer two are both inside the profile, which is exactly why the profile is
+    // one of the four.
+    if roots
+        .iter()
+        .any(|(_, root)| overlaps(candidate, root))
+    {
+        return Err(Error::LibraryRootInvalid);
+    }
+    // The workspace is the directory the engine was actually given, and it is not
+    // necessarily the platform default: it can be named on the command line, so it
+    // is compared as its own participant rather than assumed to be under anything.
+    if overlaps(candidate, workspace) {
+        return Err(Error::LibraryRootInvalid);
+    }
+    if system.iter().any(|path| overlaps(candidate, path)) {
+        return Err(Error::LibraryRootInvalid);
+    }
+    Ok(())
+}
+
+/// Directories the operating system owns, in the spelling the platform uses.
+///
+/// These are read from the environment the operating system sets for its own
+/// directories rather than typed out, so a non-English installation is judged by
+/// where its system directories actually are.
+fn system_directories() -> Vec<PathBuf> {
+    let names: &[&str] = if cfg!(windows) {
+        &["SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"]
+    } else {
+        &["SystemRoot"]
+    };
+    let mut found: Vec<PathBuf> = names
+        .iter()
+        .filter_map(|name| env_path(name))
+        .filter(|path| path.is_absolute())
+        .collect();
+    if cfg!(windows) {
+        // /Windows/System32 is what an application can actually name, and it is a
+        // descendant of the root the variables above describe.
+        found.extend(env_path("SystemRoot").map(|root| root.join("System32")));
+    } else {
+        found.extend(
+            ["/usr", "/bin", "/sbin", "/etc", "/boot", "/var"]
+                .iter()
+                .map(PathBuf::from),
+        );
+    }
+    found
+}
+
+/// Whether two roots are equal or nested either way, comparing whole components.
+///
+/// Resolving is deliberately avoided: the candidate is a directory that may not
+/// exist yet, and a path that cannot be resolved must be refused on its spelling
+/// rather than admitted because the check could not run.
+fn overlaps(left: &Path, right: &Path) -> bool {
+    let left = normalized(left);
+    let right = normalized(right);
+    let (left, right) = if cfg!(windows) {
+        (left.to_lowercase(), right.to_lowercase())
+    } else {
+        (left, right)
+    };
+    let boundary = |prefix: &str, whole: &str| {
+        whole == prefix || whole.starts_with(&format!("{prefix}/"))
+    };
+    boundary(&left, &right) || boundary(&right, &left)
+}
+
 /// Roots must be pairwise disjoint: neither equal nor nested either way, because
 /// cleaning, backing up, or uninstalling one must never reach another.
 ///
-/// The pre-upgrade snapshot is the caller: it refuses a backup directory that
-/// sits inside the data directory it is about to copy. The startup assertion that
-/// the batch wiring the layers together will turn into a refusal uses this too.
+/// Two callers depend on this shape. The pre-upgrade snapshot refuses a backup
+/// directory that sits inside the data directory it is about to copy, and the
+/// library-root admission refuses a location that is the installation, the
+/// workspace, or either user-level layer.
 pub fn check_disjoint(roots: &[(&'static str, &Path)]) -> Result<(), Error> {
     for (index, (_, path)) in roots.iter().enumerate() {
         for (_, other) in roots[index + 1..].iter() {
@@ -565,6 +684,59 @@ mod tests {
         let running = running_install_dir().unwrap();
         let executable = std::env::current_exe().unwrap();
         assert_eq!(running, executable.parent().unwrap());
+    }
+
+    #[test]
+    fn a_chosen_library_root_beside_the_installation_is_admitted() {
+        // The default layer-three location: a sibling of the installation, which
+        // no uninstall or upgrade policy can reach.
+        let install = Path::new("D:/Apps/Wenyi Desktop");
+        let library = library_root(install).unwrap();
+        assert_eq!(
+            admit_library_root(&library, install, Path::new("C:/profile/Wenyi Desktop")),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn the_installation_and_its_ancestors_are_refused() {
+        let install = Path::new("D:/Apps/Wenyi Desktop");
+        for candidate in [
+            Path::new("D:/Apps/Wenyi Desktop"),
+            Path::new("D:/Apps/Wenyi Desktop/data"),
+            // An ancestor is the more dangerous case: a recursive removal of the
+            // chosen folder would take the installation with it.
+            Path::new("D:/Apps"),
+            Path::new("D:/"),
+        ] {
+            assert_eq!(
+                admit_library_root(candidate, install, Path::new("C:/profile/Wenyi Desktop")).err(),
+                Some(Error::LibraryRootInvalid),
+                "{candidate:?} must not be admitted"
+            );
+        }
+    }
+
+    #[test]
+    fn the_volume_root_and_relative_spellings_are_refused() {
+        let install = Path::new("D:/Apps/Wenyi Desktop");
+        let workspace = Path::new("C:/profile/Wenyi Desktop");
+        for candidate in [Path::new(""), Path::new("relative/folder"), Path::new(".")] {
+            assert_eq!(
+                admit_library_root(candidate, install, workspace).err(),
+                Some(Error::LibraryRootInvalid),
+                "{candidate:?} is not an absolute location"
+            );
+        }
+    }
+
+    #[test]
+    fn sibling_names_that_merely_share_a_prefix_do_not_overlap() {
+        // D:/Apps and D:/Apps2 share a prefix and neither contains the other.
+        // Comparing whole components is what keeps that from being a silent pass.
+        assert!(!overlaps(Path::new("D:/Apps"), Path::new("D:/Apps2")));
+        assert!(overlaps(Path::new("D:/Apps"), Path::new("D:/Apps/data")));
+        assert!(!overlaps(Path::new("D:/Apps"), Path::new("D:/Apps2/data")));
     }
 
     #[test]

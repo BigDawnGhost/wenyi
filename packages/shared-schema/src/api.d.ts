@@ -1407,6 +1407,8 @@ export interface components {
              * @enum {string}
              */
             translation_mode: "standard" | "best_of_three";
+            /** Location */
+            location?: string | null;
         };
         /** ProjectDetail */
         ProjectDetail: {

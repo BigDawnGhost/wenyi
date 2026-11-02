@@ -13,4 +13,9 @@ async function choose(): Promise<string | null> {
   }
 }
 
-export const library: LibraryServices = { choose, importProject: api.importProject };
+/** Ask the engine whether one folder may hold a new project. */
+async function admitLocation(path: string): Promise<string> {
+  return api.admitProjectLocation(path);
+}
+
+export const library: LibraryServices = { choose, importProject: api.importProject, admitLocation };

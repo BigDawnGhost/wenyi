@@ -88,6 +88,7 @@ impl Backend {
         resources: &Path,
         workspace: Option<&Path>,
         runtime: Option<&Path>,
+        library: Option<&Path>,
         diagnostics: crate::diagnostics::Diagnostics,
     ) -> Result<(Self, ReadySignal), &'static str> {
         let token = token()?;
@@ -114,6 +115,19 @@ impl Backend {
         }
         if let Some(runtime) = runtime {
             command.arg("--runtime-dir").arg(runtime);
+        }
+        // Layer three is passed only when there is an installation to put it
+        // beside. A development run has no installer record, and a sibling of
+        // target/debug is a directory the developer never chose; leaving the
+        // argument out makes the engine keep using the workspace it was given.
+        if let Some(library) = library {
+            command.arg("--library-root").arg(library);
+            // The engine cannot derive this: as a bundled sidecar its own
+            // executable lives beside the runtime it loads, not beside the
+            // installed application, so the parent names the installation.
+            if let Ok(install) = crate::paths::running_install_dir() {
+                command.arg("--install-root").arg(install);
+            }
         }
         command
             .env("WENYI_API_TOKEN", &token)

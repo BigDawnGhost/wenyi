@@ -111,6 +111,18 @@ class BackendContext:
     update_term: Callable[..., None]
     remove_project: Callable[[str], None]
     api_token: str | None = None
+    #: Where a project that does not exist yet will be created, or `ValueError`
+    #: carrying the sentence a person reads.
+    #:
+    #: The shared application has no filesystem of its own: which folders exist and
+    #: which are safe to write to are facts only the host knows. `location` is the
+    #: folder a person chose, or None for this installation's default. `name` is the
+    #: project's, because a library directory carries a readable half.
+    #:
+    #: A host with no library concept leaves this unset. A request that names a
+    #: location then fails instead of quietly creating the project somewhere else:
+    #: a client must never be told the project went where it asked when it did not.
+    new_project_dir: Callable[[str, str, str | None], Path] | None = None
     mineru_token_resolver: Callable[[], str | None] | None = None
     # Desktop resolves a saved connection's stored key; None keeps environment lookup (Web).
     connection_credential: Callable[[str, Any], str | None] | None = None
