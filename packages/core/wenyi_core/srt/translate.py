@@ -155,26 +155,27 @@ def _flush_usage(
     """Merge unpersisted client usage into usage.json; return cumulative usage and the new
     checkpoint.
     """
-    current = client.usage_summary()
-    increment = usage_delta(current, checkpoint)
-    accumulated = store.load_usage() or {
-        "totals": {},
-        "by_tier": {},
-        "by_stage": {},
-    }
-    if not increment["totals"]["calls"]:
+    with store.usage_lock():
+        current = client.usage_summary()
+        increment = usage_delta(current, checkpoint)
+        accumulated = store.load_usage() or {
+            "totals": {},
+            "by_tier": {},
+            "by_stage": {},
+        }
+        if not increment["totals"]["calls"]:
+            store._usage_checkpoint = current
+            return merge_usage_summaries(accumulated, increment), current
+        cumulative = merge_usage_summaries(accumulated, increment)
+        store.save_usage(cumulative)
         store._usage_checkpoint = current
-        return merge_usage_summaries(accumulated, increment), current
-    cumulative = merge_usage_summaries(accumulated, increment)
-    store.save_usage(cumulative)
-    store._usage_checkpoint = current
-    store.log_event(
-        "usage_summary",
-        scope=scope,
-        increment=increment,
-        cumulative=cumulative,
-    )
-    return cumulative, current
+        store.log_event(
+            "usage_summary",
+            scope=scope,
+            increment=increment,
+            cumulative=cumulative,
+        )
+        return cumulative, current
 
 
 def translate_srt(

@@ -91,6 +91,12 @@ class SrtRunStore:
         with self._file_lock(".events.lock"):
             yield
 
+    @contextmanager
+    def usage_lock(self) -> Iterator[None]:
+        """Serialize usage read-merge-write so concurrent flushes lose no increment."""
+        with self._file_lock(".usage.lock"):
+            yield
+
     def ensure_manifest(
         self,
         source_path: str,
