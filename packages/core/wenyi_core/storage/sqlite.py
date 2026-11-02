@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from ..errors import ArtifactCorrupt
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..ingest.models import Chapter, Document
 from ..pipeline.runstore import ExportSnapshotStore, RunStore, source_sha256
@@ -294,7 +295,12 @@ class SqliteStorage:
                 .execute("SELECT value FROM artifacts WHERE key=?", (key,))
                 .fetchone()
             )
-        return json.loads(row[0]) if row else None
+        if row is None:
+            return None
+        try:
+            return json.loads(row[0])
+        except json.JSONDecodeError as error:
+            raise ArtifactCorrupt(f"Artifact {key} is corrupt at byte {error.pos}") from error
 
     def write_artifact(self, key: str, value: Any) -> None:
         key = self._key(key)
