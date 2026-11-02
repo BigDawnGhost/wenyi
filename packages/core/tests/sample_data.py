@@ -199,6 +199,72 @@ def write_nested_toc_epub(
             zf.writestr(f"OEBPS/{ncx_filename}", _FLAT_SECONDARY_NCX)
 
 
+_DANGLING_FRAGMENT_OPF = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Dangling</dc:title></metadata>
+<manifest>
+  <item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+  <item id="two" href="two.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine toc="toc"><itemref idref="one"/><itemref idref="two"/></spine></package>"""
+
+_DANGLING_FRAGMENT_NCX = """<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>
+  <navPoint><navLabel><text>One</text></navLabel><content src="one.xhtml#missing"/></navPoint>
+  <navPoint><navLabel><text>Two</text></navLabel><content src="two.xhtml#missing"/></navPoint>
+</navMap></ncx>
+"""
+
+_DANGLING_FRAGMENT_OPF_DUAL = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Dangling Dual TOC</dc:title></metadata>
+<manifest>
+  <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+  <item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+  <item id="two" href="two.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine toc="toc"><itemref idref="one"/><itemref idref="two"/></spine></package>"""
+
+_DANGLING_FRAGMENT_NAV = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"
+ xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol>
+  <li><a href="one.xhtml#missing">One</a></li>
+  <li><a href="two.xhtml#missing">Two</a></li>
+</ol></nav></body></html>
+"""
+
+_DANGLING_FRAGMENT_ONE = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>One</title></head>
+<body><h1>One</h1><p>First body.</p></body></html>
+"""
+
+_DANGLING_FRAGMENT_TWO = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Two</title></head>
+<body><h1>Two</h1><p>Second body.</p></body></html>
+"""
+
+
+def write_dangling_fragment_epub(path: str, *, include_nav: bool = False) -> None:
+    """Build an EPUB whose only TOC destination in each resource is a missing fragment.
+
+    With include_nav, the same destinations appear once in an EPUB3 NAV and once in the NCX,
+    so each resource has two references across the book but only one inside each TOC.
+    """
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+        zf.writestr("META-INF/container.xml", _CONTAINER)
+        if include_nav:
+            zf.writestr("OEBPS/content.opf", _DANGLING_FRAGMENT_OPF_DUAL)
+            zf.writestr("OEBPS/nav.xhtml", _DANGLING_FRAGMENT_NAV)
+        else:
+            zf.writestr("OEBPS/content.opf", _DANGLING_FRAGMENT_OPF)
+        zf.writestr("OEBPS/toc.ncx", _DANGLING_FRAGMENT_NCX)
+        zf.writestr("OEBPS/one.xhtml", _DANGLING_FRAGMENT_ONE)
+        zf.writestr("OEBPS/two.xhtml", _DANGLING_FRAGMENT_TWO)
+
+
 def write_grouped_nav_epub(path: str) -> None:
     """Build EPUB3 NAV with href-free spans as top-level part groups."""
     opf = """<?xml version="1.0" encoding="UTF-8"?>
@@ -293,6 +359,61 @@ def write_degenerate_toc_epub(path: str) -> None:
         zf.writestr("OEBPS/toc.ncx", ncx)
         for name, content in resources.items():
             zf.writestr(f"OEBPS/{name}", content)
+
+
+def write_volume_toc_epub(path: str) -> None:
+    """Build an EPUB3 NAV whose chapters are nested below volume nodes."""
+    opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Volume</dc:title></metadata>
+<manifest>
+  <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+  <item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>
+</manifest><spine><itemref idref="body"/></spine></package>"""
+    nav = """<html xmlns="http://www.w3.org/1999/xhtml"
+ xmlns:epub="http://www.idpf.org/2007/ops"><body><nav epub:type="toc"><ol>
+ <li><a href="body.xhtml#vol-1">卷一</a><ol>
+   <li><a href="body.xhtml#ch-1">第一章</a></li>
+   <li><a href="body.xhtml#ch-2">第二章</a></li>
+ </ol></li>
+ <li><a href="body.xhtml#vol-2">卷二</a><ol>
+   <li><a href="body.xhtml#ch-3">第三章</a></li>
+   <li><a href="body.xhtml#ch-4">第四章</a></li>
+ </ol></li>
+</ol></nav></body></html>"""
+    body = """<html><body>
+<h1 id="vol-1">卷一</h1><p>Intro one.</p>
+<h2 id="ch-1">第一章</h2><p>Body one.</p>
+<h2 id="ch-2">第二章</h2><p>Body two.</p>
+<h1 id="vol-2">卷二</h1><p>Intro two.</p>
+<h2 id="ch-3">第三章</h2><p>Body three.</p>
+<h2 id="ch-4">第四章</h2><p>Body four.</p>
+</body></html>"""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+        zf.writestr("META-INF/container.xml", _CONTAINER)
+        zf.writestr("OEBPS/content.opf", opf)
+        zf.writestr("OEBPS/nav.xhtml", nav)
+        zf.writestr("OEBPS/body.xhtml", body)
+
+
+def write_single_file_headings_epub(path: str) -> None:
+    """Build a TOC-less EPUB whose whole body lives in one XHTML with three h1 sections."""
+    opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Flat</dc:title></metadata>
+<manifest><item id="body" href="body.xhtml" media-type="application/xhtml+xml"/></manifest>
+<spine><itemref idref="body"/></spine></package>"""
+    body = """<html><body>
+<h1 id="alpha">Alpha</h1><p>One.</p>
+<h1 id="beta">Beta</h1><p>Two.</p>
+<h1 id="gamma">Gamma</h1><p>Three.</p>
+</body></html>"""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+        zf.writestr("META-INF/container.xml", _CONTAINER)
+        zf.writestr("OEBPS/content.opf", opf)
+        zf.writestr("OEBPS/body.xhtml", body)
 
 
 _INLINE_OPF = """<?xml version="1.0" encoding="UTF-8"?>

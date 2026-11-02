@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from bs4.element import Tag
 from wenyi_core.assemble.html_renderer import _render_chapter_html
 from wenyi_core.glossary.store import source_matches_text
+from wenyi_core.ingest.epub_chapters import NestedLeafTocStrategy
 from wenyi_core.ingest.epub_package import _decode_markup, _find_opf_path, _parse_opf
 from wenyi_core.ingest.epub_reader import peek_epub_title
 from wenyi_core.ingest.epub_toc import parse_toc_entries
@@ -30,11 +31,14 @@ from wenyi_core.markup.segments import annotate_epub_resource
 
 from tests.sample_data import (
     write_cross_resource_toc_epub,
+    write_dangling_fragment_epub,
     write_degenerate_toc_epub,
     write_grouped_nav_epub,
     write_nested_toc_epub,
     write_sample_epub,
     write_sample_txt,
+    write_single_file_headings_epub,
+    write_volume_toc_epub,
 )
 
 
@@ -1003,6 +1007,39 @@ class TestEpubIngest(unittest.TestCase):
         self.assertNotIn("segment_anchor", broken)
         self.assertNotIn("boundary_position", broken)
 
+    def test_unresolved_fragment_falls_back_to_unique_resource_start(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "dangling-fragment.epub")
+            write_dangling_fragment_epub(path)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual([chapter.title for chapter in doc.chapters], ["One", "Two"])
+        self.assertEqual(doc.meta["epub_split_strategy"], "top-level-toc")
+        self.assertEqual(
+            [[segment.source for segment in chapter.segments] for chapter in doc.chapters],
+            [["One", "First body."], ["Two", "Second body."]],
+        )
+        for entry in doc.meta["toc_entries"]:
+            self.assertIsInstance(entry["boundary_position"], int)
+            self.assertNotIn("segment_anchor", entry)
+
+    def test_unresolved_fragment_fallback_counts_references_per_toc_path(self):
+        # NAV and NCX each reference every resource once, so no single TOC has a competing
+        # destination and the resource-start fallback must still apply.
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "dangling-dual-toc.epub")
+            write_dangling_fragment_epub(path, include_nav=True)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual(doc.meta["epub_split_strategy"], "top-level-toc")
+        self.assertEqual(doc.meta["epub_split_toc_path"], "OEBPS/nav.xhtml")
+        self.assertEqual(
+            [[segment.source for segment in chapter.segments] for chapter in doc.chapters],
+            [["One", "First body."], ["Two", "Second body."]],
+        )
+
     def test_degenerate_toc_falls_back_to_spine_chapters(self):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "degenerate.epub")
@@ -1015,6 +1052,135 @@ class TestEpubIngest(unittest.TestCase):
         self.assertEqual(
             [[segment.source for segment in chapter.segments] for chapter in doc.chapters],
             [["One", "First body."], ["Two", "Second body."], ["Three", "Third body."]],
+        )
+
+    def test_nested_leaf_strategy_prefers_child_chapter_boundaries(self):
+        entries = [
+            {
+                "node_index": 0,
+                "parent_index": None,
+                "depth": 0,
+                "title": "卷一",
+                "boundary_position": 0,
+            },
+            {
+                "node_index": 1,
+                "parent_index": 0,
+                "depth": 1,
+                "title": "第一章",
+                "boundary_position": 2,
+            },
+            {
+                "node_index": 2,
+                "parent_index": 0,
+                "depth": 1,
+                "title": "第二章",
+                "boundary_position": 4,
+            },
+            {
+                "node_index": 3,
+                "parent_index": None,
+                "depth": 0,
+                "title": "卷二",
+                "boundary_position": 6,
+            },
+            {
+                "node_index": 4,
+                "parent_index": 3,
+                "depth": 1,
+                "title": "第三章",
+                "boundary_position": 8,
+            },
+        ]
+
+        selected = NestedLeafTocStrategy().select(entries)
+
+        self.assertEqual([entry["title"] for entry in selected], ["第一章", "第二章", "第三章"])
+
+    def test_nested_leaf_strategy_keeps_leaves_under_broken_parents(self):
+        entries = [
+            {
+                "node_index": 0,
+                "parent_index": None,
+                "depth": 0,
+                "title": "PART I",
+                "boundary_position": 0,
+            },
+            {
+                "node_index": 1,
+                "parent_index": 0,
+                "depth": 1,
+                "title": "Section 1",
+                "boundary_position": 2,
+            },
+            {
+                "node_index": 2,
+                "parent_index": 3,
+                "depth": 1,
+                "title": "Section 2",
+                "boundary_position": 4,
+            },
+            {"node_index": 3, "parent_index": None, "depth": 0, "title": "PART II"},
+        ]
+
+        selected = NestedLeafTocStrategy().select(entries)
+
+        self.assertEqual([entry["title"] for entry in selected], ["Section 1", "Section 2"])
+
+    def test_nested_leaf_strategy_prefers_anchored_duplicate(self):
+        entries = [
+            {"node_index": 0, "depth": 0, "title": "Empty", "boundary_position": 0},
+            {
+                "node_index": 1,
+                "depth": 0,
+                "title": "Real",
+                "boundary_position": 0,
+                "segment_anchor": "tn1",
+            },
+        ]
+
+        selected = NestedLeafTocStrategy().select(entries)
+
+        self.assertEqual([entry["title"] for entry in selected], ["Real"])
+
+    def test_volume_toc_splits_at_nested_chapters(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "volume.epub")
+            write_volume_toc_epub(path)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual(
+            [chapter.title for chapter in doc.chapters],
+            ["卷一", "第一章", "第二章", "第三章", "第四章"],
+        )
+        self.assertEqual(doc.meta["epub_split_strategy"], "nested-leaf-toc")
+        self.assertEqual(
+            [segment.source for segment in doc.chapters[1].segments],
+            ["第一章", "Body one."],
+        )
+        # Leaf boundaries drop the volume nodes, so the second volume's heading and intro
+        # travel with the preceding chapter instead of forming their own boundary.
+        self.assertEqual(
+            [segment.source for segment in doc.chapters[2].segments],
+            ["第二章", "Body two.", "卷二", "Intro two."],
+        )
+
+    def test_single_file_headings_split_without_toc(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "flat.epub")
+            write_single_file_headings_epub(path)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual(
+            [chapter.title for chapter in doc.chapters],
+            ["Alpha", "Beta", "Gamma"],
+        )
+        self.assertEqual(doc.meta["epub_split_strategy"], "heading-anchor-fallback")
+        self.assertEqual(
+            [[segment.source for segment in chapter.segments] for chapter in doc.chapters],
+            [["Alpha", "One."], ["Beta", "Two."], ["Gamma", "Three."]],
         )
 
     def test_logical_chapter_can_span_multiple_spine_resources(self):

@@ -2,13 +2,36 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from bs4 import BeautifulSoup
 
-from wenyi_core.ingest.epub_chapters import get_chapter_split_strategy
+from wenyi_core.ingest.epub_chapters import (
+    ChapterSplitStrategy,
+    NestedLeafTocStrategy,
+    get_chapter_split_strategy,
+)
 from wenyi_core.ingest.models import KIND_HEADING, Chapter, Segment
 from wenyi_core.markup.anchors import fragment_nodes, resolve_epub_href, scope_segment_anchors
 from wenyi_core.markup.annotations import _note_context_scope
 from wenyi_core.markup.contracts import ANNOTATION_META_KEY
+
+# Switching from the top-level policy to nested leaves must buy more than one extra boundary,
+# so single-section part structures keep the stable default and only volume-style TOCs that
+# demonstrably hide multiple chapters activate the finer granularity.
+_NESTED_LEAF_MIN_GAIN = 2
+
+
+def _nonempty_spine_resource_count(resources: list[dict[str, object]]) -> int:
+    """Count spine resources that carry at least one segment."""
+    count = 0
+    for resource in resources:
+        raw_segments = resource.get("segments")
+        if isinstance(raw_segments, list) and any(
+            isinstance(segment, Segment) for segment in raw_segments
+        ):
+            count += 1
+    return count
 
 
 def _build_epub_annotation_contexts(
@@ -128,12 +151,59 @@ def _toc_collapsed_to_single_boundary(
             top_level += 1
     if top_level < 2:
         return False
-    non_empty_resources = 0
+    return _nonempty_spine_resource_count(resources) >= 2
+
+
+class _HeadingAnchorFallbackStrategy:
+    """Name carrier for chapters split from heading anchors when no TOC boundary is usable."""
+
+    name = "heading-anchor-fallback"
+
+    def select(self, toc_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Satisfy the strategy protocol; heading boundaries come from _heading_anchor_boundaries."""
+        return []
+
+
+def _heading_anchor_boundaries(
+    resources: list[dict[str, object]],
+    anchor_positions: dict[str, int],
+) -> list[dict[str, object]]:
+    """Collect h1/h2 heading anchors as chapter boundaries when the TOC provides none.
+    Older EPUBs often keep the whole body in one spine XHTML, which resource-level fallback
+    cannot split. Heading anchors reuse the same fragment infrastructure as TOC entries, so a
+    heading without a resolvable anchor is skipped rather than guessed.
+    """
+    by_position: dict[int, dict[str, object]] = {}
     for resource in resources:
-        segments = resource.get("segments")
-        if isinstance(segments, list) and any(isinstance(segment, Segment) for segment in segments):
-            non_empty_resources += 1
-    return non_empty_resources >= 2
+        template = resource.get("template")
+        if not isinstance(template, str) or not template:
+            continue
+        raw_fragment_map = resource.get("fragment_anchors")
+        fragment_map = raw_fragment_map if isinstance(raw_fragment_map, dict) else {}
+        if not fragment_map:
+            continue
+        soup = BeautifulSoup(template, "html.parser")
+        for heading in soup.find_all(["h1", "h2"]):
+            fragment = next(
+                (
+                    element.get("id")
+                    for element in (heading, *heading.find_all(True))
+                    if isinstance(element.get("id"), str) and element.get("id")
+                ),
+                None,
+            )
+            anchor = fragment_map.get(fragment) if isinstance(fragment, str) else None
+            if not isinstance(anchor, str) or anchor not in anchor_positions:
+                continue
+            by_position.setdefault(
+                anchor_positions[anchor],
+                {
+                    "title": heading.get_text(strip=True),
+                    "boundary_position": anchor_positions[anchor],
+                    "resource_href": str(resource.get("href") or ""),
+                },
+            )
+    return sorted(by_position.values(), key=lambda boundary: boundary["boundary_position"])
 
 
 def _logical_chapters(
@@ -161,6 +231,14 @@ def _logical_chapters(
             if segment.anchor:
                 anchor_positions[segment.anchor] = len(all_segments)
             all_segments.append(segment)
+    # Count references per TOC file, not per book: NAV and NCX each mirror the same
+    # destinations, and that duplication must not look like competing boundaries.
+    resource_toc_refs: dict[tuple[str, str], int] = {}
+    for entry in toc_entries:
+        href = entry.get("resource_href")
+        if isinstance(href, str) and href in resource_starts:
+            key = (str(entry.get("toc_path") or ""), href)
+            resource_toc_refs[key] = resource_toc_refs.get(key, 0) + 1
     for raw_entry in toc_entries:
         entry = raw_entry
         href = entry.get("resource_href")
@@ -172,8 +250,16 @@ def _logical_chapters(
         raw_fragment_map = resource.get("fragment_anchors")
         fragment_map = raw_fragment_map if isinstance(raw_fragment_map, dict) else {}
         if has_fragment and fragment not in fragment_map:
-            # An invalid fragment must not silently fall back to the resource start; that would split chapters
-            # at the wrong point and assign the first heading's translation to the wrong TOC entry.
+            # A damaged fragment usually must not silently fall back to the resource start: when
+            # several TOC destinations share one file that would split chapters at the wrong
+            # point and assign the first heading's translation to the wrong TOC entry. But a
+            # resource reached by this entry alone has no competing destination, so its start is
+            # the best available boundary. Leave segment_anchor unset so the TOC label remains
+            # the chapter title instead of borrowing a body heading.
+            refs_key = (str(entry.get("toc_path") or ""), href)
+            if resource_toc_refs.get(refs_key, 0) > 1:
+                continue
+            entry["boundary_position"] = resource_starts[href]
             continue
         segment_anchor = fragment_map.get(fragment) if has_fragment else None
         if not has_fragment:
@@ -238,7 +324,9 @@ def _logical_chapters(
                 entry["boundary_position"] = descendant["boundary_position"]
                 entry["inherited_boundary_from"] = descendant.get("entry_id")
 
-    strategy = get_chapter_split_strategy()
+    default_strategy = get_chapter_split_strategy()
+    nested_strategy = get_chapter_split_strategy(NestedLeafTocStrategy.name)
+    strategy: ChapterSplitStrategy = default_strategy
     ordered_toc_paths = list(
         dict.fromkeys(
             str(entry.get("toc_path"))
@@ -249,14 +337,19 @@ def _logical_chapters(
     canonical_toc_path = ""
     boundaries: list[dict[str, object]] = []
     for toc_path in ordered_toc_paths:
-        candidates = strategy.select(
-            [entry for entry in toc_entries if entry.get("toc_path") == toc_path]
-        )
+        entries = [entry for entry in toc_entries if entry.get("toc_path") == toc_path]
+        candidates = default_strategy.select(entries)
+        path_strategy: ChapterSplitStrategy = default_strategy
+        nested_candidates = nested_strategy.select(entries)
+        if len(nested_candidates) >= len(candidates) + _NESTED_LEAF_MIN_GAIN:
+            path_strategy = nested_strategy
+            candidates = nested_candidates
         if candidates:
             # _parse_opf prioritizes EPUB3 NAV over NCX. Fall back to the next TOC only when the preferred
             # one cannot provide any chapter boundaries.
             canonical_toc_path = toc_path
             boundaries = candidates
+            strategy = path_strategy
             break
 
     def boundary_position(entry: dict[str, object]) -> int:
@@ -275,6 +368,15 @@ def _logical_chapters(
         # chapter. If the spine still contains multiple body-bearing resources, fall back to resource
         # boundaries to preserve the book's structure.
         boundaries = []
+
+    if not boundaries:
+        # Without usable TOC boundaries, heading anchors can still split a spine file that holds
+        # the whole body. Only adopt them when they produce more chapters than resource-level
+        # fallback would; otherwise keep the legacy resource titles and strategy name.
+        heading_boundaries = _heading_anchor_boundaries(resources, anchor_positions)
+        if len(heading_boundaries) > _nonempty_spine_resource_count(resources):
+            boundaries = heading_boundaries
+            strategy = _HeadingAnchorFallbackStrategy()
 
     if not boundaries:
         chapters: list[Chapter] = []
