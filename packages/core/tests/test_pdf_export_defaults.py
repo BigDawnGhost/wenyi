@@ -228,3 +228,28 @@ def test_default_format_and_targets_come_from_the_same_export_snapshot(pdf_proje
     assert result["outputs"] == [str(source.parent / "output" / "book.zh.pdf")]
     assert requests[0][1] == {"0:0": "译0"}
     assert store.load_chapter(0).segments[0].target == "Later live translation"
+
+
+@pytest.mark.parametrize("bilingual", [False, True])
+def test_pdf_export_retains_blank_polished_paragraph(pdf_project, tmp_path, bilingual):
+    config, source, requests = pdf_project
+    store = Orchestrator(config).run(str(source))
+    chapter = store.load_chapter(0)
+    chapter.segments.append(
+        Segment(
+            index=35,
+            source=".",
+            target="",
+            target_before_polish=".",
+            meta={"babeldoc_id": "2:4", "layout_label": "fallback_line"},
+        )
+    )
+    store.save_chapter(chapter)
+    before = store.load_chapter(0).model_dump()
+    output = tmp_path / "export.pdf"
+
+    assemble(store, str(source), out_path=str(output), out_format="pdf", bilingual=bilingual)
+
+    assert output.read_bytes().startswith(b"%PDF-")
+    assert requests[-1][1] == {"0:0": "译0", "2:4": "."}
+    assert store.load_chapter(0).model_dump() == before
