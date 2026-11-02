@@ -44,18 +44,26 @@ class SqliteStorage:
         self.source_dir = os.path.join(self.run_dir, "source")
         self.reviews_dir = os.path.join(self.run_dir, "reviews")
         self._create = create
+        # The mutex serializes writers across threads; reads use per-thread
+        # connections and a WAL snapshot instead of queueing behind it.
         self._mutex = threading.RLock()
         self._lock_local = threading.local()
-        self._conn: sqlite3.Connection | None = None
-        self._depth = 0
+        self._conn_local = threading.local()
+        self._connections: set[sqlite3.Connection] = set()
+        self._schema_ready = False
         if create:
             with self._mutex:
                 self._connection()
 
     def _connection(self) -> sqlite3.Connection:
-        """Open lazily so read-only discovery of missing projects creates nothing."""
-        if self._conn is not None:
-            return self._conn
+        """Return this thread's lazily opened connection.
+
+        Reads take their own connection so they do not queue behind another
+        thread's write transaction; WAL still gives them a consistent snapshot.
+        """
+        conn = getattr(self._conn_local, "conn", None)
+        if conn is not None:
+            return conn
         if self._create:
             os.makedirs(self.run_dir, exist_ok=True)
         elif not os.path.isfile(self.database_path):
@@ -64,7 +72,18 @@ class SqliteStorage:
         # Serialize first opens across instances/processes, including discovery;
         # ordinary reads/writes keep using WAL without holding this OS lock.
         with self._file_lock(".schema.lock"):
-            return self._open_connection()
+            conn = self._open_connection()
+        with self._mutex:
+            self._connections.add(conn)
+        self._conn_local.conn = conn
+        self._conn_local.depth = 0
+        return conn
+
+    def _database_present(self) -> bool:
+        """Report whether this store already has a database to read from."""
+        if getattr(self._conn_local, "conn", None) is not None:
+            return True
+        return os.path.isfile(self.database_path)
 
     def _open_connection(self) -> sqlite3.Connection:
         """Called under the instance mutex and the short schema initialization lock."""
@@ -120,27 +139,28 @@ class SqliteStorage:
         except BaseException:
             conn.close()
             raise
-        self._conn = conn
         return conn
 
     def close(self) -> None:
-        """Release the owned connection after active operations have finished."""
+        """Close every registered connection after active operations finish."""
+        if getattr(self._conn_local, "depth", 0):
+            raise RuntimeError("Cannot close storage inside a state transaction")
         with self._mutex:
-            if self._depth:
-                raise RuntimeError("Cannot close storage inside a state transaction")
-            if self._conn is not None:
-                self._conn.close()
-                self._conn = None
+            connections, self._connections = self._connections, set()
+        for conn in connections:
+            conn.close()
+        self._conn_local.conn = None
+        self._conn_local.depth = 0
 
     @contextmanager
     def state_lock(self) -> Iterator[None]:
         """Commit a short atomic state change; nested failures roll back their savepoint."""
         with self._mutex:
             conn = self._connection()
-            depth = self._depth
+            depth = self._conn_local.depth
             savepoint = f"state_{depth}"
             conn.execute("BEGIN IMMEDIATE" if depth == 0 else f"SAVEPOINT {savepoint}")
-            self._depth += 1
+            self._conn_local.depth += 1
             try:
                 yield
             except BaseException:
@@ -161,21 +181,24 @@ class SqliteStorage:
                         conn.rollback()
                     raise
             finally:
-                self._depth -= 1
+                self._conn_local.depth -= 1
 
     @contextmanager
     def _read_lock(self) -> Iterator[None]:
-        """Capture a WAL read snapshot without competing for SQLite's writer lock."""
-        with self._mutex:
-            conn = self._connection()
-            if conn.in_transaction:
-                yield
-                return
-            conn.execute("BEGIN")
-            try:
-                yield
-            finally:
-                conn.rollback()
+        """Take a WAL snapshot on this thread's own connection.
+
+        The instance mutex is deliberately not held: a reader only needs a
+        consistent snapshot, and WAL provides one without waiting for writers.
+        """
+        conn = self._connection()
+        if conn.in_transaction:
+            yield
+            return
+        conn.execute("BEGIN")
+        try:
+            yield
+        finally:
+            conn.rollback()
 
     @contextmanager
     def _file_lock(self, filename: str, *, blocking: bool = True) -> Iterator[None]:
@@ -243,15 +266,15 @@ class SqliteStorage:
 
     def read_artifact(self, key: str) -> Any | None:
         key = self._key(key)
-        with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
-                return None
+        if not self._database_present():
+            return None
+        with self._read_lock():
             row = (
                 self._connection()
                 .execute("SELECT value FROM artifacts WHERE key=?", (key,))
                 .fetchone()
             )
-            return json.loads(row[0]) if row else None
+        return json.loads(row[0]) if row else None
 
     def write_artifact(self, key: str, value: Any) -> None:
         key = self._key(key)
@@ -272,9 +295,9 @@ class SqliteStorage:
 
     def list_artifacts(self, prefix: str = "") -> list[str]:
         prefix = self._key(prefix, prefix=True)
-        with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
-                return []
+        if not self._database_present():
+            return []
+        with self._read_lock():
             # A binary range uses the primary-key index, including literal '%' and '_'.
             rows = self._connection().execute(
                 "SELECT key FROM artifacts WHERE key>=? AND key<? ORDER BY key",
@@ -297,9 +320,9 @@ class SqliteStorage:
 
     def read_artifact_records(self, key: str) -> list[dict]:
         key = self._key(key)
-        with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
-                return []
+        if not self._database_present():
+            return []
+        with self._read_lock():
             return [
                 json.loads(row[0])
                 for row in self._connection().execute(
@@ -657,7 +680,7 @@ class SqliteStorage:
         return meta.get("title_translated") or None
 
     def load_chapter(self, ci: int) -> Chapter:
-        if self._conn is None and not os.path.isfile(self.database_path):
+        if not self._database_present():
             raise FileNotFoundError(f"Chapter not found: {ci}")
         with self._read_lock():
             value = self.read_artifact(f"chapters/ch{ci}.json")
@@ -780,7 +803,7 @@ class SqliteStorage:
 
     def list_events(self, *, event_type: str | None = None, limit: int = 200) -> list[dict]:
         with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
+            if not self._database_present():
                 return []
             rows = (
                 self._connection()
@@ -806,20 +829,20 @@ class SqliteStorage:
 
     def get_term(self, source: str) -> GlossaryTerm | None:
         with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
+            if not self._database_present():
                 return None
             return self._glossary().get_term(source)
 
     def get_terms(self, sources: list[str]) -> list[GlossaryTerm]:
         with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
+            if not self._database_present():
                 return []
             return self._glossary().get_terms(sources)
 
     def list_terms_page(
         self, *, q: str = "", term_type: str = "", offset: int = 0, limit: int = 100
     ) -> tuple[list[GlossaryTerm], int]:
-        if self._conn is None and not os.path.isfile(self.database_path):
+        if not self._database_present():
             return [], 0
         with self._read_lock():
             return self._glossary().list_terms_page(
@@ -832,7 +855,7 @@ class SqliteStorage:
 
     def all_terms(self) -> list[GlossaryTerm]:
         with self._mutex:
-            if self._conn is not None:
+            if getattr(self._conn_local, "conn", None) is not None:
                 return self._glossary().all_terms()
             if not os.path.isfile(self.database_path):
                 return []
@@ -890,12 +913,12 @@ class SqliteStorage:
 
     def open_conflicts(self) -> list[dict]:
         with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
+            if not self._database_present():
                 return []
             return self._glossary().open_conflicts()
 
     def stats(self) -> dict[str, int]:
         with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
+            if not self._database_present():
                 return {"terms": 0, "open_conflicts": 0}
             return self._glossary().stats()

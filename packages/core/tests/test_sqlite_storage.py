@@ -365,7 +365,9 @@ def test_glossary_rules_and_wal_readonly_snapshot(store):
     before = [(path.stat().st_mtime_ns, path.read_bytes()) for path in paths]
     assert snapshot.all_terms() == store.all_terms()
     assert [(path.stat().st_mtime_ns, path.read_bytes()) for path in paths] == before
-    assert snapshot._conn is None
+    # The read-only snapshot must not have opened a writable connection; it
+    # answers from the existing file instead.
+    assert getattr(snapshot._conn_local, "conn", None) is None
     store.resolve_term("Ann", "安妮")
     store.mark_conflicts_resolved("Ann")
     assert store.open_conflicts() == []
