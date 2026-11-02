@@ -12,7 +12,6 @@ from wenyi_core.assemble.writer_common import output_formats
 from ..config_documents import project_document
 from ..context import current_context
 from ..global_settings import load_settings, registry_guard
-from ..project_service import require_book, validate_translation_mode_for_format
 from ..schemas import (
     AssembleEnqueued,
     JobEnqueued,
@@ -49,12 +48,6 @@ async def create_project(
     project: Annotated[Json[ProjectCreate], Form()], file: UploadFile = File(...)
 ) -> dict:
     fmt = input_format(file)
-    if fmt == "srt" and project.prepare:
-        raise HTTPException(422, "Subtitles do not use book preparation")
-    try:
-        validate_translation_mode_for_format(project.translation_mode, fmt)
-    except ValueError as error:
-        raise HTTPException(422, str(error)) from error
     if project.source_lang == project.target_lang:
         raise HTTPException(422, "Source and target languages are identical")
     pid = uuid4().hex[:16]
@@ -103,7 +96,7 @@ def get_project(pid: str) -> dict:
     project = require_project(pid)
     summaries = chapter_summaries(project)
     manifest = {}
-    if project.get("initialized") and project.get("fmt") != "srt":
+    if project.get("initialized"):
         storage = read_storage_for(pid)
         try:
             manifest = storage.load_manifest()
@@ -113,7 +106,7 @@ def get_project(pid: str) -> dict:
         chapter_count=len(summaries),
         total_word_count=sum(ch["word_count"] for ch in summaries),
         done_chapters=sum(ch["status"] == "done" for ch in summaries),
-        output_formats=["srt"] if project.get("fmt") == "srt" else output_formats(manifest),
+        output_formats=output_formats(manifest),
     )
     return project
 
@@ -134,7 +127,6 @@ async def upload_source(
             with storage.state_lock():
                 storage.delete_artifact("preview.json")
                 storage.delete_artifact("parsed_document.json")
-                storage.delete_artifact("subtitle_preview.json")
         except BaseException:
             source.path.unlink(missing_ok=True)
             raise
@@ -150,7 +142,7 @@ def preview(pid: str) -> dict:
     project = require_project(pid)
     storage = read_storage_for(pid)
     try:
-        if project.get("fmt") != "srt" and not project.get("initialized"):
+        if not project.get("initialized"):
             document = parsed_source(project, storage)
             result = book_preview(document, project["fmt"]) if document is not None else None
         else:
@@ -178,13 +170,13 @@ async def start_translation(pid: str, body: StartTranslation | None = None) -> d
             repository = current_context().repository
             repository.set_project_strategy(pid, body.strategy, connection=conn)
             repository.set_project_config(pid, project_document(config), connection=conn)
-    project = require_project(pid)
-    return await start_job(pid, "srt" if project.get("fmt") == "srt" else "translation")
+    require_project(pid)
+    return await start_job(pid, "translation")
 
 
 @router.post("/{pid}/prepare", response_model=JobEnqueued)
 async def prepare_only(pid: str) -> dict:
-    require_book(require_project(pid))
+    require_project(pid)
     return await start_job(pid, "prepare")
 
 

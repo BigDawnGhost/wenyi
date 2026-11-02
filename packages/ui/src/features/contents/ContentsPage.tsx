@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "../../lib/toast";
 import { useI18n } from "../../i18n";
@@ -16,14 +16,12 @@ export default function ContentsPage() {
   const { pid = "" } = useParams();
   const project = useProjectQuery(pid);
   const busy = isProjectBusy(project.data?.status);
-  const subtitle = project.data?.fmt === "srt";
   const chapters = useQuery({
     queryKey: ["chapters", pid],
     queryFn: () => api.listChapters(pid),
-    enabled: !!project.data && !subtitle,
+    enabled: !!project.data,
     refetchInterval: busy ? 3000 : false,
   });
-  if (subtitle) return <Navigate to={`/projects/${pid}/subtitles`} replace />;
   return (
     <ContentsWorkspace
       key={pid}

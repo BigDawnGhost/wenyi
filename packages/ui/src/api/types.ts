@@ -38,6 +38,5 @@ export type ReviewRun = Output<"ReviewRun">;
 export type ReviewItem = components["schemas"]["ReviewItem"];
 export type ReviewLocation = components["schemas"]["ReviewLocation"];
 export type Workflow = Output<"WorkflowOut">;
-export type SubtitleData = Output<"SubtitleResult">;
 export type UploadPreview = Output<"UploadPreview">;
 export type AnalysisPayload = Output<"AnalysisOut">;

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "../../lib/toast";
 import { useI18n } from "../../i18n";
@@ -27,17 +27,14 @@ function ReviewWorkbench({ pid }: { pid: string }) {
   const [selected, setSelected] = useState<string>();
   const project = useProjectQuery(pid);
   const busy = isProjectBusy(project.data?.status);
-  const subtitle = project.data?.fmt === "srt";
   const chapters = useQuery({
     queryKey: ["chapters", pid],
     queryFn: () => api.listChapters(pid),
-    enabled: !subtitle,
     refetchInterval: busy ? 4000 : false,
   });
   const runs = useQuery({
     queryKey: ["review-runs", pid],
     queryFn: () => api.listReviewRuns(pid),
-    enabled: !subtitle,
     refetchInterval: busy ? 3000 : false,
   });
   const rid = selected || runs.data?.[0]?.id;
@@ -45,14 +42,13 @@ function ReviewWorkbench({ pid }: { pid: string }) {
   const workflow = useQuery({
     queryKey: ["workflow", pid],
     queryFn: () => api.getWorkflow(pid),
-    enabled: !subtitle,
     refetchInterval: busy ? 3000 : false,
   });
-  const { msg } = useProjectProgress(subtitle ? undefined : pid);
+  const { msg } = useProjectProgress(pid);
   const run = useQuery({
     queryKey: ["review-run", pid, rid],
     queryFn: () => api.getReviewRun(pid, rid!),
-    enabled: !!rid && !subtitle,
+    enabled: !!rid,
     refetchInterval: !historical && busy ? 3000 : false,
   });
   const progress = reviewProgress(pid, workflow.data, msg);
@@ -102,7 +98,6 @@ function ReviewWorkbench({ pid }: { pid: string }) {
     run.error ||
     workflow.error ||
     review.error;
-  if (subtitle) return <Navigate to={`/projects/${pid}/subtitles`} replace />;
   return (
     <>
       <PageHeader

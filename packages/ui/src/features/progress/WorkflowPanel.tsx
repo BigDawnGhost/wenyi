@@ -26,7 +26,6 @@ export function WorkflowPanel({
     translation: tr("workflowPanel.bookTranslation"),
     chapter_translation: tr("workflowPanel.chapterTranslation"),
     review: tr("common.wholeBookReview"),
-    srt: tr("workflowPanel.subtitleTranslation"),
   };
 
   const query = useQuery({

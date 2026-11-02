@@ -23,7 +23,7 @@
 - [BackendContext](../../../packages/backend/wenyi_backend/context.py#L96) 按应用注入适配器；ContextVar 属于请求/任务作用域，**不是**进程级 Web/Desktop 开关。线程与回调中的上下文传播必须保留。
 - Web 拥有 PostgreSQL 与 Redis/Arq；Desktop 拥有独立工作区、SQLite 目录库、凭据与本地运行器。PostgreSQL 适配器必须留在 `apps/api`，不能移入 Core。
 - 共享 UI 已有 feature 目录与宿主能力注入。继续区分路由、外壳、基础组件与功能组件，不为更换父目录名称搬动所有页面。
-- `ArtifactStorage`、Review 证据/模型、markup、DOCX 样式策略、语言策略及独立 SRT 执行已经形成有效边界，应复用而不是再造一套抽象。
+- `ArtifactStorage`、Review 证据/模型、markup、DOCX 样式策略及语言策略已经形成有效边界，应复用而不是再造一套抽象。
 - 已有 [Python 边界测试](../../../packages/backend/tests/test_backend_boundaries.py#L11)、[前端边界测试](../../../packages/ui/tests/platform-boundaries.test.mjs#L31) 和[干净安装隔离检查](../../../scripts/check_backend_packages.py#L19)。需要定向补强，而不是推倒重建。
 
 ## 2. 检查发现与建议拆分点
@@ -36,13 +36,13 @@
 
 **风险：** 修改调度调用或任务终态处理，会触碰业务执行链。迟到回调与重复投递的安全性依赖嵌在链路内的任务身份及锁检查。
 
-**已落地的 P1 拆分：** [ExecutionRequest 与依赖](../../../packages/backend/wenyi_backend/execution/contracts.py#L20) 显式传入 [runner](../../../packages/backend/wenyi_backend/execution/runner.py#L64)，由后者统一拥有执行前身份复核、中断、清理和终态处理。[操作层](../../../packages/backend/wenyi_backend/execution/operations.py#L108) 负责预览、书籍和字幕用例；`workers/tasks.py` 保留原任务名称及签名，作为薄包装。Web Arq 与 Desktop 调度继续属于平台适配；CLI 仍直接调用 Core，不接入 HTTP 应用层。
+**已落地的 P1 拆分：** [ExecutionRequest 与依赖](../../../packages/backend/wenyi_backend/execution/contracts.py#L20) 显式传入 [runner](../../../packages/backend/wenyi_backend/execution/runner.py#L64)，由后者统一拥有执行前身份复核、中断、清理和终态处理。[操作层](../../../packages/backend/wenyi_backend/execution/operations.py#L86) 负责预览和书籍用例；`workers/tasks.py` 保留原任务名称及签名，作为薄包装。Web Arq 与 Desktop 调度继续属于平台适配；CLI 仍直接调用 Core，不接入 HTTP 应用层。
 
 runner 从持久任务身份复核、恢复直到领域执行结束持有书级长运行锁。成功目录库状态写入在实时统计清理与运行锁退出后进行，保留现有执行契约，而不是扩大到原方案设想的锁范围。资源取得后立即登记清理，包含启动失败路径；异步取消等待同步工作结束后才返回。读取路由也在成功与错误路径中关闭本次操作创建的存储。
 
 同步调度器通过执行依赖注入：Web 保留默认 executor，Desktop 保留 `main` 新增的每工作流独立线程。集成该改动后，验证了上下文传播、并行关闭、暂停/失败隔离和续跑用量。
 
-独立导出协调器在同一个 `export_lock` 内完成 claim、render、publish 与终态写入。书籍渲染使用 Core 一致快照和 assemble lock；SRT 保留独立的 state-lock 快照路径。渲染不更新目录库状态，发布不调用 Writer。复用现有导出计划、路径和响应辅助模块，不创建第二套导出策略。
+独立导出协调器在同一个 `export_lock` 内完成 claim、render、publish 与终态写入。书籍渲染使用 Core 一致快照和 assemble lock。渲染不更新目录库状态，发布不调用 Writer。复用现有导出计划、路径和响应辅助模块，不创建第二套导出策略。
 
 ### F2：作用域上下文正确，但动态转发掩盖服务的真实依赖
 
@@ -72,7 +72,7 @@ runner 从持久任务身份复核、恢复直到领域执行结束持有书级�
 
 **已实现：** [UsageCoordinator](../../../packages/core/wenyi_core/pipeline/runtime_usage.py#L28) 拥有唯一 client 检查点，显式依赖用量源、书籍账本与 Review 账本协议，所有书籍工作流消费者共享同一所有者。先恢复再读取累计值，先持久化绝对累计量日志再推进内存检查点，重试不会重复应用增量。原有计算、空 Review 账本行为、事件载荷和存储格式保持不变。
 
-不预建没有消费者的端口。语言绑定和计时仍是 Runtime 的合理职责；`RunStore` 与聚合 `Storage` 契约保留。独立 SRT 记账不变。
+不预建没有消费者的端口。语言绑定和计时仍是 Runtime 的合理职责；`RunStore` 与聚合 `Storage` 契约保留。
 
 ### F5：UI 契约暴露实现路径，并存在仅类型层面的反向依赖
 
@@ -134,7 +134,7 @@ packages/
     execution/
       contracts.py                    # implemented typed run request and dependencies
       runner.py                       # implemented lifecycle and resource ownership
-      operations.py                   # implemented preview/book/SRT dispatch into Core
+      operations.py                   # implemented preview/book dispatch into Core
       exporting.py                    # implemented rendering/publication separation
       bindings.py                     # implemented context-to-port composition
     workers/tasks.py                  # implemented stable task entry-point wrappers
@@ -203,7 +203,7 @@ Core services -> Storage/ArtifactStorage ports <- file / SQLite / PostgreSQL ada
 3. 保留运行/状态/事件/导出锁作用域、一致快照与文件原子发布；慢原生操作或外部调用不得持有目录库写事务。
 4. 用量可恢复发布、Review 增量只合并一次；事件项目/运行身份、持久化任务名称和状态、过期任务拒绝与配置快照不变。
 5. Review 只编辑影子译文；显式 Autofix 仍先写可恢复索引，再更新正式译文。
-6. SRT 不接入书籍 Orchestrator、术语库或全书 Review。BabelDOC 继续是外部 AGPL HTTP 服务，不成为 Core 依赖。
+6. BabelDOC 继续是外部 AGPL HTTP 服务，不成为 Core 依赖。
 7. 保留 Web/Desktop 状态与依赖隔离、loopback 鉴权、opaque 原生文件授权、凭据保密，以及“选择保存目标时取消则不创建任务”。
 8. CLI 命令、HTTP 契约、生成类型、URL、导航顺序、语言策略指纹、提示词资源与干净安装行为不变。
 
@@ -224,7 +224,6 @@ uv run --no-sync pytest -q \
 uv run --no-sync pytest -q \
   packages/core/tests/test_storage_injection.py \
   packages/core/tests/test_preparation.py \
-  packages/core/tests/test_srt.py \
   packages/backend/tests/test_worker_tasks.py \
   packages/backend/tests/test_export_admission.py \
   apps/api/tests/test_desktop_route_isolation.py

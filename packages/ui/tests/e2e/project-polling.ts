@@ -18,12 +18,12 @@ export function registerTests() {
 for (const status of ["done", "paused"]) {
   for (const route of [
     "", "/proofreading/0", "/contents", "/glossary", "/review",
-    "/events", "/settings", "/style", "/subtitles",
+    "/events", "/settings", "/style",
   ]) {
     test(`${status} projects do not poll on ${route || "/overview"}`, async ({ page }) => {
       await page.clock.install();
       const saved = {
-        ...project, status, fmt: route === "/subtitles" ? "srt" : "epub",
+        ...project, status,
       };
       await fakeApi(page, {
         [`/projects/${pid}`]: saved,

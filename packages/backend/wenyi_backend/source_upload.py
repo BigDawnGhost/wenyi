@@ -23,7 +23,6 @@ _FORMATS = {
     "htm": "html",
     "pdf": "pdf",
     "docx": "docx",
-    "srt": "srt",
 }
 
 

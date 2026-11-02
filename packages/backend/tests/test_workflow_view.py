@@ -45,17 +45,6 @@ def test_workflow_uses_snapshot_and_excludes_exports(
     assert result["progress"] is None
 
 
-def test_subtitle_plan_does_not_show_book_steps(monkeypatch):
-    monkeypatch.setattr(configuration, "require_project", lambda pid: {"id": pid, "fmt": "srt"})
-    monkeypatch.setattr(current_context().repository, "list_jobs", lambda pid: [])
-    monkeypatch.setattr(configuration, "effective_config", lambda project: None)
-    monkeypatch.setattr(configuration, "config_document", lambda config: {"pipeline": {}})
-    result = configuration.workflow("p")
-    assert result["source"] == "config"
-    assert result["status"] == "not_started"
-    assert [s["id"] for s in result["stages"]] == ["srt", "assemble"]
-
-
 def test_progress_cache_carries_run_identity_and_cumulative_elapsed_time(monkeypatch):
     import json
     from datetime import datetime

@@ -123,12 +123,10 @@ def test_anki_export_uses_full_glossary_and_closes_storage(backend_context, monk
     storage.log_event.assert_not_called()
 
 
-def test_anki_export_rejects_missing_projects_and_subtitles(backend_context):
+def test_anki_export_rejects_missing_projects(backend_context):
     app = FastAPI()
     app.include_router(glossary.router)
     with TestClient(app) as client:
         backend_context.repository.get_project.return_value = None
         assert client.get("/projects/missing/glossary/export?format=apkg").status_code == 404
-        backend_context.repository.get_project.return_value = {"id": "subtitles", "fmt": "srt"}
-        assert client.get("/projects/subtitles/glossary/export?format=apkg").status_code == 422
     backend_context.storage_for.assert_not_called()

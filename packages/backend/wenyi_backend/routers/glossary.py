@@ -13,7 +13,6 @@ from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.i18n.metadata import normalize_term_type
 
 from ..context import current_context
-from ..project_service import require_book
 from ..schemas import (
     ConflictOut,
     GlossaryExportFormat,
@@ -38,7 +37,7 @@ def _term(body: TermIn) -> GlossaryTerm:
 
 @router.get("/terms", response_model=list[TermOut])
 def list_terms(pid: str, q: str | None = Query(None), type: str | None = Query(None)) -> list[dict]:
-    require_book(require_project(pid))
+    require_project(pid)
     with closing(storage_for(pid)) as storage:
         terms = storage.all_terms()
     if type:
@@ -66,7 +65,7 @@ def list_terms_page(
     limit: int = Query(100, ge=1, le=200),
 ) -> dict:
     """Browse by source codepoint order without changing model-context order."""
-    require_book(require_project(pid))
+    require_project(pid)
     storage = read_storage_for(pid)
     try:
         items, total = storage.list_terms_page(
@@ -80,7 +79,7 @@ def list_terms_page(
 @router.post("/terms/lookup", response_model=list[TermOut])
 def lookup_terms(pid: str, body: TermLookup) -> list[dict]:
     """Check imported sources against the whole glossary, not just the displayed page."""
-    require_book(require_project(pid))
+    require_project(pid)
     storage = read_storage_for(pid)
     try:
         return [vars(term) for term in storage.get_terms(body.sources)]
@@ -91,8 +90,7 @@ def lookup_terms(pid: str, body: TermLookup) -> list[dict]:
 @router.post("/terms", response_model=TermOut, status_code=201)
 def add_term(pid: str, body: TermIn) -> dict:
     term = _term(body)
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         if storage.get_term(term.source) is not None:
             raise HTTPException(409, "Term already exists; edit it or resolve its conflicts")
         storage.upsert_term(term)
@@ -103,8 +101,7 @@ def add_term(pid: str, body: TermIn) -> dict:
 @router.put("/terms/{source}", response_model=TermOut)
 def update_term(pid: str, source: str, body: TermIn) -> dict:
     term = _term(body)
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         existing = storage.get_term(source)
         if existing is None:
             raise HTTPException(404, "term not found")
@@ -117,8 +114,7 @@ def update_term(pid: str, source: str, body: TermIn) -> dict:
 
 @router.delete("/terms/{source}", response_model=Message)
 def delete_term(pid: str, source: str) -> dict:
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         if not storage.delete_term(source):
             raise HTTPException(404, "term not found")
         storage.mark_conflicts_resolved(source)
@@ -128,15 +124,14 @@ def delete_term(pid: str, source: str) -> dict:
 
 @router.get("/conflicts", response_model=list[ConflictOut])
 def list_conflicts(pid: str) -> list[dict]:
-    require_book(require_project(pid))
+    require_project(pid)
     with closing(storage_for(pid)) as storage:
         return storage.open_conflicts()
 
 
 @router.post("/conflicts/{cid}/resolve", response_model=Message)
 def resolve_conflict(pid: str, cid: int, body: ResolveConflict) -> dict:
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         conflict = next((row for row in storage.open_conflicts() if row["id"] == cid), None)
         if conflict is None:
             raise HTTPException(404, "conflict not found")
@@ -161,7 +156,6 @@ def resolve_conflict(pid: str, cid: int, body: ResolveConflict) -> dict:
 @router.get("/export")
 def export_glossary(pid: str, format: GlossaryExportFormat = "json"):
     project = require_project(pid)
-    require_book(project)
     with closing(storage_for(pid)) as storage:
         terms = storage.all_terms()
     if format == "apkg":
@@ -209,8 +203,7 @@ def export_glossary(pid: str, format: GlossaryExportFormat = "json"):
 @router.post("/import")
 def import_glossary(pid: str, body: GlossaryImport) -> dict:
     terms = [_term(item) for item in body.terms]
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         conflicts = 0
         with storage.state_lock():
             for term in terms:

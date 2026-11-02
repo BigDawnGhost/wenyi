@@ -79,7 +79,7 @@ def test_execution_services_use_explicit_ports_not_scoped_lookup():
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             assert not (node.module or "").startswith(
-                ("wenyi_core.pipeline", "wenyi_core.srt", "wenyi_core.assemble")
+                ("wenyi_core.pipeline", "wenyi_core.assemble")
             )
 
 

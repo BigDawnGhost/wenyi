@@ -75,15 +75,3 @@ def test_read_failure_still_closes_storage(inspected_project, monkeypatch):
     with pytest.raises(OSError, match="Read failed"):
         client.get(f"/projects/{pid}/glossary/terms")
     assert all(not instance._connections for instance in instances)
-
-
-def test_subtitle_inspection_closes_storage(desktop_context, monkeypatch):
-    backend = desktop_context.repository
-    pid = backend.create_project("Subtitles", "en", "zh", {}, source={"fmt": "srt"})
-    storage = backend.storage_for(pid)
-    storage.write_artifact("subtitle_preview.json", [{"index": "1", "source": "Hello"}])
-    storage.close()
-    monkeypatch.setattr("wenyi_backend.routers.subtitles.storage_for", lambda _: storage)
-    with TestClient(create_app(desktop_context)) as client:
-        assert client.get(f"/projects/{pid}/subtitles").status_code == 200
-    assert not storage._connections

@@ -1,6 +1,6 @@
 """File implementation of the backend-neutral JSON artifact port.
 
-Keys are relative to a run; Review and subtitle services never open state paths.
+Keys are relative to a run; domain services never open state paths.
 """
 
 from __future__ import annotations

@@ -1,9 +1,8 @@
-"""Storage injection must keep review and subtitle state out of resource directories."""
+"""Storage injection must keep review state out of resource directories."""
 
 from __future__ import annotations
 
 import ast
-import json
 from pathlib import Path
 
 import pytest
@@ -13,8 +12,6 @@ from wenyi_core.pipeline.input_preparation import ingest_config, load_parsed_doc
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.runstore import source_sha256
 from wenyi_core.review.run_store import ReviewRunStore
-from wenyi_core.srt.store import SrtRunStore
-from wenyi_core.srt.translate import translate_srt
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
 from wenyi_core.storage.sqlite import SqliteStorage
@@ -127,50 +124,6 @@ def test_preparation_reuses_matching_preview_and_invalidates_changed_settings(
     assert store.load_manifest()["initialized"] is True
     assert store.load_manifest()["source_sha256"] == source_sha256(str(source))
     store.close()
-
-
-def test_subtitle_pause_flushes_usage_and_resume_preserves_human_edits(tmp_path):
-    source = tmp_path / "captions.srt"
-    source.write_text("1\n00:00:01,000 --> 00:00:02,000\nHello.\n\n", encoding="utf-8")
-    config = Config.from_dict(
-        {
-            "language": {"source": "en", "target": "zh"},
-            "llm": {"preset": "fake"},
-            "output": {"mono": True, "bilingual": True},
-        }
-    )
-    storage = MemoryArtifacts(tmp_path / "resources")
-    client = MeteredFakeClient(handler=lambda *args: json.dumps({"1": "你好。"}))
-
-    def pause(done, total, label):
-        if done:
-            raise RuntimeError("pause requested")
-
-    with pytest.raises(RuntimeError, match="pause requested"):
-        translate_srt(str(source), config, client=client, storage=storage, progress=pause)
-    usage = storage.load_usage()
-    assert usage is not None
-    assert usage["totals"]["calls"] == 1
-    manifest = storage.read_artifact("srt/manifest.json")
-    assert isinstance(manifest, dict)
-    assert manifest["status"] == "interrupted"
-    subtitle = SrtRunStore(storage.run_dir, storage=storage)
-    cues = subtitle.load_cues()
-    cues["1"]["target"] = "人工校订。"
-    subtitle.save_cues(cues)
-    resumed = MeteredFakeClient(
-        handler=lambda *args: pytest.fail("Completed cue was retransmitted")
-    )
-    result = translate_srt(str(source), config, client=resumed, storage=storage)
-    assert not resumed.calls
-    assert result["usage"]["totals"]["calls"] == 1
-    assert storage.manifest["initialized"]
-    assert subtitle.load_cues()["1"]["target"] == "人工校订。"
-    for output in result["outputs"]:
-        text = Path(output).read_text(encoding="utf-8")
-        assert "人工校订。" in text
-        assert "00:00:01,000 --> 00:00:02,000" in text
-    assert not Path(storage.run_dir).exists()
 
 
 def test_domain_services_have_no_direct_state_files_or_sqlite():

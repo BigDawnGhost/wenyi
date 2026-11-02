@@ -190,6 +190,7 @@ test("Desktop bridge selects without upload, highlights/leaves and preserves sel
   });
   let browserUpload = false;
   await page.route(`${origin}/projects`, async (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
     browserUpload = (route.request().postData() ?? "").includes("browse.docx");
     await route.fulfill({ status: 503, json: { detail: "Browser upload fixture" } });
   });

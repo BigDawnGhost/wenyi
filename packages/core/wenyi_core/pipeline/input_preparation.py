@@ -60,8 +60,6 @@ def parse_document(
     mineru_token_resolver: Callable[[], str | None] | None = None,
 ) -> Document:
     """Parse or reuse source chapters; the caller holds the book run lock."""
-    if os.path.splitext(input_path)[1].lower() == ".srt":
-        raise ValueError("SRT uses the subtitle workflow. Run wenyi translate <input.srt>.")
     digest = source_sha256(input_path)
     if expected_sha256 is not None and digest != expected_sha256:
         raise ValueError("Source changed during parsing; ensure the file is stable and retry.")
@@ -112,8 +110,6 @@ def locate_input_storage(
     if progress:
         progress(0, 0, "Locating source…")
     extension = os.path.splitext(input_path)[1].lower()
-    if extension == ".srt":
-        raise ValueError("SRT uses the subtitle workflow. Run wenyi translate <input.srt>.")
     digest = source_sha256(input_path)
     if extension in (
         ".txt",

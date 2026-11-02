@@ -64,7 +64,7 @@ def uploaded_project(desktop_context):
     source.write_text("Original source.", encoding="utf-8")
     backend.set_project_source(pid, str(source), "Original", fmt="text")
     storage = backend.storage_for(pid)
-    for key in ("preview.json", "parsed_document.json", "subtitle_preview.json"):
+    for key in ("preview.json", "parsed_document.json"):
         storage.write_artifact(key, {"original": key})
     storage.close()
     return backend, pid, source
@@ -92,7 +92,7 @@ def test_replacement_cache_failure_preserves_source_and_preview(uploaded_project
     assert not list(source.parent.glob("source-*"))
     storage = backend.storage_for(pid)
     try:
-        for key in ("preview.json", "parsed_document.json", "subtitle_preview.json"):
+        for key in ("preview.json", "parsed_document.json"):
             assert storage.read_artifact(key) == {"original": key}
     finally:
         storage.close()

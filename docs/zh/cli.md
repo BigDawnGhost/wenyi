@@ -57,7 +57,7 @@ uv run wenyi --config config.yaml translate book.epub --bilingual
 
 输出为 `output/book.en.epub` 和 `output/book.en-bi.epub`。日译英改为 `source: ja`、`target: en`；英译日用 `source: en`、`target: ja`。反向翻译以对应语言的文件为输入，每次选择一个方向。`--out` 仍遵循显式命名及 `-bi` 派生规则。
 
-以下 `.zh.*` 示例指默认简体中文目标。所有目标的书籍状态均位于 `state/<书名>/targets/<目标语言>/`，字幕位于 `state/srt/<slug>/targets/<目标语言>/`。续跑和独立阶段命令使用同一目标配置，完成的译文不会因切换回原目标而重新翻译。EPUB 说明页在简体中文目标下为中文，其它目标暂用标记为英语的英文页，可通过 `about_page: false` 关闭。
+以下 `.zh.*` 示例指默认简体中文目标。所有目标的书籍状态均位于 `state/<书名>/targets/<目标语言>/`。续跑和独立阶段命令使用同一目标配置，完成的译文不会因切换回原目标而重新翻译。EPUB 说明页在简体中文目标下为中文，其它目标暂用标记为英语的英文页，可通过 `about_page: false` 关闭。
 
 CLI 的帮助、进度、表格和错误提示统一使用英语。译文和模型生成的说明性元数据使用 `language.target`；`source` 和 `aliases` 中的原文姓名保留用于匹配。续跑复用已有分析和术语备注，本次更新不会自动翻译旧数据。当前不支持阿拉伯语、希伯来语等 RTL 目标；PDF 字体和外部 bridge 的语言支持仍需单独验证。真实长篇翻译质量尚未完成新旧盲评。
 
@@ -117,16 +117,16 @@ notarization。macOS 仍可能隔离下载的程序；确认校验和无误后�
 
 ## 输入与输出
 
-- 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF、DOCX、SRT。
+- 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF、DOCX。
 - Markdown 输入中，以 `#` 至 `######` 开头并与标题文字以空白分隔的标题行会划分为章节。导入时会记录原始标题层级；带页码的普通目录列表仍作为正文保留。
 - Markdown 标题层级会保留在 EPUB 正文标题、自动生成的 EPUB 导航目录和 DOCX 大纲样式中。导航将标题嵌套到前面最近且等级数字更小的标题下；跳级不会补造目录条目。已有状态若章节划分正确且保存了标题等级，只需重新导出，无需重新翻译。
 - 书籍默认输出：源文件旁 `output/` 下的单语版 `<书名>.zh.epub`（`.docx` 输入默认为 `<书名>.zh.docx`，BabelDOC PDF 状态默认为 `<书名>.zh.pdf`）；双语版 `*.zh-bi.*` 按需开启。
-- `--format epub|txt|html|markdown|pdf|docx`：书籍导出格式；`pdf` 仅适用于已保存的 BabelDOC 项目。未指定时 BabelDOC PDF 状态→`pdf`，`.docx`→`docx`，其它书籍（含 MinerU PDF 状态）→`epub`。显式指定的受支持格式优先；PDF 是否可用及默认格式均依据已保存的后端信息，即使当前 `pdf_backend` 配置改变也不会改用另一套规则。该选项不适用于 SRT。
+- `--format epub|txt|html|markdown|pdf|docx`：书籍导出格式；`pdf` 仅适用于已保存的 BabelDOC 项目。未指定时 BabelDOC PDF 状态→`pdf`，`.docx`→`docx`，其它书籍（含 MinerU PDF 状态）→`epub`。显式指定的受支持格式优先；PDF 是否可用及默认格式均依据已保存的后端信息，即使当前 `pdf_backend` 配置改变也不会改用另一套规则。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
 - 双语版按段展示译文与原文。EPUB/HTML 原文默认淡化，设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。DOCX 原文默认使用正常正文样式，不再额外添加灰字、高亮或缩小字号；开启同一选项后，正文和表格会恢复已记录的原文字符样式，包括段内混合样式。排列顺序由 `output.bilingual_order` 独立控制。已有翻译状态只需重新导出。
 - EPUB 中未翻译的段落只保留一份原文及其注音、链接。Web 导出和部分已译章节同样遵循此规则，双语排列顺序与原文样式选项不会额外生成重复段落。
 - EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。
-- 书籍状态位于 `state/<书名>/targets/<目标语言>/`，含章节中间结果、术语 SQLite 库、用量和报告。字幕运行使用独立目录树 `state/srt/`（见 [SRT 字幕](#srt-字幕)）。
+- 书籍状态位于 `state/<书名>/targets/<目标语言>/`，含章节中间结果、术语 SQLite 库、用量和报告。
 
 ### 实验性 PDF 支持
 
@@ -214,37 +214,6 @@ uv run wenyi translate book.docx --bilingual
 uv run wenyi translate book.docx --format epub
 ```
 
-## SRT 字幕
-
-`translate` 会按扩展名自动分流 `.srt`。字幕路径比书籍管线更轻：
-
-- 滑窗 20 条、重叠 10，最多 100 路并发 strong 档调用；
-- 无术语库、润色或全书审校；
-- `--chapter`、`--polish`、`--review`、`--format` 在不适用时会被忽略或拒绝；
-- 默认写出单语 `output/<stem>.zh.srt`；加 `--bilingual` 可生成 `.zh-bi.srt`。
-
-```bash
-uv run wenyi translate movie.srt
-uv run wenyi translate movie.srt --bilingual
-uv run wenyi translate movie.srt --no-mono --bilingual
-```
-
-再次对同一源文件执行即可续跑；已缓存的
-`state/srt/<slug>/targets/<目标语言>/batches/` 会跳过。目录布局：
-
-```text
-state/srt/<slug>/targets/<目标语言>/
-  manifest.json    # 源身份、字幕条数、滑窗配置
-  cues.jsonl       # 每行一条：index / timestamp / source / target / status
-  batches/         # 模型原始批次结果，供续跑
-  usage.json       # 跨 resume 累计 token
-  timing.json      # 累计执行时长与每次运行用时
-  events.jsonl     # 运行事件与 LLM 重试观察
-```
-
-字幕路径不会生成 `glossary.db` 或 `reviews/`。包代码在 `trans_novel.srt`
-（store + translate），读写分别在 `ingest.srt_reader` 与 `assemble.srt_writer`。
-
 ## 用量与事件日志
 
 每个目标目录的 `usage.json` 保存跨续跑累计的 token 用量，`events.jsonl` 追加记录阶段事件与重试。Review 目录另存本次审校用量，其增量只合并到总账一次。
@@ -286,7 +255,7 @@ schema-2 账本在内存中兼容升级，下一次正常保存用量时持久�
 切换阶段、章节或审校轮次不会归零；一个阶段完成后，如果后续工作仍在进行，时钟仍继续走动。
 并发模型请求按实际经过时间计时，不累加各请求的耗时。
 
-`prepare`、`translate`（包括 `--chapter` 和 SRT）、`review` 或 `assemble` 结束后，CLI 显示
+`prepare`、`translate`（包括 `--chapter`）、`review` 或 `assemble` 结束后，CLI 显示
 最近一次运行用时和累计执行时长。每个目标目录的 `timing.json` 保存 `total_seconds`，以及
 包含运行 ID、操作、起止时间、用时和完成状态的 `runs` 列表。重复执行命令只追加本次实际
 执行时长，不计入两次运行之间的停机时间；嵌套流程只计一次。分别启动的命令各自计时，
@@ -311,7 +280,6 @@ uv run wenyi translate book.epub --chapter 3
 uv run wenyi translate book.epub --format txt
 uv run wenyi prepare book.epub
 uv run wenyi translate book.pdf
-uv run wenyi translate movie.srt
 
 # 覆盖配置中的润色与最终审校开关
 uv run wenyi translate book.epub --polish --review
@@ -322,7 +290,7 @@ uv run wenyi translate book.epub --bilingual
 uv run wenyi translate book.epub --no-mono --bilingual
 ```
 
-`parse` 列出从零开始的章节编号、原文标题与段落数，并将完整解析原文保存到所显示目标语言状态目录的 `parsed_document.json`。它不需要 LLM 凭据，不调用模型识别语言，不生成梗概、风格或术语，也不把翻译状态标记为初始化成功。`language.source: auto` 留到预处理时识别。PDF 解析仍需要配置的 MinerU/BabelDOC 服务；SRT 使用独立字幕流程，不经过此书籍命令。
+`parse` 列出从零开始的章节编号、原文标题与段落数，并将完整解析原文保存到所显示目标语言状态目录的 `parsed_document.json`。它不需要 LLM 凭据，不调用模型识别语言，不生成梗概、风格或术语，也不把翻译状态标记为初始化成功。`language.source: auto` 留到预处理时识别。PDF 解析仍需要配置的 MinerU/BabelDOC 服务。
 
 之后对同一源文件和配置运行 `prepare` 或 `translate`。匹配的解析缓存会复用，包括 PDF 转换；内容或解析参数变化会使缓存失效。已有初始化状态会拒绝不同源内容，保留已保存译文、分析和用量。
 
@@ -341,7 +309,7 @@ uv run wenyi translate book.epub --translation-mode best_of_three --polish
 
 等价配置为 `pipeline.translation_mode: best_of_three` 与
 `pipeline.polish: true`。`--translation-mode standard` 将待译批次恢复为默认流程。
-精翻与 `--no-polish` 的组合会被拒绝；该选项不适用于 SRT。
+精翻与 `--no-polish` 的组合会被拒绝。
 续跑时保留相同模式与配置，以复用精翻检查点。已有译文不会自动重新处理。
 三份独立初稿后一次原文优先综合润色、续跑及成本/质量限制见[精翻流程](pipeline.md#三选一精翻)。
 正常批次调用模型四次，标准翻译加润色为两次，沿用相同路由与输出限制。
@@ -369,7 +337,7 @@ uv run wenyi --config config.yaml translate book.epub
 
 `terminology_context` 仅对译前发现和译后补漏候选中的人物条目（`type: person`），检查全书所有匹配原文组的证据，并向翻译、润色、Review 和 Fixer 请求补充有界、相关的只读备注。译前发现仅处理人物；其他类型保留常规译后抽取和冲突处理，不调用全书取证或合并。全量术语映射不变，既有人物译名和受保护的人工字段保留，不同译名建议记录为冲突，不删除已有备注。`prepare` 只分析风格与人物语气，不抽取或建立术语；取证从待译批次开始。
 
-只有 CLI `prepare` 和 `translate` 获得本次操作的证据生产权限。普通 Orchestrator/Runtime 调用方及 API 不能仅靠 YAML 设置为 `true` 生产证据；Web/UI 未适配。Review 和 assemble 可以消费已有备注，不生产证据。SRT 不使用此路径。
+只有 CLI `prepare` 和 `translate` 获得本次操作的证据生产权限。普通 Orchestrator/Runtime 调用方及 API 不能仅靠 YAML 设置为 `true` 生产证据；Web/UI 未适配。Review 和 assemble 可以消费已有备注，不生产证据。
 
 术语表仍按词条保存单一原文身份、单一主译名。全书备注可以解释上下文和不确定性，但没有真正的义项模型或逐次出现的译名选择。备注基于原文，只是只读补充，不授权添加后文剧情或覆盖权威译名；无法保证模型始终遵守这些约束。
 
@@ -389,7 +357,7 @@ uv run wenyi status book.epub
 `--autofix` 时可以发布最终修订。只有需要从头翻译时
 才应使用新的状态目录或清理对应状态。
 
-语言策略内置于源码。策略变更或保存的状态缺少策略身份时，`prepare`/`translate` 会自动重建受影响的分析，再继续待完成工作；重建可能调用模型。已完成译文继续保留，字体等仅影响导出的变更只需重新导出。书籍／字幕行为和开发者诊断见[内置语言策略](configuration.md#内置语言策略)。
+语言策略内置于源码。策略变更或保存的状态缺少策略身份时，`prepare`/`translate` 会自动重建受影响的分析，再继续待完成工作；重建可能调用模型。已完成译文继续保留，字体等仅影响导出的变更只需重新导出。流程行为和开发者诊断见[内置语言策略](configuration.md#内置语言策略)。
 
 章节梗概现完整分块覆盖原文，v2 原文哈希与策略身份会令旧缓存失效，因此升级后首次续跑可能重新生成分析。梗概人物保留原文身份，译名来自当前术语表。开启术语证据后，失败重试复用缓存的发现结果和成功证据组，补齐未完成准入，保留已译正文；不会把局部分组结果作为完整知识发布。
 

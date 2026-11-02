@@ -63,7 +63,6 @@ export function useProjectProgress(pid: string | undefined) {
     const all = [
       "project",
       "chapters",
-      "subtitles",
       "workflow",
       "stats",
       "review-runs",

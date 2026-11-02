@@ -271,14 +271,3 @@ test("failed server saves retain input and allow retry without browser draft sto
   await expect(dialog).toHaveCount(0);
   expect(state.rows[0].title_translated).toBe("Keep this edit");
 });
-
-test("subtitle projects do not expose book contents editing", async ({
-  page,
-}) => {
-  await fakeApi(page, { [`/projects/${pid}`]: { ...project, fmt: "srt" } });
-  await page.goto(`/projects/${pid}/contents`);
-  await expect(page).toHaveURL(`/projects/${pid}/subtitles`);
-  await expect(
-    page.getByRole("link", { name: "Contents & titles", exact: true }),
-  ).toHaveCount(0);
-});

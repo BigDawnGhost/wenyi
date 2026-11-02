@@ -1890,7 +1890,6 @@ mod tests {
             ("md", "book.en.md"),
             ("pdf", "book.zh-bi.pdf"),
             ("txt", "book.en.txt"),
-            ("srt", "book.zh.srt"),
             ("zip", "book.zh-bi.html.zip"),
         ] {
             let plan = Plan {

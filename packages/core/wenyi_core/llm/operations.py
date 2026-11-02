@@ -179,7 +179,6 @@ OPERATIONS = register_operations(
             review=True,
             protocol_version=2,
         ),
-        OperationSpec("srt.translate", "Translate subtitle cues", "strong", workflows=("srt",)),
     )
 )
 
@@ -194,7 +193,7 @@ def require_operation(operation: str) -> OperationSpec:
 
 def workflow_operations(workflow: str, flags: Mapping[str, object]) -> tuple[str, ...]:
     """Select reachable operations, including recovery, without touching state or SDKs."""
-    if workflow not in {"prepare", "translate", "review", "srt"}:
+    if workflow not in {"prepare", "translate", "review"}:
         raise ValueError(f"Unknown model workflow: {workflow}")
     return tuple(
         spec.id

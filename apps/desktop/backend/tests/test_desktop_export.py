@@ -111,17 +111,10 @@ def test_glossary_plan_is_side_effect_free_and_matches_download(desktop_exports,
     assert (backend.list_exports(pid), backend.all_jobs()) == before
 
 
-def test_glossary_plan_rejects_unknown_project_format_and_subtitles(desktop_exports):
+def test_glossary_plan_rejects_missing_project_and_unknown_format(desktop_exports):
     client, _, pid = desktop_exports
     assert client.get("/desktop/projects/missing/glossary/plan?format=json").status_code == 404
     assert client.get(f"/desktop/projects/{pid}/glossary/plan?format=txt").status_code == 422
-    subtitle_pid = current_context().repository.create_project("Subtitles", "en", "zh", {})
-    current_context().repository.set_project_source(
-        subtitle_pid, source_path="source.srt", book_title="Subtitles", fmt="srt"
-    )
-    response = client.get(f"/desktop/projects/{subtitle_pid}/glossary/plan?format=json")
-    assert response.status_code == 422
-    assert "only available for book projects" in response.json()["message"]
 
 
 @pytest.mark.parametrize(

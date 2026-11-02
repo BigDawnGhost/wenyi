@@ -21,7 +21,6 @@ TASK_FUNCTIONS = {
     "translation": "run_translation",
     "chapter_translation": "run_chapter_translation",
     "review": "run_review",
-    "srt": "run_srt",
 }
 TASK_STATUSES = {
     "parse": "parsing",
@@ -29,7 +28,6 @@ TASK_STATUSES = {
     "translation": "translating",
     "chapter_translation": "translating",
     "review": "reviewing",
-    "srt": "translating",
 }
 
 

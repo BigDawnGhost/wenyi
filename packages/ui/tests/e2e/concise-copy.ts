@@ -60,7 +60,6 @@ for (const locale of ["en", "zh-CN"] as const) {
         ["translation", "workflowPanel.bookTranslation"],
         ["chapter_translation", "workflowPanel.chapterTranslation"],
         ["review", "common.wholeBookReview"],
-        ["srt", "workflowPanel.subtitleTranslation"],
       ] as const) {
         kind = task;
         await page.goto(`/projects/${pid}`);

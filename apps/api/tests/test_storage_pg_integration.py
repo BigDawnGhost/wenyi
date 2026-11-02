@@ -380,59 +380,6 @@ def test_postgres_complete_workflow_review_reuse_and_export(pg_storage, tmp_path
     assert not list((tmp_path / "resources").rglob("*.db"))
 
 
-def test_postgres_subtitle_translation_resume_and_dual_output(pg_storage, tmp_path):
-    import json
-
-    from wenyi_core.config import Config
-    from wenyi_core.llm.providers.fake import FakeClient
-    from wenyi_core.srt.store import SrtRunStore
-    from wenyi_core.srt.translate import translate_srt
-
-    source = tmp_path / "clip.srt"
-    source.write_text(
-        "1\n00:00:00,100 --> 00:00:01,200\nHello\n\n2\n00:00:01,300 --> 00:00:02,400\nGoodbye\n",
-        encoding="utf-8",
-    )
-    config = Config.from_dict(
-        {"language": {"source": "en", "target": "zh"}, "llm": {"preset": "fake"}}
-    )
-    client = FakeClient(
-        handler=lambda *_: json.dumps({"1": "你好", "2": "再见"}, ensure_ascii=False)
-    )
-    first = translate_srt(
-        str(source),
-        config,
-        client=client,
-        storage=pg_storage,
-        out=str(tmp_path / "translated.srt"),
-        mono=True,
-        bilingual=True,
-    )
-    call_count = len(client.calls)
-    second = translate_srt(
-        str(source),
-        config,
-        client=client,
-        storage=pg_storage,
-        out=str(tmp_path / "translated-again.srt"),
-        mono=True,
-        bilingual=True,
-    )
-    assert len(client.calls) == call_count
-    assert first["cue_count"] == second["translated"] == 2
-    cues = SrtRunStore(pg_storage.run_dir, storage=pg_storage).load_cues()
-    assert cues["1"]["timestamp"] == "00:00:00,100 --> 00:00:01,200"
-    assert cues["2"]["target"] == "再见"
-    assert pg_storage.load_manifest()["fmt"] == "srt"
-    assert pg_storage.exists()
-    for path in first["outputs"]:
-        content = Path(path).read_text(encoding="utf-8")
-        assert "00:00:01,300 --> 00:00:02,400" in content
-        assert "再见" in content
-    assert not list((tmp_path / "resources").rglob("*.json"))
-    assert not list((tmp_path / "resources").rglob("*.jsonl"))
-
-
 def test_postgres_review_interrupt_restores_same_run(pg_storage, tmp_path, monkeypatch):
     from tests.fake_llm import MeteredFakeClient, routing_handler
     from wenyi_core.config import Config
@@ -530,58 +477,6 @@ def test_postgres_autofix_publication_resume_protects_manual_edit(
     assert resumed.resume_pending(pg_storage) is None
     assert client.calls == []
     assert not list((tmp_path / "resources").rglob("*.json"))
-
-
-def test_postgres_subtitle_pause_persists_usage_and_manual_edit(pg_storage, tmp_path):
-    import json
-
-    from tests.fake_llm import MeteredFakeClient
-    from wenyi_core.config import Config
-    from wenyi_core.srt.store import SrtRunStore
-    from wenyi_core.srt.translate import translate_srt
-
-    source = tmp_path / "pause.srt"
-    source.write_text(
-        "1\n00:00:00,100 --> 00:00:01,200\nHello\n\n2\n00:00:01,300 --> 00:00:02,400\nGoodbye\n",
-        encoding="utf-8",
-    )
-    config = Config.from_dict(
-        {"language": {"source": "en", "target": "zh"}, "llm": {"preset": "fake"}}
-    )
-    client = MeteredFakeClient(
-        handler=lambda *_: json.dumps({"1": "你好", "2": "再见"}, ensure_ascii=False)
-    )
-
-    def pause(current, *_):
-        if current > 0:
-            raise KeyboardInterrupt("safe pause")
-
-    with pytest.raises(KeyboardInterrupt):
-        translate_srt(
-            str(source),
-            config,
-            client=client,
-            storage=pg_storage,
-            progress=pause,
-            out=str(tmp_path / "pause-output.srt"),
-        )
-    store = SrtRunStore(pg_storage.run_dir, storage=pg_storage)
-    assert store.load_manifest()["status"] == "interrupted"
-    usage = pg_storage.load_usage()
-    assert usage["totals"]["calls"] > 0
-    cues = store.load_cues()
-    assert cues["1"]["target"]
-    cues["1"]["target"] = "用户调整"
-    store.save_cues(cues)
-    translate_srt(
-        str(source),
-        config,
-        client=client,
-        storage=pg_storage,
-        out=str(tmp_path / "resume-output.srt"),
-    )
-    assert pg_storage.load_usage() == usage
-    assert store.load_cues()["1"]["target"] == "用户调整"
 
 
 def test_postgres_dal_config_job_identity_errors_and_review_summary(

@@ -302,17 +302,3 @@ def test_parse_then_prepare_reuses_artifact_and_preserves_initialized_state(tmp_
         input_preparation.parse_document(store, str(source), config)
     assert store.load_manifest() == manifest
     assert store.load_chapter(0) == chapter
-
-
-def test_cli_parse_rejects_subtitles_without_creating_state(tmp_path, monkeypatch):
-    _, config, _ = inputs(tmp_path)
-    source = tmp_path / "captions.srt"
-    source.write_text("1\n00:00:00,000 --> 00:00:01,000\nHello\n", encoding="utf-8")
-    monkeypatch.setattr(
-        "wenyi_cli.commands.context.CommandContext.load_config", lambda self: config
-    )
-    with patch("wenyi_core.config.Config.create_default_file"):
-        result = CliRunner().invoke(app, ["parse", str(source)])
-    assert result.exit_code == 1
-    assert "wenyi translate" in result.output
-    assert not (tmp_path / "state").exists()

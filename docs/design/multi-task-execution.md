@@ -10,7 +10,7 @@ The earlier task-center proposal is withdrawn: no new navigation, task list, bad
 
 ## Execution boundaries
 
-- Cross-project parse, preparation, translation, chapter translation, review and SRT workflows can overlap. [Project write exclusion](../../packages/backend/wenyi_backend/project_service.py#L46) still prevents conflicting work within one project.
+- Cross-project parse, preparation, translation, chapter translation and review workflows can overlap. [Project write exclusion](../../packages/backend/wenyi_backend/project_service.py#L38) still prevents conflicting work within one project.
 - [Durable admission](../../packages/backend/wenyi_backend/job_service.py#L31) still creates the job/run identity and configuration snapshot before dispatch, compensating a rejected submission. Existing HTTP contracts and resume semantics remain unchanged.
 - [LocalRuntime](../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L212) no longer serializes workflows through one consumer or a size-128 admission queue. Each accepted workflow owns an async supervisor.
 - A [Desktop dispatcher](../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L198) owns one synchronous execution thread per invocation. Its one-thread executor is private to that invocation, not a shared fixed pool of workflow slots. Context is copied into that thread. Default executor capacity remains available for control requests, snapshots and maintenance.

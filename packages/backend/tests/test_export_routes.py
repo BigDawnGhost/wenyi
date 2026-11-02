@@ -13,7 +13,6 @@ from wenyi_backend.schemas import ExportRequest
     "source_fmt,meta,expected",
     [
         ("docx", {}, "docx"),
-        ("srt", {}, "srt"),
         ("pdf", {"pdf_export": "babeldoc"}, "pdf"),
         ("text", {}, "epub"),
     ],

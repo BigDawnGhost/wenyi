@@ -72,9 +72,7 @@ def register_model_commands(
 
     @models.command("check")
     def check(
-        workflow: str = typer.Option(
-            "translate", "--for", help="prepare, translate, review or srt"
-        ),
+        workflow: str = typer.Option("translate", "--for", help="prepare, translate or review"),
     ):
         """Validate reachable credentials locally; never send a test request."""
         try:
@@ -93,9 +91,7 @@ def register_model_commands(
 
     @models.command("ping")
     def ping(
-        workflow: str = typer.Option(
-            "translate", "--for", help="prepare, translate, review or srt"
-        ),
+        workflow: str = typer.Option("translate", "--for", help="prepare, translate or review"),
         timeout: float = typer.Option(
             30.0, "--timeout", min=0.1, help="Seconds to wait for each provider"
         ),

@@ -36,8 +36,8 @@ router = APIRouter(tags=["configuration"])
 def capabilities() -> dict:
     return {
         "languages": [{"code": code, "name": label(code)} for code in supported_languages()],
-        "input_formats": ["epub", "fb2", "txt", "markdown", "html", "pdf", "docx", "srt"],
-        "output_formats": ["epub", "txt", "html", "markdown", "pdf", "docx", "srt"],
+        "input_formats": ["epub", "fb2", "txt", "markdown", "html", "pdf", "docx"],
+        "output_formats": ["epub", "txt", "html", "markdown", "pdf", "docx"],
         "pdf": {"backends": ["mineru", "babeldoc"], "export_backends": ["babeldoc"]},
         "providers": list(PROVIDERS),
         "operations": [asdict(spec) for spec in OPERATIONS.values()],
@@ -146,7 +146,7 @@ def workflow(pid: str) -> dict:
     snapshot = params.get("config_snapshot")
     document = snapshot or config_document(effective_config(project))
     pipeline = document.get("pipeline", {})
-    kind = job["kind"] if job else ("srt" if project.get("fmt") == "srt" else "translation")
+    kind = job["kind"] if job else "translation"
     stages = []
 
     def add(key, label, enabled=True):
@@ -154,9 +154,6 @@ def workflow(pid: str) -> dict:
 
     if kind == "parse":
         add("parse", "解析原文与生成预览")
-    elif kind == "srt":
-        add("srt", "分批翻译字幕并保存检查点")
-        add("assemble", "组装字幕文件")
     else:
         if kind != "review":
             add("prepare", "解析、术语与风格准备")

@@ -18,7 +18,7 @@ def parsed_source(
     """Read the immutable upload's matching parse, never staged translation state."""
     source = project.get("source_path")
     digest = project.get("source_sha256")
-    if not source or not digest or project.get("fmt") == "srt":
+    if not source or not digest:
         return None
     # Uploads have content-bound identities; HTTP reads need not rehash the whole book.
     return load_parsed_document(storage, source, config_for(project), actual_sha256=digest)

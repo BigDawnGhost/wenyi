@@ -14,7 +14,7 @@ from ..metrics import Metrics
 from ..ports.jobs import JobRepository
 from ..ports.projects import ProjectRepository
 
-WorkflowKind = Literal["parse", "prepare", "translation", "chapter_translation", "review", "srt"]
+WorkflowKind = Literal["parse", "prepare", "translation", "chapter_translation", "review"]
 
 
 @dataclass(frozen=True)

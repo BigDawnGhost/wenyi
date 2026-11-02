@@ -89,17 +89,7 @@ impl Grant {
         let extension = path.extension().and_then(|s| s.to_str()).unwrap_or("");
         if !matches!(
             extension.to_ascii_lowercase().as_str(),
-            "epub"
-                | "fb2"
-                | "txt"
-                | "text"
-                | "md"
-                | "markdown"
-                | "html"
-                | "htm"
-                | "pdf"
-                | "docx"
-                | "srt"
+            "epub" | "fb2" | "txt" | "text" | "md" | "markdown" | "html" | "htm" | "pdf" | "docx"
         ) {
             return Err(crate::ipc_error::IpcError::new(
                 "drop_unsupported_format",

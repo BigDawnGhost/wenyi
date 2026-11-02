@@ -41,17 +41,3 @@ def test_policy_diagnostics_reject_unavailable_format_before_execution(tmp_path)
     assert result.exit_code == 1
     assert "Unsupported language policy export format" in result.output
     assert "Traceback" not in result.output
-
-
-def test_subtitle_diagnostics_reject_an_explicit_book_format(tmp_path):
-    path = tmp_path / "config.yaml"
-    path.write_text("language: {source: en, target: zh}\n")
-    runner = CliRunner()
-    result = runner.invoke(app, ["--config", str(path), "language-policy", "--subtitles"])
-    assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["export"]["context"]["format"] == "srt"
-    result = runner.invoke(
-        app, ["--config", str(path), "language-policy", "--subtitles", "--format", "epub"]
-    )
-    assert result.exit_code == 1
-    assert "Unsupported language policy export format: epub" in result.output

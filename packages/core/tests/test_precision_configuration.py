@@ -38,7 +38,7 @@ def test_precision_reuses_standard_translation_and_polish_routes_without_output_
     body_operations = {"translation.body", "polish.body"}
     assert body_operations.issubset(configured_operations(standard, "translate"))
     assert body_operations.issubset(configured_operations(precision, "translate"))
-    for workflow in ("prepare", "review", "srt"):
+    for workflow in ("prepare", "review"):
         assert not body_operations.intersection(configured_operations(precision, workflow))
     routes = resolve_routes(precision.llm)
     for operation in body_operations:
@@ -72,9 +72,6 @@ def test_precision_freezes_every_consumed_prompt_and_configured_guidance():
     assert "polisher_system" not in dict(plan.templates)
     assert not expected.intersection(dict(standard_plan.templates))
     assert plan.fingerprint != standard_plan.fingerprint
-    assert not expected.intersection(
-        dict(precision.language_policy("translation", path="srt").templates)
-    )
     text = render(
         "precision_generation_system",
         src=precision.source_lang,
@@ -123,14 +120,6 @@ def test_cli_precision_conflict_is_concise_and_precedes_credentials():
     assert "requires pipeline.polish=true" in result.output
     assert "Traceback" not in result.output
     validate.assert_not_called()
-
-
-def test_srt_rejects_explicit_book_mode():
-    result = CliRunner().invoke(
-        app, ["translate", "unused.srt", "--translation-mode", "best_of_three"]
-    )
-    assert result.exit_code == 1
-    assert "SRT translation does not support: --translation-mode" in result.output
 
 
 def test_offline_model_preview_shows_shared_routes_without_removed_precision_operations():

@@ -9,7 +9,6 @@ from dataclasses import replace
 import pytest
 from api_test_support import new_project
 from fastapi.testclient import TestClient
-from tests.fake_llm import MeteredFakeClient
 from type_helpers import must
 from wenyi_api import dal
 from wenyi_api.adapters import postgres_repository
@@ -78,7 +77,6 @@ def test_creation_uploads_source_and_runs_selected_setup(api, prepare):
         ({"name": "  "}, "book.txt", b"contents"),
         ({"name": "Book", "source_lang": "en", "target_lang": "en"}, "book.txt", b"text"),
         ({"name": "Book", "target_lang": "invalid"}, "book.txt", b"text"),
-        ({"name": "Book", "prepare": True}, "book.srt", b"subtitles"),
     ],
 )
 def test_invalid_creation_never_publishes_a_project(api, metadata, filename, content, tmp_path):
@@ -198,21 +196,6 @@ def test_creation_freezes_project_precision_before_queueing(api):
     assert snapshot.polish is True
     globals = client.get("/settings").json()["effective"]["pipeline"]
     assert "translation_mode" not in globals and "precision_concurrency" not in globals
-
-
-def test_subtitle_creation_only_parses_source(api):
-    client, queue = api
-    response = client.post(
-        "/projects",
-        data={"project": json.dumps({"name": "Subtitles"})},
-        files={"file": ("video.srt", b"1\n00:00:00,100 --> 00:00:01,200\nHello\n")},
-    )
-    assert response.status_code == 201, response.text
-    assert queue[0][0] == "run_parse"
-    pid = response.json()["id"]
-    execute_next(api)
-    assert client.get(f"/projects/{pid}/preview").json()["total_word_count"] == 1
-    assert not must(dal.get_project(pid))["initialized"]
 
 
 def execute_next(api):
@@ -340,63 +323,6 @@ def test_source_identity_and_config_snapshot(api):
         ).status_code
         == 409
     )
-
-
-def test_srt_full_workflow_manual_edit_resume_and_exports(api, monkeypatch):
-    import json
-
-    from wenyi_core.llm import factory
-
-    client, _ = api
-    pid = new_project(api)
-    source = (
-        b"1\n00:00:00,100 --> 00:00:01,200\nHello\n\n2\n00:00:01,300 --> 00:00:02,400\nGoodbye\n"
-    )
-    upload(api, pid, "video.srt", source)
-    assert (
-        client.put(
-            f"/projects/{pid}/config", json={"yaml": "output: {mono: true, bilingual: true}"}
-        ).status_code
-        == 200
-    )
-    monkeypatch.setattr(
-        factory,
-        "build_client",
-        lambda cfg: MeteredFakeClient(
-            handler=lambda *_: json.dumps({"1": "你好", "2": "再见"}, ensure_ascii=False)
-        ),
-    )
-    assert client.post(f"/projects/{pid}/translate").json()["kind"] == "srt"
-    execute_next(api)
-    assert client.get(f"/projects/{pid}").json()["initialized"]
-    subtitles = client.get(f"/projects/{pid}/subtitles").json()
-    assert subtitles["completed"] == 2
-    assert client.get(f"/projects/{pid}/stats").json()["usage"]["totals"]["calls"] > 0
-    assert len(client.get(f"/projects/{pid}/exports").json()) == 2
-    assert (
-        client.put(f"/projects/{pid}/subtitles/1", json={"target": "人工修订"}).status_code == 200
-    )
-    assert client.post(f"/projects/{pid}/translate").status_code == 200
-    execute_next(api)
-    assert client.get(f"/projects/{pid}/subtitles").json()["cues"][0]["target"] == "人工修订"
-    response = client.post(f"/projects/{pid}/exports", json={"bilingual": True})
-    assert response.status_code == 200
-    execute_next(api)
-    text = client.get(f"/projects/{pid}/exports/{response.json()['export_id']}/download").text
-    assert "人工修订" in text and "00:00:00,100 --> 00:00:01,200" in text
-    # Resuming subtitles generates new files and applies the same export retention policy.
-    assert client.post(f"/projects/{pid}/translate").status_code == 200
-    execute_next(api)
-    with dal.get_pool().connection() as conn:
-        rows = conn.execute(
-            "SELECT path FROM exports WHERE project_id=%s AND status='done'", (pid,)
-        ).fetchall()
-    assert len(rows) == 5
-    from pathlib import Path
-
-    files = list((Path(current_context().data_dir) / pid / "exports").rglob("*.srt"))
-    assert len(files) == 5
-    assert client.post(f"/projects/{pid}/review/run").status_code == 422
 
 
 def test_live_redis_queue_executes_persisted_parse_job(api, monkeypatch):

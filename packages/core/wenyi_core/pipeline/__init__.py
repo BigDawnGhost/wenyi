@@ -8,6 +8,5 @@ polishing, glossary updates and titles. Review owns evidence, arbitration, shado
 and blind rechecks. ReviewAutofix separately publishes idempotent complete-paragraph
 revisions after verification. Finalization owns live/snapshot exports.
 Top-level i18n contains pure language helpers; runstore persists state; context manages recent
-translations. Review evidence lives in
-wenyi_core.review, while the independent subtitle workflow lives in wenyi_core.srt.
+translations. Review evidence lives in wenyi_core.review.
 """

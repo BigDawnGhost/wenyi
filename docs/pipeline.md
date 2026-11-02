@@ -147,7 +147,7 @@ The glossary constrains later translation and supplies evidence to the final rev
 
 ### Optional whole-book terminology evidence
 
-`pipeline.terminology_context` defaults to `false` and is a CLI-only experimental book feature. CLI `prepare` and `translate` explicitly grant operation-scoped `allow_terminology_context=True`; Orchestrator/PipelineRuntime default to `False`. Ordinary callers and the API cannot produce evidence just by enabling the YAML setting. Review and assemble may consume existing notes without producing evidence. Web/Desktop do not expose evidence production; SRT does not use this path.
+`pipeline.terminology_context` defaults to `false` and is a CLI-only experimental book feature. CLI `prepare` and `translate` explicitly grant operation-scoped `allow_terminology_context=True`; Orchestrator/PipelineRuntime default to `False`. Ordinary callers and the API cannot produce evidence just by enabling the YAML setting. Review and assemble may consume existing notes without producing evidence. Web/Desktop do not expose evidence production.
 
 When enabled through an authorized CLI operation, only person entries (`type: person`) from pretranslation discoveries and posttranslation backfill pass through whole-book source-evidence admission. An existing entry's stored type takes precedence over a candidate's type. Pretranslation discovery requests people only; nonperson proposals are ignored before historical alignment and admission, and known nonperson entries are not refreshed through evidence. Other term types retain ordinary posttranslation extraction and glossary conflict handling without whole-book evidence or merge calls. Preparation does not extract or seed glossary entries, even in this mode; evidence work begins with pending translation batches. Existing notes and artifacts are not deleted. Every matching source group for a person is processed; failed evidence collection or merging does not publish partial knowledge. Discovery, group results, and merged knowledge are cached through Storage artifacts. Retry retains successful groups and saved translations rather than retranslating completed body text.
 
@@ -374,8 +374,8 @@ not deleted or re-billed; legacy calls without historical request receipts are e
 marked incomplete for replay. New results are written only once. Published history is not
 automatically pruned because it is useful for future comparison and replay.
 
-Polishing is required. Whole-book Review remains a separate optional workflow,
-and SRT is unchanged. A normal body batch uses four model calls
+Polishing is required. Whole-book Review remains a separate optional workflow.
+A normal body batch uses four model calls
 versus two for standard translation with polishing; structural retries add billed
 attempts. Provider retries and other book tasks are accounted for separately;
 this is **not a fixed 2× cost**. Precision uses the existing
@@ -394,18 +394,9 @@ On Windows, local JSON state reads/writes and artifact access use extended-lengt
 
 Local workflow lock waits can be interrupted with Ctrl+C with either the native or Python lock backend. SQLite run cleanup waits for active read snapshots before closing connections; surviving worker threads reopen their connections on the next operation rather than reusing closed handles.
 
-## Subtitle path (SRT)
-
-`.srt` files take a parallel light path under `wenyi_core.srt`, not the book
-Orchestrator above. There is no whole-book prescan, glossary, polishing, or
-Review. Translation uses overlapping cue windows with high concurrency on the
-strong model tier; progress is stored under `state/srt/<slug>/targets/<target-language>/` with
-`cues.jsonl`, batch caches, `usage.json`, and `events.jsonl`. See
-[CLI guide — SRT subtitles](cli.md#srt-subtitles).
-
 ## Model registration and usage
 
-All model calls use stable operation IDs from `llm/operations.py`; `llm/registry.py` registers provider adapters. Runtime and the separate SRT workflow each own one routed client, reusing SDK connections and sharing invocation concurrency, quotas and usage. Agents select no provider or tier; Orchestrator retains only assembly and workflow routing.
+All model calls use stable operation IDs from `llm/operations.py`; `llm/registry.py` registers provider adapters. Runtime owns one routed client, reusing SDK connections and sharing invocation concurrency, quotas and usage. Agents select no provider or tier; Orchestrator retains only assembly and workflow routing.
 
 To add a model operation, register an `OperationSpec` with its ID, default tier or inherited operation, workflow flags and protocol version, then call `complete(..., operation="domain.operation")` in the domain service. Operations do not impose their own output-token caps; use explicit model profiles when a cap is needed. Validation, CLI previews and inference fingerprints read the same registry. To add a provider, implement its options, request builder, usage normalization and `ProviderAdapter` under `llm/providers/`, then register a `ProviderSpec`. Keep SDK initialization lazy and SDK retries disabled. Change the relevant protocol version when request semantics change, and cover requests, usage and resume behavior with offline tests. Registries are immutable after startup.
 

@@ -38,7 +38,6 @@ TASK_NAMES = frozenset(
         "run_translation",
         "run_chapter_translation",
         "run_review",
-        "run_srt",
         "run_export",
     }
 )

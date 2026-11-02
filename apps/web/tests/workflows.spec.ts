@@ -210,34 +210,6 @@ test("failed manual edit keeps the draft and does not show a success state", asy
   ).toHaveCount(0);
 });
 
-test("subtitle projects expose timeline and only SRT exports", async ({
-  page,
-}) => {
-  await fakeApi(page, {
-    [`/projects/${pid}`]: { ...project, fmt: "srt", status: "translating" },
-  });
-  await page.goto(`/projects/${pid}/subtitles`);
-  await expect(
-    page.getByText("#007 · 00:00:01,000 → 00:00:03,000"),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "你好", exact: true }),
-  ).toBeDisabled();
-  await expect(
-    page.getByRole("link", { name: "Glossary", exact: true }),
-  ).toHaveCount(0);
-  await page.goto(`/projects/${pid}/export`);
-  await expect(
-    page.getByRole("button", { name: "SRT", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "EPUB", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Generate export" }),
-  ).toBeEnabled();
-});
-
 test("advanced configuration reports validation errors", async ({
   page,
 }, testInfo) => {

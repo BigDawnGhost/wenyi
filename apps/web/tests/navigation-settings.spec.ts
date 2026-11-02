@@ -117,18 +117,6 @@ for (const chinese of [false, true]) {
   });
 }
 
-test("subtitle navigation stays flat and omits book-only pages", async ({
-  page,
-}) => {
-  await fakeApi(page, { [`/projects/${pid}`]: { ...project, fmt: "srt" } });
-  await page.goto(`/projects/${pid}/subtitles`);
-  const nav = page.getByRole("navigation", { name: "Project navigation" });
-  await expect(nav.getByRole("link")).toHaveCount(5);
-  await expect(
-    nav.getByRole("link", { name: /Glossary|Style|review/i }),
-  ).toHaveCount(0);
-});
-
 test("advanced settings retain invalid drafts and reveal them after validation", async ({
   page,
 }) => {

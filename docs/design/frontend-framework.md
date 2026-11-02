@@ -100,7 +100,7 @@
      path: string;                 // "/projects/:pid/settings"
      element: ReactNode;           // lazy 页面
      loader: () => Promise<unknown>; // 代码分割 loader（预热与预取共用）
-     nav?: { label: MessageKey; icon: LucideIcon; group: "global" | "project"; order: number; bookOnly?: boolean; srtOnly?: boolean };
+     nav?: { label: MessageKey; icon: LucideIcon; group: "global" | "project"; order: number; bookOnly?: boolean };
    }
    ```
 

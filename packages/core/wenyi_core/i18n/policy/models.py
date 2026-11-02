@@ -72,7 +72,7 @@ class OperationSpec:
     contract_version: int = 1
     roles: tuple[Role, ...] = ("source", "target", "pair")
     languages: tuple[str, ...] = ()
-    paths: tuple[str, ...] = ("book", "srt")
+    paths: tuple[str, ...] = ("book",)
     formats: tuple[str, ...] = ()
     backends: tuple[str, ...] = ()
     options_schema: tuple[tuple[str, str, str], ...] = ()
@@ -90,7 +90,7 @@ class PolicyContext:
     source: str
     target: str
     phase: Phase = "translation"
-    path: Literal["book", "srt"] = "book"
+    path: Literal["book"] = "book"
     format: str = ""
     backend: str = "native"
     punctuation_normalize: bool = True

@@ -442,40 +442,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/projects/{pid}/subtitles": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Subtitles */
-        get: operations["get_subtitles_projects__pid__subtitles_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{pid}/subtitles/{cueid}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /** Edit Subtitle */
-        put: operations["edit_subtitle_projects__pid__subtitles__cueid__put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/projects/{pid}/chapters": {
         parameters: {
             query?: never;
@@ -1140,7 +1106,7 @@ export interface components {
         /** ExportRequest */
         ExportRequest: {
             /** Format */
-            format?: ("epub" | "txt" | "html" | "markdown" | "pdf" | "docx" | "srt") | null;
+            format?: ("epub" | "txt" | "html" | "markdown" | "pdf" | "docx") | null;
             /**
              * Bilingual
              * @default false
@@ -1250,7 +1216,7 @@ export interface components {
              * @default translate
              * @enum {string}
              */
-            workflow: "prepare" | "translate" | "review" | "srt";
+            workflow: "prepare" | "translate" | "review";
         };
         /** ModelCheckResult */
         ModelCheckResult: {
@@ -1713,42 +1679,6 @@ export interface components {
             steps: {
                 [key: string]: unknown;
             };
-        };
-        /** SubtitleCue */
-        SubtitleCue: {
-            /** Id */
-            id: string;
-            /** Index */
-            index: number;
-            /** Timestamp */
-            timestamp: string;
-            /** Start */
-            start: string;
-            /** End */
-            end: string;
-            /** Source */
-            source: string;
-            /** Target */
-            target?: string | null;
-            /**
-             * Status
-             * @default pending
-             */
-            status: string;
-        };
-        /** SubtitleResult */
-        SubtitleResult: {
-            /** Cues */
-            cues: components["schemas"]["SubtitleCue"][];
-            /** Completed */
-            completed: number;
-            /** Total */
-            total: number;
-        };
-        /** TargetEdit */
-        TargetEdit: {
-            /** Target */
-            target: string;
         };
         /** TermIn */
         TermIn: {
@@ -2758,75 +2688,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelListResult"];
-                };
-            };
-        };
-    };
-    get_subtitles_projects__pid__subtitles_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                pid: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubtitleResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    edit_subtitle_projects__pid__subtitles__cueid__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                pid: string;
-                cueid: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["TargetEdit"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

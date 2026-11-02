@@ -17,7 +17,7 @@ from .config_documents import (
     project_llm,
 )
 from .context import BackendStorage
-from .errors import INVALID_CONFIGURATION, PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
+from .errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from .global_settings import registered_models
 from .ports.projects import RUNNING_PROJECT_STATUSES, ProjectReader
 from .strategies import _saved_strategy_to_config
@@ -51,12 +51,6 @@ def project_write(pid: str, projects: ProjectReader, storage_for: Callable[[str]
         storage.close()
 
 
-def validate_translation_mode_for_format(mode: str, fmt: str | None) -> None:
-    """Keep the configured book-only mode consistent with the source workflow."""
-    if fmt == "srt" and mode != "standard":
-        raise ValueError("Precision translation is only available for books")
-
-
 def effective_config(
     project: dict,
     *,
@@ -88,7 +82,6 @@ def effective_config(
         raw["pipeline"]["polish"] = True
     raw["paths"] = {"state_dir": state_dir}
     config = Config.from_dict(raw)
-    validate_translation_mode_for_format(config.pipeline.translation_mode, project.get("fmt"))
     if config.source_lang == config.target_lang:
         raise ValueError("Source and target languages are identical; choose another direction")
     if project.get("initialized"):
@@ -103,7 +96,7 @@ def effective_config(
         )
     else:
         resolved = config
-    resolved.language_policy("translation", path="srt" if project.get("fmt") == "srt" else "book")
+    resolved.language_policy("translation")
     return config
 
 
@@ -128,10 +121,3 @@ def config_response(project: dict, config: Config) -> dict:
         "editable": not busy(project),
         "registered_models": registered_models(config),
     }
-
-
-def require_book(project: dict) -> None:
-    if project.get("fmt") == "srt":
-        raise ApiError(
-            INVALID_CONFIGURATION, 422, "This operation is only available for book projects"
-        )

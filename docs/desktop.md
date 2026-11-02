@@ -56,7 +56,7 @@ endpoint. Historical report data is left untouched, and saved legacy report step
 not block project resume. Review/Autofix results, usage, timing, book exports, and
 application diagnostic exports are unaffected.
 
-Multiple Desktop projects can run at the same time, without a fixed workflow-count limit or a concurrency setting. Start each from its existing project page; navigating to another project or hiding the window does not pause it. Background management is internal: there is no separate task center or batch-control interface. Parsing, preparation, translation, chapter translation, review and subtitle workflows can overlap across projects, but conflicting workflows within one project remain mutually exclusive.
+Multiple Desktop projects can run at the same time, without a fixed workflow-count limit or a concurrency setting. Start each from its existing project page; navigating to another project or hiding the window does not pause it. Background management is internal: there is no separate task center or batch-control interface. Parsing, preparation, translation, chapter translation and review workflows can overlap across projects, but conflicting workflows within one project remain mutually exclusive.
 
 Pause and resume affect only the selected project and retain its saved checkpoints. A failed project does not cancel other projects. Quitting the engine waits for active workflows to stop safely; installing updates remains blocked until all tasks and cleanup have finished. Exports retain their independent two-worker queue.
 

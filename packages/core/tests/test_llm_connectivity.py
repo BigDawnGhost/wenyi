@@ -211,17 +211,17 @@ def _invoke(tmp_path, raw, *arguments):
 
 def test_cli_ping_reports_results_and_exit_code(tmp_path, sdk):
     raw = {"llm": _config().model_dump(mode="json", exclude_none=True)}
-    passed = _invoke(tmp_path, raw, "--for", "srt", "--json")
+    passed = _invoke(tmp_path, raw, "--for", "review", "--json")
     assert passed.exit_code == 0, passed.output
-    assert [item["profile"] for item in json.loads(passed.output)] == ["strong"]
+    assert [item["profile"] for item in json.loads(passed.output)] == ["small", "strong"]
 
     sdk.behaviors["big"] = _status_error(401)
-    failed = _invoke(tmp_path, raw, "--for", "srt", "--json")
+    failed = _invoke(tmp_path, raw, "--for", "review", "--json")
     assert failed.exit_code == 1
-    assert json.loads(failed.output)[0]["category"] == "authentication_failed"
-    table = _invoke(tmp_path, raw, "--for", "srt")
+    assert json.loads(failed.output)[1]["category"] == "authentication_failed"
+    table = _invoke(tmp_path, raw, "--for", "review")
     assert table.exit_code == 1
-    assert "1 of 1 model profiles unreachable" in table.output
+    assert "1 of 2 model profiles unreachable" in table.output
     for output in (failed.output, table.output):
         assert SECRET not in output
         assert "Traceback" not in output

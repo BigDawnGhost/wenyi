@@ -125,7 +125,7 @@ Fixer 术语文本，仍需自行负责其内容；自动过滤适用于结构�
 
 ### 可选全书术语证据
 
-`pipeline.terminology_context` 默认为 `false`，是仅 CLI 可用的实验性书籍功能。CLI `prepare` 和 `translate` 显式授予本次操作 `allow_terminology_context=True`；Orchestrator/PipelineRuntime 默认为 `False`。普通调用方和 API 不能仅靠开启 YAML 设置生产证据。Review 和 assemble 可以消费已有备注，不生产证据。Web/Desktop 不开放证据生产；SRT 不使用此路径。
+`pipeline.terminology_context` 默认为 `false`，是仅 CLI 可用的实验性书籍功能。CLI `prepare` 和 `translate` 显式授予本次操作 `allow_terminology_context=True`；Orchestrator/PipelineRuntime 默认为 `False`。普通调用方和 API 不能仅靠开启 YAML 设置生产证据。Review 和 assemble 可以消费已有备注，不生产证据。Web/Desktop 不开放证据生产。
 
 通过获授权的 CLI 操作开启后，仅译前发现及译后补漏中的人物条目（`type: person`）经过全书原文证据准入。已有条目以保存的类型为准，而非候选建议的类型。译前发现只请求人物；非人物建议在历史对齐和准入前被忽略，已有非人物条目也不通过取证刷新。其他类型保留常规译后抽取及术语冲突处理，不调用全书取证或合并。即使开启此模式，译前准备也不抽取或建立术语；取证从待译批次开始。不会删除已有备注和产物。人物的所有匹配原文组都会处理；取证或合并失败时不发布局部知识。发现结果、分组结果和合并知识通过 Storage artifacts 缓存，重试保留成功组与已保存译文，不重新翻译已完成正文。
 
@@ -316,7 +316,7 @@ precision/
 旧调用若没有历史请求记录，会明确标记回放资料不完整。新综合结果只保存一次。
 已发布历史不会自动清理，以便后续比较与回放。
 
-精翻必须开启润色。全书 Review 仍是独立可选流程，SRT 不变。
+精翻必须开启润色。全书 Review 仍是独立可选流程。
 正常正文批次调用四次模型，标准翻译加润色调用两次；结构重试增加计费尝试，
 provider 重试及其他书籍任务另计，因此**不是固定两倍成本**。
 精翻沿用 `translation.body` 与 `polish.body` 路由，
@@ -333,13 +333,9 @@ provider 重试及其他书籍任务另计，因此**不是固定两倍成本**�
 
 无论使用原生还是 Python 锁后端，本地工作流等待锁时都可用 Ctrl+C 中断。SQLite 运行收尾会等待活跃的读取快照结束后再关闭连接；仍存活的工作线程在下次操作时重新连接，不会复用已关闭的句柄。
 
-## 字幕路径（SRT）
-
-`.srt` 走平行轻量路径 `wenyi_core.srt`，不经过上文的书籍 Orchestrator：无全书预扫、术语库、润色或 Review。翻译使用重叠字幕窗 + strong 档高并发；进度落在 `state/srt/<slug>/targets/<目标语言>/`，含 `cues.jsonl`、批次缓存、`usage.json` 与 `events.jsonl`。字幕计划及窗口缓存绑定独立的翻译策略身份，变更后自动刷新待译窗口缓存并保留已完成字幕。详见[CLI 使用指南 — SRT 字幕](cli.md#srt-字幕)。
-
 ## 模型注册与用量
 
-所有模型调用使用 `llm/operations.py` 中的稳定操作 ID；提供商由 `llm/registry.py` 统一注册。Runtime 和独立 SRT 流程各持有一个路由客户端，按连接复用 SDK，并共享该次运行内的并发名额、配额和用量统计。Agent 不选择提供商或档位，Orchestrator 继续只负责装配和流程路由。
+所有模型调用使用 `llm/operations.py` 中的稳定操作 ID；提供商由 `llm/registry.py` 统一注册。Runtime 持有一个路由客户端，按连接复用 SDK，并共享该次运行内的并发名额、配额和用量统计。Agent 不选择提供商或档位，Orchestrator 继续只负责装配和流程路由。
 
 新增模型操作时，在 `OperationSpec` 中注册 ID、默认档位或继承操作、工作流开关和协议版本，再由领域服务调用 `complete(..., operation="domain.operation")`。操作不附加自己的输出 token 上限，需要限制时使用显式模型配置。校验、CLI 预览和推理指纹共用该注册表。新增提供商时，在 `llm/providers/` 实现选项、请求构建、用量归一化和 `ProviderAdapter`，再注册 `ProviderSpec`。SDK 延迟初始化并关闭内置重试；请求语义变化时更新相应协议版本，并用离线测试覆盖请求、用量和续跑。注册表在启动后不可修改。
 

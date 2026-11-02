@@ -25,9 +25,6 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         ),
         fmt: str | None = typer.Option(None, "--format", help="Actual export format"),
         backend: str = typer.Option("native", "--backend", help="native / babeldoc"),
-        subtitles: bool = typer.Option(
-            False, "--subtitles", help="Preview the independent SRT path"
-        ),
     ) -> None:
         """Preview built-in language operations and phase fingerprints without model calls."""
         from wenyi_core.i18n.languages import require_language
@@ -37,9 +34,8 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
             if source is not None:
                 config.source_lang = require_language(source, allow_auto=True)
             preview = config.language_policy_preview(
-                format=fmt or ("srt" if subtitles else "epub"),
+                format=fmt or "epub",
                 backend=backend,
-                path="srt" if subtitles else "book",
             )
         except ValueError as error:
             context().console.print(f"[red]Error: {error}[/]")

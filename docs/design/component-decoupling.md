@@ -23,7 +23,7 @@ No database/state migration, new runtime service, new workspace package, prompt 
 - [BackendContext](../../packages/backend/wenyi_backend/context.py#L96) supplies per-application adapters. Its ContextVar is request/task scoped, **not** a process-wide Web/Desktop selector. Retain context propagation to threads and callbacks.
 - Web owns PostgreSQL and Redis/Arq; Desktop owns its workspace, SQLite catalog, credentials and local runner. PostgreSQL adapters must remain in `apps/api`, never move into Core.
 - Shared UI already uses feature directories and injected host capabilities. Keep routes, shell, primitives and features separate; do not move every page merely to rename its parent directory.
-- `ArtifactStorage`, review evidence/models, markup, DOCX style policy, language policies and independent SRT execution already have useful boundaries. Extend these rather than introduce parallel abstractions.
+- `ArtifactStorage`, review evidence/models, markup, DOCX style policy and language policies already have useful boundaries. Extend these rather than introduce parallel abstractions.
 - [Python boundary tests](../../packages/backend/tests/test_backend_boundaries.py#L11), [frontend boundary tests](../../packages/ui/tests/platform-boundaries.test.mjs#L31) and [clean-install package checks](../../scripts/check_backend_packages.py#L19) already protect platform isolation. They need targeted extensions, not replacement.
 
 ## 2. Findings and intended seams
@@ -36,13 +36,13 @@ Priorities below describe migration order, not confirmed production failures. Fi
 
 **Risk:** changing scheduler invocation or terminal-state handling touches the business execution path. Late completion and duplicate delivery depend on job identity and lock checks embedded in that path.
 
-**Implemented P1 seam:** [ExecutionRequest and dependencies](../../packages/backend/wenyi_backend/execution/contracts.py#L20) are explicit inputs to the [runner](../../packages/backend/wenyi_backend/execution/runner.py#L64), which owns admission rechecks, interruption, cleanup and terminal-state handling. [Operations](../../packages/backend/wenyi_backend/execution/operations.py#L108) own preview/book/subtitle work; `workers/tasks.py` retains the existing task names and signatures as thin wrappers. Web Arq and Desktop scheduling remain platform adapters. CLI continues to call Core directly, not this HTTP application layer.
+**Implemented P1 seam:** [ExecutionRequest and dependencies](../../packages/backend/wenyi_backend/execution/contracts.py#L20) are explicit inputs to the [runner](../../packages/backend/wenyi_backend/execution/runner.py#L64), which owns admission rechecks, interruption, cleanup and terminal-state handling. [Operations](../../packages/backend/wenyi_backend/execution/operations.py#L86) own preview/book work; `workers/tasks.py` retains the existing task names and signatures as thin wrappers. Web Arq and Desktop scheduling remain platform adapters. CLI continues to call Core directly, not this HTTP application layer.
 
 The runner owns the long book lock from durable identity rechecks through recovery and domain execution. Successful catalog status writes follow live-statistics cleanup and lock exit, preserving the existing execution contract rather than the original plan's proposed wider lock. Resource cleanup is registered at acquisition, including startup failures; async cancellation drains synchronous work before returning. Read routes also close per-operation storage on success and error.
 
 The synchronous dispatcher is injected through execution dependencies: Web retains its default executor, while Desktop retains the independent per-workflow threads introduced on `main`. Context propagation, parallel shutdown, pause/failure isolation and resumed usage are covered after integrating that change.
 
-The separate export coordinator retains the same `export_lock` across claim, render, publish and terminal status. Book rendering uses the consistent Core snapshot and assemble lock; SRT retains its independent state-lock snapshot path. Rendering does not update catalog status, and publication does not invoke a writer. Existing export plan/path/response helpers are reused rather than creating a second export policy.
+The separate export coordinator retains the same `export_lock` across claim, render, publish and terminal status. Book rendering uses the consistent Core snapshot and assemble lock. Rendering does not update catalog status, and publication does not invoke a writer. Existing export plan/path/response helpers are reused rather than creating a second export policy.
 
 ### F2 — Scoped context is correct, but dynamic forwarding hides service dependencies
 
@@ -72,7 +72,7 @@ The caller-specific cache policy is preserved, including PDF's known state path 
 
 **Implemented:** [UsageCoordinator](../../packages/core/wenyi_core/pipeline/runtime_usage.py#L28) owns the single client checkpoint and depends on explicit usage-source, book-ledger and Review-ledger protocols. All book workflow consumers share that owner. Recovery precedes reading totals; the durable absolute-total journal precedes the in-memory checkpoint; retry cannot replay a delta. Existing arithmetic, empty Review ledger behavior, event payloads and storage formats are preserved.
 
-No matrix of unused ports is introduced. Language binding and timing remain legitimate Runtime responsibilities; `RunStore` and the aggregate `Storage` contract stay in place. Independent SRT accounting is unchanged.
+No matrix of unused ports is introduced. Language binding and timing remain legitimate Runtime responsibilities; `RunStore` and the aggregate `Storage` contract stay in place.
 
 ### F5 — UI contracts expose implementation paths and a type-only dependency cycle
 
@@ -134,7 +134,7 @@ packages/
     execution/
       contracts.py                    # implemented typed run request and dependencies
       runner.py                       # implemented lifecycle and resource ownership
-      operations.py                   # implemented preview/book/SRT dispatch into Core
+      operations.py                   # implemented preview/book dispatch into Core
       exporting.py                    # implemented rendering/publication separation
       bindings.py                     # implemented context-to-port composition
     workers/tasks.py                  # implemented stable task entry-point wrappers
@@ -203,7 +203,7 @@ Each extraction starts with characterization tests for existing behavior. A genu
 3. Preserve run/state/event/export lock scopes, snapshot consistency and atomic file publication. Slow native or external operations must not hold catalog write transactions.
 4. Keep recoverable usage publication and once-only Review deltas; preserve event project/run identity, durable job names/statuses, stale-run rejection and configuration snapshots.
 5. Review edits shadow translations only; explicit Autofix still writes a recoverable index before publishing formal targets.
-6. SRT stays outside the book Orchestrator, glossary and full-book Review. BabelDOC remains an external AGPL HTTP service, never a Core dependency.
+6. BabelDOC remains an external AGPL HTTP service, never a Core dependency.
 7. Preserve Web/Desktop state and dependency isolation, loopback authentication, opaque native file grants, credential secrecy, and “cancel save before enqueue means no task.”
 8. Preserve CLI commands, HTTP contracts, generated types, URLs, navigation ordering, language-policy fingerprints, prompt resources and clean-install behavior.
 
@@ -224,7 +224,6 @@ uv run --no-sync pytest -q \
 uv run --no-sync pytest -q \
   packages/core/tests/test_storage_injection.py \
   packages/core/tests/test_preparation.py \
-  packages/core/tests/test_srt.py \
   packages/backend/tests/test_worker_tasks.py \
   packages/backend/tests/test_export_admission.py \
   apps/api/tests/test_desktop_route_isolation.py

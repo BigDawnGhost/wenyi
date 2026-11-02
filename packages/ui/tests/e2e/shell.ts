@@ -60,19 +60,19 @@ export function registerShellTests({ apiOrigin }: { apiOrigin?: string } = {}) {
     });
   }
 
-  test("project navigation never pairs a new project ID with the previous format", async ({ page }) => {
+  test("project navigation follows the selected project while details load", async ({ page }) => {
     const book = { ...project, name: "Book project" };
-    const subtitles = { ...project, id: "srt-1", name: "Subtitle project", fmt: "srt" };
+    const nextBook = { ...project, id: "book-next", name: "Next book", fmt: "docx" };
     await fakeApi(
       page,
-      { "/projects": [book, subtitles], [`/projects/${pid}`]: book, "/projects/srt-1": subtitles },
+      { "/projects": [book, nextBook], [`/projects/${pid}`]: book, "/projects/book-next": nextBook },
       apiOrigin,
     );
     let release = () => {};
     const pending = new Promise<void>(resolve => { release = resolve; });
-    await page.route("**/projects/srt-1", async route => {
+    await page.route("**/projects/book-next", async route => {
       await pending;
-      await route.fulfill({ json: subtitles });
+      await route.fulfill({ json: nextBook });
     });
     try {
       await page.goto(`/projects/${pid}`);
@@ -80,12 +80,13 @@ export function registerShellTests({ apiOrigin }: { apiOrigin?: string } = {}) {
       await expect(navigation).toContainText("Book project");
       await expect(navigation.getByRole("link", { name: "Manual proofreading", exact: true })).toBeVisible();
       await page.getByRole("link", { name: "Projects", exact: true }).click();
-      await page.locator('a[href="/projects/srt-1"]').click();
-      await expect(navigation).toContainText("Subtitle project");
-      await expect(navigation.getByRole("link", { name: "Subtitle editor", exact: true })).toBeVisible();
-      await expect(navigation.getByRole("link", { name: "Manual proofreading", exact: true })).toHaveCount(0);
+      await page.locator('a[href="/projects/book-next"]').click();
+      await expect(navigation).toContainText("Next book");
+      await expect(navigation.getByRole("link", { name: "Manual proofreading", exact: true })).toHaveAttribute(
+        "href", "/projects/book-next/proofreading",
+      );
       release();
-      await expect(navigation).toContainText("Subtitle project");
+      await expect(navigation).toContainText("Next book");
     } finally {
       release();
     }

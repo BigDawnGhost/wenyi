@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from enum import Enum
 
 import typer
@@ -93,69 +92,6 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
 
-    def _translate_srt_or_raise(
-        input_path: str,
-        *,
-        chapter: int | None = None,
-        fmt: str = "epub",
-        out: str | None = None,
-        polish: bool | None = None,
-        translation_mode: TranslationMode | None = None,
-        review: bool | None = None,
-        mono: bool | None = None,
-        bilingual: bool | None = None,
-    ) -> None:
-        """Translate subtitles with the strong tier, concurrency and state under state/srt/."""
-        console = context().console
-        from wenyi_core.srt.translate import translate_srt
-
-        if chapter is not None:
-            raise ValueError("SRT translation does not support --chapter")
-        ignored: list[str] = []
-        if fmt != "epub":
-            ignored.append("--format")
-        if polish is not None:
-            ignored.append("--polish/--no-polish")
-        if translation_mode is not None:
-            ignored.append("--translation-mode")
-        if review is not None:
-            ignored.append("--review/--no-review")
-        if ignored:
-            raise ValueError("SRT translation does not support: " + ", ".join(ignored))
-
-        config = context().load_config()
-        context().validate_api_configuration(config, "srt")
-        require_input_file(input_path, console=console)
-        if mono is not None:
-            config.output.mono = mono
-        if bilingual is not None:
-            config.output.bilingual = bilingual
-
-        with Progress(
-            *progress_view.progress_columns(),
-            console=console,
-        ) as prog:
-            cb = progress_view.RichProgressBridge(prog, "Translating subtitles…")
-            result = translate_srt(
-                input_path,
-                config,
-                out=out,
-                mono=mono,
-                bilingual=bilingual,
-                progress=cb,
-            )
-
-        presentation.print_subtitle_summary(
-            console,
-            translated=result["translated"],
-            cue_count=result["cue_count"],
-            run_dir=result["run_dir"],
-        )
-        presentation.print_usage(console, result.get("usage") or {})
-        presentation.print_timing(console, load_timing(result["run_dir"]))
-        for path in result.get("outputs") or []:
-            console.print(f"Translation: [bold]{path}[/]")
-
     def _translate_impl_or_raise(
         input_path: str,
         *,
@@ -171,20 +107,6 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         """Run translation; let ``_translate_impl`` convert exceptions to CLI errors."""
         console = context().console
         from wenyi_core.pipeline.orchestrator import Orchestrator
-
-        if os.path.splitext(input_path)[1].lower() == ".srt":
-            _translate_srt_or_raise(
-                input_path,
-                chapter=chapter,
-                fmt=fmt or "epub",
-                out=out,
-                polish=polish,
-                translation_mode=translation_mode,
-                review=review,
-                mono=mono,
-                bilingual=bilingual,
-            )
-            return
 
         fmt = resolve_output_format(input_path, fmt, console=console)
         config = context().load_config()
@@ -328,7 +250,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
     def translate(
         input: str = typer.Argument(
             ...,
-            help="Book or subtitles to translate (EPUB / FB2 / TXT / Markdown / HTML / PDF / DOCX / SRT)",
+            help="Book to translate (EPUB / FB2 / TXT / Markdown / HTML / PDF / DOCX)",
         ),
         chapter: int | None = typer.Option(
             None,

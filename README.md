@@ -109,12 +109,10 @@ Prefer a graphical app? See the [Desktop quick start](docs/desktop.md#quick-star
 | Input | Output |
 |---|---|
 | EPUB, FB2, TXT, Markdown, HTML, PDF, DOCX | EPUB (monolingual / bilingual), TXT, HTML, Markdown, DOCX |
-| SRT (movie / series subtitles) | SRT (monolingual / bilingual) |
 
 - PDF input defaults to MinerU and requires its API key for the initial conversion; the resulting HTML is cached and reused. The BabelDOC bridge is optional for layout-preserving PDFs. See [PDF configuration](docs/configuration.md#pipeline).
 - PDF output is available only for saved BabelDOC projects through bridge fillback; other projects use the book output formats above.
 - EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
-- SRT projects use a lightweight subtitle workflow without a glossary, polishing, or whole-book review.
 - DOCX uses the full book pipeline. Headings, simple tables, lists, and common run/paragraph styles are preserved where possible; translated Chinese uses Song (宋体).
 
 ### Language support
@@ -157,7 +155,6 @@ Public-domain translation examples are shared through [wenyi-bookcase](https://g
 - Polishing and final review are the most expensive stages. Shadow fixing may
   trigger multiple full-book review passes and additional Fixer calls.
 - PDF input defaults to MinerU and requires an API key for the initial conversion. The BabelDOC bridge is optional for layout-preserving PDFs.
-- SRT translation does not include a glossary, polishing, or whole-book review.
 - Translation quality is bounded by the capabilities of the chosen LLM model.
 - Very long books may produce large workspaces; storage requirements grow with book length.
 
