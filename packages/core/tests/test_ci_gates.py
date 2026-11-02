@@ -1,6 +1,7 @@
 """Exercise CI admission with the same signals consumed by the workflow jobs."""
 
 import json
+import re
 from fnmatch import fnmatchcase
 from pathlib import Path
 from types import SimpleNamespace
@@ -148,9 +149,13 @@ def test_the_windows_bundle_installs_its_nsis_hooks():
     # this asserts against -- not a missing macro body.
     hooks = _installer_hooks()
     assert hooks.is_file(), f"installerHooks names a missing file: {hooks}"
-    text = hooks.read_text(encoding="utf-8")
+    # The macro name is matched whole. A substring test accepts a renamed macro
+    # that still starts with the expected name (NSIS_HOOK_PREINSTALLX), and a
+    # renamed macro is a macro the bundler never inserts -- which is the silent
+    # skip this asserts against.
+    declared = set(re.findall(r"^\s*!macro\s+(\S+)", hooks.read_text(encoding="utf-8"), re.M))
     for macro in ("NSIS_HOOK_PREINSTALL", "NSIS_HOOK_POSTUNINSTALL"):
-        assert f"!macro {macro}" in text, f"{macro} is missing from {hooks.name}"
+        assert macro in declared, f"{macro} is missing from {hooks.name}: {sorted(declared)}"
 
 
 def test_installer_hooks_never_name_bundler_defines():
