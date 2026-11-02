@@ -405,16 +405,18 @@ class RunStore(FileArtifacts):
         )
 
     def save_analysis(self, data: dict) -> None:
-        """Atomically save book analysis and synopsis data."""
-        self._write_json(self.analysis_path, data)
+        """Atomically save book analysis and synopsis data under the state lock."""
+        with self.state_lock():
+            self._write_json(self.analysis_path, data)
 
     def load_analysis(self) -> dict | None:
         """Read book analysis, or return None if absent."""
         return self._read_json(self.analysis_path) if os.path.isfile(self.analysis_path) else None
 
     def save_usage(self, data: dict) -> None:
-        """Atomically save cumulative book token usage."""
-        self._write_json(self.usage_path, data)
+        """Atomically save cumulative token usage under the state lock."""
+        with self.state_lock():
+            self._write_json(self.usage_path, data)
 
     def load_usage(self) -> dict | None:
         """Read cumulative token usage, or return None if absent."""
