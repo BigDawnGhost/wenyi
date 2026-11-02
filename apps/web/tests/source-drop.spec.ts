@@ -101,7 +101,7 @@ for (const chinese of [false, true]) {
         exact: true,
       })
       .click();
-    await expect(page.getByText("503: Upload unavailable")).toBeVisible();
+    await expect(page.getByText("Upload unavailable")).toBeVisible();
     expect(uploads).toEqual([
       {
         name: "bản thảo.docx",
@@ -112,7 +112,7 @@ for (const chinese of [false, true]) {
     const retry = await fileTransfer(page, [{ name: "next.docx" }]);
     await zone.dispatchEvent("drop", { dataTransfer: retry });
     await retry.dispose();
-    await expect(page.getByText("503: Upload unavailable")).toHaveCount(0);
+    await expect(page.getByText("Upload unavailable")).toHaveCount(0);
     await expect(zone.getByText("next.docx", { exact: true })).toBeVisible();
   });
 }

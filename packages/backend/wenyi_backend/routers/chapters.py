@@ -9,6 +9,7 @@ from wenyi_core.storage.precision_drafts import read_precision_drafts
 
 from ..chapter_state import chapter_review_state
 from ..context import current_context
+from ..errors import CHAPTER_NOT_FOUND, ApiError
 from ..project_service import require_book
 from ..schemas import (
     ChapterSegments,
@@ -35,7 +36,7 @@ def chapter_payload(storage, ci: int, *, project: dict) -> dict:
         try:
             chapter = storage.load_chapter(ci)
         except (KeyError, FileNotFoundError):
-            raise HTTPException(404, "chapter not found") from None
+            raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found") from None
         review = storage.load_latest_review_result() or {}
     else:
         document = parsed_source(project, storage)
@@ -45,7 +46,7 @@ def chapter_payload(storage, ci: int, *, project: dict) -> dict:
             else None
         )
         if chapter is None:
-            raise HTTPException(404, "chapter not found")
+            raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found")
         review = {}
     text_segments = chapter.text_segments
     issues = []
@@ -156,7 +157,7 @@ def update_chapter_title(pid: str, ci: int, body: ChapterTitleUpdate) -> dict:
                 (row for row in manifest.get("chapters", []) if row["index"] == ci), None
             )
             if chapter is None:
-                raise HTTPException(404, "chapter not found")
+                raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found")
             before = chapter.get("title_translated")
             if before != body.expected_title_translated:
                 raise HTTPException(
@@ -191,7 +192,7 @@ async def translate_chapter(pid: str, ci: int) -> dict:
         None,
     )
     if chapter is None:
-        raise HTTPException(404, "chapter not found")
+        raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found")
     if chapter["status"] == "done":
         raise HTTPException(409, "chapter is already translated")
     return await start_job(pid, "chapter_translation", params={"chapter_index": ci})

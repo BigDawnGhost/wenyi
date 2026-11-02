@@ -106,7 +106,7 @@ test("creation rejects empty files and recovers from an upload failure without l
     buffer: Buffer.from("fixture"),
   });
   await create.click();
-  await expect(page.getByText("503: Upload unavailable")).toBeVisible();
+  await expect(page.getByText("Upload unavailable")).toBeVisible();
   await expect(page).toHaveURL("/projects/new");
   await expect(page.getByLabel("Project name", { exact: true })).toHaveValue("New book");
   await expect(page.getByText("book.docx", { exact: true })).toBeVisible();
@@ -145,7 +145,7 @@ test("PDF parser is selected before creation and subtitles omit book preparation
   await page
     .getByRole("button", { name: "Create project", exact: true })
     .click();
-  await expect(page.getByText("503: Upload unavailable")).toBeVisible();
+  await expect(page.getByText("Upload unavailable")).toBeVisible();
   expect(submitted?.pdf_backend).toBe("babeldoc");
   expect(submitted?.prepare).toBe(true);
   expect(submitted?.translation_mode).toBe("standard");
@@ -165,7 +165,7 @@ test("PDF parser is selected before creation and subtitles omit book preparation
   await page
     .getByRole("button", { name: "Create project", exact: true })
     .click();
-  await expect(page.getByText("503: Upload unavailable")).toBeVisible();
+  await expect(page.getByText("Upload unavailable")).toBeVisible();
   expect(submitted?.pdf_backend).toBeNull();
   expect(submitted?.prepare).toBe(false);
   expect(submitted?.translation_mode).toBe("standard");

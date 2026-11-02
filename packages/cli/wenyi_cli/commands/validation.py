@@ -3,14 +3,26 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
-from wenyi_core.config import Config
 from wenyi_core.i18n.languages import validate_run_languages
-from wenyi_core.ingest.errors import IngestError
-from wenyi_core.ingest.segmenter import load_document
-from wenyi_core.pipeline.runstore import RunStore, translation_run_dir
+
+if TYPE_CHECKING:
+    from wenyi_core.config import Config
+    from wenyi_core.pipeline.runstore import RunStore
+
+
+def load_document(*args, **kwargs):
+    """Defer the ingest stack while keeping a patchable module attribute.
+
+    Callers and tests have always reached this name through the module, so the
+    import stays behind the call rather than moving out of the namespace.
+    """
+    from wenyi_core.ingest.segmenter import load_document as parse
+
+    return parse(*args, **kwargs)
 
 
 def require_input_file(input_path: str, *, console: Console | None = None) -> None:
@@ -50,6 +62,10 @@ def resolve_output_format(
 
 def runstore_for(config: Config, input_path: str, *, console: Console | None = None) -> RunStore:
     """Resolve the title and locate existing state without creating a directory."""
+    # Deferred: reading a title pulls the ingest stack (bs4/lxml) in; --help
+    # must not pay for that.
+    from wenyi_core.pipeline.runstore import RunStore, translation_run_dir
+
     console = console or Console()
     require_input_file(input_path, console=console)
     if os.path.splitext(input_path)[1].lower() == ".pdf":
@@ -70,7 +86,9 @@ def runstore_for(config: Config, input_path: str, *, console: Console | None = N
 def runstore_for_cli(
     config: Config, input_path: str, *, console: Console | None = None
 ) -> RunStore:
-    """Locate state for inspection commands and report identity errors concisely."""
+    # Deferred with the ingest stack; the base error class drags it in.
+    from wenyi_core.ingest.errors import IngestError
+
     console = console or Console()
     try:
         return runstore_for(config, input_path, console=console)

@@ -358,6 +358,13 @@ ID. `WENYI_LOG_FORMAT=json` selects JSON for other entry points. Internal
 tracebacks stay in server logs, not the project event API; legacy event records
 are also filtered when returned.
 
+Web and Desktop API failures with a stable error code return `code`, `message`,
+and an optional `request_id`. These coded responses no longer duplicate the message
+in `detail`: external clients must read `message` and use `code`, not English wording,
+for branching. Uncoded HTTP exceptions retain FastAPI's `{"detail": ...}` shape.
+The shared UI accepts both shapes and localizes known codes consistently in page
+notices and notifications.
+
 `GET /metrics` exposes Prometheus text using the same `API_TOKEN` authentication
 as other API routes. Configure the scraper's bearer token when authentication
 is enabled. API and workers must use the same Redis database:

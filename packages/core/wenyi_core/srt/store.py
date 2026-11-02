@@ -18,7 +18,7 @@ from ..i18n.policy.models import PolicyPlan
 from ..pipeline.runstore import source_sha256, translation_run_dir
 from ..storage.artifacts import FileArtifacts
 from ..storage.language_policies import persist_plan, verify_plan_artifact
-from ..storage.locks import exclusive_file_lock
+from ..storage.locks import EVENTS_LOCK, TIMING_LOCK, USAGE_LOCK, exclusive_file_lock
 from ..timing import save_timing
 
 STATUS_PENDING = "pending"
@@ -76,10 +76,14 @@ class SrtRunStore:
 
     @contextmanager
     def _file_lock(self, filename: str) -> Iterator[None]:
-        """Serialize cross-process operations using the named lock file within state."""
+        """Serialize cross-process operations using the named lock file within state.
+
+        An injected storage owns its own concurrency: SqliteStorage appends through
+        SQL, where the database serializes the write, and a caller-provided backend
+        may have no directory at all. Only a standalone store creates lock files.
+        """
         if self._storage is not None:
-            with self._storage.state_lock():
-                yield
+            yield
             return
         os.makedirs(self.run_dir, exist_ok=True)
         with exclusive_file_lock(os.path.join(self.run_dir, filename)):
@@ -88,7 +92,13 @@ class SrtRunStore:
     @contextmanager
     def event_lock(self) -> Iterator[None]:
         """Serialize JSONL appends so concurrent writers cannot interleave one line."""
-        with self._file_lock(".events.lock"):
+        with self._file_lock(EVENTS_LOCK):
+            yield
+
+    @contextmanager
+    def usage_lock(self) -> Iterator[None]:
+        """Serialize usage read-merge-write so concurrent flushes lose no increment."""
+        with self._file_lock(USAGE_LOCK):
             yield
 
     def ensure_manifest(
@@ -279,7 +289,7 @@ class SrtRunStore:
         """Accumulate subtitle invocation timing independently of token usage."""
         if self._storage is not None:
             return self._storage.record_timing(record)
-        with self._file_lock(".timing.lock"):
+        with self._file_lock(TIMING_LOCK):
             return save_timing(self.run_dir, record)
 
     def load_usage(self) -> dict[str, Any] | None:

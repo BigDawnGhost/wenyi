@@ -108,6 +108,8 @@ Desktop 不接管或迁移已有 Web 项目，也不读取或修改 CLI 的 `con
 
 工作区包含 SQLite 目录库、各项目的 SQLite 状态、上传原文、解析缓存和导出产物。备份时保留完整工作区，并先退出 Desktop；不要只复制仍在使用的 SQLite 主文件而遗漏 WAL。
 
+任务状态轮询读取目录库已提交的快照，不申请写锁，因此目录库正在写入时也不会阻塞状态查询。
+
 从项目列表点击删除后，会显示应用内确认框，并默认聚焦“取消”；准备完成且无活动任务的项目也可删除。请求处理期间不能重复提交；失败后确认框保持打开，可重试或取消。
 
 **删除 Desktop 项目是永久操作。** 确认后会清理该项目在工作区内的上传原文、
@@ -160,7 +162,7 @@ pnpm desktop --data-dir /path/to/desktop-test-workspace
 pnpm desktop:build
 ```
 
-构建先将 Python 引擎冻结为 onedir sidecar，再与界面和原生程序一起打包。Onedir 避免每次启动都解压完整运行时。每次发行仍需验证安装包、签名和平台运行依赖；Linux 构建成功不代表 Windows/macOS 已验证。
+构建先将 Python 引擎冻结为 onedir sidecar，再与界面和原生程序一起打包。Onedir 避免每次启动都解压完整运行时。sidecar 会捆绑 `native/wenyi-locks` 构建出的 `wenyi_locks`，需先运行 `cargo build --release --manifest-path native/wenyi-locks/Cargo.toml`。以 wheel 方式安装则不携带原生库，自动回退到 Python 锁后端，两种后端的行为由 `test_locks_contract.py` 钉住。每次发行仍需验证安装包、签名和平台运行依赖；Linux 构建成功不代表 Windows/macOS 已验证。
 
 macOS 安装包分别在 Apple Silicon 和 Intel runner 上原生构建。本地构建时，
 Python 解释器和 Rust 工具链均应与 Mac 的架构一致；仅交叉编译 Rust 主程序

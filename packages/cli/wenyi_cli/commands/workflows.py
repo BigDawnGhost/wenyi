@@ -9,7 +9,6 @@ import typer
 from rich.progress import Progress
 from wenyi_core.config import PipelineConfig
 from wenyi_core.errors import WenyiError
-from wenyi_core.storage.protocol import STATUS_DONE
 from wenyi_core.timing import load_timing
 
 from wenyi_cli.commands import presentation
@@ -267,7 +266,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         store = result["store"]
         with store.lock(), store.state_lock():
             chapters = store.load_manifest()["chapters"]
-            chapters_done = sum(chapter["status"] == STATUS_DONE for chapter in chapters)
+            chapters_done = sum(chapter["status"] == "done" for chapter in chapters)
             term_count = store.stats()["terms"]
         presentation.print_translation_summary(
             console,

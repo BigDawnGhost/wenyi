@@ -53,65 +53,31 @@ class ApiError(HTTPException):
         return self.message
 
 
-# Legacy (status, detail) pairs translated into codes during the dual-write
-# window. Only text a client can already observe is listed; anything else keeps
-# the original ``detail``-only response shape.
-LEGACY_ERRORS: tuple[tuple[int, str, str], ...] = (
-    (404, "project not found", PROJECT_NOT_FOUND),
-    (409, "project already has a running task", PROJECT_BUSY),
-    (503, "Task queue is unavailable; retry the operation", QUEUE_UNAVAILABLE),
-    (503, "Export queue is unavailable; retry the operation", QUEUE_UNAVAILABLE),
-    (404, "Completed export not found", EXPORT_NOT_FOUND),
-    (404, "chapter not found", CHAPTER_NOT_FOUND),
-    (404, "segment not found", SEGMENT_NOT_FOUND),
-    (409, "Prepare or translate the source before exporting", SOURCE_NOT_READY),
-    (409, "Global settings changed; reload before saving again", SETTINGS_CONFLICT),
-    (422, "Subtitle projects export SRT; book projects export book formats", INVALID_CONFIGURATION),
-    (422, "Invalid connection settings", INVALID_CONFIGURATION),
-    (422, "Invalid model list request", INVALID_CONFIGURATION),
-    (422, "Unsupported client", UNSUPPORTED_CLIENT),
-)
-
-_LEGACY_LOOKUP: dict[tuple[int, str], str] = {
-    (status, detail): code for status, detail, code in LEGACY_ERRORS
-}
-
-
-def code_for(status: int, detail: Any) -> str | None:
-    """Return the code recorded for a legacy (status, detail) pair, if any."""
-    if not isinstance(detail, str):
-        return None
-    return _LEGACY_LOOKUP.get((status, detail))
-
-
 def error_envelope(*, code: str, message: str, request_id: str | None = None) -> dict[str, Any]:
-    """Build the response body that carries both the new and the legacy fields."""
+    """Build the response body for a coded failure.
+
+    ``code`` is the stable identity and ``message`` is what a person reads.
+    """
     body: dict[str, Any] = {"code": code, "message": message}
     if request_id:
         body["request_id"] = request_id
-    # Dual write: clients that only read ``detail`` keep working unchanged.
-    body["detail"] = message
     return body
 
 
 async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
-    """Render an :class:`ApiError` with its code and the legacy detail field."""
+    """Render an :class:`ApiError` with its code and message."""
     body = error_envelope(code=exc.code, message=exc.message, request_id=current_request_id())
     return JSONResponse(body, status_code=exc.status)
 
 
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    """Translate known legacy failures into codes while preserving the old shape.
+    """Unrecognised failures keep FastAPI's original ``{"detail": ...}`` shape.
 
-    Unrecognised details keep FastAPI's original ``{"detail": ...}`` response so
-    no existing client can observe a change it did not opt into.
+    A user-facing failure must raise :class:`ApiError` so the response carries a
+    stable code; this handler only covers what is left over.
     """
     headers = getattr(exc, "headers", None)
-    code = code_for(exc.status_code, exc.detail)
-    if code is None:
-        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers)
-    body = error_envelope(code=code, message=exc.detail, request_id=current_request_id())
-    return JSONResponse(body, status_code=exc.status_code, headers=headers)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=headers)
 
 
 def describe_status(status: int) -> str:
@@ -124,14 +90,12 @@ def describe_status(status: int) -> str:
 
 __all__ = [
     "INVALID_CONFIGURATION",
-    "LEGACY_ERRORS",
     "PROJECT_BUSY",
     "PROJECT_NOT_FOUND",
     "QUEUE_UNAVAILABLE",
     "UNSUPPORTED_CLIENT",
     "ApiError",
     "api_error_handler",
-    "code_for",
     "describe_status",
     "error_envelope",
     "http_exception_handler",

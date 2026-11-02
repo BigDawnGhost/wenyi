@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import typer
 from rich.table import Table
-from wenyi_core.ingest.errors import IngestError
-from wenyi_core.pipeline.runstore import STATUS_DONE
 from wenyi_core.timing import load_timing
 
 from wenyi_cli.commands import presentation
@@ -80,7 +78,7 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         console.print(f"“{m['title']}”({m['fmt']})  {m['source_lang']}→{m['target_lang']}")
         table = Table("", "#", "Chapter", "Translation")
         for c in m["chapters"]:
-            mark = "✓" if c["status"] == STATUS_DONE else "·"
+            mark = "✓" if c["status"] == "done" else "·"
             table.add_row(
                 mark,
                 str(c["index"]),
@@ -157,6 +155,8 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         ),
     ):
         """Export translations from existing state without calling a model."""
+        from wenyi_core.ingest.errors import IngestError
+
         console = context().console
         from wenyi_core.llm.providers.fake import FakeClient
         from wenyi_core.pipeline.orchestrator import Orchestrator

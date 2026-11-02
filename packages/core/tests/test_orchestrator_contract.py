@@ -31,6 +31,11 @@ class _RecordingStore:
             self.lock_events.append("lock:exit")
 
     @contextmanager
+    def state_lock(self):
+        # The usage flush serializes its read-merge-write under this lock.
+        yield
+
+    @contextmanager
     def assemble_lock(self):
         self.assemble_lock_events.append("assemble_lock:enter")
         try:

@@ -13,6 +13,7 @@ use std::{
 
 use serde::Serialize;
 use tauri::Manager;
+use crate::mutex::lock;
 
 const TTL: Duration = Duration::from_secs(15 * 60);
 const MAX_GRANTS: usize = 2;
@@ -201,7 +202,7 @@ impl Grants {
                 "Select exactly one source file.",
             ));
         }
-        let mut grants = self.0.lock().unwrap();
+        let mut grants = lock(&self.0);
         grants.retain(|_, grant| grant.expires > Instant::now());
         if grants.len() >= MAX_GRANTS {
             return Err(crate::ipc_error::IpcError::new(
@@ -216,7 +217,7 @@ impl Grants {
     }
 
     fn take(&self, handle: &str) -> Result<Grant> {
-        let mut grants = self.0.lock().unwrap();
+        let mut grants = lock(&self.0);
         grants.retain(|_, grant| grant.expires > Instant::now());
         let grant = grants
             .remove(handle)
@@ -228,7 +229,7 @@ impl Grants {
     }
 
     pub fn clear(&self) {
-        self.0.lock().unwrap().clear();
+        lock(&self.0).clear();
     }
 }
 
@@ -257,32 +258,10 @@ impl Read for SourceReader {
     }
 }
 
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Connection {
-    api_base: String,
-    token: String,
-}
 
 fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<serde_json::Value> {
-    let connection: Connection =
-        serde_json::from_str(connection).map_err(|_| "Local service is unavailable.")?;
-    let base =
-        reqwest::Url::parse(&connection.api_base).map_err(|_| "Invalid local service address.")?;
-    if base.scheme() != "http"
-        || base.host_str() != Some("127.0.0.1")
-        || base.port().is_none()
-        || !base.username().is_empty()
-        || base.password().is_some()
-        || base.path() != "/"
-        || base.query().is_some()
-        || base.fragment().is_some()
-    {
-        return Err(crate::ipc_error::IpcError::new(
-            "drop_connection_invalid",
-            "Invalid local service address.",
-        ));
-    }
+    let connection = crate::local_connection::Connection::new(connection)
+        .map_err(crate::ipc_error::IpcError::from)?;
     grant
         .validate()
         .map_err(|_| "Source file changed. Drop it again.")?;
@@ -299,15 +278,12 @@ fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<
     let form = reqwest::blocking::multipart::Form::new()
         .text("project", project.to_string())
         .part("file", file);
-    let client = reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
+    let response = connection
+        .client
+        .post(format!("{}/projects", connection.base))
+        .bearer_auth(&connection.token)
+        // The shared client caps requests at 30 s; a source upload needs longer.
         .timeout(Duration::from_secs(60 * 60))
-        .build()
-        .map_err(|_| "Could not initialize local upload.")?;
-    let response = client
-        .post(base.join("/projects").unwrap())
-        .bearer_auth(connection.token)
         .multipart(form)
         .send()
         .map_err(|_| "Local upload failed. Drop the source again to retry.")?;
@@ -371,7 +347,7 @@ pub fn native_drop_release(
     handle: String,
 ) -> Result<()> {
     trusted_window(&window)?;
-    grants.0.lock().unwrap().remove(&handle);
+    lock(&grants.0).remove(&handle);
     Ok(())
 }
 
@@ -385,7 +361,7 @@ pub async fn native_drop_upload(
 ) -> Result<serde_json::Value> {
     trusted_window(&window)?;
     let connection = {
-        let state = state.lock().unwrap();
+        let state = lock(&state);
         if state.closing || state.error.is_some() {
             return Err(crate::ipc_error::IpcError::new(
                 "drop_engine_unavailable",
@@ -558,7 +534,7 @@ mod tests {
         grants.take(&source.handle).unwrap();
         assert!(grants.take(&source.handle).is_err());
         grants.clear();
-        assert!(grants.0.lock().unwrap().is_empty());
+        assert!(lock(&grants.0).is_empty());
     }
 
     #[test]

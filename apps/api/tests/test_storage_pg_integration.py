@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
 from wenyi_core.pipeline.precision import PrecisionBatchExecutor
 from wenyi_core.pipeline.runstore import source_sha256
+from wenyi_core.pipeline.runtime_usage import UsageCoordinator
 from wenyi_core.pipeline.translation import TranslationService
 from wenyi_core.pipeline.translation_batch import BatchPlan
 
@@ -163,6 +165,55 @@ def test_usage_commit_recovery_does_not_double_charge(storage, tmp_path):
     assert storage.load_usage() == ledger
     assert storage.read_artifact(key) == ledger
     assert storage.read_artifact("usage-pending.json") is None
+
+
+@pytest.mark.parametrize("failure", ["commit", "recover", "event"])
+def test_usage_coordinator_retries_postgres_failures_without_losing_calls(
+    pg_storage, monkeypatch, failure
+):
+    tracker = UsageTracker()
+
+    class Source:
+        def usage_summary(self) -> dict:
+            return tracker.summary()
+
+    coordinator = UsageCoordinator(Source())
+    tracker.record("fast", UsageSample(10, 5, 15))
+    recover = pg_storage.recover_usage
+    state_lock = pg_storage.state_lock
+    recoveries = 0
+
+    def fail_publication():
+        nonlocal recoveries
+        recoveries += 1
+        if recoveries == 2:
+            raise OSError("interrupted")
+        recover()
+
+    def fail_event(*args, **kwargs):
+        raise OSError("interrupted")
+
+    @contextmanager
+    def fail_commit():
+        outer = getattr(pg_storage._local, "state_conn", None) is None
+        with state_lock():
+            yield
+            if outer:
+                raise OSError("interrupted")
+
+    with monkeypatch.context() as patch:
+        method, replacement = {
+            "commit": ("state_lock", fail_commit),
+            "recover": ("recover_usage", fail_publication),
+            "event": ("log_event", fail_event),
+        }[failure]
+        patch.setattr(pg_storage, method, replacement)
+        with pytest.raises(OSError, match="interrupted"):
+            coordinator.flush(pg_storage, scope="test")
+    assert (pg_storage.read_artifact("usage-pending.json") is not None) == (failure != "commit")
+    tracker.record("fast", UsageSample(10, 5, 15))
+    assert coordinator.flush(pg_storage, scope="retry")["totals"]["calls"] == 2
+    assert coordinator.flush(pg_storage, scope="retry")["totals"]["calls"] == 2
 
 
 @pytest.mark.parametrize("published", [False, True])

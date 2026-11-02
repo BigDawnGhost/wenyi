@@ -307,7 +307,7 @@ for (const stage of ["configuration", "credential"]) {
     await key.fill(" fake-retry-key ");
     await save.click();
     await expect(page.getByText(stage === "configuration"
-      ? "503: Configuration unavailable"
+      ? "Configuration unavailable"
       : "Configuration saved, but an API key could not be saved. Save again to retry.",
     { exact: true })).toBeVisible();
     await expect(save).toBeEnabled();

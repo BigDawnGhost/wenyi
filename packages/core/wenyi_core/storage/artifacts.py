@@ -11,6 +11,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
+from ..errors import ArtifactCorrupt
+
 
 class FileArtifacts:
     def __init__(self, run_dir: str):
@@ -40,9 +42,15 @@ class FileArtifacts:
 
     def read_artifact(self, key: str) -> Any | None:
         try:
-            return json.loads(self._artifact_path(key).read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            raw = self._artifact_path(key).read_text(encoding="utf-8")
+        except FileNotFoundError:
             return None
+        except OSError as error:
+            raise ArtifactCorrupt(f"Cannot read artifact {key}") from error
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as error:
+            raise ArtifactCorrupt(f"Artifact {key} is corrupt at byte {error.pos}") from error
 
     def write_artifact(self, key: str, value: Any) -> None:
         path = self._artifact_path(key)

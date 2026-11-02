@@ -119,7 +119,7 @@ test("loading and failed request are visible and retryable", async ({ page }) =>
   await open(page);
   await expect(page.getByRole("dialog").getByRole("status")).toBeVisible();
   release();
-  await expect(page.getByRole("dialog").getByText(/503: Archive unavailable/)).toBeVisible();
+  await expect(page.getByRole("dialog").getByText(/Archive unavailable/)).toBeVisible();
   await page.route(`**/api${endpoint}`, route => route.fulfill({ json: archive }));
   await page.getByRole("button", { name: "重新加载初稿" }).click();
   await expect(page.getByText("润色前对照稿")).toBeVisible();
