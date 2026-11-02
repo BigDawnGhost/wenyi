@@ -7,7 +7,6 @@ Long workflow locks are OS locks, never open database transactions.
 
 from __future__ import annotations
 
-import errno
 import hashlib
 import json
 import os
@@ -21,19 +20,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from ..errors import WenyiError
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..ingest.models import Chapter, Document
 from ..pipeline.runstore import ExportSnapshotStore, RunStore, source_sha256
+from .locks import StorageBusyError, exclusive_file_lock
 from .protocol import STATUS_DONE, STATUS_PENDING
 
-
-class StorageBusyError(WenyiError, BlockingIOError):
-    """Another local process owns the requested workflow lock.
-
-    Keeps ``BlockingIOError`` so existing ``except BlockingIOError`` guards keep
-    matching while the code migrates.
-    """
+# Re-exported: the class moved to locks.py, but callers still import it from here.
+__all__ = ["SqliteStorage", "StorageBusyError"]
 
 
 class SqliteStorage:
@@ -205,43 +199,11 @@ class SqliteStorage:
 
     @contextmanager
     def _process_file_lock(self, filename: str, *, blocking: bool) -> Iterator[None]:
+        """Delegate to the shared primitive so every store locks the same way."""
         if self._create:
             os.makedirs(self.run_dir, exist_ok=True)
-        with open(os.path.join(self.run_dir, filename), "a+b") as handle:
-            if os.name == "nt":  # pragma: no cover - Windows-specific
-                import msvcrt
-
-                handle.seek(0, os.SEEK_END)
-                if handle.tell() == 0:
-                    handle.write(b"\0")
-                    handle.flush()
-                while True:
-                    handle.seek(0)
-                    try:
-                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-                        break
-                    except OSError as error:
-                        if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
-                            raise
-                        if not blocking:
-                            raise StorageBusyError("Local workflow is already running") from error
-                        time.sleep(0.05)
-                try:
-                    yield
-                finally:
-                    handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                try:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
-                except BlockingIOError as error:
-                    raise StorageBusyError("Local workflow is already running") from error
-                try:
-                    yield
-                finally:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        with exclusive_file_lock(os.path.join(self.run_dir, filename), blocking=blocking):
+            yield
 
     @contextmanager
     def lock(self, blocking: bool = True) -> Iterator[None]:
