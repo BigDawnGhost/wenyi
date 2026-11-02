@@ -335,9 +335,9 @@ pub fn current_install() -> InstallCheck {
 /// Roots must be pairwise disjoint: neither equal nor nested either way, because
 /// cleaning, backing up, or uninstalling one must never reach another.
 ///
-/// Refusing startup is the job of the batch that wires the layers together. The
-/// rule stays here, and tested, so it exists in exactly one place.
-#[allow(dead_code)]
+/// The pre-upgrade snapshot is the caller: it refuses a backup directory that
+/// sits inside the data directory it is about to copy. The startup assertion that
+/// the batch wiring the layers together will turn into a refusal uses this too.
 pub fn check_disjoint(roots: &[(&'static str, &Path)]) -> Result<(), Error> {
     for (index, (_, path)) in roots.iter().enumerate() {
         for (_, other) in roots[index + 1..].iter() {

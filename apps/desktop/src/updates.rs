@@ -1,6 +1,7 @@
 //! Signed whole-application updates, owned by the native host rather than a page.
 use std::{
     io::Read,
+    path::PathBuf,
     sync::{atomic::Ordering, Arc, Mutex},
     time::Duration,
 };
@@ -11,12 +12,17 @@ use tauri::Manager;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::{
-    ipc_error::IpcError, local_connection::Connection, native_export::Saves, Engine, State,
+    ipc_error::IpcError, local_connection::Connection, migration, mutex::lock,
+    native_export::Saves, paths, Engine, State,
 };
-use crate::mutex::lock;
 
 const MANIFEST: &str = "https://github.com/BigDawnGhost/wenyi/releases/latest/download/latest.json";
 const RELEASE_API: &str = "https://api.github.com/repos/BigDawnGhost/wenyi/releases/latest";
+/// Layer-two directory that keeps one verified copy per completed upgrade.
+///
+/// Layer two and not layer one: the copy has to outlive the application, and
+/// layer one is the directory that is rebuilt on every launch.
+const BACKUP: &str = "backup";
 type Result<T> = std::result::Result<T, IpcError>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
@@ -438,6 +444,71 @@ fn cancel_prepare(connection: &Connection) {
         .send();
 }
 
+/// Copy the workspace aside and prove the copy, or explain why it was refused.
+///
+/// Called once the engine has exited and before the installer runs. Both ends of
+/// that window matter: a live engine keeps a write-ahead log moving underneath
+/// the copy, so the bytes read would be a mixture of two states, and an installer
+/// that started first has already replaced the files the copy is meant to preserve.
+///
+/// Layer two, not layer one, holds the copy: the point of keeping it is to have it
+/// after the application that wrote it is gone, and layer one is rebuilt on every
+/// launch.
+fn snapshot(engine: &Engine) -> std::result::Result<PathBuf, String> {
+    // No admitted workspace means no data directory, so an upgrade cannot lose
+    // anything and there is nothing to copy.
+    let workspace = engine
+        .workspace
+        .as_deref()
+        .ok_or("Wenyi could not find its data folder, so the update was cancelled.")?;
+    let target = paths::user_root()
+        .map_err(|error| error.message().to_owned())?
+        .join(BACKUP);
+    // A backup directory inside the directory being copied would be walked into
+    // its own copy, and each upgrade would then duplicate what the previous one
+    // wrote. The two roots belong to different layers and are never nested under
+    // either platform default, but the data directory can be named on the command
+    // line, so the copy is refused rather than attempted.
+    paths::check_disjoint(&[("data", workspace), ("backup", target.as_path())])
+        .map_err(|error| error.message().to_owned())?;
+    // The space check runs before anything is written, so an upgrade that is
+    // refused here leaves no partial copy behind.
+    migration::preflight(workspace, &target).map_err(|error| error.to_string())?;
+    let snapshot = migration::snapshot(workspace, &target, env!("WENYI_DESKTOP_VERSION"))
+        .map_err(|error| error.to_string())?;
+    Ok(snapshot.root)
+}
+
+/// Put the application back into the state it was in before the upgrade attempt.
+///
+/// The engine is already stopped by the time any caller reaches this, so the one
+/// thing that must happen is starting it again. Credentials are cleared first and
+/// the page is not published until the new connection exists: a window that shows
+/// the old token after the update failed is a window talking to a stopped engine.
+fn recover(
+    app: &tauri::AppHandle,
+    engine: &Engine,
+    state: &Mutex<State>,
+    saves: &Saves,
+    code: &str,
+    reason: String,
+) -> IpcError {
+    // Preserve the verified download for a retry, but restore the engine first.
+    lock(state).connection = None;
+    let recovery = crate::start_backend(app, engine, true);
+    {
+        let mut state = lock(state);
+        state.closing = false;
+        if let Err(error) = recovery {
+            state.error = Some(error);
+        }
+    }
+    saves.reopen();
+    engine.closing.store(false, Ordering::SeqCst);
+    crate::publish(app, state);
+    IpcError::new(code, reason)
+}
+
 fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Result<()> {
     let engine = app.state::<Engine>();
     let state = app.state::<Arc<Mutex<State>>>();
@@ -485,24 +556,34 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
     if let Some(mut backend) = lock(&engine.child).take() {
         backend.shutdown();
     }
+    // The engine is down, so the workspace holds no writer and SQLite has folded
+    // its write-ahead log back into the database. That is the only moment the
+    // data directory is a set of static files, which is what lets the snapshot
+    // be a plain byte copy with no SQLite binding on this side.
+    //
+    // The snapshot runs before the installer starts and aborts the upgrade when
+    // it fails. An upgrade that replaces the application without a verified copy
+    // of what the old version wrote is the failure this ordering prevents, and
+    // the recovery path below is the one an installer that refused to start
+    // already used.
+    if let Err(error) = snapshot(&engine) {
+        return Err(recover(
+            app,
+            &engine,
+            &state,
+            &saves,
+            "update_backup_failed",
+            error,
+        ));
+    }
     if update.install(bytes.as_slice()).is_err() {
-        // Preserve verified download for a retry, but restore the engine first.
-        // Do not publish stale credentials or reopen the UI during recovery.
-        lock(&state).connection = None;
-        let recovery = crate::start_backend(app, &engine, true);
-        {
-            let mut state = lock(&state);
-            state.closing = false;
-            if let Err(error) = recovery {
-                state.error = Some(error);
-            }
-        }
-        saves.reopen();
-        engine.closing.store(false, Ordering::SeqCst);
-        crate::publish(app, &state);
-        return Err(IpcError::new(
+        return Err(recover(
+            app,
+            &engine,
+            &state,
+            &saves,
             "update_install_failed",
-            "The update could not be installed.",
+            String::from("The update could not be installed."),
         ));
     }
     let diagnostics = app.state::<crate::diagnostics::Diagnostics>();
@@ -574,6 +655,7 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn updater_requires_version_bound_signatures_without_guest_permissions() {
@@ -694,5 +776,47 @@ mod tests {
         assert!(state.snapshot.phase == Phase::Checking);
         assert!(state.bytes.is_none());
         assert!(state.snapshot.error.is_none());
+    }
+
+    #[test]
+    fn the_backup_lands_below_layer_two_and_not_below_the_data_directory() {
+        // The two roots are separate layers, so copying one never has to walk the
+        // other. Asserting the relationship here keeps the preflight refusal from
+        // being the only place it is written down.
+        let profile = Path::new("C:/Users/example");
+        let workspace = profile.join("AppData/Local/Wenyi Desktop");
+        let backup = profile.join("Wenyi").join(BACKUP);
+        paths::check_disjoint(&[("data", &workspace), ("backup", &backup)]).unwrap();
+        assert_eq!(backup, PathBuf::from("C:/Users/example/Wenyi/backup"));
+    }
+
+    #[test]
+    fn a_backup_inside_the_data_directory_is_refused() {
+        // The snapshot walks its source, so a target inside it would be copied
+        // into itself and every upgrade would duplicate the previous copy.
+        let workspace = Path::new("C:/Users/example/Wenyi Desktop");
+        let nested = workspace.join("Wenyi").join(BACKUP);
+        assert_eq!(
+            paths::check_disjoint(&[("data", workspace), ("backup", &nested)]).err(),
+            Some(paths::Error::Overlap)
+        );
+    }
+
+    #[test]
+    fn the_snapshot_refuses_an_upgrade_it_cannot_restore() {
+        // A refused snapshot has to stop the installer before it runs. The error
+        // code is what the page branches on, and it has to stay distinct from a
+        // failed launch so the two failures are not reported as one.
+        let refusal = IpcError::new(
+            "update_backup_failed",
+            migration::Error::InsufficientSpace {
+                required: 2_000_000_000,
+                available: 1_000_000_000,
+            }
+            .to_string(),
+        );
+        assert_eq!(refusal.code, "update_backup_failed");
+        assert!(refusal.message.contains("cancelled"), "{}", refusal.message);
+        assert_ne!(refusal.code, "update_install_failed");
     }
 }

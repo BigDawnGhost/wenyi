@@ -62,6 +62,10 @@ impl Snapshot {
     /// path writes the snapshot just before the installer starts, and the first
     /// launch of the new version is what needs to trust it. Without this there
     /// would be no way to check a backup this run did not create.
+    ///
+    /// Unused in this build for that reason; the caller arrives with the first
+    /// launch that has to adopt an upgrade's backup.
+    #[allow(dead_code)]
     pub fn load(root: &Path) -> Result<Self, Error> {
         let manifest = read(&root.join(MANIFEST))?;
         if manifest.schema_version != SCHEMA_VERSION {

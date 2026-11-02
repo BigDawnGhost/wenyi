@@ -1,21 +1,28 @@
 //! Directory snapshot taken before an upgrade installs anything.
 //!
-//! This module ships without a caller on purpose: the update path starts using
-//! it in its own batch, so merging it changes no application behaviour. When it
-//! is wired in, it runs between shutting the engine down and starting the
+//! The update path calls this between shutting the engine down and starting the
 //! installer, which is the only moment the data directory is static.
 //!
 //! Nothing here opens SQLite. The crate carries no SQLite binding (a C build
 //! dependency is exactly what the Windows build avoids), so the snapshot is a
 //! byte-for-byte copy plus a manifest that proves the copy. Byte equality is the
 //! stronger claim: it holds for every table this code has never heard of.
-
-// Until the update path calls it, every item here is unused.
-#![allow(dead_code, unused_imports)]
+//!
+//! `Snapshot::load` is what the *next* version reads. The process that writes a
+//! backup and the process that trusts it are two different binaries, so a module
+//! that could only write would leave the new version with no way to check a copy
+//! the old one made.
 
 mod backup;
 
-pub use backup::{preflight, snapshot, verify, Entry, Snapshot};
+pub use backup::{preflight, snapshot};
+// The reading half of the contract. Nothing in this build calls it: a backup is
+// written by the version being replaced and read by the version that replaces it,
+// so the caller is the next version's first launch, not this one. Keeping the
+// functions compiled is what stops that reader from being written against an
+// interface nobody has exercised.
+#[allow(unused_imports)]
+pub use backup::{verify, Entry, Snapshot};
 
 use std::fmt;
 
@@ -65,7 +72,19 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl std::error::Error for Error {
+    /// The underlying filesystem failure, when there is one.
+    ///
+    /// The message above is what a person reads; this is what a support log keeps,
+    /// and it is the only way the operating system's own reason survives the
+    /// conversion to a displayable string.
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Source(error) | Self::Target(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 /// Sizes in a form a person can compare at a glance.
 fn size(bytes: u64) -> String {

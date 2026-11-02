@@ -122,3 +122,91 @@ def test_windows_full_tier_uses_bash_for_the_tls_graph_check():
         step for step in steps if step.get("name") == "Test Windows local state and artifact paths"
     )
     assert "packages/core/tests/test_file_migrations.py" in windows["run"]
+
+
+def _installer_hooks() -> Path:
+    """The NSIS hook file the Windows bundle configuration names."""
+    config = json.loads((ROOT / "apps/desktop/tauri.windows.conf.json").read_text())
+    declared = config["bundle"]["windows"]["nsis"]["installerHooks"]
+    return (ROOT / "apps/desktop" / declared).resolve()
+
+
+def _hook_code() -> str:
+    """The hooks file with its comments removed, so prose cannot satisfy a check."""
+    return "\n".join(
+        line
+        for line in _installer_hooks().read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith(";")
+    )
+
+
+def test_the_windows_bundle_installs_its_nsis_hooks():
+    # tauri-bundler only emits `!include` for the hooks file when this setting
+    # exists. Without it the template has no include at all, all four
+    # `!ifmacrodef NSIS_HOOK_*` checks are false, and every macro is skipped while
+    # the build still succeeds. A hooks file that nothing includes is the failure
+    # this asserts against -- not a missing macro body.
+    hooks = _installer_hooks()
+    assert hooks.is_file(), f"installerHooks names a missing file: {hooks}"
+    text = hooks.read_text(encoding="utf-8")
+    for macro in ("NSIS_HOOK_PREINSTALL", "NSIS_HOOK_POSTUNINSTALL"):
+        assert f"!macro {macro}" in text, f"{macro} is missing from {hooks.name}"
+
+
+def test_installer_hooks_never_name_bundler_defines():
+    # The hooks file is included before the block that defines PRODUCTNAME,
+    # BUNDLEID and MANUPRODUCTKEY, so referring to one there expands to nothing or
+    # fails to compile -- and either way the guard would name the wrong key. The
+    # registry path is spelled out instead; this keeps a later tidy-up from
+    # reintroducing the define and silently disabling the check.
+    code = _hook_code()
+    for define in ("${PRODUCTNAME}", "${BUNDLEID}", "${MANUPRODUCTKEY}"):
+        assert define not in code, f"{define} is undefined where the hooks are included"
+
+
+def test_the_nsis_hook_guards_the_registry_key_rust_also_reads():
+    # The key in the hooks file and INSTALL_KEY in src/paths.rs are two spellings
+    # of one key: the uninstaller reads the first and the startup check reads the
+    # second. A divergence would make the PREINSTALL block never fire.
+    rust = (ROOT / "apps/desktop/src/paths.rs").read_text(encoding="utf-8")
+    declared = next(
+        line.split("=", 1)[1].strip().rstrip(";").strip()
+        for line in rust.splitlines()
+        if "pub const INSTALL_KEY" in line
+    )
+    # The Rust literal escapes each separator for the compiler; NSIS does not, so
+    # the two spellings are compared after undoing the source escaping.
+    assert declared == '"Software\\\\wenyi\\\\Wenyi Desktop"'
+    assert declared.strip('"').replace("\\\\", "\\") in _hook_code()
+
+
+def test_the_nsis_hook_names_layer_two_under_the_user_profile():
+    # Layer two is %USERPROFILE%\\Wenyi. The first review of the isolation design
+    # put it under %LOCALAPPDATA%, where that path names the disposable runtime
+    # layer instead -- and the wrong value leaves the user's real data behind.
+    code = _hook_code()
+    assert "$PROFILE\\Wenyi" in code
+    assert "$LOCALAPPDATA\\Wenyi" not in code
+
+
+def test_the_nsis_hook_checks_for_a_reparse_point_before_recursing():
+    # RMDir /r recurses through a junction, so a project directory a user has
+    # replaced with a link to another drive would take that drive's contents with
+    # it on the way out. The one recursive removal here is guarded.
+    code = _hook_code()
+    assert "GetFileAttributes" in code
+    assert "${WENYI_REPARSE_POINT}" in code
+    remove = code.split("!macro wenyi_remove_tree", 1)[1].split("!macroend", 1)[0]
+    assert "RMDir /r" in remove
+    assert remove.index("GetFileAttributes") < remove.index("RMDir /r")
+
+
+def test_the_nsis_hook_rechecks_the_uninstall_checkbox_itself():
+    # NSIS_HOOK_POSTUNINSTALL is inserted outside the `delete app data` branch, so
+    # that branch does not filter it. Without its own test, an uninstall that never
+    # asked to delete anything would delete the user's work.
+    code = _hook_code()
+    post = code.split("!macro NSIS_HOOK_POSTUNINSTALL", 1)[1]
+    assert "$DeleteAppDataCheckboxState" in post
+    assert "$UpdateMode" in post
+    assert post.index("$DeleteAppDataCheckboxState") < post.index("!insertmacro wenyi_remove_tree")

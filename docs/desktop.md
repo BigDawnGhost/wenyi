@@ -115,7 +115,29 @@ The default Desktop workspace is:
 | macOS | `~/Library/Application Support/Wenyi Desktop` |
 | Windows | `%LOCALAPPDATA%/Wenyi Desktop` |
 
-The workspace contains a SQLite catalog, per-project SQLite state, uploaded originals, parse caches, and generated exports. Keep the entire workspace when backing up; stop Desktop before taking a filesystem backup. Do not copy only a live SQLite database while omitting its WAL.
+On Windows, the installer copies the workspace into a timestamped folder under
+`%USERPROFILE%/Wenyi/backup/<version>-<timestamp>/` before it replaces anything.
+The copy is verified against a `MANIFEST.json` of every file's size and SHA-256,
+and a copy that fails that check cancels the update before the installer starts.
+The snapshot is taken after the local engine has exited, which is the only moment
+the workspace holds no writer and SQLite has folded its write-ahead log back into
+the database.
+
+A setup file run by hand cannot take that snapshot, so the installer requires one:
+when Wenyi is already installed and no backup carrying a manifest exists, the
+installation stops before a single file is copied and says so. Updating from
+inside Wenyi always satisfies this, because it writes the backup first.
+
+Uninstalling leaves the workspace, `%USERPROFILE%/Wenyi`, and the rest of the
+user's data in place. Ticking **Delete the application data** on the uninstall
+confirmation page removes them; leaving it clear removes only the application's
+own files. Updating is never treated as an uninstall, so an update never removes
+project data.
+
+The workspace contains a SQLite catalog, per-project SQLite state, uploaded
+originals, parse caches, and generated exports. Keep the entire workspace when
+backing up by hand; stop Desktop first. Do not copy only a live SQLite database
+while omitting its WAL.
 
 Job-status polling reads committed catalog snapshots without reserving a write
 lock, so an active catalog writer does not block status lookups.
