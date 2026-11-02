@@ -6,7 +6,6 @@ from collections.abc import Callable
 from contextlib import contextmanager
 
 import yaml
-from fastapi import HTTPException
 from wenyi_core.config import Config
 from wenyi_core.llm.routing import resolve_routes
 
@@ -18,7 +17,7 @@ from .config_documents import (
     project_llm,
 )
 from .context import BackendStorage
-from .errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
+from .errors import INVALID_CONFIGURATION, PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from .global_settings import registered_models
 from .ports.projects import RUNNING_PROJECT_STATUSES, ProjectReader
 from .strategies import _saved_strategy_to_config
@@ -133,4 +132,6 @@ def config_response(project: dict, config: Config) -> dict:
 
 def require_book(project: dict) -> None:
     if project.get("fmt") == "srt":
-        raise HTTPException(422, "This operation is only available for book projects")
+        raise ApiError(
+            INVALID_CONFIGURATION, 422, "This operation is only available for book projects"
+        )

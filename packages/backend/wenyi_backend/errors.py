@@ -54,17 +54,18 @@ class ApiError(HTTPException):
 
 
 def error_envelope(*, code: str, message: str, request_id: str | None = None) -> dict[str, Any]:
-    """Build the response body that carries both the new and the legacy fields."""
+    """Build the response body for a coded failure.
+
+    ``code`` is the stable identity and ``message`` is what a person reads.
+    """
     body: dict[str, Any] = {"code": code, "message": message}
     if request_id:
         body["request_id"] = request_id
-    # Dual write: clients that only read ``detail`` keep working unchanged.
-    body["detail"] = message
     return body
 
 
 async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
-    """Render an :class:`ApiError` with its code and the legacy detail field."""
+    """Render an :class:`ApiError` with its code and message."""
     body = error_envelope(code=exc.code, message=exc.message, request_id=current_request_id())
     return JSONResponse(body, status_code=exc.status)
 

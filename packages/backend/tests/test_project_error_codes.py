@@ -17,7 +17,7 @@ def test_missing_project_reports_project_not_found(backend_context, monkeypatch)
     assert response.status_code == 404
     body = response.json()
     assert body["code"] == PROJECT_NOT_FOUND
-    assert body["detail"] == "project not found"
+    assert "detail" not in body
     assert body["message"] == "project not found"
 
 

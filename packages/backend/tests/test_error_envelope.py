@@ -60,13 +60,13 @@ def test_unrecognised_failure_keeps_the_original_detail_only_shape():
     assert response.json() == {"detail": "nothing depends on this text"}
 
 
-def test_api_error_renders_its_code_alongside_the_legacy_detail():
+def test_api_error_renders_the_coded_shape():
     body = _client().get("/api-error").json()
     assert body["code"] == PROJECT_BUSY
-    assert body["detail"] == "project already has a running task"
+    assert body["message"] == "project already has a running task"
 
 
-def test_envelope_omits_request_id_when_absent_but_always_writes_detail():
-    assert error_envelope(code="x", message="m") == {"code": "x", "message": "m", "detail": "m"}
+def test_envelope_omits_request_id_when_absent():
+    assert error_envelope(code="x", message="m") == {"code": "x", "message": "m"}
     with_id = error_envelope(code="x", message="m", request_id="r1")
     assert with_id["request_id"] == "r1"

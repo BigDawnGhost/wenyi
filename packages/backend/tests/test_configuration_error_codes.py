@@ -19,7 +19,7 @@ def test_invalid_project_yaml_returns_invalid_configuration(backend_context, mon
     assert response.status_code == 422
     body = response.json()
     assert body["code"] == INVALID_CONFIGURATION
-    assert body["detail"] == body["message"]
+    assert "detail" not in body
 
 
 def test_configuration_raise_is_still_an_http_exception():
