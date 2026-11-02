@@ -18,6 +18,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import BinaryIO
 
 from ..errors import WenyiError
 
@@ -142,7 +143,7 @@ class FileLockHandle:
     def __init__(self, lock_path: str):
         self._path = os.fspath(lock_path)
         self._handle: int | None = None
-        self._file: object | None = None
+        self._file: BinaryIO | None = None
 
     @property
     def backend(self) -> str:

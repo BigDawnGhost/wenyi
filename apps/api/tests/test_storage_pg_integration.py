@@ -11,7 +11,6 @@ import threading
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 from api_test_support import document, initialize
@@ -173,7 +172,12 @@ def test_usage_coordinator_retries_postgres_failures_without_losing_calls(
     pg_storage, monkeypatch, failure
 ):
     tracker = UsageTracker()
-    coordinator = UsageCoordinator(SimpleNamespace(usage_summary=tracker.summary))
+
+    class Source:
+        def usage_summary(self) -> dict:
+            return tracker.summary()
+
+    coordinator = UsageCoordinator(Source())
     tracker.record("fast", UsageSample(10, 5, 15))
     recover = pg_storage.recover_usage
     state_lock = pg_storage.state_lock

@@ -313,6 +313,11 @@ chunk 不超过 Vite 默认的 500 kB 限制。体积增长时应继续拆包，
 其他入口可用 `WENYI_LOG_FORMAT=json` 选择 JSON。内部 traceback 只保留在服务端日志中，
 不通过项目事件 API 返回；读取历史事件时也会过滤该字段。
 
+Web 和 Desktop API 中带稳定错误码的失败响应包含 `code`、`message`，以及可选的
+`request_id`。这类响应不再通过 `detail` 重复返回文案：外部客户端必须读取 `message`，
+并依据 `code` 而不是英文文案判断错误类型。未编码的 HTTP 异常仍保留 FastAPI 的
+`{"detail": ...}` 形式。共享界面兼容两种响应，并在页面提示和通知中统一本地化已知错误码。
+
 `GET /metrics` 输出 Prometheus 文本，使用与其他 API 路由一致的 `API_TOKEN` 鉴权。
 开启鉴权时须给采集器配置 bearer token。API 和 worker 必须连接同一个 Redis 数据库：
 
