@@ -249,7 +249,7 @@ def test_cleanup_closes_owned_sqlite_handles_and_blocks_only_its_project(
 
     def remove(path):
         assert stores
-        assert all(store._conn is None for store in stores)
+        assert all(getattr(store._conn_local, "conn", None) is None for store in stores)
         entered.set()
         assert release.wait(10)
         original_remove(path)

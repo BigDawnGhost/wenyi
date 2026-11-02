@@ -54,7 +54,7 @@ def test_inspection_releases_all_storage_handles(inspected_project, path, status
     response = client.get(f"/projects/{pid}{path}")
     assert response.status_code == status, response.text
     assert instances, "The route must actually inspect persisted state"
-    assert all(instance._conn is None for instance in instances)
+    assert all(getattr(instance._conn_local, "conn", None) is None for instance in instances)
 
 
 @pytest.mark.parametrize("method", ["GET", "POST"])
@@ -73,7 +73,7 @@ def test_read_failure_still_closes_storage(inspected_project, monkeypatch):
     monkeypatch.setattr(SqliteStorage, "all_terms", fail)
     with pytest.raises(OSError, match="Read failed"):
         client.get(f"/projects/{pid}/glossary/terms")
-    assert all(instance._conn is None for instance in instances)
+    assert all(getattr(instance._conn_local, "conn", None) is None for instance in instances)
 
 
 def test_subtitle_inspection_closes_storage(desktop_context, monkeypatch):
@@ -85,4 +85,4 @@ def test_subtitle_inspection_closes_storage(desktop_context, monkeypatch):
     monkeypatch.setattr("wenyi_backend.routers.subtitles.storage_for", lambda _: storage)
     with TestClient(create_app(desktop_context)) as client:
         assert client.get(f"/projects/{pid}/subtitles").status_code == 200
-    assert storage._conn is None
+    assert getattr(storage._conn_local, "conn", None) is None

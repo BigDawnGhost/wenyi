@@ -142,15 +142,33 @@ class SqliteStorage:
         return conn
 
     def close(self) -> None:
-        """Close every registered connection after active operations finish."""
+        """Release this thread's connection; other threads release their own.
+
+        Callers borrow a storage for one operation and close it in a finally
+        block, so closing every thread's connection would break a concurrent
+        caller still holding its own.
+        """
         if getattr(self._conn_local, "depth", 0):
             raise RuntimeError("Cannot close storage inside a state transaction")
+        conn = getattr(self._conn_local, "conn", None)
+        self._conn_local.conn = None
+        self._conn_local.depth = 0
+        if conn is None:
+            return
+        with self._mutex:
+            self._connections.discard(conn)
+        conn.close()
+
+    def close_all(self) -> None:
+        """Close every thread's connection; used when the run lock finally exits."""
+        if getattr(self._conn_local, "depth", 0):
+            raise RuntimeError("Cannot close storage inside a state transaction")
+        self._conn_local.conn = None
+        self._conn_local.depth = 0
         with self._mutex:
             connections, self._connections = self._connections, set()
         for conn in connections:
             conn.close()
-        self._conn_local.conn = None
-        self._conn_local.depth = 0
 
     @contextmanager
     def state_lock(self) -> Iterator[None]:
@@ -235,7 +253,9 @@ class SqliteStorage:
                 yield
             finally:
                 if self._lock_local.depths[".run.lock"] == 1:
-                    self.close()
+                    # The run lock owns the whole store: every thread's
+                    # connection is released when it finally exits.
+                    self.close_all()
 
     def assemble_lock(self):
         return self._file_lock(".assemble.lock")
