@@ -184,6 +184,12 @@ def platform_home() -> Path:
     )
 
 
+# Resolution never checks whether the profile can be written to. A user-level
+# directory that exists but refuses a write is a real condition this code cannot
+# repair by choosing another one, and the failure belongs at the write, where the
+# error can name the directory that refused, not here.
+
+
 def user_root(*, home: Path | None = None) -> Path:
     """Layer two: user-level data that outlives the application.
 
