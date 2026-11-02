@@ -104,7 +104,6 @@ pub fn runtime_root() -> Result<PathBuf, Error> {
 }
 
 /// Layer two: user-level data that is backed up and shared across projects.
-#[allow(dead_code)]
 pub fn user_root() -> Result<PathBuf, Error> {
     Ok(home_dir()?.join(USER))
 }
@@ -457,15 +456,120 @@ fn overlaps(left: &Path, right: &Path) -> bool {
 /// directory that sits inside the data directory it is about to copy, and the
 /// library-root admission refuses a location that is the installation, the
 /// workspace, or either user-level layer.
+///
+/// Comparison is by whole path component and case-insensitive on Windows, through
+/// the same rules the admission uses. A spelling mismatch would make the opposite
+/// mistake: an installation inside a user's data directory would pass in silence,
+/// because "D:/Apps/Wenyi" and "d:/apps/wenyi" are one directory to the filesystem
+/// and two strings to a byte comparison. It would also refuse layer one beside
+/// layer two on a profile whose two halves differ by case, which on Windows they
+/// cannot, and on any other platform they must not.
 pub fn check_disjoint(roots: &[(&'static str, &Path)]) -> Result<(), Error> {
     for (index, (_, path)) in roots.iter().enumerate() {
         for (_, other) in roots[index + 1..].iter() {
-            if path.starts_with(other) || other.starts_with(path) {
+            if overlaps(path, other) {
                 return Err(Error::Overlap);
             }
         }
     }
     Ok(())
+}
+
+/// The two user-level layers, in the order the layout names them.
+///
+/// Layers one and two are derivable on every platform from the profile alone, so
+/// the installer applies the same pair to `$INSTDIR` before a single file is
+/// copied. This function is the single spelling of that pair on the native side;
+/// the NSIS hook has to repeat it, because the two programs share no code, and a
+/// test pins the repeated spelling against these literals.
+pub fn user_layers() -> Result<[(&'static str, PathBuf); 2], Error> {
+    Ok([
+        ("layer-one", runtime_root()?),
+        ("layer-two", user_root()?),
+    ])
+}
+
+/// The layer-three root this start will actually use, when it can name one.
+///
+/// `None` is the ordinary answer for a development run, a test, and an unpacked
+/// build: none of them has an installer record, so none of them has a directory
+/// beside an installation. It is also the answer for a refused choice — an
+/// installation at a volume root has no sibling, and `main` then runs without a
+/// layer-three root rather than inventing one. The startup assertion reports the
+/// roots it is given and never derives a fourth.
+pub fn layer_three(install: &InstallCheck, workspace: &Path) -> Option<PathBuf> {
+    if matches!(install, InstallCheck::NotInstalled | InstallCheck::Unreadable) {
+        return None;
+    }
+    let install_dir = running_install_dir().ok()?;
+    let library = library_root(&install_dir).ok()?;
+    admit_library_root(&library, &install_dir, workspace)
+        .ok()
+        .map(|()| library)
+}
+
+/// What this start found when it compared the four parties of the layout.
+///
+/// The four are layers one and two, layer three, and the installation directory.
+/// `check_disjoint` is called with all of them at once, so the layout is admitted
+/// only when no two of the six pairs share a directory or contain one another.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LayoutCheck {
+    /// Every pair answered, and the layout is live.
+    Consistent,
+    /// Two of the four parties share a directory or contain one another.
+    Overlap,
+    /// One of the user-level roots cannot be resolved on this computer.
+    Unresolved,
+}
+
+/// Whether the layers and the installation directory are pairwise disjoint.
+///
+/// This is the startup half of the layout rule; the installer applies its own
+/// half to `$INSTDIR` before copying anything, and admitting a new layer-three
+/// folder applies a third to the folder a person picked. All three exist because
+/// each one runs when the others cannot: the installer never runs again, and the
+/// admission only ever sees a folder someone chose.
+///
+/// The participants are supplied rather than resolved here, so that the caller
+/// decides what a development run contributes. `library` is `None` when no
+/// installation was recorded, which is the state of every `cargo run`, every test,
+/// and every unpacked build: with three parties the three pairs that remain are
+/// still checked, and a start that would fail because a developer has no
+/// installer record never happens.
+pub fn check_layout(install_dir: &Path, library: Option<&Path>) -> LayoutCheck {
+    let Some(layers) = user_layers().ok() else {
+        return LayoutCheck::Unresolved;
+    };
+    let mut roots: Vec<(&'static str, &Path)> = Vec::with_capacity(4);
+    roots.extend(layers.iter().map(|(name, path)| (*name, path.as_path())));
+    roots.push(("install", install_dir));
+    if let Some(library) = library {
+        roots.push(("layer-three", library));
+    }
+    match check_disjoint(&roots) {
+        Ok(()) => LayoutCheck::Consistent,
+        Err(_) => LayoutCheck::Overlap,
+    }
+}
+
+impl LayoutCheck {
+    /// The message shown when a start is refused, or `None` when it proceeds.
+    ///
+    /// A refusal has to say what to do, because the user cannot see a directory
+    /// layout: the file that explains the arrangement is the one below, and it is
+    /// written before this runs.
+    pub fn message(&self) -> Option<&'static str> {
+        match self {
+            Self::Consistent => None,
+            Self::Overlap => Some(
+                "Wenyi's data folders overlap. One of them is inside another, which would let an upgrade or an uninstall remove more than it should. Move the installation or the project folder so the two are separate, then reopen Wenyi. The diagnostic log in the workspace records which folders were compared.",
+            ),
+            Self::Unresolved => Some(
+                "Wenyi could not determine where its user folders are. Check that the user profile is available, then reopen Wenyi. The diagnostic log in the workspace records which folders were compared.",
+            ),
+        }
+    }
 }
 
 /// Platform base the workspace and its log fallback derive from.
@@ -737,6 +841,138 @@ mod tests {
         assert!(!overlaps(Path::new("D:/Apps"), Path::new("D:/Apps2")));
         assert!(overlaps(Path::new("D:/Apps"), Path::new("D:/Apps/data")));
         assert!(!overlaps(Path::new("D:/Apps"), Path::new("D:/Apps2/data")));
+    }
+
+    #[test]
+    fn the_four_parties_are_admitted_only_when_pairwise_disjoint() {
+        // The layout of an installation whose layer three is the sibling directory
+        // the default names. This is the ordinary case, and it must pass.
+        let home = Path::new("C:/Users/Reader");
+        let runtime = home.join(".wenyi/desktop");
+        let user = home.join("Wenyi");
+        let install = Path::new("D:/Apps/Wenyi Desktop");
+        for (first, second) in [
+            (runtime.clone(), user.clone()),
+            (runtime.clone(), install.to_path_buf()),
+            (user.clone(), install.to_path_buf()),
+        ] {
+            assert_eq!(
+                check_disjoint(&[("first", &first), ("second", &second)]),
+                Ok(()),
+                "{first:?} and {second:?} are separate"
+            );
+        }
+        // The installation sits beside layer three, not inside it, so the fourth
+        // pair is separate as well.
+        let library = library_root(install).unwrap();
+        assert_eq!(
+            check_disjoint(&[
+                ("layer-one", &runtime),
+                ("layer-two", &user),
+                ("install", install),
+                ("layer-three", &library),
+            ]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn an_installation_inside_a_layer_is_rejected_whatever_the_spelling() {
+        // "相等的" and "互为祖先" are the same failure for this check, and the
+        // spelling must not decide it: the filesystem treats these as one directory.
+        let install = Path::new("C:/Users/Reader/Wenyi/Install");
+        for layer in [
+            Path::new("C:/Users/Reader/Wenyi"),
+            Path::new("c:/users/reader/wenyi"),
+            Path::new("C:\\Users\\Reader\\Wenyi"),
+            install,
+        ] {
+            assert_eq!(
+                check_disjoint(&[("layer-two", layer), ("install", install)]).err(),
+                Some(Error::Overlap),
+                "{layer:?} and {install:?} must not be admitted"
+            );
+        }
+    }
+
+    #[test]
+    fn sibling_directories_that_share_a_name_prefix_are_admitted() {
+        // A byte-prefix test would reject "Wenyi Desktop Data" beside "Wenyi
+        // Desktop". Whole components are what make the fourth pair work at all.
+        let install = Path::new("D:/Apps/Wenyi Desktop");
+        let library = Path::new("D:/Apps/Wenyi Desktop Data");
+        assert_eq!(
+            check_disjoint(&[("install", install), ("layer-three", library)]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_development_run_contributes_three_parties_and_still_passes() {
+        // With no installation record there is no layer three. The remaining
+        // pairs are still checked; what must never happen is a start that fails
+        // because a developer has no installer record.
+        let home = env_path(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
+        let Some(home) = home else {
+            return;
+        };
+        let running = match running_install_dir() {
+            Ok(running) => running,
+            Err(_) => return,
+        };
+        assert_eq!(
+            check_layout(&running, None),
+            LayoutCheck::Consistent,
+            "a run outside any installation must not be refused"
+        );
+        assert!(LayoutCheck::Consistent.message().is_none());
+        // And the same three parties are not where the engine was told to work.
+        assert_eq!(
+            check_disjoint(&[("layer-two", &home.join(USER)), ("install", &running)]),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn a_refusal_always_explains_what_to_do() {
+        // A refusal the user cannot act on is a refusal that gets reported as a
+        // broken application. Both failure kinds carry a message, and the two
+        // messages differ so that the log says which rule was broken.
+        let overlap = LayoutCheck::Overlap.message().unwrap();
+        let unresolved = LayoutCheck::Unresolved.message().unwrap();
+        assert_ne!(overlap, unresolved);
+        assert!(overlap.contains("overlap"));
+        assert!(overlap.contains("reopen Wenyi"));
+        assert!(unresolved.contains("user profile"));
+    }
+
+    #[test]
+    fn the_user_layers_are_the_two_documented_directories() {
+        let Ok(layers) = user_layers() else {
+            return;
+        };
+        assert_eq!(layers[0].0, "layer-one");
+        assert_eq!(layers[1].0, "layer-two");
+        assert_eq!(layers[0].1.file_name().unwrap(), ENTRY);
+        assert_eq!(layers[1].1.file_name().unwrap(), USER);
+        let roots: Vec<(&'static str, &Path)> = layers
+            .iter()
+            .map(|(name, path)| (*name, path.as_path()))
+            .collect();
+        assert_eq!(check_disjoint(&roots), Ok(()));
+    }
+
+    #[test]
+    fn an_unrecorded_installation_has_no_layer_three() {
+        // The development door of the assertion. Nothing is derived for a build
+        // that was never installed, so the assertion cannot refuse a start for a
+        // directory nobody chose.
+        for install in [InstallCheck::NotInstalled, InstallCheck::Unreadable] {
+            assert_eq!(
+                layer_three(&install, Path::new("C:/profile/Wenyi Desktop")),
+                None
+            );
+        }
     }
 
     #[test]

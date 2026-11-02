@@ -143,34 +143,38 @@ fn fail(app: &tauri::AppHandle, state: &Mutex<State>, error: &'static str) {
     publish(app, state);
 }
 
-/// Layer three for this start, or None when this is not an installed application.
+/// Refuse this start when the layout would let one cleanup reach another layer.
 ///
-/// A development run, a test, and an unpacked build all reach this function with
-/// no installer record. They must not receive a library root: the only sibling
-/// this executable has is `target/debug`, and writing a user's projects into a
-/// build directory would be a location nobody chose. The absence of the argument
-/// is what tells the engine to keep the workspace it was given.
+/// Layer three is the directory this start will actually use, so the six pairs
+/// are checked against what the engine is about to be handed rather than against
+/// what the default would have named. A development run, a test, and an unpacked
+/// build contribute no layer three, because none of them has an installer record
+/// and the only sibling of a `target/debug` executable is a build directory
+/// nobody chose; those starts are still checked on the three parties that remain.
 ///
-/// A recorded installation whose directory no longer matches is still installed
-/// -- that is the case where the sibling matters most, because the record is the
-/// only thing that still knows where the previous version kept its data.
-fn library_root(
-    workspace: &std::path::Path,
-    install: &paths::InstallCheck,
-) -> Option<std::path::PathBuf> {
-    if matches!(
-        install,
-        paths::InstallCheck::NotInstalled | paths::InstallCheck::Unreadable
-    ) {
-        return None;
+/// The log is already open here on purpose. A start that ends at this point has
+/// no window, no engine, and no console in a release build, so the file is the
+/// only place that can say which folders were compared.
+fn assert_layout(
+    diagnostics: &diagnostics::Diagnostics,
+    library: Option<&std::path::Path>,
+) -> Result<(), &'static str> {
+    let running = paths::running_install_dir().map_err(|_| {
+        "Wenyi could not determine which folder it is running from. Reinstall Wenyi into a folder of its own."
+    })?;
+    let layout = paths::check_layout(&running, library);
+    if layout == paths::LayoutCheck::Consistent {
+        return Ok(());
     }
-    let install_dir = paths::running_install_dir().ok()?;
-    let library = paths::library_root(&install_dir).ok()?;
-    // A library directory that is the workspace itself, or contains it, would
-    // make one directory stand for two layers. The refused case keeps the engine
-    // on the workspace it already has rather than inventing a third location.
-    paths::admit_library_root(&library, &install_dir, workspace).ok()?;
-    Some(library)
+    diagnostics.record(
+        diagnostics::Source::Native,
+        diagnostics::Event::LayoutRefused,
+        serde_json::json!({}),
+    );
+    diagnostics.drain();
+    Err(layout
+        .message()
+        .unwrap_or("Wenyi's data folders overlap."))
 }
 
 fn application_context() -> tauri::Context<tauri::Wry> {
@@ -180,13 +184,21 @@ fn application_context() -> tauri::Context<tauri::Wry> {
 
 impl tauri::Resource for instance::Instance {}
 
-fn instance_error(error: instance::Error) {
-    eprintln!("{}", error.message());
+/// Report one refusal raised before any window exists.
+///
+/// A start that ends here has no interface to report in, so the dialog and the
+/// console line are the whole report and the diagnostic log carries the record.
+fn notice(message: &str) {
+    eprintln!("{message}");
     rfd::MessageDialog::new()
         .set_title("Wenyi Desktop")
-        .set_description(error.message())
+        .set_description(message)
         .set_level(rfd::MessageLevel::Warning)
         .show();
+}
+
+fn instance_error(error: instance::Error) {
+    notice(error.message());
 }
 
 fn activate_instance(app: &tauri::AppHandle) {
@@ -271,6 +283,16 @@ fn main() {
         panic_diagnostics.record(diagnostics::Source::Native, diagnostics::Event::NativePanic, serde_json::json!({}));
         previous_panic(info);
     }));
+    // Refusing to start is the whole point of the assertion: a layout that would
+    // let one cleanup reach another layer is not a state this build runs in. The
+    // check runs before any window exists, so the reason is shown instead of an
+    // interface that fails later for a cause nothing connects back to this.
+    let library = paths::layer_three(&install, &workspace);
+    if let Err(error) = assert_layout(&diagnostics, library.as_deref()) {
+        notice(error);
+        diagnostics_ui::startup_failure(&diagnostics);
+        return;
+    }
     graphics::configure();
     let state = Arc::new(Mutex::new(State::default()));
     let closing = Arc::new(AtomicBool::new(false));
@@ -281,7 +303,7 @@ fn main() {
         workspace: Some(workspace.clone()),
         // Resolved once, at startup, and passed through unchanged.
         runtime: paths::runtime_root().ok(),
-        library: library_root(&workspace, &install),
+        library: library,
         closing: closing.clone(),
         closed: closed.clone(),
     };

@@ -215,3 +215,59 @@ def test_the_nsis_hook_rechecks_the_uninstall_checkbox_itself():
     assert "$DeleteAppDataCheckboxState" in post
     assert "$UpdateMode" in post
     assert post.index("$DeleteAppDataCheckboxState") < post.index("!insertmacro wenyi_remove_tree")
+
+
+def _windows_bundle() -> dict:
+    """The Windows bundle configuration that carries the NSIS settings."""
+    return json.loads((ROOT / "apps/desktop/tauri.windows.conf.json").read_text())
+
+
+def test_the_installer_mode_is_declared_and_stays_current_user():
+    # tauri-bundler defaults to currentUser, so declaring it changes nothing today.
+    # It is declared anyway because the hook file's correctness depends on it:
+    # installer.nsh names layer two as $PROFILE\\Wenyi, and $PROFILE is the profile
+    # of the account running setup. Under perMachine, or when setup is started from
+    # an elevated shell, that is the administrator's profile -- the uninstaller
+    # would then remove a directory the user never owned and leave the user's real
+    # data in place. An inherited default is one edit away from being wrong
+    # silently; an explicit value fails the build instead.
+    nsis = _windows_bundle()["bundle"]["windows"]["nsis"]
+    assert nsis["installMode"] == "currentUser"
+
+
+def test_the_nsis_hook_refuses_the_install_location_before_copying():
+    # The four refusals of the isolation design are only refusals if they run
+    # before the first file is written. NSIS_HOOK_PREINSTALL is inserted ahead of
+    # every File instruction, so the ordering inside that macro is what makes them
+    # blocking rather than advisory.
+    code = _hook_code()
+    pre = code.split("!macro NSIS_HOOK_PREINSTALL", 1)[1].split("!macroend", 1)[0]
+    assert pre.index("wenyi_refuse_install_location") < pre.index("Abort")
+    # The backup refusal that predates this batch is still there and still the
+    # second thing the macro does: this batch added checks in front of it rather
+    # than replacing any part of it.
+    assert "wenyi_has_backup" in pre
+    assert pre.index("wenyi_refuse_install_location") < pre.index("wenyi_has_backup")
+
+
+def test_the_nsis_hook_compares_paths_by_whole_components():
+    # Layer three's default directory is "Wenyi Desktop Data" and the installation
+    # is "Wenyi Desktop". A bare prefix comparison calls those two nested and
+    # refuses the layout every default install produces, so the separator after the
+    # longer name is part of the test rather than an optimisation.
+    code = _hook_code()
+    contains = code.split("!macro wenyi_contains", 1)[1].split("!macroend", 1)[0]
+    assert "StrCmp" in contains or '== "$R0"' in contains
+    assert '"\\"' in contains
+    # Equality is nesting: an installation that is layer two itself is one
+    # uninstall away from taking the settings with it.
+    assert contains.count('StrCpy ${RESULT} "1"') == 2
+
+
+def test_the_nsis_hook_has_no_compiled_helper():
+    # The installer and the uninstaller are separate programs and both include
+    # this file. A helper expanded into a Function would be defined twice and fail
+    # to link, so every helper has to stay a macro of plain instructions.
+    code = _hook_code()
+    assert "Function " not in code
+    assert "Var " not in code

@@ -69,6 +69,12 @@ pub enum Event {
     PreviousUnclean,
     NativePanic,
     InstallLocationChanged,
+    /// The layers and the installation directory were not pairwise disjoint.
+    ///
+    /// Recorded by the native side only. It is a distinct event because the
+    /// remedy is different from every other failed start: nothing is broken, the
+    /// folders are arranged in a way this build refuses to run in.
+    LayoutRefused,
 }
 
 impl Event {
@@ -86,6 +92,7 @@ impl Event {
             | CredentialsDegraded
             | LoggerDropped
             | PreviousUnclean
+            | LayoutRefused
             | InstallLocationChanged => "WARN",
             HttpCompleted | LlmRequestStarted | LlmUsage => "DEBUG",
             _ => "INFO",
@@ -143,6 +150,7 @@ impl Event {
                     | DetailChanged
                     | PreviousUnclean
                     | NativePanic
+                    | LayoutRefused
                     | InstallLocationChanged
             ),
         }

@@ -130,6 +130,45 @@ when Wenyi is already installed and no backup carrying a manifest exists, the
 installation stops before a single file is copied and says so. Updating from
 inside Wenyi always satisfies this, because it writes the backup first.
 
+### Where the installer will not put Wenyi
+
+On Windows the installer refuses four kinds of installation directory, before it
+copies anything, and says which folder it refused and why:
+
+- a drive or share root, such as `D:\`, because the projects folder is created
+  beside the installation and a root has nothing beside it
+- a folder inside or around `%USERPROFILE%\.wenyi`, which holds the runtime the
+  application deletes and rebuilds
+- a folder inside or around `%USERPROFILE%\Wenyi`, which holds settings, the
+  project list and the backups of projects
+- a folder Windows will not let this account write to, or one that already holds
+  another application's files. An existing empty folder and an existing Wenyi
+  installation are both accepted.
+
+These refusals are why installation runs as the current user and never asks for
+elevation. The installer's declaration is `"installMode": "currentUser"` in
+`apps/desktop/tauri.windows.conf.json`, which is the same value tauri-bundler
+would default to; the point of writing it down is that the uninstall hook depends
+on it. Layer two is `$PROFILE\Wenyi`, and `$PROFILE` is the profile of the
+account running setup. A per-machine or elevated install would make that the
+administrator's profile, so an uninstall would remove a directory the user never
+owned and leave the user's real data untouched.
+
+The application checks the same rule at every start. If layers one and two, the
+projects folder and the installation directory are not pairwise separate (equal,
+or one inside another), it refuses to start and names the rule that was broken.
+The check runs after the diagnostic log is open, so a refused start still leaves a
+record, and it applies to an installed copy only: a run from source, a test and an
+unpacked build have no installation directory to compare, so they are checked on
+the three layers they do have.
+
+A copy of the application that no installer installed (a portable directory, or
+the unpacked build) gets no installer refusal at all. Nothing prepares its
+installation directory, so the only protection is the startup check above, and
+that check has no installation directory to compare until the copy is recorded as
+installed. Projects created by such a copy stay in the workspace it was given,
+which is where the standalone layout has always kept them.
+
 Uninstalling leaves the workspace, `%USERPROFILE%/Wenyi`, and the rest of the
 user's data in place. Ticking **Delete the application data** on the uninstall
 confirmation page removes them; leaving it clear removes only the application's

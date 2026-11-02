@@ -3,6 +3,7 @@
     "targets": ["nsis"],
     "windows": {
       "nsis": {
+        "installMode": "currentUser",
         "installerHooks": "installer.nsh"
       }
     }
