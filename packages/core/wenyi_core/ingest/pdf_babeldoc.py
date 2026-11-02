@@ -333,7 +333,7 @@ def read_pdf_babeldoc(
 
 
 def translations_from_store(store) -> tuple[str, str, dict[str, str]]:
-    """Collect ``{babeldoc_id: target}`` from a RunStore; return session/url/map."""
+    """Collect fillback text, falling back to source for blank targets without saving it."""
     manifest = store.load_manifest()
     meta = manifest.get("meta") if isinstance(manifest.get("meta"), dict) else {}
     session_id = meta.get("babeldoc_session_id")
@@ -353,7 +353,11 @@ def translations_from_store(store) -> tuple[str, str, dict[str, str]]:
                 pid = segment.meta.get(BABELDOC_ID_META)
             if not pid:
                 continue
-            text = segment.target if segment.target is not None else segment.source
+            # The bridge requires nonblank text for every parsed paragraph ID.
+            # Polishing can blank layout-only units such as a standalone period.
+            text = segment.target
+            if text is None or not text.strip():
+                text = segment.source
             if text is None or not str(text).strip():
                 continue
             mapping[str(pid)] = str(text)
