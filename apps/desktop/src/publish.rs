@@ -23,32 +23,16 @@ impl Drop for Temporary<'_> {
 
 /// Move `temporary` to `name`, failing if the destination already exists.
 ///
-/// All three platform branches take different inputs: the unix ones rename
-/// relative to `dir`'s handle, Windows renames by path, and the portable
-/// fallback links within `dir`. The parameters each branch does not read are
-/// gated out so no build sees an unused argument.
-#[cfg_attr(windows, allow(unused_variables))] // Windows only forwards `path`.
+/// Each platform branch reads a different subset of the arguments: the unix
+/// renames use the directory handle, Windows renames by path, and the portable
+/// fallback links inside the directory. The signature stays the same on every
+/// target so call sites do not fork, which leaves some arguments unread on some
+/// platforms.
+#[allow(unused_variables)]
 pub(crate) fn publish_new(
     dir: &Dir,
     name: &Path,
     path: &Path,
-    temporary: &str,
-) -> std::io::Result<()> {
-    publish_staged(
-        #[cfg(not(windows))]
-        dir,
-        #[cfg(not(windows))]
-        name,
-        #[cfg(windows)]
-        path,
-        temporary,
-    )
-}
-
-fn publish_staged(
-    #[cfg(not(windows))] dir: &Dir,
-    #[cfg(not(windows))] name: &Path,
-    #[cfg(windows)] path: &Path,
     temporary: &str,
 ) -> std::io::Result<()> {
     // No check-then-overwriting-rename fallback: a file appearing after the
