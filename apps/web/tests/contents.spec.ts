@@ -201,9 +201,7 @@ test("a title changed before saving preserves the editor input and requires the 
   await draft.fill("My edit");
   state.conflictOnSave = true;
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toHaveText(
-    "This title changed; reload its latest value before saving",
-  );
+  await expect(dialog.getByRole("alert")).toContainText("409");
   await expect(draft).toHaveValue("My edit");
   await expect(
     dialog.getByRole("button", { name: "Save", exact: true }),

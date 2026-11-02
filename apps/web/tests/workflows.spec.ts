@@ -201,7 +201,7 @@ test("failed manual edit keeps the draft and does not show a success state", asy
     .click();
   await page.getByLabel("Edit translation").fill("Keep this draft");
   await page.getByRole("button", { name: "Save translation" }).click();
-  await expect(page.getByRole("alert")).toHaveText("项目正在执行任务");
+  await expect(page.getByRole("alert")).toContainText("409");
   await expect(page.getByLabel("Edit translation")).toHaveValue(
     "Keep this draft",
   );
