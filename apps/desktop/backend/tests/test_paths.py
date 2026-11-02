@@ -1,17 +1,22 @@
-"""The engine's half of the workspace layout, pinned against the other half.
+"""The engine's half of the layout, pinned against the other half.
 
 Every function here is a pure join, so the tests are small. Their job is not to
-describe what `pathlib` does: it is to fail when one half of the layout is
-renamed and the other is not. Two of the names below are also spelled by the
-native parent, which neither imports this module nor runs the engine, so each of
-those is asserted twice — once as this module's answer, and once against the
-Rust source that spells it.
+describe what `pathlib` does: it is to fail when one half of the layout is renamed
+and the other is not. Several of the names below are also spelled by the native
+parent, which neither imports this module nor runs the engine, so each of those
+is asserted twice -- once as this module's answer, and once against the Rust
+source that spells it.
+
+The user-level names are the ones this batch moved, so they carry the extra
+weight: the engine opens `user_catalog()` while the old workspace still holds
+`catalog()`, and the two must never collapse into one name while both exist.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from wenyi_desktop import paths
 from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.local_credentials import CredentialStore
@@ -26,21 +31,51 @@ def rust(relative: str) -> str:
     return (DESKTOP / relative).read_text(encoding="utf-8")
 
 
-def test_catalog_is_the_file_the_engine_opens(tmp_path: Path) -> None:
+def test_the_old_catalog_is_still_named_in_the_workspace(tmp_path: Path) -> None:
     workspace = tmp_path / "Wenyi Desktop"
+    # Kept on purpose: the migration reads this file and no batch deletes it.
     assert paths.catalog(workspace) == workspace / "local.sqlite3"
+
+
+def test_the_engine_catalog_is_the_one_under_the_user_profile(tmp_path: Path) -> None:
+    home = tmp_path / "profile"
+    assert paths.user_catalog(home=home) == home / "Wenyi" / "storages" / "catalog.sqlite3"
+
+
+def test_the_two_catalog_names_are_different_files(tmp_path: Path) -> None:
+    workspace = tmp_path / "Wenyi Desktop"
+    home = tmp_path / "profile"
+    # While both layouts exist, an identical file name would make it impossible
+    # to tell which database a running process has open.
+    assert paths.catalog(workspace).name != paths.user_catalog(home=home).name
 
 
 def test_the_catalog_and_the_credentials_share_one_file(tmp_path: Path) -> None:
     workspace = tmp_path / "Wenyi Desktop"
     workspace.mkdir()
-    # One SQLite file holds both stores. If the two ever diverge, one of them
-    # opens an empty database, and the user sees an empty project list or
-    # signed-out model providers.
-    assert CredentialStore(workspace).database == paths.catalog(workspace)
-    backend = LocalBackend(workspace)
+    home = tmp_path / "profile"
+    # One SQLite file holds both stores, as it did in the workspace. If the two
+    # ever diverge, one of them opens an empty database, and the user sees an
+    # empty project list or signed-out model providers.
+    store = CredentialStore(workspace, user_home=home)
+    assert store.database == paths.user_catalog(home=home)
+    backend = LocalBackend(workspace, user_home=home)
     try:
-        assert backend.database == paths.catalog(workspace)
+        assert backend.database == paths.user_catalog(home=home)
+        assert backend.database == store.database
+    finally:
+        backend.close()
+
+
+def test_the_workspace_keeps_the_project_directories(tmp_path: Path) -> None:
+    workspace = tmp_path / "Wenyi Desktop"
+    backend = LocalBackend(workspace, user_home=tmp_path / "profile")
+    try:
+        # Only the catalog moved. Project directories and the locks stay with
+        # the workspace until the batch that owns layer three moves them.
+        assert backend.workspace == workspace
+        assert backend.database.is_relative_to(paths.user_root(home=tmp_path / "profile"))
+        assert backend.project_dir(PROJECT).is_relative_to(paths.projects(workspace))
     finally:
         backend.close()
 
@@ -59,7 +94,7 @@ def test_a_project_directory_is_below_the_projects_directory(tmp_path: Path) -> 
 
 def test_the_project_directory_is_the_one_deletion_admits(tmp_path: Path) -> None:
     workspace = tmp_path / "Wenyi Desktop"
-    backend = LocalBackend(workspace)
+    backend = LocalBackend(workspace, user_home=tmp_path / "profile")
     try:
         # remove_project() refuses a directory whose resolved parent is not
         # paths.projects(). That gate is only sound while these two agree.
@@ -90,6 +125,74 @@ def test_the_lock_stays_at_the_workspace_root(tmp_path: Path) -> None:
     assert WorkspaceLock(workspace).path == paths.instance_lock(workspace)
 
 
+def test_the_native_instance_lock_is_named_beside_the_engine_lock(tmp_path: Path) -> None:
+    workspace = tmp_path / "Wenyi Desktop"
+    # The migration probes this file to refuse reading a workspace whose old
+    # instance is still running. It is never taken over.
+    assert paths.native_instance_lock(workspace) == workspace / ".desktop-instance.lock"
+    assert paths.native_instance_lock(workspace).parent == paths.instance_lock(workspace).parent
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("user_root", ()),
+        ("user_storages", ("storages",)),
+        ("user_catalog", ("storages", "catalog.sqlite3")),
+        ("user_settings", ("settings.yaml",)),
+        ("user_workspace_index", ("storages", "workspace.json")),
+        ("user_logs", ("logs",)),
+        ("user_migration_lock", ("storages", ".migration.lock")),
+    ],
+)
+def test_every_layer_two_entry_hangs_below_the_user_root(tmp_path: Path, name, expected) -> None:
+    home = tmp_path / "profile"
+    resolved = getattr(paths, name)(home=home)
+    assert resolved == home.joinpath("Wenyi", *expected)
+    assert resolved.is_relative_to(paths.user_root(home=home))
+
+
+def test_a_variable_cannot_move_layer_two(tmp_path, monkeypatch, private_profile) -> None:
+    # Layer two is persisted configuration, not an overridable root: a variable
+    # that moved it would orphan every project the user already has. Only the
+    # profile itself is read, and that is the value the fixture set.
+    monkeypatch.setenv("WENYI_USER_DIR", str(tmp_path / "elsewhere"))
+    assert paths.user_root() == private_profile / "Wenyi"
+
+
+def test_a_blank_profile_variable_is_not_the_current_directory(
+    tmp_path, monkeypatch, private_profile
+) -> None:
+    # A value set to nothing has to count as unset. Resolving it as-is would put
+    # layer two in a relative directory, which every later start would then
+    # resolve against a different working directory.
+    monkeypatch.setenv("USERPROFILE", "   ")
+    monkeypatch.setenv("HOME", "")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: private_profile))
+    assert paths.platform_home() == private_profile
+    assert paths.platform_home() != Path.cwd()
+
+
+def test_a_profile_that_cannot_be_named_is_refused_rather_than_guessed(
+    tmp_path, monkeypatch
+) -> None:
+    # The last resort is refusal, not the working directory: a guessed layer two
+    # writes the user's settings and project index where nobody will find them.
+    monkeypatch.setenv("USERPROFILE", "not-a-path")
+    monkeypatch.setenv("HOME", "")
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: cls("relative")))
+    with pytest.raises(RuntimeError, match="user folder"):
+        paths.platform_home()
+
+
+def test_the_two_roots_the_design_names_do_not_overlap(tmp_path: Path) -> None:
+    # design §3.3: layer one and layer two must be pairwise disjoint.
+    layer_one = paths.platform_home() / ".wenyi"
+    layer_two = paths.user_root()
+    assert not layer_two.is_relative_to(layer_one)
+    assert not layer_one.is_relative_to(layer_two)
+
+
 def test_the_catalog_name_is_the_one_the_native_snapshot_copies() -> None:
     # The native snapshot copies a workspace byte for byte and names this file,
     # so a rename here alone would restore a workspace whose catalog is gone.
@@ -103,6 +206,22 @@ def test_the_lock_name_is_the_one_the_native_parent_probes() -> None:
     # processes lock different files.
     assert paths.instance_lock(Path("C:/workspace")).name == ".desktop.lock"
     assert 'workspace.join(".desktop.lock")' in rust("src/instance.rs")
+
+
+def test_the_native_instance_lock_name_is_the_one_the_native_parent_holds() -> None:
+    # The migration probes the lock the previous version holds. If the two sides
+    # disagreed on the name, the probe would always report "not running" and the
+    # migration would read a workspace an old instance is still writing.
+    assert paths.native_instance_lock(Path("C:/workspace")).name == ".desktop-instance.lock"
+    assert 'const LOCK: &str = ".desktop-instance.lock";' in rust("src/instance.rs")
+
+
+def test_the_layer_two_root_is_the_one_the_native_resolver_builds() -> None:
+    # user_root() in the native resolver is home_dir().join(USER). Layer two has
+    # to be the same directory from both halves, because the native side writes
+    # the diagnostic logs and the backup into it.
+    assert paths.user_root(home=Path("C:/profile")) == Path("C:/profile/Wenyi")
+    assert 'const USER: &str = "Wenyi";' in rust("src/paths.rs")
 
 
 def test_the_diagnostics_name_is_the_one_the_native_resolver_builds() -> None:

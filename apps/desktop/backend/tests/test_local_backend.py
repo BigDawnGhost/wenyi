@@ -76,7 +76,11 @@ def test_catalog_durability_and_workspace_isolation(backend, tmp_path):
     assert current_context().repository.latest_resumable_job(pid) == saved
     workspace = backend.workspace
     backend.close()
-    other = create_context(tmp_path / "second")
+    # A second workspace shares this machine's layer two, so what this test can
+    # still isolate is the per-workspace project directory and the state inside
+    # it. Give the second workspace its own profile so the shared catalog does
+    # not answer the isolation question by itself.
+    other = create_context(tmp_path / "second", user_home=tmp_path / "second-profile")
     try:
         with use_context(other):
             assert other.repository.all_jobs() == []
@@ -770,7 +774,11 @@ def test_verbatim_workspace_reopens_existing_catalog(tmp_path):
         assert reopened.workspace == workspace
         assert reopened.get_project(pid)["name"] == "Existing project"
         assert reopened.get_project_config(pid) == {"keep": True}
-        assert reopened.database.samefile(workspace / "local.sqlite3")
+        # The catalog moved to layer two; the workspace keeps the project
+        # directories and, from the old version, its untouched catalog.
+        from wenyi_desktop import paths as desktop_paths
+
+        assert reopened.database == desktop_paths.user_catalog()
         storage = reopened.storage_for(pid)
         try:
             storage.write_artifact("preview.json", {"title": "Still writable"})

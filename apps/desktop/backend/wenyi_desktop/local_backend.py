@@ -41,13 +41,22 @@ def _plain_windows_path(path: str) -> str:
 
 
 class LocalBackend:
-    def __init__(self, workspace: str | Path, config_path: str | None = None) -> None:
+    def __init__(
+        self,
+        workspace: str | Path,
+        config_path: str | None = None,
+        *,
+        user_home: Path | None = None,
+    ) -> None:
         resolved = Path(workspace).expanduser().resolve()
         # Also accept --data-dir from older native parents or direct engine launches.
         self.workspace = Path(_plain_windows_path(str(resolved)))
         self.workspace.mkdir(parents=True, exist_ok=True)
         self.config_path = config_path
-        self.database = paths.catalog(self.workspace)
+        # Layer two holds the catalog now. The workspace stays the parent of the
+        # project directories and the owner of the workspace locks.
+        self.database = paths.user_catalog(home=user_home)
+        self.database.parent.mkdir(parents=True, exist_ok=True)
         # Releasing memory must not depend on an available project directory.
         self._export_leases_lock = Lock()
         self._export_leases: dict[int, int] = {}

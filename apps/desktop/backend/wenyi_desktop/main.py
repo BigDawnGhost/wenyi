@@ -23,6 +23,7 @@ from .local_runtime import (
     run_workflow_sync,
     statistics_snapshot,
 )
+from .migration.startup import adopt
 from .settings import DesktopSettings
 from .updates import UpdateAdmissionMiddleware, UpdateGuard
 from .updates import router as updates_router
@@ -98,9 +99,20 @@ def create_context(
     api_token: str | None = None,
     config_path: str | None = None,
     credentials: CredentialStore | None = None,
+    user_home: str | Path | None = None,
+    migrate: bool = True,
 ) -> BackendContext:
-    backend = LocalBackend(workspace, config_path)
-    credentials = credentials or CredentialStore(backend.workspace, vault_factory=system_keyring)
+    home = Path(user_home) if user_home is not None else None
+    if migrate:
+        # Layer two has to exist before either store opens it, and the move is
+        # the only step that reads the old workspace. It raises when another
+        # instance owns that read, which is a refusal this version cannot fix by
+        # waiting: the old application is still writing the data being moved.
+        adopt(Path(workspace), home=home)
+    backend = LocalBackend(workspace, config_path, user_home=home)
+    credentials = credentials or CredentialStore(
+        backend.workspace, vault_factory=system_keyring, user_home=home
+    )
     services = DesktopServices(backend)
     return BackendContext(
         repository=backend,

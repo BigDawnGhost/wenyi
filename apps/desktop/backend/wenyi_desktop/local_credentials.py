@@ -70,8 +70,20 @@ def system_keyring():
 
 
 class CredentialStore:
-    def __init__(self, workspace: Path, *, vault=None, vault_factory: Callable | None = None):
-        self.database = paths.catalog(workspace)
+    def __init__(
+        self,
+        workspace: Path,
+        *,
+        vault=None,
+        vault_factory: Callable | None = None,
+        user_home: Path | None = None,
+    ):
+        # The same file the catalog uses: the two stores shared one database in
+        # the old layout, and splitting them now would give the user an empty
+        # project list in one process and signed-out providers in the other.
+        del workspace
+        self.database = paths.user_catalog(home=user_home)
+        self.database.parent.mkdir(parents=True, exist_ok=True)
         self._vault = vault
         self._vault_factory = vault_factory
         self._lock = RLock()
