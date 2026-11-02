@@ -84,6 +84,8 @@ _USER_CATALOG = "catalog.sqlite3"
 _WORKSPACE_INDEX = "workspace.json"
 #: Serializes the one-time move into layer two.
 _MIGRATION_LOCK = ".migration.lock"
+#: Settings key remembering the library root a person used last.
+LAST_LIBRARY_ROOT = "last_library_root"
 
 #: A project identifier is the first 16 characters of a version 4 UUID.
 #:

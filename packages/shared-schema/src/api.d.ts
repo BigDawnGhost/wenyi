@@ -1346,6 +1346,16 @@ export interface components {
             } | null;
             /** Created At */
             created_at?: string | null;
+            /**
+             * Available
+             * @default true
+             */
+            available: boolean;
+            /**
+             * Source Changed
+             * @default false
+             */
+            source_changed: boolean;
         };
         /** ProjectConfigOut */
         ProjectConfigOut: {
@@ -1430,6 +1440,16 @@ export interface components {
             } | null;
             /** Created At */
             created_at?: string | null;
+            /**
+             * Available
+             * @default true
+             */
+            available: boolean;
+            /**
+             * Source Changed
+             * @default false
+             */
+            source_changed: boolean;
             /** Book Title */
             book_title?: string | null;
             /**

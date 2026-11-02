@@ -53,6 +53,11 @@ class Project(BaseModel):
     initialized: bool = False
     strategy: Optional[dict[str, Any]] = None
     created_at: Optional[str] = None
+    #: False when the project's own directory is not reachable, which on a
+    #: Desktop build means its drive is not mounted. Absent means unknown.
+    available: bool = True
+    #: True when the original file no longer matches the recorded checksum.
+    source_changed: bool = False
 
 
 class ProjectDetail(Project):

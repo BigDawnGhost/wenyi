@@ -122,6 +122,12 @@ const en = {
   "dashboard.noSourceUploaded": "(No source uploaded)",
   "dashboard.deleteProject": "Delete project {name}",
   "dashboard.deleteAction": "Delete project",
+  "dashboard.importProject": "Import existing project",
+  "dashboard.projectImported": "Project “{name}” imported",
+  "dashboard.couldNotImportProject": "Could not import that folder",
+  "dashboard.sourceChangedAfterImport":
+    "The original file changed since the last run. It will be parsed again.",
+  "dashboard.projectUnavailable": "The folder for this project is not available",
   "events.project": "Project",
   "events.preparation": "Preparation",
   "events.translation": "Translation",

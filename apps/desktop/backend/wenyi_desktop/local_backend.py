@@ -247,11 +247,24 @@ class LocalBackend:
             finally:
                 storage.close()
             project.pop("updated_at", None)
+            # A project on a drive that is not mounted cannot be opened, and the
+            # list has to say so instead of failing when the project is chosen.
+            project["available"] = self.project_dir(pid).is_dir()
         return project
 
     def list_projects(self) -> list[dict]:
         rows = sorted(self._list("projects"), key=lambda row: row["created_at"], reverse=True)
-        keys = ("id", "name", "title", "fmt", "source_lang", "target_lang", "status", "created_at")
+        keys = (
+            "id",
+            "name",
+            "title",
+            "fmt",
+            "source_lang",
+            "target_lang",
+            "status",
+            "created_at",
+            "available",
+        )
         return [
             {key: project[key] for key in keys}
             for row in rows

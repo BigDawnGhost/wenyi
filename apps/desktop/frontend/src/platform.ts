@@ -12,6 +12,7 @@ import {
   useCredentialDraftsPending,
 } from "./credentials";
 import { activity } from "./activity";
+import { library } from "./library";
 import { DesktopDiagnostics, DiagnosticExportButton } from "./DesktopDiagnostics";
 import { reportDiagnostic } from "./diagnostics";
 import { translateDesktop } from "./i18n";
@@ -87,6 +88,7 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
         Section: BabeldocPlugin,
       },
       saveExport: saveNativeExport,
+      library,
       credentials: {
         Field: DesktopCredential,
         refresh: () => queryClient.refetchQueries({ queryKey: credentialQuery.queryKey }),

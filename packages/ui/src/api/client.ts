@@ -90,6 +90,11 @@ export const api = {
   getProject: (pid: string) => request<ProjectDetail>(`/projects/${pid}`),
   deleteProject: (pid: string) =>
     request<{ message: string }>(`/projects/${pid}`, { method: "DELETE" }),
+  importProject: (path: string) =>
+    request<ProjectDetail>("/desktop/projects/import", {
+      method: "POST",
+      body: JSON.stringify({ path }),
+    }),
   translate: (pid: string, strategy?: Record<string, unknown>) =>
     request<JobEnqueued>(`/projects/${pid}/translate`, {
       method: "POST",

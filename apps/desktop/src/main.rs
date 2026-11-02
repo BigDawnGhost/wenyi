@@ -7,6 +7,7 @@ mod diagnostics_ui;
 mod graphics;
 mod instance;
 mod ipc_error;
+mod library_choose;
 mod local_connection;
 mod migration;
 mod mutex;
@@ -268,6 +269,7 @@ fn main() {
         .manage(native_drop::Grants::default())
         .manage(native_export::Saves::default())
         .invoke_handler(tauri::generate_handler![
+            library_choose::native_library_choose,
             native_drop::native_drop_release,
             native_drop::native_drop_upload,
             native_export::native_export_save,

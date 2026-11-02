@@ -51,7 +51,20 @@ export interface ProgressServices {
   progressKeys: (kind: string) => string[];
 }
 
+/** What a host can say about adopting a project folder that already exists.
+ *
+ * A native host can open a folder picker; the Web host cannot, so the entry
+ * point is absent there rather than shown and disabled. `choose` answers the
+ * selected absolute path, or null when the picker was dismissed.
+ */
+export interface LibraryServices {
+  choose: () => Promise<string | null>;
+  /** Adopt the chosen folder; the message of a refusal is written for a person. */
+  importProject: (path: string) => Promise<ProjectDetail>;
+}
+
 export interface OptionalCapabilities {
+  library?: LibraryServices;
   diagnostics?: {
     label: (locale: string) => string;
     Section: ComponentType;

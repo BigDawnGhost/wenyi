@@ -144,7 +144,13 @@ def create_app(
     diagnostics: Reporter | None = None,
 ):
     from .desktop import ORIGINS
-    from .routers import babeldoc_plugin, credentials, desktop_export, external_credentials
+    from .routers import (
+        babeldoc_plugin,
+        credentials,
+        desktop_export,
+        external_credentials,
+        project_import,
+    )
 
     # The sidecar owns its own stderr; stdout carries the parent/child protocol.
     configure_logging(service="wenyi-desktop")
@@ -184,6 +190,7 @@ def create_app(
     app.include_router(external_credentials.router)
     app.include_router(updates_router)
     app.include_router(babeldoc_plugin.router)
+    app.include_router(project_import.router)
     app.state.babeldoc_plugin = services.babeldoc
     app.state.update_guard = UpdateGuard(services)
     app.add_middleware(
