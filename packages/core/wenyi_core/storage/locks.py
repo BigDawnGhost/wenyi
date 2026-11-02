@@ -42,6 +42,10 @@ _LOCK_INVALID = 2
 _LOCK_OS_ERROR = 3
 
 
+class _NativeLockResult(ctypes.Structure):
+    _fields_ = [("handle", ctypes.c_uint64), ("os_error", ctypes.c_int64)]
+
+
 class StorageBusyError(WenyiError, BlockingIOError):
     """Another local process owns the requested workflow lock.
 
@@ -90,18 +94,22 @@ def _native_library() -> ctypes.CDLL | None:
     for candidate in _library_candidates():
         try:
             library = ctypes.CDLL(candidate)
-        except OSError:
+            acquire = library.wenyi_lock_acquire_v2
+            release = library.wenyi_lock_release
+        except (OSError, AttributeError):
+            # Older builds used the output handle for OS errors too; never call
+            # them with the new layout or mistake an error number for an owned lock.
             continue
-        library.wenyi_lock_acquire.argtypes = [
+        acquire.argtypes = [
             ctypes.c_char_p,
             ctypes.c_size_t,
             ctypes.c_ubyte,
             ctypes.c_uint32,
-            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.POINTER(_NativeLockResult),
         ]
-        library.wenyi_lock_acquire.restype = ctypes.c_int
-        library.wenyi_lock_release.argtypes = [ctypes.c_uint64]
-        library.wenyi_lock_release.restype = ctypes.c_int
+        acquire.restype = ctypes.c_int
+        release.argtypes = [ctypes.c_uint64]
+        release.restype = ctypes.c_int
         _native = library
         break
     return _native
@@ -152,19 +160,29 @@ class FileLockHandle:
         library = _native_library()
         assert library is not None  # _use_native() already proved availability
         raw = self._path.encode("utf-8")
-        handle = ctypes.c_uint64(0)
-        code = library.wenyi_lock_acquire(
-            raw, len(raw), 1 if blocking else 0, timeout_ms, ctypes.byref(handle)
-        )
-        if code == _LOCK_OK:
-            self._handle = handle.value
-            return
-        if code == _LOCK_BUSY:
-            raise _busy_error()
-        if code == _LOCK_INVALID:
-            raise OSError(f"Cannot open lock file: {self._path}")
-        # _LOCK_OS_ERROR carries the raw OS error code in the out parameter.
-        raise OSError(handle.value, f"Cannot lock {self._path}")
+        deadline = None if timeout_ms <= 0 else time.monotonic() + timeout_ms / 1000.0
+        result = _NativeLockResult()
+        try:
+            while True:
+                # Retry in Python so SIGINT can interrupt a wait for a long workflow.
+                code = library.wenyi_lock_acquire_v2(raw, len(raw), 0, 0, ctypes.byref(result))
+                if code == _LOCK_OK:
+                    self._handle = result.handle
+                    return
+                if code == _LOCK_INVALID:
+                    raise OSError(f"Cannot open lock file: {self._path}")
+                if code != _LOCK_BUSY:
+                    raise OSError(result.os_error, f"Cannot lock {self._path}")
+                if not blocking or (deadline is not None and time.monotonic() >= deadline):
+                    raise _busy_error()
+                time.sleep(_RETRY_SECONDS)
+        except BaseException:
+            # ctypes may raise KeyboardInterrupt before assigning its return code.
+            # The out parameter still identifies the resource acquired by that call.
+            if result.handle:
+                library.wenyi_lock_release(result.handle)
+            self._handle = None
+            raise
 
     def _acquire_python(self, *, blocking: bool, timeout_ms: int) -> None:
         deadline = None if timeout_ms <= 0 else time.monotonic() + timeout_ms / 1000.0
@@ -197,7 +215,9 @@ class FileLockHandle:
                         if not _still_waiting(error, blocking, deadline):
                             raise _busy_error() from error
                         time.sleep(_RETRY_SECONDS)
+            self._file = handle
         except BaseException:
+            self._file = None
             # Closing must not mask the reason the acquisition failed: Windows
             # reports PermissionError from close() while another owner holds it.
             try:
@@ -205,7 +225,6 @@ class FileLockHandle:
             except OSError:
                 pass
             raise
-        self._file = handle
 
     def release(self) -> None:
         """Release the lock; safe to call on a handle that never acquired."""
@@ -242,8 +261,8 @@ def exclusive_file_lock(
     A non-blocking acquisition raises :class:`StorageBusyError` instead of waiting.
     """
     handle = FileLockHandle(lock_path)
-    handle.acquire(blocking=blocking, timeout_ms=timeout_ms)
     try:
+        handle.acquire(blocking=blocking, timeout_ms=timeout_ms)
         yield
     finally:
         handle.release()

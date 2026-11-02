@@ -40,9 +40,9 @@ __all__ = ["SqliteStorage", "StorageBusyError"]
 class SqliteStorage:
     """One target-isolated local database, safe across threads and processes.
 
-    A reentrant mutex serializes this instance's connection. Independent instances use
-    SQLite's WAL and busy timeout. Nested state locks use savepoints in the same outer
-    transaction, including borrowed glossary operations.
+    A reentrant mutex serializes writers; readers use per-thread WAL snapshots.
+    Nested state locks use savepoints in the same outer transaction, including
+    borrowed glossary operations. Closing all connections drains active snapshots.
     """
 
     def __init__(self, run_dir: str, *, create: bool = True):
@@ -57,7 +57,9 @@ class SqliteStorage:
         self._lock_local = threading.local()
         self._conn_local = threading.local()
         self._connections: set[sqlite3.Connection] = set()
-        self._schema_ready = False
+        self._connections_guard = threading.Condition()
+        self._readers = 0
+        self._closing = False
         if create:
             with self._mutex:
                 self._connection()
@@ -80,7 +82,9 @@ class SqliteStorage:
         # ordinary reads/writes keep using WAL without holding this OS lock.
         with self._file_lock(".schema.lock"):
             conn = self._open_connection()
-        with self._mutex:
+        # Readers must not take the writer mutex: close_all holds it while
+        # draining snapshots, and a first read may still be opening its connection.
+        with self._connections_guard:
             self._connections.add(conn)
         self._conn_local.conn = conn
         self._conn_local.depth = 0
@@ -93,7 +97,7 @@ class SqliteStorage:
         return os.path.isfile(self.database_path)
 
     def _open_connection(self) -> sqlite3.Connection:
-        """Called under the instance mutex and the short schema initialization lock."""
+        """Called under the short schema initialization lock."""
         uri = Path(self.database_path).as_uri() + ("?mode=rwc" if self._create else "?mode=rw")
         conn = sqlite3.connect(uri, uri=True, isolation_level=None, check_same_thread=False)
         conn.row_factory = sqlite3.Row
@@ -155,27 +159,37 @@ class SqliteStorage:
         block, so closing every thread's connection would break a concurrent
         caller still holding its own.
         """
-        if getattr(self._conn_local, "depth", 0):
-            raise RuntimeError("Cannot close storage inside a state transaction")
-        conn = getattr(self._conn_local, "conn", None)
-        self._conn_local.conn = None
-        self._conn_local.depth = 0
-        if conn is None:
-            return
+        self._check_close()
         with self._mutex:
-            self._connections.discard(conn)
-        conn.close()
+            conn = getattr(self._conn_local, "conn", None)
+            self._conn_local.conn = None
+            self._conn_local.depth = 0
+            if conn is not None:
+                with self._connections_guard:
+                    self._connections.discard(conn)
+                conn.close()
+
+    def _check_close(self) -> None:
+        if getattr(self._conn_local, "depth", 0) or getattr(self._conn_local, "read_depth", 0):
+            raise RuntimeError("Cannot close storage inside a state transaction or read snapshot")
 
     def close_all(self) -> None:
-        """Close every thread's connection; used when the run lock finally exits."""
-        if getattr(self._conn_local, "depth", 0):
-            raise RuntimeError("Cannot close storage inside a state transaction")
-        self._conn_local.conn = None
-        self._conn_local.depth = 0
+        """Drain operations and invalidate every thread's cached connection."""
+        self._check_close()
         with self._mutex:
-            connections, self._connections = self._connections, set()
-        for conn in connections:
-            conn.close()
+            with self._connections_guard:
+                self._closing = True
+                try:
+                    self._connections_guard.wait_for(lambda: self._readers == 0)
+                    connections, self._connections = self._connections, set()
+                    # Replacing the TLS object invalidates caches in surviving worker
+                    # threads too, not only in the thread releasing the run lock.
+                    self._conn_local = threading.local()
+                    for conn in connections:
+                        conn.close()
+                finally:
+                    self._closing = False
+                    self._connections_guard.notify_all()
 
     @contextmanager
     def state_lock(self) -> Iterator[None]:
@@ -212,18 +226,31 @@ class SqliteStorage:
     def _read_lock(self) -> Iterator[None]:
         """Take a WAL snapshot on this thread's own connection.
 
-        The instance mutex is deliberately not held: a reader only needs a
-        consistent snapshot, and WAL provides one without waiting for writers.
+        Register the outer snapshot before opening its connection. Shutdown waits
+        for existing readers, including nested reads, without admitting new ones.
         """
-        conn = self._connection()
-        if conn.in_transaction:
-            yield
-            return
-        conn.execute("BEGIN")
+        with self._connections_guard:
+            depth = getattr(self._conn_local, "read_depth", 0)
+            if not depth:
+                self._connections_guard.wait_for(lambda: not self._closing)
+                self._readers += 1
+            self._conn_local.read_depth = depth + 1
         try:
-            yield
+            conn = self._connection()
+            if conn.in_transaction:
+                yield
+                return
+            conn.execute("BEGIN")
+            try:
+                yield
+            finally:
+                conn.rollback()
         finally:
-            conn.rollback()
+            with self._connections_guard:
+                self._conn_local.read_depth = depth
+                if not depth:
+                    self._readers -= 1
+                    self._connections_guard.notify_all()
 
     @contextmanager
     def _file_lock(self, filename: str, *, blocking: bool = True) -> Iterator[None]:

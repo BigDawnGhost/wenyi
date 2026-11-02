@@ -2,7 +2,8 @@
 //!
 //! Python loads this library through ctypes. Handles are opaque u64 tokens
 //! into a process-local registry, so no platform descriptor crosses the FFI
-//! boundary. On an OS error the raw OS error code is written to `out_handle`.
+//! boundary. The result keeps handles separate from OS errors so an interrupted
+//! FFI return can still release an acquired handle safely.
 
 use std::collections::BTreeMap;
 use std::fs::{File, OpenOptions};
@@ -15,6 +16,13 @@ pub const WENYI_LOCK_OK: i32 = 0;
 pub const WENYI_LOCK_BUSY: i32 = 1;
 pub const WENYI_LOCK_INVALID: i32 = 2;
 pub const WENYI_LOCK_OS_ERROR: i32 = 3;
+
+#[repr(C)]
+#[derive(Default)]
+pub struct LockResult {
+    pub handle: u64,
+    pub os_error: i64,
+}
 
 const RETRY_INTERVAL: Duration = Duration::from_millis(50);
 
@@ -79,13 +87,7 @@ mod platform {
         let mut overlapped = overlapped();
         // SAFETY: same reasoning as `try_lock`; a failed unlock only closes the file.
         unsafe {
-            UnlockFileEx(
-                file.as_raw_handle() as HANDLE,
-                0,
-                1,
-                0,
-                &mut overlapped,
-            );
+            UnlockFileEx(file.as_raw_handle() as HANDLE, 0, 1, 0, &mut overlapped);
         }
     }
 }
@@ -127,43 +129,48 @@ fn registry() -> std::sync::MutexGuard<'static, Option<BTreeMap<u64, Held>>> {
 ///
 /// `blocking == 0`: a single attempt. Otherwise retry every 50 ms until the
 /// lock is acquired or `timeout_ms` elapses (`0` waits forever). Returns
-/// `WENYI_LOCK_OK` and writes the handle to `out_handle`; `WENYI_LOCK_BUSY`
+/// `WENYI_LOCK_OK` and writes the handle to `out_result.handle`; `WENYI_LOCK_BUSY`
 /// when a non-blocking attempt or a deadline finds another owner;
-/// `WENYI_LOCK_INVALID` for null or empty arguments, or when `out_handle` is
-/// null; `WENYI_LOCK_OS_ERROR` with the raw OS error code in `out_handle`
-/// otherwise.
+/// `WENYI_LOCK_INVALID` for null or empty arguments; `WENYI_LOCK_OS_ERROR`
+/// with the raw OS error code in `out_result.os_error` otherwise. A nonzero
+/// result handle always owns a lock, even if the caller is interrupted on return.
+/// The versioned symbol prevents loading the earlier, incompatible output layout.
 ///
 /// # Safety
 ///
-/// `path` must point to `path_len` readable bytes, and `out_handle` must be
+/// `path` must point to `path_len` readable bytes, and `out_result` must be
 /// writable when non-null.
 #[no_mangle]
-pub unsafe extern "C" fn wenyi_lock_acquire(
+pub unsafe extern "C" fn wenyi_lock_acquire_v2(
     path: *const u8,
     path_len: usize,
     blocking: u8,
     timeout_ms: u32,
-    out_handle: *mut u64,
+    out_result: *mut LockResult,
 ) -> i32 {
-    if path.is_null() || path_len == 0 || out_handle.is_null() {
+    if out_result.is_null() {
+        return WENYI_LOCK_INVALID;
+    }
+    std::ptr::write(out_result, LockResult::default());
+    if path.is_null() || path_len == 0 {
         return WENYI_LOCK_INVALID;
     }
     let bytes = std::slice::from_raw_parts(path, path_len);
     let Ok(text) = std::str::from_utf8(bytes) else {
         return WENYI_LOCK_INVALID;
     };
-    let Ok(file) = OpenOptions::new()
+    let file = match OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(Path::new(text))
-    else {
-        let code = std::io::Error::last_os_error()
-            .raw_os_error()
-            .unwrap_or(-1) as i64 as u64;
-        std::ptr::write(out_handle, code);
-        return WENYI_LOCK_OS_ERROR;
+    {
+        Ok(file) => file,
+        Err(error) => {
+            (*out_result).os_error = error.raw_os_error().unwrap_or(-1) as i64;
+            return WENYI_LOCK_OS_ERROR;
+        }
     };
 
     let deadline = if blocking == 0 || timeout_ms == 0 {
@@ -187,7 +194,7 @@ pub unsafe extern "C" fn wenyi_lock_acquire(
                 std::thread::sleep(RETRY_INTERVAL);
             }
             Attempt::Failed(code) => {
-                std::ptr::write(out_handle, code as u64);
+                (*out_result).os_error = code;
                 return WENYI_LOCK_OS_ERROR;
             }
         }
@@ -197,11 +204,11 @@ pub unsafe extern "C" fn wenyi_lock_acquire(
     registry()
         .get_or_insert_with(BTreeMap::new)
         .insert(handle, Held { file });
-    std::ptr::write(out_handle, handle);
+    (*out_result).handle = handle;
     WENYI_LOCK_OK
 }
 
-/// Release a handle returned by `wenyi_lock_acquire`.
+/// Release a handle returned by `wenyi_lock_acquire_v2`.
 ///
 /// Returns `WENYI_LOCK_OK`, or `WENYI_LOCK_INVALID` for an unknown handle.
 #[no_mangle]
@@ -229,11 +236,17 @@ mod tests {
 
     fn acquire(path: &Path, blocking: u8, timeout_ms: u32) -> (i32, u64) {
         let bytes = path.to_str().unwrap().as_bytes();
-        let mut handle: u64 = 0;
+        let mut result = LockResult::default();
         let code = unsafe {
-            wenyi_lock_acquire(bytes.as_ptr(), bytes.len(), blocking, timeout_ms, &mut handle)
+            wenyi_lock_acquire_v2(
+                bytes.as_ptr(),
+                bytes.len(),
+                blocking,
+                timeout_ms,
+                &mut result,
+            )
         };
-        (code, handle)
+        (code, result.handle)
     }
 
     #[test]
@@ -284,5 +297,24 @@ mod tests {
         assert_eq!(busy, WENYI_LOCK_BUSY);
         assert_eq!(wenyi_lock_release(handle), WENYI_LOCK_OK);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn failed_acquire_never_returns_an_owned_handle() {
+        let path = temp_path("missing-parent").join("lock");
+        let bytes = path.to_str().unwrap().as_bytes();
+        let mut result = LockResult {
+            handle: 123,
+            os_error: 0,
+        };
+        let code = unsafe { wenyi_lock_acquire_v2(bytes.as_ptr(), bytes.len(), 0, 0, &mut result) };
+        assert_eq!(code, WENYI_LOCK_OS_ERROR);
+        assert_eq!(result.handle, 0);
+        assert_ne!(result.os_error, 0);
+
+        let code = unsafe { wenyi_lock_acquire_v2(std::ptr::null(), 0, 0, 0, &mut result) };
+        assert_eq!(code, WENYI_LOCK_INVALID);
+        assert_eq!(result.handle, 0);
+        assert_eq!(result.os_error, 0);
     }
 }

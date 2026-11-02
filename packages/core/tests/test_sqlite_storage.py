@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import multiprocessing
 import os
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
+from threading import Event
 
 import pytest
 from wenyi_core.config import Config
@@ -51,7 +52,71 @@ def document(tmp_path):
 def store(tmp_path):
     storage = SqliteStorage(str(tmp_path / "run"))
     yield storage
-    storage.close()
+    storage.close_all()
+
+
+def test_run_exit_invalidates_connections_in_reused_threads(store):
+    store.write_artifact("probe.json", {"value": 1})
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        assert pool.submit(store.read_artifact, "probe.json").result(timeout=5) == {"value": 1}
+        with store.lock():
+            pass
+        assert not store._connections
+        assert pool.submit(store.read_artifact, "probe.json").result(timeout=5) == {"value": 1}
+        pool.submit(store.write_artifact, "probe.json", {"value": 2}).result(timeout=5)
+        pool.submit(store.close).result(timeout=5)
+    assert store.read_artifact("probe.json") == {"value": 2}
+
+
+def test_close_all_waits_for_active_read_snapshot(store):
+    store.write_artifact("probe.json", {"value": 1})
+    reading, finish_read, closing = Event(), Event(), Event()
+
+    def read():
+        with store._read_lock():
+            assert store.read_artifact("probe.json") == {"value": 1}
+            reading.set()
+            assert finish_read.wait(5)
+            # A nested read must still work while close_all waits for the outer snapshot.
+            return store.read_artifact("probe.json")
+
+    def close():
+        closing.set()
+        store.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reader = pool.submit(read)
+        assert reading.wait(5)
+        closer = pool.submit(close)
+        try:
+            assert closing.wait(5)
+            with pytest.raises(TimeoutError):
+                closer.result(timeout=0.1)
+        finally:
+            finish_read.set()
+        assert reader.result(timeout=5) == {"value": 1}
+        closer.result(timeout=5)
+    assert not store._connections
+
+
+def test_first_reader_uses_committed_snapshot_without_waiting_for_writer(store):
+    store.write_artifact("probe.json", {"value": 1})
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with store.state_lock():
+            store.write_artifact("probe.json", {"value": 2})
+            assert pool.submit(store.read_artifact, "probe.json").result(timeout=5) == {"value": 1}
+        assert pool.submit(store.read_artifact, "probe.json").result(timeout=5) == {"value": 2}
+        # Closing this thread's connection must not close the worker's connection.
+        store.close()
+        assert pool.submit(store.read_artifact, "probe.json").result(timeout=5) == {"value": 2}
+
+
+@pytest.mark.parametrize("close_method", ["close", "close_all"])
+def test_cannot_close_inside_read_snapshot(store, close_method):
+    with store._read_lock():
+        with pytest.raises(RuntimeError, match="read snapshot"):
+            getattr(store, close_method)()
+        assert store.read_artifact("missing.json") is None
 
 
 @pytest.mark.parametrize("published", [False, True])
