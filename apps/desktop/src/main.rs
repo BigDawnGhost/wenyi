@@ -11,6 +11,7 @@ mod local_connection;
 mod mutex;
 mod native_drop;
 mod native_export;
+mod paths;
 mod process;
 mod publish;
 mod updates;
@@ -69,6 +70,7 @@ impl State {
 struct Engine {
     child: Arc<Mutex<Option<process::Backend>>>,
     workspace: Option<std::path::PathBuf>,
+    runtime: Option<std::path::PathBuf>,
     closing: Arc<AtomicBool>,
     closed: Arc<AtomicBool>,
 }
@@ -85,7 +87,12 @@ fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Res
         {
             return Err("Wenyi is closing.");
         }
-        let (backend, ready) = process::Backend::spawn(&resources, engine.workspace.as_deref(), diagnostics.inner().clone())?;
+        let (backend, ready) = process::Backend::spawn(
+            &resources,
+            engine.workspace.as_deref(),
+            engine.runtime.as_deref(),
+            diagnostics.inner().clone(),
+        )?;
         *owner = Some(backend);
         ready
     };
@@ -226,6 +233,8 @@ fn main() {
     let engine = Engine {
         child: child.clone(),
         workspace: Some(workspace),
+        // Resolved once, at startup, and passed through unchanged.
+        runtime: paths::runtime_root().ok(),
         closing: closing.clone(),
         closed: closed.clone(),
     };

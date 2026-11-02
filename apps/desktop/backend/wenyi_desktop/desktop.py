@@ -27,6 +27,13 @@ ORIGINS = (
 
 
 def default_workspace() -> Path:
+    """Fallback for running the engine as a standalone CLI.
+
+    The desktop parent always injects --data-dir from its own path resolution,
+    so this is never the application's path: it only exists so that a developer
+    can start the engine by hand. Both sides must keep resolving the same value
+    (a Rust test pins them together).
+    """
     if sys.platform == "win32":
         base = Path(os.environ["LOCALAPPDATA"])
     elif sys.platform == "darwin":
@@ -78,7 +85,16 @@ def watch_parent(server: uvicorn.Server) -> None:
     watchdog.start()
 
 
-async def serve(workspace: Path, protocol_stream, reporter: Reporter | None = None) -> None:
+async def serve(
+    workspace: Path,
+    protocol_stream,
+    reporter: Reporter | None = None,
+    runtime_dir: Path | None = None,
+) -> None:
+    # The native parent injects the layer-one directory so the engine never
+    # derives it. Consuming it belongs to the layer-one batch; until then the
+    # value is carried here unused and no path changes.
+    del runtime_dir
     import uvicorn
 
     from .main import create_app
@@ -123,6 +139,7 @@ async def serve(workspace: Path, protocol_stream, reporter: Reporter | None = No
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None)
+    parser.add_argument("--runtime-dir", type=Path, default=None)
     args = parser.parse_args()
     if not os.environ.get("WENYI_API_TOKEN"):
         parser.error("WENYI_API_TOKEN must be supplied by the desktop parent")
@@ -134,7 +151,15 @@ def main() -> None:
     if reporter is not None:
         reporter.emit("engine_bootstrap")
     try:
-        asyncio.run(serve(args.data_dir or default_workspace(), protocol_stream, reporter))
+        # An injected directory is authoritative; the fallback is CLI-only.
+        asyncio.run(
+            serve(
+                args.data_dir or default_workspace(),
+                protocol_stream,
+                reporter,
+                runtime_dir=args.runtime_dir,
+            )
+        )
     except Exception as error:
         if reporter is not None:
             reporter.emit("engine_bootstrap_failed", **failure_attributes(error))

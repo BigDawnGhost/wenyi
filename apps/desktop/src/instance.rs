@@ -40,8 +40,11 @@ impl Error {
 }
 
 /// Resolve once and use a SQLite-compatible spelling for the Python workspace.
+///
+/// The name itself lives in paths.rs; this only admits the directory and
+/// normalizes its spelling.
 pub fn workspace(explicit: Option<PathBuf>) -> Result<PathBuf, Error> {
-    let path = explicit.map(Ok).unwrap_or_else(default_workspace)?;
+    let path = crate::paths::workspace(explicit).map_err(|_| Error::Workspace)?;
     fs::create_dir_all(&path).map_err(|_| Error::Workspace)?;
     path.canonicalize()
         .map(plain_path)
@@ -74,24 +77,6 @@ fn plain_path(path: PathBuf) -> PathBuf {
         }
     }
     plain
-}
-
-fn default_workspace() -> Result<PathBuf, Error> {
-    let env = |name| {
-        std::env::var_os(name)
-            .map(PathBuf::from)
-            .ok_or(Error::Workspace)
-    };
-    #[cfg(windows)]
-    let base = env("LOCALAPPDATA")?;
-    #[cfg(target_os = "macos")]
-    let base = env("HOME")?.join("Library/Application Support");
-    #[cfg(not(any(windows, target_os = "macos")))]
-    let base = match std::env::var_os("XDG_DATA_HOME") {
-        Some(path) => PathBuf::from(path),
-        None => env("HOME")?.join(".local/share"),
-    };
-    Ok(base.join("Wenyi Desktop"))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -630,7 +615,11 @@ mod tests {
             .unwrap();
         assert!(output.status.success());
         let existing: String = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(default_workspace().unwrap(), PathBuf::from(existing));
+        // The native default must keep matching the Python standalone fallback.
+        assert_eq!(
+            crate::paths::default_workspace().unwrap(),
+            PathBuf::from(existing)
+        );
     }
 
     #[test]

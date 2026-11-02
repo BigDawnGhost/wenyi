@@ -87,6 +87,7 @@ impl Backend {
     pub fn spawn(
         resources: &Path,
         workspace: Option<&Path>,
+        runtime: Option<&Path>,
         diagnostics: crate::diagnostics::Diagnostics,
     ) -> Result<(Self, ReadySignal), &'static str> {
         let token = token()?;
@@ -106,8 +107,13 @@ impl Backend {
                 command.args(["-m", "wenyi_desktop"]);
             }
         }
+        // Inject instead of letting the engine derive: the parent owns the
+        // resolution, and the engine only falls back when it runs standalone.
         if let Some(workspace) = workspace {
             command.arg("--data-dir").arg(workspace);
+        }
+        if let Some(runtime) = runtime {
+            command.arg("--runtime-dir").arg(runtime);
         }
         command
             .env("WENYI_API_TOKEN", &token)

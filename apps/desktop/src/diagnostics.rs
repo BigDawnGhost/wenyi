@@ -530,24 +530,12 @@ impl Diagnostics {
         Self::with_limits(path, Limits::default())
     }
 
+    /// The workspace copy first, then the user-level fallback that keeps logging
+    /// possible when the workspace is not writable. Both candidates are resolved
+    /// by paths.rs, and neither depends on layers one to three, so this can start
+    /// before any layout assertion runs.
     pub fn for_workspace(workspace: &Path) -> Self {
-        let mut candidates = vec![workspace.join("diagnostics")];
-        #[cfg(windows)]
-        let fallback = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-        #[cfg(target_os = "macos")]
-        let fallback = std::env::var_os("HOME").map(|p| PathBuf::from(p).join("Library/Logs"));
-        #[cfg(not(any(windows, target_os = "macos")))]
-        let fallback = std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/state")));
-        if let Some(base) = fallback.filter(|p| p.is_absolute()) {
-            let workspace_ref = format!(
-                "{:x}",
-                Sha256::digest(workspace.to_string_lossy().as_bytes())
-            );
-            candidates.push(base.join("Wenyi Desktop Logs").join(&workspace_ref[..16]));
-        }
-        Self::with_paths(candidates, Limits::default())
+        Self::with_paths(crate::paths::log_roots(workspace), Limits::default())
     }
 
     fn with_limits(path: Option<&Path>, limits: Limits) -> Self {
