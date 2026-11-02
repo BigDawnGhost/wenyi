@@ -184,7 +184,10 @@ Later runs reuse this file, and you may correct it manually before resuming.
 
 PDF output is only supported for projects parsed with BabelDOC. It sends saved
 translations to the external bridge's `/fillback` endpoint to preserve the original
-PDF layout. No local PDF rendering dependencies or engine selection are needed:
+PDF layout. Missing, empty, or whitespace-only translations use the original
+paragraph text for fillback so that required paragraph IDs remain present. This
+export fallback does not change saved translations. No local PDF rendering
+dependencies or engine selection are needed:
 
 ```bash
 uv run wenyi assemble book.pdf --format pdf
