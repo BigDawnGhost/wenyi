@@ -145,6 +145,26 @@ def smoke_parse(base_url: str, token: str) -> None:
     raise AssertionError("Packaged background preview did not become ready")
 
 
+def _locks_library() -> str:
+    """Return the built wenyi-locks library to bundle beside the sidecar."""
+    name = {
+        "win32": "wenyi_locks.dll",
+        "darwin": "libwenyi_locks.dylib",
+    }.get(sys.platform, "libwenyi_locks.so")
+    override = os.environ.get("WENYI_LOCKS_LIB")
+    if override:
+        if not os.path.isfile(override):
+            raise SystemExit(f"WENYI_LOCKS_LIB points at a missing file: {override}")
+        return override
+    candidate = ROOT / "native" / "wenyi-locks" / "target" / "release" / name
+    if candidate.is_file():
+        return str(candidate)
+    raise SystemExit(
+        "Build the lock library first: "
+        "cargo build --release --manifest-path native/wenyi-locks/Cargo.toml"
+    )
+
+
 def build() -> None:
     for module in EXCLUDED_MODULES:
         assert find_spec(module) is None, f"Build environment is not isolated: {module}"
@@ -192,6 +212,8 @@ def build() -> None:
             "tiktoken_ext",
             "--collect-submodules",
             "keyring.backends",
+            "--add-binary",
+            f"{_locks_library()}{os.pathsep}.",
             "--add-data",
             f"{cache}{os.pathsep}tiktoken_cache",
             *(argument for module in EXCLUDED_MODULES for argument in ("--exclude-module", module)),

@@ -199,6 +199,8 @@ jobs:
       # nextest runs every test in its own process and reports per-test timings,
       # which the plain harness cannot do.
       - uses: taiki-e/install-action@nextest
+      - name: Build the wenyi-locks native library
+        run: cargo build --release --manifest-path native/wenyi-locks/Cargo.toml
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop -> target
@@ -218,16 +220,22 @@ jobs:
       - run: uv run --no-sync pytest -q packages/core/tests/test_release_packaging.py packages/core/tests/test_desktop_updates.py
       - name: Test Windows local state and artifact paths
         if: runner.os == 'Windows'
+        env:
+          WENYI_LOCKS_LIB: ${{ github.workspace }}/native/wenyi-locks/target/release/wenyi_locks.dll
         run: >
           uv run --no-sync pytest -q -n auto --dist loadgroup
           packages/core/tests/test_file_artifacts.py
           packages/core/tests/test_file_storage.py
           packages/core/tests/test_file_migrations.py
           packages/core/tests/test_precision_pipeline.py
+          packages/core/tests/test_locks_contract.py
           packages/core/tests/test_orchestrator.py
       # loadgroup keeps tests that drive one runtime on the same worker; --dist
       # defaults to load, which would scatter them and race the scheduler.
-      - run: uv run --no-sync pytest -q -n auto --dist loadgroup apps/desktop/backend/tests
+      - name: Desktop backend suite
+        env:
+          WENYI_LOCKS_LIB: ${{ github.workspace }}/native/wenyi-locks/target/release/${{ runner.os == 'Windows' && 'wenyi_locks.dll' || 'libwenyi_locks.so' }}
+        run: uv run --no-sync pytest -q -n auto --dist loadgroup apps/desktop/backend/tests
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
       - run: cargo nextest run --locked --manifest-path apps/desktop/Cargo.toml
