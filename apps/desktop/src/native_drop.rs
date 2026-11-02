@@ -258,32 +258,10 @@ impl Read for SourceReader {
     }
 }
 
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Connection {
-    api_base: String,
-    token: String,
-}
 
 fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<serde_json::Value> {
-    let connection: Connection =
-        serde_json::from_str(connection).map_err(|_| "Local service is unavailable.")?;
-    let base =
-        reqwest::Url::parse(&connection.api_base).map_err(|_| "Invalid local service address.")?;
-    if base.scheme() != "http"
-        || base.host_str() != Some("127.0.0.1")
-        || base.port().is_none()
-        || !base.username().is_empty()
-        || base.password().is_some()
-        || base.path() != "/"
-        || base.query().is_some()
-        || base.fragment().is_some()
-    {
-        return Err(crate::ipc_error::IpcError::new(
-            "drop_connection_invalid",
-            "Invalid local service address.",
-        ));
-    }
+    let connection = crate::local_connection::Connection::new(connection)
+        .map_err(crate::ipc_error::IpcError::from)?;
     grant
         .validate()
         .map_err(|_| "Source file changed. Drop it again.")?;
@@ -300,15 +278,12 @@ fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<
     let form = reqwest::blocking::multipart::Form::new()
         .text("project", project.to_string())
         .part("file", file);
-    let client = reqwest::blocking::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .no_proxy()
+    let response = connection
+        .client
+        .post(format!("{}/projects", connection.base))
+        .bearer_auth(&connection.token)
+        // The shared client caps requests at 30 s; a source upload needs longer.
         .timeout(Duration::from_secs(60 * 60))
-        .build()
-        .map_err(|_| "Could not initialize local upload.")?;
-    let response = client
-        .post(base.join("/projects").unwrap())
-        .bearer_auth(connection.token)
         .multipart(form)
         .send()
         .map_err(|_| "Local upload failed. Drop the source again to retry.")?;
