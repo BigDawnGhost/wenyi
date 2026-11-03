@@ -128,10 +128,11 @@ class MinerUApi:
             )
             put_resp.raise_for_status()
 
-        # 3. Poll until all done
-        return self._poll_batch(data["batch_id"], timeout, expected_count=len(file_paths))
+        # 3. Poll until all done, matching results back to the upload manifest by name
+        expected_names = [Path(p).name for p in file_paths]
+        return self._poll_batch(data["batch_id"], timeout, expected_names=expected_names)
 
-    def _poll_batch(self, batch_id: str, timeout: int, *, expected_count: int) -> list[bytes]:
+    def _poll_batch(self, batch_id: str, timeout: int, *, expected_names: list[str]) -> list[bytes]:
         deadline = time.monotonic() + timeout
         interval = POLL_INTERVAL
         while True:
@@ -140,15 +141,23 @@ class MinerUApi:
             results = resp.json()["data"]["extract_result"]
             states = [r["state"] for r in results]
             if all(s in ("done", "failed") for s in states):
-                if len(results) != expected_count:
+                if len(results) != len(expected_names):
                     # Result order/length must match the upload manifest; chunks arriving
                     # out of order or missing would silently misassemble the book.
                     raise MinerUError(
                         f"MinerU returned {len(results)} extraction results "
-                        f"for {expected_count} uploaded files"
+                        f"for {len(expected_names)} uploaded files"
+                    )
+                by_name = {r.get("file_name"): r for r in results}
+                missing = [name for name in expected_names if name not in by_name]
+                if missing:
+                    raise MinerUError(
+                        f"MinerU extraction results are missing uploaded files: "
+                        f"{', '.join(missing[:3])}"
                     )
                 zips: list[bytes] = []
-                for r in results:
+                for name in expected_names:
+                    r = by_name[name]
                     if r["state"] == "failed":
                         raise MinerUError(
                             f"Extraction failed for {r['file_name']}: {r.get('err_msg', 'unknown')}"

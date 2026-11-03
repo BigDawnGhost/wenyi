@@ -39,7 +39,7 @@ def _check_deps() -> None:
             f"PDF conversion requires optional dependencies; run: \n"
             f"  uv pip install {' '.join(missing)}\n"
             f"After installing dependencies and converting once, inspect the cached source/<SHA-256>/"
-            f"converted.html。"
+            f"converted.html."
         )
 
 
@@ -89,7 +89,9 @@ def read_pdf(
         temporary_html_path = f"{html_path}.tmp"
         try:
             os.remove(temporary_html_path)
-        except FileNotFoundError:
+        except OSError:
+            # FileNotFoundError is normal; on Windows a stale tmp can also be locked,
+            # and conversion overwrites it anyway (audit Z-2/H-5).
             pass
         try:
             convert_pdf_to_html(path, temporary_html_path, api_token=api_token)
