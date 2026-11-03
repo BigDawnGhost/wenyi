@@ -8,8 +8,10 @@ layer two without touching the old workspace again.
 
 from __future__ import annotations
 
+import gc
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -210,7 +212,7 @@ def test_credentials_can_initialize_layer_two_before_the_catalog(
 def test_credentials_only_is_not_fresh_when_provenance_survives(tmp_path: Path) -> None:
     workspace = old_layout(tmp_path / WORKSPACE)
     startup.adopt(workspace)
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         for table in (*layers.CATALOG_TABLES, layers.RECEIPTS):
             connection.execute(f"DROP TABLE {table}")
     before = paths.user_catalog().read_bytes()
@@ -248,7 +250,7 @@ def test_the_old_catalog_is_not_used_again_after_the_move(tmp_path: Path) -> Non
 def test_a_second_workspace_is_adopted_even_though_layer_two_is_shared(tmp_path: Path) -> None:
     first = old_layout(tmp_path / "first" / WORKSPACE)
     second = old_layout(tmp_path / "second" / WORKSPACE)
-    with sqlite3.connect(paths.catalog(second)) as connection:
+    with closing(sqlite3.connect(paths.catalog(second))) as connection, connection:
         connection.execute(
             "UPDATE projects SET id=?, document=?",
             ("fedcba9876543210", '{"id":"fedcba9876543210","name":"Second"}'),
@@ -264,7 +266,7 @@ def test_a_second_workspace_is_adopted_even_though_layer_two_is_shared(tmp_path:
     assert startup.adopt(second).ok
     assert layers.complete(second)
     assert layers.complete(first)
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         assert set(connection.execute("SELECT id FROM projects")) == {
             ("0123456789abcdef",),
             ("fedcba9876543210",),
@@ -285,6 +287,9 @@ def test_a_second_workspace_is_adopted_even_though_layer_two_is_shared(tmp_path:
             assert export["id"] == job["params"]["export_id"]
             # History remains at its old path; remapping must not rename files.
             assert export["path"] == f"{pid}/exports/1/book.txt"
+    # Closing a leaked fixture connection must not checkpoint the legacy WAL
+    # after its baseline was captured, regardless of the interpreter's GC timing.
+    gc.collect()
     assert {workspace: fingerprint(workspace) for workspace in (first, second)} == before
     backend = LocalBackend(second)
     try:
@@ -349,7 +354,7 @@ def test_first_adoption_can_resume_after_transaction_rollback(tmp_path: Path, mo
 
 def test_lost_shared_catalog_cannot_be_partially_rebuilt_from_two_originals(tmp_path: Path) -> None:
     first, second = old_layout(tmp_path / "first"), old_layout(tmp_path / "second")
-    with sqlite3.connect(paths.catalog(second)) as connection:
+    with closing(sqlite3.connect(paths.catalog(second))) as connection, connection:
         connection.execute(
             "UPDATE projects SET id=?, document=?",
             ("fedcba9876543210", '{"id":"fedcba9876543210","name":"Second"}'),
@@ -380,7 +385,7 @@ def test_invalid_provenance_refuses_replay_even_with_one_valid_receipt(
     workspace = old_layout(tmp_path / WORKSPACE)
     add_export_history(workspace, "0123456789abcdef", "legacy-run")
     startup.adopt(workspace)
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("DELETE FROM projects")
         if lost_receipt:
@@ -392,7 +397,7 @@ def test_invalid_provenance_refuses_replay_even_with_one_valid_receipt(
         startup.adopt(workspace)
     assert (fingerprint(workspace), fingerprint(paths.user_root())) == before
     assert paths.user_catalog().read_bytes() == database_before
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         for table in ("projects", "jobs", "exports"):
             assert connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == 0
 
@@ -400,7 +405,7 @@ def test_invalid_provenance_refuses_replay_even_with_one_valid_receipt(
 def test_invalid_shared_provenance_cannot_be_erased_by_another_workspace(tmp_path: Path) -> None:
     first, second = old_layout(tmp_path / "first"), old_layout(tmp_path / "second")
     second_id = "fedcba9876543210"
-    with sqlite3.connect(paths.catalog(second)) as connection:
+    with closing(sqlite3.connect(paths.catalog(second))) as connection, connection:
         connection.execute(
             "UPDATE projects SET id=?, document=?",
             (second_id, json.dumps({"id": second_id, "name": "Second"})),
@@ -409,7 +414,7 @@ def test_invalid_shared_provenance_cannot_be_erased_by_another_workspace(tmp_pat
     add_export_history(second, second_id, "second-run")
     startup.adopt(first)
     startup.adopt(second)
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("DELETE FROM projects WHERE id=?", (second_id,))
         connection.execute(
@@ -423,7 +428,7 @@ def test_invalid_shared_provenance_cannot_be_erased_by_another_workspace(tmp_pat
         with pytest.raises(layers.LayoutError, match="provenance"):
             startup.adopt(workspace)
         assert {path: fingerprint(path) for path in before} == before
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         assert connection.execute("SELECT id FROM projects").fetchall() == [("0123456789abcdef",)]
         assert (
             connection.execute(
@@ -440,7 +445,7 @@ def test_stale_valid_provenance_is_repaired_from_the_transactional_receipt(
     workspace = old_layout(tmp_path / WORKSPACE)
     add_export_history(workspace, "0123456789abcdef", "legacy-run")
     startup.adopt(workspace)
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         receipt = json.loads(
             connection.execute("SELECT document FROM desktop_migrations").fetchone()[0]
         )
@@ -480,7 +485,7 @@ def test_legacy_missing_offsets_mean_zero_when_comparing_completion_records(tmp_
 def test_provenance_does_not_replace_a_transactional_receipt(tmp_path: Path, missing: str) -> None:
     workspace = old_layout(tmp_path / WORKSPACE)
     startup.adopt(workspace)
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         connection.execute(
             "DROP TABLE desktop_migrations"
             if missing == "table"
@@ -489,7 +494,7 @@ def test_provenance_does_not_replace_a_transactional_receipt(tmp_path: Path, mis
     assert not layers.complete(workspace)
     assert startup.adopt(workspace).ok
     assert layers.complete(workspace)
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         assert connection.execute("SELECT count(*) FROM desktop_migrations").fetchone()[0] == 1
 
 
@@ -515,7 +520,7 @@ def test_provenance_does_not_replace_a_transactional_receipt(tmp_path: Path, mis
 def test_inconsistent_catalog_stops_startup_despite_provenance(tmp_path: Path, damage: str) -> None:
     workspace = old_layout(tmp_path / WORKSPACE)
     startup.adopt(workspace)
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         connection.execute(
             {
                 "invalid receipt": "UPDATE desktop_migrations SET document='not json'",
@@ -633,7 +638,7 @@ def test_conflicting_second_workspace_is_refused_without_replacing_any_data(tmp_
     first = old_layout(tmp_path / "first")
     second = old_layout(tmp_path / "second")
     startup.adopt(first)
-    with sqlite3.connect(paths.catalog(second)) as connection:
+    with closing(sqlite3.connect(paths.catalog(second))) as connection, connection:
         connection.execute("UPDATE projects SET document=?", ('{"name":"Conflict"}',))
     before = paths.user_catalog().read_bytes()
     with pytest.raises(layers.LayoutError, match="conflict"):
@@ -662,10 +667,10 @@ def test_second_import_preserves_legacy_completion_and_current_settings(tmp_path
     legacy.pop("sources", None)
     legacy.pop("id_offsets")
     layers.provenance().write_text(json.dumps(legacy), encoding="utf-8")
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         connection.execute("DROP TABLE desktop_migrations")
         connection.execute("UPDATE application_settings SET document=?", ('{"revision":99}',))
-    with sqlite3.connect(paths.catalog(second)) as connection:
+    with closing(sqlite3.connect(paths.catalog(second))) as connection, connection:
         connection.execute(
             "UPDATE projects SET id=?, document=?",
             ("fedcba9876543210", '{"id":"fedcba9876543210","name":"Second"}'),
@@ -676,7 +681,7 @@ def test_second_import_preserves_legacy_completion_and_current_settings(tmp_path
     assert layers.complete(second)
     assert startup.adopt(first).ok
     assert layers.complete(first)
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         assert connection.execute("SELECT document FROM application_settings").fetchone()[0] == (
             '{"revision":99}'
         )
@@ -690,7 +695,7 @@ def test_legacy_receipt_backfill_keeps_newer_documents_and_history(
     pid = "0123456789abcdef"
     if remapped:
         earlier = old_layout(tmp_path / "earlier")
-        with sqlite3.connect(paths.catalog(earlier)) as connection:
+        with closing(sqlite3.connect(paths.catalog(earlier))) as connection, connection:
             connection.execute(
                 "UPDATE projects SET id=?, document=?",
                 ("fedcba9876543210", '{"id":"fedcba9876543210","name":"Earlier"}'),
@@ -706,7 +711,7 @@ def test_legacy_receipt_backfill_keeps_newer_documents_and_history(
         provenance.pop("sources")
         provenance.pop("id_offsets")
         layers.provenance().write_text(json.dumps(provenance), encoding="utf-8")
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         connection.execute("DROP TABLE desktop_migrations")
         connection.execute(
             "UPDATE projects SET document=json_set(document, '$.name', 'Newer') WHERE id=?", (pid,)
@@ -729,7 +734,7 @@ def test_legacy_receipt_backfill_keeps_newer_documents_and_history(
         backend.admit_export(pid, "txt", {}, "new-run", {})
     finally:
         backend.close()
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         before_rows = {
             table: list(connection.execute(f"SELECT * FROM {table}")) for table in layers.TABLES
         }
@@ -737,7 +742,7 @@ def test_legacy_receipt_backfill_keeps_newer_documents_and_history(
     assert startup.adopt(workspace).ok
     assert layers.complete(workspace)
     assert startup.adopt(workspace).ok
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         assert {
             table: list(connection.execute(f"SELECT * FROM {table}")) for table in layers.TABLES
         } == before_rows
@@ -751,7 +756,7 @@ def test_legacy_backfill_refuses_ambiguous_missing_data_and_recovers_after_repai
     workspace = old_layout(tmp_path / WORKSPACE)
     add_export_history(workspace, "0123456789abcdef", "legacy-run")
     startup.adopt(workspace)
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         exported = connection.execute("SELECT * FROM exports").fetchone()
         connection.execute("DROP TABLE desktop_migrations")
         connection.execute("DELETE FROM exports")
@@ -760,7 +765,7 @@ def test_legacy_backfill_refuses_ambiguous_missing_data_and_recovers_after_repai
         startup.adopt(workspace)
     assert paths.user_catalog().read_bytes() == before
     assert layers.pending()
-    with sqlite3.connect(paths.user_catalog()) as connection:
+    with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
         connection.execute("INSERT INTO exports VALUES (?,?,?)", exported)
     assert startup.adopt(workspace).ok
     assert layers.complete(workspace)
@@ -772,7 +777,7 @@ def test_populated_second_import_is_atomic_and_retry_preserves_new_rows(
     tmp_path: Path, monkeypatch, failure: str
 ) -> None:
     first, second = old_layout(tmp_path / "first"), old_layout(tmp_path / "second")
-    with sqlite3.connect(paths.catalog(second)) as connection:
+    with closing(sqlite3.connect(paths.catalog(second))) as connection, connection:
         connection.execute(
             "UPDATE projects SET id=?, document=?",
             ("fedcba9876543210", '{"id":"fedcba9876543210","name":"Second"}'),
@@ -796,7 +801,7 @@ def test_populated_second_import_is_atomic_and_retry_preserves_new_rows(
         monkeypatch.setattr(layers.Materializer, failure, fail)
         with pytest.raises(layers.LayoutError, match="injected interruption"):
             startup.adopt(second)
-        with sqlite3.connect(paths.user_catalog()) as connection:
+        with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
             expected = 1 if failure == "record" else 2
             assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == expected
             assert connection.execute("SELECT count(*) FROM exports").fetchone()[0] == expected
@@ -814,7 +819,7 @@ def test_populated_second_import_is_atomic_and_retry_preserves_new_rows(
         monkeypatch.setattr(layers.Materializer, failure, original)
         assert startup.adopt(second).ok
         assert startup.adopt(second).ok
-        with sqlite3.connect(paths.user_catalog()) as connection:
+        with closing(sqlite3.connect(paths.user_catalog())) as connection, connection:
             assert connection.execute("SELECT count(*) FROM jobs").fetchone()[0] == 3
             assert connection.execute("SELECT count(*) FROM exports").fetchone()[0] == 3
             assert connection.execute("SELECT count(*) FROM desktop_migrations").fetchone()[0] == 2
@@ -840,14 +845,14 @@ def test_populated_second_import_is_atomic_and_retry_preserves_new_rows(
 @pytest.mark.parametrize("identity", ["run_id", "arq_job_id", "credential"])
 def test_real_domain_conflicts_roll_back_the_second_import(tmp_path: Path, identity: str) -> None:
     first, second = old_layout(tmp_path / "first"), old_layout(tmp_path / "second")
-    with sqlite3.connect(paths.catalog(second)) as connection:
+    with closing(sqlite3.connect(paths.catalog(second))) as connection, connection:
         connection.execute(
             "UPDATE projects SET id=?, document=?",
             ("fedcba9876543210", '{"id":"fedcba9876543210","name":"Second"}'),
         )
     add_export_history(first, "0123456789abcdef", "first-run")
     add_export_history(second, "fedcba9876543210", "second-run")
-    with sqlite3.connect(paths.catalog(second)) as connection:
+    with closing(sqlite3.connect(paths.catalog(second))) as connection, connection:
         if identity == "credential":
             connection.execute(
                 "UPDATE desktop_credentials SET document=?", ('{"reference":"other-reference"}',)
@@ -880,13 +885,13 @@ def test_a_lost_catalog_requires_backup_recovery_even_from_a_fresh_workspace(
 def test_remapping_reserves_retired_exports_and_their_job_references(tmp_path: Path) -> None:
     first, second = old_layout(tmp_path / "first"), old_layout(tmp_path / "second")
     pid = "fedcba9876543210"
-    with sqlite3.connect(paths.catalog(second)) as connection:
+    with closing(sqlite3.connect(paths.catalog(second))) as connection, connection:
         connection.execute(
             "UPDATE projects SET id=?, document=?", (pid, json.dumps({"id": pid, "name": "Second"}))
         )
     add_export_history(first, "0123456789abcdef", "first-run")
     add_export_history(second, pid, "second-run")
-    with sqlite3.connect(paths.catalog(second)) as connection:
+    with closing(sqlite3.connect(paths.catalog(second))) as connection, connection:
         connection.execute("INSERT INTO exports VALUES (70, ?, '{}')", (pid,))
         connection.execute("DELETE FROM exports WHERE id=70")
         document = json.loads(connection.execute("SELECT document FROM jobs").fetchone()[0])
