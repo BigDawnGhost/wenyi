@@ -24,8 +24,15 @@ def windows_paths(monkeypatch):
                 text = "\\\\?\\UNC\\" + text[2:] if text.startswith("\\\\") else "\\\\?\\" + text
             return type(self)(text)
 
-    monkeypatch.setattr(artifacts, "os", SimpleNamespace(name="nt", path=ntpath, sep="\\"))
+    # to_io_path lives in its own module and reads *its* os, so patching only the
+    # artifacts module would leave the real platform in place and make these
+    # Windows-shaped expectations fail wherever the host is not Windows.
+    import wenyi_core.storage.io_path as io_path
+
+    windows_os = SimpleNamespace(name="nt", path=ntpath, sep="\\")
+    monkeypatch.setattr(artifacts, "os", windows_os)
     monkeypatch.setattr(artifacts, "Path", ResolvingWindowsPath)
+    monkeypatch.setattr(io_path, "os", windows_os)
     return ResolvingWindowsPath
 
 
