@@ -16,8 +16,8 @@ from __future__ import annotations
 from contextlib import AbstractContextManager
 from typing import Any, Protocol, runtime_checkable
 
-from ..glossary.store import GlossaryTerm
-from ..ingest.models import Chapter, Document
+from ..models.document import Chapter, Document
+from ..models.glossary import GlossaryTerm
 
 STATUS_PENDING = "pending"
 STATUS_DONE = "done"

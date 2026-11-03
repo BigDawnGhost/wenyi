@@ -6,7 +6,7 @@ can share one fixture without importing each other's test module.
 
 import hashlib
 
-from wenyi_core.ingest.models import Chapter, Document, Segment
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.storage.sqlite import SqliteStorage
 
 

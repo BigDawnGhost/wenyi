@@ -5,14 +5,14 @@ import hashlib
 import pytest
 from wenyi_core.assemble.export_view import ExportViewStore
 from wenyi_core.i18n.policy.models import ExportTextInput, ExportTextResult
-from wenyi_core.ingest.models import Chapter, Segment
+from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.postprocess.export_text import boundary_map, normalize_chinese, validate_result
 from wenyi_core.storage.run_store import ExportSnapshotStore
 
 
 def test_export_identity_binds_targets_and_output_choices_not_cache_timestamps(tmp_path):
     from wenyi_core.assemble.policy import export_plan
-    from wenyi_core.ingest.models import Chapter, Document, Segment
+    from wenyi_core.models.document import Chapter, Document, Segment
     from wenyi_core.storage.file import FileStorage
 
     source = tmp_path / "source.txt"
@@ -48,7 +48,7 @@ def test_handler_failure_never_replaces_an_output_or_formal_targets(tmp_path, mo
 
     import pytest
     from wenyi_core.assemble.writer import assemble
-    from wenyi_core.ingest.models import Chapter, Document, Segment
+    from wenyi_core.models.document import Chapter, Document, Segment
     from wenyi_core.storage.file import FileStorage
 
     source = tmp_path / "source.txt"

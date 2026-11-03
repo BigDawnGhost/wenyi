@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..ingest.models import Chapter
 from ..llm.routing import inference_snapshot
+from ..models.document import Chapter
 from ..review.autofix_models import AutofixCandidates, AutofixPlan, PublishLocation
 from ..review.models import ReviewOutcome, text_hash
 from ..review.run_store import ReviewRunStore

@@ -5,9 +5,9 @@ from dataclasses import replace
 
 import pytest
 from wenyi_core.glossary.evidence_models import DiscoveryResult
-from wenyi_core.glossary.extractor import GlossaryExtractor
-from wenyi_core.glossary.store import TYPE_PERSON, GlossaryTerm
+from wenyi_core.agents.glossary_extractor import GlossaryExtractor
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.glossary import TYPE_PERSON, GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.terminology import TerminologyService
 

@@ -5,7 +5,7 @@ or bilingual text according to bilingual and order.
 
 from __future__ import annotations
 
-from ..ingest.models import KIND_HEADING
+from ..models.document import KIND_HEADING
 from .export_view import AssembleStore
 from .writer_common import _bilingual_source, _merged_paragraphs, _ordered_pair
 

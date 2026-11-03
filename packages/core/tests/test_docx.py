@@ -19,9 +19,9 @@ from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
 from wenyi_core.document_styles.docx import merge_align_results, proportional_range_placements
 from wenyi_core.ingest.docx_reader import read_docx
-from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.document import KIND_HEADING, KIND_TEXT
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.run_store import STATUS_DONE
 

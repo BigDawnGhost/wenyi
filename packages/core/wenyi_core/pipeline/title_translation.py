@@ -10,7 +10,7 @@ from typing import Any
 from ..agents import prompts
 from ..agents.title_translator import TitleOutputError, TitleTranslator
 from ..glossary.store import GlossaryStore
-from ..ingest.models import Chapter
+from ..models.document import Chapter
 from ..storage.protocol import Storage
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..glossary.store import GlossaryTerm
+from ..models.glossary import GlossaryTerm
 
 _FIELDS = ("note", "reading", "gender")
 

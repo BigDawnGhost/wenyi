@@ -20,7 +20,7 @@ from ..agents.terminology import TerminologyAgent
 from ..agents.title_translator import TitleTranslator
 from ..agents.translator import Translator
 from ..config import Config
-from ..glossary.extractor import GlossaryExtractor
+from ..agents.glossary_extractor import GlossaryExtractor
 from ..i18n.languages import require_language, validate_run_languages
 from ..llm.base import LLMClient
 from ..llm.factory import build_client

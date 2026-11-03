@@ -7,7 +7,7 @@ import unicodedata
 from dataclasses import dataclass
 from itertools import groupby
 
-from ..ingest.models import KIND_HEADING, Chapter, Segment
+from ..models.document import KIND_HEADING, Chapter, Segment
 
 _SECTION_NUMBER = re.compile(r"^\d+(?:\.\d+)*\s*(?:[|:.)–—-]\s*)?")
 _ABSTRACT_HEADINGS = {"abstract", "摘要"}

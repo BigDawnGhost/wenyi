@@ -87,7 +87,7 @@ def runstore_for_cli(
     config: Config, input_path: str, *, console: Console | None = None
 ) -> RunStore:
     # Deferred with the ingest stack; the base error class drags it in.
-    from wenyi_core.ingest.errors import IngestError
+    from wenyi_core.models.errors import IngestError
 
     console = console or Console()
     try:

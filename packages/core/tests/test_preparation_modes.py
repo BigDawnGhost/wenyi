@@ -6,7 +6,7 @@ import pytest
 from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.agents.synopsis import Synopsizer
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage

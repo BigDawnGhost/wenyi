@@ -7,10 +7,10 @@ from dataclasses import dataclass
 
 from ..agents.polisher import Polisher
 from ..agents.translator import Translator
-from ..glossary.store import GlossaryTerm
-from ..ingest.models import Segment
 from ..ingest.segmenter import batch_segments
 from ..markup.ruby import strip_ruby_markers
+from ..models.document import Segment
+from ..models.glossary import GlossaryTerm
 
 
 @dataclass(frozen=True)

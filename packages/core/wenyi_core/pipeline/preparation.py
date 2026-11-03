@@ -16,9 +16,9 @@ from ..i18n.languages import normalize_language
 from ..i18n.policy.models import Phase, content_hash
 from ..i18n.prompts import render
 from ..ingest.epub_reader import peek_epub_title
-from ..ingest.models import Document
 from ..ingest.segmenter import load_document
 from ..llm.errors import ProviderFailure, describe_provider_failure
+from ..models.document import Document
 from ..storage.protocol import Storage
 from .book_understanding import BookUnderstandingService
 from .input_preparation import (

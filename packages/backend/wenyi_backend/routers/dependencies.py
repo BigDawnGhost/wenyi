@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 
 from wenyi_core.config import Config
-from wenyi_core.ingest.models import Document
+from wenyi_core.models.document import Document
 from wenyi_core.storage.protocol import Storage
 
 from .. import job_service, project_service, source_view

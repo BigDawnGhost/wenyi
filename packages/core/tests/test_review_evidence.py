@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from wenyi_core.glossary.store import GlossaryTerm
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.review.conflicts import build_conflict_groups, normalize_review_issues
 from wenyi_core.review.evidence import BookEvidenceIndex
 

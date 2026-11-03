@@ -11,8 +11,8 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from ..events import ProgressFn
-from ..glossary.store import GlossaryTerm
 from ..llm.usage import validate_usage
+from ..models.glossary import GlossaryTerm
 from ..review.models import ReviewOutcome
 from ..review.run_store import ReviewRunStore
 from ..storage.protocol import Storage

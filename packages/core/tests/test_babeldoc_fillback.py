@@ -1,8 +1,8 @@
 """BabelDOC fillback must retain IDs whose saved translation is blank."""
 
 import pytest
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.ingest.pdf_babeldoc import translations_from_store
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
 

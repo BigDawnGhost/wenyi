@@ -16,8 +16,8 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from ..events import ProgressFn
-from ..glossary.store import GlossaryTerm
 from ..llm.retrying import is_resumable_provider_interrupt
+from ..models.glossary import GlossaryTerm
 from ..review.evidence import BookEvidenceIndex
 from ..review.models import ReviewOutcome
 from ..review.run_store import ReviewRunStore

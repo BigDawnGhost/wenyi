@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal
 
 from psycopg import Connection
-from wenyi_core.ingest.models import Chapter
+from wenyi_core.models.document import Chapter
 
 
 def record_chapter_changes(

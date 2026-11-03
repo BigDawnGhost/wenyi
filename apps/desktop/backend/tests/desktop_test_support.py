@@ -4,7 +4,7 @@ import time
 
 import pytest
 from wenyi_backend.context import current_context
-from wenyi_core.ingest.models import Chapter, Document, Segment
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.storage.sqlite import SqliteStorage
 
 

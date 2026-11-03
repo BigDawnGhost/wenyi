@@ -18,7 +18,7 @@ from wenyi_backend.context import current_context, use_context
 from wenyi_backend.execution import operations, runner
 from wenyi_backend.execution.bindings import workflow_dependencies
 from wenyi_backend.execution.contracts import ExecutionRequest
-from wenyi_core.ingest.models import Document
+from wenyi_core.models.document import Document
 from wenyi_core.storage.sqlite import SqliteStorage
 from wenyi_desktop.main import create_context
 

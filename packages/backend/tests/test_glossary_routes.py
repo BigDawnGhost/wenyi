@@ -8,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from wenyi_backend.routers import glossary
-from wenyi_core.glossary.store import GlossaryTerm
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.storage.sqlite import SqliteStorage
 
 

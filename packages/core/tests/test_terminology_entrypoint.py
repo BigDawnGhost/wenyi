@@ -7,8 +7,8 @@ from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.autofix_verification import AutofixVerification
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.review_rounds import ReviewRoundService

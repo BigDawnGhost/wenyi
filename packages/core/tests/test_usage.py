@@ -13,7 +13,6 @@ from unittest.mock import patch
 
 from wenyi_core.agents.base import Agent
 from wenyi_core.config import Config, LLMConfig
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.factory import build_client
 from wenyi_core.llm.providers._openai_compatible import (
     EmptyResponseError,
@@ -33,6 +32,7 @@ from wenyi_core.llm.usage import (
     merge_usage_summaries,
     usage_delta,
 )
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.run_store import source_sha256

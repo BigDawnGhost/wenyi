@@ -10,10 +10,10 @@ from typing import Any
 
 from ..agents.precision import PrecisionAgent, PrecisionError, PrecisionInputs
 from ..config import Config
-from ..ingest.models import Chapter
 from ..llm.base import LLMClient
 from ..llm.routing import identity, inference_snapshot
 from ..markup.ruby import strip_ruby_markers
+from ..models.document import Chapter
 from ..storage.precision_archive import PrecisionArchive
 from ..storage.protocol import Storage
 from .precision_records import PrecisionRecords

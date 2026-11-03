@@ -10,10 +10,10 @@ from threading import Event
 
 import pytest
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
+from wenyi_core.models.document import Chapter, Document, Segment
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.review.models import ReviewOutcome
 from wenyi_core.review.run_store import ReviewRunStore

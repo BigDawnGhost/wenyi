@@ -25,7 +25,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ..agents import prompts
-from ..glossary.store import GlossaryTerm
+from ..models.glossary import GlossaryTerm
 from .protocol import ArtifactStorage
 
 _ROOT = "precision/shared/"

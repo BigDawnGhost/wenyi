@@ -7,9 +7,9 @@ import pytest
 from wenyi_core.agents.terminology import TerminologyReferenceError
 from wenyi_core.config import Config
 from wenyi_core.glossary.evidence_models import KnowledgeResult, SourcePassage
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.i18n.policy.models import content_hash
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.terminology import TerminologyService
 
 from tests.storage_fixtures import require_value

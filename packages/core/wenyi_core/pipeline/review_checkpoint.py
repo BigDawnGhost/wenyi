@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from ..ingest.models import Chapter
+from ..models.document import Chapter
 from ..review.run_store import ReviewRunStore
 from ..review.session import ReviewRoundResult, ReviewSessionState
 

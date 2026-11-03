@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from api_test_support import initialize
 from wenyi_api import dal
-from wenyi_core.glossary.store import GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Segment
+from wenyi_core.models.document import Chapter, Segment
+from wenyi_core.models.glossary import GlossaryTerm
 
 
 def test_review_run_listing_and_sparse_segment_mapping(domain_client, tmp_path):

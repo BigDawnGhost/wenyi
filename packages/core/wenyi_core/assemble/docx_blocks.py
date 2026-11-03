@@ -23,7 +23,7 @@ from wenyi_core.assemble.writer_common import (
 from wenyi_core.document_styles.docx import (
     text_has_visible_list_prefix,
 )
-from wenyi_core.ingest.models import KIND_HEADING, Chapter
+from wenyi_core.models.document import KIND_HEADING, Chapter
 
 
 def _add_heading(

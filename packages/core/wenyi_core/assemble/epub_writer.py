@@ -33,7 +33,7 @@ from wenyi_core.assemble.writer_common import (
     _sanitize_filename,
 )
 from wenyi_core.ingest.fb2_reader import read_fb2_binaries
-from wenyi_core.ingest.models import KIND_HEADING
+from wenyi_core.models.document import KIND_HEADING
 
 from .export_view import AssembleStore
 from .policy import export_options

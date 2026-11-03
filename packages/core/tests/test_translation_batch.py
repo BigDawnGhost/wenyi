@@ -11,8 +11,8 @@ from wenyi_core.agents.polisher import Polisher
 from wenyi_core.agents.translator import Translator
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.review_chunks import ReviewChunkService
 from wenyi_core.pipeline.translation import TranslationService

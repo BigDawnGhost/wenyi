@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import PipelineConfig
 from ..events import ProgressFn
-from ..glossary.extractor import TranslatedSegmentEvidence
+from ..agents.glossary_extractor import TranslatedSegmentEvidence
 from ..glossary.store import GlossaryStore
-from ..ingest.models import Chapter, Segment
+from ..models.document import Chapter, Segment
 from ..storage.protocol import Storage
 from .babeldoc_context import BabeldocContext
 from .context import render_recent_translations

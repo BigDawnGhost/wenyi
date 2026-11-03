@@ -12,7 +12,7 @@ from ..agents.synopsis import Synopsizer
 from ..config import Config
 from ..events import ProgressFn
 from ..i18n.policy.models import content_hash
-from ..ingest.models import Chapter
+from ..models.document import Chapter
 from ..storage.protocol import Storage
 from .runtime_usage import UsageCoordinator
 

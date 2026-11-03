@@ -9,7 +9,7 @@ import unittest
 
 from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.agents.base import Agent
-from wenyi_core.glossary.extractor import (
+from wenyi_core.agents.glossary_extractor import (
     GlossaryExtractor,
     TranslatedSegmentEvidence,
 )

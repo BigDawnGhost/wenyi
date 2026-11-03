@@ -16,7 +16,7 @@ from wenyi_core.assemble.epub_resources import _epub_resource_specs, _render_epu
 from wenyi_core.assemble.html_bilingual import _BILINGUAL_CSS, _BILINGUAL_STYLE_ID
 from wenyi_core.assemble.html_renderer import _render_chapter_html
 
-from ..ingest.models import KIND_HEADING
+from ..models.document import KIND_HEADING
 from .export_view import AssembleStore
 from .html_resources import _materialize_html_resources, _template_resource_source
 from .policy import export_options

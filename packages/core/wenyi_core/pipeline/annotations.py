@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ..agents.annotation_aligner import AnnotationUnit, target_digest
-from ..ingest.models import Chapter, Segment
+from ..models.document import Chapter, Segment
 from ..storage.protocol import Storage
 
 if TYPE_CHECKING:

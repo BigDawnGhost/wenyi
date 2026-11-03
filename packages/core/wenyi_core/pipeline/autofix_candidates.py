@@ -9,9 +9,9 @@ from typing import Any
 from ..agents.review_fixer import ProvisionalPatch
 from ..config import Config
 from ..events import ProgressFn
-from ..glossary.store import GlossaryTerm
-from ..ingest.models import Chapter
 from ..llm.base import LLMClient
+from ..models.document import Chapter
+from ..models.glossary import GlossaryTerm
 from ..review.autofix_models import AutofixCandidates
 from ..review.evidence import BookEvidenceIndex
 from ..review.models import ReviewOutcome, integer_index

@@ -17,10 +17,10 @@ from wenyi_core.assemble.html_renderer import _render_chapter_html, _render_segm
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.markup.segments import annotate_epub_resource
+from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
 

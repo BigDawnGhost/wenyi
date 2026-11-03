@@ -11,9 +11,9 @@ from wenyi_core.agents.review_arbiter import ReviewConflictArbiter
 from wenyi_core.agents.review_loop import (
     ReviewAgentLoop,
 )
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.routing import inference_snapshot
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.review_checkpoint import ReviewTraceStore
 from wenyi_core.review.conflicts import (
     apply_review_arbitrations,

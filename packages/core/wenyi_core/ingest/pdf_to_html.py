@@ -25,7 +25,7 @@ from pathlib import Path
 import httpx
 from pypdf import PdfReader, PdfWriter
 
-from wenyi_core.ingest.errors import MinerUError, MinerUTimeoutError
+from wenyi_core.models.errors import MinerUError, MinerUTimeoutError
 
 API_BASE = "https://mineru.net/api/v4"
 MAX_PAGES = 200

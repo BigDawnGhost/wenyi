@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from .models import SegmentRef
 
 if TYPE_CHECKING:
-    from ..glossary.store import GlossaryTerm
+    from ..models.glossary import GlossaryTerm
 
 
 class ReviewTrace(Protocol):

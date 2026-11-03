@@ -17,9 +17,9 @@ from api_test_support import document, initialize
 from type_helpers import must
 from wenyi_api.storage_pg import PostgresStorage, ProjectBusyError
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.precision import PrecisionBatchExecutor
 from wenyi_core.pipeline.runtime_usage import UsageCoordinator
 from wenyi_core.pipeline.translation import TranslationService

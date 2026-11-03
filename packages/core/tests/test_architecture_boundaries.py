@@ -14,6 +14,7 @@ import ast
 import importlib
 import importlib.util
 import pathlib
+import sys
 from functools import lru_cache
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
@@ -24,6 +25,16 @@ API_DIR = REPO_ROOT / "apps" / "api" / "wenyi_api"
 DESKTOP_BACKEND_DIR = REPO_ROOT / "apps" / "desktop" / "backend" / "wenyi_desktop"
 PIPELINE_DIR = TRANS_NOVEL_DIR / "pipeline"
 AGENTS_DIR = TRANS_NOVEL_DIR / "agents"
+MODELS_DIR = TRANS_NOVEL_DIR / "models"
+
+# Third-party packages a pure data model may use. Anything that opens a socket, a file or
+# a database would make importing a model observable at run time, which defeats the point.
+MODELS_ALLOWED_THIRD_PARTY = frozenset({"pydantic", "pydantic_core", "typing_extensions"})
+
+# Standard-library roots that are data-only and therefore safe in a pure model module.
+_STDLIB_DATA_MODULES = frozenset(
+    {"__future__", "collections", "dataclasses", "enum", "json", "sqlite3", "typing", "typing_extensions"}
+)
 
 SERVICE_MODULES = (
     "runtime",
@@ -326,6 +337,30 @@ def test_platform_layers_do_not_import_the_orchestrator():
         assert ORCHESTRATOR_MODULE in source, f"{boundary} must bind {ORCHESTRATOR_MODULE}"
 
 
+def test_glossary_never_imports_agents():
+    """Agents format prompts and call models; glossary stores terms and matches text.
+
+    The extractor used to live in `glossary`, which made this a two-way edge. It is now an
+    agent, so `agents -> glossary` is the only direction and the store stays model-free.
+    """
+    scanned = 0
+    for path in sorted((TRANS_NOVEL_DIR / "glossary").rglob("*.py")):
+        scanned += 1
+        for module in _imported_modules(path):
+            assert not _matches(module, ("wenyi_core.agents",)), (
+                f"{path.relative_to(TRANS_NOVEL_DIR)} imports {module}"
+            )
+    assert scanned, "The glossary boundary check must inspect actual modules"
+
+
+def test_glossary_extractor_is_an_agent():
+    """The extractor belongs with the model tasks, not with the term store."""
+    assert not (TRANS_NOVEL_DIR / "glossary" / "extractor.py").exists()
+    module = importlib.import_module("wenyi_core.agents.glossary_extractor")
+    assert hasattr(module, "GlossaryExtractor")
+    assert hasattr(module, "TranslatedSegmentEvidence")
+
+
 def test_review_agents_use_contracts_instead_of_concrete_storage_or_evidence():
     """Agents cannot acquire book state or bypass the evidence-query boundary."""
     forbidden = (
@@ -388,12 +423,12 @@ def test_review_models_have_no_application_dependencies():
 
 
 def test_shared_markup_has_no_workflow_or_archive_dependencies():
-    """The shared DOM layer depends only on markup and pure document models."""
+    """The shared DOM layer depends only on markup and the pure data models."""
     for path in (TRANS_NOVEL_DIR / "markup").rglob("*.py"):
         for module in _imported_modules(path):
             if not module.startswith("wenyi_core."):
                 continue
-            assert module.startswith(("wenyi_core.markup", "wenyi_core.ingest.models")), (
+            assert _matches(module, ("wenyi_core.markup", "wenyi_core.models")), (
                 path,
                 module,
             )
@@ -421,6 +456,83 @@ def test_document_style_policy_is_independent_of_workflows():
                 path,
                 module,
             )
+
+
+def test_models_package_is_zero_dependency():
+    """A model must be importable without another wenyi_core subpackage behind it.
+
+    This is what lets markup, storage and pipeline share one Segment without importing each
+    other; a single sibling import here would silently restore the cycle the split removed.
+    `wenyi_core.errors` is the one allowed exception: it holds the product-wide base class
+    and imports nothing, so it cannot reintroduce a cycle.
+    """
+    modules = sorted(MODELS_DIR.glob("*.py"))
+    assert modules, "The models boundary check must inspect actual modules"
+    for path in modules:
+        for module in _imported_modules(path):
+            if not module.startswith("wenyi_core"):
+                continue
+            assert _matches(module, ("wenyi_core.models", "wenyi_core.errors")), (
+                f"{path.name} imports {module}"
+            )
+
+
+def test_models_import_only_data_libraries():
+    """Every import that runs at import time must be data-only.
+
+    A whitelist rather than a blacklist: a new dependency has to be justified in this test,
+    so a model cannot quietly start opening sockets or files.
+    """
+    scanned = 0
+    for path in sorted(MODELS_DIR.glob("*.py")):
+        scanned += 1
+        for node in ast.walk(_parsed(path)):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0:
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                root = name.split(".")[0]
+                if not root or not sys.stdlib_module_names.__contains__(root):
+                    assert root in MODELS_ALLOWED_THIRD_PARTY, f"{path.name} imports {name}"
+                else:
+                    assert root in _STDLIB_DATA_MODULES, f"{path.name} imports {name}"
+    assert scanned, "The models boundary check must inspect actual modules"
+
+
+def test_models_package_exports_the_shared_records():
+    """The records every layer names must be reachable from the package root."""
+    models = importlib.import_module("wenyi_core.models")
+    expected = {
+        "Chapter",
+        "Document",
+        "GlossaryTerm",
+        "IngestError",
+        "Segment",
+    }
+    assert expected <= set(models.__all__), sorted(expected - set(models.__all__))
+    for name in expected:
+        assert hasattr(models, name), f"wenyi_core.models.{name} is missing"
+
+
+def test_ingest_keeps_the_forwarding_paths():
+    """Old import paths keep working, so the move stays reviewable as a pure relocation."""
+    ingest_models = importlib.import_module("wenyi_core.ingest.models")
+    ingest_errors = importlib.import_module("wenyi_core.ingest.errors")
+    models = importlib.import_module("wenyi_core.models")
+    for name in ("KIND_HEADING", "KIND_TEXT", "Chapter", "Document", "Segment"):
+        assert getattr(ingest_models, name) is getattr(models, name), name
+    for name in ("IngestError", "MinerUError", "MinerUTimeoutError"):
+        assert getattr(ingest_errors, name) is getattr(models, name), name
+
+
+def test_pdf_bridge_does_not_import_the_ingest_pipeline():
+    """The bridge raises IngestError from models, so it never loads a parser."""
+    for path in sorted((TRANS_NOVEL_DIR / "pdf_bridge").rglob("*.py")):
+        for module in _imported_modules(path):
+            assert not _matches(module, ("wenyi_core.ingest",)), f"{path.name} imports {module}"
 
 
 STORAGE_DIR = TRANS_NOVEL_DIR / "storage"

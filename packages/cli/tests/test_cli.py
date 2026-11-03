@@ -13,8 +13,8 @@ from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_cli.commands.bootstrap import configure_windows_console
 from wenyi_core.config import Config
-from wenyi_core.ingest.errors import MinerUError
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.errors import MinerUError
 from wenyi_core.pdf_bridge import BabeldocBridgeError
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\].*?\x07|\r")

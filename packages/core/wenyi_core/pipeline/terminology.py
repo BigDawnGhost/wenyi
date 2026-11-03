@@ -23,10 +23,10 @@ from ..glossary.evidence_models import (
     KnowledgeResult,
     SourcePassage,
 )
-from ..glossary.extractor import GlossaryExtractor, TranslatedSegmentEvidence
+from ..agents.glossary_extractor import GlossaryExtractor, TranslatedSegmentEvidence
 from ..glossary.store import TYPE_PERSON, GlossaryTerm, source_matches_text
 from ..i18n.policy.models import content_hash
-from ..ingest.models import Chapter, Segment
+from ..models.document import Chapter, Segment
 from ..storage.protocol import Storage
 from .terminology_metadata import protected_metadata_fields
 

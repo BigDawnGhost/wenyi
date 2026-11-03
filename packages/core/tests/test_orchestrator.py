@@ -12,9 +12,9 @@ from unittest.mock import patch
 
 from wenyi_core.agents.reviewer import ReviewOutputError
 from wenyi_core.glossary.store import GlossaryStore
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample
+from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.translation import TranslationService
 from wenyi_core.storage.file import FileStorage

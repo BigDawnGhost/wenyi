@@ -22,7 +22,7 @@ from typing import Any, Literal
 
 from ..errors import ArtifactCorrupt
 from ..glossary.store import GlossaryStore, GlossaryTerm
-from ..ingest.models import Chapter, Document
+from ..models.document import Chapter, Document
 from .io_path import require_sqlite_path
 from .locks import (
     ASSEMBLE_LOCK,

@@ -11,20 +11,20 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from typing import Any
 
-from ..agents import prompts
-from ..agents.base import Agent
 from ..config import Config
-from ..i18n.policy.models import content_hash
-from ..llm.base import LLMClient
-from ..llm.json_parser import JsonParseError, parse_json_result
-from ..storage.protocol import Storage
-from .store import (
+from ..glossary.store import (
     TYPE_TERM,
     GlossaryOccurrenceMatcher,
     GlossaryStore,
     GlossaryTerm,
     source_matches_text,
 )
+from ..i18n.policy.models import content_hash
+from ..llm.base import LLMClient
+from ..llm.json_parser import JsonParseError, parse_json_result
+from ..storage.protocol import Storage
+from . import prompts
+from .base import Agent
 
 _LOGGER = logging.getLogger(__name__)
 _HISTORY_VERSION = 1

@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
 from ..glossary.store import GlossaryStore, GlossaryTerm
-from ..ingest.models import Chapter, Document
+from ..models.document import Chapter, Document
 from .artifacts import FileArtifacts
 from .protocol import STATUS_PENDING  # noqa: F401
 from .run_store import STATUS_DONE, RunStore  # noqa: F401 (re-export)

@@ -10,7 +10,7 @@ from wenyi_core.document_styles.docx import (
     needs_alignment,
     proportional_range_placements,
 )
-from wenyi_core.ingest.models import Chapter
+from wenyi_core.models.document import Chapter
 from wenyi_core.pipeline.annotations import AnnotationService
 from wenyi_core.storage.protocol import Storage
 

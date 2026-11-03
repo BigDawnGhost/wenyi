@@ -28,8 +28,8 @@ from threading import local
 from typing import Any
 
 from ..i18n.languages import require_language
-from ..ingest.models import Chapter, Document
 from ..ingest.source_hash import source_sha256
+from ..models.document import Chapter, Document
 from ..timing import save_timing
 from .artifacts import FileArtifacts
 from .atomic_write import sweep_temporary, write_text_atomic

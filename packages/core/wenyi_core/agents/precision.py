@@ -7,10 +7,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from ..errors import WenyiError
-from ..glossary.store import GlossaryTerm
 from ..llm.base import Messages
 from ..llm.json_parser import JsonParseError, parse_json_loose
 from ..llm.retrying import TruncatedResponseError
+from ..models.glossary import GlossaryTerm
 from . import prompts
 from .base import Agent
 from .translator import Translator

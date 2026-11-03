@@ -5,8 +5,8 @@ import re
 from pathlib import Path
 
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Segment
+from wenyi_core.models.document import Chapter, Segment
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.review.evidence import BookEvidenceIndex
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.run_store import STATUS_DONE

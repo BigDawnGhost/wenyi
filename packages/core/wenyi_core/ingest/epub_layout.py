@@ -5,10 +5,10 @@ from __future__ import annotations
 from bs4 import BeautifulSoup
 
 from wenyi_core.ingest.epub_chapters import get_chapter_split_strategy
-from wenyi_core.ingest.models import KIND_HEADING, Chapter, Segment
 from wenyi_core.markup.anchors import fragment_nodes, resolve_epub_href, scope_segment_anchors
 from wenyi_core.markup.annotations import _note_context_scope
 from wenyi_core.markup.contracts import ANNOTATION_META_KEY
+from wenyi_core.models.document import KIND_HEADING, Chapter, Segment
 
 
 def _build_epub_annotation_contexts(

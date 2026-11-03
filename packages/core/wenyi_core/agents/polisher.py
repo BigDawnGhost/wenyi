@@ -7,7 +7,7 @@ polishing cannot drop paragraphs.
 
 from __future__ import annotations
 
-from ..glossary.store import GlossaryTerm
+from ..models.glossary import GlossaryTerm
 from . import prompts
 from .base import Agent, Messages
 

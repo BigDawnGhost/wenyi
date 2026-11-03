@@ -12,8 +12,8 @@ from unittest.mock import patch
 from wenyi_core.agents.polisher import Polisher
 from wenyi_core.agents.reviewer import Reviewer, ReviewOutputError
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
-from wenyi_core.ingest.models import Segment
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.document import Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.review.run_store import ReviewRunStore
 

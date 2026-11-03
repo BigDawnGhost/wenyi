@@ -9,7 +9,7 @@ from threading import Lock
 from typing import Any
 
 from ..glossary.store import GlossaryTerm, source_matches_text, term_match_sources
-from ..ingest.models import Chapter
+from ..models.document import Chapter
 from .models import SegmentRef, normalize_value
 
 

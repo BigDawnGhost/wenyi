@@ -8,9 +8,9 @@ import pytest
 from wenyi_core.agents.terminology import TerminologyAgent, TerminologyReferenceError
 from wenyi_core.config import Config
 from wenyi_core.glossary.evidence_models import SourcePassage
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.retrying import TruncatedResponseError
 from wenyi_core.llm.router import RoutedLLMClient
+from wenyi_core.models.glossary import GlossaryTerm
 
 
 def response(content, finish_reason="stop"):

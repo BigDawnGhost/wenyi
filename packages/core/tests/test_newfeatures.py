@@ -13,8 +13,8 @@ from pathlib import Path
 from wenyi_core.assemble.export_view import ExportViewStore
 from wenyi_core.config import Config
 from wenyi_core.i18n.languages import honorific_rule
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.postprocess.punct import normalize_zh_segments
 from wenyi_core.storage.file import FileStorage

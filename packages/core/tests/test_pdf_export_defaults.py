@@ -7,8 +7,8 @@ from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.run_store import RunStore
 

@@ -16,7 +16,6 @@ from wenyi_core.ingest.epub_package import _decode_markup, _find_opf_path, _pars
 from wenyi_core.ingest.epub_reader import peek_epub_title
 from wenyi_core.ingest.epub_toc import parse_toc_entries
 from wenyi_core.ingest.fb2_reader import read_fb2_binaries
-from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
 from wenyi_core.ingest.segmenter import (
     _split_text,
     batch_segments,
@@ -27,6 +26,7 @@ from wenyi_core.ingest.tokens import count_tokens
 from wenyi_core.markup.anchors import resolve_epub_href
 from wenyi_core.markup.ruby import strip_ruby_markers
 from wenyi_core.markup.segments import annotate_epub_resource
+from wenyi_core.models.document import KIND_HEADING, KIND_TEXT, Chapter, Segment
 
 from tests.sample_data import (
     write_cross_resource_toc_epub,

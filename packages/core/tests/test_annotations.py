@@ -2,7 +2,7 @@
 
 import unittest
 
-from wenyi_core.ingest.models import Segment
+from wenyi_core.models.document import Segment
 from wenyi_core.pipeline.annotations import AnnotationService
 
 

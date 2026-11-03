@@ -7,10 +7,10 @@ from dataclasses import replace
 
 import pytest
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.configuration import LLMConfig
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.review_checkpoint import ReviewTraceStore
 from wenyi_core.pipeline.review_workflow import ReviewService

@@ -10,9 +10,9 @@ from unittest.mock import patch
 
 import pytest
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.i18n.languages import normalize_language
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.preparation import PreparationService
 from wenyi_core.storage.file import FileStorage

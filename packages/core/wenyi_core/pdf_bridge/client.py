@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from ..ingest.errors import IngestError
+from ..models.errors import IngestError
 from .connection import resolve_connection
 
 

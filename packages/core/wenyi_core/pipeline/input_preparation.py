@@ -14,8 +14,8 @@ from ..config import Config
 from ..events import ProgressFn
 from ..ingest.epub_reader import peek_epub_title
 from ..ingest.fb2_reader import peek_fb2_title
-from ..ingest.models import Document
 from ..ingest.segmenter import load_document
+from ..models.document import Document
 from ..storage.protocol import ArtifactStorage, Storage
 from .runstore import source_sha256, translation_run_dir
 

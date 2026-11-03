@@ -14,7 +14,7 @@ from wenyi_core.assemble.html_renderer import (
     _render_segments_html,
     _segment_render_maps,
 )
-from wenyi_core.ingest.models import Chapter, Segment
+from wenyi_core.models.document import Chapter, Segment
 
 
 def _epub_resource_specs(meta: dict[str, object]) -> list[tuple[int, str]]:

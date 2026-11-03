@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 
-from ..ingest.models import Chapter, Segment
+from ..models.document import Chapter, Segment
 from .evidence_models import SourcePassage
 from .store import GlossaryTerm, _match_text, source_matches_text, term_match_sources
 

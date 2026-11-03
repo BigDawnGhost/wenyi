@@ -10,9 +10,9 @@ from typing import Any
 from ..agents.review_loop import ReviewAgentLoop
 from ..agents.reviewer import Reviewer, ReviewOutputError
 from ..config import Config
-from ..glossary.store import GlossaryTerm
 from ..ingest.tokens import count_tokens
 from ..llm.base import LLMClient
+from ..models.glossary import GlossaryTerm
 from ..review.evidence import BookEvidenceIndex
 from ..review.models import integer_index
 from ..review.run_store import ReviewRunStore
