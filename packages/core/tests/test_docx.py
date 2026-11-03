@@ -91,6 +91,59 @@ class TestDocxReader(unittest.TestCase):
         self.assertEqual(book.chapters[0].segments[0].source, "Hello without lists.")
         self.assertNotIn("list_num_id", book.chapters[0].segments[0].meta)
 
+    def test_merged_gridspan_cells_keep_text_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "merged.docx")
+            doc = DocxDocument()
+            table = doc.add_table(rows=1, cols=2)
+            merged = table.cell(0, 0).merge(table.cell(0, 1))
+            merged.text = "Spanned"
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+        table_segs = [s for s in book.chapters[0].segments if s.meta.get("table_id") == 0]
+        self.assertEqual(len(table_segs), 2)
+        by_pos = {(s.meta["row"], s.meta["col"]): s.source for s in table_segs}
+        self.assertEqual(by_pos[(0, 0)], "Spanned")
+        self.assertEqual(by_pos[(0, 1)], "")
+
+    def test_multi_paragraph_cell_styles_shift_to_joined_offsets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "cell.docx")
+            doc = DocxDocument()
+            table = doc.add_table(rows=1, cols=1)
+            cell = table.cell(0, 0)
+            first = cell.paragraphs[0]
+            first.add_run("Bold title.")
+            first.runs[0].bold = True
+            cell.add_paragraph("Plain body text.")
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+        segment = next(s for s in book.chapters[0].segments if s.meta.get("table_id") == 0)
+        joined = segment.source
+        self.assertEqual(joined, "Bold title.\nPlain body text.")
+        items = segment.meta["docx_styles"]["items"]
+        self.assertEqual(len(items), 1)
+        bold = items[0]
+        self.assertTrue(bold.get("bold"))
+        self.assertEqual(joined[bold["source_start"] : bold["source_end"]], "Bold title.")
+
+    def test_uniform_multi_paragraph_cell_keeps_compact_style(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "uniform.docx")
+            doc = DocxDocument()
+            table = doc.add_table(rows=1, cols=1)
+            cell = table.cell(0, 0)
+            cell.paragraphs[0].add_run("Bold one.")
+            cell.paragraphs[0].runs[0].bold = True
+            second = cell.add_paragraph("")
+            second.add_run("Bold two.").bold = True
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+        segment = next(s for s in book.chapters[0].segments if s.meta.get("table_id") == 0)
+        self.assertEqual(segment.source, "Bold one.\nBold two.")
+        self.assertTrue(segment.meta.get("docx_style", {}).get("bold"))
+        self.assertNotIn("docx_styles", segment.meta)
+
     def test_load_document_routes_docx(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "sample.docx")
