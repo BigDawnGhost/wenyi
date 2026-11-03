@@ -16,7 +16,7 @@
 |---|---|
 | 入口 | `packages/cli/wenyi_cli/cli.py` 装配 CLI；`commands/` 通过调用上下文注册命令。Web 入口位于 `apps/api/wenyi_api/`，本地 Desktop 入口位于 `apps/desktop/backend/wenyi_desktop/`。 |
 | HTTP 应用 | `packages/backend/wenyi_backend/` 提供共享路由、schema、应用服务与平台端口。每个 app 和 worker 接收自身 backend context；平台适配器提供持久化、任务调度、凭据与进度遥测。 |
-| Backend 执行 | `packages/backend/wenyi_backend/execution/` 分离类型化请求、工作流生命周期、领域操作与导出协调；`bindings.py` 显式注入项目/任务端口及现有平台服务，`workers/tasks.py` 保留稳定调度入口。 |
+| Backend 执行 | `packages/backend/wenyi_backend/execution/` 分离类型化请求、工作流生命周期、领域操作与导出协调；`bindings.py` 显式注入项目/任务端口及现有平台服务，`wenyi_backend/workers/tasks.py` 保留稳定调度入口。 |
 | 用户界面 | `packages/ui/` 提供共享页面、组件与界面翻译；`apps/web/` 和 `apps/desktop/frontend/` 提供独立入口与平台服务。只有 Desktop 包含原生导入/保存和凭据适配。 |
 | Pipeline 目录结构 | `pipeline/` 按子阶段分组：`run/`（运行时、用量检查点、语言策略）、`prepare/`（原文解析、预扫、全书理解）、`translate/`（批次、术语、标题、上下文、精修）、`annotate/`（EPUB 注释、DOCX 样式）、`review/`、`autofix/` 与 `finalize/`。`pipeline/__init__.py` 转出全部模块，扁平与分子包两种 import 路径都可用。 |
 | 流程路由 | `pipeline/orchestrator.py` 位于包顶层，装配服务、路由步骤并管理锁作用域，领域工作留在具体服务中。 |
