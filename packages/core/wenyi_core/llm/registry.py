@@ -130,6 +130,13 @@ PROVIDERS = register_providers(
             "openai_compatible",
         ),
         ProviderSpec(
+            "cheaperinference",
+            "cheaperinference",
+            "CheaperInferenceClient",
+            "OpenAICompatibleOptions",
+            "openai_compatible",
+        ),
+        ProviderSpec(
             "ollama", "ollama", "OllamaClient", "OpenAICompatibleOptions", "openai_compatible"
         ),
         ProviderSpec("vllm", "vllm", "VLLMClient", "OpenAICompatibleOptions", "openai_compatible"),
