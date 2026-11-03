@@ -46,6 +46,12 @@ function badgeFor(type: string) {
 
 function describe(e: EventOut): string {
   const p = e.payload;
+  // `Number(x) ?? 0` never falls back: Number(undefined) is NaN and ?? only catches
+  // null/undefined. Normalize explicitly (audit Y-4/F-4).
+  const chapterNumber = (value: unknown) => {
+    const parsed = Number(value);
+    return (Number.isFinite(parsed) ? parsed : 0) + 1;
+  };
   switch (e.type) {
     case "language_detected":
       return tr("events.sourceLanguageDetected", { language: p.source_lang });
@@ -55,21 +61,21 @@ function describe(e: EventOut): string {
       return tr("events.bookSynopsisGenerated");
     case "batch_translated":
       return tr("events.chapterBatchCompletedParagraphs", {
-        chapter: (Number(p.chapter) ?? 0) + 1,
+        chapter: chapterNumber(p.chapter),
         count: p.count,
       });
     case "batch_skipped":
       return tr("events.chapterTranslatedBatchSkipped", {
-        chapter: (Number(p.chapter) ?? 0) + 1,
+        chapter: chapterNumber(p.chapter),
       });
     case "chapter_done":
       return tr("events.chapterTranslated", {
-        chapter: (Number(p.chapter) ?? 0) + 1,
+        chapter: chapterNumber(p.chapter),
         title: p.title,
       });
     case "chapter_reviewed":
       return tr("events.chapterReviewIssues", {
-        chapter: (Number(p.chapter) ?? 0) + 1,
+        chapter: chapterNumber(p.chapter),
         count: p.issue_count,
       });
     case "assembled":
