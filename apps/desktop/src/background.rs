@@ -1,9 +1,9 @@
+use crate::mutex::lock;
 use tauri::{
     menu::{Menu, MenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager,
 };
-use crate::mutex::lock;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloseAction {
@@ -58,8 +58,10 @@ fn tray_host_available() -> bool {
         "/StatusNotifierWatcher",
         deadline.saturating_duration_since(std::time::Instant::now()),
     );
-    let host: Result<bool, _> =
-        watcher.get("org.kde.StatusNotifierWatcher", "IsStatusNotifierHostRegistered");
+    let host: Result<bool, _> = watcher.get(
+        "org.kde.StatusNotifierWatcher",
+        "IsStatusNotifierHostRegistered",
+    );
     if !matches!(host, Ok(true)) {
         return false;
     }
@@ -72,9 +74,10 @@ fn tray_host_available() -> bool {
         "/StatusNotifierWatcher",
         remaining,
     );
-    let Ok(items): Result<Vec<String>, _> =
-        watcher.get("org.kde.StatusNotifierWatcher", "RegisteredStatusNotifierItems")
-    else {
+    let Ok(items): Result<Vec<String>, _> = watcher.get(
+        "org.kde.StatusNotifierWatcher",
+        "RegisteredStatusNotifierItems",
+    ) else {
         return false;
     };
     // The watcher alone is insufficient: our icon must have registered successfully.
@@ -84,7 +87,8 @@ fn tray_host_available() -> bool {
             return false;
         }
         let bus = item.split('/').next().unwrap_or_default();
-        let proxy = connection.with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", remaining);
+        let proxy =
+            connection.with_proxy("org.freedesktop.DBus", "/org/freedesktop/DBus", remaining);
         let owner: Result<(u32,), _> =
             proxy.method_call("org.freedesktop.DBus", "GetConnectionUnixProcessID", (bus,));
         owner.is_ok_and(|(pid,)| pid == std::process::id())
@@ -177,7 +181,13 @@ pub fn close(app: &tauri::AppHandle, tray_available: bool) {
 pub fn install(app: &tauri::AppHandle) -> tauri::Result<bool> {
     let show = MenuItem::with_id(app, "show-wenyi", "Show Wenyi", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit-wenyi", "Quit Wenyi", true, Some("CmdOrCtrl+Q"))?;
-    let diagnostics = MenuItem::with_id(app, "wenyi-diagnostics", "Export diagnostic report…", true, Some("CmdOrCtrl+Shift+D"))?;
+    let diagnostics = MenuItem::with_id(
+        app,
+        "wenyi-diagnostics",
+        "Export diagnostic report…",
+        true,
+        Some("CmdOrCtrl+Shift+D"),
+    )?;
     let menu = Menu::with_items(app, &[&show, &diagnostics, &quit])?;
     // Always install the application menu and its keyboard quit accelerator.
     let application = Submenu::with_items(app, "Wenyi", true, &[&show, &diagnostics, &quit])?;

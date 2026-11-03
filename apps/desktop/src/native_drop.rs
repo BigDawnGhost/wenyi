@@ -11,9 +11,9 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use crate::mutex::lock;
 use serde::Serialize;
 use tauri::Manager;
-use crate::mutex::lock;
 
 const TTL: Duration = Duration::from_secs(15 * 60);
 const MAX_GRANTS: usize = 2;
@@ -248,7 +248,6 @@ impl Read for SourceReader {
     }
 }
 
-
 fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<serde_json::Value> {
     let connection = crate::local_connection::Connection::new(connection)
         .map_err(crate::ipc_error::IpcError::from)?;
@@ -392,7 +391,10 @@ fn physical_drag_position(
     tauri::PhysicalPosition::new(position.x * scale, position.y * scale)
 }
 
-fn error_event(error: crate::ipc_error::IpcError, position: serde_json::Value) -> serde_json::Value {
+fn error_event(
+    error: crate::ipc_error::IpcError,
+    position: serde_json::Value,
+) -> serde_json::Value {
     serde_json::json!({
         "kind": "error", "code": error.code, "message": error.message, "position": position,
     })
@@ -431,9 +433,7 @@ pub fn event(window: &tauri::WebviewWindow, event: &tauri::DragDropEvent) {
                 Ok(source) => {
                     serde_json::json!({"kind": "drop", "source": source, "position": position(p)})
                 }
-                Err(message) => {
-                    error_event(message, position(p))
-                }
+                Err(message) => error_event(message, position(p)),
             }
         }
         _ => return,

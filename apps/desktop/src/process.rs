@@ -184,7 +184,9 @@ impl Drop for Backend {
 }
 
 fn receive_protocol(
-    output: impl Read, pid: u32, token: &str,
+    output: impl Read,
+    pid: u32,
+    token: &str,
     diagnostics: &crate::diagnostics::Diagnostics,
     tx: mpsc::Sender<Result<String, &'static str>>,
 ) {
@@ -193,15 +195,24 @@ fn receive_protocol(
     let mut discard = false;
     loop {
         let mut bytes = Vec::new();
-        let Ok(count) = reader.by_ref().take(crate::diagnostics::MAX_RECORD as u64 + 1)
-            .read_until(b'\n', &mut bytes) else { break; };
-        if count == 0 { break; }
+        let Ok(count) = reader
+            .by_ref()
+            .take(crate::diagnostics::MAX_RECORD as u64 + 1)
+            .read_until(b'\n', &mut bytes)
+        else {
+            break;
+        };
+        if count == 0 {
+            break;
+        }
         let complete = bytes.ends_with(b"\n");
         if discard || !complete || bytes.len() > crate::diagnostics::MAX_RECORD {
             discard = !complete;
             continue;
         }
-        let Ok(line) = std::str::from_utf8(&bytes) else { continue; };
+        let Ok(line) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
         if let Some(payload) = line.strip_prefix("WENYI_DIAGNOSTIC ") {
             // Only typed content-free observations cross the persistence boundary.
             diagnostics.ingest(crate::diagnostics::Source::Engine, payload);
@@ -214,7 +225,9 @@ fn receive_protocol(
         }
         // Unknown post-ready output is discarded, never saved as raw text.
     }
-    if !sent { let _ = tx.send(Err("Local engine exited before readiness")); }
+    if !sent {
+        let _ = tx.send(Err("Local engine exited before readiness"));
+    }
 }
 
 fn engine_name() -> &'static str {
@@ -240,7 +253,8 @@ mod tests {
         );
         let (tx, rx) = mpsc::channel();
         receive_protocol(input.as_bytes(), 9, "owner-token", &diagnostics, tx);
-        let connection: serde_json::Value = serde_json::from_str(&rx.recv().unwrap().unwrap()).unwrap();
+        let connection: serde_json::Value =
+            serde_json::from_str(&rx.recv().unwrap().unwrap()).unwrap();
         assert_eq!(connection["apiBase"], "http://127.0.0.1:1234");
         assert_eq!(connection["token"], "owner-token");
         assert!(rx.try_recv().is_err());

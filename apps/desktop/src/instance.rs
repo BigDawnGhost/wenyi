@@ -2,6 +2,7 @@
 //!
 //! The OS lock is the authority, not the presence of a file. A separate discovery
 //! record advertises an activation-only loopback socket; it contains no API token.
+use crate::mutex::lock;
 use std::{
     fs::{self, File, OpenOptions, TryLockError},
     io::{Read, Write},
@@ -14,7 +15,6 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant},
 };
-use crate::mutex::lock;
 
 const LOCK: &str = ".desktop-instance.lock";
 const ENDPOINT: &str = ".desktop-instance.json";

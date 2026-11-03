@@ -18,12 +18,12 @@ mod process;
 mod publish;
 mod updates;
 
+use crate::mutex::lock;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
-use crate::mutex::lock;
 
 fn trusted(url: &tauri::Url) -> bool {
     url.username().is_empty()
@@ -79,10 +79,21 @@ struct Engine {
 }
 
 /// The same launch path is used at startup and to recover a failed installation.
-fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Result<(), &'static str> {
-    let resources = app.path().resource_dir().map_err(|_| "Local resources unavailable.")?;
+fn start_backend(
+    app: &tauri::AppHandle,
+    engine: &Engine,
+    recovery: bool,
+) -> Result<(), &'static str> {
+    let resources = app
+        .path()
+        .resource_dir()
+        .map_err(|_| "Local resources unavailable.")?;
     let diagnostics = app.state::<diagnostics::Diagnostics>();
-    diagnostics.record(diagnostics::Source::Native, diagnostics::Event::EngineSpawned, serde_json::json!({}));
+    diagnostics.record(
+        diagnostics::Source::Native,
+        diagnostics::Event::EngineSpawned,
+        serde_json::json!({}),
+    );
     let ready = {
         let mut owner = lock(&engine.child);
         if engine.closed.load(Ordering::SeqCst)
@@ -102,7 +113,11 @@ fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Res
     };
     match ready.recv_timeout(std::time::Duration::from_secs(60)) {
         Ok(Ok(connection)) => {
-            diagnostics.record(diagnostics::Source::Native, diagnostics::Event::EngineReady, serde_json::json!({}));
+            diagnostics.record(
+                diagnostics::Source::Native,
+                diagnostics::Event::EngineReady,
+                serde_json::json!({}),
+            );
             let state = app.state::<Arc<Mutex<State>>>();
             let mut state = lock(&state);
             state.connected(connection);
@@ -138,7 +153,11 @@ fn publish_background(app: &tauri::AppHandle, state: &Mutex<State>) {
 }
 
 fn fail(app: &tauri::AppHandle, state: &Mutex<State>, error: &'static str) {
-    app.state::<diagnostics::Diagnostics>().record(diagnostics::Source::Native, diagnostics::Event::EngineFailed, serde_json::json!({}));
+    app.state::<diagnostics::Diagnostics>().record(
+        diagnostics::Source::Native,
+        diagnostics::Event::EngineFailed,
+        serde_json::json!({}),
+    );
     lock(state).error = Some(error);
     publish(app, state);
 }
@@ -172,9 +191,7 @@ fn assert_layout(
         serde_json::json!({}),
     );
     diagnostics.drain();
-    Err(layout
-        .message()
-        .unwrap_or("Wenyi's data folders overlap."))
+    Err(layout.message().unwrap_or("Wenyi's data folders overlap."))
 }
 
 fn application_context() -> tauri::Context<tauri::Wry> {
@@ -209,19 +226,27 @@ fn activate_instance(app: &tauri::AppHandle) {
         }
         let (tx, rx) = std::sync::mpsc::channel();
         let activation_handle = handle.clone();
-        if handle.run_on_main_thread(move || {
-            let reply = if activation_handle.state::<Engine>().closing.load(Ordering::SeqCst) {
-                instance::Reply::Closing
-            } else if background::try_restore(&activation_handle) {
-                instance::Reply::Activated
-            } else {
-                instance::Reply::Unreachable
-            };
-            let _ = tx.send(reply);
-        }).is_err() {
+        if handle
+            .run_on_main_thread(move || {
+                let reply = if activation_handle
+                    .state::<Engine>()
+                    .closing
+                    .load(Ordering::SeqCst)
+                {
+                    instance::Reply::Closing
+                } else if background::try_restore(&activation_handle) {
+                    instance::Reply::Activated
+                } else {
+                    instance::Reply::Unreachable
+                };
+                let _ = tx.send(reply);
+            })
+            .is_err()
+        {
             return instance::Reply::Unreachable;
         }
-        rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or(instance::Reply::Unreachable)
+        rx.recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap_or(instance::Reply::Unreachable)
     }));
     if pending && !background::try_restore(app) {
         instance_error(instance::Error::Unreachable);
@@ -264,7 +289,11 @@ fn main() {
         }
     };
     let diagnostics = diagnostics::Diagnostics::for_workspace(&workspace);
-    diagnostics.record(diagnostics::Source::Native, diagnostics::Event::AppStarted, serde_json::json!({}));
+    diagnostics.record(
+        diagnostics::Source::Native,
+        diagnostics::Event::AppStarted,
+        serde_json::json!({}),
+    );
     // An installation the registry places somewhere other than this executable is
     // reported here and nowhere else. Acting on it would move a user's projects
     // during a start that never asked to, so the detection stays a record until
@@ -280,7 +309,11 @@ fn main() {
     let panic_diagnostics = diagnostics.clone();
     let previous_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        panic_diagnostics.record(diagnostics::Source::Native, diagnostics::Event::NativePanic, serde_json::json!({}));
+        panic_diagnostics.record(
+            diagnostics::Source::Native,
+            diagnostics::Event::NativePanic,
+            serde_json::json!({}),
+        );
         previous_panic(info);
     }));
     // Refusing to start is the whole point of the assertion: a layout that would
@@ -464,7 +497,11 @@ fn main() {
                     backend.shutdown();
                 }
                 let diagnostics = handle.state::<diagnostics::Diagnostics>();
-                diagnostics.record(diagnostics::Source::Native, diagnostics::Event::AppStopped, serde_json::json!({}));
+                diagnostics.record(
+                    diagnostics::Source::Native,
+                    diagnostics::Event::AppStopped,
+                    serde_json::json!({}),
+                );
                 diagnostics.drain();
                 closed.store(true, Ordering::SeqCst);
                 handle.exit(0);
@@ -545,7 +582,9 @@ mod tests {
         // Recovery publishes new credentials only after lifecycle admission reopens.
         state.closing = false;
         assert!(state.script().contains("secret"));
-        assert!(state.script().contains("__WENYI_DESKTOP_BACKGROUND__=true;"));
+        assert!(state
+            .script()
+            .contains("__WENYI_DESKTOP_BACKGROUND__=true;"));
     }
 
     #[test]
@@ -560,13 +599,17 @@ mod tests {
     #[test]
     fn reload_replays_latest_background_in_every_state() {
         let mut state = State::default();
-        assert!(state.script().contains("__WENYI_DESKTOP_BACKGROUND__=false;"));
+        assert!(state
+            .script()
+            .contains("__WENYI_DESKTOP_BACKGROUND__=false;"));
         state.background = true;
         for status in 0..4 {
             state.connection = (status == 1).then(|| "{}".into());
             state.error = (status == 2).then_some("Safe failure");
             state.closing = status == 3;
-            assert!(state.script().contains("__WENYI_DESKTOP_BACKGROUND__=true;"));
+            assert!(state
+                .script()
+                .contains("__WENYI_DESKTOP_BACKGROUND__=true;"));
             assert!(state.script().contains("wenyi:desktop-visibility"));
         }
     }

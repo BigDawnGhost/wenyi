@@ -382,10 +382,7 @@ pub fn admit_library_root(
     // to judge the whole set would fail on the roots themselves: layer one and
     // layer two are both inside the profile, which is exactly why the profile is
     // one of the four.
-    if roots
-        .iter()
-        .any(|(_, root)| overlaps(candidate, root))
-    {
+    if roots.iter().any(|(_, root)| overlaps(candidate, root)) {
         return Err(Error::LibraryRootInvalid);
     }
     // The workspace is the directory the engine was actually given, and it is not
@@ -407,7 +404,13 @@ pub fn admit_library_root(
 /// where its system directories actually are.
 fn system_directories() -> Vec<PathBuf> {
     let names: &[&str] = if cfg!(windows) {
-        &["SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"]
+        &[
+            "SystemRoot",
+            "windir",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "ProgramData",
+        ]
     } else {
         &["SystemRoot"]
     };
@@ -443,9 +446,8 @@ fn overlaps(left: &Path, right: &Path) -> bool {
     } else {
         (left, right)
     };
-    let boundary = |prefix: &str, whole: &str| {
-        whole == prefix || whole.starts_with(&format!("{prefix}/"))
-    };
+    let boundary =
+        |prefix: &str, whole: &str| whole == prefix || whole.starts_with(&format!("{prefix}/"));
     boundary(&left, &right) || boundary(&right, &left)
 }
 
@@ -483,10 +485,7 @@ pub fn check_disjoint(roots: &[(&'static str, &Path)]) -> Result<(), Error> {
 /// the NSIS hook has to repeat it, because the two programs share no code, and a
 /// test pins the repeated spelling against these literals.
 pub fn user_layers() -> Result<[(&'static str, PathBuf); 2], Error> {
-    Ok([
-        ("layer-one", runtime_root()?),
-        ("layer-two", user_root()?),
-    ])
+    Ok([("layer-one", runtime_root()?), ("layer-two", user_root()?)])
 }
 
 /// The layer-three root this start will actually use, when it can name one.
@@ -498,7 +497,10 @@ pub fn user_layers() -> Result<[(&'static str, PathBuf); 2], Error> {
 /// layer-three root rather than inventing one. The startup assertion reports the
 /// roots it is given and never derives a fourth.
 pub fn layer_three(install: &InstallCheck, workspace: &Path) -> Option<PathBuf> {
-    if matches!(install, InstallCheck::NotInstalled | InstallCheck::Unreadable) {
+    if matches!(
+        install,
+        InstallCheck::NotInstalled | InstallCheck::Unreadable
+    ) {
         return None;
     }
     let install_dir = running_install_dir().ok()?;
@@ -581,7 +583,9 @@ impl LayoutCheck {
 fn data_base() -> Result<PathBuf, Error> {
     #[cfg(windows)]
     {
-        env_path("LOCALAPPDATA").or_else(local_app_data).ok_or(Error::Base)
+        env_path("LOCALAPPDATA")
+            .or_else(local_app_data)
+            .ok_or(Error::Base)
     }
     #[cfg(target_os = "macos")]
     {
@@ -650,15 +654,14 @@ fn local_app_data() -> Option<PathBuf> {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::System::Com::CoTaskMemFree;
-    use windows_sys::Win32::UI::Shell::{SHGetKnownFolderPath, FOLDERID_LocalAppData};
+    use windows_sys::Win32::UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath};
 
     let mut raw: *mut u16 = std::ptr::null_mut();
     // SAFETY: `raw` is a valid out-pointer for a `PWSTR`. The call either
     // leaves it null or fills it with an allocation this function owns and
     // frees below, which is the contract `SHGetKnownFolderPath` documents.
-    let status = unsafe {
-        SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut raw)
-    };
+    let status =
+        unsafe { SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut raw) };
     if status < 0 || raw.is_null() {
         if !raw.is_null() {
             // SAFETY: non-null means the shell allocated the string.
@@ -713,7 +716,10 @@ mod tests {
         if let Some(configured) = env_path("LOCALAPPDATA") {
             // Compared case-insensitively: Windows path identity does not
             // depend on the spelling of its components.
-            assert_eq!(known.to_string_lossy().to_lowercase(), configured.to_string_lossy().to_lowercase());
+            assert_eq!(
+                known.to_string_lossy().to_lowercase(),
+                configured.to_string_lossy().to_lowercase()
+            );
         }
     }
 
