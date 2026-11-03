@@ -54,3 +54,19 @@ def test_models_route_maps_invalid_config_to_422(backend_context):
     )
     assert response.status_code == 422
     assert response.json()["code"] == "invalid_configuration"
+
+
+def test_review_mutations_answer_409_when_project_is_unprepared(backend_context):
+    # Guards exist on both mutation routes; without them an unprepared project reached
+    # the chapter load and answered 500 instead of the documented 409.
+    storage = MagicMock()
+    storage.exists.return_value = False
+    context = replace(backend_context, storage_for=Mock(return_value=storage))
+    client = _client_with(context)
+    edit = client.put(
+        "/projects/pid1/review/0/segments/1",
+        json={"expected_target": "a", "target": "b"},
+    )
+    assert edit.status_code == 409
+    complete = client.post("/projects/pid1/review/0/complete")
+    assert complete.status_code == 409
