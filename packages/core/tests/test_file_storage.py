@@ -355,6 +355,10 @@ def test_replacement_retries_while_another_process_holds_the_target(tmp_path):
     assert [path.name for path in tmp_path.iterdir()] == ["manifest.json"]
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="Only Windows refuses to replace a file another handle holds open",
+)
 def test_replacement_reports_a_target_that_stays_locked(tmp_path, monkeypatch):
     """The retry is bounded: a permanent holder is reported instead of hung on."""
     import wenyi_core.storage.atomic_write as atomic_write
@@ -378,6 +382,26 @@ def test_replacement_reports_a_target_that_stays_locked(tmp_path, monkeypatch):
     assert len(attempts) == atomic_write.REPLACE_ATTEMPTS
     # The previous content survives and the abandoned temporary file is removed.
     assert json.loads(target.read_text(encoding="utf-8")) == {"target": "original"}
+    assert [path.name for path in tmp_path.iterdir()] == ["manifest.json"]
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="POSIX lets replace swap a file out from under an open handle",
+)
+def test_replacement_succeeds_while_the_target_is_open(tmp_path):
+    """The same call on the platform that permits it still lands and cleans up.
+
+    Windows needs the bounded retry above; POSIX never reaches it, so this branch
+    pins what does happen there instead of leaving the case untested.
+    """
+    target = tmp_path / "manifest.json"
+    target.write_text('{"target": "original"}', encoding="utf-8")
+    with target.open("r+b") as holder:
+        RunStore._write_json(str(target), {"target": "updated"})
+        assert holder is not None
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"target": "updated"}
     assert [path.name for path in tmp_path.iterdir()] == ["manifest.json"]
 
 

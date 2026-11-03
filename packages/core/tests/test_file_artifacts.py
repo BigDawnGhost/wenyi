@@ -293,9 +293,12 @@ def test_sqlite_paths_are_length_checked_instead_of_prefixed():
     """
     from wenyi_core.storage.io_path import SQLITE_PATH_LIMIT, require_sqlite_path
 
-    assert require_sqlite_path(r"C:\state\run\state.sqlite3") == os.path.abspath(
-        r"C:\state\run\state.sqlite3"
-    )
+    # The returned spelling is the plain one it was given: the length is measured
+    # against the resolved form, but nothing is rewritten on the way out. Comparing
+    # against os.path.abspath() only matched on Windows, where an absolute path is
+    # already its own abspath.
+    short_path = r"C:\state\run\state.sqlite3"
+    assert require_sqlite_path(short_path) == short_path
     long_path = str(Path.cwd() / "run" / ("a" * SQLITE_PATH_LIMIT) / "state.sqlite3")
     with pytest.raises(ValueError, match="SQLite cannot open a path longer than"):
         require_sqlite_path(long_path)
