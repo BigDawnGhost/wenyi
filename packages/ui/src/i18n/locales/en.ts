@@ -695,6 +695,8 @@ const en = {
   "error.segmentNotFound": "That paragraph no longer exists.",
   "error.invalidConfiguration": "The configuration is not valid. Check the settings.",
   "error.unsupportedClient": "This client version is not supported. Update Wenyi.",
+  "error.sourceTooLarge": "That file is larger than the 512 MiB upload limit.",
+  "error.validationFailed": "Some values were rejected. Check the input and try again.",
   "error.requestTimeout": "The server did not answer in time. Try again.",
 } as const;
 

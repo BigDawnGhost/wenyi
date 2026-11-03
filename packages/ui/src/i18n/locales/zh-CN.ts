@@ -672,6 +672,8 @@ const zhCN = {
   "error.segmentNotFound": "该段落已不存在。",
   "error.invalidConfiguration": "配置无效，请检查设置。",
   "error.unsupportedClient": "当前客户端版本不受支持，请更新文翼。",
+  "error.sourceTooLarge": "文件超过 512 MiB 的上传上限。",
+  "error.validationFailed": "部分取值未被接受，请检查输入后重试。",
   "error.requestTimeout": "服务器未在规定时间内响应，请重试。",
 } satisfies Messages;
 

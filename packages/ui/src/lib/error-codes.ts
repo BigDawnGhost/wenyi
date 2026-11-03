@@ -23,6 +23,10 @@ export const errorCodeMessages: Record<string, MessageKey> = {
   segment_not_found: "error.segmentNotFound",
   invalid_configuration: "error.invalidConfiguration",
   unsupported_client: "error.unsupportedClient",
+  source_too_large: "error.sourceTooLarge",
+  // A validation rejection (400/422) has no stable code of its own; the envelope only
+  // carries a field-error list, so the UI needs its own copy for that shape.
+  validation_failed: "error.validationFailed",
   // Raised by the client itself when a request exceeds its deadline; the server
   // never sends it, so it has no backend envelope behind it.
   request_timeout: "error.requestTimeout",

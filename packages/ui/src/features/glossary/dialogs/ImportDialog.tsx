@@ -167,8 +167,14 @@ export function ImportDialog({
       onSaved();
     },
     onError: (e) => {
+      // Route through errorMessage: a rejected import (422) carries a field-error list
+      // rather than prose, so the raw message would show JSON instead of a readable
+      // explanation of the limit.
+      const failure = e as Error & { status?: number };
+      const normalized =
+        failure.status === 422 ? { code: "validation_failed" } : e;
       toast.error(
-        tr("glossary.couldNotImportTerms", { error: (e as Error).message }),
+        tr("glossary.couldNotImportTerms", { error: errorMessage(normalized, tr) }),
       );
       setStep("upload");
     },

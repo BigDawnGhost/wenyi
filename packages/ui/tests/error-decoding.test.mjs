@@ -135,3 +135,13 @@ test("an expired deadline aborts the request it bounds", async () => {
   assert.equal(init.signal.aborted, true);
   assert.equal(init.signal.reason.name, "TimeoutError");
 });
+
+test("the upload size limit is localized instead of echoing the server text", () => {
+  const error = { status: 413, code: "source_too_large", detail: "Source file exceeds the upload size limit" };
+  assert.equal(errorMessage(error, translate), "localized:error.sourceTooLarge");
+});
+
+test("a validation rejection without a code still reads as a rejection", () => {
+  const error = { status: 422, code: "validation_failed" };
+  assert.equal(errorMessage(error, translate), "localized:error.validationFailed");
+});
