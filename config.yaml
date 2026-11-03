@@ -58,8 +58,8 @@ paths:
 
 # ── Output ───────────────────────────────────────────────────────────────────
 output:
-  mono: true # Monolingual output in language.target
-  bilingual: false # Bilingual output with source and translation
+  mono: true # Monolingual output (<title>.<target-language>.epub; default target is zh)
+  bilingual: false # Bilingual output (<title>.<target-language>-bi.epub)
   bilingual_order: target_first # target_first=translation first; source_first=source first
   # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
   bilingual_preserve_source_style: false
