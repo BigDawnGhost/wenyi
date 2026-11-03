@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from contextlib import closing
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
 from ..errors import CHAPTER_NOT_FOUND, ApiError
 from ..schemas import AnalysisOut, AnalysisUpdate, DigestUpdate
@@ -17,9 +17,16 @@ router = APIRouter(prefix="/projects/{pid}", tags=["style"])
 def get_analysis(pid: str) -> dict:
     require_project(pid)
     with closing(storage_for(pid)) as storage:
+        if not storage.exists():
+            raise HTTPException(409, "Prepare the book before viewing the analysis")
         digests = []
         for entry in storage.load_manifest().get("chapters", []):
-            chapter = storage.load_chapter(entry["index"])
+            try:
+                chapter = storage.load_chapter(entry["index"])
+            except (KeyError, FileNotFoundError):
+                raise ApiError(
+                    CHAPTER_NOT_FOUND, 404, f"chapter {entry['index']} not found"
+                ) from None
             digests.append(
                 {
                     "index": chapter.index,
@@ -43,7 +50,7 @@ def update_chapter_digest(pid: str, ci: int, body: DigestUpdate) -> dict:
     with project_write(pid) as (_project, storage):
         try:
             chapter = storage.load_chapter(ci)
-        except KeyError:
+        except (KeyError, FileNotFoundError):
             raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found") from None
         chapter.meta["source_digest"] = body.digest
         storage.save_chapter(chapter)

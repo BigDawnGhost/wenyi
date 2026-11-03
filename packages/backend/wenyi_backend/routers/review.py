@@ -97,7 +97,7 @@ def edit_segment(pid: str, ci: int, seg_idx: int, body: SegmentEdit) -> dict:
             raise HTTPException(409, "Prepare the book before editing translations")
         try:
             chapter = storage.load_chapter(ci)
-        except KeyError:
+        except (KeyError, FileNotFoundError):
             raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found") from None
         segment = next((item for item in chapter.segments if item.index == seg_idx), None)
         if segment is None:
@@ -147,7 +147,7 @@ def mark_reviewed(pid: str, ci: int) -> dict:
             raise HTTPException(409, "Prepare the book before marking review complete")
         try:
             chapter = storage.load_chapter(ci)
-        except KeyError:
+        except (KeyError, FileNotFoundError):
             raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found") from None
         if any(segment.target is None for segment in chapter.text_segments):
             raise HTTPException(409, "Translate every text segment before marking review complete")
