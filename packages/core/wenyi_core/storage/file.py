@@ -1,6 +1,6 @@
 """Local filesystem implementation of Storage for CLI workflows.
 
-Compose :class:`wenyi_core.pipeline.runstore.RunStore` for JSON run state with
+Compose :class:`wenyi_core.storage.run_store.RunStore` for JSON run state with
 :class:`wenyi_core.glossary.store.GlossaryStore` for the SQLite glossary.
 Domain services use the same storage interface as the Web backend.
 """
@@ -14,9 +14,9 @@ from typing import Any, Iterator, Optional
 
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..ingest.models import Chapter, Document
-from ..pipeline.runstore import STATUS_DONE, RunStore  # noqa: F401 (re-export)
 from .artifacts import FileArtifacts
 from .protocol import STATUS_PENDING  # noqa: F401
+from .run_store import STATUS_DONE, RunStore  # noqa: F401 (re-export)
 
 
 class FileStorage(FileArtifacts):
@@ -26,10 +26,6 @@ class FileStorage(FileArtifacts):
         FileArtifacts.__init__(self, run_dir)
         self._run = RunStore(run_dir, create=create)
         self._glossary: Optional[GlossaryStore] = None
-
-    def __getattr__(self, name: str):
-        # File-only state operations stay in RunStore; domain services receive this port.
-        return getattr(self._run, name)
 
     @property
     def _batch_glossary_event_cache(self):

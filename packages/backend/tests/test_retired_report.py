@@ -22,15 +22,15 @@ def test_report_routes_are_absent(backend_context):
 
 @pytest.mark.parametrize("kind", ["translation", "review"])
 @pytest.mark.parametrize("review", [False, True])
-def test_book_tasks_no_longer_generate_reports(monkeypatch, kind, review):
+def test_book_tasks_no_longer_generate_reports(kind, review):
     orch = Mock(spec=["run_review", "run_steps"])
-    monkeypatch.setattr("wenyi_core.pipeline.orchestrator.Orchestrator", lambda *a, **kw: orch)
     services = OperationServices(
         projects=Mock(),
         config_for=Mock(),
         source_for=lambda pid: "book.txt",
         build_client=Mock(),
         exports_dir=Mock(),
+        build_workflow=lambda *a, **kw: orch,
     )
     config = Config.from_dict({"llm": {"preset": "fake"}, "pipeline": {"review": review}})
     progress = Mock()

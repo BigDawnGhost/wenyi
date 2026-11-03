@@ -13,6 +13,7 @@ from ..context import BackendStorage
 from ..ports.projects import ProjectRepository
 from ..source_view import book_preview
 from .contracts import ExecutionRequest
+from .ports import WorkflowRunnerFactory
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class OperationServices:
     source_for: Callable[[str], str]
     build_client: Callable[[Config], LLMClient]
     exports_dir: Callable[[str], str]
+    build_workflow: WorkflowRunnerFactory
     mineru_token_resolver: Callable[[], str | None] | None = None
 
 
@@ -56,16 +58,9 @@ def book_operation(
     progress: ProgressFn,
     services: OperationServices,
 ) -> str:
-    from wenyi_core.pipeline.orchestrator import Orchestrator
-
     if request.params.get("autofix") is not None:
         config.pipeline.review_autofix = request.params["autofix"]
-    orch = Orchestrator(
-        config,
-        client=client,
-        storage=storage,
-        mineru_token_resolver=services.mineru_token_resolver,
-    )
+    orch = services.build_workflow(config, client, storage)
     source = services.source_for(request.project_id)
     if request.kind == "prepare":
         orch.prepare_for_translation(source, progress=progress)

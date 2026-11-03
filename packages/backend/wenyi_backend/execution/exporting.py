@@ -45,8 +45,8 @@ def render_export(
     """Return a complete private output; only the coordinator may publish it."""
     from wenyi_core.assemble.policy import export_plan
     from wenyi_core.assemble.writer import assemble
-    from wenyi_core.pipeline.runstore import source_sha256
     from wenyi_core.storage.language_policies import persist_plan
+    from wenyi_core.storage.run_store import source_sha256
 
     from ..export_plan import export_filename
 

@@ -23,7 +23,6 @@ from typing import Any, Literal
 from ..errors import ArtifactCorrupt
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..ingest.models import Chapter, Document
-from ..pipeline.runstore import ExportSnapshotStore, RunStore, source_sha256
 from .io_path import require_sqlite_path
 from .locks import (
     ASSEMBLE_LOCK,
@@ -33,6 +32,7 @@ from .locks import (
     exclusive_file_lock,
 )
 from .protocol import STATUS_DONE, STATUS_PENDING
+from .run_store import ExportSnapshotStore, RunStore, source_sha256
 
 # Re-exported: the class moved to locks.py, but callers still import it from here.
 __all__ = ["SqliteStorage", "StorageBusyError"]

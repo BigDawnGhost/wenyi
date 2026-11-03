@@ -50,12 +50,13 @@ ORCHESTRATOR_MODULE = f"{PIPELINE_MODULE}.orchestrator"
 # purpose: driving the orchestrator is its documented role. Test trees are skipped below.
 ORCHESTRATOR_SCAN_ROOTS = (BACKEND_DIR, API_DIR, DESKTOP_BACKEND_DIR)
 
-# Repository-relative path -> why the facade import is still accepted.
-ORCHESTRATOR_IMPORT_EXEMPTIONS: dict[str, str] = {
-    "packages/backend/wenyi_backend/execution/operations.py": (
-        "B5 replaces this direct import with a narrow execution port; drop the entry then."
-    ),
-}
+# The one module allowed to bind the concrete facade to the WorkflowRunner port. Every
+# other platform module receives the port, so no legacy import can hide behind it.
+ORCHESTRATOR_COMPOSITION_BOUNDARIES = ("packages/backend/wenyi_backend/execution/bindings.py",)
+
+# Repository-relative path -> why the facade import is still accepted. Empty since B5
+# replaced the operations.py import with the narrow execution port.
+ORCHESTRATOR_IMPORT_EXEMPTIONS: dict[str, str] = {}
 
 # Agent source path (relative to agents/) -> why a pipeline import is still accepted.
 AGENT_PIPELINE_EXEMPTIONS: dict[str, str] = {}
@@ -295,6 +296,8 @@ def test_platform_layers_do_not_import_the_orchestrator():
             if _is_test_module(path, root):
                 continue
             scanned += 1
+            if _repo_relative(path) in ORCHESTRATOR_COMPOSITION_BOUNDARIES:
+                continue
             hits = {
                 module
                 for module in _imported_modules(path, root)
@@ -309,6 +312,11 @@ def test_platform_layers_do_not_import_the_orchestrator():
     assert not unexpected, f"Platform code must not import {ORCHESTRATOR_MODULE}: {unexpected}"
     stale = sorted(set(ORCHESTRATOR_IMPORT_EXEMPTIONS) - set(importers))
     assert not stale, f"Unused exemptions; delete them: {stale}"
+    # A composition boundary that stopped importing the facade would silently stop
+    # exercising the port, so the declaration has to stay true.
+    for boundary in ORCHESTRATOR_COMPOSITION_BOUNDARIES:
+        source = (REPO_ROOT / boundary).read_text(encoding="utf-8")
+        assert ORCHESTRATOR_MODULE in source, f"{boundary} must bind {ORCHESTRATOR_MODULE}"
 
 
 def test_review_agents_use_contracts_instead_of_concrete_storage_or_evidence():
@@ -406,3 +414,66 @@ def test_document_style_policy_is_independent_of_workflows():
                 path,
                 module,
             )
+
+
+STORAGE_DIR = TRANS_NOVEL_DIR / "storage"
+
+# Undeclared state paths FileStorage exposes to tests and CLI presentation. Shrinking this
+# set is the remaining work of D2-A-04; growing it is a new contract leak.
+FILE_STORAGE_PATH_GAPS = {
+    "chapter_path",
+    "event_log_path",
+    "glossary_path",
+    "initialization_path",
+    "manifest_path",
+    "usage_path",
+}
+
+
+def test_storage_layer_never_imports_pipeline():
+    """Storage owns the run-state primitives; it cannot reach up into workflow code."""
+    scanned = 0
+    for path in sorted(STORAGE_DIR.rglob("*.py")):
+        scanned += 1
+        for module in _imported_modules(path):
+            assert not _matches(module, (PIPELINE_MODULE,)), (
+                f"{path.relative_to(TRANS_NOVEL_DIR)} imports {module}"
+            )
+    assert scanned, "The storage boundary check must inspect actual modules"
+
+
+def _declared_storage_names() -> set[str]:
+    """Every name the Storage port spells out, including documented path gaps."""
+    protocol = (STORAGE_DIR / "protocol.py").read_text(encoding="utf-8")
+    return {
+        node.name
+        for node in ast.walk(ast.parse(protocol))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+
+
+def test_file_storage_has_no_catch_all_attribute_forwarding():
+    """A __getattr__ would satisfy any future typo with a RunStore method instead of failing."""
+    source = (STORAGE_DIR / "file.py").read_text(encoding="utf-8")
+    assert "__getattr__" not in source
+    defined = {
+        node.name
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    undeclared = sorted(
+        name
+        for name in defined - _declared_storage_names()
+        if not name.startswith("_") and not name.isupper()
+    )
+    # State-file paths the CLI presents but the port does not declare yet. They are a
+    # measured contract gap, not evidence that forwarding is acceptable.
+    assert set(undeclared) <= FILE_STORAGE_PATH_GAPS, undeclared
+    assert FILE_STORAGE_PATH_GAPS == {
+        "chapter_path",
+        "event_log_path",
+        "glossary_path",
+        "initialization_path",
+        "manifest_path",
+        "usage_path",
+    }
