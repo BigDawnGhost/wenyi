@@ -970,18 +970,25 @@ mod tests {
         // "相等的" and "互为祖先" are the same failure for this check, and the
         // spelling must not decide it: the filesystem treats these as one directory.
         let install = Path::new("C:/Users/Reader/Wenyi/Install");
-        for layer in [
-            Path::new("C:/Users/Reader/Wenyi"),
-            Path::new("c:/users/reader/wenyi"),
-            Path::new("C:\\Users\\Reader\\Wenyi"),
-            install,
-        ] {
+        // Backslash spelling differs on every platform; the lower-case spelling is one
+        // directory only where the filesystem folds case, which is what same_directory
+        // encodes per platform.
+        let mut spellings = vec!["C:/Users/Reader/Wenyi", "C:\\Users\\Reader\\Wenyi"];
+        if cfg!(windows) {
+            spellings.push("c:/users/reader/wenyi");
+        }
+        for layer in spellings {
             assert_eq!(
-                check_disjoint(&[("layer-two", layer), ("install", install)]).err(),
+                check_disjoint(&[("layer-two", Path::new(layer)), ("install", install)]).err(),
                 Some(Error::Overlap),
                 "{layer:?} and {install:?} must not be admitted"
             );
         }
+        // The installation itself is the equality case on every platform.
+        assert_eq!(
+            check_disjoint(&[("layer-two", install), ("install", install)]).err(),
+            Some(Error::Overlap),
+        );
     }
 
     #[test]
