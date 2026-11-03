@@ -203,7 +203,15 @@ export function ProviderSettings({
                     min={1}
                     value={Number(provider.timeout ?? 600)}
                     onChange={(e) =>
-                      update("providers", id, { timeout: Number(e.target.value) })
+                      update("providers", id, {
+                        // A cleared input reads as 0; keep the current timeout rather
+                        // than submitting a value the backend rejects. Anything else is
+                        // passed through so the backend can name the offending field.
+                        timeout:
+                          e.target.value.trim() === ""
+                            ? (provider.timeout ?? 600)
+                            : Number(e.target.value),
+                      })
                     }
                   />
                 </div>

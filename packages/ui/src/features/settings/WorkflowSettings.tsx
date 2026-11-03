@@ -6,6 +6,19 @@ import { SettingsGroup } from "./SettingsSection";
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;
 
+/** Number inputs yield "" when cleared; fall back to the current value rather than
+ * submitting 0. Anything else the person typed is passed through unchanged, so an
+ * out-of-range entry reaches the backend and comes back as a field-specific error
+ * instead of being silently rewritten under their hands. */
+const orFallback = (value: string, fallback: number) =>
+  value.trim() === "" ? fallback : Number(value);
+
+/** 0 is a valid max_tokens_per_segment value: the splitter treats it as disabled. */
+const nonNegativeInt = (value: string) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+};
+
 /** Update workflow settings without changing the project's creation-time translation mode. */
 export function workflowField(
   config: Record<string, unknown>,
@@ -92,7 +105,7 @@ export function WorkflowSettings({
                 onField(
                   "segment",
                   "max_tokens_per_batch",
-                  Number(e.target.value),
+                  orFallback(e.target.value, 1800),
                 )
               }
               className="mt-2"
@@ -105,7 +118,7 @@ export function WorkflowSettings({
             <Input
               id="segment-tokens"
               type="number"
-              min={1}
+              min={0}
               value={Number(
                 section(config, "segment").max_tokens_per_segment ?? 1200,
               )}
@@ -113,7 +126,7 @@ export function WorkflowSettings({
                 onField(
                   "segment",
                   "max_tokens_per_segment",
-                  Number(e.target.value),
+                  nonNegativeInt(e.target.value),
                 )
               }
               className="mt-2"
@@ -134,7 +147,7 @@ export function WorkflowSettings({
                 onField(
                   "pipeline",
                   "review_concurrency",
-                  Number(e.target.value),
+                  orFallback(e.target.value, 4),
                 )
               }
               className="mt-2"
