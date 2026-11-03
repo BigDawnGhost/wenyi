@@ -284,16 +284,18 @@ jobs:
           # rather than left to the compiled default so a fork that reuses this
           # workflow publishes installers that update from its own repository.
           WENYI_UPDATE_REPO: ${{ github.repository }}
+      # The crates share one workspace at the repository root, so cargo writes the
+      # binaries and the bundle tree there rather than inside apps/desktop.
       - name: Verify native Windows GUI subsystem
         if: runner.os == 'Windows' && matrix.tier == 'full'
-        run: uv run --no-project python scripts/dev/desktop_pe.py apps/desktop/target/release/wenyi-desktop.exe
+        run: uv run --no-project python scripts/dev/desktop_pe.py target/release/wenyi-desktop.exe
       - name: Verify native application version
         if: matrix.tier == 'full'
         shell: bash
         env:
           EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          binary=apps/desktop/target/release/wenyi-desktop
+          binary=target/release/wenyi-desktop
           if [[ "$RUNNER_OS" == Windows ]]; then binary="${binary}.exe"; fi
           actual="$("$binary" --version)"
           test "$actual" = "Wenyi Desktop $EXPECTED_VERSION"
@@ -303,7 +305,7 @@ jobs:
           uv run --no-project python scripts/release/package_release.py desktop
           --version "${{ steps.version.outputs.version }}"
           --platform "${{ matrix.platform }}"
-          --source apps/desktop/target/release/bundle
+          --source target/release/bundle
       - name: Collect signed updater payload and signature
         if: steps.updater.outputs.signed == 'true' && matrix.tier == 'full'
         env:
@@ -312,7 +314,7 @@ jobs:
           uv run --no-project python scripts/release/desktop_updates.py collect
           --version "${{ steps.version.outputs.version }}"
           --platform "${{ matrix.platform }}"
-          --source apps/desktop/target/release/bundle
+          --source target/release/bundle
       - uses: actions/upload-artifact@v6
         if: matrix.tier == 'full'
         with:
