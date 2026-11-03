@@ -21,10 +21,10 @@ from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
 from wenyi_core.pipeline.precision import PrecisionBatchExecutor
-from wenyi_core.pipeline.runstore import source_sha256
 from wenyi_core.pipeline.runtime_usage import UsageCoordinator
 from wenyi_core.pipeline.translation import TranslationService
 from wenyi_core.pipeline.translation_batch import BatchPlan
+from wenyi_core.storage.run_store import source_sha256
 
 
 def test_precision_candidates_and_guarded_publication_use_backend_storage(storage, tmp_path):

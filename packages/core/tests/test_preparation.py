@@ -15,8 +15,8 @@ from wenyi_core.i18n.languages import normalize_language
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.preparation import PreparationService
-from wenyi_core.pipeline.runstore import slugify, source_sha256
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.run_store import slugify, source_sha256
 
 from tests.fake_llm import routing_handler
 from tests.pipeline_fixtures import fake_pipeline_config

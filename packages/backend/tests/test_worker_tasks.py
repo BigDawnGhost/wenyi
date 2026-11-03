@@ -20,7 +20,7 @@ from wenyi_backend.routers.dependencies import start_job
 from wenyi_backend.workers import tasks
 from wenyi_core.config import Config
 from wenyi_core.ingest.segmenter import load_document
-from wenyi_core.pipeline.runstore import ExportSnapshotStore, source_sha256
+from wenyi_core.storage.run_store import ExportSnapshotStore, source_sha256
 
 
 @pytest.mark.parametrize("fmt", ["epub", "pdf"])

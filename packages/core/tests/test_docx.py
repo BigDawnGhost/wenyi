@@ -22,8 +22,8 @@ from wenyi_core.ingest.docx_reader import read_docx
 from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.runstore import STATUS_DONE
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.run_store import STATUS_DONE
 
 
 def _write_sample_docx(path: str) -> None:

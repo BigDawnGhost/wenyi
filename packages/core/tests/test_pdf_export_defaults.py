@@ -10,7 +10,7 @@ from wenyi_core.config import Config
 from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import RunStore
+from wenyi_core.storage.run_store import RunStore
 
 from tests.fake_llm import routing_handler
 

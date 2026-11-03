@@ -16,9 +16,9 @@ from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import STATUS_DONE, STATUS_PENDING
 from wenyi_core.pipeline.translation import TranslationService
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.run_store import STATUS_DONE, STATUS_PENDING
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
 from tests.pipeline_fixtures import fake_pipeline_config as _config

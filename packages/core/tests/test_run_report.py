@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from wenyi_cli.cli import create_app
 from wenyi_cli.commands.run_report import build_report
 from wenyi_core.llm.usage import UsageSample, UsageTracker
-from wenyi_core.pipeline.runstore import RunStore
+from wenyi_core.storage.run_store import RunStore
 
 
 class FakeStore:

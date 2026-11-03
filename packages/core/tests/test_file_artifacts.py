@@ -300,7 +300,7 @@ def test_long_run_directory_round_trips_through_the_extended_length_form(tmp_pat
     The prefix is the only spelling that makes the deep path openable, so this
     exercises a write and a read instead of asserting on the string itself.
     """
-    from wenyi_core.pipeline.runstore import RunStore
+    from wenyi_core.storage.run_store import RunStore
 
     run_dir = tmp_path / ("a" * 100) / ("b" * 100) / ("c" * 80)
     path = run_dir / "manifest.json"

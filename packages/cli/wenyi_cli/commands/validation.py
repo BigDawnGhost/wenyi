@@ -11,7 +11,7 @@ from wenyi_core.i18n.languages import validate_run_languages
 
 if TYPE_CHECKING:
     from wenyi_core.config import Config
-    from wenyi_core.pipeline.runstore import RunStore
+    from wenyi_core.storage.run_store import RunStore
 
 
 def load_document(*args, **kwargs):
@@ -64,7 +64,7 @@ def runstore_for(config: Config, input_path: str, *, console: Console | None = N
     """Resolve the title and locate existing state without creating a directory."""
     # Deferred: reading a title pulls the ingest stack (bs4/lxml) in; --help
     # must not pay for that.
-    from wenyi_core.pipeline.runstore import RunStore, translation_run_dir
+    from wenyi_core.storage.run_store import RunStore, translation_run_dir
 
     console = console or Console()
     require_input_file(input_path, console=console)

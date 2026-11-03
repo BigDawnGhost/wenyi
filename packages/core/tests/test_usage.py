@@ -34,8 +34,8 @@ from wenyi_core.llm.usage import (
     usage_delta,
 )
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import source_sha256
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.run_store import source_sha256
 
 from tests.fake_llm import routing_handler
 from tests.model_fixtures import model_config

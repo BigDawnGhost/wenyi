@@ -2,7 +2,7 @@
 
 from wenyi_api import dal
 from wenyi_core.ingest.models import Chapter, Document, Segment
-from wenyi_core.pipeline.runstore import source_sha256
+from wenyi_core.storage.run_store import source_sha256
 
 
 def new_project(api, source="en", target="zh"):

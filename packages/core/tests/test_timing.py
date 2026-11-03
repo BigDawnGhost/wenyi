@@ -9,8 +9,8 @@ from wenyi_cli.cli import app
 from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import RunStore
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.run_store import RunStore
 from wenyi_core.timing import RunTimer, format_duration, load_timing
 
 from tests.fake_llm import routing_handler

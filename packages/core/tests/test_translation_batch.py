@@ -83,7 +83,7 @@ def test_chapter_service_limits_blank_allowance_and_resumes_without_retranslatio
 ):
     from wenyi_core.agents.translator import AlignmentError
     from wenyi_core.pipeline.orchestrator import Orchestrator
-    from wenyi_core.pipeline.runstore import STATUS_PENDING
+    from wenyi_core.storage.run_store import STATUS_PENDING
 
     from tests.fake_llm import routing_handler
     from tests.review_fixtures import autofix_config as _config

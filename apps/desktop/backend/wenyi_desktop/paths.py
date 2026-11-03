@@ -50,7 +50,7 @@ import re
 import sys
 from pathlib import Path
 
-from wenyi_core.pipeline.runstore import slugify
+from wenyi_core.storage.run_store import slugify
 
 #: Catalog database of the old layout, holding both project records and the
 #: credential tables.

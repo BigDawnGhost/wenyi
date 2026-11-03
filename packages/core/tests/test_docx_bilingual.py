@@ -11,7 +11,7 @@ from docx.shared import Pt, RGBColor
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
 from wenyi_core.ingest.docx_reader import read_docx
-from wenyi_core.pipeline.runstore import ExportSnapshotStore
+from wenyi_core.storage.run_store import ExportSnapshotStore
 
 
 @pytest.fixture

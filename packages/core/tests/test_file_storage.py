@@ -14,8 +14,8 @@ from types import SimpleNamespace
 import pytest
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.llm.usage import UsageSample, UsageTracker
-from wenyi_core.pipeline.runstore import RunStore, slugify
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.run_store import RunStore, slugify
 
 
 class _RecordingText:
@@ -93,9 +93,9 @@ def test_initialization_retry_recovers_first_usage_commit(tmp_path, published):
     ],
 )
 def test_windows_runstore_json_uses_valid_io_paths(monkeypatch, directory, io_directory):
-    import wenyi_core.pipeline.runstore as runstore
     import wenyi_core.storage.atomic_write as atomic_write
     import wenyi_core.storage.io_path as io_path_module
+    import wenyi_core.storage.run_store as run_store
 
     calls = []
 
@@ -127,7 +127,7 @@ def test_windows_runstore_json_uses_valid_io_paths(monkeypatch, directory, io_di
     monkeypatch.setattr(io_path_module, "os", windows_os)
     monkeypatch.setattr(atomic_write, "os", windows_os)
     monkeypatch.setattr(atomic_write, "open", open_json, raising=False)
-    monkeypatch.setattr(runstore, "open", open_json, raising=False)
+    monkeypatch.setattr(run_store, "open", open_json, raising=False)
     path = ntpath.join(directory, "context.json")
     io_path = ntpath.join(io_directory, "context.json")
     RunStore._write_json(path, {"target": "translation"})
@@ -161,7 +161,7 @@ def test_long_json_write_is_atomic_and_can_resume(tmp_path, monkeypatch, interru
             raise OSError("interrupted before replace")
 
         with monkeypatch.context() as patch:
-            patch.setattr("wenyi_core.pipeline.runstore.os.replace", interrupt)
+            patch.setattr("wenyi_core.storage.run_store.os.replace", interrupt)
             with pytest.raises(OSError, match="interrupted before replace"):
                 RunStore._write_json(path, {"target": "partial"})
         assert RunStore._read_json(path) == {"target": "original"}
@@ -231,7 +231,7 @@ def test_concurrent_writers_do_not_share_a_temporary_file(tmp_path):
     writers = [f"writer-{index}" for index in range(4)]
     script = (
         "import sys;"
-        "from wenyi_core.pipeline.runstore import RunStore;"
+        "from wenyi_core.storage.run_store import RunStore;"
         "RunStore._write_json(sys.argv[1], {'writer': sys.argv[2]})"
     )
     processes = [

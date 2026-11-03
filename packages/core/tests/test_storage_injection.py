@@ -10,10 +10,10 @@ from wenyi_core.config import Config
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.pipeline.input_preparation import ingest_config, load_parsed_document
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import source_sha256
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
+from wenyi_core.storage.run_store import source_sha256
 from wenyi_core.storage.sqlite import SqliteStorage
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
