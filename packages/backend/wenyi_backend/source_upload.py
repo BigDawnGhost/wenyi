@@ -11,6 +11,7 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile
 
 from . import paths
+from .errors import SOURCE_TOO_LARGE, ApiError
 
 _FORMATS = {
     "epub": "epub",
@@ -24,6 +25,10 @@ _FORMATS = {
     "pdf": "pdf",
     "docx": "docx",
 }
+
+# Upload ceiling. Large enough for any realistic novel with artwork, small enough that
+# one bad upload cannot exhaust the DATA_DIR volume (audit C-2).
+MAX_SOURCE_BYTES = 512 * 1024 * 1024
 
 
 def format_for_suffix(suffix: str) -> str | None:
@@ -74,15 +79,25 @@ async def save_source(
     It defaults to the context projection, which is what every caller without a
     location choice uses.
     """
+    size = getattr(file, "size", None)
+    if isinstance(size, int) and not isinstance(size, bool) and size > MAX_SOURCE_BYTES:
+        raise ApiError(SOURCE_TOO_LARGE, 413, "Source file exceeds the upload size limit")
     fmt_code = input_format(file, fmt)
     suffix = {"markdown": "md", "text": "txt"}.get(fmt_code, fmt_code)
     root = Path(directory) if directory is not None else Path(paths.project_dir(pid))
     destination = root / f"source-{uuid4().hex}.{suffix}"
     destination.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
+    written = 0
     try:
         with destination.open("xb") as handle:
             while block := await file.read(1024 * 1024):
+                written += len(block)
+                if written > MAX_SOURCE_BYTES:
+                    # Chunked uploads may not carry a trustworthy Content-Length.
+                    raise ApiError(
+                        SOURCE_TOO_LARGE, 413, "Source file exceeds the upload size limit"
+                    )
                 digest.update(block)
                 handle.write(block)
         if destination.stat().st_size == 0:

@@ -22,6 +22,8 @@ CHAPTER_NOT_FOUND = "chapter_not_found"
 SEGMENT_NOT_FOUND = "segment_not_found"
 INVALID_CONFIGURATION = "invalid_configuration"
 UNSUPPORTED_CLIENT = "unsupported_client"
+# Added by the upload guard (audit C-2).
+SOURCE_TOO_LARGE = "source_too_large"
 
 
 class ApiError(HTTPException):
@@ -94,6 +96,7 @@ __all__ = [
     "PROJECT_NOT_FOUND",
     "QUEUE_UNAVAILABLE",
     "UNSUPPORTED_CLIENT",
+    "SOURCE_TOO_LARGE",
     "ApiError",
     "api_error_handler",
     "describe_status",
