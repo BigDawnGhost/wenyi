@@ -124,6 +124,17 @@ class TestPunct(unittest.TestCase):
     def test_ellipsis_and_dash(self):
         self.assertEqual(normalize_zh_segments(["等等...走了--他笑了"])[0], "等等……走了——他笑了")
 
+    def test_dash_conversion_is_cjk_scoped(self):
+        # Latin contexts keep their dash runs and single em dashes (audit A-8).
+        self.assertEqual(normalize_zh_segments(["2010--2015 interval"])[0], "2010--2015 interval")
+        self.assertEqual(
+            normalize_zh_segments(["well--known — pause"])[0],
+            "well--known — pause",
+        )
+        # CJK neighbours still convert, including single em dashes between CJK.
+        self.assertEqual(normalize_zh_segments(["前—后"])[0], "前——后")
+        self.assertEqual(normalize_zh_segments(["走出——房间"])[0], "走出——房间")
+
     def test_word_final_apostrophe_is_a_right_apostrophe(self):
         self.assertEqual(normalize_zh_segments(["James' book"])[0], "James’ book")
 
