@@ -41,3 +41,16 @@ def test_chapter_digest_missing_chapter_file_maps_to_404(backend_context):
     response = _client_with(context).put("/projects/pid1/chapter-digests/7", json={"digest": "abc"})
     assert response.status_code == 404
     assert response.json()["code"] == "chapter_not_found"
+
+
+def test_models_route_maps_invalid_config_to_422(backend_context):
+    # A saved project whose languages collapse to the same value makes effective_config
+    # raise ValueError; the route must answer 422 invalid_configuration, not a bare 500.
+    project = {"id": "pid1", "source_lang": "zh", "target_lang": "zh", "config": {}}
+    repository = Mock()
+    repository.get_project.return_value = project
+    response = _client_with(replace(backend_context, repository=repository)).get(
+        "/projects/pid1/models"
+    )
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_configuration"
