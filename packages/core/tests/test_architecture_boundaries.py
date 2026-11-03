@@ -655,6 +655,50 @@ FILE_STORAGE_PATH_GAPS = {
 }
 
 
+LLM_DIR = TRANS_NOVEL_DIR / "llm"
+
+
+def test_llm_operation_names_imports_nothing():
+    """The names module is what lets config and llm.configuration point at each other.
+
+    It has to stay import-free: any wenyi_core import here rebuilds the cycle it exists to
+    break, and that cycle only stayed hidden behind a TYPE_CHECKING block and lazy imports.
+    """
+    path = LLM_DIR / "operation_names.py"
+    assert path.is_file()
+    imported = _imported_modules(path)
+    assert not [module for module in imported if module.startswith("wenyi_core")], imported
+    source = path.read_text(encoding="utf-8")
+    assert "pydantic" not in source, "operation names must stay dependency-free"
+
+
+def test_llm_operation_names_match_the_registry():
+    """A name list that drifts from the registry would validate the wrong IDs."""
+    from wenyi_core.llm.operation_names import OPERATION_NAMES
+    from wenyi_core.llm.operations import OPERATIONS
+
+    assert set(OPERATION_NAMES) == set(OPERATIONS), sorted(set(OPERATION_NAMES) ^ set(OPERATIONS))
+    assert len(OPERATION_NAMES) == len(set(OPERATION_NAMES)), "duplicate operation name"
+
+
+def test_llm_configuration_does_not_import_the_operation_registry():
+    """Validation only needs the names; importing the registry restores the cycle."""
+    imported = _imported_modules(LLM_DIR / "configuration.py")
+    assert "wenyi_core.llm.operation_names" in imported
+    assert "wenyi_core.llm.operations" not in imported, imported
+
+
+def test_config_module_has_no_top_level_llm_operations_import():
+    """config.py may reach llm.configuration, but never the registry at import time."""
+    source = (TRANS_NOVEL_DIR / "config.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    for node in tree.body:
+        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("llm.operations"):
+            raise AssertionError("config.py imports llm.operations at module level")
+        if isinstance(node, ast.ImportFrom) and (node.module or "").endswith("llm.routing"):
+            raise AssertionError("config.py imports llm.routing at module level")
+
+
 def test_storage_layer_never_imports_pipeline():
     """Storage owns the run-state primitives; it cannot reach up into workflow code."""
     scanned = 0
