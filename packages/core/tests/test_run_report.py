@@ -52,6 +52,62 @@ def test_a_failed_run_reports_the_error_type_and_traceback(tmp_path):
     assert report["last_failure"]["run_id"] == "run-7"
 
 
+def test_a_crashed_step_counts_as_a_failure(tmp_path):
+    # CLI pipelines never emit pipeline_error; a failed run is a step that started
+    # but has no matching run_steps_finished (audit Z-2/H-1).
+    store = FakeStore(tmp_path)
+    write_events(
+        store,
+        [
+            {
+                "event": "run_steps_started",
+                "steps": ["prepare", "translate"],
+                "input_path": "b.txt",
+            },
+            {"event": "run_steps_finished", "steps": ["prepare"]},
+        ],
+    )
+    report = build_report(store)
+    assert report["failures"] == 1
+    assert report["last_failure"]["error_type"] is None
+    assert report["last_failure"]["error"] is None
+
+
+def test_retry_exhaustion_surfaces_as_the_last_failure(tmp_path):
+    store = FakeStore(tmp_path)
+    write_events(
+        store,
+        [
+            {"event": "llm_retry_wait", "provider": "openai"},
+            {
+                "event": "llm_retry_exhausted",
+                "provider": "openai",
+                "error_type": "ProviderRequestError",
+                "status_code": 503,
+            },
+        ],
+    )
+    report = build_report(store)
+    assert report["retries"] == 2  # wait + exhausted both start with llm_retry
+    assert report["last_failure"]["error_type"] == "ProviderRequestError"
+
+
+def test_a_torn_multibyte_final_line_keeps_the_earlier_records(tmp_path):
+    # ensure_ascii=False records tear inside CJK characters when the process dies
+    # mid-append; the report must survive instead of crashing on UnicodeDecodeError
+    # (audit Z-2/H-2).
+    store = FakeStore(tmp_path)
+    record = json.dumps({"event": "chapter_done", "title": "第十二章"}, ensure_ascii=False)
+    torn = "第五十章：暗流".encode("utf-8")[:6]
+    with open(store.event_log_path, "wb") as handle:
+        handle.write(record.encode("utf-8") + b"\n")
+        handle.write(b'{"event": "chapter_done", "title": "\n')
+        handle.write(torn)
+    report = build_report(store)
+    assert report["events"] == 1
+    assert report["failures"] == 0
+
+
 def test_a_torn_final_line_keeps_the_earlier_records(tmp_path):
     store = FakeStore(tmp_path)
     with open(store.event_log_path, "w", encoding="utf-8") as handle:
