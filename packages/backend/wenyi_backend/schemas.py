@@ -281,7 +281,9 @@ class AssembleEnqueued(JobEnqueued):
 
 
 class GlossaryImport(RequestModel):
-    terms: list[TermIn]
+    # A bounded list keeps the single-transaction import from holding the project write
+    # lock for minutes on end (audit Y-4/E-5).
+    terms: list[TermIn] = Field(max_length=1000)
 
 
 class DigestUpdate(RequestModel):

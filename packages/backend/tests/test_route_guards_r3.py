@@ -70,3 +70,10 @@ def test_review_mutations_answer_409_when_project_is_unprepared(backend_context)
     assert edit.status_code == 409
     complete = client.post("/projects/pid1/review/0/complete")
     assert complete.status_code == 409
+
+
+def test_glossary_import_rejects_oversized_term_list(backend_context):
+    client = _client_with(backend_context)
+    terms = [{"source": f"t{i}", "target": f"译{i}"} for i in range(1001)]
+    response = client.post("/projects/pid1/glossary/import", json={"terms": terms})
+    assert response.status_code == 422
