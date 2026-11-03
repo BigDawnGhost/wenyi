@@ -474,6 +474,49 @@ class TestPolisher(unittest.TestCase):
             out, ["甲", "乙"]
         )  # Preserve the original translation on paragraph-count mismatch.
 
+    def test_polish_null_items_keep_original(self):
+        # A same-length list containing nulls must not coerce into literal "None" strings.
+        client = FakeClient(
+            handler=lambda m, t, j: json.dumps({"polished": [None, None]}, ensure_ascii=False)
+        )
+        p = Polisher(client, _cfg())
+        out = p.polish(["甲", "乙"])
+        self.assertEqual(out, ["甲", "乙"])
+
+    def test_polish_non_string_items_keep_original(self):
+        client = FakeClient(
+            handler=lambda m, t, j: json.dumps(
+                {"polished": [None, "润色乙", 3]}, ensure_ascii=False
+            )
+        )
+        with self.assertLogs("wenyi_core.agents.base", level="WARNING") as captured:
+            out = Polisher(client, _cfg()).polish(["甲", "乙", "丙"])
+        self.assertEqual(out, ["甲", "乙", "丙"])
+        self.assertTrue(any("invalid item types" in line for line in captured.output))
+
+    def test_polish_continue_null_items_return_none(self):
+        client = FakeClient(
+            handler=lambda m, t, j: json.dumps({"polished": [None, "润色乙"]}, ensure_ascii=False)
+        )
+        turn = [
+            {"role": "system", "content": "You are an experienced literary translator"},
+            {"role": "user", "content": "translate these"},
+            {
+                "role": "assistant",
+                "content": json.dumps({"translations": ["甲", "乙"]}, ensure_ascii=False),
+            },
+        ]
+        out = Polisher(client, _cfg()).polish_continue(turn, n=2, next_source="next")
+        self.assertIsNone(out)
+
+    def test_polish_transport_failure_logs_warning(self):
+        # The centralized fallback must stay observable (audit A-2).
+        client = FakeClient(handler=lambda m, t, j: (_ for _ in ()).throw(RuntimeError("boom")))
+        with self.assertLogs("wenyi_core.agents.base", level="WARNING") as captured:
+            out = Polisher(client, _cfg()).polish(["甲"])
+        self.assertEqual(out, ["甲"])
+        self.assertTrue(any("returning fallback" in line for line in captured.output))
+
     def test_polish_continue_appends_user_turn_to_translation_transcript(self):
         client = FakeClient(
             handler=lambda m, t, j: json.dumps(
