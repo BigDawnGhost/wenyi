@@ -59,10 +59,13 @@ def create_app(
 
         app.add_middleware(TokenMiddleware)
 
+    allowed_origins = origins if origins is not None else ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins if origins is not None else ["*"],
-        allow_credentials=True,
+        allow_origins=allowed_origins,
+        # A wildcard deployment must not echo credentials: its origins are untrusted by
+        # definition. Explicit origin lists are admin-curated and may allow credentials.
+        allow_credentials="*" not in allowed_origins,
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["Content-Disposition"],
