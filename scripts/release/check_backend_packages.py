@@ -127,9 +127,13 @@ def archives(directory: Path) -> dict[str, Path]:
                 assert not any(name.startswith(f"{other}/") for name in names), (wheel, other)
             if package == "wenyi_core":
                 assert prompts <= names, f"Missing wheel prompts: {prompts - names}"
+                # One module from each stage sub-package plus the storage one: a wheel that
+                # silently dropped a sub-package would still satisfy the "some .py exists"
+                # check above.
                 assert {
-                    "wenyi_core/pipeline/book_understanding.py",
-                    "wenyi_core/pipeline/runtime_usage.py",
+                    "wenyi_core/pipeline/prepare/book_understanding.py",
+                    "wenyi_core/pipeline/run/runtime_usage.py",
+                    "wenyi_core/pipeline/translate/babeldoc_context.py",
                     "wenyi_core/storage/file_migrations.py",
                 } <= names, "Missing extracted Core services"
             if package == "wenyi_backend":
