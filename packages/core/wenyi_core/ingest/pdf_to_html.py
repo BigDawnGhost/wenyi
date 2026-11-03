@@ -109,9 +109,16 @@ class MinerUApi:
         )
         resp.raise_for_status()
         data = _check(resp.json())["data"]
+        upload_urls = data.get("file_urls")
+        if not isinstance(upload_urls, list) or len(upload_urls) != len(file_paths):
+            # A short URL list would silently skip chunks and misassemble the book.
+            raise MinerUError(
+                f"MinerU returned {len(upload_urls) if isinstance(upload_urls, list) else 0} "
+                f"upload URLs for {len(file_paths)} files"
+            )
 
         # 2. Upload each file (no Content-Type — required by OSS signature)
-        for local_path, upload_url in zip(file_paths, data["file_urls"]):
+        for local_path, upload_url in zip(file_paths, upload_urls):
             put_resp = _request_with_retry(
                 None,
                 "PUT",
@@ -122,9 +129,9 @@ class MinerUApi:
             put_resp.raise_for_status()
 
         # 3. Poll until all done
-        return self._poll_batch(data["batch_id"], timeout)
+        return self._poll_batch(data["batch_id"], timeout, expected_count=len(file_paths))
 
-    def _poll_batch(self, batch_id: str, timeout: int) -> list[bytes]:
+    def _poll_batch(self, batch_id: str, timeout: int, *, expected_count: int) -> list[bytes]:
         deadline = time.monotonic() + timeout
         interval = POLL_INTERVAL
         while True:
@@ -133,6 +140,13 @@ class MinerUApi:
             results = resp.json()["data"]["extract_result"]
             states = [r["state"] for r in results]
             if all(s in ("done", "failed") for s in states):
+                if len(results) != expected_count:
+                    # Result order/length must match the upload manifest; chunks arriving
+                    # out of order or missing would silently misassemble the book.
+                    raise MinerUError(
+                        f"MinerU returned {len(results)} extraction results "
+                        f"for {expected_count} uploaded files"
+                    )
                 zips: list[bytes] = []
                 for r in results:
                     if r["state"] == "failed":
