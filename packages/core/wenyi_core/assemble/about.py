@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
 import posixpath
 import zipfile
 from string import Template
 
 from bs4 import BeautifulSoup
 
+from ..atomicio import publish_target
 from ..i18n.policy.models import PolicyContext
 from ..i18n.policy.resolver import resolve_policy
 from ..i18n.resources import read_text
@@ -111,8 +111,7 @@ def append_about_page(epub_path: str, lang: str, *, locale: str | None = None) -
             return False
         entries[opf_path] = opf_data
 
-    tmp_path = epub_path + ".about.tmp"
-    try:
+    with publish_target(epub_path) as tmp_path:
         with zipfile.ZipFile(tmp_path, "w") as zout:
             for info in infos:
                 data = entries[info.filename]
@@ -121,8 +120,4 @@ def append_about_page(epub_path: str, lang: str, *, locale: str | None = None) -
                 else:
                     zout.writestr(info, data)
             zout.writestr(about_entry, about_xhtml(lang, locale=locale))
-        os.replace(tmp_path, epub_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
     return True
