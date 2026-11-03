@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .diagnostics import EngineDiagnostics, Reporter
+from .migration.ownership import NativeOwner, profile_lock
 
 if TYPE_CHECKING:
     import uvicorn
@@ -162,6 +163,7 @@ async def serve(
     runtime_dir: Path | None = None,
     library_root: Path | None = None,
     install_root: Path | None = None,
+    native_owner: NativeOwner | None = None,
 ) -> None:
     with lifecycle.observe("application"):
         import uvicorn
@@ -178,6 +180,7 @@ async def serve(
             library_root=library_root,
             install_root=install_root,
             runtime_dir=runtime_dir,
+            native_owner=native_owner,
         )
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -223,6 +226,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None)
     parser.add_argument("--runtime-dir", type=Path, default=None)
+    parser.add_argument("--native-startup", action="store_true", help=argparse.SUPPRESS)
     # Layer three is injected only by an installed native parent. Its absence is
     # the ordinary state of a development run, and the engine then keeps creating
     # projects in the workspace it was given (see `LocalBackend.project_roots`).
@@ -246,16 +250,20 @@ def main() -> None:
     try:
         with lifecycle.observe("bootstrap"):
             # An injected directory is authoritative; the fallback is CLI-only.
-            asyncio.run(
-                serve(
-                    args.data_dir or default_workspace(),
-                    protocol_stream,
-                    lifecycle,
-                    runtime_dir=args.runtime_dir,
-                    library_root=args.library_root,
-                    install_root=args.install_root,
+            workspace = args.data_dir or default_workspace()
+            owner = NativeOwner.read(sys.stdin, workspace) if args.native_startup else None
+            with profile_lock(workspace, owner):
+                asyncio.run(
+                    serve(
+                        workspace,
+                        protocol_stream,
+                        lifecycle,
+                        runtime_dir=args.runtime_dir,
+                        library_root=args.library_root,
+                        install_root=args.install_root,
+                        native_owner=owner,
+                    )
                 )
-            )
             # ASGI can consume shutdown failures too. Do not report failure and
             # then let the interpreter return a misleading successful exit code.
             if lifecycle.failed:

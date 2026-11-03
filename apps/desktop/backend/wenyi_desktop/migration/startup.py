@@ -6,11 +6,8 @@ application does when the move cannot finish.
 
 Two rules make that decision safe to make at every start:
 
-- **The old workspace is never a fallback for new writes.** If the move cannot be
-  completed, the start says so and the application runs on what layer two already
-  has; it does not quietly reopen the old catalog. The old catalog stops being
-  written the moment this version first runs, and resuming writes to it would
-  make the two layouts disagree about the same project.
+- **Incomplete migration stops startup.** Neither the old workspace nor a
+  partially adopted catalog is opened for application writes after a failure.
 - **An unfinished move is resumed, never discarded.** The sentinel records that a
   move started, so the next start runs the same idempotent steps over whatever the
   old workspace still holds. Keeping the old data is what makes that possible.
@@ -26,12 +23,15 @@ from pathlib import Path
 
 from .. import paths
 from . import layers
+from .ownership import NativeOwner
 from .protocol import VerifyReport
 
 log = logging.getLogger(__name__)
 
 
-def adopt(workspace: Path, *, home: Path | None = None) -> VerifyReport:
+def adopt(
+    workspace: Path, *, home: Path | None = None, native_owner: NativeOwner | None = None
+) -> VerifyReport:
     """Bring layer two up to date for one workspace, before anything opens it.
 
     Called once per start, ahead of the stores that read the catalog. The
@@ -42,19 +42,23 @@ def adopt(workspace: Path, *, home: Path | None = None) -> VerifyReport:
     - the previous version still owns the workspace, so it has to be closed;
     - the move failed for another reason, and the old data is still intact.
     """
-    if not paths.catalog(workspace).is_file():
-        # A fresh installation: there is nothing to move, and layer two is
-        # created by whoever opens it first.
-        return VerifyReport()
-    if layers.complete(workspace, home=home):
-        return VerifyReport()
     try:
-        moved = layers.migrate(workspace, home=home)
+        layers.check_pending(workspace, home=home)
+        if layers.complete(workspace, home=home):
+            return VerifyReport()
+        if not paths.catalog(workspace).is_file():
+            # Validate existing layer two before allowing even a fresh workspace
+            # to open it: store initialization must not conceal catalog damage.
+            return VerifyReport()
+        moved = layers.migrate(workspace, home=home, native_owner=native_owner)
     except layers.MigrationBusy:
         raise
     except Exception as error:
         log.warning("Could not move the Desktop data into the user directory", exc_info=True)
-        return VerifyReport(problems=(str(error),))
+        raise layers.LayoutError(
+            f"Desktop migration could not finish: {error}. "
+            "Startup was stopped; keep the original workspace and retry."
+        ) from error
     if moved is None:
         return VerifyReport()
     return VerifyReport(files=len(moved.tables))

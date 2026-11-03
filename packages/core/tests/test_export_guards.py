@@ -12,6 +12,8 @@ import unittest
 import zipfile
 from pathlib import Path
 
+import pytest
+from bs4 import BeautifulSoup
 from wenyi_core.assemble.epub_navigation import _rewrite_opf_metadata
 from wenyi_core.assemble.html_resources import _load_html_resource
 from wenyi_core.assemble.writer import assemble
@@ -51,6 +53,166 @@ def _rewrite_zip_excluding(src_path: str, dest_path: str, drop: str) -> None:
             if info.filename == drop:
                 continue
             dest.writestr(info, src.read(info.filename))
+
+
+def _write_resource_epub(path: Path, *, include_image: bool) -> None:
+    """Build a root-level chapter with a missing resource and an optional ZIP image."""
+    container = (
+        '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+        '<rootfiles><rootfile full-path="content.opf" '
+        'media-type="application/oebps-package+xml"/></rootfiles></container>'
+    )
+    image_item = (
+        '<item id="image" href="cover.png" media-type="image/png"/>' if include_image else ""
+    )
+    opf = (
+        '<package xmlns="http://www.idpf.org/2007/opf" version="3.0">'
+        '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+        "<dc:title>Resource test</dc:title><dc:language>ja</dc:language></metadata>"
+        '<manifest><item id="chapter" href="chapter.xhtml" '
+        f'media-type="application/xhtml+xml"/>{image_item}</manifest>'
+        '<spine><itemref idref="chapter"/></spine></package>'
+    )
+    image = '<img id="cover" src="cover.png"/>' if include_image else ""
+    chapter = (
+        '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>静かな朝だった。</p>'
+        f'<img id="missing" src="local-only.txt"/>{image}</body></html>'
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+        archive.writestr("META-INF/container.xml", container)
+        archive.writestr("content.opf", opf)
+        archive.writestr("chapter.xhtml", chapter)
+        if include_image:
+            archive.writestr("cover.png", b"epub-image")
+
+
+@pytest.mark.parametrize("zip_resources", [{}, {"other.png": b"other-image"}])
+def test_zip_resource_lookup_never_reads_missing_local_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, zip_resources: dict[str, bytes]
+) -> None:
+    local = tmp_path / "local-only.txt"
+    local.write_bytes(b"private-local-data")
+    monkeypatch.chdir(tmp_path)
+
+    for reference in (
+        "local-only.txt",
+        "local%2Donly.txt",
+        f"../{tmp_path.name}/local-only.txt",
+        str(local),
+        local.as_uri(),
+    ):
+        assert _load_html_resource(reference, source_dir="", zip_resources=zip_resources) is None, (
+            reference
+        )
+
+
+def test_zip_resource_lookup_cannot_be_shadowed_by_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "cover.png").write_bytes(b"local-image")
+    monkeypatch.chdir(tmp_path)
+
+    assert _load_html_resource(
+        "cover.png", source_dir="", zip_resources={"cover.png": b"epub-image"}
+    ) == ("image/png", b"epub-image")
+
+
+@pytest.mark.parametrize(
+    "reference",
+    ["../Images/cover%20image.png?version=1#sample", "OEBPS/Images/cover%20image.png"],
+)
+def test_zip_resource_lookup_preserves_container_paths(reference: str) -> None:
+    assert _load_html_resource(
+        reference,
+        source_dir="OEBPS/Text",
+        zip_resources={"OEBPS/Images/cover image.png": b"epub-image"},
+    ) == ("image/png", b"epub-image")
+
+
+@pytest.mark.parametrize("zip_resources", [None, {}], ids=["local", "zip"])
+def test_html_resource_modes_preserve_data_and_external_uris(
+    zip_resources: dict[str, bytes] | None,
+) -> None:
+    assert _load_html_resource(
+        "data:image/png;base64,aW5saW5l", source_dir="", zip_resources=zip_resources
+    ) == ("image/png", b"inline")
+    assert _load_html_resource(
+        "data:image/svg+xml,%3Csvg%2F%3E", source_dir="", zip_resources=zip_resources
+    ) == ("image/svg+xml", b"<svg/>")
+    for reference in ("https://example.invalid/cover.png", "//example.invalid/cover.png", "#cover"):
+        assert _load_html_resource(reference, source_dir="", zip_resources=zip_resources) is None, (
+            reference
+        )
+
+
+@pytest.mark.parametrize("local_directory", ["cwd", "source"])
+@pytest.mark.parametrize("include_image", [False, True], ids=["empty-media", "zip-image"])
+@pytest.mark.parametrize("bilingual", [False, True], ids=["monolingual", "bilingual"])
+def test_epub_html_export_never_packages_files_outside_container(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    local_directory: str,
+    include_image: bool,
+    bilingual: bool,
+) -> None:
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    local = cwd if local_directory == "cwd" else source_dir
+    (local / "local-only.txt").write_bytes(b"private-local-data")
+    (local / "cover.png").write_bytes(b"local-image")
+    source = source_dir / "book.epub"
+    _write_resource_epub(source, include_image=include_image)
+    monkeypatch.chdir(cwd)
+    store, _ = _run_full_pipeline(str(source), str(tmp_path / "state"))
+    assert any(segment.target for segment in store.load_chapter(0).segments)
+
+    output = Path(
+        assemble(
+            store,
+            str(source),
+            out_path=str(tmp_path / "export" / "book.html"),
+            out_format="html",
+            bilingual=bilingual,
+            about_page=False,
+        )
+    )
+
+    soup = BeautifulSoup(output.read_text(encoding="utf-8"), "html.parser")
+    assert soup.find("img", id="missing")["src"] == "local-only.txt"
+    assets = output.with_suffix(".assets")
+    if include_image:
+        assert [path.read_bytes() for path in assets.iterdir()] == [b"epub-image"]
+        image_href = soup.find("img", id="cover")["src"]
+        assert image_href.startswith("book.assets/")
+        assert (output.parent / image_href).read_bytes() == b"epub-image"
+    else:
+        assert not assets.exists()
+
+
+def test_html_input_still_packages_local_and_embedded_images(tmp_path: Path) -> None:
+    source = tmp_path / "source.html"
+    source.write_text(
+        "<html><body><p>静かな朝だった。</p>"
+        '<img id="local" src="cover.png"/>'
+        '<img id="inline" src="data:image/png;base64,aW5saW5l"/>'
+        '<img id="external" src="https://example.invalid/cover.png"/>'
+        "</body></html>",
+        encoding="utf-8",
+    )
+    (tmp_path / "cover.png").write_bytes(b"local-image")
+    store, _ = _run_full_pipeline(str(source), str(tmp_path / "state"))
+
+    output = Path(assemble(store, str(source), out_format="html", about_page=False))
+
+    soup = BeautifulSoup(output.read_text(encoding="utf-8"), "html.parser")
+    for image_id, payload in (("local", b"local-image"), ("inline", b"inline")):
+        href = soup.find("img", id=image_id)["src"]
+        assert href.startswith(f"{output.stem}.assets/")
+        assert (output.parent / href).read_bytes() == payload
+    assert soup.find("img", id="external")["src"] == "https://example.invalid/cover.png"
 
 
 class TestEpubResourceGuards(unittest.TestCase):

@@ -35,6 +35,7 @@ def backend(roots):
 def old_style_project(backend: LocalBackend, pid: str = PROJECT) -> Path:
     """A project written by the version that had no layer three at all."""
     backend.create_project("An old book", "en", "zh", {}, project_id=pid)
+    backend.update_project(pid, library_root=None)
     directory = paths.project(backend.workspace, pid)
     directory.mkdir(parents=True, exist_ok=True)
     return directory
@@ -184,9 +185,9 @@ def test_names_that_only_share_a_prefix_are_not_inside_each_other(backend, roots
 
 
 def test_a_refused_location_leaves_no_record_and_no_directory(backend, roots, tmp_path):
-    _, library = roots
+    workspace, library = roots
     with pytest.raises(LibraryLocationRefused):
-        backend.create_project("A book", "en", "zh", {}, library_root=str(library))
+        backend.create_project("A book", "en", "zh", {}, library_root=str(workspace))
     assert not library.exists()
     assert backend.list_projects() == []
 

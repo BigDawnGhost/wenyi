@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException, UploadFile
+from wenyi_backend.execution.bindings import resolve_source
 from wenyi_backend.routers import projects
 from wenyi_core.storage.sqlite import SqliteStorage
 
@@ -117,7 +118,7 @@ def test_uncertain_source_publication_never_deletes_referenced_file(
                 pid, UploadFile(BytesIO(b"Replacement source."), filename="new.txt"), None
             )
         )
-    referenced = Path(desktop_context.data_dir) / backend.get_project(pid)["source_path"]
+    referenced = Path(resolve_source(desktop_context, pid))
     assert referenced.is_file()
     assert referenced.read_bytes() == (b"Replacement source." if committed else b"Original source.")
     assert original.is_file()

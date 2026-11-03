@@ -2,7 +2,10 @@
 use std::{
     io::Read,
     path::PathBuf,
-    sync::{atomic::Ordering, Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -458,15 +461,92 @@ fn prepare_engine(connection: &Connection) -> Result<()> {
     }
 }
 
-fn cancel_prepare(connection: &Connection) {
-    let _ = connection
+const CANCELLATION_UNCERTAIN: &str =
+    "Wenyi could not confirm that update preparation was cancelled. Quit and reopen Wenyi before continuing.";
+
+fn cancel_prepare(connection: &Connection) -> Result<()> {
+    let response = connection
         .client
         .post(format!("{}/desktop/updates/cancel", connection.base))
         .bearer_auth(&connection.token)
-        .send();
+        .send()
+        .map_err(|_| IpcError::new("update_unavailable", CANCELLATION_UNCERTAIN))?;
+    if response.status().as_u16() != 204 {
+        return Err(IpcError::new("update_unavailable", CANCELLATION_UNCERTAIN));
+    }
+    Ok(())
 }
 
-/// Copy the workspace aside and prove the copy, or explain why it was refused.
+fn unavailable(state: &Mutex<State>, closing: &AtomicBool, reason: &'static str) {
+    let mut state = lock(state);
+    state.connection = None;
+    state.error = Some(reason);
+    state.closing = false;
+    // Keep native save admission closed, but allow an explicit Quit to proceed.
+    closing.store(false, Ordering::SeqCst);
+}
+
+fn cancel_preparation(
+    connection: &Connection,
+    state: &Mutex<State>,
+    saves: &Saves,
+    closing: &AtomicBool,
+) -> Result<()> {
+    if let Err(error) = cancel_prepare(connection) {
+        unavailable(state, closing, CANCELLATION_UNCERTAIN);
+        return Err(error);
+    }
+    lock(state).closing = false;
+    saves.reopen();
+    closing.store(false, Ordering::SeqCst);
+    Ok(())
+}
+
+fn stop_engine(engine: &Engine) -> std::result::Result<(), &'static str> {
+    let mut owner = lock(&engine.child);
+    if let Some(backend) = owner.as_mut() {
+        backend.shutdown();
+        if !backend.exited() {
+            return Err(
+                "The local engine has not stopped. Quit and reopen Wenyi before continuing.",
+            );
+        }
+    }
+    // Never discard a Child handle before its exit/reap has been observed.
+    owner.take();
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BackupPlan {
+    schema_version: u32,
+    sources: Vec<migration::BackupSource>,
+}
+
+fn backup_plan(connection: &Connection) -> Result<BackupPlan> {
+    let failure = || {
+        IpcError::new(
+            "update_backup_failed",
+            "Wenyi could not locate all project data. Reconnect missing project folders and retry.",
+        )
+    };
+    let response = connection
+        .client
+        .post(format!("{}/desktop/updates/backup-plan", connection.base))
+        .bearer_auth(&connection.token)
+        .send()
+        .map_err(|_| failure())?
+        .error_for_status()
+        .map_err(|_| failure())?;
+    let plan: BackupPlan = response.json().map_err(|_| failure())?;
+    if plan.schema_version != 1 || plan.sources.is_empty() {
+        return Err(failure());
+    }
+    Ok(plan)
+}
+
+/// Copy the frozen owned-source plan and prove it, or explain the refusal.
 ///
 /// Called once the engine has exited and before the installer runs. Both ends of
 /// that window matter: a live engine keeps a write-ahead log moving underneath
@@ -476,29 +556,24 @@ fn cancel_prepare(connection: &Connection) {
 /// Layer two, not layer one, holds the copy: the point of keeping it is to have it
 /// after the application that wrote it is gone, and layer one is rebuilt on every
 /// launch.
-fn snapshot(engine: &Engine) -> std::result::Result<PathBuf, String> {
-    // No admitted workspace means no data directory, so an upgrade cannot lose
-    // anything and there is nothing to copy.
-    let workspace = engine
-        .workspace
-        .as_deref()
-        .ok_or("Wenyi could not find its data folder, so the update was cancelled.")?;
+fn snapshot(plan: &BackupPlan) -> std::result::Result<PathBuf, String> {
     let target = paths::user_root()
         .map_err(|error| error.message().to_owned())?
         .join(BACKUP);
-    // A backup directory inside the directory being copied would be walked into
-    // its own copy, and each upgrade would then duplicate what the previous one
-    // wrote. The two roots belong to different layers and are never nested under
-    // either platform default, but the data directory can be named on the command
-    // line, so the copy is refused rather than attempted.
-    paths::check_disjoint(&[("data", workspace), ("backup", target.as_path())])
-        .map_err(|error| error.message().to_owned())?;
-    // The space check runs before anything is written, so an upgrade that is
-    // refused here leaves no partial copy behind.
-    migration::preflight(workspace, &target).map_err(|error| error.to_string())?;
-    let snapshot = migration::snapshot(workspace, &target, env!("WENYI_DESKTOP_VERSION"))
-        .map_err(|error| error.to_string())?;
+    let snapshot =
+        migration::snapshot_sources(&plan.sources, &target, env!("WENYI_DESKTOP_VERSION"))
+            .map_err(|error| error.to_string())?;
     Ok(snapshot.root)
+}
+
+/// The production install gate. Neither a failed copy nor verification can
+/// reach the installer; tests exercise this driver with a real multi-root copy.
+fn install_prepared(
+    backup: impl FnOnce() -> std::result::Result<PathBuf, String>,
+    installer: impl FnOnce() -> std::result::Result<(), String>,
+) -> std::result::Result<(), (&'static str, String)> {
+    backup().map_err(|error| ("update_backup_failed", error))?;
+    installer().map_err(|error| ("update_install_failed", error))
 }
 
 /// Put the application back into the state it was in before the upgrade attempt.
@@ -525,7 +600,9 @@ fn recover(
             state.error = Some(error);
         }
     }
-    saves.reopen();
+    if recovery.is_ok() {
+        saves.reopen();
+    }
     engine.closing.store(false, Ordering::SeqCst);
     crate::publish(app, state);
     IpcError::new(code, reason)
@@ -549,6 +626,16 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
     };
     let connection = Connection::new(&raw)
         .map_err(|_| IpcError::new("update_unavailable", "Updates are not available right now."))?;
+    // Exclude every other native/standalone engine sharing layer two before
+    // freezing the plan, and retain the lease until installation or recovery.
+    let owned_writer = lock(&engine.child)
+        .as_ref()
+        .filter(|backend| backend.is_ready())
+        .map(|backend| engine.native_owner.writer_name(backend.id()));
+    let profile = engine
+        .profile
+        .exclusive(owned_writer.as_deref())
+        .map_err(|error| IpcError::new("update_busy", error))?;
     if engine.closing.swap(true, Ordering::SeqCst) {
         return Err(IpcError::new(
             "update_busy",
@@ -565,30 +652,24 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
     }
     lock(&state).closing = true;
     crate::publish(app, &state);
-    if let Err(error) = prepare_engine(&connection) {
-        // A timed-out response may still have closed admission on the engine.
-        cancel_prepare(&connection);
-        lock(&state).closing = false;
-        saves.reopen();
-        engine.closing.store(false, Ordering::SeqCst);
-        crate::publish(app, &state);
-        return Err(error);
-    }
+    let prepared = prepare_engine(&connection).and_then(|()| backup_plan(&connection));
+    let plan = match prepared {
+        Ok(plan) => plan,
+        Err(error) => {
+            // A timed-out response may still have closed admission on the engine.
+            let cancellation = cancel_preparation(&connection, &state, &saves, &engine.closing);
+            crate::publish(app, &state);
+            return Err(cancellation.err().unwrap_or(error));
+        }
+    };
     app.state::<crate::native_drop::Grants>().clear();
-    if let Some(mut backend) = lock(&engine.child).take() {
-        backend.shutdown();
+    if let Err(error) = stop_engine(&engine) {
+        unavailable(&state, &engine.closing, error);
+        crate::publish(app, &state);
+        return Err(IpcError::new("update_unavailable", error));
     }
-    // The engine is down, so the workspace holds no writer and SQLite has folded
-    // its write-ahead log back into the database. That is the only moment the
-    // data directory is a set of static files, which is what lets the snapshot
-    // be a plain byte copy with no SQLite binding on this side.
-    //
-    // The snapshot runs before the installer starts and aborts the upgrade when
-    // it fails. An upgrade that replaces the application without a verified copy
-    // of what the old version wrote is the failure this ordering prevents, and
-    // the recovery path below is the one an installer that refused to start
-    // already used.
-    if let Err(error) = snapshot(&engine) {
+    if let Err(error) = profile.quiescent() {
+        drop(profile);
         return Err(recover(
             app,
             &engine,
@@ -598,15 +679,26 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
             error,
         ));
     }
-    if update.install(bytes.as_slice()).is_err() {
-        return Err(recover(
-            app,
-            &engine,
-            &state,
-            &saves,
-            "update_install_failed",
-            String::from("The update could not be installed."),
-        ));
+    // The engine is down and the profile lease excludes other writers. A forced
+    // exit can leave committed WAL data, so every companion is still copied.
+    //
+    // The snapshot runs before the installer starts and aborts the upgrade when
+    // it fails. An upgrade that replaces the application without a verified copy
+    // of what the old version wrote is the failure this ordering prevents, and
+    // the recovery path below is the one an installer that refused to start
+    // already used.
+    if let Err((code, error)) = install_prepared(
+        || snapshot(&plan),
+        || {
+            update
+                .install(bytes.as_slice())
+                .map_err(|_| "The update could not be installed.".into())
+        },
+    ) {
+        // A replacement engine registers its own writer lease through admission.
+        // Restore our shared lease before spawning it; never bypass the gate.
+        drop(profile);
+        return Err(recover(app, &engine, &state, &saves, code, error));
     }
     let diagnostics = app.state::<crate::diagnostics::Diagnostics>();
     diagnostics.record(
@@ -678,6 +770,108 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
 mod tests {
     use super::*;
     use std::path::Path;
+
+    fn controls(
+        replies: Vec<(&'static str, Option<u16>)>,
+    ) -> (Connection, std::thread::JoinHandle<()>) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::time::Duration;
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let worker = std::thread::spawn(move || {
+            let mut handlers = Vec::new();
+            for (path, response) in replies {
+                let (mut stream, _) = listener.accept().unwrap();
+                handlers.push(std::thread::spawn(move || {
+                    stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+                    let mut request = Vec::new();
+                    while !request.ends_with(b"\r\n\r\n") {
+                        let mut byte = [0u8];
+                        stream.read_exact(&mut byte).unwrap();
+                        request.push(byte[0]);
+                    }
+                    assert!(String::from_utf8(request).unwrap().starts_with(&format!("POST {path} ")));
+                    if let Some(status) = response {
+                        write!(stream, "HTTP/1.1 {status} Test\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                    } else {
+                        // Keep the connection open beyond the client's deadline.
+                        std::thread::sleep(Duration::from_millis(300));
+                    }
+                }));
+            }
+            for handler in handlers {
+                handler.join().unwrap();
+            }
+        });
+        let connection = Connection {
+            client: reqwest::blocking::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_millis(100))
+                .build()
+                .unwrap(),
+            base: format!("http://{address}"),
+            token: "offline-test-token".into(),
+        };
+        (connection, worker)
+    }
+
+    #[test]
+    fn failed_cancellation_is_not_an_acknowledgement() {
+        for reply in [Some(500), Some(200), None] {
+            let (connection, worker) = controls(vec![("/desktop/updates/cancel", reply)]);
+            let outcome = cancel_prepare(&connection);
+            assert!(outcome.is_err(), "cancellation was silently ignored");
+            worker.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn preparation_and_plan_errors_reopen_only_after_acknowledged_cancellation() {
+        for phase in ["prepare", "backup-plan"] {
+            for failure in [Some(500), None] {
+                for cancel in [Some(204), Some(500), None] {
+                    let mut replies = vec![("/desktop/updates/prepare", Some(204))];
+                    if phase == "prepare" {
+                        replies[0].1 = failure;
+                    } else {
+                        replies.push(("/desktop/updates/backup-plan", failure));
+                    }
+                    replies.push(("/desktop/updates/cancel", cancel));
+                    let (connection, worker) = controls(replies);
+                    let prepared =
+                        prepare_engine(&connection).and_then(|()| backup_plan(&connection));
+                    assert!(prepared.is_err());
+                    let state = Mutex::new(State {
+                        connection: Some("old-connection".into()),
+                        closing: true,
+                        ..State::default()
+                    });
+                    let closing = AtomicBool::new(true);
+                    let saves = Saves::default();
+                    assert!(saves.close_if_idle());
+                    let result = cancel_preparation(&connection, &state, &saves, &closing);
+                    assert!(!closing.load(Ordering::SeqCst)); // Explicit Quit stays usable.
+                    assert!(!lock(&state).closing);
+                    if cancel == Some(204) {
+                        assert!(result.is_ok());
+                        assert!(lock(&state).connection.is_some());
+                        assert!(lock(&state).error.is_none());
+                        assert!(saves.close_if_idle());
+                    } else {
+                        assert!(result.is_err());
+                        assert!(lock(&state).connection.is_none());
+                        assert_eq!(lock(&state).error, Some(CANCELLATION_UNCERTAIN));
+                        assert!(
+                            !saves.close_if_idle(),
+                            "uncertain cancellation reopened saves"
+                        );
+                    }
+                    worker.join().unwrap();
+                }
+            }
+        }
+    }
 
     #[test]
     fn updater_requires_version_bound_signatures_without_guest_permissions() {
@@ -877,5 +1071,116 @@ mod tests {
         assert_eq!(refusal.code, "update_backup_failed");
         assert!(refusal.message.contains("cancelled"), "{}", refusal.message);
         assert_ne!(refusal.code, "update_install_failed");
+    }
+
+    #[test]
+    fn prepared_install_covers_user_and_chosen_projects_before_running_installer() {
+        let root = std::env::temp_dir().join(format!(
+            "wenyi-update-plan-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let user = root.join("profile/Wenyi");
+        let project = root.join("chosen/0123456789abcdef-Book");
+        std::fs::create_dir_all(user.join("storages")).unwrap();
+        std::fs::create_dir_all(user.join("storages/.desktop-writers")).unwrap();
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::create_dir_all(user.join(BACKUP)).unwrap();
+        for (path, bytes) in [
+            (
+                user.join("storages/catalog.sqlite3"),
+                b"catalog and credentials".as_slice(),
+            ),
+            (
+                user.join("storages/catalog.sqlite3-wal"),
+                b"committed WAL".as_slice(),
+            ),
+            (user.join("settings.yaml"), b"settings".as_slice()),
+            (project.join("state.sqlite3"), b"project".as_slice()),
+            (user.join("backup/old-copy"), b"do not recurse".as_slice()),
+            (root.join("chosen/private.txt"), b"not a project".as_slice()),
+            (
+                user.join("storages/.desktop-profile-admission.lock"),
+                b"".as_slice(),
+            ),
+            (
+                user.join("storages/.desktop-writers/transient.lock"),
+                b"".as_slice(),
+            ),
+        ] {
+            std::fs::write(path, bytes).unwrap();
+        }
+        let sources = vec![
+            migration::BackupSource {
+                name: "user/storages".into(),
+                path: user.join("storages"),
+            },
+            migration::BackupSource {
+                name: "user/settings.yaml".into(),
+                path: user.join("settings.yaml"),
+            },
+            migration::BackupSource {
+                name: "projects/0".into(),
+                path: project.clone(),
+            },
+        ];
+        let mut installed = false;
+        let target = user.join(BACKUP);
+        install_prepared(
+            || {
+                migration::snapshot_sources(&sources, &target, "1.4.0")
+                    .map(|copy| {
+                        let manifest: serde_json::Value = serde_json::from_slice(
+                            &std::fs::read(copy.root.join("MANIFEST.json")).unwrap(),
+                        )
+                        .unwrap();
+                        assert_eq!(manifest["sources"].as_array().unwrap().len(), 3);
+                        assert_eq!(copy.files.len(), 4);
+                        assert!(copy
+                            .files
+                            .iter()
+                            .any(|entry| entry.path == "user/storages/catalog.sqlite3-wal"));
+                        assert!(copy
+                            .files
+                            .iter()
+                            .any(|entry| entry.path == "projects/0/state.sqlite3"));
+                        assert!(
+                            !copy.files.iter().any(|entry| entry.path.contains("private")
+                                || entry.path.contains("old-copy"))
+                        );
+                        copy.root
+                    })
+                    .map_err(|error| error.to_string())
+            },
+            || {
+                installed = true;
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert!(installed);
+
+        // The production install driver must not invoke the installer on an
+        // incomplete plan, even if another source (the catalog) was readable.
+        std::fs::remove_dir_all(&project).unwrap();
+        installed = false;
+        let failure = install_prepared(
+            || {
+                migration::snapshot_sources(&sources, &target, "1.4.0")
+                    .map(|copy| copy.root)
+                    .map_err(|error| error.to_string())
+            },
+            || {
+                installed = true;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(failure.0, "update_backup_failed");
+        assert!(!installed);
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

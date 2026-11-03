@@ -32,6 +32,7 @@ use super::Error;
 
 const MANIFEST: &str = "MANIFEST.json";
 const SCHEMA_VERSION: u32 = 1;
+const MULTI_SOURCE_SCHEMA_VERSION: u32 = 2;
 /// Headroom over the source size. A copy is not the only thing the update does
 /// to the same volume, and a backup that stops halfway is worthless.
 const HEADROOM: f64 = 1.1;
@@ -53,6 +54,7 @@ pub struct Snapshot {
     pub root: PathBuf,
     /// Sorted by path, so two runs over the same source agree exactly.
     pub files: Vec<Entry>,
+    pub sources: Vec<BackupSource>,
 }
 
 impl Snapshot {
@@ -68,12 +70,13 @@ impl Snapshot {
     #[allow(dead_code)]
     pub fn load(root: &Path) -> Result<Self, Error> {
         let manifest = read(&root.join(MANIFEST))?;
-        if manifest.schema_version != SCHEMA_VERSION {
+        if !valid_schema(&manifest) {
             return Err(mismatch(MANIFEST));
         }
         Ok(Self {
             root: root.to_path_buf(),
             files: manifest.files,
+            sources: manifest.sources,
         })
     }
 }
@@ -85,6 +88,121 @@ struct Manifest {
     created_at: String,
     version: String,
     files: Vec<Entry>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sources: Vec<BackupSource>,
+}
+
+fn valid_schema(manifest: &Manifest) -> bool {
+    manifest.schema_version
+        == if manifest.sources.is_empty() {
+            SCHEMA_VERSION
+        } else {
+            MULTI_SOURCE_SCHEMA_VERSION
+        }
+}
+
+/// A narrowly owned source and its restore namespace, supplied by the frozen engine.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BackupSource {
+    pub name: String,
+    pub path: PathBuf,
+}
+
+/// Copy only the authoritative sources, not arbitrary chosen parent directories.
+/// Source mappings in the manifest make a multi-root backup restorable.
+pub fn snapshot_sources(
+    sources: &[BackupSource],
+    target: &Path,
+    version: &str,
+) -> Result<Snapshot, Error> {
+    if sources.is_empty() {
+        return Err(Error::Unsupported("empty backup plan".into()));
+    }
+    let mut planned = Vec::new();
+    let mut names = BTreeSet::new();
+    let mut bytes = 0u64;
+    for source in sources {
+        let namespace = Path::new(&source.name);
+        if !source.path.is_absolute()
+            || source.name.contains('\\')
+            || source.name.is_empty()
+            || !namespace
+                .components()
+                .all(|part| matches!(part, Component::Normal(_)))
+            || namespace == Path::new(MANIFEST)
+        {
+            return Err(Error::Unsupported(source.name.clone()));
+        }
+        crate::paths::check_disjoint(&[("source", &source.path), ("backup", target)])
+            .map_err(|_| Error::Unsupported("backup overlaps source".into()))?;
+        let metadata = fs::symlink_metadata(&source.path).map_err(Error::Source)?;
+        if metadata.is_symlink() {
+            return Err(Error::Unsupported(source.name.clone()));
+        }
+        let entries = if metadata.is_dir() {
+            // These are owned project/storage directories, not old workspaces:
+            // a project may legitimately keep its own diagnostics or plugins.
+            let plan = plan_with(&source.path, false)?;
+            bytes = bytes.saturating_add(plan.bytes);
+            plan.files
+                .into_iter()
+                .map(|relative| {
+                    (
+                        source.path.join(&relative),
+                        format!("{}/{relative}", source.name),
+                    )
+                })
+                .collect::<Vec<_>>()
+        } else if metadata.is_file() {
+            bytes = bytes.saturating_add(metadata.len());
+            vec![(source.path.clone(), source.name.clone())]
+        } else {
+            return Err(Error::Unsupported(source.name.clone()));
+        };
+        for (path, name) in entries {
+            if !names.insert(name.clone()) {
+                return Err(Error::Unsupported("overlapping backup namespaces".into()));
+            }
+            planned.push((path, name));
+        }
+    }
+    let available = free_space(target)?;
+    let required = scaled(bytes);
+    if available < required {
+        return Err(Error::InsufficientSpace {
+            required,
+            available,
+        });
+    }
+    planned.sort_by(|left, right| left.1.cmp(&right.1));
+    let root = free_root(target, version);
+    fs::create_dir_all(&root).map_err(Error::Target)?;
+    let mut files = Vec::with_capacity(planned.len());
+    for (path, name) in planned {
+        files.push(copy_file(&path, &root, &name)?);
+    }
+    let manifest = Manifest {
+        schema_version: MULTI_SOURCE_SCHEMA_VERSION,
+        source_path: String::new(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+        version: version.into(),
+        files,
+        sources: sources.to_vec(),
+    };
+    let encoded = serde_json::to_vec_pretty(&manifest)
+        .map_err(|error| Error::Target(std::io::Error::other(error)))?;
+    write(&root.join(MANIFEST), &encoded)?;
+    let snapshot = Snapshot {
+        root,
+        files: manifest.files,
+        sources: manifest.sources,
+    };
+    if let Err(error) = verify(&snapshot) {
+        let _ = fs::remove_file(snapshot.root.join(MANIFEST));
+        return Err(error);
+    }
+    Ok(snapshot)
 }
 
 /// Refuse a snapshot that the target volume cannot hold.
@@ -137,6 +255,7 @@ fn snapshot_into(source: &Path, root: &Path, version: &str) -> Result<Snapshot, 
         created_at: chrono::Utc::now().to_rfc3339(),
         version: version.to_owned(),
         files,
+        sources: Vec::new(),
     };
     let encoded = serde_json::to_vec_pretty(&manifest)
         .map_err(|error| Error::Target(std::io::Error::other(error)))?;
@@ -144,6 +263,7 @@ fn snapshot_into(source: &Path, root: &Path, version: &str) -> Result<Snapshot, 
     let snapshot = Snapshot {
         root: root.to_path_buf(),
         files: manifest.files,
+        sources: manifest.sources,
     };
     verify(&snapshot)?;
     Ok(snapshot)
@@ -155,7 +275,10 @@ fn snapshot_into(source: &Path, root: &Path, version: &str) -> Result<Snapshot, 
 /// so an edited, truncated, or missing manifest is caught too.
 pub fn verify(snapshot: &Snapshot) -> Result<(), Error> {
     let manifest = read(&snapshot.root.join(MANIFEST))?;
-    if manifest.schema_version != SCHEMA_VERSION || manifest.files != snapshot.files {
+    if !valid_schema(&manifest)
+        || manifest.files != snapshot.files
+        || manifest.sources != snapshot.sources
+    {
         return Err(mismatch(MANIFEST));
     }
     let listed: BTreeSet<&str> = manifest
@@ -195,6 +318,10 @@ struct Plan {
 /// Reads and metadata only: the walk is also what verify uses to notice files
 /// the manifest does not mention.
 fn plan(source: &Path) -> Result<Plan, Error> {
+    plan_with(source, true)
+}
+
+fn plan_with(source: &Path, rebuild: bool) -> Result<Plan, Error> {
     let metadata = fs::metadata(source).map_err(Error::Source)?;
     if !metadata.is_dir() {
         return Err(Error::Source(std::io::Error::other("not a directory")));
@@ -203,12 +330,12 @@ fn plan(source: &Path) -> Result<Plan, Error> {
         files: Vec::new(),
         bytes: 0,
     };
-    walk(source, Path::new(""), &mut plan)?;
+    walk(source, Path::new(""), &mut plan, rebuild)?;
     plan.files.sort();
     Ok(plan)
 }
 
-fn walk(directory: &Path, prefix: &Path, plan: &mut Plan) -> Result<(), Error> {
+fn walk(directory: &Path, prefix: &Path, plan: &mut Plan, rebuild: bool) -> Result<(), Error> {
     let entries = fs::read_dir(directory).map_err(Error::Source)?;
     for entry in entries {
         let entry = entry.map_err(Error::Source)?;
@@ -222,7 +349,12 @@ fn walk(directory: &Path, prefix: &Path, plan: &mut Plan) -> Result<(), Error> {
         else {
             return Err(Error::Unsupported(path.to_string_lossy().into_owned()));
         };
-        if excluded(&relative) {
+        if (rebuild && excluded(&relative))
+            || relative
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.to_ascii_lowercase().ends_with(EXCLUDED_SUFFIX))
+        {
             continue;
         }
         // Never a follow: a link under the source would copy its target, which
@@ -232,7 +364,7 @@ fn walk(directory: &Path, prefix: &Path, plan: &mut Plan) -> Result<(), Error> {
             return Err(Error::Unsupported(relative.to_string_lossy().into_owned()));
         }
         if metadata.is_dir() {
-            walk(&path, &relative, plan)?;
+            walk(&path, &relative, plan, rebuild)?;
         } else if metadata.is_file() {
             plan.bytes = plan.bytes.saturating_add(metadata.len());
             plan.files.push(relative.to_string_lossy().into_owned());
@@ -277,11 +409,15 @@ fn excluded(relative: &Path) -> bool {
 /// The hash comes from the same read that produced the copy, so it describes
 /// what is on disk in the snapshot rather than what was expected.
 fn copy(source: &Path, root: &Path, relative: &str) -> Result<Entry, Error> {
+    copy_file(&source.join(relative), root, relative)
+}
+
+fn copy_file(source: &Path, root: &Path, relative: &str) -> Result<Entry, Error> {
     let to = root.join(relative);
     if let Some(parent) = to.parent() {
         fs::create_dir_all(parent).map_err(Error::Target)?;
     }
-    let mut reader = File::open(source.join(relative)).map_err(Error::Source)?;
+    let mut reader = File::open(source).map_err(Error::Source)?;
     let mut writer = File::create(&to).map_err(Error::Target)?;
     let mut hasher = Sha256::new();
     let mut buffer = vec![0u8; 64 * 1024];
@@ -788,6 +924,30 @@ mod tests {
         let snapshot = snapshot(&source, &scratch.path("backup"), "1.4.0").unwrap();
         assert!(snapshot.files.is_empty());
         verify(&snapshot).unwrap();
+    }
+
+    #[test]
+    fn explicit_sources_refuse_recursion_and_preserve_project_owned_subdirectories() {
+        let scratch = Scratch::new();
+        let source = scratch.workspace();
+        let sources = [BackupSource {
+            name: "projects/0".into(),
+            path: source.clone(),
+        }];
+        assert!(snapshot_sources(&sources, &source.join("backup"), "1.4.0").is_err());
+        assert!(!source.join("backup").exists());
+        let snapshot = snapshot_sources(&sources, &scratch.path("backup"), "1.4.0").unwrap();
+        assert!(listed(&snapshot).contains(&"projects/0/diagnostics/native-2026-11-02.log"));
+        assert!(listed(&snapshot).contains(&"projects/0/plugins/babeldoc/model.bin"));
+        assert_eq!(Snapshot::load(&snapshot.root).unwrap().sources, sources);
+        let mut altered = snapshot.clone();
+        altered.sources[0].path = scratch.path("other");
+        assert!(verify(&altered).is_err());
+        let escaped = [BackupSource {
+            name: "../escape".into(),
+            path: source,
+        }];
+        assert!(snapshot_sources(&escaped, &scratch.path("another"), "1.4.0").is_err());
     }
 
     #[test]

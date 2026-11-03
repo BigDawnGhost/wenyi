@@ -15,6 +15,7 @@ mod native_drop;
 mod native_export;
 mod paths;
 mod process;
+mod profile;
 mod publish;
 mod updates;
 
@@ -74,6 +75,8 @@ struct Engine {
     workspace: Option<std::path::PathBuf>,
     runtime: Option<std::path::PathBuf>,
     library: Option<std::path::PathBuf>,
+    native_owner: instance::NativeOwner,
+    profile: Arc<profile::Profile>,
     closing: Arc<AtomicBool>,
     closed: Arc<AtomicBool>,
 }
@@ -95,11 +98,15 @@ fn start_backend(
         {
             return Err("Wenyi is closing.");
         }
+        if owner.as_mut().is_some_and(|backend| !backend.exited()) {
+            return Err("The previous local engine has not stopped. Quit and reopen Wenyi.");
+        }
         let (backend, ready) = process::Backend::spawn(
             &resources,
             engine.workspace.as_deref(),
             engine.runtime.as_deref(),
             engine.library.as_deref(),
+            &engine.native_owner,
             diagnostics.inner().clone(),
         )
         .map_err(|failure| failure.report(&diagnostics))?;
@@ -123,8 +130,12 @@ fn start_backend(
         }
         Err(failure) => {
             let message = failure.report(&diagnostics);
-            if let Some(mut backend) = lock(&engine.child).take() {
+            let mut owner = lock(&engine.child);
+            if let Some(backend) = owner.as_mut() {
                 backend.shutdown();
+                if backend.exited() {
+                    owner.take();
+                }
             }
             Err(message)
         }
@@ -283,6 +294,17 @@ fn main() {
         }
     };
     let diagnostics = diagnostics::Diagnostics::for_workspace(&workspace);
+    let profile = match paths::user_root()
+        .map_err(|error| error.message().to_owned())
+        .and_then(|root| profile::Profile::enter(&root.join("storages")))
+    {
+        Ok(profile) => Arc::new(profile),
+        Err(message) => {
+            notice(&message);
+            diagnostics_ui::startup_failure(&diagnostics);
+            return;
+        }
+    };
     diagnostics.record(
         diagnostics::Source::Native,
         diagnostics::Event::AppStarted,
@@ -331,6 +353,8 @@ fn main() {
         // Resolved once, at startup, and passed through unchanged.
         runtime: paths::runtime_root().ok(),
         library: library,
+        native_owner: primary.owner.clone(),
+        profile,
         closing: closing.clone(),
         closed: closed.clone(),
     };

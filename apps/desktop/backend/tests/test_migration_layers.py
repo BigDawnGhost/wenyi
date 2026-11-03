@@ -26,10 +26,15 @@ from wenyi_desktop.migration.protocol import LOG_SUFFIX
 WORKSPACE = "Wenyi Desktop"
 
 
-def fingerprint(directory: Path) -> list[tuple[str, int, int]]:
-    """Names, sizes and modification times: what "untouched" actually means."""
+def fingerprint(directory: Path) -> list[tuple[str, int, int, bytes]]:
+    """Names, sizes, modification times and bytes, including committed WALs."""
     return sorted(
-        (path.name, path.stat().st_size, path.stat().st_mtime_ns)
+        (
+            str(path.relative_to(directory)),
+            path.stat().st_size,
+            path.stat().st_mtime_ns,
+            path.read_bytes(),
+        )
         for path in directory.rglob("*")
         if path.is_file()
     )

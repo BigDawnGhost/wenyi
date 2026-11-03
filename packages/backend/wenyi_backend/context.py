@@ -79,6 +79,13 @@ class ExportStore(Protocol):
     def publish_export(self, pid: str, export_id: int, output: str) -> None: ...
 
 
+class SourcePaths(Protocol):
+    """Host-owned source identities, independent of the Web data-volume layout."""
+
+    def source_reference(self, source: Path) -> str: ...
+    def source_path(self, pid: str, reference: str) -> Path: ...
+
+
 class Telemetry(Protocol):
     def connect(self) -> StatisticsCache: ...
     def release(self, cache: StatisticsCache) -> None: ...
@@ -123,6 +130,8 @@ class BackendContext:
     #: location then fails instead of quietly creating the project somewhere else:
     #: a client must never be told the project went where it asked when it did not.
     new_project_dir: Callable[[str, str, str | None], Path] | None = None
+    # None retains DATA_DIR-relative Web originals. Desktop keeps movable project-local names.
+    source_paths: SourcePaths | None = None
     mineru_token_resolver: Callable[[], str | None] | None = None
     # Desktop resolves a saved connection's stored key; None keeps environment lookup (Web).
     connection_credential: Callable[[str, Any], str | None] | None = None

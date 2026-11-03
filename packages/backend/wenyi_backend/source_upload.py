@@ -11,6 +11,7 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile
 
 from . import paths
+from .context import current_context
 from .errors import SOURCE_TOO_LARGE, ApiError
 
 _FORMATS = {
@@ -52,8 +53,13 @@ class UploadedSource:
     sha256: str
 
     def fields(self) -> dict:
+        source_paths = current_context().source_paths
         return {
-            "source_path": os.path.relpath(self.path, paths.data_dir()),
+            "source_path": (
+                source_paths.source_reference(self.path)
+                if source_paths is not None
+                else os.path.relpath(self.path, paths.data_dir())
+            ),
             "book_title": Path(self.filename).stem,
             "source_sha256": self.sha256,
             "fmt": self.fmt,

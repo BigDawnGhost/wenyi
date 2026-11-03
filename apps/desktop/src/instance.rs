@@ -19,6 +19,7 @@ use std::{
 const LOCK: &str = ".desktop-instance.lock";
 const ENDPOINT: &str = ".desktop-instance.json";
 const MAGIC: &[u8; 16] = b"WENYI_ACTIVATE\0\x01";
+const MIGRATE: &[u8; 16] = b"WENYI_MIGRATE\0\0\x01";
 const WAKE_TIMEOUT: Duration = Duration::from_secs(3);
 const SOCKET_TIMEOUT: Duration = Duration::from_millis(250);
 
@@ -127,8 +128,31 @@ impl Activation {
 struct Endpoint {
     protocol: u8,
     port: u16,
+    #[serde(default)]
+    pid: u32,
     // A generation ID rejects stale discovery records, not a service credential.
     instance: [u8; 16],
+}
+
+/// Passed only through the anonymous child pipe, never the discovery file.
+#[derive(Clone, serde::Serialize)]
+pub struct NativeOwner {
+    workspace: PathBuf,
+    port: u16,
+    pid: u32,
+    instance: [u8; 16],
+    token: String,
+}
+
+impl NativeOwner {
+    pub fn writer_name(&self, child: u32) -> String {
+        let generation: String = self
+            .instance
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        format!("{generation}-{child}.lock")
+    }
 }
 
 pub struct Instance {
@@ -137,6 +161,7 @@ pub struct Instance {
     stop: Arc<AtomicBool>,
     worker: Option<JoinHandle<()>>,
     pub activation: Activation,
+    pub owner: NativeOwner,
 }
 
 impl Drop for Instance {
@@ -200,9 +225,12 @@ fn start(workspace: &Path, lock: File) -> Result<Instance, Error> {
     let address = listener.local_addr().map_err(|_| Error::Workspace)?;
     let mut instance = [0u8; 16];
     getrandom::fill(&mut instance).map_err(|_| Error::Workspace)?;
+    let mut capability = [0u8; 32];
+    getrandom::fill(&mut capability).map_err(|_| Error::Workspace)?;
     let endpoint = Endpoint {
         protocol: 1,
         port: address.port(),
+        pid: std::process::id(),
         instance,
     };
     // A separate record is required: Windows denies reads of an exclusively locked file.
@@ -236,7 +264,7 @@ fn start(workspace: &Path, lock: File) -> Result<Instance, Error> {
                         if stopped.load(Ordering::SeqCst) {
                             break;
                         }
-                        let _ = respond(stream, &instance, &requests);
+                        let _ = respond(stream, &instance, &capability, &requests);
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(_) => break,
@@ -250,21 +278,45 @@ fn start(workspace: &Path, lock: File) -> Result<Instance, Error> {
         stop,
         worker: Some(worker),
         activation,
+        owner: NativeOwner {
+            workspace: workspace.to_path_buf(),
+            port: address.port(),
+            pid: std::process::id(),
+            instance,
+            token: capability
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect(),
+        },
     })
 }
 
 fn respond(
     mut stream: TcpStream,
     instance: &[u8; 16],
+    capability: &[u8; 32],
     activation: &Activation,
 ) -> std::io::Result<()> {
     stream.set_read_timeout(Some(SOCKET_TIMEOUT))?;
     stream.set_write_timeout(Some(SOCKET_TIMEOUT))?;
-    let mut request = [0u8; 32];
-    stream.read_exact(&mut request)?;
-    // No HTTP, arguments, paths, credentials, or commands other than activation.
-    if &request[..16] == MAGIC && &request[16..] == instance {
-        stream.write_all(&[activation.request() as u8])?;
+    let mut kind = [0u8; 16];
+    stream.read_exact(&mut kind)?;
+    if &kind == MAGIC {
+        let mut generation = [0u8; 16];
+        stream.read_exact(&mut generation)?;
+        if &generation == instance {
+            stream.write_all(&[activation.request() as u8])?;
+        }
+    } else if &kind == MIGRATE {
+        let mut proof = [0u8; 32];
+        stream.read_exact(&mut proof)?;
+        if &proof == capability {
+            stream.write_all(&[1])?;
+        }
+    } else {
+        // Consume the remainder of the old fixed-size activation request before
+        // closing, so invalid requests receive EOF rather than a socket reset.
+        stream.read_exact(&mut [0u8; 16])?;
     }
     Ok(())
 }
@@ -658,8 +710,12 @@ mod tests {
     fn admitted_workspace_is_the_directory_python_opens() {
         let directory = Workspace::new();
         let resolved = workspace(Some(directory.0.join("Wenyi 工作区 # 100%"))).unwrap();
+        let profile = directory.0.join("profile");
+        fs::create_dir_all(&profile).unwrap();
         let _owner = enter(&resolved).unwrap().unwrap();
         let output = std::process::Command::new(python())
+            .env("HOME", &profile)
+            .env("USERPROFILE", &profile)
             .args([
                 "-c",
                 r#"
@@ -689,6 +745,96 @@ finally:
         );
         let existing: String = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(resolved, PathBuf::from(existing));
+    }
+
+    #[test]
+    fn admitted_native_parent_can_migrate_but_standalone_engine_cannot_bypass_it() {
+        let directory = Workspace::new();
+        let workspace = directory.0.join("workspace");
+        let profile = directory.0.join("profile");
+        fs::create_dir_all(&workspace).unwrap();
+        fs::create_dir_all(&profile).unwrap();
+        let owner = enter(&workspace).unwrap().unwrap();
+        #[cfg(windows)]
+        let mut command = crate::process::windows_python_command(&python()).unwrap();
+        #[cfg(not(windows))]
+        let mut command = std::process::Command::new(python());
+        let mut child = command
+            .args([
+                "-c",
+                r#"
+import json, sqlite3, sys
+from pathlib import Path
+from wenyi_desktop import paths
+from wenyi_desktop.migration import layers, startup
+
+workspace = Path(sys.argv[1])
+with sqlite3.connect(paths.catalog(workspace)) as db:
+    db.executescript("""
+        CREATE TABLE projects(id TEXT PRIMARY KEY, document TEXT NOT NULL);
+        CREATE TABLE jobs(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            run_id TEXT NOT NULL UNIQUE, arq_job_id TEXT NOT NULL UNIQUE,
+            document TEXT NOT NULL);
+        CREATE TABLE exports(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            document TEXT NOT NULL);
+        CREATE TABLE application_settings(
+            id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL);
+        CREATE TABLE progress(
+            id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+            document TEXT NOT NULL);
+    """)
+try:
+    startup.adopt(workspace)
+except layers.MigrationBusy:
+    pass
+else:
+    raise AssertionError("standalone engine bypassed the native owner")
+# The authorized child receives proof on its anonymous input pipe, not an env flag.
+from wenyi_desktop.migration.ownership import NativeOwner
+import io
+proof = json.loads(sys.stdin.readline())
+for invalid in (
+    {**proof, "token": "00" * 32},
+    {**proof, "pid": 0},
+    {**proof, "workspace": str(workspace.parent / "other")},
+):
+    try:
+        NativeOwner.read(io.StringIO(json.dumps(invalid) + "\n"), workspace)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("invalid parent ownership proof was accepted")
+owner = NativeOwner.read(io.StringIO(json.dumps(proof) + "\n"), workspace)
+assert startup.adopt(workspace, native_owner=owner).ok
+assert paths.user_catalog().is_file()
+"#,
+            ])
+            .arg(&workspace)
+            .env("HOME", &profile)
+            .env("USERPROFILE", &profile)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Filled by the native startup protocol; the proof never goes on disk.
+        writeln!(
+            child.stdin.as_mut().unwrap(),
+            "{}",
+            serde_json::to_string(&owner.owner).unwrap()
+        )
+        .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        drop(owner);
     }
 
     #[test]

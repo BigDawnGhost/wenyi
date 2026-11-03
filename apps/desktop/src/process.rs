@@ -87,7 +87,7 @@ fn token() -> Result<String, &'static str> {
 /// Keeping the interpreter as our direct child preserves both PID authentication
 /// and forced shutdown ownership; readiness never authorizes opening another PID.
 #[cfg(any(windows, test))]
-fn windows_python_command(python: &Path) -> Result<Command, &'static str> {
+pub(crate) fn windows_python_command(python: &Path) -> Result<Command, &'static str> {
     // Do not canonicalize: resolving a venv symlink would lose its environment.
     let python = std::path::absolute(python).map_err(|_| "Invalid development Python path")?;
     if !python.is_file() {
@@ -168,6 +168,7 @@ impl Backend {
         workspace: Option<&Path>,
         runtime: Option<&Path>,
         library: Option<&Path>,
+        native_owner: &crate::instance::NativeOwner,
         diagnostics: Diagnostics,
     ) -> Result<(Self, ReadySignal), Failure> {
         let token = token().map_err(Failure::Setup)?;
@@ -209,6 +210,7 @@ impl Backend {
             }
         }
         command
+            .arg("--native-startup")
             .env("WENYI_API_TOKEN", &token)
             .env("WENYI_DIAGNOSTICS_PROTOCOL", "1")
             .stdin(Stdio::piped())
@@ -221,6 +223,16 @@ impl Backend {
             command.creation_flags(0x08000000); // CREATE_NO_WINDOW
         }
         let mut backend = Self::launch(&mut command, diagnostics.clone())?;
+        let proof = serde_json::to_string(native_owner).map_err(|_| Failure::InvalidProtocol)?;
+        writeln!(
+            backend
+                .child
+                .stdin
+                .as_mut()
+                .ok_or(Failure::InvalidProtocol)?,
+            "{proof}"
+        )
+        .map_err(|_| Failure::ReadProtocol)?;
         let output = backend
             .child
             .stdout
@@ -240,6 +252,10 @@ impl Backend {
 
     pub fn is_ready(&self) -> bool {
         self.ready
+    }
+
+    pub fn id(&self) -> u32 {
+        self.child.id()
     }
 
     fn stage(&self) -> &'static str {
@@ -315,9 +331,13 @@ impl Backend {
         }
         if self.child.kill().is_ok() {
             self.exit_reason = "forced";
-        }
-        if let Ok(status) = self.child.wait() {
-            self.record_exit(status);
+            if let Ok(status) = self.child.wait() {
+                self.record_exit(status);
+            }
+        } else {
+            // A failed kill is not a stopped process. Keep the Child handle so
+            // callers can refuse replacement/snapshot instead of assuming exit.
+            self.exited();
         }
     }
 }

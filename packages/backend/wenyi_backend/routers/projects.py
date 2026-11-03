@@ -40,24 +40,21 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 def new_project_dir(pid: str, name: str, location: str | None) -> Path | None:
-    """A host-chosen directory for a project's files, or None for the default.
+    """Resolve a host's default or chosen directory before writing any source bytes.
 
     The upload happens first -- the record has to name a file that is already
     there -- so this answer is what the record is then created to agree with. It
     comes from the host for the same reason deletion and lookup do: only the host
     knows which directories it owns.
 
-    None means `save_source` resolves the directory itself, exactly as it did
-    before a location could be chosen. A host without a library therefore keeps
-    the call shape it has always had.
+    Only hosts without a resolver leave the directory to `save_source`. A host
+    with named directories needs the complete project name even for its default.
     """
     resolver = current_context().new_project_dir
     if location is None and resolver is None:
         return None
     if resolver is None:
         raise ValueError("This version of Wenyi cannot choose a project folder.")
-    if location is None:
-        return None
     return resolver(pid, name, location)
 
 
@@ -108,7 +105,7 @@ async def create_project(
                 source=source.fields(),
                 config=project_document(config),
                 connection=conn,
-                library_root=project.location,
+                library_root=str(directory.parent) if directory is not None else project.location,
             )
     except ValueError as error:
         source.path.unlink(missing_ok=True)

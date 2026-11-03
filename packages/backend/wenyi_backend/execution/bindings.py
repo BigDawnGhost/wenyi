@@ -41,9 +41,12 @@ def resolve_source(context: BackendContext, pid: str) -> str:
         raise ValueError(f"Project not found: {pid}")
     if not project.get("source_path"):
         raise ValueError("Project has no uploaded source")
-    source = Path(project["source_path"])
-    if not source.is_absolute():
-        source = Path(context.data_dir) / source
+    if context.source_paths is not None:
+        source = context.source_paths.source_path(pid, project["source_path"])
+    else:
+        source = Path(project["source_path"])
+        if not source.is_absolute():
+            source = Path(context.data_dir) / source
     if not source.is_file():
         raise ValueError("Uploaded source file is missing")
     return str(source)

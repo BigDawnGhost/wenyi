@@ -53,6 +53,8 @@ def test_normal_upload_succeeds_with_fields(tmp_path):
     assert result.filename == "My Book.txt"
     assert result.path.name.startswith("source-")
     assert len(_project_files(tmp_path)) == 1
+    # Web keeps its existing DATA_DIR-relative identity.
+    assert result.fields()["source_path"] == os.path.relpath(result.path, tmp_path)
 
 
 def test_empty_file_rejected_and_cleaned(tmp_path):

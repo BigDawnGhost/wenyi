@@ -472,6 +472,76 @@ def test_an_idle_progress_hub_still_sends_a_heartbeat(catalog, monkeypatch):
     anyio.run(run)
 
 
+def test_progress_after_heartbeats_is_delivered_and_all_receivers_are_drained(catalog, monkeypatch):
+    from wenyi_desktop import main as module
+    from wenyi_desktop.main import DesktopServices
+
+    async def run():
+        pid = project()
+        hub = ProgressHub(catalog, asyncio.get_running_loop())
+        services = DesktopServices(catalog)
+        services.runtime = SimpleNamespace(hub=hub)
+        monkeypatch.setattr(module, "HEARTBEAT_SECONDS", 0.01)
+        sent = asyncio.Queue()
+        idle = asyncio.Event()
+        disconnected = asyncio.Event()
+        heartbeats = 0
+        receivers = []
+        create_task = asyncio.create_task
+
+        def track(coro, **kwargs):
+            task = create_task(coro, **kwargs)
+            receivers.append(task)
+            return task
+
+        monkeypatch.setattr(asyncio, "create_task", track)
+
+        async def send_json(payload):
+            assert payload["kind"] == "snapshot"
+
+        async def send_text(payload):
+            nonlocal heartbeats
+            frame = json.loads(payload)
+            if frame["kind"] == "heartbeat":
+                heartbeats += 1
+                if heartbeats == 2:
+                    # Once idle delivery is proven, no timer competes with the
+                    # data frames. The test is driven by events, not fixed sleeps.
+                    monkeypatch.setattr(module, "HEARTBEAT_SECONDS", 60)
+                    idle.set()
+            else:
+                sent.put_nowait(frame)
+
+        async def receive():
+            await disconnected.wait()
+            return {"type": "websocket.disconnect"}
+
+        relay = create_task(
+            services.relay(
+                SimpleNamespace(send_json=send_json, send_text=send_text, receive=receive), pid
+            )
+        )
+        frames = [
+            {"kind": "progress", "done": 1},
+            {"kind": "progress", "done": 2},
+            {"kind": "error", "message": "Synthetic task failure"},
+        ]
+        try:
+            await asyncio.wait_for(idle.wait(), 3)
+            for frame in frames:
+                frame.update(project_id=pid, run_id="after-idle")
+                hub.publish(f"project:{pid}", json.dumps(frame))
+            for expected in frames:
+                assert await asyncio.wait_for(sent.get(), 3) == expected
+        finally:
+            disconnected.set()
+            await asyncio.wait_for(relay, 3)
+        assert receivers and all(task.done() for task in receivers)
+        assert hub._subscribers == {}
+
+    anyio.run(run)
+
+
 def test_progress_relay_cancellation_drains_children_and_unsubscribes(catalog, monkeypatch):
     from wenyi_desktop.main import DesktopServices
 

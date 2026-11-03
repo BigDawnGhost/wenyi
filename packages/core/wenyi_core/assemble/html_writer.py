@@ -156,8 +156,9 @@ def _assemble_html(
 {"".join(body_parts)}
 </body>
 </html>"""
-    if packaged:
-        # EPUB-sourced media was already rewritten into the .assets namespace.
+    if m.get("fmt") == "epub":
+        # EPUB references were resolved only inside the ZIP. An empty result must not
+        # retry unresolved references against files beside the source EPUB.
         _write_packaged(packaged, out_path)
     else:
         full_html = _materialize_html_resources(

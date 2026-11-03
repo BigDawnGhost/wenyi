@@ -48,6 +48,8 @@ METADATA_INVALID = "project_metadata_invalid"
 SOURCE_MISSING = "project_source_missing"
 SOURCE_AMBIGUOUS = "project_source_ambiguous"
 SOURCE_CHANGED = "project_source_changed"
+IDENTITY_INVALID = "project_identity_invalid"
+IDENTITY_AMBIGUOUS = "project_identity_ambiguous"
 # Reasons raised by an import rather than by the scan itself.
 NOT_A_DIRECTORY = "project_path_not_a_directory"
 PATH_INVALID = "project_path_invalid"
@@ -72,37 +74,17 @@ _IN_FLIGHT = {
 
 
 def project_id(directory: Path) -> str:
-    """The identifier of one project directory, or "" when it is not one.
+    """Read a valid identity, or "" for an unmarked name with no identifier.
 
     The marker is the authority, because a directory can be renamed by hand and
     the readable suffix carries no identity of its own. A directory written by
     the version that had no marker falls back to its name, which is what that
     version used as the whole identity.
 
-    A marker that names a different identifier than its own directory rejects the
-    directory rather than choosing one of the two. The two disagreeing means the
-    pair was assembled by hand, and rebuilding a catalog entry from it would put
-    a project id in front of files that do not belong to it.
+    A malformed marker or one that contradicts its directory raises, rather than
+    silently assigning a different identity during recovery or import.
     """
-    embedded = _marker(directory)
-    embedded_id = paths.project_id(str(embedded.get("pid", ""))) if embedded else ""
-    named_id, _ = paths.split_project_name(directory.name)
-    if embedded_id and named_id and embedded_id != named_id:
-        return ""
-    return embedded_id or named_id
-
-
-def _marker(directory: Path) -> dict:
-    """Read one project directory's marker, treating an unreadable one as absent.
-
-    Discovery must not stop over a single damaged directory: the rest of the scan
-    is still able to rebuild a catalog, and the caller reports this one.
-    """
-    try:
-        document = json.loads((directory / paths.PROJECT_MARKER).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-    return document if isinstance(document, dict) else {}
+    return paths.project_id_in(directory)
 
 
 def _state_uri(directory: Path) -> str:
@@ -194,12 +176,9 @@ def scan_project(
 ) -> tuple[dict | None, str | None]:
     """Rebuild one catalog record from a directory, or say what is wrong with it.
 
-    `strict` decides what an original file that no longer matches the checksum
-    means. Automatic recovery passes true and skips such a directory, because a
-    catalog it rebuilt from a mismatch would put a project in front of a book it
-    never translated. A person who picked the folder passes false: the file is
-    the one they mean, so it is accepted and the record is marked, and the next
-    parse starts from the new content.
+    Both automatic recovery and explicit import preserve saved source identity.
+    Picking a folder is not permission to attach different input bytes to its
+    translations. `strict` controls only how ambiguous mismatches are reported.
 
     The failure is returned rather than logged so a caller can tell the user
     which part of the directory is missing or damaged.
@@ -232,18 +211,10 @@ def scan_project(
         return None, SOURCE_MISSING
     matches = [item for item in candidates if expected is None or item[2] == expected]
     if not matches:
-        # The original was replaced after the run. Only a directory that holds
-        # exactly one possible original can be adopted: with several, nothing in
-        # it says which file the saved progress belongs to.
-        if strict or len(candidates) != 1:
-            return None, SOURCE_CHANGED if strict else SOURCE_AMBIGUOUS
-        source, fmt, digest = candidates[0]
-        changed = True
-    else:
-        if len(matches) != 1:
-            return None, SOURCE_AMBIGUOUS
-        source, fmt, digest = matches[0]
-        changed = expected is not None and digest != expected
+        return None, SOURCE_CHANGED if strict or len(candidates) == 1 else SOURCE_AMBIGUOUS
+    if len(matches) != 1:
+        return None, SOURCE_AMBIGUOUS
+    source, fmt, digest = matches[0]
     title = manifest.get("title") or preview.get("title")
     if not isinstance(title, str) or not title.strip():
         title = None
@@ -261,7 +232,7 @@ def scan_project(
             "source_lang": manifest.get("source_lang") or preview.get("source_lang") or "auto",
             "target_lang": manifest.get("target_lang") or defaults.target_lang,
             "source": {
-                "source_path": source.relative_to(directory.parent).as_posix(),
+                "source_path": source.name,
                 "source_sha256": digest,
                 "fmt": fmt,
                 "title": title,
@@ -269,7 +240,7 @@ def scan_project(
                 "initialized": bool(manifest),
                 "status": status,
                 "error": error,
-                "source_changed": changed,
+                "source_changed": False,
                 "created_at": datetime.fromtimestamp(
                     record.stat().st_mtime, timezone.utc
                 ).isoformat(),
@@ -280,29 +251,8 @@ def scan_project(
 
 
 def candidate_roots(backend: LocalBackend) -> list[Path]:
-    """Every directory a lost catalog might have recorded projects under.
-
-    The default root is where this installation writes. The other two are places
-    a user has already pointed the application at: the library root remembered in
-    the settings document, and the absolute paths the layer-two index recorded.
-    The index is read for its parent directories rather than for its project
-    rows, because a project that moved takes its row with it, while a library
-    root usually outlives it.
-
-    The remembered root sits beside the settings `config` rather than inside it:
-    `Config` rejects sections it does not know, so a library path stored there
-    would make the whole document unreadable. Nothing writes the key yet; the
-    batch that adds a library picker owns that, and this only reads it.
-
-    Order matters: the default root is scanned first, so a project that exists in
-    both places is recovered where this installation expects it.
-    """
-    roots = [paths.projects(backend.workspace)]
-    saved = backend.load_settings() or {}
-    configured = saved.get(paths.LAST_LIBRARY_ROOT)
-    if isinstance(configured, str) and configured.strip():
-        roots.append(Path(configured))
-    roots.extend(_indexed_roots())
+    """Scan the same durable roots that normal lookup and deletion admit."""
+    roots = [paths.projects(backend.workspace), *backend.project_roots()]
     unique: list[Path] = []
     seen: set[str] = set()
     for root in roots:
@@ -314,23 +264,6 @@ def candidate_roots(backend: LocalBackend) -> list[Path]:
             seen.add(key)
             unique.append(root)
     return unique
-
-
-def _indexed_roots() -> list[Path]:
-    """Parent directories of the projects the layer-two index last listed."""
-    try:
-        document = json.loads(paths.user_workspace_index().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return []
-    entries = document.get("projects") if isinstance(document, dict) else None
-    if not isinstance(entries, list):
-        return []
-    roots = []
-    for entry in entries:
-        recorded = entry.get("path") if isinstance(entry, dict) else None
-        if isinstance(recorded, str) and recorded.strip():
-            roots.append(Path(recorded).parent)
-    return roots
 
 
 def _project_directories(root: Path) -> list[Path]:
@@ -353,16 +286,34 @@ def recover_empty_catalog(backend: LocalBackend) -> RecoveryReport:
             return RecoveryReport()
     saved = backend.load_settings()
     defaults = Config.from_dict(saved["config"]) if saved else backend.defaults()
-    projects: list[tuple[str, dict]] = []
-    seen: set[str] = set()
+    projects: list[tuple[str, Path, dict]] = []
+    seen: dict[str, Path] = {}
+    ambiguous: set[str] = set()
     skipped: list[tuple[Path, str]] = []
     for root in candidate_roots(backend):
         if not root.is_dir():
             continue
         for directory in _project_directories(root):
-            pid = project_id(directory)
-            if not pid or pid in seen:
+            try:
+                pid = project_id(directory)
+            except (OSError, ValueError):
+                skipped.append((directory, IDENTITY_INVALID))
                 continue
+            if not pid:
+                continue
+            if pid in seen:
+                # Nothing is published until discovery finishes. Retract the
+                # earlier candidate and report every copy, even if one had
+                # already failed its metadata scan.
+                if pid not in ambiguous:
+                    previous = seen[pid]
+                    projects = [item for item in projects if item[0] != pid]
+                    skipped = [item for item in skipped if item[0] != previous]
+                    skipped.append((previous, IDENTITY_AMBIGUOUS))
+                    ambiguous.add(pid)
+                skipped.append((directory, IDENTITY_AMBIGUOUS))
+                continue
+            seen[pid] = directory
             if paths.deleting_marker_in(directory).is_file():
                 # The person asked for this project to be deleted and the
                 # deletion was interrupted. Adopting it again would undo the
@@ -383,8 +334,7 @@ def recover_empty_catalog(backend: LocalBackend) -> RecoveryReport:
                 log.info("Not restoring %s: %s", directory, reason)
                 skipped.append((directory, reason or METADATA_INVALID))
                 continue
-            seen.add(pid)
-            projects.append((pid, project))
+            projects.append((pid, directory, project))
     if not projects:
         return RecoveryReport(skipped=skipped)
     # Hashing and state reads happen outside the short catalog transaction.
@@ -393,8 +343,14 @@ def recover_empty_catalog(backend: LocalBackend) -> RecoveryReport:
         if connection.execute("SELECT 1 FROM projects LIMIT 1").fetchone():
             # Another instance completed the repair while this one was scanning.
             return RecoveryReport()
-        for pid, project in projects:
-            backend.create_project(**project, strategy={}, project_id=pid, connection=connection)
+        for pid, directory, project in projects:
+            backend.create_project(
+                **project,
+                strategy={},
+                project_id=pid,
+                library_root=directory.parent,
+                connection=connection,
+            )
     return RecoveryReport(recovered=len(projects), skipped=skipped)
 
 
@@ -464,10 +420,8 @@ def import_project(
 ) -> dict:
     """Adopt one directory the user picked, or refuse and say why.
 
-    The picked directory is taken at its word about which file is the original.
-    The person chose this folder, so a file that changed after the run is
-    accepted and flagged for a re-parse rather than refused; automatic recovery
-    is the caller that has to stay strict, because nobody is there to confirm.
+    The original must match the saved state before any copying or removal. A
+    changed original belongs in a new project, never over existing translations.
 
     The directory is moved into this workspace before it is recorded, because
     the rest of the application opens a project through `paths.project()` and
@@ -480,13 +434,17 @@ def import_project(
         raise ImportRefused(NOT_A_DIRECTORY, f"{directory.name} is a file, not a folder.")
     if directory.is_symlink():
         raise ImportRefused(PATH_INVALID, f"{directory.name} is a link, not a folder.")
+    try:
+        identity = project_id(directory)
+    except (OSError, ValueError) as error:
+        raise ImportRefused(IDENTITY_INVALID, _describe(IDENTITY_INVALID)) from error
     project, reason = scan_project(directory, strict=False, defaults=defaults or backend.defaults())
     if project is None or reason is not None:
         raise ImportRefused(reason or METADATA_INVALID, _describe(reason))
     # An identifier comes from the marker or the directory name; a folder that
     # carries neither gets a fresh one. The destination is derived from that
     # identifier, because that is how every later path for this project is built.
-    pid = project_id(directory) or uuid4().hex[:16]
+    pid = identity or uuid4().hex[:16]
     try:
         with backend.transaction(write=False) as connection:
             recorded = connection.execute("SELECT 1 FROM projects WHERE id=?", (pid,)).fetchone()
@@ -501,14 +459,9 @@ def import_project(
         destination.parent.mkdir(parents=True, exist_ok=True)
         _adopt_directory(directory, destination)
 
-    # The record names the original by its path inside this workspace, which is
-    # the directory the rest of the application resolves from.
-    project["source"]["source_path"] = (
-        destination.relative_to(backend.workspace).as_posix()
-        + "/"
-        + Path(project["source"]["source_path"]).name
-    )
-    backend.create_project(**project, strategy={}, project_id=pid)
+    # Source references stay local to the directory after import, independently
+    # of the workspace layout or the library selected for new projects.
+    backend.create_project(**project, strategy={}, project_id=pid, library_root=destination.parent)
     backend.mark_project(pid, library_root=destination.parent)
     stored = backend.get_project(pid)
     if stored is None:
@@ -578,7 +531,17 @@ def _describe(reason: str | None) -> str:
         METADATA_INVALID: "The saved project metadata is not valid.",
         SOURCE_MISSING: "There is no original file beside the project state.",
         SOURCE_AMBIGUOUS: "There is more than one possible original file, and none matches.",
-        SOURCE_CHANGED: "The original file no longer matches the saved checksum.",
+        SOURCE_CHANGED: (
+            "The original file no longer matches the saved checksum. "
+            "Restore the matching original or create a new project for the changed text."
+        ),
+        IDENTITY_INVALID: (
+            "The project marker is unreadable, invalid, or contradicts the directory identifier."
+        ),
+        IDENTITY_AMBIGUOUS: (
+            "Multiple folders claim the same project identity. "
+            "Choose the intended copy explicitly instead of automatic recovery."
+        ),
         PATH_INVALID: "That folder cannot be used.",
         NOT_A_DIRECTORY: "That path is not a folder.",
         ALREADY_REGISTERED: "That project is already in the list.",

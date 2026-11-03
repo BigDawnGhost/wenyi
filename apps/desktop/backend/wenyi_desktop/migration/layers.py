@@ -28,13 +28,17 @@ migration that rebuilt the tables from a list of column names would preserve
 every row and silently drop every constraint, so the statements are read out of
 the old database's own `sqlite_master` and executed as they were written.
 
-**Re-entry is the normal case, not the exceptional one.** A move that is
-interrupted -- by the user, by the operating system, by a full disk -- has to be
-able to run again and finish. The new database is therefore built in a temporary
-file and published with `os.replace`, the documents are written with the same
-temporary-plus-replace pattern this repository uses for manifests, and a sentinel
-written before the first byte is what tells the next start to run this module
-again instead of assuming the new layout is complete.
+**Re-entry never replaces layer two.** Imported rows and a per-source receipt
+commit in one SQLite transaction. A retry repairs only the derived documents,
+not rows that may since have changed. A second workspace adds nonconflicting
+rows; conflicting identities or credentials refuse the entire transaction.
+Existing settings win. The original workspace and its WAL remain untouched.
+
+**Job and export IDs belong to their original catalog.** Each source reserves
+an independent integer range in the destination, including retired IDs from
+SQLite's sequence. JSON IDs and export-job references follow that mapping;
+project/run identities and on-disk export paths do not change. The receipt
+records the mapping in the same transaction as the imported rows.
 
 **The two halves of one file must not be split.** The catalog tables and the
 credential tables lived in one file; a migration that moved one set and not the
@@ -49,9 +53,10 @@ import json
 import os
 import sqlite3
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +64,7 @@ import yaml
 from wenyi_core.storage.locks import FileLockHandle, StorageBusyError
 
 from .. import paths
+from .ownership import NativeOwner
 from .protocol import open_read_only
 
 #: Marker written into layer two while a move is running. It is created before
@@ -83,6 +89,20 @@ SETTINGS_TABLE = "application_settings"
 PROJECT_TABLE = "projects"
 #: Default settings row; the schema keeps exactly one.
 SETTINGS_ID = 1
+RECEIPTS = "desktop_migrations"
+SURROGATE_TABLES = ("jobs", "exports")
+# The supported catalog contract, checked before trusting either a receipt or
+# an existing destination. CREATE TABLE statements still come from the source.
+CATALOG_COLUMNS = {
+    "projects": ("id", "document"),
+    "jobs": ("id", "project_id", "run_id", "arq_job_id", "document"),
+    "exports": ("id", "project_id", "document"),
+    "application_settings": ("id", "document"),
+    "progress": ("id", "document"),
+    "desktop_credentials": ("connection", "document"),
+    "desktop_external_credentials": ("service", "mode", "reference", "storage", "revision"),
+    RECEIPTS: ("source", "document"),
+}
 
 
 class MigrationBusy(RuntimeError):
@@ -107,6 +127,7 @@ class Snapshot:
     schema: dict[str, str] = field(default_factory=dict)
     columns: dict[str, tuple[str, ...]] = field(default_factory=dict)
     rows: dict[str, tuple[tuple[Any, ...], ...]] = field(default_factory=dict)
+    sequences: dict[str, int] = field(default_factory=dict)
     settings: Any = None
 
     @property
@@ -151,6 +172,129 @@ def _columns(connection: sqlite3.Connection, table: str) -> tuple[str, ...]:
     return tuple(row[1] for row in connection.execute(f'PRAGMA table_info("{table}")'))
 
 
+def _catalog_error(problem: str) -> LayoutError:
+    return LayoutError(
+        f"Desktop catalog {problem}. Startup was stopped; keep the user catalog and "
+        "original workspaces for recovery or manual reconciliation. No data was replaced."
+    )
+
+
+def _record(document: Any, source: str) -> dict[str, Any]:
+    """Validate metadata, not current row counts: application data can change."""
+    try:
+        if isinstance(document, str):
+            document = json.loads(document)
+        if not isinstance(document, dict):
+            raise ValueError
+        counts = document["tables"]
+        offsets = document.get("id_offsets", dict.fromkeys(SURROGATE_TABLES, 0))
+        if (
+            not isinstance(source, str)
+            or not source
+            or type(document["schema_version"]) is not int
+            or document["schema_version"] != SCHEMA_VERSION
+            or document["source"] != source
+            or not isinstance(counts, dict)
+            or not set(CATALOG_TABLES).issubset(counts)
+            or not set(counts).issubset(TABLES)
+            or any(type(count) is not int or count < 0 for count in counts.values())
+            or not isinstance(offsets, dict)
+            or set(offsets) != set(SURROGATE_TABLES)
+            or any(
+                type(offset) is not int or not 0 <= offset < 2**63 for offset in offsets.values()
+            )
+            or datetime.fromisoformat(document["migrated_at"]).tzinfo is None
+        ):
+            raise ValueError
+    except (ValueError, KeyError, TypeError):
+        raise _catalog_error("has an invalid migration receipt") from None
+    return document
+
+
+def _validate_catalog(
+    connection: sqlite3.Connection, *, allow_uninitialized: bool = False
+) -> dict[str, dict[str, Any]]:
+    """Check the durable schema, constraints and receipts in one transaction."""
+    tables = set(_tables(connection))
+    # CredentialStore may be injected before LocalBackend initializes its tables.
+    # This is a fresh state only when no receipt/provenance claims prior adoption.
+    initializing = allow_uninitialized and tables.issubset(CREDENTIAL_TABLES)
+    missing = set() if initializing else set(CATALOG_TABLES) - tables
+    unknown = tables - CATALOG_COLUMNS.keys()
+    if missing or unknown:
+        raise _catalog_error(
+            f"has missing tables {sorted(missing)} or unknown tables {sorted(unknown)}"
+        )
+    if connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type IN ('trigger', 'view')"
+    ).fetchone():
+        raise _catalog_error("has unsupported triggers or views")
+    for table in tables:
+        info = list(connection.execute(f'PRAGMA table_info("{table}")'))
+        if tuple(row[1] for row in info) != CATALOG_COLUMNS[table] or [
+            row[1] for row in info if row[5]
+        ] != [CATALOG_COLUMNS[table][0]]:
+            raise _catalog_error(f"has an unsupported schema for {table}")
+        for _, name, kind, required, default, primary in info:
+            integer = name == "revision" or (
+                name == "id" and table in (*SURROGATE_TABLES, SETTINGS_TABLE)
+            )
+            nullable = bool(primary) or (
+                table == "desktop_external_credentials" and name in ("reference", "storage")
+            )
+            if (
+                kind.upper() != ("INTEGER" if integer else "TEXT")
+                or bool(required) != (not nullable)
+                or default is not None
+            ):
+                raise _catalog_error(f"has an unsupported column in {table}")
+        if table == SETTINGS_TABLE and "CHECK(ID=1)" not in "".join(
+            (_schema(connection, table) or "").upper().split()
+        ):
+            raise _catalog_error("lost the application settings identity constraint")
+        if table in SURROGATE_TABLES:
+            if "AUTOINCREMENT" not in (_schema(connection, table) or "").upper():
+                raise _catalog_error(f"has an unsupported identity for {table}")
+        if table in ("jobs", "exports", "progress"):
+            expected = "id" if table == "progress" else "project_id"
+            foreign = list(connection.execute(f'PRAGMA foreign_key_list("{table}")'))
+            if not any(
+                row[2:5] == ("projects", expected, "id") and row[6].upper() == "CASCADE"
+                for row in foreign
+            ):
+                raise _catalog_error(f"lost the project foreign key in {table}")
+    unique = {
+        tuple(
+            row[2] for row in connection.execute("SELECT * FROM pragma_index_info(?)", (index[1],))
+        )
+        for index in connection.execute("PRAGMA index_list('jobs')")
+        if index[2] and not index[4]
+    }
+    if "jobs" in tables and not {("run_id",), ("arq_job_id",)}.issubset(unique):
+        raise _catalog_error("lost a jobs uniqueness constraint")
+    if (
+        list(connection.execute("PRAGMA quick_check")) != [("ok",)]
+        or connection.execute("PRAGMA foreign_key_check").fetchone()
+    ):
+        raise _catalog_error("failed its integrity or foreign-key check")
+    receipts = {}
+    if RECEIPTS in tables:
+        for source, raw in connection.execute(f"SELECT source, document FROM {RECEIPTS}"):
+            record = _record(raw, source)
+            if not set(record["tables"]).issubset(tables):
+                raise _catalog_error("is missing tables promised by a migration receipt")
+            receipts[source] = record
+    return receipts
+
+
+def _high_water(connection: sqlite3.Connection, table: str) -> int:
+    row = connection.execute("SELECT seq FROM sqlite_sequence WHERE name=?", (table,)).fetchone()
+    return max(
+        row[0] if row else 0,
+        connection.execute(f'SELECT coalesce(max(id), 0) FROM "{table}"').fetchone()[0],
+    )
+
+
 def _read(connection: sqlite3.Connection, table: str) -> tuple[tuple[Any, ...], ...]:
     """Read rows in a stable order, so a resumed move writes identical bytes.
 
@@ -167,6 +311,7 @@ def _read(connection: sqlite3.Connection, table: str) -> tuple[tuple[Any, ...], 
 def _snapshot(database: Path) -> Snapshot:
     """Read the catalog through a temporary copy of the database and its log."""
     with open_read_only(database) as connection:
+        _validate_catalog(connection)
         tables = _tables(connection)
         schema = {}
         columns = {}
@@ -184,12 +329,14 @@ def _snapshot(database: Path) -> Snapshot:
             settings = next(
                 (row[document] for row in rows[SETTINGS_TABLE] if row[index] == SETTINGS_ID), None
             )
+        sequences = {table: _high_water(connection, table) for table in SURROGATE_TABLES}
     return Snapshot(
         source=database,
         tables=tables,
         schema=schema,
         columns=columns,
         rows=rows,
+        sequences=sequences,
         settings=settings,
     )
 
@@ -210,7 +357,7 @@ def read(workspace: Path) -> Snapshot:
         raise LayoutError(
             "The existing Desktop catalog is missing "
             + ", ".join(missing)
-            + " and cannot be moved. Wenyi will keep using it."
+            + " and cannot be moved. Startup was stopped; the original is unchanged."
         )
     return snapshot
 
@@ -251,17 +398,13 @@ def _write_yaml(path: Path, document: Any) -> None:
 
 @dataclass
 class Materializer:
-    """Build layer two from one snapshot; safe to run again over the same one.
-
-    Every entry is reconstructed whole and published atomically, so a second run
-    produces the same bytes as the first. That is what makes an interrupted move
-    resumable rather than merely retryable, and it is why nothing here appends.
-    """
+    """Import once transactionally, then repair derived documents on retry."""
 
     snapshot: Snapshot
     workspace: Path
     home: Path | None = None
     written: list[str] = field(default_factory=list)
+    id_offsets: dict[str, int] = field(default_factory=lambda: dict.fromkeys(SURROGATE_TABLES, 0))
 
     def apply(self) -> None:
         """Write every layer-two entry, then the record that says it finished."""
@@ -272,33 +415,199 @@ class Materializer:
         self.provenance()
 
     def database(self) -> Path:
-        """Copy every table, with its own schema, into the layer-two catalog."""
+        """Merge without replacing the database, including its committed WAL."""
         destination = paths.user_catalog(home=self.home)
+        records = _provenance_records(self.home)
+        if not destination.exists() and records != {}:
+            raise _catalog_error(
+                "is missing after prior adoption; restore the shared catalog from a backup"
+            )
+        destination.parent.mkdir(parents=True, exist_ok=True)
         snapshot = self.snapshot
-
-        def write(temporary: Path) -> None:
-            connection = sqlite3.connect(temporary)
-            try:
-                for table in TABLES:
-                    statement = snapshot.schema.get(table)
-                    if statement is None:
-                        continue
-                    connection.execute(statement)
-                    columns = snapshot.columns.get(table, ())
-                    rows = snapshot.rows.get(table, ())
-                    if not columns or not rows:
-                        continue
-                    connection.executemany(
-                        f'INSERT INTO "{table}" VALUES ({", ".join("?" * len(columns))})',
-                        rows,
-                    )
-                connection.commit()
-            finally:
-                connection.close()
-
-        _publish(destination, write)
+        # Reject ambiguous identities before committing any rows from this source.
+        self.index_document()
+        connection = sqlite3.connect(destination)
+        try:
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("BEGIN IMMEDIATE")
+            existing = bool(_tables(connection))
+            receipts = _validate_catalog(
+                connection,
+                allow_uninitialized=records == {},
+            )
+            receipt = receipts.get(str(snapshot.source))
+            connection.execute(
+                f"CREATE TABLE IF NOT EXISTS {RECEIPTS} "
+                "(source TEXT PRIMARY KEY, document TEXT NOT NULL)"
+            )
+            if receipt is None:
+                legacy = records.get(str(snapshot.source)) if existing else None
+                if legacy is not None:
+                    self.backfill(connection, legacy)
+                else:
+                    self.merge(connection)
+                connection.execute(
+                    f"INSERT INTO {RECEIPTS} VALUES (?,?)",
+                    (str(snapshot.source), json.dumps(self.record())),
+                )
+            _validate_catalog(connection)
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
         self.written.append(str(destination))
         return destination
+
+    @cached_property
+    def export_projects(self) -> dict[int, str]:
+        columns = self.snapshot.columns["exports"]
+        return {
+            row[columns.index("id")]: row[columns.index("project_id")]
+            for row in self.snapshot.rows["exports"]
+        }
+
+    def remapped(self, table: str, row: tuple[Any, ...]) -> dict[str, Any]:
+        """Remap catalog references, never filesystem paths or domain identities."""
+        values = dict(zip(self.snapshot.columns[table], row))
+        if table not in SURROGATE_TABLES:
+            return values
+        old_id = values["id"]
+        document = _document(values["document"])
+        if type(old_id) is not int or old_id <= 0 or not isinstance(document, dict):
+            raise _catalog_error(f"has an invalid {table} record")
+        for key in ("id", "project_id", "run_id", "arq_job_id"):
+            if key in document and key in values and document[key] != values[key]:
+                raise _catalog_error(f"has conflicting {table} document identities")
+        values["id"] = old_id + self.id_offsets[table]
+        document["id"] = values["id"]
+        if table == "jobs" and document.get("kind") == "export":
+            params = document.get("params")
+            if not isinstance(params, dict) or type(params.get("export_id")) is not int:
+                raise _catalog_error("has an invalid export job reference")
+            export_id = params["export_id"]
+            if export_id <= 0 or export_id > self.snapshot.sequences["exports"]:
+                raise _catalog_error("has an invalid export job identity")
+            # A retired export may be absent, but a surviving reference cannot
+            # point into a different project's history.
+            if self.export_projects.get(export_id, values["project_id"]) != values["project_id"]:
+                raise _catalog_error("has a cross-project export job reference")
+            params["export_id"] = export_id + self.id_offsets["exports"]
+        values["document"] = json.dumps(document)
+        return values
+
+    def reserve_ids(self, connection: sqlite3.Connection) -> None:
+        """Keep retired IDs reserved too, so new exports cannot reuse old paths."""
+        for table in SURROGATE_TABLES:
+            sequence = self.id_offsets[table] + self.snapshot.sequences[table]
+            if connection.execute(
+                "SELECT 1 FROM sqlite_sequence WHERE name=?", (table,)
+            ).fetchone():
+                connection.execute(
+                    "UPDATE sqlite_sequence SET seq=max(seq, ?) WHERE name=?", (sequence, table)
+                )
+            else:
+                connection.execute(
+                    "INSERT INTO sqlite_sequence(name, seq) VALUES (?, ?)", (table, sequence)
+                )
+
+    def merge(self, connection: sqlite3.Connection) -> None:
+        """Add one source atomically; overlapping domain identities are not retries."""
+        for table in TABLES:
+            statement = self.snapshot.schema.get(table)
+            if statement is not None and _schema(connection, table) is None:
+                connection.execute(statement)
+        self.id_offsets = {table: _high_water(connection, table) for table in SURROGATE_TABLES}
+        for table in TABLES:
+            columns = self.snapshot.columns.get(table, ())
+            names = ", ".join(f'"{column}"' for column in columns)
+            for row in self.snapshot.rows.get(table, ()):
+                values = self.remapped(table, row)
+                # User-level settings already in use are authoritative.
+                if (
+                    table == SETTINGS_TABLE
+                    and connection.execute(
+                        f"SELECT 1 FROM {SETTINGS_TABLE} WHERE id=?", (SETTINGS_ID,)
+                    ).fetchone()
+                ):
+                    continue
+                try:
+                    connection.execute(
+                        f'INSERT INTO "{table}" ({names}) VALUES ({", ".join("?" * len(columns))})',
+                        tuple(values.values()),
+                    )
+                except sqlite3.IntegrityError as error:
+                    # Only shared credential references may coincide across
+                    # workspaces. A project/run collision needs reconciliation.
+                    identical = (
+                        table in CREDENTIAL_TABLES
+                        and connection.execute(
+                            f'SELECT 1 FROM "{table}" WHERE '
+                            + " AND ".join(f'"{name}" IS ?' for name in columns),
+                            row,
+                        ).fetchone()
+                    )
+                    if not identical:
+                        raise _catalog_error(f"has a migration data conflict in {table}") from error
+        self.reserve_ids(connection)
+
+    def backfill(self, connection: sqlite3.Connection, record: dict[str, Any]) -> None:
+        """Prove a pre-receipt import before recording it, without replaying old data.
+
+        The old implementation kept source IDs. New provenance also carries the
+        offsets, allowing a lost receipt to be repaired after a remapped import.
+        Missing or mismatched identities are ambiguous (loss versus deletion),
+        so they need manual recovery rather than resurrecting stale rows.
+        """
+        if record["tables"] != {
+            table: len(self.snapshot.rows[table]) for table in self.snapshot.tables
+        } or not set(self.snapshot.tables).issubset(_tables(connection)):
+            raise _catalog_error("cannot reconcile legacy provenance with the original workspace")
+        self.id_offsets = record.get("id_offsets", dict.fromkeys(SURROGATE_TABLES, 0))
+        for table in ("projects", "jobs", "exports", "progress"):
+            for row in self.snapshot.rows[table]:
+                values = self.remapped(table, row)
+                current = connection.execute(
+                    f'SELECT {", ".join(values)} FROM "{table}" WHERE id=?', (values["id"],)
+                ).fetchone()
+                if current is None:
+                    raise _catalog_error(
+                        f"cannot reconcile legacy {table}; a recorded row is missing"
+                    )
+                actual = dict(zip(values, current))
+                if any(actual[key] != value for key, value in values.items() if key != "document"):
+                    raise _catalog_error(f"has a legacy identity conflict in {table}")
+                expected_doc, actual_doc = (
+                    _document(values["document"]),
+                    _document(actual["document"]),
+                )
+                if not isinstance(expected_doc, dict) or not isinstance(actual_doc, dict):
+                    raise _catalog_error(f"has an invalid legacy document in {table}")
+                keys = {
+                    "projects": ("id", "created_at"),
+                    "jobs": ("id", "project_id", "run_id", "arq_job_id", "kind", "created_at"),
+                    "exports": ("id", "project_id", "format", "options", "created_at"),
+                    "progress": (),
+                }[table]
+                if any(
+                    key in expected_doc and actual_doc.get(key) != expected_doc[key] for key in keys
+                ):
+                    raise _catalog_error(f"has a legacy document identity conflict in {table}")
+                if table == "jobs" and expected_doc.get("kind") == "export":
+                    params = actual_doc.get("params")
+                    if (
+                        not isinstance(params, dict)
+                        or params.get("export_id") != expected_doc["params"]["export_id"]
+                    ):
+                        raise _catalog_error("has a legacy export reference conflict")
+                if (
+                    table == "exports"
+                    and expected_doc.get("path")
+                    and actual_doc.get("path") != expected_doc["path"]
+                ):
+                    raise _catalog_error("has a legacy export path conflict")
+        self.reserve_ids(connection)
 
     def settings(self) -> Path | None:
         """Write the settings table as the layer-two document.
@@ -307,10 +616,17 @@ class Materializer:
         it from there; the document is the copy that survives without SQLite,
         which is what the design asks layer two to offer.
         """
-        document = _document(self.snapshot.settings)
+        destination = paths.user_settings(home=self.home)
+        if destination.exists():
+            return destination
+        uri = paths.user_catalog(home=self.home).as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
+            row = connection.execute(
+                f"SELECT document FROM {SETTINGS_TABLE} WHERE id=?", (SETTINGS_ID,)
+            ).fetchone()
+        document = _document(row[0]) if row else None
         if not isinstance(document, dict):
             return None
-        destination = paths.user_settings(home=self.home)
         _write_yaml(
             destination,
             {
@@ -330,45 +646,76 @@ class Materializer:
         rows, and the directories themselves stay where the old version put them
         until the batch that owns layer three moves them.
         """
+        document = self.index_document()
+        if document is None:
+            return None
+        destination = paths.user_workspace_index(home=self.home)
+        _write_json(destination, document)
+        self.written.append(str(destination))
+        return destination
+
+    def index_document(self) -> dict[str, Any] | None:
         columns = self.snapshot.columns.get(PROJECT_TABLE, ())
         rows = self.snapshot.rows.get(PROJECT_TABLE, ())
         if not columns or not rows:
             return None
         identity = columns.index("id")
-        projects = []
+        destination = paths.user_workspace_index(home=self.home)
+        existing = (
+            json.loads(destination.read_text(encoding="utf-8")) if destination.exists() else {}
+        )
+        projects = {project["id"]: project for project in existing.get("projects", [])}
         for row in rows:
             document = _document(row[columns.index("document")])
             if not isinstance(document, dict):
                 raise LayoutError("a catalog project record is not an object")
-            projects.append(
+            pid = row[identity]
+            if document.get("id", pid) != pid:
+                raise _catalog_error("has conflicting project document identities")
+            path = str(paths.project(self.workspace, pid))
+            if pid in projects and projects[pid]["path"] != path:
+                raise LayoutError(
+                    "Migration project path conflict; original directories are intact"
+                )
+            projects.setdefault(
+                pid,
                 {
                     "id": row[identity],
                     "name": document.get("name"),
                     "status": document.get("status"),
                     "created_at": document.get("created_at"),
-                    "path": str(paths.project(self.workspace, row[identity])),
-                }
+                    "path": path,
+                },
             )
-        destination = paths.user_workspace_index(home=self.home)
-        _write_json(destination, {"schema_version": SCHEMA_VERSION, "projects": projects})
-        self.written.append(str(destination))
-        return destination
+        return {"schema_version": SCHEMA_VERSION, "projects": list(projects.values())}
+
+    def record(self) -> dict[str, Any]:
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "source": str(self.snapshot.source),
+            "migrated_at": datetime.now(timezone.utc).isoformat(),
+            "tables": {
+                table: len(self.snapshot.rows.get(table, ()))
+                for table in TABLES
+                if table in self.snapshot.columns
+            },
+            "id_offsets": self.id_offsets,
+        }
 
     def provenance(self) -> Path:
         """Record where layer two's data came from and when."""
         destination = paths.user_root(home=self.home) / PROVENANCE
+        # Repair stale records, but never erase unreadable shared import history.
+        records = _provenance_records(self.home)
+        uri = paths.user_catalog(home=self.home).as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
+            for source, document in connection.execute(
+                f"SELECT source, document FROM {RECEIPTS} ORDER BY source"
+            ):
+                records[source] = _record(document, source)
         _write_json(
             destination,
-            {
-                "schema_version": SCHEMA_VERSION,
-                "source": str(self.snapshot.source),
-                "migrated_at": datetime.now(timezone.utc).isoformat(),
-                "tables": {
-                    table: len(self.snapshot.rows.get(table, ()))
-                    for table in TABLES
-                    if table in self.snapshot.columns
-                },
-            },
+            {**records[str(self.snapshot.source)], "sources": list(records.values())},
         )
         self.written.append(str(destination))
         return destination
@@ -381,29 +728,10 @@ class Materializer:
         problems: list[str] = []
         connection = sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)
         try:
-            present = set(_tables(connection))
-            for table in TABLES:
-                if table not in self.snapshot.columns:
-                    continue
-                if table not in present:
-                    problems.append(f"missing table: {table}")
-                    continue
-                expected = f'PRAGMA table_info("{table}")'
-                if (
-                    tuple(row[1] for row in connection.execute(expected))
-                    != (self.snapshot.columns[table])
-                ):
-                    problems.append(f"columns differ: {table}")
-                    continue
-                count = connection.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0]
-                if count != len(self.snapshot.rows.get(table, ())):
-                    problems.append(f"row count differs: {table}")
-            if "jobs" in self.snapshot.columns:
-                unique = connection.execute(
-                    "SELECT count(*) FROM pragma_index_list('jobs') WHERE \"unique\"=1"
-                ).fetchone()[0]
-                if unique < 2:
-                    problems.append("jobs lost a uniqueness constraint")
+            connection.execute("BEGIN")
+            receipts = _validate_catalog(connection)
+            if str(self.snapshot.source) not in receipts:
+                problems.append("missing migration receipt")
         finally:
             connection.close()
         for document, expected in (
@@ -479,26 +807,27 @@ def workspace_lock(workspace: Path) -> Iterator[None]:
         handle.release()
 
 
-def old_instance_running(workspace: Path) -> bool:
-    """Whether the previous version still owns this workspace.
-
-    The native lock is probed, never taken over: it belongs to the native parent,
-    which owns its lifetime. A workspace whose lock cannot be opened at all is
-    reported as busy, because migrating data that a process may still be writing
-    is the failure this check exists to prevent.
-    """
+@contextmanager
+def native_workspace_lock(workspace: Path, owner: NativeOwner | None) -> Iterator[None]:
+    """Hold native admission, or verify the live parent that already holds it."""
+    if owner is not None:
+        if not owner.valid(workspace):
+            raise MigrationBusy("The native Desktop owner could not be verified. Reopen Wenyi.")
+        yield
+        return
     path = paths.native_instance_lock(workspace)
-    if not path.is_file():
-        return False
+    if not path.exists():
+        yield
+        return
     handle = FileLockHandle(str(path))
     try:
         handle.acquire(blocking=False)
-    except StorageBusyError:
-        return True
-    except OSError:
-        return True
+    except (StorageBusyError, OSError) as error:
+        raise MigrationBusy(
+            "The previous version of Wenyi is still running. Close it, then reopen Wenyi."
+        ) from error
     try:
-        return False
+        yield
     finally:
         handle.release()
 
@@ -518,31 +847,114 @@ def pending(home: Path | None = None) -> bool:
     return sentinel(home=home).exists()
 
 
-def complete(workspace: Path, *, home: Path | None = None) -> bool:
-    """Whether layer two has already adopted this particular workspace.
+def _canonical_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Compare receipt fields, excluding the provenance envelope and legacy omissions."""
+    return {
+        **{key: record[key] for key in ("schema_version", "source", "migrated_at", "tables")},
+        "id_offsets": record.get("id_offsets", dict.fromkeys(SURROGATE_TABLES, 0)),
+    }
 
-    Layer two is shared by every workspace on the machine, so a provenance record
-    is not by itself an answer: it says some workspace was adopted, not that this
-    one was. The record names its source for exactly this reason. The sentinel
-    decides first, because it is removed last and therefore overrides anything
-    else the directory appears to say.
+
+def _provenance_records(home: Path | None) -> dict[str, dict[str, Any]]:
+    """Return valid records or absence; refuse unreadable shared import history.
+
+    A single valid receipt cannot prove that other workspaces' receipts survived.
+    Replacing damaged provenance with the surviving subset could make those
+    workspaces look unimported and resurrect their intentionally deleted data.
     """
-    if pending(home=home):
-        return False
     record = provenance(home=home)
-    if not record.is_file():
+    try:
+        try:
+            raw = record.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            if not record.is_symlink():
+                return {}
+            raise
+        document = json.loads(raw)
+        current = _record(document, document["source"])
+        rows = document.get("sources", [document])
+        if not isinstance(rows, list) or not rows:
+            raise ValueError("Invalid provenance source list")
+        records = {row["source"]: _record(row, row["source"]) for row in rows}
+        if len(records) != len(rows) or _canonical_record(current) != _canonical_record(
+            records[current["source"]]
+        ):
+            raise ValueError("Inconsistent provenance records")
+        return records
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, LayoutError):
+        raise _catalog_error(
+            "has invalid migration provenance; restore it from a consistent backup"
+        ) from None
+
+
+def complete(workspace: Path, *, home: Path | None = None) -> bool:
+    """Trust a validated durable receipt, not a surviving provenance document.
+
+    A lost adopted catalog requires backup recovery, not partial reconstruction
+    from older originals. A missing receipt needs verified backfill. An
+    inconsistent catalog must never be opened for writes.
+    The sentinel and derived provenance still require retrying document writes.
+    """
+    database = paths.user_catalog(home=home)
+    source = paths.catalog(workspace)
+    records = _provenance_records(home)
+    if not database.exists():
+        if records != {}:
+            raise _catalog_error(
+                "is missing after prior adoption; restore the shared catalog from a backup"
+            )
         return False
     try:
-        document = json.loads(record.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        # An unreadable record cannot be trusted to describe a finished move, so
-        # the next start redoes the (idempotent) work rather than assuming one.
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
+            connection.execute("BEGIN")
+            receipts = _validate_catalog(
+                connection,
+                # Only pre-completion creation can leave a safely retryable
+                # empty file or credentials-only catalog.
+                allow_uninitialized=records == {},
+            )
+    except sqlite3.Error as error:
+        raise _catalog_error(
+            "could not be read; restore a valid catalog before retrying"
+        ) from error
+    receipt = receipts.get(str(source))
+    if receipt is None:
+        if not source.is_file() and (str(source) in records or (not receipts and records)):
+            raise _catalog_error("needs its original workspace to verify a missing receipt")
         return False
-    return str(document.get("source")) == str(paths.catalog(workspace))
+    record = records.get(str(source))
+    return (
+        not pending(home=home)
+        and record is not None
+        and _canonical_record(record) == _canonical_record(receipt)
+    )
+
+
+def check_pending(workspace: Path, *, home: Path | None = None) -> None:
+    """Never hide an interrupted import by opening another or a fresh workspace."""
+    if not pending(home=home):
+        return
+    try:
+        document = json.loads(sentinel(home=home).read_text(encoding="utf-8"))
+        if (
+            document["source"] == str(paths.catalog(workspace))
+            and paths.catalog(workspace).is_file()
+        ):
+            return
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    raise LayoutError(
+        "An unfinished Desktop migration needs its original workspace. "
+        "Reopen that workspace before starting another; no data was replaced."
+    )
 
 
 def migrate(
-    workspace: Path, *, home: Path | None = None, snapshot: Snapshot | None = None
+    workspace: Path,
+    *,
+    home: Path | None = None,
+    snapshot: Snapshot | None = None,
+    native_owner: NativeOwner | None = None,
 ) -> Snapshot | None:
     """Move one workspace's user-level data into layer two.
 
@@ -552,15 +964,18 @@ def migrate(
     interruption anywhere in between leaves the next start knowing to resume
     rather than to trust a half-built directory.
     """
-    if old_instance_running(workspace):
-        raise MigrationBusy(
-            "The previous version of Wenyi is still running. Close it, then reopen Wenyi."
-        )
     if snapshot is None and not paths.catalog(workspace).is_file():
         # Nothing to move, so nothing is created either: a fresh installation
         # must not find a layer two that claims a move happened.
         return None
-    with workspace_lock(workspace), migration_lock(home=home):
+    with (
+        workspace_lock(workspace),
+        native_workspace_lock(workspace, native_owner),
+        migration_lock(home=home),
+    ):
+        check_pending(workspace, home=home)
+        if complete(workspace, home=home):
+            return None
         current = snapshot if snapshot is not None else read(workspace)
         if current.empty:
             return None
@@ -569,10 +984,7 @@ def migrate(
             raise LayoutError("; ".join(problems))
         marker = sentinel(home=home)
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(
-            json.dumps({"schema_version": SCHEMA_VERSION, "source": str(current.source)}),
-            encoding="utf-8",
-        )
+        _write_json(marker, {"schema_version": SCHEMA_VERSION, "source": str(current.source)})
         materializer = Materializer(snapshot=current, workspace=workspace, home=home)
         materializer.apply()
         remaining = materializer.verify()

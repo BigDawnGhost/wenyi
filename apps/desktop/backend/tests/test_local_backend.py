@@ -626,8 +626,8 @@ def test_deletion_refuses_a_project_directory_that_is_a_link(backend, tmp_path):
     (target / "keep.txt").write_text("not this project", encoding="utf-8")
     outside = tmp_path / "outside"
     outside.mkdir()
+    directory = backend.project_dir(pid)
     for destination, survivor in ((target, target), (outside, outside)):
-        directory = backend.project_dir(pid)
         if directory.exists() or directory.is_symlink():
             directory.unlink()
         try:

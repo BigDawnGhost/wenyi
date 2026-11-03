@@ -91,11 +91,12 @@ def _load_html_resource(
     source_dir: str,
     zip_resources: dict[str, bytes] | None = None,
 ) -> tuple[str, bytes] | None:
-    """Load a local, zip-internal or data-URI resource without escaping the source tree.
+    """Load a data URI or a resource from exactly one source namespace.
 
-    ``zip_resources`` maps container-internal posix paths to their bytes (audit X-1): it
-    is consulted when the reference does not exist beside the source on the filesystem,
-    resolved against ``source_dir`` first and then as given.
+    ``zip_resources=None`` selects local files contained beneath ``source_dir``.
+    Any mapping, including an empty one, selects ZIP-only lookup: ``source_dir`` is
+    a container-internal POSIX directory, never a filesystem path. References resolve
+    against that directory first and then as given, with no disk fallback.
     """
     value = reference.strip()
     if not value or value.startswith(("#", "http://", "https://", "//")):
@@ -115,9 +116,21 @@ def _load_html_resource(
         return media_type, payload
 
     parsed = urlsplit(value)
+    relative = unquote(parsed.path)
+    if zip_resources is not None:
+        if parsed.scheme:
+            return None
+        for key in (
+            posixpath.normpath(posixpath.join(source_dir, relative)) if relative else source_dir,
+            posixpath.normpath(relative),
+        ):
+            if key in zip_resources:
+                media_type = mimetypes.guess_type(key)[0] or "application/octet-stream"
+                return media_type, zip_resources[key]
+        return None
+
     if parsed.scheme and parsed.scheme != "file":
         return None
-    relative = unquote(parsed.path)
     candidate = os.path.abspath(os.path.join(source_dir, relative))
     try:
         contained = os.path.commonpath((candidate, os.path.abspath(source_dir))) == os.path.abspath(
@@ -128,15 +141,6 @@ def _load_html_resource(
     if contained and os.path.isfile(candidate):
         media_type = mimetypes.guess_type(candidate)[0] or "application/octet-stream"
         return media_type, Path(candidate).read_bytes()
-    if zip_resources:
-        base = source_dir.replace(os.sep, "/")
-        for key in (
-            posixpath.normpath(posixpath.join(base, relative)) if relative else base,
-            posixpath.normpath(relative),
-        ):
-            if key in zip_resources:
-                media_type = mimetypes.guess_type(key)[0] or "application/octet-stream"
-                return media_type, zip_resources[key]
     return None
 
 
@@ -147,7 +151,7 @@ def _package_html_resources(
     href_prefix: str,
     zip_resources: dict[str, bytes] | None = None,
 ) -> tuple[str, dict[str, tuple[str, bytes]]]:
-    """Rewrite image/media references and return packaged href -> payload entries."""
+    """Package references using the exclusive source contract of ``_load_html_resource``."""
     soup = BeautifulSoup(html, "html.parser")
     packaged: dict[str, tuple[str, bytes]] = {}
     href_by_reference: dict[str, str] = {}

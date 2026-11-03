@@ -45,6 +45,7 @@ tests pin them so that neither side can be renamed alone:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -191,32 +192,64 @@ def project_in(root: Path, pid: str, name: str) -> Path:
 
 
 def find_project(root: Path, pid: str) -> Path | None:
-    """Locate one project below one root, or `None` when it is not there.
+    """Find one unambiguous identity below a root; refuse conflicting copies.
 
-    Both layouts are recognised, and neither is read out of a record. A project
-    written before layer three is named by the identifier alone; the layer-three
-    name is the identifier followed by the separator and a readable suffix. The
-    identifier is fixed width, so a prefix test decides which of the two a
-    directory is without guessing at the suffix.
-
-    Scanning is what keeps a path free of catalog data: the roots come from
-    configuration and the name comes from the identifier, so a record edited by
-    hand can at worst point at a directory that is not this project's -- which
-    the caller then refuses to use, rather than one it follows.
+    A matching readable name is not stronger evidence than a matching marker.
+    Inspect all immediate entries before choosing; directory iteration order
+    must never decide which saved state a read, backup or deletion will use.
     """
-    plain = root / pid
-    if plain.is_dir():
-        return plain
     try:
         entries = list(root.iterdir())
-    except OSError:
+    except FileNotFoundError:
         return None
-    for entry in entries:
-        # Both spellings begin with the identifier; `split_project_name` has
-        # already answered "is this a project directory at all" for the scan.
-        if split_project_name(entry.name)[0] == pid and entry.is_dir():
-            return entry
-    return None
+    matches = []
+    for entry in sorted(entries):
+        named, _ = split_project_name(entry.name)
+        if entry.is_symlink() or not entry.is_dir():
+            if named == pid:
+                raise ValueError("Project directory is not an owned folder")
+            continue
+        try:
+            embedded = _project_marker_id(entry)
+        except (OSError, ValueError) as error:
+            if named == pid:
+                raise ValueError("Project directory does not belong to this project") from error
+            continue
+        if pid not in (named, embedded):
+            continue
+        _checked_project_id(named, embedded)
+        matches.append(entry)
+    if len(matches) > 1:
+        raise ValueError(f"Project {pid} has ambiguous directory ownership in {root}")
+    return matches[0] if matches else None
+
+
+def project_id_in(directory: Path) -> str:
+    """Read stable identity, raising for an invalid or contradictory marker."""
+    embedded = _project_marker_id(directory)
+    named, _ = split_project_name(directory.name)
+    return _checked_project_id(named, embedded)
+
+
+def _checked_project_id(named: str, embedded: str) -> str:
+    """A marker may supply identity, but may not contradict an identifier in the name."""
+    if embedded and named and embedded != named:
+        raise ValueError("Project directory does not belong to this project")
+    return embedded or named
+
+
+def _project_marker_id(directory: Path) -> str:
+    """Read a marker's identifier, distinguishing absence from damaged identity."""
+    try:
+        marker = json.loads(marker_in(directory).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return ""
+    if not isinstance(marker, dict):
+        raise ValueError("Invalid project marker")
+    value = marker.get("pid")
+    if not isinstance(value, str) or not project_id(value):
+        raise ValueError("Invalid project identifier in marker")
+    return value
 
 
 def project_id(value: str) -> str:

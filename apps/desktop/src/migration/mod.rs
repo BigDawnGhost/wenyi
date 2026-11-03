@@ -15,14 +15,14 @@
 
 mod backup;
 
-pub use backup::{preflight, snapshot};
+pub use backup::{snapshot_sources, BackupSource};
 // The reading half of the contract. Nothing in this build calls it: a backup is
 // written by the version being replaced and read by the version that replaces it,
 // so the caller is the next version's first launch, not this one. Keeping the
 // functions compiled is what stops that reader from being written against an
 // interface nobody has exercised.
 #[allow(unused_imports)]
-pub use backup::{verify, Entry, Snapshot};
+pub use backup::{preflight, snapshot, verify, Entry, Snapshot};
 
 use std::fmt;
 

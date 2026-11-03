@@ -13,6 +13,7 @@ from catalog_support import orphan
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from wenyi_backend.context import use_context
+from wenyi_backend.execution.bindings import resolve_source
 from wenyi_core.storage.sqlite import SqliteStorage
 from wenyi_desktop import local_runtime, paths
 from wenyi_desktop.local_runtime import LocalRuntime
@@ -41,7 +42,7 @@ def test_windows_startup_repairs_empty_catalog_through_http(tmp_path, windows, i
         assert project["initialized"] == initialized
         assert project["status"] == ("done" if done else "prepared" if initialized else "uploaded")
         assert project["source_sha256"] == digest
-        assert workspace / "projects" / project["source_path"] == source
+        assert Path(resolve_source(app.state.backend, directory.name)) == source
         assert project["config"] == {}
         assert app.state.backend.repository.all_jobs() == []
         assert app.state.backend.repository.list_exports(directory.name) == []
@@ -383,7 +384,7 @@ def test_verbatim_workspace_recovers_projects_and_preserves_translations(tmp_pat
             project = backend.get_project(directory.name)
             assert project["status"] == "done"
             assert project["source_sha256"] == digest
-            assert backend.workspace / "projects" / project["source_path"] == source
+            assert Path(resolve_source(app.state.backend, directory.name)) == source
             assert backend.all_jobs() == []
             assert backend.list_exports(directory.name) == []
             storage = backend.storage_for(directory.name, create=False)

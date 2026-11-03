@@ -136,4 +136,3 @@ grep -rn "\.run_dir\b\|\.source_dir\b\|\.reviews_dir\b" packages apps --include=
 For the dynamic check, add a temporary trace to `FileStorage.__getattr__` that appends the
 attribute name, run `PYTHONUTF8=1 uv run --no-sync pytest -q -n auto`, and confirm the trace
 stays empty before deleting the instrumentation.
-

@@ -43,6 +43,8 @@ Use **Create project** in the shared sidebar to open the centered dialog over th
 
 **Project folder** names where the new project's directory is created, and defaults to a folder beside the installed application (`Wenyi Desktop Data`). Choose **Choose folder** to put this project somewhere else; **Use default** returns to the default location. A folder that cannot hold project data is refused with the reason shown beside the control: the application's own program folder, a parent of it, Wenyi's cache and settings folders, a drive or user folder, and system folders. The choice applies to this project only, and existing projects keep the folder they already have.
 
+The uploaded original and project state stay together in that project directory, including when the chosen folder is on another local volume. Saving model settings or restarting Desktop does not forget existing project locations. If the recorded library is unavailable, reconnect it: Desktop does not automatically substitute a same-ID copy in another library.
+
 Drag in a supported book or choose it with **Browse files**, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost. During upload, source replacement is locked and **Cancel** becomes **Close**; dismissing stays available but is not a task cancellation action. Failed uploads retain the form and source selection; a failed native upload requires re-dropping the file to renew its single-use grant before retrying. Successful creation enters the project overview while parsing or optional preparation continues in the background. Legacy `/projects/new?project=<id>` links retain read-only source preview/resume controls.
 
 Browser Back can still leave during an upload; it does not cancel the request. The source resource remains available until the request settles, then is released. The project may be created in the background, and completion will not redirect you away from the list.
@@ -125,18 +127,51 @@ writes that this application serializes locally can interleave; OneDrive's
 Files On-Demand leaves placeholders that read as errors or block a save; and a
 sync client copies the database and its write-ahead log at different moments,
 which produces a backup that opens and is missing data. A workspace that is
-already on such a folder keeps working until one of those happens. Move it by
-closing Desktop, copying the whole folder (including `*.sqlite3-wal`), and
-starting Desktop with `--data-dir <new path>`. This version does not detect
-these folders; it only documents them.
+already on such a folder keeps working until one of those happens. The same
+local-disk requirement applies to the shared profile and project library folders.
+`--data-dir <new path>` selects a workspace; it does not move the shared profile
+or change existing projects' recorded library roots. Keep the original data until
+any explicit relocation/import is verified. This version does not detect network
+or cloud-synced folders; it only documents this restriction.
 
-On Windows, the installer copies the workspace into a timestamped folder under
-`%USERPROFILE%/Wenyi/backup/<version>-<timestamp>/` before it replaces anything.
-The copy is verified against a `MANIFEST.json` of every file's size and SHA-256,
-and a copy that fails that check cancels the update before the installer starts.
-The snapshot is taken after the local engine has exited, which is the only moment
-the workspace holds no writer and SQLite has folded its write-ahead log back into
-the database.
+The first launch of this layout imports the legacy Desktop catalog into
+`~/Wenyi/storages/catalog.sqlite3` (on Windows, `%USERPROFILE%/Wenyi/storages/`).
+The legacy database, its WAL and project directories remain untouched. Importing
+another legacy workspace adds nonconflicting records rather than replacing the
+shared catalog. Workspace-local job/export numbers are remapped without moving
+their existing output files. Existing settings take precedence; conflicting project
+or unique run identities and credential references stop migration for manual reconciliation.
+Keep both originals in that case. An incomplete migration stops startup before
+application writes begin. Reopening the same workspace retries it; an import receipt
+committed with the rows prevents replay from erasing newer catalog or credential data.
+
+The transactional receipt is authoritative; readable but stale provenance is repaired from it.
+If previous migration evidence remains but the shared catalog is missing or invalid,
+startup stops and asks for a consistent backup or manual reconciliation. Unreadable
+provenance also stops startup: one workspace's surviving receipt cannot prove that
+other imports' records survived. Reimporting only old catalogs would not recover
+later edits, deletions or settings and is not treated as a complete recovery.
+
+An in-app update first freezes writes and resolves the current catalog's exact
+project directories, including legacy, default and individually chosen locations.
+It then stops the engine and copies those directories, layer-two `storages`, settings
+and migration provenance into `~/Wenyi/backup/<version>-<timestamp>/`
+(`%USERPROFILE%/Wenyi/backup/` on Windows). It never copies a selected parent folder
+wholesale or includes earlier backups. The manifest records each source's original
+path and every copied file's size and SHA-256. SQLite WAL files are included when
+present; a forced shutdown is not assumed to have checkpointed them. Credential
+references are preserved, but secrets held by the operating-system vault or only in
+memory are not exported.
+
+Other Desktop workspaces may normally remain open, but an upgrade requires exclusive
+access to the shared profile until installation or recovery finishes. Close those
+instances and retry if update admission is refused. An unavailable project directory,
+unsafe link, insufficient space, copy or verification failure cancels the update
+before the installer runs; reconnect the missing drive or correct the reported
+problem and retry. The existing application is reopened after a failed snapshot.
+If the engine cannot acknowledge cancellation of update preparation, the window
+stays in an explicit error state rather than resuming writes. Quit and reopen Wenyi
+to restore normal operation.
 
 A setup file run by hand cannot take that snapshot, so the installer requires one:
 when Wenyi is already installed and no backup carrying a manifest exists, the
@@ -196,17 +231,21 @@ rule: the schema guard is what makes the version check honest, and the version
 check is what keeps a user from reaching the guard at all. Reinstalling the same
 version, and installing a newer one, are both unaffected.
 
-The workspace contains a SQLite catalog, per-project SQLite state, uploaded
-originals, parse caches, and generated exports. Keep the entire workspace when
-backing up by hand; stop Desktop first. Do not copy only a live SQLite database
-while omitting its WAL.
+For manual backups, stop every Desktop instance first. Copy `~/Wenyi/storages/`,
+the settings and migration-provenance files in `~/Wenyi/`, and every registered
+project directory, including chosen library locations. Each project directory
+contains its SQLite state, original, parse caches and generated exports. Keep any
+SQLite WAL beside its database. Copying only the old workspace is not a complete
+backup of this layout.
 
 Each project database records its schema version in SQLite's own header
 (`PRAGMA user_version`). Opening a project with a version this build does not
 know is refused with a message naming the newer build, and the project stays in
-the list marked unavailable so it is not silently dropped. A database written
-before this version existed reports 0, is stamped with the current number, and
-is otherwise untouched — no data is rewritten by the upgrade.
+the list marked unavailable so it is not silently dropped. Other projects remain
+listable and usable; both direct reads and writes to the newer database return
+the same upgrade-required error. A database written before this version existed
+reports 0, is stamped with the current number, and is otherwise untouched — no
+data is rewritten by the upgrade.
 
 Job-status polling reads committed catalog snapshots without reserving a write
 lock, so an active catalog writer does not block status lookups.
@@ -218,8 +257,9 @@ pending, duplicate submissions are disabled and the dismiss action is relabelled
 dialog open for retry.
 
 **Deleting a Desktop project is permanent.** The confirmation covers its uploaded
-originals, translations, history, caches, and exports inside the workspace. Files
-saved elsewhere are not removed. Active tasks or export downloads block deletion.
+originals, translations, history, caches, and exports inside its project directory,
+whether in the default or a chosen library folder. Files saved outside that project
+directory are not removed. Active tasks or export downloads block deletion.
 If file cleanup fails, Desktop reports an error and retains the catalog entry so
 you can close files using the project and retry; some files may already be removed.
 Historical leftover directories are not bulk-cleaned.
@@ -607,8 +647,9 @@ Restart Desktop after changing its inherited environment externally.
 - HTML is explicitly saved as **HTML + assets (ZIP)**, with a `.html.zip` filename. Extract the archive before opening the HTML so relative image/media links continue to work. Only that published HTML and its owned assets are included.
 - Desktop refuses internal workspace destinations and source-file identities/paths recorded during the current app session. Source protection is bounded and kept in memory without retaining open source files. Do not replace a destination from another application while saving: an overwrite is an atomic file replacement on one volume when nothing else holds the target, not a cross-process compare-and-swap. The staged temporary file is complete before publication, but replacing an existing file is a plain rename: a process that opens, replaces or locks that destination during the save is not detected afterwards, and on Windows the rename fails rather than retrying if the target is held. Web continues to use browser downloads.
 - **Import existing project** on the project list adopts a project folder that already exists — one this installation moved, or one copied here from another computer. The folder is checked before anything changes; a folder without `state.sqlite3`, one whose saved metadata is unreadable, or one with no single recognizable original is refused, and the list names which of those it was. An accepted folder is moved into the workspace and added to the list with the state its saved chapters imply.
-- A folder whose original file no longer matches the recorded checksum is still accepted when you pick it yourself, because you chose that folder on purpose. Desktop marks it **source changed** and parses the file again on the next run; the automatic startup repair stays strict and skips such a folder instead.
-- A project whose folder is not reachable — a removed drive, or an unmounted network share — stays in the list, greyed out with no way to open it, so the missing location is visible instead of the project silently failing when selected. Removing it still works.
+- If no original matches the saved checksum, manual import refuses the folder before copying or moving it, and automatic startup repair also skips it. Restore the matching original or create a new project for changed text. Existing translations and checkpoints are not reset or attached to different source content.
+- Import also refuses a malformed project marker or a marker that disagrees with the directory's project ID. Legacy folders without a marker remain supported. Automatic catalog repair skips duplicate project identities rather than choosing a copy by scan order.
+- A project whose folder is not reachable — a removed drive, or an unmounted network share — stays in the list, greyed out with no way to open it. Writes refuse a missing uploaded-project directory rather than creating an empty replacement. Removing its catalog entry still works without recreating the folder or deleting another same-ID copy; data on the disconnected drive remains untouched.
 - The Web interface has no folder picker, so **Import existing project** is absent there rather than shown and disabled.
 
 ## Diagnostics and feedback

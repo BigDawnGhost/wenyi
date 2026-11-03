@@ -86,7 +86,7 @@ def test_two_originals_that_both_match_are_refused_as_ambiguous(tmp_path):
     assert reason == catalog_recovery.SOURCE_AMBIGUOUS
 
 
-def test_strict_scan_refuses_what_a_picked_directory_accepts_and_flags(tmp_path):
+def test_scan_refuses_a_changed_original_for_both_recovery_and_import(tmp_path):
     directory, source, digest = orphan(tmp_path, "1" * 16)
     defaults = create_context(tmp_path).repository.defaults()
     source.write_text("Rewritten after the run.\n", encoding="utf-8")
@@ -96,9 +96,8 @@ def test_strict_scan_refuses_what_a_picked_directory_accepts_and_flags(tmp_path)
     assert reason == catalog_recovery.SOURCE_CHANGED
 
     adopted, failure = catalog_recovery.scan_project(directory, strict=False, defaults=defaults)
-    assert failure is None
-    assert adopted["source"]["source_changed"] is True
-    assert adopted["source"]["source_sha256"] != digest
+    assert adopted is None
+    assert failure == catalog_recovery.SOURCE_CHANGED
 
 
 def test_a_matching_directory_is_not_flagged_as_changed(tmp_path):
@@ -219,18 +218,18 @@ def test_import_adopts_a_picked_directory_and_reports_its_state(tmp_path, window
     assert not directory.exists()
 
 
-def test_import_accepts_a_changed_original_and_marks_it(tmp_path, windows):
+def test_import_refuses_a_changed_original_without_moving_it(tmp_path, windows):
     source_root = tmp_path / "Downloads"
     directory, source, digest = orphan(source_root, "b" * 16)
     source.write_text("Edited outside the application.\n", encoding="utf-8")
     app = create_app(tmp_path / "workspace")
     with TestClient(app) as client:
         response = client.post("/desktop/projects/import", json={"path": str(directory)})
-        assert response.status_code == 201, response.text
-        imported = response.json()
-        assert imported["source_changed"] is True
-        assert imported["source_sha256"] != digest
-        assert imported["status"] == "prepared"
+        assert response.status_code == 422, response.text
+        assert "checksum" in response.json()["message"]
+        assert client.get("/projects").json() == []
+    assert directory.exists()
+    assert source.read_text(encoding="utf-8") == "Edited outside the application.\n"
 
 
 def test_import_refusal_names_what_is_wrong_with_the_folder(tmp_path, windows):

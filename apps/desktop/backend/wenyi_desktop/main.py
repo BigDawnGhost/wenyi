@@ -7,15 +7,18 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import anyio
-from fastapi import WebSocketDisconnect
+from fastapi import Request, WebSocketDisconnect
+from fastapi.responses import JSONResponse
 from wenyi_backend.application import create_app as create_http_app
 from wenyi_backend.context import BackendContext, use_context
+from wenyi_backend.errors import ApiError, api_error_handler
+from wenyi_core.errors import SchemaTooNew
 from wenyi_core.observability import configure_logging
 
 from . import paths
 from .babeldoc_plugin import BabeldocPlugin
 from .diagnostics import DiagnosticsMiddleware, EngineDiagnostics, Reporter, scope
-from .local_backend import LocalBackend
+from .local_backend import PROJECT_SCHEMA_TOO_NEW, LocalBackend
 from .local_credentials import CredentialStore, build_local_client, system_keyring
 from .local_runtime import (
     LocalRuntime,
@@ -23,6 +26,7 @@ from .local_runtime import (
     run_workflow_sync,
     statistics_snapshot,
 )
+from .migration.ownership import NativeOwner
 from .migration.startup import adopt
 from .settings import DesktopSettings
 from .updates import UpdateAdmissionMiddleware, UpdateGuard
@@ -74,7 +78,8 @@ class DesktopServices:
             received = None
             try:
                 while not disconnected.done():
-                    received = asyncio.create_task(queue.get())
+                    if received is None:
+                        received = asyncio.create_task(queue.get())
                     done, _ = await asyncio.wait(
                         {disconnected, received},
                         timeout=HEARTBEAT_SECONDS,
@@ -88,6 +93,7 @@ class DesktopServices:
                         await ws.send_text(HEARTBEAT_FRAME)
                         continue
                     data = received.result()
+                    received = None
                     if data is None:
                         break
                     await ws.send_text(data)
@@ -117,6 +123,7 @@ def create_context(
     library_root: str | Path | None = None,
     install_root: str | Path | None = None,
     runtime_dir: str | Path | None = None,
+    native_owner: NativeOwner | None = None,
 ) -> BackendContext:
     home = Path(user_home) if user_home is not None else None
     if migrate:
@@ -124,7 +131,7 @@ def create_context(
         # the only step that reads the old workspace. It raises when another
         # instance owns that read, which is a refusal this version cannot fix by
         # waiting: the old application is still writing the data being moved.
-        adopt(Path(workspace), home=home)
+        adopt(Path(workspace), home=home, native_owner=native_owner)
     backend = LocalBackend(
         workspace,
         config_path,
@@ -154,6 +161,7 @@ def create_context(
         data_dir=str(paths.projects(backend.workspace)),
         project_dir=lambda pid: str(backend.project_dir(pid)),
         new_project_dir=backend.new_project_dir,
+        source_paths=backend,
         health=services.health,
         update_term=lambda pid, storage, source, term: storage.update_term(source, term),
         api_token=api_token,
@@ -171,6 +179,7 @@ def create_app(
     install_root: str | Path | None = None,
     runtime_dir: str | Path | None = None,
     engine_diagnostics: EngineDiagnostics | None = None,
+    native_owner: NativeOwner | None = None,
 ):
     from .desktop import ORIGINS
     from .routers import (
@@ -195,6 +204,7 @@ def create_app(
             library_root=library_root,
             install_root=install_root,
             runtime_dir=runtime_dir,
+            native_owner=native_owner,
         )
     services = context.telemetry
     lifecycle = engine_diagnostics or EngineDiagnostics(diagnostics)
@@ -227,6 +237,15 @@ def create_app(
         origins=list(ORIGINS),
         handle_errors=diagnostics is None,
     )
+
+    @app.exception_handler(SchemaTooNew)
+    async def schema_too_new(request: Request, error: SchemaTooNew) -> JSONResponse:
+        # Read stores open lazily, after storage_for has returned. Keep their
+        # refusal identical to an eager writable open without changing that lifetime.
+        return await api_error_handler(
+            request, ApiError(PROJECT_SCHEMA_TOO_NEW, 409, error.message)
+        )
+
     app.include_router(credentials.router)
     app.include_router(desktop_export.router)
     app.include_router(external_credentials.router)
