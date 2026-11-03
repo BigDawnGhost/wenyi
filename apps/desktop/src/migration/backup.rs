@@ -210,12 +210,14 @@ pub fn snapshot_sources(
 /// The check runs before anything is written, so a rejected upgrade leaves no
 /// partial copy behind. Available space belongs to the volume rather than to the
 /// directory: the caller may not have created the target yet.
-pub fn preflight(source: &Path, target: &Path) -> Result<(), Error> {
+#[cfg(test)]
+fn preflight(source: &Path, target: &Path) -> Result<(), Error> {
     preflight_with(source, free_space(target)?)
 }
 
 /// The decision itself, with the volume's free space supplied by the caller so
 /// that the refusal can be exercised without filling a drive.
+#[cfg(test)]
 fn preflight_with(source: &Path, available: u64) -> Result<(), Error> {
     let required = scaled(plan(source)?.bytes);
     if available < required {
@@ -233,10 +235,15 @@ fn preflight_with(source: &Path, available: u64) -> Result<(), Error> {
 /// but no manifest, so nothing can mistake it for a usable backup. The copy is
 /// read back before returning, because an upgrade that proceeds on an unverified
 /// backup is the exact failure this module exists to prevent.
-pub fn snapshot(source: &Path, target: &Path, version: &str) -> Result<Snapshot, Error> {
+///
+/// Only compatibility tests write legacy schema-v1 snapshots; the application
+/// creates multi-source snapshots through `snapshot_sources`.
+#[cfg(test)]
+fn snapshot(source: &Path, target: &Path, version: &str) -> Result<Snapshot, Error> {
     snapshot_into(source, &free_root(target, version), version)
 }
 
+#[cfg(test)]
 fn snapshot_into(source: &Path, root: &Path, version: &str) -> Result<Snapshot, Error> {
     let plan = plan(source)?;
     // The manifest is written at the snapshot root, so a source file with that
@@ -408,6 +415,7 @@ fn excluded(relative: &Path) -> bool {
 ///
 /// The hash comes from the same read that produced the copy, so it describes
 /// what is on disk in the snapshot rather than what was expected.
+#[cfg(test)]
 fn copy(source: &Path, root: &Path, relative: &str) -> Result<Entry, Error> {
     copy_file(&source.join(relative), root, relative)
 }

@@ -22,7 +22,7 @@ pub use backup::{snapshot_sources, BackupSource};
 // functions compiled is what stops that reader from being written against an
 // interface nobody has exercised.
 #[allow(unused_imports)]
-pub use backup::{preflight, snapshot, verify, Entry, Snapshot};
+pub use backup::{verify, Entry, Snapshot};
 
 use std::fmt;
 

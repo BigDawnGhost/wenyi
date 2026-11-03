@@ -232,6 +232,7 @@ fn normalized(path: &Path) -> String {
 /// `productName`. Spelling the result here rather than reading it keeps the
 /// resolver independent of build-time configuration, and a test pins both
 /// components against that file so they cannot drift apart in silence.
+#[cfg(any(windows, test))]
 pub const INSTALL_KEY: &str = "Software\\wenyi\\Wenyi Desktop";
 
 /// The run of installations this build can compare itself against.
