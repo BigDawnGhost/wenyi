@@ -282,6 +282,7 @@ class TestDocxReader(unittest.TestCase):
             for paragraph in paragraphs:
                 target_side = paragraph.text.startswith("译")
                 style_name = paragraph.style.name if paragraph.style is not None else ""
+                assert isinstance(style_name, str)
                 self.assertEqual(
                     style_name.startswith("List Number"),
                     target_side,

@@ -304,7 +304,7 @@ def _build_epub_from_chapters(
     with publish_target(out_path) as temp_out:
         epub.write_epub(temp_out, book)
         if bilingual and not preserve_source_style:
-            _inject_bilingual_style(temp_out, chapter_filenames, lang)
+            _inject_bilingual_style(str(temp_out), chapter_filenames, lang)
     return out_path
 
 

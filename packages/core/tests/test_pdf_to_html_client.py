@@ -10,13 +10,14 @@ from wenyi_core.ingest import pdf_to_html
 from wenyi_core.ingest.pdf_to_html import MinerUError, _request_with_retry
 
 
-class FakeClient:
-    def __init__(self, responses):
+class FakeClient(httpx.Client):
+    def __init__(self, responses: list[httpx.Response | Exception]) -> None:
         self.responses = list(responses)
         self.default = responses[-1]  # repeat the last response when exhausted
         self.calls = 0
+        super().__init__(transport=httpx.MockTransport(self._respond))
 
-    def request(self, method, url, **kwargs):
+    def _respond(self, request: httpx.Request) -> httpx.Response:
         self.calls += 1
         item = self.responses.pop(0) if self.responses else self.default
         if isinstance(item, Exception):

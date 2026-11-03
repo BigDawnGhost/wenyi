@@ -13,7 +13,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from wenyi_core.assemble.epub_navigation import _rewrite_opf_metadata
 from wenyi_core.assemble.html_resources import _load_html_resource
 from wenyi_core.assemble.writer import assemble
@@ -85,6 +85,14 @@ def _write_resource_epub(path: Path, *, include_image: bool) -> None:
         archive.writestr("chapter.xhtml", chapter)
         if include_image:
             archive.writestr("cover.png", b"epub-image")
+
+
+def _image_source(soup: BeautifulSoup, image_id: str) -> str:
+    image = soup.find("img", id=image_id)
+    assert isinstance(image, Tag)
+    source = image.get("src")
+    assert isinstance(source, str)
+    return source
 
 
 @pytest.mark.parametrize("zip_resources", [{}, {"other.png": b"other-image"}])
@@ -181,11 +189,11 @@ def test_epub_html_export_never_packages_files_outside_container(
     )
 
     soup = BeautifulSoup(output.read_text(encoding="utf-8"), "html.parser")
-    assert soup.find("img", id="missing")["src"] == "local-only.txt"
+    assert _image_source(soup, "missing") == "local-only.txt"
     assets = output.with_suffix(".assets")
     if include_image:
         assert [path.read_bytes() for path in assets.iterdir()] == [b"epub-image"]
-        image_href = soup.find("img", id="cover")["src"]
+        image_href = _image_source(soup, "cover")
         assert image_href.startswith("book.assets/")
         assert (output.parent / image_href).read_bytes() == b"epub-image"
     else:
@@ -209,10 +217,10 @@ def test_html_input_still_packages_local_and_embedded_images(tmp_path: Path) -> 
 
     soup = BeautifulSoup(output.read_text(encoding="utf-8"), "html.parser")
     for image_id, payload in (("local", b"local-image"), ("inline", b"inline")):
-        href = soup.find("img", id=image_id)["src"]
+        href = _image_source(soup, image_id)
         assert href.startswith(f"{output.stem}.assets/")
         assert (output.parent / href).read_bytes() == payload
-    assert soup.find("img", id="external")["src"] == "https://example.invalid/cover.png"
+    assert _image_source(soup, "external") == "https://example.invalid/cover.png"
 
 
 class TestEpubResourceGuards(unittest.TestCase):

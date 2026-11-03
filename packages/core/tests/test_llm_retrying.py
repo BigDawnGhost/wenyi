@@ -229,7 +229,9 @@ def test_configured_timeout_reaches_every_http_client(timeout: float):
         patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}),
         patch("openai.OpenAI") as openai_type,
     ):
-        client.adapter("default")._ensure_client()
+        adapter = client.adapter("default")
+        assert isinstance(adapter, DeepSeekClient)
+        adapter._ensure_client()
 
     assert openai_type.call_args.kwargs["timeout"] == timeout
 

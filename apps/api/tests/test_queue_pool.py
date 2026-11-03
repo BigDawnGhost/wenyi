@@ -57,6 +57,7 @@ def test_export_jobs_route_to_export_queue(monkeypatch):
     asyncio.run(queue_module.enqueue("redis://one", "run_parse"))
 
     pool = next(iter(queue_module._pools.values()))
+    assert isinstance(pool, FakePool)
     assert [queue_name for _name, queue_name in pool.jobs] == [
         queue_module.EXPORT_QUEUE,
         queue_module.WORKFLOW_QUEUE,
