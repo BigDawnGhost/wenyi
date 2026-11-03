@@ -28,6 +28,8 @@ def private_profile(tmp_path, monkeypatch):
     # what a subprocess started through a POSIX-style shell would read.
     monkeypatch.setenv("USERPROFILE", str(profile))
     monkeypatch.setenv("HOME", str(profile))
+    # An inherited XDG root must not bypass the temporary profile on Unix.
+    monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     return profile
 
 

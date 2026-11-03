@@ -119,6 +119,19 @@ The default Desktop workspace is:
 | macOS | `~/Library/Application Support/Wenyi Desktop` |
 | Windows | `%LOCALAPPDATA%/Wenyi Desktop` |
 
+The shared data root for settings, the catalog, migration provenance and upgrade
+backups is separate from the workspace:
+
+| Platform | Shared data root |
+| --- | --- |
+| Linux and other XDG platforms | `${XDG_DATA_HOME:-~/.local/share}/wenyi` |
+| macOS | `~/Library/Application Support/Wenyi` |
+| Windows | `%USERPROFILE%/Wenyi` |
+
+Only an absolute `XDG_DATA_HOME` is used; unset, blank or relative values fall
+back to `~/.local/share`. Changing it selects a different shared data root; it
+does not relocate existing data. macOS and Windows ignore `XDG_DATA_HOME`.
+
 **Keep the workspace on a local disk.** A folder on a network share, a mapped
 drive or a cloud-synced directory (OneDrive, Dropbox, iCloud Drive, Google
 Drive) is not a supported workspace location. Three things break there and none
@@ -135,7 +148,7 @@ any explicit relocation/import is verified. This version does not detect network
 or cloud-synced folders; it only documents this restriction.
 
 The first launch of this layout imports the legacy Desktop catalog into
-`~/Wenyi/storages/catalog.sqlite3` (on Windows, `%USERPROFILE%/Wenyi/storages/`).
+`<shared-data-root>/storages/catalog.sqlite3`, using the platform root above.
 The legacy database, its WAL and project directories remain untouched. Importing
 another legacy workspace adds nonconflicting records rather than replacing the
 shared catalog. Workspace-local job/export numbers are remapped without moving
@@ -155,8 +168,8 @@ later edits, deletions or settings and is not treated as a complete recovery.
 An in-app update first freezes writes and resolves the current catalog's exact
 project directories, including legacy, default and individually chosen locations.
 It then stops the engine and copies those directories, layer-two `storages`, settings
-and migration provenance into `~/Wenyi/backup/<version>-<timestamp>/`
-(`%USERPROFILE%/Wenyi/backup/` on Windows). It never copies a selected parent folder
+and migration provenance into `<shared-data-root>/backup/<version>-<timestamp>/`.
+It never copies a selected parent folder
 wholesale or includes earlier backups. The manifest records each source's original
 path and every copied file's size and SHA-256. SQLite WAL files are included when
 present; a forced shutdown is not assumed to have checkpointed them. Credential
@@ -231,8 +244,8 @@ rule: the schema guard is what makes the version check honest, and the version
 check is what keeps a user from reaching the guard at all. Reinstalling the same
 version, and installing a newer one, are both unaffected.
 
-For manual backups, stop every Desktop instance first. Copy `~/Wenyi/storages/`,
-the settings and migration-provenance files in `~/Wenyi/`, and every registered
+For manual backups, stop every Desktop instance first. Copy `<shared-data-root>/storages/`,
+the settings and migration-provenance files in `<shared-data-root>/`, and every registered
 project directory, including chosen library locations. Each project directory
 contains its SQLite state, original, parse caches and generated exports. Keep any
 SQLite WAL beside its database. Copying only the old workspace is not a complete

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from wenyi_desktop import paths
 from wenyi_desktop.local_runtime import LocalRuntime
 from wenyi_desktop.main import create_app, create_context
 from wenyi_desktop.updates import UpdateAdmissionMiddleware, UpdateGuard
@@ -87,6 +88,35 @@ def test_backup_plan_requires_frozen_authenticated_admission(context, monkeypatc
     assert client.put("/config", headers=headers).status_code == 409
     assert client.post("/desktop/updates/cancel", headers=headers).status_code == 204
     assert client.post("/desktop/updates/backup-plan", headers=headers).status_code == 409
+
+
+def test_xdg_shared_data_is_used_by_catalog_credentials_and_backup_plan(
+    tmp_path, monkeypatch, private_profile
+):
+    if paths.sys.platform in {"win32", "darwin"}:
+        pytest.skip("XDG_DATA_HOME applies only to XDG platforms")
+    data_home = tmp_path / "separate-data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    root = data_home / "wenyi"
+    context = create_context(tmp_path / "workspace", api_token="test-token")
+    try:
+        assert context.repository.database == root / "storages" / "catalog.sqlite3"
+        assert context.settings_store.credentials.database == context.repository.database
+        settings = root / "settings.yaml"
+        settings.write_text("schema_version: 1\n", encoding="utf-8")
+        context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
+        client = TestClient(create_app(context=context))
+        headers = {"Authorization": "Bearer test-token"}
+        assert client.post("/desktop/updates/prepare", headers=headers).status_code == 204
+        response = client.post("/desktop/updates/backup-plan", headers=headers)
+        assert response.status_code == 200
+        assert response.json()["sources"] == [
+            {"path": str(root / "storages"), "name": "user/storages"},
+            {"path": str(settings), "name": "user/settings.yaml"},
+        ]
+        assert not (private_profile / "Wenyi").exists()
+    finally:
+        context.repository.close()
 
 
 def test_missing_authoritative_project_refuses_backup_plan(context, monkeypatch):

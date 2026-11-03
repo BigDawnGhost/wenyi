@@ -15,7 +15,7 @@ the same rule rather than by a copy of one machine's layout:
 | the installation and anything inside it | uninstall and upgrade own that directory |
 | anything the installation sits inside | a recursive removal takes the whole parent |
 | layer one (~/.wenyi) and anything inside it | discarded and rebuilt on every launch |
-| layer two (~/Wenyi) and anything inside it | settings and catalog; uninstall may delete it |
+| layer two (shared platform data) and anything inside it | settings and catalog; uninstall may delete it |
 | the user profile itself | its children belong to other applications |
 | a volume root, and the platform's system directories | recursive removal is unrecoverable |
 

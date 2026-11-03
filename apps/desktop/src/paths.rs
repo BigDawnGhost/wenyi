@@ -6,7 +6,7 @@
 //! | layer | root | lifetime |
 //! |---|---|---|
 //! | one | ~/.wenyi/desktop | rebuilt with the application |
-//! | two | ~/Wenyi | backed up, shared across projects |
+//! | two | platform data directory (see `user_root`) | backed up, shared across projects |
 //! | three | a sibling of the installation directory | user documents |
 //!
 //! Resolution is pure: nothing here creates, canonicalizes, or checks a
@@ -29,13 +29,12 @@ const DIAGNOSTICS: &str = "diagnostics";
 const RUNTIME: &str = ".wenyi";
 /// Layer one entry for this application inside RUNTIME.
 const ENTRY: &str = "desktop";
-/// Layer two root under the user profile.
+/// Layer two directory name on Windows and macOS.
 const USER: &str = "Wenyi";
 /// Layer three directory created next to the installation directory.
 const LIBRARY: &str = "Wenyi Desktop Data";
-/// Environment override for layer one. Layers two and three are deliberately
-/// not overridable: layer two is persisted configuration and layer three is
-/// recorded per project in the workspace registry.
+/// Environment override for layer one. Layer two follows platform conventions
+/// (including XDG_DATA_HOME on Unix); layer three is recorded per project.
 const RUNTIME_OVERRIDE: &str = "WENYI_RUNTIME_DIR";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,8 +103,29 @@ pub fn runtime_root() -> Result<PathBuf, Error> {
 }
 
 /// Layer two: user-level data that is backed up and shared across projects.
+///
+/// Unix uses XDG_DATA_HOME/wenyi, falling back to ~/.local/share/wenyi.
+/// macOS uses ~/Library/Application Support/Wenyi; Windows keeps ~/Wenyi.
 pub fn user_root() -> Result<PathBuf, Error> {
-    Ok(home_dir()?.join(USER))
+    Ok(user_root_in(
+        &home_dir()?,
+        env_path("XDG_DATA_HOME").as_deref(),
+    ))
+}
+
+/// Resolve the shared root from explicit inputs without reading the environment.
+pub(crate) fn user_root_in(home: &Path, xdg_data_home: Option<&Path>) -> PathBuf {
+    if cfg!(windows) {
+        home.join(USER)
+    } else if cfg!(target_os = "macos") {
+        home.join("Library/Application Support").join(USER)
+    } else {
+        let data_home = xdg_data_home
+            .filter(|path| path.is_absolute())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| home.join(".local/share"));
+        data_home.join("wenyi")
+    }
 }
 
 /// Layer three: the default directory that holds one folder per project.
@@ -374,7 +394,7 @@ pub fn admit_library_root(
     let roots: [(&'static str, PathBuf); 4] = [
         ("install", install_dir.to_path_buf()),
         ("layer-one", runtime_root().map_err(|_| Error::Base)?),
-        ("layer-two", user.clone().join(USER)),
+        ("layer-two", user_root()?),
         // The whole profile is refused for the same reason a volume root is: its
         // children are other applications' directories.
         ("profile", user),
@@ -480,11 +500,10 @@ pub fn check_disjoint(roots: &[(&'static str, &Path)]) -> Result<(), Error> {
 
 /// The two user-level layers, in the order the layout names them.
 ///
-/// Layers one and two are derivable on every platform from the profile alone, so
-/// the installer applies the same pair to `$INSTDIR` before a single file is
-/// copied. This function is the single spelling of that pair on the native side;
-/// the NSIS hook has to repeat it, because the two programs share no code, and a
-/// test pins the repeated spelling against these literals.
+/// The Windows installer applies the same pair to `$INSTDIR` before a single
+/// file is copied. This function is the single spelling of that pair on the
+/// native side; the NSIS hook has to repeat it, because the two programs share
+/// no code, and a test pins the repeated spelling against these literals.
 pub fn user_layers() -> Result<[(&'static str, PathBuf); 2], Error> {
     Ok([("layer-one", runtime_root()?), ("layer-two", user_root()?)])
 }
@@ -730,6 +749,50 @@ mod tests {
             Path::new("C:/profile").join(PRODUCT),
             Path::new("C:/profile/Wenyi Desktop")
         );
+    }
+
+    #[test]
+    fn the_shared_profile_uses_the_platform_data_directory() {
+        let home = home_dir().unwrap();
+        let expected = if cfg!(windows) {
+            home.join("Wenyi")
+        } else if cfg!(target_os = "macos") {
+            home.join("Library/Application Support/Wenyi")
+        } else {
+            override_path("XDG_DATA_HOME")
+                .unwrap_or_else(|| home.join(".local/share"))
+                .join("wenyi")
+        };
+        assert_eq!(user_root().unwrap(), expected);
+    }
+
+    #[test]
+    fn the_shared_profile_cannot_be_chosen_as_a_project_library() {
+        let root = user_root().unwrap();
+        assert_eq!(
+            admit_library_root(
+                &root,
+                &root.with_file_name("app"),
+                &root.with_file_name("workspace")
+            ),
+            Err(Error::LibraryRootInvalid)
+        );
+    }
+
+    #[test]
+    fn only_an_absolute_xdg_data_home_changes_the_unix_shared_root() {
+        let home = Path::new("/profile");
+        let default = user_root_in(home, None);
+        for invalid in [Path::new(""), Path::new("   "), Path::new("relative/data")] {
+            assert_eq!(user_root_in(home, Some(invalid)), default);
+        }
+        let data_home = Path::new("/separate-data");
+        let expected = if cfg!(any(windows, target_os = "macos")) {
+            default
+        } else {
+            data_home.join("wenyi")
+        };
+        assert_eq!(user_root_in(home, Some(data_home)), expected);
     }
 
     #[test]
@@ -1010,9 +1073,9 @@ mod tests {
         // pairs are still checked; what must never happen is a start that fails
         // because a developer has no installer record.
         let home = env_path(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
-        let Some(home) = home else {
+        if home.is_none() {
             return;
-        };
+        }
         let running = match running_install_dir() {
             Ok(running) => running,
             Err(_) => return,
@@ -1025,7 +1088,7 @@ mod tests {
         assert!(LayoutCheck::Consistent.message().is_none());
         // And the same three parties are not where the engine was told to work.
         assert_eq!(
-            check_disjoint(&[("layer-two", &home.join(USER)), ("install", &running)]),
+            check_disjoint(&[("layer-two", &user_root().unwrap()), ("install", &running)]),
             Ok(())
         );
     }
@@ -1051,7 +1114,7 @@ mod tests {
         assert_eq!(layers[0].0, "layer-one");
         assert_eq!(layers[1].0, "layer-two");
         assert_eq!(layers[0].1.file_name().unwrap(), ENTRY);
-        assert_eq!(layers[1].1.file_name().unwrap(), USER);
+        assert_eq!(layers[1].1, user_root().unwrap());
         let roots: Vec<(&'static str, &Path)> = layers
             .iter()
             .map(|(name, path)| (*name, path.as_path()))
