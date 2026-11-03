@@ -59,15 +59,17 @@ def publish_target(target: str | Path) -> Iterator[Path]:
     """Yield a temporary path in the target's directory and publish it on clean exit.
 
     Any exception inside the block removes the temporary file and leaves the previous
-    target untouched.
+    target untouched. Exiting without ever creating the temporary file is a deliberate
+    abort: nothing is published and no error is raised.
     """
     target_path = Path(target)
     target_path.parent.mkdir(parents=True, exist_ok=True)
     temp = _temp_name(target_path)
     try:
         yield temp
-        _fsync_best_effort(temp)
-        _replace_with_retry(temp, target_path)
+        if temp.exists():
+            _fsync_best_effort(temp)
+            _replace_with_retry(temp, target_path)
     finally:
         if temp.exists():
             temp.unlink()

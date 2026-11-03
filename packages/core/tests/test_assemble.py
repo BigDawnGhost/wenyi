@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
-from wenyi_core.assemble.about import append_about_page
+from wenyi_core.assemble.about import about_xhtml, append_about_page
 from wenyi_core.assemble.epub_presentation import _inject_bilingual_style, _rewrite_html_document
 from wenyi_core.assemble.html_renderer import _render_chapter_html, _render_segments_html
 from wenyi_core.assemble.writer import assemble
@@ -280,6 +280,38 @@ class TestAssembleText(unittest.TestCase):
 
             with zipfile.ZipFile(path) as archive:
                 self.assertFalse(any("trans-novel-about" in name for name in archive.namelist()))
+
+    def test_about_page_streams_entries_and_keeps_zip_invariants(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "book.epub")
+            payload = b"x" * (5 * 1024 * 1024)
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr(
+                    "META-INF/container.xml",
+                    """<container><rootfiles>
+                    <rootfile full-path="content.opf"/>
+                    </rootfiles></container>""",
+                )
+                archive.writestr("content.opf", "<package><manifest/><spine/></package>")
+                archive.writestr("images/cover.bin", payload)
+
+            self.assertTrue(append_about_page(path, "zh-Hans"))
+
+            with zipfile.ZipFile(path) as archive:
+                names = archive.namelist()
+                self.assertEqual(names[0], "mimetype")
+                self.assertEqual(archive.getinfo("mimetype").compress_type, zipfile.ZIP_STORED)
+                self.assertEqual(archive.read("mimetype"), b"application/epub+zip")
+                self.assertEqual(archive.read("images/cover.bin"), payload)
+                self.assertTrue(any("trans-novel-about" in name for name in names))
+                self.assertIn("trans-novel-about", archive.read("content.opf").decode())
+                self.assertFalse(any(name.endswith(".tmp") for name in names))
+
+    def test_about_template_tolerates_literal_dollar(self):
+        with patch("wenyi_core.assemble.about.read_text", return_value="Cost: $5 $unknown."):
+            data = about_xhtml("zh-Hans", locale="en")
+        self.assertIn(b"Cost: $5 $unknown.", data)
 
     def test_bilingual_rewrite_removes_temporary_file_on_failure(self):
         with tempfile.TemporaryDirectory() as directory:

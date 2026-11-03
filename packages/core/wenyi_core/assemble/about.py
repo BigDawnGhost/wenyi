@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import posixpath
+import shutil
 import zipfile
 from string import Template
 
@@ -28,7 +29,9 @@ def about_xhtml(lang: str, *, locale: str | None = None) -> bytes:
     )
     return (
         Template(read_text(f"export/about.{locale}.xhtml"))
-        .substitute(lang=lang, title=ABOUT_TITLE, repository=ABOUT_REPOSITORY)
+        # safe_substitute: a literal $ in future template prose must not crash the whole
+        # export postprocessing step (audit A-4).
+        .safe_substitute(lang=lang, title=ABOUT_TITLE, repository=ABOUT_REPOSITORY)
         .encode("utf-8")
     )
 
@@ -94,30 +97,40 @@ def append_about_to_opf(data: bytes, href: str) -> tuple[bytes, bool]:
 
 
 def append_about_page(epub_path: str, lang: str, *, locale: str | None = None) -> bool:
-    """Atomically postprocess an existing EPUB to append the about page to its spine."""
-    with zipfile.ZipFile(epub_path, "r") as zin:
-        try:
-            opf_path = rootfile_path(zin.read("META-INF/container.xml"))
-        except KeyError:
-            return False
-        if not opf_path or opf_path not in zin.namelist():
-            return False
+    """Atomically postprocess an existing EPUB to append the about page to its spine.
 
-        infos = zin.infolist()
-        entries = {info.filename: zin.read(info.filename) for info in infos}
-        about_entry, about_href = unique_about_entry(set(entries), opf_path)
-        opf_data, attached = append_about_to_opf(entries[opf_path], about_href)
-        if not attached:
-            return False
-        entries[opf_path] = opf_data
-
+    Entries stream from the source archive into the replacement so peak memory stays at
+    one entry instead of the whole book (audit A-3). The publish context stays outermost:
+    on Windows the replacement needs the source handle closed first.
+    """
     with publish_target(epub_path) as tmp_path:
-        with zipfile.ZipFile(tmp_path, "w") as zout:
-            for info in infos:
-                data = entries[info.filename]
-                if info.filename == "mimetype":
-                    zout.writestr(info, data, zipfile.ZIP_STORED)
-                else:
-                    zout.writestr(info, data)
-            zout.writestr(about_entry, about_xhtml(lang, locale=locale))
+        with zipfile.ZipFile(epub_path, "r") as zin:
+            try:
+                opf_path = rootfile_path(zin.read("META-INF/container.xml"))
+            except KeyError:
+                return False
+            if not opf_path or opf_path not in zin.namelist():
+                return False
+
+            infos = zin.infolist()
+            about_entry, about_href = unique_about_entry(
+                {info.filename for info in infos}, opf_path
+            )
+            opf_data, attached = append_about_to_opf(zin.read(opf_path), about_href)
+            if not attached:
+                return False
+
+            with zipfile.ZipFile(tmp_path, "w") as zout:
+                for info in infos:
+                    if info.filename == "mimetype":
+                        stored = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+                        stored.compress_type = zipfile.ZIP_STORED
+                        with zin.open(info) as source, zout.open(stored, "w") as target:
+                            shutil.copyfileobj(source, target)
+                    elif info.filename == opf_path:
+                        zout.writestr(info, opf_data)
+                    else:
+                        with zin.open(info) as source, zout.open(info, "w") as target:
+                            shutil.copyfileobj(source, target)
+                zout.writestr(about_entry, about_xhtml(lang, locale=locale))
     return True
