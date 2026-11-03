@@ -161,6 +161,14 @@ def _logical_chapters(
             if segment.anchor:
                 anchor_positions[segment.anchor] = len(all_segments)
             all_segments.append(segment)
+    # Count references per TOC file, not per book: NAV and NCX each mirror the same
+    # destinations, and that duplication must not look like competing boundaries.
+    resource_toc_refs: dict[tuple[str, str], int] = {}
+    for entry in toc_entries:
+        href = entry.get("resource_href")
+        if isinstance(href, str) and href in resource_starts:
+            key = (str(entry.get("toc_path") or ""), href)
+            resource_toc_refs[key] = resource_toc_refs.get(key, 0) + 1
     for raw_entry in toc_entries:
         entry = raw_entry
         href = entry.get("resource_href")
@@ -172,8 +180,16 @@ def _logical_chapters(
         raw_fragment_map = resource.get("fragment_anchors")
         fragment_map = raw_fragment_map if isinstance(raw_fragment_map, dict) else {}
         if has_fragment and fragment not in fragment_map:
-            # An invalid fragment must not silently fall back to the resource start; that would split chapters
-            # at the wrong point and assign the first heading's translation to the wrong TOC entry.
+            # A damaged fragment usually must not silently fall back to the resource start: when
+            # several TOC destinations share one file that would split chapters at the wrong
+            # point and assign the first heading's translation to the wrong TOC entry. But a
+            # resource reached by this entry alone has no competing destination, so its start is
+            # the best available boundary. Leave segment_anchor unset so the TOC label remains
+            # the chapter title instead of borrowing a body heading.
+            refs_key = (str(entry.get("toc_path") or ""), href)
+            if resource_toc_refs.get(refs_key, 0) > 1:
+                continue
+            entry["boundary_position"] = resource_starts[href]
             continue
         segment_anchor = fragment_map.get(fragment) if has_fragment else None
         if not has_fragment:

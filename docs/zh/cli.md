@@ -119,6 +119,7 @@ notarization。macOS 仍可能隔离下载的程序；确认校验和无误后�
 
 - 输入格式：EPUB、FB2、TXT、Markdown、HTML、PDF、DOCX。
 - Markdown 输入中，以 `#` 至 `######` 开头并与标题文字以空白分隔的标题行会划分为章节。导入时会记录原始标题层级；带页码的普通目录列表仍作为正文保留。
+- EPUB 输入中，目录项指向的锚点在文件中不存在、且该文件没有被同一目录中的其他目录项引用时，以该文件开头作为章节边界。
 - Markdown 标题层级会保留在 EPUB 正文标题、自动生成的 EPUB 导航目录和 DOCX 大纲样式中。导航将标题嵌套到前面最近且等级数字更小的标题下；跳级不会补造目录条目。已有状态若章节划分正确且保存了标题等级，只需重新导出，无需重新翻译。
 - 书籍默认输出：源文件旁 `output/` 下的单语版 `<书名>.zh.epub`（`.docx` 输入默认为 `<书名>.zh.docx`，BabelDOC PDF 状态默认为 `<书名>.zh.pdf`）；双语版 `*.zh-bi.*` 按需开启。
 - `--format epub|txt|html|markdown|pdf|docx`：书籍导出格式；`pdf` 仅适用于已保存的 BabelDOC 项目。未指定时 BabelDOC PDF 状态→`pdf`，`.docx`→`docx`，其它书籍（含 MinerU PDF 状态）→`epub`。显式指定的受支持格式优先；PDF 是否可用及默认格式均依据已保存的后端信息，即使当前 `pdf_backend` 配置改变也不会改用另一套规则。
