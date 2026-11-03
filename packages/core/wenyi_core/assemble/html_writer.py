@@ -6,8 +6,11 @@ headings, paragraphs and bilingual content.
 
 from __future__ import annotations
 
+import os
+import posixpath
 import zipfile
 from html import escape
+from pathlib import Path
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
@@ -17,9 +20,16 @@ from wenyi_core.assemble.html_bilingual import _BILINGUAL_CSS, _BILINGUAL_STYLE_
 from wenyi_core.assemble.html_renderer import _render_chapter_html
 from wenyi_core.atomicio import publish_target
 
+from ..ingest.epub_package import _decode_markup
 from ..models.document import KIND_HEADING
 from .export_view import AssembleStore
-from .html_resources import _materialize_html_resources, _template_resource_source
+from .html_resources import (
+    _MEDIA_SUFFIXES,
+    _materialize_html_resources,
+    _package_html_resources,
+    _template_resource_source,
+    _write_packaged,
+)
 from .policy import export_options
 from .writer_common import _bilingual_source, _epub_lang, _manifest_target_lang, _merged_paragraphs
 
@@ -47,9 +57,18 @@ def _assemble_html(
 
     body_parts: list[str] = []
     rendered_epub = False
+    packaged: dict[str, tuple[str, bytes]] = {}
     if m.get("fmt") == "epub" and _epub_resource_specs(meta):
         chapters = [store.load_chapter(c["index"]) for c in m["chapters"]]
+        asset_prefix = f"{Path(out_path).stem}.assets"
         with zipfile.ZipFile(source_path, "r") as archive:
+            # Media entries are read once here: their bytes end up in the .assets
+            # directory either way, and keeping the XHTML out of memory bounds usage.
+            media = {
+                info.filename: archive.read(info.filename)
+                for info in archive.infolist()
+                if os.path.splitext(info.filename)[1].lower() in _MEDIA_SUFFIXES
+            }
             rendered = _render_epub_resources(
                 archive,
                 chapters,
@@ -63,17 +82,32 @@ def _assemble_html(
                 ),
                 preserve_source_ruby=export_options(store, "html").preserve_source_ruby,
             )
-        for _resource_index, href in _epub_resource_specs(meta):
-            resource_html = rendered.get(href)
-            if not resource_html:
-                continue
-            resource_soup = BeautifulSoup(resource_html, "html.parser")
-            resource_body = resource_soup.find("body")
-            body_parts.append(
-                resource_body.decode_contents()
-                if isinstance(resource_body, Tag)
-                else str(resource_soup)
-            )
+            for _resource_index, href in _epub_resource_specs(meta):
+                resource_html = rendered.get(href)
+                if not resource_html:
+                    # Pages without translated segments (image-only plates) must keep
+                    # their original body instead of being silently dropped.
+                    try:
+                        resource_html = _decode_markup(archive.read(href))
+                    except KeyError:
+                        continue
+                resource_soup = BeautifulSoup(resource_html, "html.parser")
+                resource_body = resource_soup.find("body")
+                body_html = (
+                    resource_body.decode_contents()
+                    if isinstance(resource_body, Tag)
+                    else str(resource_soup)
+                )
+                # EPUB references are page-relative; resolve them against the page's own
+                # zip directory and rewrite into the flat .assets namespace (audit X-1).
+                rewritten, page_packaged = _package_html_resources(
+                    body_html,
+                    source_dir=posixpath.dirname(href),
+                    href_prefix=asset_prefix,
+                    zip_resources=media,
+                )
+                packaged.update(page_packaged)
+                body_parts.append(rewritten)
         rendered_epub = bool(body_parts)
 
     for c in [] if rendered_epub else m["chapters"]:
@@ -117,11 +151,15 @@ def _assemble_html(
 {"".join(body_parts)}
 </body>
 </html>"""
-    full_html = _materialize_html_resources(
-        full_html,
-        source_path=_template_resource_source(store, m, source_path),
-        out_path=out_path,
-    )
+    if packaged:
+        # EPUB-sourced media was already rewritten into the .assets namespace.
+        _write_packaged(packaged, out_path)
+    else:
+        full_html = _materialize_html_resources(
+            full_html,
+            source_path=_template_resource_source(store, m, source_path),
+            out_path=out_path,
+        )
 
     # Publish atomically: the .assets directory is keyed to the final out_path, only the
     # document file itself is swapped (audit X-2).

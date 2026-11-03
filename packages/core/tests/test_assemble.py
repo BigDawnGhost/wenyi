@@ -7,6 +7,7 @@ import os
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 from unittest.mock import patch
 
 from bs4 import BeautifulSoup
@@ -1039,6 +1040,63 @@ data-tn-annotation-id="ann-0" href="chapter.xhtml#part">Chapter
         self.assertEqual(image_data, b"inline-image")
         self.assertIsNotNone(rendered.find(id="kobo.1.1"))
         self.assertIsNone(rendered.select_one("[data-tn-inline-id]"))
+
+    def test_epub_html_export_packages_media_and_keeps_image_pages(self):
+        container = (
+            '<?xml version="1.0"?>'
+            '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+            '<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>'
+            "</rootfiles></container>"
+        )
+        opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Plates</dc:title><dc:language>fr</dc:language>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="plate" href="plate.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img1" href="image.jpg" media-type="image/jpeg"/>
+    <item id="img2" href="plate.png" media-type="image/png"/>
+  </manifest>
+  <spine><itemref idref="ch1"/><itemref idref="plate"/></spine>
+</package>
+"""
+        ch1 = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>I</title></head>'
+            '<body><p><img src="image.jpg"/><span id="kobo.1.1">Je suis là.</span></p></body></html>'
+        )
+        plate = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>plate</title></head>'
+            '<body><img src="plate.png"/></body></html>'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            epub = os.path.join(directory, "plates.epub")
+            with zipfile.ZipFile(epub, "w") as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr("META-INF/container.xml", container)
+                archive.writestr("OEBPS/content.opf", opf)
+                archive.writestr("OEBPS/ch1.xhtml", ch1)
+                archive.writestr("OEBPS/plate.xhtml", plate)
+                archive.writestr("OEBPS/image.jpg", b"chapter-image")
+                archive.writestr("OEBPS/plate.png", b"plate-image")
+            store, _ = _run(epub, os.path.join(directory, "state"))
+
+            output = assemble(store, epub, out_format="html", about_page=False)
+            self.assertTrue(output.endswith(".html"))
+            with open(output, encoding="utf-8") as handle:
+                html = handle.read()
+            self.assertNotIn('src="image.jpg"', html)
+            self.assertNotIn('src="plate.png"', html)
+            self.assertEqual(html.count(".assets/"), 2)
+            assets_dir = os.path.join(os.path.dirname(output), f"{Path(output).stem}.assets")
+            packaged = {
+                name: Path(os.path.join(assets_dir, name)).read_bytes()
+                for name in os.listdir(assets_dir)
+            }
+            self.assertEqual(sorted(packaged.values()), [b"chapter-image", b"plate-image"])
 
     def test_epub_export_rejects_source_state_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:
