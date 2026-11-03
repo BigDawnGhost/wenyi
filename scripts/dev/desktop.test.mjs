@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 // A WebviewWindow emits native drops as WindowEvent, not WebviewEvent.
 // Bridge E2E dispatches frontend events and cannot check this native wiring.
 test('the main WebviewWindow forwards native window drag events to the source bridge', () => {
-  const source = readFileSync(new URL('../apps/desktop/src/main.rs', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../../apps/desktop/src/main.rs', import.meta.url), 'utf8');
   assert.ok(
     /\.on_window_event\(\|window, event\| \{[\s\S]*?tauri::WindowEvent::DragDrop\(event\)[\s\S]*?native_drop::event\(&window, event\)/.test(source),
     'Connect WindowEvent::DragDrop to native_drop::event for the main WebviewWindow.',
@@ -17,7 +17,8 @@ test('the main WebviewWindow forwards native window drag events to the source br
 });
 
 test('Tauri runs in the native project without pnpm changing its working directory', async () => {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  // This file lives two levels below the repository root, alongside the script it covers.
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const calls = [];
   const argv = process.argv;
   const npmExecPath = process.env.npm_execpath;
@@ -97,7 +98,7 @@ test('Tauri runs in the native project without pnpm changing its working directo
 });
 
 test('Desktop launches pnpm JavaScript entry points with Node and native executables directly', async (t) => {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const calls = [];
   const argv = process.argv;
   const environmentNames = ['npm_execpath', 'WENYI_DESKTOP_PYTHON'];
