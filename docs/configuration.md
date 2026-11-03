@@ -404,8 +404,8 @@ paths:
   state_dir: state
 ```
 
-- `max_tokens_per_batch`: source-token budget for one model translation request, counted with tiktoken `cl100k_base` (a universal estimator, not the live provider tokenizer).
-- `max_tokens_per_segment`: token threshold for splitting an exceptionally long source paragraph at sentence boundaries.
+- `max_tokens_per_batch`: source-token budget for one model translation request, counted with tiktoken `cl100k_base` (a universal estimator, not the live provider tokenizer). Must be at least 1.
+- `max_tokens_per_segment`: token threshold for splitting an exceptionally long source paragraph at sentence boundaries. `0` disables splitting.
 - `honorific.strategy`: Japanese-source honorific policy: `keep_style`, `normalize`, or `drop`.
 - `state_dir`: location of book checkpoints, chapter files, the glossary database, usage data, and reports.
 

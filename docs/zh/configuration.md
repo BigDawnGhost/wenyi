@@ -377,8 +377,8 @@ paths:
   state_dir: state
 ```
 
-- `max_tokens_per_batch`：单个模型翻译批次的源文 token 预算，使用 tiktoken `cl100k_base` 计数（通用估算，不等于线上提供商私有分词器）。
-- `max_tokens_per_segment`：超长段落按句拆分的 token 阈值。
+- `max_tokens_per_batch`：单个模型翻译批次的源文 token 预算，使用 tiktoken `cl100k_base` 计数（通用估算，不等于线上提供商私有分词器）。必须至少为 1。
+- `max_tokens_per_segment`：超长段落按句拆分的 token 阈值。`0` 表示禁用拆分。
 - `honorific.strategy`：日语源文本的敬称处理策略，可选 `keep_style`、`normalize`、`drop`。
 - `state_dir`：书籍断点、章节产物、术语库、用量和报告的位置。
 

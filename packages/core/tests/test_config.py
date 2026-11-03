@@ -104,6 +104,14 @@ class TestConfigFileCreation(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "rolling_context_tokens"):
             Config.from_dict({"pipeline": {"rolling_context_tokens": -1}})
 
+    def test_segment_budgets_guard_batch_only(self):
+        # max_tokens_per_batch=0 would degrade packing to one request per segment
+        # (audit Y-3); max_tokens_per_segment=0 legitimately disables splitting.
+        with self.assertRaisesRegex(ValidationError, "max_tokens_per_batch"):
+            Config.from_dict({"segment": {"max_tokens_per_batch": 0}})
+        cfg = Config.from_dict({"segment": {"max_tokens_per_segment": 0}})
+        self.assertEqual(cfg.segment.max_tokens_per_segment, 0)
+
     def test_removed_rolling_context_segments_is_rejected(self):
         for pipeline in (
             {"rolling_context_segments": 6},

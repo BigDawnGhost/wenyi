@@ -59,6 +59,10 @@ class ExportDefaults(BaseModel):
     def reject_null(cls, value: Any) -> Any:
         if value is None:
             raise ValueError("Export policy defaults cannot be null")
+        if isinstance(value, str) and not value.strip():
+            # Align with registry.validate_options: blank strings are not valid values
+            # (audit Y-4/D-2).
+            raise ValueError("Export policy defaults cannot be blank")
         return value
 
 
