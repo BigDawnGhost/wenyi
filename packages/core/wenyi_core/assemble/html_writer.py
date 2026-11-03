@@ -15,6 +15,7 @@ from bs4.element import Tag
 from wenyi_core.assemble.epub_resources import _epub_resource_specs, _render_epub_resources
 from wenyi_core.assemble.html_bilingual import _BILINGUAL_CSS, _BILINGUAL_STYLE_ID
 from wenyi_core.assemble.html_renderer import _render_chapter_html
+from wenyi_core.atomicio import publish_target
 
 from ..models.document import KIND_HEADING
 from .export_view import AssembleStore
@@ -122,6 +123,9 @@ def _assemble_html(
         out_path=out_path,
     )
 
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(full_html)
+    # Publish atomically: the .assets directory is keyed to the final out_path, only the
+    # document file itself is swapped (audit X-2).
+    with publish_target(out_path) as temp_out:
+        with open(temp_out, "w", encoding="utf-8") as f:
+            f.write(full_html)
     return out_path

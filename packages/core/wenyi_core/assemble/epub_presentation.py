@@ -133,7 +133,7 @@ def _inject_bilingual_style(out_path: str, chapter_filenames: set[str], lang: st
     with zipfile.ZipFile(out_path, "r") as zin:
         infos = zin.infolist()
         entries = {info.filename: zin.read(info.filename) for info in infos}
-    tmp_path = out_path + ".tmp"
+    tmp_path = f"{out_path}.tmp"
     try:
         with zipfile.ZipFile(tmp_path, "w") as zout:
             for info in infos:
