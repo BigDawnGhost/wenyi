@@ -1147,7 +1147,7 @@ export interface components {
              * Default Template
              * @constant
              */
-            default_template: "��׼����";
+            default_template: "标准翻译";
             /** Revision */
             revision: number;
             /** Model Renames */
@@ -1171,7 +1171,7 @@ export interface components {
              * Default Template
              * @constant
              */
-            default_template: "��׼����";
+            default_template: "标准翻译";
             /** Revision */
             revision: number;
         };
