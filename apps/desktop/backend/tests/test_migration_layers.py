@@ -299,9 +299,11 @@ def test_a_running_old_instance_blocks_the_move(old_workspace: Path) -> None:
 
     handle = FileLockHandle(str(paths.native_instance_lock(old_workspace)))
     handle.acquire(blocking=False)
-    # Taken after the lock file exists, so the comparison is about what the
-    # migration did rather than about the lock this test just created.
+    handle.release()
+    # Initialize the lock before the baseline, but read it while unlocked:
+    # Windows denies reads of the locked byte even from this process.
     before = fingerprint(old_workspace)
+    handle.acquire(blocking=False)
     try:
         with pytest.raises(layers.MigrationBusy, match="previous version"):
             layers.migrate(old_workspace)
