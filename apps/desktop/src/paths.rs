@@ -817,12 +817,18 @@ mod tests {
     #[test]
     fn a_record_that_matches_the_running_directory_is_unchanged() {
         let running = Path::new("D:/Apps/Wenyi Desktop");
-        for recorded in [
+        // Separator and trailing-separator spellings differ on every platform. Case
+        // differs only where the filesystem folds it, and same_directory follows the
+        // platform on purpose, so the lower-case spelling is asserted on Windows only.
+        let mut spellings = vec![
             "D:/Apps/Wenyi Desktop",
             "D:\\Apps\\Wenyi Desktop",
             "D:/Apps/Wenyi Desktop/",
-            "d:/apps/wenyi desktop",
-        ] {
+        ];
+        if cfg!(windows) {
+            spellings.push("d:/apps/wenyi desktop");
+        }
+        for recorded in spellings {
             assert_eq!(
                 check_install(Some(Path::new(recorded)), running),
                 InstallCheck::Unchanged,
