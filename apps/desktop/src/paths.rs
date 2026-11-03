@@ -867,9 +867,12 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn a_chosen_library_root_beside_the_installation_is_admitted() {
         // The default layer-three location: a sibling of the installation, which
-        // no uninstall or upgrade policy can reach.
+        // no uninstall or upgrade policy can reach. A drive-letter spelling is not
+        // absolute off Windows and admit_library_root refuses relative candidates,
+        // so this case only exists where that spelling resolves.
         let install = Path::new("D:/Apps/Wenyi Desktop");
         let library = library_root(install).unwrap();
         assert_eq!(
@@ -879,7 +882,11 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn the_installation_and_its_ancestors_are_refused() {
+        // The candidates below are drive-letter spellings. Off Windows those are
+        // relative, so admit_library_root would refuse them for the wrong reason and
+        // the case would pass without exercising the ancestor rule it names.
         let install = Path::new("D:/Apps/Wenyi Desktop");
         for candidate in [
             Path::new("D:/Apps/Wenyi Desktop"),
