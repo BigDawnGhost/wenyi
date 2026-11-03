@@ -243,6 +243,53 @@ class TestDocxReader(unittest.TestCase):
             num_pr = first._p.pPr.find(qn("w:numPr")) if first._p.pPr is not None else None
             self.assertIsNotNone(num_pr)
 
+    def test_bilingual_export_keeps_list_numbering_on_target_only(self):
+        from docx.oxml.ns import qn
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "list.docx")
+            doc = DocxDocument()
+            doc.add_paragraph("One", style="List Number")
+            doc.add_paragraph("Two", style="List Number")
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+            store = FileStorage(os.path.join(directory, "state", "list"))
+            store.save_manifest(
+                {
+                    "title": "list",
+                    "fmt": "docx",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "source_path": path,
+                    "source_sha256": "x",
+                    "chapters": [
+                        {
+                            "index": 0,
+                            "title": book.chapters[0].title,
+                            "status": STATUS_DONE,
+                        }
+                    ],
+                }
+            )
+            for item in book.chapters[0].segments:
+                item.target = "译" + item.source
+            store.save_chapter(book.chapters[0])
+            out_path = os.path.join(directory, "out.docx")
+            _assemble_docx(store, out_path, bilingual=True)
+            result = DocxDocument(out_path)
+            paragraphs = [p for p in result.paragraphs if p.text]
+            self.assertEqual([p.text for p in paragraphs], ["译One", "One", "译Two", "Two"])
+            for paragraph in paragraphs:
+                target_side = paragraph.text.startswith("译")
+                style_name = paragraph.style.name if paragraph.style is not None else ""
+                self.assertEqual(
+                    style_name.startswith("List Number"),
+                    target_side,
+                    paragraph.text,
+                )
+                num_pr = paragraph._p.pPr.find(qn("w:numPr")) if paragraph._p.pPr else None
+                self.assertEqual(num_pr is not None, paragraph.text == "译One")
+
 
 class TestDocxStyles(unittest.TestCase):
     def test_proportional_fallback_maps_ranges(self):

@@ -119,8 +119,14 @@ def _add_bilingual_paragraphs(
     align: str | None = None,
     shade: str | None = None,
     output_font: str | None = None,
+    list_kwargs: dict[str, Any] | None = None,
 ) -> None:
-    """Order both sides without changing their character styles."""
+    """Order both sides without changing their character styles.
+
+    ``list_kwargs`` applies Word list formatting to the target block only: sharing the
+    list with the source block would consume two numbers per bilingual pair, and the
+    source side is reference material (audit G-2).
+    """
     src = _bilingual_source(source, target)
     target_font = _font_for_text(output_font, source=source, output_text=target)
     blocks = [(target, style, placements, target_font)]
@@ -139,6 +145,7 @@ def _add_bilingual_paragraphs(
             align=align,
             shade=shade,
             output_font=block_font,
+            **(list_kwargs if text is target and list_kwargs else {}),
         )
 
 
@@ -294,6 +301,16 @@ def _emit_chapter_blocks(
                 source_style, source_placements, _, _ = _segment_style_payload(
                     style_meta, source=source, output_text=_bilingual_source(source, target)
                 )
+            # Bilingual lists keep Word numbering on the target side with the same restart
+            # semantics as monolingual output; the source block stays an unnumbered
+            # reference (audit G-2).
+            list_kwargs = None
+            if is_list:
+                list_kwargs = {
+                    "list_fmt": list_fmt,
+                    "list_ilvl": int(list_ilvl) if isinstance(list_ilvl, int) else 0,
+                    "list_restart": list_num_id != last_list_num_id,
+                }
             _add_bilingual_paragraphs(
                 doc,
                 source,
@@ -306,8 +323,9 @@ def _emit_chapter_blocks(
                 align=align,
                 shade=shade,
                 output_font=output_font,
+                list_kwargs=list_kwargs,
             )
-            last_list_num_id = None
+            last_list_num_id = list_num_id if is_list else None
         elif is_list:
             restart = list_num_id != last_list_num_id
             _add_normal(
