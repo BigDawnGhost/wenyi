@@ -16,6 +16,7 @@ from wenyi_core.assemble.about import about_xhtml, append_about_page
 from wenyi_core.assemble.epub_presentation import _inject_bilingual_style, _rewrite_html_document
 from wenyi_core.assemble.html_renderer import _render_chapter_html, _render_segments_html
 from wenyi_core.assemble.writer import assemble
+from wenyi_core.assemble.writer_common import bilingual_out_path
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore
 from wenyi_core.ingest.segmenter import load_document
@@ -145,6 +146,21 @@ def _run(input_path, state_dir):
     cfg = _config(state_dir)
     orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
     return require_file_storage(orch.run(input_path)), cfg
+
+
+class TestBilingualOutPath(unittest.TestCase):
+    """Lock the documented explicit --out contract (docs/cli.md): the bilingual
+    derivative appends -bi to the stem of whatever path the user gave."""
+
+    def test_appends_bi_to_stem(self):
+        self.assertEqual(bilingual_out_path("custom.epub"), "custom-bi.epub")
+        self.assertEqual(
+            bilingual_out_path(os.path.join("out", "my.book.epub")),
+            os.path.join("out", "my.book-bi.epub"),
+        )
+
+    def test_no_extension_still_appends_suffix(self):
+        self.assertEqual(bilingual_out_path("book"), "book-bi")
 
 
 class TestAssembleText(unittest.TestCase):
