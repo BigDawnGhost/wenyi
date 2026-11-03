@@ -265,6 +265,62 @@ def write_dangling_fragment_epub(path: str, *, include_nav: bool = False) -> Non
         zf.writestr("OEBPS/two.xhtml", _DANGLING_FRAGMENT_TWO)
 
 
+_VALID_AND_DANGLING_OPF = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="2.0">
+<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>Mixed</dc:title></metadata>
+<manifest>
+  <item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+  <item id="cover" href="cover.xhtml" media-type="application/xhtml+xml"/>
+  <item id="one" href="one.xhtml" media-type="application/xhtml+xml"/>
+  <item id="two" href="two.xhtml" media-type="application/xhtml+xml"/>
+</manifest>
+<spine toc="toc"><itemref idref="cover"/><itemref idref="one"/>
+<itemref idref="two"/></spine></package>"""
+
+_VALID_AND_DANGLING_NCX = """<?xml version="1.0" encoding="UTF-8"?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/"><navMap>
+  <navPoint><navLabel><text>Cover Page</text></navLabel>
+    <content src="cover.xhtml#cover"/></navPoint>
+  <navPoint><navLabel><text>Chapter One</text></navLabel>
+    <content src="one.xhtml#missing"/></navPoint>
+  <navPoint><navLabel><text>Chapter Two</text></navLabel>
+    <content src="two.xhtml#missing"/></navPoint>
+</navMap></ncx>
+"""
+
+_VALID_AND_DANGLING_COVER = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Cover</title></head>
+<body><h1 id="cover">Cover</h1><p>Cover text.</p></body></html>
+"""
+
+_VALID_AND_DANGLING_ONE = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>One</title></head>
+<body><h1>One</h1><p>First body.</p></body></html>
+"""
+
+_VALID_AND_DANGLING_TWO = """<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml"><head><title>Two</title></head>
+<body><h1>Two</h1><p>Second body.</p></body></html>
+"""
+
+
+def write_valid_and_dangling_toc_epub(path: str) -> None:
+    """Build an EPUB with one resolvable TOC boundary and two dangling unique ones.
+
+    The surviving cover boundary suppresses the spine fallback, so without the resource-start
+    fallback every remaining entry collapses into the cover chapter. TOC labels differ from the
+    body headings to pin the chapter title source.
+    """
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+        zf.writestr("META-INF/container.xml", _CONTAINER)
+        zf.writestr("OEBPS/content.opf", _VALID_AND_DANGLING_OPF)
+        zf.writestr("OEBPS/toc.ncx", _VALID_AND_DANGLING_NCX)
+        zf.writestr("OEBPS/cover.xhtml", _VALID_AND_DANGLING_COVER)
+        zf.writestr("OEBPS/one.xhtml", _VALID_AND_DANGLING_ONE)
+        zf.writestr("OEBPS/two.xhtml", _VALID_AND_DANGLING_TWO)
+
+
 def write_grouped_nav_epub(path: str) -> None:
     """Build EPUB3 NAV with href-free spans as top-level part groups."""
     opf = """<?xml version="1.0" encoding="UTF-8"?>

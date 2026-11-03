@@ -36,6 +36,7 @@ from tests.sample_data import (
     write_nested_toc_epub,
     write_sample_epub,
     write_sample_txt,
+    write_valid_and_dangling_toc_epub,
 )
 
 
@@ -1036,6 +1037,29 @@ class TestEpubIngest(unittest.TestCase):
             [[segment.source for segment in chapter.segments] for chapter in doc.chapters],
             [["One", "First body."], ["Two", "Second body."]],
         )
+
+    def test_surviving_valid_boundary_keeps_dangling_siblings_separate(self):
+        # One resolvable boundary prevents the spine fallback, so before the fix the dangling
+        # entries were swallowed by the cover chapter instead of starting their own files.
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "valid-and-dangling.epub")
+            write_valid_and_dangling_toc_epub(path)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual(
+            [chapter.title for chapter in doc.chapters],
+            ["Cover Page", "Chapter One", "Chapter Two"],
+        )
+        self.assertEqual(doc.meta["epub_split_strategy"], "top-level-toc")
+        self.assertEqual(
+            [[segment.source for segment in chapter.segments] for chapter in doc.chapters],
+            [["Cover", "Cover text."], ["One", "First body."], ["Two", "Second body."]],
+        )
+        for title in ("Chapter One", "Chapter Two"):
+            entry = next(entry for entry in doc.meta["toc_entries"] if entry["title"] == title)
+            self.assertIsInstance(entry["boundary_position"], int)
+            self.assertNotIn("segment_anchor", entry)
 
     def test_degenerate_toc_falls_back_to_spine_chapters(self):
         with tempfile.TemporaryDirectory() as d:
