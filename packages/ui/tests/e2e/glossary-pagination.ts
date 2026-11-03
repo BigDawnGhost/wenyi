@@ -2,6 +2,13 @@ import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { fakeApi, pid, termPageFixture } from "../../sandbox/fixtures";
 import { chooseOption } from "./select-helper";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Pager geometry, page resets and superseded-search cancellation against a paginated term fixture. The probe recorded only `preferences` and `request`.
+ */
+export const desktopHostSensitive = false;
+
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 const term = (source: string, type = "person") => ({
   source, target: `Translation ${source}`, type, reading: "", note: "", gender: "", aliases: [],

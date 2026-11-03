@@ -104,6 +104,10 @@ def test_owned_python_preserves_venv_and_process_identity(tmp_path):
         child.wait(timeout=5)
 
 
+# One group, because each variant starts a real engine process and tears down a loopback
+# server. Serialising them keeps a stalled shutdown on a single worker instead of letting
+# four of them compete with unrelated tests for the same machine.
+@pytest.mark.xdist_group("desktop-subprocess")
 @pytest.mark.parametrize("shutdown", ["command", "eof"])
 @pytest.mark.parametrize("diagnostics", [False, True])
 def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutdown, diagnostics):

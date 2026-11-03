@@ -70,6 +70,20 @@ test("shared behavior suites are explicitly registered and never import a host",
   const files = sources(resolve(ui, "tests/e2e"));
   const suites = files.filter(file => /export function register(?:Tests|ShellTests)\(/.test(readFileSync(file, "utf8")));
   assert(suites.length >= 20, "Scan every migrated shared suite, including the shell");
+  // Every suite must declare whether the Desktop host has to keep running it. The default
+  // is the safe one (a missing declaration is treated as sensitive), because dropping a
+  // platform-sensitive suite produces no failure anywhere else.
+  const hostSensitive = new Map();
+  for (const file of suites) {
+    const code = readFileSync(file, "utf8");
+    const declared = code.match(/export const desktopHostSensitive = (true|false);/);
+    hostSensitive.set(resolve(file), declared ? declared[1] === "true" : true);
+    if (declared?.[1] === "false")
+      assert(/\/\*\*[\s\S]*\*\//.test(code.split("export const desktopHostSensitive")[0]),
+        `${file} opts the Desktop host out of a suite without a written reason`);
+  }
+  assert([...hostSensitive.values()].filter(Boolean).length >= 1,
+    "The Desktop host must keep at least the suites that encode its own rules");
   for (const file of files) {
     const code = readFileSync(file, "utf8");
     assert(!/__WENYI_DESKTOP|__TAURI|(?:info|testInfo)\.project\.name/.test(code),
@@ -100,7 +114,23 @@ test("shared behavior suites are explicitly registered and never import a host",
         }
       }
     }
-    assert.deepEqual(importedSuites, new Set(suites), `${host} must exercise every shared suite`);
+    // Desktop deliberately re-runs only the host-sensitive suites; the rest are covered
+    // there by the parameterised bootstrap smoke in desktop.spec.ts. Web still runs
+    // everything, so the shared behaviour has one host with the full matrix.
+    if (host === "apps/web") {
+      assert.deepEqual(importedSuites, new Set(suites), `${host} must exercise every shared suite`);
+    } else {
+      const sensitiveSuites = suites.filter(file => hostSensitive.get(resolve(file)));
+      assert(sensitiveSuites.length > 0, "The Desktop host must keep its sensitive suites");
+      for (const file of sensitiveSuites)
+        assert(importedSuites.has(resolve(file)),
+          `${host} must exercise the host-sensitive suite ${basename(file)}`);
+      const smoke = readFileSync(resolve(directory, "desktop.spec.ts"), "utf8");
+      for (const file of suites.filter(entry => !hostSensitive.get(resolve(entry))))
+        assert(smoke.includes(`module: "${basename(file, ".ts")}"`) ||
+          smoke.includes(`module: '${basename(file, ".ts")}'`),
+          `apps/desktop/frontend/tests/desktop.spec.ts must smoke-render ${basename(file)}`);
+    }
     assert(!existsSync(resolve(directory, "fixtures.ts")), "Retired fixture forwarding must not return");
   }
   assert(!existsSync(resolve(ui, "src/lib/api.ts")), "Retired API forwarding must not return");

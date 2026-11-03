@@ -270,8 +270,10 @@ def test_shutdown_owns_every_workflow_before_worker_entry(catalog, monkeypatch, 
     async def run():
         runtime = LocalRuntime(catalog, current_context())
         runtime.accepting = True
-        # Exceed the former admission queue size without allocating model or worker threads.
-        for index in range(129):
+        # Several unstarted workflows, without allocating model or worker threads. The former
+        # fixed admission queue is gone (enqueue creates a task directly), so this asserts
+        # ownership rather than a capacity boundary; the export queue keeps its own 128 cap.
+        for index in range(8):
             pid = project()
             catalog.set_project_status(pid, "translating")
             enqueue(runtime, pid, f"unstarted-{index}")
@@ -279,7 +281,7 @@ def test_shutdown_owns_every_workflow_before_worker_entry(catalog, monkeypatch, 
         if supervisor_started:
             # Supervisors create their children; stop before those children enter the adapter.
             await asyncio.sleep(0)
-            assert len(runtime._active) == 129
+            assert len(runtime._active) == 8
         await runtime.stop()
         assert runtime.idle
         assert all(row["status"] == "interrupted" for row in catalog.all_jobs())

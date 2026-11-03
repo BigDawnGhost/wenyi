@@ -412,3 +412,37 @@ test("Desktop HTTP errors remain visible", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Local database is unavailable")).toBeVisible();
 });
+
+// Every shared suite the Desktop host no longer registers still needs proof that the
+// Desktop bootstrap can render it. One parameterised smoke covers each module with a
+// real route, so a shared component that breaks only under the native bootstrap is not
+// left with a Web-only guard.
+const SHARED_RENDER_SMOKE = [
+  { module: "control-geometry", route: `/projects/${pid}/export`, role: "radio" },
+  { module: "focus-style", route: `/projects/${pid}/proofreading/0`, slot: "page.header" },
+  { module: "glossary-pagination", route: `/projects/${pid}/glossary`, role: "table" },
+  { module: "glossary-types", route: `/projects/${pid}/glossary`, role: "table" },
+  { module: "overlay-notifications", route: `/projects/${pid}/glossary`, role: "table" },
+  { module: "paragraph-editor", route: `/projects/${pid}/proofreading/0`, testId: "translation-text" },
+  { module: "parsed-source", route: `/projects/${pid}/contents`, slot: "page.header" },
+  { module: "project-deletion", route: "/", role: "main" },
+  { module: "proofreading", route: `/projects/${pid}/proofreading/0`, testId: "translation-text" },
+  { module: "select", route: "/tests/select-harness.html", role: "combobox" },
+  { module: "sidebar", route: "/", slot: "sidebar" },
+  { module: "sidebar-motion", route: "/", slot: "sidebar" },
+  { module: "style-editing", route: `/projects/${pid}/style`, slot: "page.header" },
+];
+
+for (const smoke of SHARED_RENDER_SMOKE) {
+  test(`Desktop bootstrap renders the shared ${smoke.module} suite`, async ({ page }) => {
+    await desktop(page);
+    await fakeApi(page, {}, origin);
+    await page.goto(smoke.route);
+    const target = smoke.role ? page.getByRole(smoke.role).first()
+      : smoke.testId ? page.getByTestId(smoke.testId)
+        : page.locator(`[data-slot="${smoke.slot}"]`);
+    await expect(target).toBeVisible();
+    // The bootstrap must survive the render: no fallback to the Web transport.
+    await expect(page.locator('[data-runtime-state="pending"]')).toHaveCount(0);
+  });
+}

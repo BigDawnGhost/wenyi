@@ -225,7 +225,7 @@ jobs:
         run: uv run --no-sync python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
       - run: pnpm install --frozen-lockfile
       - run: node --test scripts/dev/desktop.test.mjs
-      - run: uv run --no-sync pytest -q packages/core/tests/test_release_packaging.py packages/core/tests/test_desktop_updates.py
+      - run: uv run --no-sync pytest -q -m packaging packages/core/tests/test_release_packaging.py packages/core/tests/test_desktop_updates.py
       - name: Test Windows local state and artifact paths
         if: runner.os == 'Windows'
         env:

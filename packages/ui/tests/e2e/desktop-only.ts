@@ -2,6 +2,13 @@ import { expect, test } from "@playwright/test";
 import { createTranslator } from "../../src/i18n/catalog";
 import { fakeApi, pid } from "../../sandbox/fixtures";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * The suite exists to pin the "use a computer" gate against mobile user agents and touch hints, which is a Desktop-specific rule living in shared code. Running it on the Desktop host is what catches drift in that gate.
+ */
+export const desktopHostSensitive = true;
+
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 test.beforeEach(async ({ page }) => {
   await fakeApi(page, {}, apiOrigin);

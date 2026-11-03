@@ -124,7 +124,7 @@ def test_concurrent_flushes_bill_every_increment_once(store):
     original_load = store.load_usage
     reads = 0
     read_guard = threading.Lock()
-    both_read = threading.Barrier(2, timeout=5)
+    both_read = threading.Barrier(2, timeout=1)
 
     def delayed_load():
         nonlocal reads

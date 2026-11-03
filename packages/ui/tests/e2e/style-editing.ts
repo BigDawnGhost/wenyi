@@ -2,6 +2,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { fakeApi, pid, project } from "../../sandbox/fixtures";
 import { chooseOption } from "./select-helper";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Style and synopsis draft retention across navigation and failed saves; shared form behaviour against shared fixtures. The probe recorded only `preferences` and `request`.
+ */
+export const desktopHostSensitive = false;
+
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 const dimensions = [
   ["genre", "Genre"],

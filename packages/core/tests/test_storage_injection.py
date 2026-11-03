@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,12 @@ from wenyi_core.storage.sqlite import SqliteStorage
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
 from tests.storage_fixtures import MemoryArtifacts
+
+
+@lru_cache(maxsize=None)
+def parsed_source(path: Path) -> ast.Module:
+    """Parse each module once per session instead of once per boundary assertion."""
+    return ast.parse(path.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("storage_type", [FileStorage, SqliteStorage])
@@ -131,7 +138,7 @@ def test_domain_services_have_no_direct_state_files_or_sqlite():
     for path in (core / "pipeline").glob("*.py"):
         if path.name == "runstore.py":
             continue  # The explicit CLI filesystem backend.
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+        tree = parsed_source(path)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 assert not (
@@ -144,7 +151,7 @@ def test_domain_services_have_no_direct_state_files_or_sqlite():
     for path in core.rglob("*.py"):
         imports = [
             node
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            for node in ast.walk(parsed_source(path))
             if isinstance(node, (ast.Import, ast.ImportFrom))
         ]
         for node in imports:

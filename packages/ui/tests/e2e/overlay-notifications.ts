@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi, pid } from "../../sandbox/fixtures";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Asserts toasts stay readable above an open dialog and that slow feedback ignores scroll and stray clicks; z-order and pointer handling, not transport. The probe recorded no Desktop-only service.
+ */
+export const desktopHostSensitive = false;
+
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 
 test("glossary options are selectable and failed saves stay readable over the dialog", async ({ page }, info) => {

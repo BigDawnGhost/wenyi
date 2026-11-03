@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi, pid } from "../../sandbox/fixtures";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * The Desktop host passes a nine-entry `categories` list that differs from the Web host's six. The extra categories (BabelDOC plugin, Diagnostics and feedback, About) are Desktop-only settings, so the assertions depend on the host argument.
+ */
+export const desktopHostSensitive = true;
+
 export function registerTests({
   categories = {
     en: ["General", "Models & connections", "Default models", "Workflow", "PDF parsing", "Advanced"],

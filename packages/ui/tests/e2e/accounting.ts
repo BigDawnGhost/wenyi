@@ -2,6 +2,13 @@ import { test, expect } from "@playwright/test";
 import { fakeApi, pid } from "../../sandbox/fixtures";
 import { cacheRate, tokenParts, usageRows } from "../../src/features/progress/accountingData";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * It drives `progressInterval`, `connectProgress`, `authenticateProgress` and `activity` — the services the Desktop platform implements differently from the Web one — and its live timing only ticks while `activity.isForeground()` reports a visible window.
+ */
+export const desktopHostSensitive = true;
+
 export function registerTests() {
 
 function cacheFields(read: number, ordinary: number, write = 0) {

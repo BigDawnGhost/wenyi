@@ -1,6 +1,13 @@
 import { expect, test, type Locator } from "@playwright/test";
 import { fakeApi, pid } from "../../sandbox/fixtures";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Width interpolation and reduced-motion handling for the sidebar; CSS transitions, no platform branch. The probe recorded only `preferences` and `request`.
+ */
+export const desktopHostSensitive = false;
+
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 const sidebarSelector = 'aside[data-slot="sidebar"]';
 

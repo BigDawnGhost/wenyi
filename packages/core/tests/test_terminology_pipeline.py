@@ -204,15 +204,13 @@ def test_reference_failure_is_diagnosed_and_resume_reuses_paid_analysis_and_evid
     assert all(store.read_artifact(key) == value for key, value in saved.items())
 
 
+# The field-level schema matrix lives in test_terminology_validation.py, which pins every
+# known field and every failure code at the agent boundary. This test only needs one rejected
+# response per operation to exercise resume-after-diagnostics, so it keeps a single case.
 @pytest.mark.parametrize("kind", ["evidence", "merge"])
 @pytest.mark.parametrize(
     "invalid_response,field,code",
-    [
-        ({"reading": {"PRIVATE_KEY": "PRIVATE_VALUE"}}, "reading", "string_type"),
-        ({"note": "PRIVATE_" + "x" * 4000}, "note", "string_too_long"),
-        ({"reading": "PRIVATE_" + "x" * 256}, "reading", "string_too_long"),
-        ({"gender": "PRIVATE_" + "x" * 256}, "gender", "string_too_long"),
-    ],
+    [({"reading": "PRIVATE_" + "x" * 256}, "reading", "string_too_long")],
 )
 def test_schema_failure_retains_successful_requests_and_usage_on_translation_resume(
     tmp_path, kind, invalid_response, field, code

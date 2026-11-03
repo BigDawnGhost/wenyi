@@ -207,7 +207,9 @@ jobs:
         # to the runner. Both supported interpreters verify the full workspace.
         env:
           WENYI_LOCKS_LIB: ${{ github.workspace }}/target/release/libwenyi_locks.so
-        run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration"
+        # Packaging coverage builds distributions and belongs to the release workflows,
+        # which run this marker explicitly; the regression job stays offline and fast.
+        run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration and not packaging"
       - name: Service integration tests (PostgreSQL and Redis enabled)
         # Two workers bound connections against the shared postgres service.
         # One rerun absorbs resource flake; a retried pass lands in the job

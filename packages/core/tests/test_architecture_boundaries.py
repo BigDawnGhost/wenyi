@@ -14,6 +14,7 @@ import ast
 import importlib
 import importlib.util
 import pathlib
+from functools import lru_cache
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 TRANS_NOVEL_DIR = REPO_ROOT / "packages" / "core" / "wenyi_core"
@@ -60,6 +61,12 @@ ORCHESTRATOR_IMPORT_EXEMPTIONS: dict[str, str] = {}
 
 # Agent source path (relative to agents/) -> why a pipeline import is still accepted.
 AGENT_PIPELINE_EXEMPTIONS: dict[str, str] = {}
+
+
+@lru_cache(maxsize=None)
+def _parsed(path: pathlib.Path) -> ast.Module:
+    """Parse each scanned module once; the suites below never rewrite product sources."""
+    return ast.parse(path.read_text(encoding="utf-8"))
 
 
 def _module_source(name: str) -> str:
@@ -373,7 +380,7 @@ def test_review_package_exports_core_types():
 def test_review_models_have_no_application_dependencies():
     """Shared value types must not load agents, providers or persistent stores."""
     path = TRANS_NOVEL_DIR / "review" / "models.py"
-    for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+    for node in ast.walk(_parsed(path)):
         if isinstance(node, ast.ImportFrom):
             assert node.level == 0, "review models use absolute imports only"
     for module in _imported_modules(path):

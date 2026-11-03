@@ -1,6 +1,13 @@
 import { test, expect } from "@playwright/test";
 import { fakeApi, pid, project, chapter } from "../../sandbox/fixtures";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Chapter proofreading, draft conflicts and polling while paused, all driven through shared `/review` fixtures. The probe recorded only `preferences` and `request`.
+ */
+export const desktopHostSensitive = false;
+
 export function registerTests() {
 test("proofreading is separate and refreshes saved batches before a chapter finishes", async ({
   page,

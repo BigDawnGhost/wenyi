@@ -70,6 +70,7 @@ pythonpath = ["packages/core", "packages/cli"]
 addopts = "--strict-markers --basetemp=.pytest-tmp"
 markers = [
     "integration: requires isolated PostgreSQL/Redis or opt-in Docker test services",
+    "packaging: builds distributions or inspects bundled resources; release workflows run it",
 ]
 filterwarnings = [
     "error:Using `httpx` with `starlette.testclient` is deprecated",

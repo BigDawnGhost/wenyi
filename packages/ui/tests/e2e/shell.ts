@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi, pid, project, resolveFixture } from "../../sandbox/fixtures";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * `registerShellTests` is the host contract suite: it resolves fixtures directly and asserts how the host wires `apiOrigin` into the shared shell, which is the seam the Desktop transport replaces.
+ */
+export const desktopHostSensitive = true;
+
 /** Hosts register these checks after installing their own bootstrap hooks. */
 export function registerShellTests({ apiOrigin }: { apiOrigin?: string } = {}) {
   test("shared sandbox project details preserve the metadata from the project list", () => {

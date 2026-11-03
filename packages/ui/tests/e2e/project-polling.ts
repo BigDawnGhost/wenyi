@@ -1,6 +1,13 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
 import { fakeApi, pid, project } from "../../sandbox/fixtures";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Polling cadence is exactly where the hosts diverge: the Desktop platform overrides `progressInterval` to 5s while a socket is connected and the Web platform ignores it. This matrix is what would catch a regression in that override.
+ */
+export const desktopHostSensitive = true;
+
 async function waitForProjectReconciliation(
   page: Page,
   authenticated: () => boolean,

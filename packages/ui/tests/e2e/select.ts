@@ -2,6 +2,13 @@ import { test, expect } from "@playwright/test";
 import { fakeApi } from "../../sandbox/fixtures";
 import { chooseOption } from "./select-helper";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Option list keyboard handling, dark-theme portalling and long-text wrapping. The probe recorded only `preferences` and `request`; the harness page is shared.
+ */
+export const desktopHostSensitive = false;
+
 export function registerTests() {
 test("dark OS cannot take over a light language popup", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });

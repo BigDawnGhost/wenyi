@@ -726,78 +726,52 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             }
         )
 
-    def test_standalone_assemble_does_not_wait_for_active_translation_lock(self):
-        with tempfile.TemporaryDirectory() as directory:
-            source = os.path.join(directory, "novel.txt")
-            output = os.path.join(directory, "translated.txt")
-            write_sample_txt(source)
-            config = self._config(directory)
-            store = Orchestrator(
-                config,
-                client=_MeteredFakeClient(handler=routing_handler),
-            ).run_steps(source, {"translate"})["store"]
-            completed = threading.Event()
-            errors: list[BaseException] = []
+    def test_export_alone_does_not_wait_for_active_translation_lock(self):
+        """Both export entry points must bypass a running translation's lock.
 
-            def export() -> None:
-                try:
-                    Orchestrator(config, client=FakeClient()).run_assemble(
-                        source,
-                        out_format="txt",
-                        out_path=output,
-                    )
-                except BaseException as error:  # pragma: no cover - asserted below
-                    errors.append(error)
-                finally:
-                    completed.set()
+        `run_assemble` and `run_steps({"assemble"})` reach the same export path, so the
+        scenario lives in one body and each entry point reports its own subtest.
+        """
+        for entry in ("run_assemble", "run_steps"):
+            with self.subTest(entry=entry), tempfile.TemporaryDirectory() as directory:
+                source = os.path.join(directory, "novel.txt")
+                output = os.path.join(directory, "translated.txt")
+                write_sample_txt(source)
+                config = self._config(directory)
+                store = Orchestrator(
+                    config,
+                    client=_MeteredFakeClient(handler=routing_handler),
+                ).run_steps(source, {"translate"})["store"]
+                completed = threading.Event()
+                errors: list[BaseException] = []
 
-            with store.lock():
-                worker = threading.Thread(target=export)
-                worker.start()
-                completed_while_translation_locked = completed.wait(2)
+                def export() -> None:
+                    try:
+                        orchestrator = Orchestrator(config, client=FakeClient())
+                        if entry == "run_assemble":
+                            orchestrator.run_assemble(source, out_format="txt", out_path=output)
+                        else:
+                            orchestrator.run_steps(
+                                source,
+                                {"assemble"},
+                                out_format="txt",
+                                out_path=output,
+                            )
+                    except BaseException as error:  # pragma: no cover - asserted below
+                        errors.append(error)
+                    finally:
+                        completed.set()
 
-            worker.join(timeout=2)
-            self.assertTrue(completed_while_translation_locked)
-            self.assertFalse(worker.is_alive())
-            self.assertEqual(errors, [])
-            self.assertTrue(os.path.isfile(output))
+                with store.lock():
+                    worker = threading.Thread(target=export)
+                    worker.start()
+                    completed_while_translation_locked = completed.wait(2)
 
-    def test_assemble_only_run_steps_does_not_wait_for_active_translation_lock(self):
-        with tempfile.TemporaryDirectory() as directory:
-            source = os.path.join(directory, "novel.txt")
-            output = os.path.join(directory, "translated.txt")
-            write_sample_txt(source)
-            config = self._config(directory)
-            store = Orchestrator(
-                config,
-                client=_MeteredFakeClient(handler=routing_handler),
-            ).run_steps(source, {"translate"})["store"]
-            completed = threading.Event()
-            errors: list[BaseException] = []
-
-            def export() -> None:
-                try:
-                    Orchestrator(config, client=FakeClient()).run_steps(
-                        source,
-                        {"assemble"},
-                        out_format="txt",
-                        out_path=output,
-                    )
-                except BaseException as error:  # pragma: no cover - asserted below
-                    errors.append(error)
-                finally:
-                    completed.set()
-
-            with store.lock():
-                worker = threading.Thread(target=export)
-                worker.start()
-                completed_while_translation_locked = completed.wait(2)
-
-            worker.join(timeout=2)
-            self.assertTrue(completed_while_translation_locked)
-            self.assertFalse(worker.is_alive())
-            self.assertEqual(errors, [])
-            self.assertTrue(os.path.isfile(output))
+                worker.join(timeout=2)
+                self.assertTrue(completed_while_translation_locked)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(errors, [])
+                self.assertTrue(os.path.isfile(output))
 
     def test_standalone_assemble_waits_for_another_export_writer(self):
         with tempfile.TemporaryDirectory() as directory:

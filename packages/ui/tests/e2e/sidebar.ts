@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi, pid } from "../../sandbox/fixtures";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Sidebar collapse, icon rail and preference persistence; shared layout and localStorage only. The probe recorded only `preferences` and `request`.
+ */
+export const desktopHostSensitive = false;
+
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 
 for (const chinese of [false, true]) {

@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi, pid, project } from "../../sandbox/fixtures";
 
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Confirmation and cancellation of permanent deletion. Its `window.confirm` stub models the WKWebView condition, but the probe recorded only `preferences` and `request`, so the Desktop host supplies no extra capability here.
+ */
+export const desktopHostSensitive = false;
+
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 for (const locale of ["en", "zh-CN"]) {
   test(`permanent project deletion requires confirmation (${locale})`, async ({ page }) => {
