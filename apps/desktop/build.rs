@@ -1,4 +1,14 @@
+/// The GitHub repository the updater reads releases from.
+///
+/// A fork that publishes its own releases has to be able to point the updater at
+/// itself without editing source, because the value is checked in two places and
+/// a rebuild that updated only one of them would trust a URL it never wrote.
+/// The default is this project: an ordinary build, a test and a development run
+/// are unchanged by the variable being unset.
+const DEFAULT_UPDATE_REPO: &str = "BigDawnGhost/wenyi";
+
 fn main() {
+    println!("cargo:rerun-if-env-changed=WENYI_UPDATE_REPO");
     println!("cargo:rerun-if-env-changed=WENYI_DESKTOP_VERSION");
     println!("cargo:rerun-if-env-changed=WENYI_BUILD_TAG");
     println!("cargo:rerun-if-env-changed=WENYI_UPDATER_PUBLIC_KEY");
@@ -65,6 +75,20 @@ fn main() {
     );
     println!("cargo:rustc-env=WENYI_UPDATER_PUBLIC_KEY={public_key}");
     println!("cargo:rustc-env=WENYI_DESKTOP_VERSION={version}");
+    // Validated here rather than at the call site: the value becomes part of a
+    // URL prefix that `trusted_artifact` compares, so a typo would not produce a
+    // visible failure -- it would produce an updater that silently rejects every
+    // release the same build published.
+    let repo = std::env::var("WENYI_UPDATE_REPO")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| DEFAULT_UPDATE_REPO.to_owned());
+    assert!(
+        is_repository_slug(&repo),
+        "WENYI_UPDATE_REPO must be \"owner/repository\", not {repo:?}"
+    );
+    println!("cargo:rustc-env=WENYI_UPDATE_REPO={repo}");
     config["version"] = version.into();
     let config = config.to_string();
     std::env::set_var("TAURI_CONFIG", &config);
@@ -74,6 +98,24 @@ fn main() {
             .windows_attributes(tauri_build::WindowsAttributes::new().app_manifest(APP_MANIFEST)),
     )
     .expect("failed to run tauri-build");
+}
+
+/// Whether a value names one GitHub repository and nothing else.
+///
+/// The shape is deliberately narrow. The value is spliced into a URL and into a
+/// prefix compared against the paths of download links, so an extra segment, a
+/// scheme or a trailing slash would change which URLs are trusted rather than
+/// merely failing to parse.
+fn is_repository_slug(value: &str) -> bool {
+    let Some((owner, repository)) = value.split_once('/') else {
+        return false;
+    };
+    !owner.is_empty()
+        && !repository.is_empty()
+        && !repository.contains('/')
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'/'))
 }
 
 /// The Windows application manifest embedded in the executable.

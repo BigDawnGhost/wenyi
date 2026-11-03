@@ -133,6 +133,14 @@ _PROJECT_SLUG_LIMIT = 64
 PROJECT_MARKER = "project.json"
 #: Schema of that marker.
 PROJECT_SCHEMA_VERSION = 1
+#: Written into a project directory the moment its owner asks to delete it.
+#:
+#: The catalog records the same state, but the catalog is exactly what a repair
+#: rebuilds: a deletion interrupted between the two steps would otherwise leave a
+#: directory a later scan adopts again, restoring a project the person asked to
+#: remove. The file travels with the directory, so the intent survives the loss
+#: the scan exists to repair.
+PROJECT_DELETING = ".deleting"
 
 
 def catalog(workspace: Path) -> Path:
@@ -283,6 +291,11 @@ def project_marker(workspace: Path, pid: str) -> Path:
 def marker_in(directory: Path) -> Path:
     """The self-describing marker of a project directory that is already resolved."""
     return directory / PROJECT_MARKER
+
+
+def deleting_marker_in(directory: Path) -> Path:
+    """The deletion sentinel of a project directory that is already resolved."""
+    return directory / PROJECT_DELETING
 
 
 def plugins(workspace: Path, runtime: Path | None = None) -> Path:

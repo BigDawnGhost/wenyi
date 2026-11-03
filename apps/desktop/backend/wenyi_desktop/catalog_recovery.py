@@ -54,6 +54,9 @@ PATH_INVALID = "project_path_invalid"
 ALREADY_REGISTERED = "project_already_registered"
 DESTINATION_BUSY = "project_destination_exists"
 MOVE_FAILED = "project_move_failed"
+#: The directory carries a deletion sentinel, so it describes a project that was
+#: on its way out when the catalog was lost. Reported rather than adopted.
+PROJECT_DELETING = "project_deletion_incomplete"
 
 #: Job state to the project state that admission recorded beside it. A job that
 #: is still queued or running is the only evidence of the state a lost catalog
@@ -338,15 +341,21 @@ def _project_directories(root: Path) -> list[Path]:
     return [entry for entry in entries if not entry.is_symlink() and entry.is_dir()]
 
 
-def recover_empty_catalog(backend: LocalBackend) -> None:
-    """Called only during Windows startup, after acquiring the workspace process lock."""
+def recover_empty_catalog(backend: LocalBackend) -> RecoveryReport:
+    """Called only during Windows startup, after acquiring the workspace process lock.
+
+    Returns what the scan decided, so startup can tell the user that some
+    folders were not adopted instead of leaving them silently absent from a
+    list that looks complete.
+    """
     with backend.transaction(write=False) as connection:
         if connection.execute("SELECT 1 FROM projects LIMIT 1").fetchone():
-            return
+            return RecoveryReport()
     saved = backend.load_settings()
     defaults = Config.from_dict(saved["config"]) if saved else backend.defaults()
     projects: list[tuple[str, dict]] = []
     seen: set[str] = set()
+    skipped: list[tuple[Path, str]] = []
     for root in candidate_roots(backend):
         if not root.is_dir():
             continue
@@ -354,25 +363,87 @@ def recover_empty_catalog(backend: LocalBackend) -> None:
             pid = project_id(directory)
             if not pid or pid in seen:
                 continue
+            if paths.deleting_marker_in(directory).is_file():
+                # The person asked for this project to be deleted and the
+                # deletion was interrupted. Adopting it again would undo the
+                # request, and finishing the deletion here would run a
+                # recursive removal behind a startup the user did not ask for.
+                # It is reported instead, and a later explicit removal finishes
+                # it: the sentinel and the directory are left exactly as found.
+                log.info("Not restoring %s: deletion was already requested", directory)
+                skipped.append((directory, PROJECT_DELETING))
+                continue
             try:
                 project, reason = scan_project(directory, strict=True, defaults=defaults)
             except (OSError, sqlite3.Error, ValueError):
                 log.warning("Skipping unreadable Desktop project %s", directory.name, exc_info=True)
+                skipped.append((directory, STATE_UNREADABLE))
                 continue
             if project is None:
                 log.info("Not restoring %s: %s", directory, reason)
+                skipped.append((directory, reason or METADATA_INVALID))
                 continue
             seen.add(pid)
             projects.append((pid, project))
     if not projects:
-        return
+        return RecoveryReport(skipped=skipped)
     # Hashing and state reads happen outside the short catalog transaction.
     # Commit the complete repair together so a crash can safely retry discovery.
     with backend.transaction() as connection:
         if connection.execute("SELECT 1 FROM projects LIMIT 1").fetchone():
-            return
+            # Another instance completed the repair while this one was scanning.
+            return RecoveryReport()
         for pid, project in projects:
             backend.create_project(**project, strategy={}, project_id=pid, connection=connection)
+    return RecoveryReport(recovered=len(projects), skipped=skipped)
+
+
+class RecoveryReport:
+    """What an automatic catalog repair decided, for the person who lost a catalog.
+
+    A repair that silently adopts three folders out of five is indistinguishable
+    from one that found three, and the difference is the whole question a user
+    asks: "where did my project go?". The skipped folders and their reasons are
+    therefore carried out of the scan, not only written to a log the user cannot
+    see. Reasons are the same codes the import refusal uses, so a startup notice
+    and a refused folder speak one vocabulary.
+    """
+
+    def __init__(
+        self,
+        recovered: int = 0,
+        skipped: list[tuple[Path, str]] | None = None,
+    ) -> None:
+        self.recovered = recovered
+        self.skipped = skipped or []
+
+    def __bool__(self) -> bool:
+        return bool(self.recovered or self.skipped)
+
+    def describe(self) -> str:
+        """The sentence a person reads: what came back, and what did not."""
+        parts = [f"Recovered {self.recovered} project(s)."] if self.recovered else []
+        if self.skipped:
+            parts.append(f"Skipped {len(self.skipped)} folder(s):")
+            parts.extend(
+                f"\n- {directory.name}: {_describe(reason)}" for directory, reason in self.skipped
+            )
+        return " ".join(parts).replace(": \n", ":\n")
+
+    def as_dict(self) -> dict:
+        """The same answer for a caller that renders it rather than prints it."""
+        return {
+            "recovered": self.recovered,
+            "skipped": [
+                {
+                    "path": str(directory),
+                    "name": directory.name,
+                    "reason": reason,
+                    "message": _describe(reason),
+                }
+                for directory, reason in self.skipped
+            ],
+        }
 
 
 class ImportRefused(Exception):

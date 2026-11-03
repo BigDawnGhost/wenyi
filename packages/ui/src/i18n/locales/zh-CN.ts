@@ -128,6 +128,8 @@ const zhCN = {
   "dashboard.couldNotImportProject": "无法导入该文件夹",
   "dashboard.sourceChangedAfterImport": "原文在上次运行后已变更，下次将重新解析。",
   "dashboard.projectUnavailable": "找不到此项目的文件夹",
+  "dashboard.recoveredProjects": "已修复项目列表：恢复了 {count} 个项目",
+  "dashboard.skippedFolders": "有 {count} 个文件夹未恢复：",
   "events.project": "项目",
   "events.preparation": "准备",
   "events.translation": "翻译",

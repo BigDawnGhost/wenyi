@@ -623,6 +623,38 @@ mod tests {
     }
 
     #[test]
+    fn both_sides_resolve_the_same_workspace_without_local_app_data() {
+        // `%LOCALAPPDATA%` is absent in a service, a scheduled task and an
+        // elevated shell. Reading the dictionary raised KeyError there, which
+        // is a start that fails before anything can explain why -- and the two
+        // sides have to fail or succeed together, on the same directory.
+        let output = std::process::Command::new(python())
+            .env_remove("LOCALAPPDATA")
+            .args([
+                "-c",
+                concat!(
+                    "import json; ",
+                    "from wenyi_desktop.desktop import default_workspace; ",
+                    "print(json.dumps(str(default_workspace())))"
+                ),
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let existing: String = serde_json::from_slice(&output.stdout).unwrap();
+        // Both sides fall back to the same known folder, so this is the value
+        // the native parent would have injected had the variable been set.
+        assert_eq!(
+            crate::paths::default_workspace().unwrap(),
+            PathBuf::from(existing)
+        );
+    }
+
+    #[test]
     fn admitted_workspace_is_the_directory_python_opens() {
         let directory = Workspace::new();
         let resolved = workspace(Some(directory.0.join("Wenyi 工作区 # 100%"))).unwrap();

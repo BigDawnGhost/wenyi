@@ -2,6 +2,7 @@
   "bundle": {
     "targets": ["nsis"],
     "windows": {
+      "allowDowngrades": false,
       "nsis": {
         "installMode": "currentUser",
         "installerHooks": "installer.nsh"

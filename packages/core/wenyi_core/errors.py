@@ -41,3 +41,19 @@ class ArtifactCorrupt(WenyiError):
     """
 
     code = "artifact_corrupt"
+
+
+class SchemaTooNew(WenyiError):
+    """A database was written by a build that knows a later schema.
+
+    Opening it read-only would be fine; opening it the way this build opens
+    every database is not. The build defines its schema with "create if not
+    exists", so a newer table stays and a newer column is silently absent from
+    the rows this build writes. Refusing the open is what keeps a downgrade
+    from leaving a store that neither version can read.
+
+    Callers must not treat this as corruption: nothing is damaged, and the fix
+    is to run the version that created the file.
+    """
+
+    code = "database_schema_too_new"

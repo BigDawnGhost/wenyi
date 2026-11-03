@@ -235,6 +235,17 @@ def test_the_installer_mode_is_declared_and_stays_current_user():
     assert nsis["installMode"] == "currentUser"
 
 
+def test_the_windows_bundle_refuses_to_install_an_older_version():
+    # tauri-bundler defaults allowDowngrades to true, so a setup file carried to
+    # a machine running a newer build silently replaces it. The project database
+    # records its schema version and refuses to be opened by a build that only
+    # knows an older one, so a downgrade would leave a working installation with
+    # projects it cannot read. The refusal belongs at the installer, which is the
+    # only place that can stop the replacement before it happens.
+    windows = _windows_bundle()["bundle"]["windows"]
+    assert windows["allowDowngrades"] is False
+
+
 def test_the_nsis_hook_refuses_the_install_location_before_copying():
     # The four refusals of the isolation design are only refusals if they run
     # before the first file is written. NSIS_HOOK_PREINSTALL is inserted ahead of

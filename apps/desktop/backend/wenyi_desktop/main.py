@@ -179,6 +179,7 @@ def create_app(
         external_credentials,
         library_location,
         project_import,
+        recovery,
     )
 
     # The sidecar owns its own stderr; stdout carries the parent/child protocol.
@@ -227,6 +228,7 @@ def create_app(
     app.include_router(babeldoc_plugin.router)
     app.include_router(project_import.router)
     app.include_router(library_location.router)
+    app.include_router(recovery.router)
     app.state.babeldoc_plugin = services.babeldoc
     app.state.update_guard = UpdateGuard(services)
     app.add_middleware(

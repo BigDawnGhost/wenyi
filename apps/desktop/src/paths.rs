@@ -575,11 +575,13 @@ impl LayoutCheck {
 /// Platform base the workspace and its log fallback derive from.
 ///
 /// The chain is kept byte-for-byte as it was before this module existed, so the
-/// paths an installed application uses do not move.
+/// paths an installed application uses do not move. The environment variable
+/// still comes first for that reason: an existing installation, and every
+/// workspace a person has already created beside it, is named by it.
 fn data_base() -> Result<PathBuf, Error> {
     #[cfg(windows)]
     {
-        env_path("LOCALAPPDATA").ok_or(Error::Base)
+        env_path("LOCALAPPDATA").or_else(local_app_data).ok_or(Error::Base)
     }
     #[cfg(target_os = "macos")]
     {
@@ -602,7 +604,7 @@ fn data_base() -> Result<PathBuf, Error> {
 fn log_base() -> Option<PathBuf> {
     #[cfg(windows)]
     {
-        env_path("LOCALAPPDATA")
+        env_path("LOCALAPPDATA").or_else(local_app_data)
     }
     #[cfg(target_os = "macos")]
     {
@@ -631,6 +633,58 @@ fn env_path(name: &str) -> Option<PathBuf> {
     std::env::var_os(name).map(PathBuf::from)
 }
 
+/// The local application data directory as the shell knows it.
+///
+/// `%LOCALAPPDATA%` is a convenience variable, not the definition: a process
+/// started without the user environment -- a scheduled task, a service, a
+/// shortcut that clears its block, an installer run from an elevated shell --
+/// inherits no value at all. The known folder is the definition, and it answers
+/// in exactly those processes.
+///
+/// The fallback is deliberately second. Reading the variable first keeps every
+/// existing workspace where it is, since a variable a person set on purpose (a
+/// roaming-profile test, a redirection to another drive) would otherwise be
+/// overruled by the shell's answer and the projects would appear to vanish.
+#[cfg(windows)]
+fn local_app_data() -> Option<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{SHGetKnownFolderPath, FOLDERID_LocalAppData};
+
+    let mut raw: *mut u16 = std::ptr::null_mut();
+    // SAFETY: `raw` is a valid out-pointer for a `PWSTR`. The call either
+    // leaves it null or fills it with an allocation this function owns and
+    // frees below, which is the contract `SHGetKnownFolderPath` documents.
+    let status = unsafe {
+        SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut raw)
+    };
+    if status < 0 || raw.is_null() {
+        if !raw.is_null() {
+            // SAFETY: non-null means the shell allocated the string.
+            unsafe { CoTaskMemFree(raw.cast()) };
+        }
+        return None;
+    }
+    let length = (0..).take_while(|offset| *offset < 32768).find(|offset| {
+        // SAFETY: the allocation is NUL-terminated by contract; the bound above
+        // keeps a non-conforming value from reading without end.
+        unsafe { *raw.add(*offset) == 0 }
+    });
+    let Some(length) = length else {
+        // SAFETY: non-null means the shell allocated the string.
+        unsafe { CoTaskMemFree(raw.cast()) };
+        return None;
+    };
+    // SAFETY: `length` was just measured inside the same allocation.
+    let value = unsafe { std::slice::from_raw_parts(raw, length) };
+    let path = PathBuf::from(OsString::from_wide(value));
+    // SAFETY: non-null means the shell allocated the string, and it is no longer
+    // read here: `path` has copied the contents.
+    unsafe { CoTaskMemFree(raw.cast()) };
+    path.is_absolute().then_some(path)
+}
+
 /// An override is honoured only when it is a real, absolute path. A blank value
 /// means "not set" so that no configuration can silently select the working
 /// directory.
@@ -646,6 +700,22 @@ fn override_path(name: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(windows)]
+    fn the_known_folder_answers_where_the_variable_does() {
+        // The fallback only has to be equivalent. If it named a different
+        // directory, a process without the environment would open a second,
+        // empty workspace and every project would look deleted.
+        let known = local_app_data().expect("the shell names a local app data folder");
+        assert!(known.is_absolute());
+        assert!(known.is_dir());
+        if let Some(configured) = env_path("LOCALAPPDATA") {
+            // Compared case-insensitively: Windows path identity does not
+            // depend on the spelling of its components.
+            assert_eq!(known.to_string_lossy().to_lowercase(), configured.to_string_lossy().to_lowercase());
+        }
+    }
 
     #[test]
     fn the_workspace_name_is_spelled_once() {

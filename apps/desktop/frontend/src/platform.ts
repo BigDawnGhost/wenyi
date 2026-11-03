@@ -12,7 +12,7 @@ import {
   useCredentialDraftsPending,
 } from "./credentials";
 import { activity } from "./activity";
-import { library } from "./library";
+import { library, recoveryReport } from "./library";
 import { DesktopDiagnostics, DiagnosticExportButton } from "./DesktopDiagnostics";
 import { reportDiagnostic } from "./diagnostics";
 import { translateDesktop } from "./i18n";
@@ -72,6 +72,7 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
     progressKeys: (kind) => progressKeys[kind] || ["workflow"],
     bindSourceDrop,
     capabilities: {
+      recoveryReport,
       diagnostics: {
         label: (locale) => translateDesktop(locale, "diagnostics.title"),
         Section: DesktopDiagnostics,

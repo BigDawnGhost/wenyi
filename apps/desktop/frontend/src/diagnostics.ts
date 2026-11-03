@@ -12,6 +12,10 @@ export type DiagnosticStatus = {
   version: string;
   directory: string | null;
   bytes: number;
+  /** Files in the log folder this application did not write. They count toward
+   * the storage limit but are never removed by rotation or by Clear. */
+  foreignFiles: number;
+  foreignBytes: number;
   degraded: boolean;
   dropped: number;
   detailSeconds: number;

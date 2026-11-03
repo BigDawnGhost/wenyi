@@ -117,6 +117,19 @@ The default Desktop workspace is:
 | macOS | `~/Library/Application Support/Wenyi Desktop` |
 | Windows | `%LOCALAPPDATA%/Wenyi Desktop` |
 
+**Keep the workspace on a local disk.** A folder on a network share, a mapped
+drive or a cloud-synced directory (OneDrive, Dropbox, iCloud Drive, Google
+Drive) is not a supported workspace location. Three things break there and none
+of them is detectable in advance: SQLite locking is unreliable over SMB, so two
+writes that this application serializes locally can interleave; OneDrive's
+Files On-Demand leaves placeholders that read as errors or block a save; and a
+sync client copies the database and its write-ahead log at different moments,
+which produces a backup that opens and is missing data. A workspace that is
+already on such a folder keeps working until one of those happens. Move it by
+closing Desktop, copying the whole folder (including `*.sqlite3-wal`), and
+starting Desktop with `--data-dir <new path>`. This version does not detect
+these folders; it only documents them.
+
 On Windows, the installer copies the workspace into a timestamped folder under
 `%USERPROFILE%/Wenyi/backup/<version>-<timestamp>/` before it replaces anything.
 The copy is verified against a `MANIFEST.json` of every file's size and SHA-256,
@@ -175,10 +188,25 @@ confirmation page removes them; leaving it clear removes only the application's
 own files. Updating is never treated as an uninstall, so an update never removes
 project data.
 
+The installer also refuses to install an **older** version over a newer one. Each
+project database records the schema version that wrote it, and an older build
+refuses to open a database carrying a number it does not know rather than
+writing rows the newer build would then read as complete. The two halves are one
+rule: the schema guard is what makes the version check honest, and the version
+check is what keeps a user from reaching the guard at all. Reinstalling the same
+version, and installing a newer one, are both unaffected.
+
 The workspace contains a SQLite catalog, per-project SQLite state, uploaded
 originals, parse caches, and generated exports. Keep the entire workspace when
 backing up by hand; stop Desktop first. Do not copy only a live SQLite database
 while omitting its WAL.
+
+Each project database records its schema version in SQLite's own header
+(`PRAGMA user_version`). Opening a project with a version this build does not
+know is refused with a message naming the newer build, and the project stays in
+the list marked unavailable so it is not silently dropped. A database written
+before this version existed reports 0, is stamped with the current number, and
+is otherwise untouched — no data is rewritten by the upgrade.
 
 Job-status polling reads committed catalog snapshots without reserving a write
 lock, so an active catalog writer does not block status lookups.
@@ -196,7 +224,15 @@ If file cleanup fails, Desktop reports an error and retains the catalog entry so
 you can close files using the project and retry; some files may already be removed.
 Historical leftover directories are not bulk-cleaned.
 
-On Windows only, startup silently repairs an empty project catalog from readable
+Deletion runs in three steps so that an interruption at any point is recoverable:
+the project is first marked as being deleted, then its files are removed, then its
+catalog entry is deleted. The mark is what makes the difference. Before it, a crash
+leaves a whole project; after it, the project is no longer listed or openable, and
+a retry finishes only what is left. A directory that carries the mark is also
+skipped by the startup repair, so a lost catalog cannot turn an interrupted
+deletion back into a project.
+
+On Windows only, startup repairs an empty project catalog from readable
 `projects/<id>/state.sqlite3` metadata and matching uploaded originals. A nonempty
 catalog is left untouched; ambiguous, mismatched, or unreadable projects are skipped.
 Repair does not rewrite translations, start tasks, or add deletion markers. Lost
@@ -205,6 +241,14 @@ cannot be fully reconstructed: settings fall back to the current global configur
 Check settings before starting translation again; saved checkpoints are reused.
 Old versions retained files after project deletion, so such legacy directories may
 also reappear when repairing an empty catalog.
+
+A repair that recovered something also says so: how many projects came back and,
+for each folder it did not adopt, the same sentence the import dialog would have
+shown for that folder — no `state.sqlite3`, unreadable metadata, no original, or
+more than one possible original. The report is written to the diagnostic log as
+counts only, so no path or title is recorded. Without it a repaired catalog is
+indistinguishable from one that was always empty, which is the question a user
+asks first: where did my project go?
 
 The native launcher and Python backend normalize Windows workspace paths so the
 `\\?\` prefix added during single-instance admission cannot prevent catalog repair
@@ -437,8 +481,16 @@ an older signed artifact cannot be relabeled as a newer release.
 
 ### Maintainer signing setup
 
-No update service is required. The native updater uses the fixed HTTPS endpoint
-`https://github.com/BigDawnGhost/wenyi/releases/latest/download/latest.json`.
+No update service is required. The native updater reads
+`https://github.com/<repository>/releases/latest/download/latest.json`, and the
+repository is a build-time constant: `WENYI_UPDATE_REPO` (default
+`BigDawnGhost/wenyi`) is read by `apps/desktop/build.rs`, which rejects a value
+that is not exactly one `owner/repository`. The release workflow sets it to
+`github.repository`, so a fork that reuses the workflow publishes installers
+that update from itself. The same value decides which download links are
+trusted, so the manifest a build fetches and the artifacts it accepts always
+come from one repository.
+
 Do not generate keys in this repository. From the repository root, generate a
 Tauri signer key into a protected location **outside the checkout**:
 
@@ -553,7 +605,7 @@ Restart Desktop after changing its inherited environment externally.
 - Completed history entries offer **Save as…**. Saving streams through a temporary file in the destination directory and publishes only after completion. Existing files require confirmation; transfer failures leave the existing destination intact.
 - Export history keeps the latest five completed entries. An older entry disappears from history immediately; already-open saves remain readable. File downloads defer deletion until their last stream closes, including on cancellation or disconnect; an HTML ZIP uses its own temporary archive. Failed cleanup remains retryable on later export publication or restart.
 - HTML is explicitly saved as **HTML + assets (ZIP)**, with a `.html.zip` filename. Extract the archive before opening the HTML so relative image/media links continue to work. Only that published HTML and its owned assets are included.
-- Desktop refuses internal workspace destinations and source-file identities/paths recorded during the current app session. Source protection is bounded and kept in memory without retaining open source files. Do not replace a destination from another application while saving: an overwrite is an atomic file replacement, not a cross-process compare-and-swap. Web continues to use browser downloads.
+- Desktop refuses internal workspace destinations and source-file identities/paths recorded during the current app session. Source protection is bounded and kept in memory without retaining open source files. Do not replace a destination from another application while saving: an overwrite is an atomic file replacement on one volume when nothing else holds the target, not a cross-process compare-and-swap. The staged temporary file is complete before publication, but replacing an existing file is a plain rename: a process that opens, replaces or locks that destination during the save is not detected afterwards, and on Windows the rename fails rather than retrying if the target is held. Web continues to use browser downloads.
 - **Import existing project** on the project list adopts a project folder that already exists — one this installation moved, or one copied here from another computer. The folder is checked before anything changes; a folder without `state.sqlite3`, one whose saved metadata is unreadable, or one with no single recognizable original is refused, and the list names which of those it was. An accepted folder is moved into the workspace and added to the list with the state its saved chapters imply.
 - A folder whose original file no longer matches the recorded checksum is still accepted when you pick it yourself, because you chose that folder on purpose. Desktop marks it **source changed** and parses the file again on the next run; the automatic startup repair stays strict and skips such a folder instead.
 - A project whose folder is not reachable — a removed drive, or an unmounted network share — stays in the list, greyed out with no way to open it, so the missing location is visible instead of the project silently failing when selected. Removing it still works.
@@ -577,7 +629,9 @@ their localized retry guidance rather than displaying raw exceptions.
 
 Normal capture is INFO and above. **Enable detailed logging for 30 minutes** adds safe request/attempt/usage observations, never content; it expires automatically, can be stopped early and resets on restart. Reproduce the issue while it is enabled, then export. Logging settings do not change translation configuration or caches.
 
-The native process is the only file writer. Logs normally live in `<workspace>/diagnostics/`, rotate at 10 MiB or 24 hours, and have a 200 MiB total limit; files last written over 7 days ago are removed. Export additionally filters individual records to the selected time range. If that location is unavailable, Desktop tries a workspace-scoped folder under `Wenyi Desktop Logs` in the platform state/log location (Linux: `$XDG_STATE_HOME` or `~/.local/state`; macOS: `~/Library/Logs`; Windows: `%LOCALAPPDATA%`). The settings page shows the actual folder, stored size and dropped-record count. Both locations failing leaves only a bounded memory buffer; export before exiting. A previous active-session marker is reported as an unclean exit, not proof of a crash.
+The native process is the only file writer. Logs normally live in `<workspace>/diagnostics/`, rotate at 10 MiB or 24 hours, and have a 200 MiB total limit; files last written over 7 days ago are removed, and a file written in the last minute is left alone so an export that is reading it does not lose half a report. Export additionally filters individual records to the selected time range. If that location is unavailable, Desktop tries a workspace-scoped folder under `Wenyi Desktop Logs` in the platform state/log location (Linux: `$XDG_STATE_HOME` or `~/.local/state`; macOS: `~/Library/Logs`; Windows: `%LOCALAPPDATA%`). Both locations failing leaves only a bounded memory buffer; export before exiting. A previous active-session marker is reported as an unclean exit, not proof of a crash.
+
+The log folder is an ordinary directory, so a file that another program puts in it is counted toward the 200 MiB limit — otherwise the limit would describe only this application's own output while the disk filled. Those files are never read into a report, never removed by retention and never removed by **Clear application logs**. The settings page reports them separately ("N file(s) in this folder were written by another program, M MiB") and says that Desktop will not delete them, so a large figure can be traced to the right place.
 
 **Open log folder** opens only the managed location. **Clear application logs** asks for native confirmation and removes only owned log files, not projects, translations, checkpoints or usage. Clearing and export cannot run simultaneously; logging can continue. Logs are best-effort and not a backup or a second usage ledger. CLI and Web logging are unchanged.
 

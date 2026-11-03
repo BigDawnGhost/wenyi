@@ -1,4 +1,5 @@
 import type { components } from "@wenyi/shared-schema";
+import type { desktopComponents } from "@wenyi/shared-schema";
 import { platform, type ProjectSource } from "../platform";
 import type {
   Output, ProjectInput, ExportOptions, Project, ProjectDetail, ChapterSummary,
@@ -8,6 +9,9 @@ import type {
   ProjectConfig, ReviewRun, UploadPreview, AnalysisPayload,
   GlossaryExportFormat,
 } from "./types";
+
+/** The Desktop-only startup repair notice; Web has no catalog to repair. */
+export type RecoveryAnswer = desktopComponents["schemas"]["RecoveryAnswer"];
 
 const request = <T>(path: string, init?: RequestInit) => platform().request<T>(path, init);
 const download = (path: string, fallback: string) => platform().download(path, fallback);
@@ -95,6 +99,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
+  lastRecovery: () => request<RecoveryAnswer>("/desktop/recovery/last"),
   admitProjectLocation: (path: string) =>
     request<{ path: string }>("/desktop/library/admit", {
       method: "POST",

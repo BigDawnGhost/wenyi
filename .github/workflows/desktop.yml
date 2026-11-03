@@ -280,6 +280,10 @@ jobs:
           WENYI_UPDATER_PUBLIC_KEY: ${{ steps.updater.outputs.signed == 'true' && vars.WENYI_UPDATER_PUBLIC_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ steps.updater.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ steps.updater.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          # The repository this build reads its own releases from. Set here
+          # rather than left to the compiled default so a fork that reuses this
+          # workflow publishes installers that update from its own repository.
+          WENYI_UPDATE_REPO: ${{ github.repository }}
       - name: Verify native Windows GUI subsystem
         if: runner.os == 'Windows' && matrix.tier == 'full'
         run: uv run --no-project python scripts/dev/desktop_pe.py apps/desktop/target/release/wenyi-desktop.exe

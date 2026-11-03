@@ -188,6 +188,18 @@ async def run_workflow_sync(operation: Callable[[], None]) -> None:
 class LocalRuntime:
     """Supervise independent workflows and bounded exports until their writers exit."""
 
+    #: What the last startup repair decided, or None when it ran nothing.
+    #:
+    #: Kept on the runtime rather than in the catalog because it describes one
+    #: launch: the next start re-scans and reaches its own conclusion, and a
+    #: leftover note about a repair that has since been acted on would be wrong.
+    _recovery_report: dict | None = None
+
+    @property
+    def recovery_report(self) -> dict | None:
+        """The catalog repair this launch performed, or None when it ran none."""
+        return self._recovery_report
+
     def __init__(
         self, backend: LocalBackend, context: BackendContext, *, diagnostics: Reporter | None = None
     ):
@@ -377,7 +389,17 @@ class LocalRuntime:
         if startup and platform == "win32":
             from .catalog_recovery import recover_empty_catalog
 
-            recover_empty_catalog(self.backend)
+            report = recover_empty_catalog(self.backend)
+            if report:
+                # A repaired catalog is a user-visible event: some projects came
+                # back and some folders did not, and neither is something the
+                # person can discover by looking at a list that simply shows
+                # fewer projects than they remember.
+                log.info("Desktop catalog repair: %s", report.describe())
+                self._recovery_report = report.as_dict()
+                from .diagnostics import emit
+
+                emit("catalog_recovered", count=report.recovered, line=len(report.skipped))
         now = datetime.now(timezone.utc)
         for job in self.backend.all_jobs():
             if job["status"] not in {"queued", "running"} or job["run_id"] in self._submitted:

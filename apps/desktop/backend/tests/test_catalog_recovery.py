@@ -163,6 +163,77 @@ def test_permanent_deletion_does_not_return_after_windows_restart(tmp_path, wind
         assert client.get("/projects").json() == []
 
 
+def test_a_directory_marked_for_deletion_is_not_restored_by_repair(tmp_path, windows):
+    # The sentinel is the whole reason the deletion is three steps. A crash
+    # between removing the files and removing the row leaves a directory with
+    # no row, which is exactly what the repair adopts. Restoring a project the
+    # person asked to delete would undo the request, so the marker wins.
+    workspace = tmp_path / "workspace"
+    directory, source, _ = orphan(workspace)
+    (directory / paths.PROJECT_DELETING).write_text("deleting\n", encoding="utf-8")
+    app = create_app(workspace)
+    with TestClient(app) as client:
+        assert client.get("/projects").json() == []
+        # The directory is reported rather than silently ignored, and left in
+        # place: finishing the removal is the user's call, not a startup effect.
+        answer = client.get("/desktop/recovery/last").json()
+    assert directory.exists() and source.exists()
+    assert answer["recovered"] == 0
+    assert [entry["reason"] for entry in answer["skipped"]] == ["project_deletion_incomplete"]
+
+
+def test_the_report_is_reachable_from_the_interface(tmp_path, windows):
+    # The scan runs before any request exists, so its result is asked for rather
+    # than pushed. Without the route the report would only reach the log file,
+    # which is exactly where someone asking "where did my project go?" does not
+    # look.
+    workspace = tmp_path / "workspace"
+    orphan(workspace)
+    empty = workspace / "projects" / ("c" * 16)
+    empty.mkdir(parents=True)
+    with TestClient(create_app(workspace)) as client:
+        answer = client.get("/desktop/recovery/last").json()
+    assert answer["recovered"] == 1
+    assert [entry["reason"] for entry in answer["skipped"]] == ["project_state_missing"]
+    assert "no state.sqlite3" in answer["skipped"][0]["message"]
+    # The folder is named for the person who has to find it; the reason is the
+    # same code the import refusal uses.
+    assert answer["skipped"][0]["name"] == empty.name
+
+
+def test_a_catalog_that_needed_no_repair_reports_nothing(tmp_path, windows):
+    # An ordinary launch must not raise a notice: a report saying "0 restored"
+    # on every start is noise that trains people to ignore the real one.
+    workspace = tmp_path / "workspace"
+    with TestClient(create_app(workspace)) as client:
+        assert client.get("/desktop/recovery/last").json() == {
+            "recovered": 0,
+            "skipped": [],
+        }
+
+
+def test_repair_reports_how_many_folders_it_skipped(tmp_path, windows):
+    # "Where did my project go?" is the question a repaired catalog raises, and
+    # a list that simply shows fewer projects cannot answer it. The report is
+    # what distinguishes "nothing was there" from "five folders were refused".
+    from wenyi_desktop.catalog_recovery import recover_empty_catalog
+
+    workspace = tmp_path / "workspace"
+    orphan(workspace)
+    empty = workspace / "projects" / ("b" * 16)
+    empty.mkdir(parents=True)
+    context = create_context(workspace)
+    report = recover_empty_catalog(context.repository)
+    assert report.recovered == 1
+    assert [reason for _, reason in report.skipped] == ["project_state_missing"]
+    assert "Recovered 1 project(s)" in report.describe()
+    assert "Skipped 1 folder(s)" in report.describe()
+    assert "no state.sqlite3" in report.describe()
+    described = report.as_dict()
+    assert described["recovered"] == 1
+    assert described["skipped"][0]["reason"] == "project_state_missing"
+
+
 def test_failed_file_cleanup_reports_error_and_keeps_catalog_for_retry(
     tmp_path, windows, monkeypatch
 ):

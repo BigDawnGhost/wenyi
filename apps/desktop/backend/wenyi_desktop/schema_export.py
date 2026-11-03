@@ -22,6 +22,7 @@ def build_schema() -> dict:
         external_credentials,
         library_location,
         project_import,
+        recovery,
     )
     from .updates import router as updates_router
 
@@ -35,6 +36,7 @@ def build_schema() -> dict:
         babeldoc_plugin,
         project_import,
         library_location,
+        recovery,
     ):
         app.include_router(module.router)
     app.include_router(updates_router)

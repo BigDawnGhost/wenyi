@@ -13,8 +13,45 @@ import { ErrorNotice } from "../../components/ui/data";
 import { Dialog } from "../../components/ui/misc";
 import { api, isProjectBusy } from "../../api/client";
 import type { Project } from "../../api/types";
-import { platform } from "../../platform";
+import { platform, type RecoveryReport } from "../../platform";
 import { FolderPlus, LoaderCircle, Trash2 } from "lucide-react";
+
+/**
+ * What the Windows startup repair found, when it found anything.
+ *
+ * A rebuilt catalog and an always-empty one render identically, so without this
+ * a person whose projects did not come back has nothing to read. The skipped
+ * reasons are the import dialog's own sentences, which is why they are shown
+ * verbatim rather than re-worded here.
+ */
+function RecoveryNotice({ report }: { report: RecoveryReport }) {
+  const { t } = useI18n();
+  return (
+    <div
+      role="status"
+      data-testid="startup-recovery"
+      className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/5 px-4 py-3 text-sm"
+    >
+      <p className="font-medium">
+        {t("dashboard.recoveredProjects", { count: report.recovered })}
+      </p>
+      {report.skipped.length > 0 && (
+        <>
+          <p className="mt-1 text-muted-foreground">
+            {t("dashboard.skippedFolders", { count: report.skipped.length })}
+          </p>
+          <ul className="mt-1 list-disc ps-5 text-muted-foreground [overflow-wrap:anywhere]">
+            {report.skipped.map((folder) => (
+              <li key={`${folder.reason}:${folder.name}`}>
+                {folder.name}: {folder.message}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function Dashboard() {
   const { t: tr, locale } = useI18n();
@@ -23,6 +60,15 @@ export default function Dashboard() {
   const [pendingDelete, setPendingDelete] = useState<Project | null>(null);
   const cancelDeleteRef = useRef<HTMLButtonElement>(null);
   const library = platform().capabilities.library;
+  // Asked once per mount. The answer describes this launch's startup repair,
+  // so it cannot change while the window is open.
+  const recovery = useQuery({
+    queryKey: ["startup-recovery"],
+    queryFn: () => platform().capabilities.recoveryReport!(),
+    enabled: Boolean(platform().capabilities.recoveryReport),
+    staleTime: Infinity,
+    retry: false,
+  }).data;
   const {
     data: projects,
     isLoading,
@@ -92,6 +138,7 @@ export default function Dashboard() {
       />
       <PageContainer>
         <ErrorNotice error={error} />
+        {recovery && <RecoveryNotice report={recovery} />}
         {importFailure && (
           <div
             role="alert"

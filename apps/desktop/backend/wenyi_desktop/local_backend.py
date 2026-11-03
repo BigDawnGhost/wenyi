@@ -20,9 +20,15 @@ from typing import TYPE_CHECKING, Any, BinaryIO, Iterator
 from fastapi import HTTPException
 from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_core.config import Config
+from wenyi_core.errors import SchemaTooNew
 from wenyi_core.storage.io_path import plain_path
 
 from . import library_location, paths
+
+#: A project database written by a newer build. The catalog row is intact and the
+#: directory is where it should be, so this is a refused open rather than a fault:
+#: the answer names the version that can read the file.
+PROJECT_SCHEMA_TOO_NEW = "project_schema_too_new"
 
 if TYPE_CHECKING:
     from wenyi_core.storage.sqlite import SqliteStorage
@@ -361,7 +367,13 @@ class LocalBackend:
             # A store is only ever created for a project the catalog already has,
             # so this is the one place every project directory passes through.
             self.mark_project(pid)
-        return SqliteStorage(str(directory), create=create)
+        try:
+            return SqliteStorage(str(directory), create=create)
+        except SchemaTooNew as error:
+            # A refused schema is a state the user has to see, not a server fault:
+            # the route answers with a stable code and the sentence that names the
+            # upgrade, so the project list and the page can both explain it.
+            raise ApiError(PROJECT_SCHEMA_TOO_NEW, 409, error.message) from error
 
     def defaults(self) -> Config:
         # Config() uses built-in defaults, never the CLI's cwd config.yaml.
@@ -486,8 +498,17 @@ class LocalBackend:
                 return None
         project = self._get("projects", pid)
         if project is not None:
-            storage = self.storage_for(pid, create=False)
+            # A project written by a newer build keeps its row and its directory:
+            # it is not damaged, it is unreadable here. The list says so for the
+            # same reason it says so for an unmounted drive, so the project does
+            # not disappear from a downgraded installation.
+            #
+            # A read-only store opens lazily, so the refusal can arrive from the
+            # constructor or from the first read. Both are handled below.
+            readable = True
+            storage = None
             try:
+                storage = self.storage_for(pid, create=False)
                 if storage.exists():
                     manifest = storage.load_manifest()
                     project.update(
@@ -497,12 +518,19 @@ class LocalBackend:
                         source_lang=manifest.get("source_lang", project["source_lang"]),
                         target_lang=manifest.get("target_lang", project["target_lang"]),
                     )
+            except (ApiError, SchemaTooNew) as error:
+                # A read-only store opens lazily, so the refusal arrives from the
+                # first read rather than from the constructor.
+                if getattr(error, "code", None) != PROJECT_SCHEMA_TOO_NEW:
+                    raise
+                readable = False
             finally:
-                storage.close()
+                if storage is not None:
+                    storage.close()
             project.pop("updated_at", None)
             # A project on a drive that is not mounted cannot be opened, and the
             # list has to say so instead of failing when the project is chosen.
-            project["available"] = self.project_dir(pid).is_dir()
+            project["available"] = readable and self.project_dir(pid).is_dir()
         return project
 
     def list_projects(self) -> list[dict]:
@@ -698,7 +726,27 @@ class LocalBackend:
         return resolved
 
     def remove_project(self, pid: str) -> None:
-        """Close owned handles before file removal, retaining the catalog on failure."""
+        """Delete a project in three durable steps: mark, remove, then unlist.
+
+        The order is what makes an interrupted deletion recoverable. Removing the
+        files first and the catalog row second leaves, on a crash in between, a
+        listed project with no directory: the row still opens, so it is presented
+        as a project whose files are missing, and the next startup repair cannot
+        tell it from a project whose drive was unplugged.
+
+        Marking first turns that intermediate state into one this application can
+        recognise. The row stays listed, because the retry has to be reachable and
+        a file still held open is the reason it failed; the directory carries the
+        same mark, which is what a repair rebuilding the catalog from directories
+        reads instead. Files can be removed at any point after the mark, so a
+        crash after `rmtree` but before the row is deleted simply retries the
+        cleanup that is already done.
+
+        Nothing about the guard changed: the directory to remove is derived from
+        the identifier and checked against the record, the marker and the owned
+        roots before the mark is written, so a refused deletion still writes
+        nothing.
+        """
         from wenyi_backend.project_service import project_write
 
         project = self._get("projects", pid)
@@ -706,6 +754,17 @@ class LocalBackend:
             raise HTTPException(404, "project not found")
         directory = self._admitted_project_directory(pid, project)
         self._reject_removing(pid)
+        if project.get("deleting"):
+            # An earlier attempt was interrupted after the mark. The book and
+            # export locks below would open the project store, which recreates
+            # a directory this deletion may already have removed, so they are
+            # skipped. The catalog check they exist to protect still runs, and
+            # it is the one that matters here: nothing is removed while a task
+            # or a download is still using the project.
+            with self.transaction() as connection:
+                self._check_project_deletion(pid, connection)
+            self._finish_removal(pid, directory)
+            return
         admitted = False
         try:
             # Book and export locks protect admission, not recursive file cleanup:
@@ -719,18 +778,59 @@ class LocalBackend:
                             raise HTTPException(409, "An export download is active; retry later")
                         self._removing_projects.add(pid)
                         admitted = True
-            try:
-                if directory.exists():
-                    shutil.rmtree(directory)
-            except OSError as error:
-                raise HTTPException(
-                    409, "Could not remove project files; close files using this project and retry"
-                ) from error
-            self.delete_project(pid)
+                    # The sentinel is written before the row is marked, because a
+                    # repair rebuilds the catalog by reading directories rather
+                    # than rows: a mark with no sentinel would be forgotten.
+                    self._write_deleting_sentinel(directory)
+                    self.update_project(
+                        pid, deleting=True, deleting_since=_now(), connection=connection
+                    )
+            self._finish_removal(pid, directory)
         finally:
             if admitted:
                 with self._export_leases_lock:
                     self._removing_projects.discard(pid)
+
+    def _write_deleting_sentinel(self, directory: Path) -> None:
+        """Leave the deletion intent inside the directory being deleted.
+
+        The catalog holds the same state, and the two are written in this order
+        because they answer different questions. The row is what this running
+        installation consults before listing or admitting the project; the file
+        is what a later repair finds when the catalog it rebuilds has no row at
+        all. A sentinel that cannot be written refuses the deletion rather than
+        proceeding without it, because the alternative is a repair that puts the
+        project back.
+
+        A directory that does not exist yet has nothing to protect: the removal
+        below will not run for it either, so the sentinel is skipped.
+        """
+        if not directory.is_dir():
+            return
+        try:
+            paths.deleting_marker_in(directory).write_text("deleting\n", encoding="utf-8")
+        except OSError as error:
+            raise HTTPException(
+                409, "Could not mark the project for deletion; retry after closing files using it"
+            ) from error
+
+    def _finish_removal(self, pid: str, directory: Path) -> None:
+        """Remove the marked directory, then the catalog row.
+
+        Called with the project already marked. Both steps are idempotent so a
+        retry after an interruption repeats only what is left: a directory that
+        is already gone is skipped, and the row delete is a no-op once it ran.
+        """
+        try:
+            if directory.exists():
+                shutil.rmtree(directory)
+        except OSError as error:
+            # The mark stays, so the project is not listed and the removal can be
+            # retried after the files that are still open are closed.
+            raise HTTPException(
+                409, "Could not remove project files; close files using this project and retry"
+            ) from error
+        self.delete_project(pid)
 
     def create_job(
         self,

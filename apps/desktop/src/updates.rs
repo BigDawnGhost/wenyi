@@ -16,8 +16,23 @@ use crate::{
     native_export::Saves, paths, Engine, State,
 };
 
-const MANIFEST: &str = "https://github.com/BigDawnGhost/wenyi/releases/latest/download/latest.json";
-const RELEASE_API: &str = "https://api.github.com/repos/BigDawnGhost/wenyi/releases/latest";
+/// The repository the updater publishes to and reads from.
+///
+/// Resolved by `build.rs` from `WENYI_UPDATE_REPO`, defaulting to this project.
+/// It is one constant rather than two literals because the URL that is fetched
+/// and the URL prefix that is trusted have to name the same repository: a build
+/// that changed one and not the other would download releases it then refused.
+const REPO: &str = env!("WENYI_UPDATE_REPO");
+
+/// Where the signed release manifest lives.
+fn manifest_url() -> String {
+    format!("https://github.com/{REPO}/releases/latest/download/latest.json")
+}
+
+/// The GitHub API endpoint naming the same release.
+fn release_api_url() -> String {
+    format!("https://api.github.com/repos/{REPO}/releases/latest")
+}
 /// Layer-two directory that keeps one verified copy per completed upgrade.
 ///
 /// Layer two and not layer one: the copy has to outlive the application, and
@@ -196,7 +211,7 @@ fn manual_check() -> Result<Option<(String, String)>> {
         .build()
         .map_err(|_| IpcError::new("update_check_failed", "Could not check for updates."))?;
     let response = client
-        .get(RELEASE_API)
+        .get(release_api_url())
         .send()
         .map_err(|_| IpcError::new("update_check_failed", "Could not check for updates."))?;
     if !response.status().is_success() {
@@ -224,6 +239,12 @@ fn manual_check() -> Result<Option<(String, String)>> {
     )
 }
 
+/// Whether a download link belongs to the repository this build was made for.
+///
+/// The prefix names the same constant the manifest URL is built from, so a
+/// build cannot be configured to watch one repository and accept assets from
+/// another. Requiring the separator after the repository name is what keeps a
+/// repository called `wenyi-extra` from matching `wenyi`.
 fn trusted_artifact(url: &reqwest::Url) -> bool {
     url.scheme() == "https"
         && url.host_str() == Some("github.com")
@@ -234,7 +255,7 @@ fn trusted_artifact(url: &reqwest::Url) -> bool {
         && url.fragment().is_none()
         && url
             .path()
-            .starts_with("/BigDawnGhost/wenyi/releases/download/")
+            .starts_with(&format!("/{REPO}/releases/download/"))
 }
 
 fn begin_check(state: &mut UpdateState) -> Result<()> {
@@ -266,9 +287,10 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
     tauri::async_runtime::spawn(async move {
         let checked: Result<(Option<(String, String)>, Option<Update>)> = if automatic {
             let result = async {
+                let manifest = manifest_url().parse().unwrap();
                 let updater = app
                     .updater_builder()
-                    .endpoints(vec![MANIFEST.parse().unwrap()])
+                    .endpoints(vec![manifest])
                     .map_err(|_| {
                         IpcError::new("update_check_failed", "Could not check for updates.")
                     })?
@@ -737,21 +759,58 @@ mod tests {
 
     #[test]
     fn update_download_urls_are_fixed_to_this_repository_over_https() {
+        // The accepted URL is derived from the same constant the manifest is, so
+        // this states the invariant rather than repeating the repository name:
+        // whatever repository this build was made for, its own releases are
+        // trusted and nothing else is.
         assert!(trusted_artifact(
-            &MANIFEST
+            &manifest_url()
                 .replace("latest/download/latest.json", "download/v1.2.3/app.exe")
                 .parse()
                 .unwrap()
         ));
         for url in [
-            "http://github.com/BigDawnGhost/wenyi/releases/download/v1/app.exe",
-            "https://github.com/other/repo/releases/download/v1/app.exe",
-            "https://github.com.evil.example/BigDawnGhost/wenyi/releases/download/v1/app.exe",
-            "https://user@github.com/BigDawnGhost/wenyi/releases/download/v1/app.exe",
-            "https://github.com/BigDawnGhost/wenyi/releases/download/v1/app.exe?token=secret",
+            format!("http://github.com/{REPO}/releases/download/v1/app.exe"),
+            "https://github.com/other/repo/releases/download/v1/app.exe".to_owned(),
+            format!("https://github.com.evil.example/{REPO}/releases/download/v1/app.exe"),
+            format!("https://user@github.com/{REPO}/releases/download/v1/app.exe"),
+            format!("https://github.com/{REPO}/releases/download/v1/app.exe?token=secret"),
+            // A repository whose name merely starts with this one is another
+            // repository, and its releases must not be accepted.
+            format!("https://github.com/{REPO}-extra/releases/download/v1/app.exe"),
         ] {
-            assert!(!trusted_artifact(&url.parse().unwrap()));
+            assert!(!trusted_artifact(&url.parse().unwrap()), "{url}");
         }
+    }
+
+    #[test]
+    fn the_compiled_repository_is_one_owner_and_one_name() {
+        // build.rs rejects a malformed WENYI_UPDATE_REPO, so this asserts the
+        // rule the build enforces rather than a second implementation of it.
+        // A value with an extra segment would splice into the trusted prefix and
+        // silently widen which download links match.
+        let (owner, name) = REPO.split_once('/').expect("build.rs accepted a non-slug");
+        assert!(!owner.is_empty() && !name.is_empty());
+        assert!(!name.contains('/'));
+        assert!(
+            REPO.bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'/')),
+            "{REPO} contains a character a repository name cannot"
+        );
+    }
+
+    #[test]
+    fn both_update_urls_name_the_same_repository() {
+        // Two literals that drift apart produce an updater that downloads a
+        // release and then refuses to install it. Both are built from one
+        // constant, and this is what notices if that stops being true.
+        assert!(manifest_url().contains(&format!("/{REPO}/")));
+        assert!(release_api_url().ends_with(&format!("/repos/{REPO}/releases/latest")));
+        assert!(REPO
+            .split_once('/')
+            .is_some_and(|(owner, name)| !owner.is_empty()
+                && !name.is_empty()
+                && !name.contains('/')));
     }
 
     #[test]

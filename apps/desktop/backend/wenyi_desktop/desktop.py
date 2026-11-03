@@ -26,6 +26,75 @@ ORIGINS = (
 )
 
 
+LOCATION_ERROR = (
+    "Wenyi could not determine where to keep its files on this computer. "
+    "Check the user profile environment and reopen Wenyi."
+)
+
+
+def local_app_data() -> Path:
+    """The local application data directory, however this process can find it.
+
+    `%LOCALAPPDATA%` is a convenience variable rather than the definition. A
+    process started without the user environment -- a scheduled task, a service,
+    an elevated shell, a shortcut that clears its environment block -- inherits
+    no value at all, and reading the dictionary raised `KeyError` instead of
+    resolving the path. `SHGetKnownFolderPath` is the definition, and it answers
+    in exactly those processes.
+
+    The variable is still read first. An existing installation and every project
+    directory beside it are named by the value this machine has, so a build that
+    consulted the shell first would move the workspace out from under them.
+    """
+    configured = os.environ.get("LOCALAPPDATA", "").strip()
+    if configured and Path(configured).is_absolute():
+        return Path(configured)
+    return _known_local_app_data()
+
+
+def _known_local_app_data() -> Path:
+    """Ask the shell for FOLDERID_LocalAppData, or explain why it cannot."""
+    import ctypes
+    from ctypes import wintypes
+
+    class GUID(ctypes.Structure):
+        _fields_ = [
+            ("data1", wintypes.DWORD),
+            ("data2", wintypes.WORD),
+            ("data3", wintypes.WORD),
+            ("data4", ctypes.c_ubyte * 8),
+        ]
+
+    folder = GUID(
+        0xF1B32785,
+        0x6FBA,
+        0x4FCF,
+        (ctypes.c_ubyte * 8)(0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91),
+    )
+    shell32 = ctypes.windll.shell32  # type: ignore[attr-defined]
+    shell32.SHGetKnownFolderPath.argtypes = [
+        ctypes.POINTER(GUID),
+        wintypes.DWORD,
+        wintypes.HANDLE,
+        ctypes.POINTER(ctypes.c_wchar_p),
+    ]
+    shell32.SHGetKnownFolderPath.restype = ctypes.c_long
+    result = ctypes.c_wchar_p()
+    status = shell32.SHGetKnownFolderPath(ctypes.byref(folder), 0, None, ctypes.byref(result))
+    try:
+        if status < 0 or not result.value:
+            raise RuntimeError(LOCATION_ERROR)
+        path = Path(result.value)
+    finally:
+        # The shell owns the allocation and handing it back is the caller's job,
+        # including when the value turned out to be unusable.
+        if result.value:
+            ctypes.windll.ole32.CoTaskMemFree(result)  # type: ignore[attr-defined]
+    if not path.is_absolute():
+        raise RuntimeError(LOCATION_ERROR)
+    return path
+
+
 def default_workspace() -> Path:
     """Fallback for running the engine as a standalone CLI.
 
@@ -35,7 +104,7 @@ def default_workspace() -> Path:
     (a Rust test pins them together).
     """
     if sys.platform == "win32":
-        base = Path(os.environ["LOCALAPPDATA"])
+        base = local_app_data()
     elif sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support"
     else:
