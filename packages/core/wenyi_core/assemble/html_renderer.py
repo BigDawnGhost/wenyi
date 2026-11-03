@@ -81,6 +81,13 @@ def _segment_render_maps(
             src_by_anchor[current_anchor] = segment.source
             kind_by_anchor[current_anchor] = segment.kind
             stored_meta_by_anchor[current_anchor] = segment.meta
+        else:
+            # Template chapters always carry anchors; reaching this branch means the
+            # persisted state was truncated or corrupted. Fail loudly instead of
+            # silently dropping text (audit X-4).
+            raise ValueError(
+                f"Chapter state is inconsistent: segment {segment.index} has no anchor"
+            )
     return by_anchor, src_by_anchor, kind_by_anchor, stored_meta_by_anchor
 
 

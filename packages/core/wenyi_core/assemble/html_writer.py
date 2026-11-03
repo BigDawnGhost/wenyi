@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import posixpath
+import re
 import zipfile
 from html import escape
 from pathlib import Path
@@ -44,14 +45,18 @@ def _assemble_html(
     preserve_source_style: bool = False,
 ) -> str:
     """Backfill chapter templates and combine them into a complete HTML document."""
+    if os.path.abspath(source_path) == os.path.abspath(out_path):
+        raise ValueError("--out must not point at the source file; choose a different output path")
     m = store.load_manifest()
     raw_meta = m.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     raw_head_html = meta.get("head_html", "")
     head_html = raw_head_html if isinstance(raw_head_html, str) else ""
-    # Always declare the charset so browsers decode Unicode text correctly.
-    if "charset" not in head_html.replace(" ", "").lower():
-        head_html = '<meta charset="utf-8"/>\n' + head_html
+    # Always declare the charset so browsers decode Unicode text correctly. Source heads
+    # can carry stale declarations (e.g. gb2312 for content that is now UTF-8), so every
+    # meta charset is stripped before adding our own (audit X-4).
+    head_html = re.sub(r"<meta[^>]*charset[^>]*>", "", head_html, flags=re.IGNORECASE)
+    head_html = '<meta charset="utf-8"/>\n' + head_html
     if bilingual and not preserve_source_style and _BILINGUAL_STYLE_ID not in head_html:
         head_html += f'<style id="{_BILINGUAL_STYLE_ID}">\n{_BILINGUAL_CSS}</style>'
 

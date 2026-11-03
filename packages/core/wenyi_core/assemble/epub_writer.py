@@ -52,6 +52,9 @@ def _assemble_epub(
     """Copy the EPUB and replace physical body resources, exact TOC titles and target-language
     metadata.
     """
+    if os.path.abspath(source_path) == os.path.abspath(out_path):
+        # Opening the target for writing would truncate the archive still being read.
+        raise ValueError("--out must not point at the source file; choose a different output path")
     m = store.load_manifest()
     target_lang_code = _manifest_target_lang(m)
     target_lang = _epub_lang(target_lang_code)
