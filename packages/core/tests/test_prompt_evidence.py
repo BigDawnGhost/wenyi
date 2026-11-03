@@ -16,7 +16,7 @@ from wenyi_core.i18n.policy.models import PolicyContext
 from wenyi_core.i18n.policy.resolver import resolve_policy
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.glossary import GlossaryTerm
-from wenyi_core.pipeline.translation_batch import TranslationBatchExecutor
+from wenyi_core.pipeline.translate.translation_batch import TranslationBatchExecutor
 
 from tests.pipeline_fixtures import batch_plan as _plan
 

@@ -11,7 +11,7 @@ from tests.sample_data import write_nested_toc_epub
 from wenyi_api import dal
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.ingest.segmenter import load_document
-from wenyi_core.pipeline.title_translation import plan_titles
+from wenyi_core.pipeline.translate.title_translation import plan_titles
 
 
 def test_title_save_updates_only_linked_toc_nodes_and_survives_reload(domain_client, tmp_path):

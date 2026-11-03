@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
-from wenyi_core.pipeline.runtime_usage import UsageCoordinator
+from wenyi_core.pipeline.run.runtime_usage import UsageCoordinator
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
 

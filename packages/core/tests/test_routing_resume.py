@@ -12,9 +12,9 @@ from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample
 from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.review_checkpoint import ReviewTraceStore
-from wenyi_core.pipeline.review_workflow import ReviewService
-from wenyi_core.pipeline.runtime import PipelineRuntime
+from wenyi_core.pipeline.review.review_checkpoint import ReviewTraceStore
+from wenyi_core.pipeline.review.review_workflow import ReviewService
+from wenyi_core.pipeline.run.runtime import PipelineRuntime
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
 
@@ -120,7 +120,7 @@ def test_fixer_protocol_revisions_invalidate_old_autofix_plans(tmp_path, monkeyp
     from wenyi_core.llm import operations, routing
     from wenyi_core.llm.operations import OPERATIONS
     from wenyi_core.llm.routing import inference_snapshot
-    from wenyi_core.pipeline.autofix_plan import prepare_identity
+    from wenyi_core.pipeline.autofix.autofix_plan import prepare_identity
 
     config = _config(tmp_path)
     assert OPERATIONS["review.fix"].protocol_version == 2

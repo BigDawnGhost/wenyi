@@ -422,7 +422,7 @@ def test_runstore_reaches_the_filesystem_only_through_the_extended_length_form()
     helpers are excluded because they build a string without opening anything;
     prefixing there would hand a prefixed path to the caller's own open call.
     """
-    module = Path(__file__).resolve().parents[1] / "wenyi_core" / "pipeline" / "runstore.py"
+    module = Path(__file__).resolve().parents[1] / "wenyi_core" / "storage" / "run_store.py"
     assert _naked_calls(module, _FILESYSTEM_CALLS) == []
 
 

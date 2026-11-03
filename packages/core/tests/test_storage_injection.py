@@ -9,8 +9,8 @@ from pathlib import Path
 import pytest
 from wenyi_core.config import Config
 from wenyi_core.ingest.segmenter import load_document
-from wenyi_core.pipeline.input_preparation import ingest_config, load_parsed_document
 from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.prepare.input_preparation import ingest_config, load_parsed_document
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
@@ -123,7 +123,9 @@ def test_preparation_reuses_matching_preview_and_invalidates_changed_settings(
     def unexpected_parse(*args, **kwargs):
         raise AssertionError("Preparation re-parsed a matching upload preview")
 
-    monkeypatch.setattr("wenyi_core.pipeline.input_preparation.load_document", unexpected_parse)
+    monkeypatch.setattr(
+        "wenyi_core.pipeline.prepare.input_preparation.load_document", unexpected_parse
+    )
     result = Orchestrator(
         config, client=MeteredFakeClient(handler=routing_handler), storage=store
     ).prepare(str(source))
@@ -135,9 +137,7 @@ def test_preparation_reuses_matching_preview_and_invalidates_changed_settings(
 
 def test_domain_services_have_no_direct_state_files_or_sqlite():
     core = Path(__file__).resolve().parents[1] / "wenyi_core"
-    for path in (core / "pipeline").glob("*.py"):
-        if path.name == "runstore.py":
-            continue  # The explicit CLI filesystem backend.
+    for path in (core / "pipeline").rglob("*.py"):
         tree = parsed_source(path)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):

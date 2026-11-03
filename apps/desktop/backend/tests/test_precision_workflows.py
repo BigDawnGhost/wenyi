@@ -8,8 +8,8 @@ from tests.precision_fixtures import PrecisionHandler
 from wenyi_backend.config_documents import config_document
 from wenyi_backend.context import current_context
 from wenyi_core.config import Config
-from wenyi_core.pipeline.language_policies import CHECKPOINT
-from wenyi_core.pipeline.precision_records import load_precision_call
+from wenyi_core.pipeline.run.language_policies import CHECKPOINT
+from wenyi_core.pipeline.translate.precision_records import load_precision_call
 
 
 @pytest.mark.parametrize("stage", ["translate", "synthesis"])

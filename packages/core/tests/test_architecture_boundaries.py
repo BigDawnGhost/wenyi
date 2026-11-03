@@ -33,7 +33,16 @@ MODELS_ALLOWED_THIRD_PARTY = frozenset({"pydantic", "pydantic_core", "typing_ext
 
 # Standard-library roots that are data-only and therefore safe in a pure model module.
 _STDLIB_DATA_MODULES = frozenset(
-    {"__future__", "collections", "dataclasses", "enum", "json", "sqlite3", "typing", "typing_extensions"}
+    {
+        "__future__",
+        "collections",
+        "dataclasses",
+        "enum",
+        "json",
+        "sqlite3",
+        "typing",
+        "typing_extensions",
+    }
 )
 
 SERVICE_MODULES = (
@@ -80,8 +89,24 @@ def _parsed(path: pathlib.Path) -> ast.Module:
     return ast.parse(path.read_text(encoding="utf-8"))
 
 
+def _pipeline_module_path(name: str) -> pathlib.Path:
+    """Locate a pipeline module wherever its stage sub-package put it."""
+    direct = PIPELINE_DIR / f"{name}.py"
+    if direct.is_file():
+        return direct
+    matches = sorted(PIPELINE_DIR.glob(f"*/{name}.py"))
+    assert len(matches) == 1, f"{name} is not a single module under {PIPELINE_DIR}"
+    return matches[0]
+
+
 def _module_source(name: str) -> str:
-    return (PIPELINE_DIR / f"{name}.py").read_text(encoding="utf-8")
+    return _pipeline_module_path(name).read_text(encoding="utf-8")
+
+
+def _pipeline_package(name: str) -> str:
+    """Dotted module name for a pipeline module, following its stage sub-package."""
+    relative = _pipeline_module_path(name).relative_to(PIPELINE_DIR).with_suffix("")
+    return ".".join((PIPELINE_MODULE, *relative.parts))
 
 
 def _module_package(root: pathlib.Path, path: pathlib.Path) -> str:
@@ -224,38 +249,119 @@ def test_orchestrator_does_not_touch_glossary_store_directly():
 
 
 def test_orchestrator_wires_all_services():
-    """Require the orchestrator to assemble every extracted service."""
-    source = _module_source("orchestrator")
+    """Require the orchestrator to assemble every extracted service.
+
+    Checked against the parsed import graph rather than the source text, so a stage
+    sub-package can move without the assertion silently passing on a dead string.
+    """
+    path = _pipeline_module_path("orchestrator")
+    imported = _imported_modules(path)
     for name in SERVICE_MODULES:
-        assert f"from .{name} import" in source, f"缺少 {name} 的装配"
+        expected = _pipeline_package(name)
+        assert expected in imported, f"orchestrator does not assemble {expected}: {imported}"
+
+
+PIPELINE_STAGES = ("run", "prepare", "translate", "annotate", "review", "autofix", "finalize")
+
+
+def test_pipeline_modules_live_in_a_stage_subpackage():
+    """Every pipeline module belongs to exactly one stage; the facade is the exception.
+
+    Without this, a new module can drift back to the flat layout and the sub-packages stop
+    describing the workflow they were created to describe.
+    """
+    flat = sorted(path.name for path in PIPELINE_DIR.glob("*.py"))
+    assert flat == ["__init__.py", "orchestrator.py"], flat
+    staged: dict[str, str] = {}
+    for stage in PIPELINE_STAGES:
+        directory = PIPELINE_DIR / stage
+        assert directory.is_dir(), f"missing stage package {stage}"
+        assert (directory / "__init__.py").is_file(), f"{stage} has no __init__.py"
+        for path in sorted(directory.glob("*.py")):
+            if path.name == "__init__.py":
+                continue
+            assert path.stem not in staged, (
+                f"{path.stem} appears in {staged[path.stem]} and {stage}"
+            )
+            staged[path.stem] = stage
+    assert len(staged) == 28, sorted(staged)
+
+
+def test_pipeline_stage_packages_do_not_import_across_unrelated_stages():
+    """A stage may depend on run/ (shared runtime) but not on a sibling workflow stage.
+
+    prepare, translate, annotate, review, autofix and finalize are ordered phases; an import
+    between them would mean the order is no longer the orchestrator's to decide.
+    """
+    allowed_back_edges = {("run")}
+    stages = [stage for stage in PIPELINE_STAGES if stage != "run"]
+    for stage in stages:
+        for path in sorted((PIPELINE_DIR / stage).glob("*.py")):
+            for module in _imported_modules(path):
+                if not module.startswith(PIPELINE_MODULE + "."):
+                    continue
+                segments = module.split(".")
+                if len(segments) < 4:
+                    continue
+                target = segments[3]
+                if target not in PIPELINE_STAGES or target == stage:
+                    continue
+                assert target in allowed_back_edges, (
+                    f"{stage}/{path.name} imports {module}; only run/ may be shared"
+                )
+
+
+def test_pipeline_package_reexports_every_stage_module():
+    """Old flat import paths must keep resolving through the package __init__."""
+    pipeline = importlib.import_module(PIPELINE_MODULE)
+    staged: list[str] = []
+    for stage in PIPELINE_STAGES:
+        for path in sorted((PIPELINE_DIR / stage).glob("*.py")):
+            if path.name == "__init__.py":
+                continue
+            staged.append(path.stem)
+    assert staged, "The re-export check must inspect actual modules"
+    missing = sorted(name for name in staged if not hasattr(pipeline, name))
+    assert not missing, f"wenyi_core.pipeline does not re-export: {missing}"
+
+
+def test_pipeline_runstore_shim_is_gone():
+    """B5 moved the primitives to storage/; a leftover shim would keep two owners alive."""
+    assert not (PIPELINE_DIR / "runstore.py").exists()
+    storage = importlib.import_module("wenyi_core.storage.run_store")
+    for name in ("RunStore", "source_sha256", "translation_run_dir", "STATUS_DONE"):
+        assert hasattr(storage, name), name
 
 
 def test_no_lower_module_imports_orchestrator():
-    """Forbid reverse imports of orchestrator from lower layers."""
+    """Forbid reverse imports of orchestrator from lower layers.
+
+    The package __init__ re-exports the facade by design, so it is the one file skipped.
+    """
     for path in PIPELINE_DIR.rglob("*.py"):
-        if path.name == "orchestrator.py":
+        if path.name == "orchestrator.py" or path == PIPELINE_DIR / "__init__.py":
             continue
-        name = str(path.relative_to(PIPELINE_DIR))
+        name = path.relative_to(PIPELINE_DIR).as_posix()
         for module in _imported_modules(path):
             assert "orchestrator" not in module.split("."), (
-                f"{name}.py 不得反向导入编排器: {module}"
+                f"{name} must not import the orchestrator: {module}"
             )
 
 
 def test_runtime_uses_neutral_language_module():
     """Shared Runtime cannot depend on the preparation service."""
-    imported = _imported_modules(PIPELINE_DIR / "runtime.py")
+    imported = _imported_modules(_pipeline_module_path("runtime"))
     assert "wenyi_core.i18n.languages" in imported
-    assert "wenyi_core.pipeline.preparation" not in imported
+    assert "wenyi_core.pipeline.prepare.preparation" not in imported
 
 
 def test_preparation_usage_and_file_migration_have_independent_owners():
     for name in ("book_understanding", "runtime_usage"):
-        path = PIPELINE_DIR / f"{name}.py"
+        path = _pipeline_module_path(name)
         assert path.is_file()
         imports = _imported_modules(path)
-        assert "wenyi_core.pipeline.runtime" not in imports
-        assert "wenyi_core.pipeline.preparation" not in imports
+        assert "wenyi_core.pipeline.run.runtime" not in imports
+        assert "wenyi_core.pipeline.prepare.preparation" not in imports
         assert "self._runtime" not in path.read_text(encoding="utf-8")
     runtime = _module_source("runtime")
     assert "UsageCoordinator(self.client)" in runtime
@@ -281,8 +387,8 @@ def test_services_exist_as_pure_modules():
         "finalization": "AssemblyService",
     }
     for module_name, class_name in classes.items():
-        module = importlib.import_module(f"wenyi_core.pipeline.{module_name}")
-        assert hasattr(module, class_name), f"{module_name}.{class_name} 缺失"
+        module = importlib.import_module(_pipeline_package(module_name))
+        assert hasattr(module, class_name), f"{module_name}.{class_name} is missing"
 
 
 def test_agents_do_not_import_pipeline_orchestration():
@@ -443,7 +549,7 @@ def test_writers_do_not_import_reader_private_helpers():
 
 
 def test_autofix_publisher_has_no_candidate_or_model_dependencies():
-    for module in _imported_modules(PIPELINE_DIR / "autofix_publish.py"):
+    for module in _imported_modules(_pipeline_module_path("autofix_publish")):
         assert not module.startswith(("wenyi_core.agents", "wenyi_core.llm")), module
         assert "autofix_candidates" not in module
         assert "autofix_verification" not in module

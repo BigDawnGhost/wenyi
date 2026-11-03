@@ -14,9 +14,9 @@ from wenyi_core.glossary.store import GlossaryStore
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.review_chunks import ReviewChunkService
-from wenyi_core.pipeline.translation import TranslationService
-from wenyi_core.pipeline.translation_batch import (
+from wenyi_core.pipeline.review.review_chunks import ReviewChunkService
+from wenyi_core.pipeline.translate.translation import TranslationService
+from wenyi_core.pipeline.translate.translation_batch import (
     TranslationBatchExecutor,
     resume_batches,
 )
@@ -199,7 +199,7 @@ class TestTranslationService(unittest.TestCase):
             captured: list[list[list[dict[str, str]]]] = []
 
             def process(plan, **kwargs):
-                from wenyi_core.pipeline.translation_batch import BatchResult
+                from wenyi_core.pipeline.translate.translation_batch import BatchResult
 
                 captured.append(plan.annotation_contexts)
                 return BatchResult(

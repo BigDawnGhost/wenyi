@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 from wenyi_core.config import Config
 from wenyi_core.models.document import Document
-from wenyi_core.pipeline.input_preparation import load_parsed_document
+from wenyi_core.pipeline.prepare.input_preparation import load_parsed_document
 from wenyi_core.storage.protocol import Storage
 
 from .ports.projects import ProjectQueries

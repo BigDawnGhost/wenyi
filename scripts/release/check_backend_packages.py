@@ -65,8 +65,8 @@ for name in absent:
 for name in installed:
     importlib.import_module(name)
 if "wenyi_core" in installed:
-    import wenyi_core.pipeline.book_understanding
-    import wenyi_core.pipeline.runtime_usage
+    import wenyi_core.pipeline.prepare.book_understanding
+    import wenyi_core.pipeline.run.runtime_usage
     import wenyi_core.storage.file_migrations
 if "wenyi_backend" in installed:
     import wenyi_backend

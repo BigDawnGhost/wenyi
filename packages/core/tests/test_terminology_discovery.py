@@ -8,7 +8,7 @@ from wenyi_core.config import Config
 from wenyi_core.glossary.evidence_models import DiscoveryResult, SourcePassage
 from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.terminology import TerminologyService
+from wenyi_core.pipeline.translate.terminology import TerminologyService
 
 from tests.fake_llm import MeteredFakeClient
 from tests.storage_fixtures import require_value

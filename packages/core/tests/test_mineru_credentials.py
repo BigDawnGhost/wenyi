@@ -9,8 +9,8 @@ from wenyi_core.config import Config
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.errors import MinerUError
-from wenyi_core.pipeline.input_preparation import parse_document
 from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.prepare.input_preparation import parse_document
 from wenyi_core.storage.file import FileStorage
 
 from tests.fake_llm import routing_handler

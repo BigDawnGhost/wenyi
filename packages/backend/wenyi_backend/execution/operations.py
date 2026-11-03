@@ -34,7 +34,7 @@ def parse_source(
     progress: ProgressFn,
     services: OperationServices,
 ) -> str:
-    from wenyi_core.pipeline.input_preparation import parse_document
+    from wenyi_core.pipeline.prepare.input_preparation import parse_document
 
     source = services.source_for(pid)
     project = services.projects.get_project(pid)

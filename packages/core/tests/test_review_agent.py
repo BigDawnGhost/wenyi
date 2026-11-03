@@ -14,7 +14,7 @@ from wenyi_core.agents.review_loop import (
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.routing import inference_snapshot
 from wenyi_core.models.glossary import GlossaryTerm
-from wenyi_core.pipeline.review_checkpoint import ReviewTraceStore
+from wenyi_core.pipeline.review.review_checkpoint import ReviewTraceStore
 from wenyi_core.review.conflicts import (
     apply_review_arbitrations,
     build_conflict_groups,

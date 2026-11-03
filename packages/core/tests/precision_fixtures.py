@@ -7,7 +7,7 @@ from threading import Lock
 
 from wenyi_core.config import Config
 from wenyi_core.models.document import Chapter, Segment
-from wenyi_core.pipeline.translation_batch import BatchPlan
+from wenyi_core.pipeline.translate.translation_batch import BatchPlan
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.run_store import STATUS_PENDING
 

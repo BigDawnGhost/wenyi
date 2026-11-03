@@ -12,8 +12,8 @@ from wenyi_backend.routers.dependencies import storage_for
 from wenyi_core.config import Config
 from wenyi_core.i18n.resources import read_text
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.language_policies import CHECKPOINT
 from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.run.language_policies import CHECKPOINT
 
 
 def test_policy_artifacts_resume_and_export_are_backend_neutral(storage, tmp_path, monkeypatch):

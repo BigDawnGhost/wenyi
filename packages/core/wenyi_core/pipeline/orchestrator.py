@@ -18,13 +18,13 @@ from typing import Any
 from ..config import Config
 from ..events import ProgressFn
 from ..storage.protocol import Storage
-from .annotations import AnnotationService
-from .finalization import AssemblyService
-from .preparation import PreparationService
-from .review_autofix import ReviewAutofixService
-from .review_workflow import ReviewService
-from .runtime import LLMClient, PipelineRuntime
-from .translation import TranslationService
+from .annotate.annotations import AnnotationService
+from .autofix.review_autofix import ReviewAutofixService
+from .finalize.finalization import AssemblyService
+from .prepare.preparation import PreparationService
+from .review.review_workflow import ReviewService
+from .run.runtime import LLMClient, PipelineRuntime
+from .translate.translation import TranslationService
 
 
 class Orchestrator:

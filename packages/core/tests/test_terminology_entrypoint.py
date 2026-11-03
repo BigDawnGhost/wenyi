@@ -9,9 +9,9 @@ from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.glossary import GlossaryTerm
-from wenyi_core.pipeline.autofix_verification import AutofixVerification
+from wenyi_core.pipeline.autofix.autofix_verification import AutofixVerification
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.review_rounds import ReviewRoundService
+from wenyi_core.pipeline.review.review_rounds import ReviewRoundService
 from wenyi_core.review.evidence import BookEvidenceIndex
 from wenyi_core.review.models import ReviewOutcome
 from wenyi_core.review.run_store import ReviewRunStore
@@ -82,7 +82,7 @@ def test_real_cli_produces_evidence_only_during_translation(tmp_path, entry):
         args += ["--format", "txt", "--out", str(tmp_path / "translation.txt")]
     with (
         patch("wenyi_cli.commands.context.CommandContext.load_config", return_value=selected),
-        patch("wenyi_core.pipeline.runtime.build_client", return_value=client),
+        patch("wenyi_core.pipeline.run.runtime.build_client", return_value=client),
     ):
         result = CliRunner().invoke(app, args)
     assert result.exit_code == 0, result.output
