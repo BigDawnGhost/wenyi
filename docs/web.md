@@ -78,7 +78,7 @@ API, workflow worker, and export worker all load `deploy/.env`, mount the same r
 
 Custom WebSocket clients must send a JSON first packet `{"token":"…"}` within 10 seconds of connecting. Send the packet even when the server has no token configured (the token may be empty). Project snapshots and live events are delivered only after authentication succeeds.
 
-PostgreSQL stores projects, chapters, segments, glossary, review evidence/checkpoints, Autofix publish indexes, subtitle caches, usage, and timing. `DATA_DIR` does not keep JSON/SQLite copies of that mutable state.
+PostgreSQL stores projects, chapters, segments, glossary, review evidence/checkpoints, Autofix publish indexes, usage, and timing. `DATA_DIR` does not keep JSON/SQLite copies of that mutable state.
 
 Deleting from the project list opens an in-app confirmation with Cancel focused.
 Prepared projects without active tasks can also be deleted. While a request is
