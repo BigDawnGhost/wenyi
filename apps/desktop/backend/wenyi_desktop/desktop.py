@@ -12,7 +12,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .diagnostics import Reporter, failure_attributes
+from .diagnostics import EngineDiagnostics, Reporter
 
 if TYPE_CHECKING:
     import uvicorn
@@ -157,42 +157,46 @@ def watch_parent(server: uvicorn.Server) -> None:
 async def serve(
     workspace: Path,
     protocol_stream,
-    reporter: Reporter | None = None,
+    lifecycle: EngineDiagnostics,
+    *,
     runtime_dir: Path | None = None,
     library_root: Path | None = None,
     install_root: Path | None = None,
 ) -> None:
-    import uvicorn
+    with lifecycle.observe("application"):
+        import uvicorn
 
-    from .main import create_app
+        from .main import create_app
 
-    # The native parent resolves all three roots and injects them: the engine
-    # never derives a location of its own.
-    app = create_app(
-        workspace,
-        api_token=os.environ.get("WENYI_API_TOKEN"),
-        diagnostics=reporter,
-        library_root=library_root,
-        install_root=install_root,
-        runtime_dir=runtime_dir,
-    )
+        # The native parent resolves all three roots and injects them: the engine
+        # never derives a location of its own.
+        app = create_app(
+            workspace,
+            api_token=os.environ.get("WENYI_API_TOKEN"),
+            diagnostics=lifecycle.reporter,
+            engine_diagnostics=lifecycle,
+            library_root=library_root,
+            install_root=install_root,
+            runtime_dir=runtime_dir,
+        )
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-            listener.bind(("127.0.0.1", 0))
-            port = listener.getsockname()[1]
-            config = uvicorn.Config(
-                LocalBoundary(app, port),
-                host="127.0.0.1",
-                port=port,
-                access_log=False,
-                log_config=None,
-                timeout_graceful_shutdown=25,
-            )
-            server = uvicorn.Server(config)
-            threading.Thread(target=watch_parent, args=(server,), daemon=True).start()
-            task = asyncio.create_task(server.serve(sockets=[listener]))
-            while not server.started and not task.done():
-                await asyncio.sleep(0.01)
+            with lifecycle.observe("listen"):
+                listener.bind(("127.0.0.1", 0))
+                port = listener.getsockname()[1]
+                config = uvicorn.Config(
+                    LocalBoundary(app, port),
+                    host="127.0.0.1",
+                    port=port,
+                    access_log=False,
+                    log_config=None,
+                    timeout_graceful_shutdown=25,
+                )
+                server = uvicorn.Server(config)
+                threading.Thread(target=watch_parent, args=(server,), daemon=True).start()
+                task = asyncio.create_task(server.serve(sockets=[listener]))
+                while not server.started and not task.done():
+                    await asyncio.sleep(0.01)
             if server.started and not server.should_exit:
                 try:
                     ready = (
@@ -200,16 +204,19 @@ async def serve(
                         + json.dumps({"protocol": 1, "port": port, "pid": os.getpid()})
                         + "\n"
                     )
-                    if reporter is not None:
-                        reporter.protocol(ready)
+                    if lifecycle.reporter is not None:
+                        lifecycle.reporter.protocol(ready)
                     else:
                         protocol_stream.write(ready)
                         protocol_stream.flush()
+                    lifecycle.ready = True
                 except (BrokenPipeError, OSError):
                     server.should_exit = True
-            await task
+            with lifecycle.observe("running" if lifecycle.ready else "listen"):
+                await task
     finally:
-        app.state.backend.repository.close()
+        with lifecycle.observe("shutdown"):
+            app.state.backend.repository.close()
 
 
 def main() -> None:
@@ -235,25 +242,27 @@ def main() -> None:
     )
     if reporter is not None:
         reporter.emit("engine_bootstrap")
+    lifecycle = EngineDiagnostics(reporter)
     try:
-        # An injected directory is authoritative; the fallback is CLI-only.
-        asyncio.run(
-            serve(
-                args.data_dir or default_workspace(),
-                protocol_stream,
-                reporter,
-                runtime_dir=args.runtime_dir,
-                library_root=args.library_root,
-                install_root=args.install_root,
+        with lifecycle.observe("bootstrap"):
+            # An injected directory is authoritative; the fallback is CLI-only.
+            asyncio.run(
+                serve(
+                    args.data_dir or default_workspace(),
+                    protocol_stream,
+                    lifecycle,
+                    runtime_dir=args.runtime_dir,
+                    library_root=args.library_root,
+                    install_root=args.install_root,
+                )
             )
-        )
-    except Exception as error:
-        if reporter is not None:
-            reporter.emit("engine_bootstrap_failed", **failure_attributes(error))
-        raise
+            # ASGI can consume shutdown failures too. Do not report failure and
+            # then let the interpreter return a misleading successful exit code.
+            if lifecycle.failed:
+                raise SystemExit(lifecycle.exit_code or 1)
     finally:
+        lifecycle.stopped()
         if reporter is not None:
-            reporter.emit("engine_stopped")
             reporter.close()
 
 

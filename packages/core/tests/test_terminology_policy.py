@@ -132,12 +132,13 @@ def test_default_polisher_preserves_original_resource_and_fingerprint():
         ("analysis", "395155e77e13b4da88691410724aaa83b5f924b9b8afb6690c196aed969af139"),
         ("translation", "d5b09a1db42684cc475fd55e88d84ec09ad2f0ab2ab79db91bd8c3dc19e303eb"),
         ("review", "6297d2547a9a32893e34291f22051e3d3dfda78fefa80ff3c5b784e938139611"),
-        ("export", "f18cefb9111ecee5ca4a1470edf6351e51be6cd4983634e93aa8c64643f5b043"),
+        ("export", "d4de743d62c14ff316fee9bcb27075cae1f7f260a3cf9cf056914ed022d47fe6"),
     ],
 )
 def test_only_default_analysis_phase_changes_from_feature_baseline(phase, fingerprint):
     # Recorded from main; Review includes the prompt revision in 63a1149.
-    selected = Config.from_dict({"llm": {"preset": "fake"}})
+    # Exclude project-page copy from this terminology feature baseline.
+    selected = Config.from_dict({"llm": {"preset": "fake"}, "output": {"about_page": False}})
     plan = selected.language_policy(phase, format="epub" if phase == "export" else "")
     assert (plan.fingerprint != fingerprint) == (phase == "analysis")
 

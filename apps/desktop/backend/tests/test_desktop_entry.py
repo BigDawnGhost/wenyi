@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 import queue
@@ -127,6 +128,7 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         text=True,
     )
     lines: queue.Queue[str] = queue.Queue()
@@ -174,7 +176,10 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
         assert token not in json.dumps(observations) + child.stderr.read()
         if diagnostics:
             assert observations[0]["event"] == "engine_bootstrap"
-            assert observations[-1]["event"] == "engine_stopped"
+            assert observations[-1] == {
+                "event": "engine_stopped",
+                "attributes": {"stage": "running", "reason": "completed", "exit_code": 0},
+            }
             assert any(row["event"] == "http_failed" for row in observations)
             assert str(workspace) not in json.dumps(observations)
         else:
@@ -185,6 +190,96 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
         if child.poll() is None:
             child.kill()
         child.wait(timeout=5)
+
+
+@pytest.mark.parametrize("stage", ["application", "runtime"])
+def test_startup_failure_reports_original_error_before_uvicorn_exit(tmp_path, stage):
+    """A real failed lifespan must not become just bootstrap + stopped."""
+    workspace = tmp_path / "fake-private-workspace"
+    if stage == "application":
+        workspace.write_text("A file cannot be a workspace.")
+    else:
+        workspace.mkdir()
+        (workspace / ".desktop.lock").mkdir()
+    token = secrets.token_hex(32)
+    env = {k: v for k, v in os.environ.items() if not k.startswith("WENYI_")}
+    env.update(WENYI_API_TOKEN=token, WENYI_DIAGNOSTICS_PROTOCOL="1")
+    # Keep stdin open, just like the native parent. Capture neither arbitrary
+    # stderr nor a traceback: the diagnostic protocol alone must explain failure.
+    output = tmp_path / "protocol.txt"
+    with output.open("w") as stream:
+        child = subprocess.Popen(
+            [owned_python(env), "-m", "wenyi_desktop", "--data-dir", str(workspace)],
+            cwd=tmp_path,
+            env=env,
+            stdin=subprocess.PIPE,
+            stdout=stream,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+            text=True,
+        )
+        try:
+            child.wait(timeout=20)
+            assert child.returncode != 0
+        finally:
+            if child.poll() is None:
+                child.kill()
+            child.wait(timeout=5)
+            child.stdin.close()
+    protocol = output.read_text()
+    assert "WENYI_READY " not in protocol
+    assert token not in protocol and "fake-private" not in protocol
+    observations = [
+        json.loads(line.removeprefix("WENYI_DIAGNOSTIC ")) for line in protocol.splitlines()
+    ]
+    failures = [row for row in observations if row["event"] == "engine_bootstrap_failed"]
+    assert len(failures) == 1
+    assert failures[0]["attributes"]["stage"] == stage
+    assert failures[0]["attributes"]["module"] in {"local_backend", "local_runtime"}
+    assert failures[0]["attributes"]["line"] > 0
+    assert observations[-1] == {
+        "event": "engine_stopped",
+        "attributes": {
+            "stage": "bootstrap",
+            "reason": "failed",
+            "exit_code": child.returncode,
+        },
+    }
+
+
+def test_asgi_consumed_shutdown_failure_exits_unsuccessfully(monkeypatch, tmp_path):
+    from wenyi_desktop import desktop
+
+    # The engine also receives the three resolved roots as keyword arguments; this
+    # stub only exercises the lifecycle wiring, so it accepts and ignores them.
+    async def serve(workspace, stream, lifecycle, **_roots):
+        lifecycle.ready = True
+        # Mirror ASGI consuming a lifecycle failure instead of propagating it.
+        with pytest.raises(OSError):
+            with lifecycle.observe("shutdown"):
+                raise OSError("fake-private-shutdown-error")
+
+    stream = io.StringIO()
+    monkeypatch.setattr(desktop, "serve", serve)
+    monkeypatch.setattr(sys, "stdout", stream)
+    monkeypatch.setattr(sys, "argv", ["wenyi-engine", "--data-dir", str(tmp_path)])
+    monkeypatch.setenv("WENYI_API_TOKEN", secrets.token_hex(32))
+    monkeypatch.setenv("WENYI_DIAGNOSTICS_PROTOCOL", "1")
+    with pytest.raises(SystemExit) as stopped:
+        desktop.main()
+    assert stopped.value.code == 1
+    protocol = stream.getvalue()
+    observations = [
+        json.loads(line.removeprefix("WENYI_DIAGNOSTIC ")) for line in protocol.splitlines()
+    ]
+    assert observations[1]["event"] == "engine_runtime_failed"
+    assert observations[1]["attributes"]["stage"] == "shutdown"
+    assert observations[-1]["attributes"] == {
+        "stage": "running",
+        "reason": "failed",
+        "exit_code": 1,
+    }
+    assert "fake-private" not in protocol
 
 
 def test_desktop_requires_parent_token(tmp_path):

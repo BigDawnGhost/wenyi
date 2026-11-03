@@ -34,8 +34,10 @@ pub enum Event {
     EngineSpawned,
     EngineReady,
     EngineFailed,
+    EngineExited,
     EngineBootstrap,
     EngineBootstrapFailed,
+    EngineRuntimeFailed,
     EngineStopped,
     TaskStarted,
     TaskCompleted,
@@ -92,7 +94,7 @@ impl Event {
     pub fn level(self) -> &'static str {
         use Event::*;
         match self {
-            NativePanic | EngineBootstrapFailed => "CRITICAL",
+            NativePanic | EngineBootstrapFailed | EngineRuntimeFailed => "CRITICAL",
             EngineFailed | TaskFailed | TaskTimeout | LlmRequestFailed | LlmRetryExhausted
             | FrontendError | FrontendRejection | FrontendRenderFailed | ExportFailed
             | UpdateFailed | HttpError => "ERROR",
@@ -127,6 +129,7 @@ impl Event {
                 self,
                 EngineBootstrap
                     | EngineBootstrapFailed
+                    | EngineRuntimeFailed
                     | EngineStopped
                     | TaskStarted
                     | TaskCompleted
@@ -156,6 +159,7 @@ impl Event {
                     | EngineSpawned
                     | EngineReady
                     | EngineFailed
+                    | EngineExited
                     | ExportCompleted
                     | ExportFailed
                     | UpdateFailed
@@ -216,12 +220,75 @@ fn attributes(input: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
             "duration_ms" | "status_code" | "attempt" | "wait_ms" | "tokens" | "count" | "line" => {
                 value.as_u64().is_some_and(|n| n <= (1u64 << 53) - 1)
             }
+            "exit_code" | "os_error" | "win_error" | "sqlite_error" => value
+                .as_i64()
+                .is_some_and(|n| (i32::MIN as i64..=u32::MAX as i64).contains(&n)),
+            "signal" => value.as_u64().is_some_and(|n| (1..=255).contains(&n)),
             "project_ref" | "run_ref" | "call_ref" | "request_id" | "error_id" => {
                 value.as_str().is_some_and(identity)
             }
             "category" => matches!(
                 value.as_str(),
-                Some("timeout" | "permission" | "io" | "invalid" | "dependency" | "unknown")
+                Some(
+                    "timeout"
+                        | "permission"
+                        | "io"
+                        | "invalid"
+                        | "dependency"
+                        | "interrupted"
+                        | "unknown"
+                )
+            ),
+            "stage" => matches!(
+                value.as_str(),
+                Some(
+                    "bootstrap"
+                        | "application"
+                        | "runtime"
+                        | "plugins"
+                        | "listen"
+                        | "running"
+                        | "shutdown"
+                )
+            ),
+            "reason" => matches!(
+                value.as_str(),
+                Some(
+                    "failed"
+                        | "completed"
+                        | "setup_failed"
+                        | "spawn_failed"
+                        | "protocol_invalid"
+                        | "protocol_read_failed"
+                        | "protocol_eof"
+                        | "ready_timeout"
+                        | "channel_closed"
+                        | "process_exited"
+                        | "shutdown_requested"
+                        | "forced"
+                        | "wait_failed"
+                )
+            ),
+            "exception" | "cause_exception" => matches!(
+                value.as_str(),
+                Some(
+                    "TimeoutError"
+                        | "PermissionError"
+                        | "FileNotFoundError"
+                        | "FileExistsError"
+                        | "IsADirectoryError"
+                        | "NotADirectoryError"
+                        | "OSError"
+                        | "Error"
+                        | "ImportError"
+                        | "ValueError"
+                        | "TypeError"
+                        | "RuntimeError"
+                        | "SystemExit"
+                        | "KeyboardInterrupt"
+                        | "CancelledError"
+                        | "BaseException"
+                )
             ),
             "phase" => matches!(
                 value.as_str(),
@@ -255,6 +322,11 @@ fn attributes(input: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
                     "desktop"
                         | "main"
                         | "local_runtime"
+                        | "local_backend"
+                        | "catalog_recovery"
+                        | "local_credentials"
+                        | "babeldoc_plugin"
+                        | "locks"
                         | "tasks"
                         | "router"
                         | "retrying"
@@ -1005,7 +1077,9 @@ impl Diagnostics {
                 }
             }
             if let Some(error) = record.attributes.get("error_id") {
-                errors.push_back(json!({"event": record.event, "error_id": error}));
+                errors.push_back(json!({
+                    "event": record.event, "error_id": error, "attributes": record.attributes
+                }));
                 if errors.len() > 50 {
                     errors.pop_front();
                 }
@@ -1053,7 +1127,10 @@ impl Diagnostics {
         sources.insert("system.json", serde_json::to_vec_pretty(&system).unwrap());
         let report = format!(
             "# Wenyi Desktop diagnostic report\n\nVersion: {}\nPlatform: {} / {}\n\
-            Capture: {:?}\nCompleteness: {}\n\n## Failure references\n\n{}\n\n\
+            Capture: {:?}\nCollection completeness: {}\n\n\
+            Complete collection does not imply complete error coverage or an identified root cause.\n\
+            Engine exit codes/signals are in logs/native.jsonl; forced cleanup is not the original failure.\n\n\
+            ## Failure references\n\n{}\n\n\
             ## Please describe\n\n- Steps to reproduce:\n- Expected behavior:\n- Actual behavior:\n\n\
             No document text, prompts, credentials, raw configuration or project databases are included.\n\
             Timing and platform metadata may still identify you. Review this archive before sharing.\n\
@@ -1394,6 +1471,53 @@ mod tests {
             .unwrap();
         assert!(report.contains(&error));
         assert!(diagnostics.bundle(Range::Day, || true).is_err());
+    }
+
+    #[test]
+    fn startup_failure_details_survive_ingestion_and_report_export() {
+        let diagnostics = Diagnostics::new(None);
+        assert!(diagnostics.ingest(
+            Source::Engine,
+            r#"{
+            "event":"engine_bootstrap_failed","attributes":{
+                "stage":"runtime","category":"permission","exception":"RuntimeError",
+                "cause_exception":"PermissionError","module":"local_runtime","line":61,
+                "os_error":13,"message":"fake-private-book","traceback":"fake-private-key"
+            }}"#
+        ));
+        diagnostics.record(
+            Source::Native,
+            Event::EngineExited,
+            json!({
+                "stage": "bootstrap", "reason": "process_exited", "exit_code": 3,
+            }),
+        );
+        diagnostics.drain();
+        let bytes = diagnostics.bundle(Range::Session, || false).unwrap();
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        for name in ["logs/engine.jsonl", "report.md"] {
+            let mut text = String::new();
+            archive
+                .by_name(name)
+                .unwrap()
+                .read_to_string(&mut text)
+                .unwrap();
+            assert!(!text.contains("fake-private"));
+            for field in [
+                "runtime",
+                "permission",
+                "RuntimeError",
+                "PermissionError",
+                "local_runtime",
+                "61",
+            ] {
+                assert!(text.contains(field), "{name} lost {field}");
+            }
+            if name == "report.md" {
+                assert!(text.contains("Collection completeness"));
+                assert!(text.contains("does not imply complete error coverage"));
+            }
+        }
     }
 
     #[cfg(unix)]

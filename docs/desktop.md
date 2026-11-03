@@ -617,7 +617,20 @@ Open **Settings → Diagnostics and feedback → Export diagnostic report** when
 
 The startup error screen and page error fallbacks also offer export. If the Python engine or React UI is unavailable, use **Export diagnostic report…** in the native application/tray menu, or **Ctrl+Shift+D** (**Cmd+Shift+D** on macOS). This native entry does not need a running engine. If native startup itself fails, an available native error dialog offers a memory-only report; a completely unlaunchable executable cannot export itself.
 
-Reports contain `manifest.json`, a readable `report.md`, basic version/OS/architecture information, and available `logs/native.jsonl`, `logs/engine.jsonl` and `logs/frontend.jsonl`. They cover startup/exit, local task boundaries, HTTP failures, safe model retry/call summaries, frontend failures, native saves and update failures. The selected range includes content-free task metadata across this Desktop workspace; project-specific selection and project-event/configuration/usage summaries are not included yet. The ZIP is limited to 25 MiB with a 20 MiB record-selection budget. The manifest records missing sources, losses, malformed records, size omissions and the retained time coverage. `complete` means available sources were collected without a known loss, not that every event in the requested historical window still exists.
+Reports contain `manifest.json`, a readable `report.md`, basic version/OS/architecture information, and available `logs/native.jsonl`, `logs/engine.jsonl` and `logs/frontend.jsonl`. They cover startup/exit, local task boundaries, HTTP failures, safe model retry/call summaries, frontend failures, native saves and update failures. The selected range includes content-free task metadata across this Desktop workspace; project-specific selection and project-event/configuration/usage summaries are not included yet. The ZIP is limited to 25 MiB with a 20 MiB record-selection budget. The manifest records missing sources, losses, malformed records, size omissions and the retained time coverage. `complete` means available sources were collected without a known loss, not that every event in the requested historical window still exists, every error was instrumented, or a root cause has been identified.
+
+Startup failures retain the first safe exception classification, application module/line,
+and stage (application assembly, runtime initialization, plugin restoration or listening)
+before ASGI can replace the exception with `SystemExit`. Known OS/SQLite error codes and
+explicit cause classifications may also be included; exception messages, paths and
+tracebacks are not. Native records distinguish spawn failure, invalid/broken protocol,
+EOF before readiness, and readiness timeout. `engine_exited` records the observed process
+exit code or Unix signal and whether shutdown was requested or forced. Forced cleanup
+is not evidence of the original failure. `engine_stopped` reports whether the engine
+reached readiness and whether its lifecycle failed; it does not alone prove success.
+These records are enabled without detailed logging, including on the startup error screen.
+Packaging smoke checks use the same diagnostic protocol and Windows no-console launch,
+and verify both normal offline startup and a real, isolated workspace-lock startup failure.
 
 No book text, prompts, model responses, credentials, request bodies, raw exceptions/configuration, project databases or usage ledgers are included. Arbitrary stdout/stderr is not captured. IDs used for task correlation are pseudonymized, but timings and platform metadata may still identify you. **Review the ZIP before sharing it. Nothing is uploaded automatically.** Attach it yourself with reproduction steps, expected/actual behavior and the error ID. **Copy troubleshooting summary** copies the version, latest error ID and log-health information without the log path.
 
