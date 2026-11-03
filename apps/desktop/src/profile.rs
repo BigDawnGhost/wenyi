@@ -280,6 +280,11 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
+    /// Each Python child gets an isolated XDG root as well as an isolated home.
+    fn shared_storages(home: &Path) -> PathBuf {
+        crate::paths::user_root_in(home, Some(&home.join("data"))).join("storages")
+    }
+
     #[test]
     fn python_and_native_share_profile_leases_and_upgrade_admission() {
         use std::{
@@ -310,6 +315,7 @@ with profile_lock(Path(sys.argv[1]), None):
             .arg(root.join("workspace"))
             .env("HOME", &root)
             .env("USERPROFILE", &root)
+            .env("XDG_DATA_HOME", root.join("data"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -319,7 +325,7 @@ with profile_lock(Path(sys.argv[1]), None):
             .read_line(&mut line)
             .unwrap();
         assert_eq!(line.trim(), "ready");
-        let native = Profile::enter(&root.join("Wenyi/storages")).unwrap();
+        let native = Profile::enter(&shared_storages(&root)).unwrap();
         assert!(native.exclusive(None).is_err());
         writeln!(child.stdin.as_mut().unwrap()).unwrap();
         assert!(child.wait().unwrap().success());
@@ -341,6 +347,7 @@ except RuntimeError:
                 .arg(root.join("other"))
                 .env("HOME", &root)
                 .env("USERPROFILE", &root)
+                .env("XDG_DATA_HOME", root.join("data"))
                 .status()
                 .unwrap()
                 .code()
@@ -364,9 +371,10 @@ except RuntimeError:
             return;
         };
         let root = PathBuf::from(root);
+        let home = root.join("profile");
         let workspace = root.join("workspace");
         let owner = crate::instance::enter(&workspace).unwrap().unwrap();
-        let profile = Profile::enter(&root.join("profile/Wenyi/storages")).unwrap();
+        let profile = Profile::enter(&shared_storages(&home)).unwrap();
         let python = Path::new(env!("CARGO_MANIFEST_DIR")).join(if cfg!(windows) {
             "../../.venv/Scripts/python.exe"
         } else {
@@ -413,8 +421,9 @@ with socket.socket() as listener:
 "#,
             ])
             .arg(&workspace)
-            .env("HOME", root.join("profile"))
-            .env("USERPROFILE", root.join("profile"))
+            .env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("XDG_DATA_HOME", home.join("data"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .spawn()
@@ -459,7 +468,7 @@ with socket.socket() as listener:
         assert!(child.wait().unwrap().success());
         update.quiescent().unwrap();
         drop(update);
-        drop(Profile::enter(&root.join("profile/Wenyi/storages")).unwrap());
+        drop(Profile::enter(&shared_storages(&home)).unwrap());
     }
 
     #[test]
@@ -539,7 +548,7 @@ with socket.socket() as listener:
         let mut reply = [0u8];
         control.read_exact(&mut reply).unwrap();
         assert_eq!(&reply, b"w");
-        let other = Profile::enter(&root.join("profile/Wenyi/storages")).unwrap();
+        let other = Profile::enter(&shared_storages(&root.join("profile"))).unwrap();
         let refused = other.exclusive(None).is_err();
         control.write_all(b"q").unwrap();
         control.read_exact(&mut reply).unwrap();

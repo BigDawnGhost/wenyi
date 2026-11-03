@@ -351,7 +351,7 @@ const zhCN = {
   "createProject.starting": "启动中…",
   "createProject.openProject": "进入项目",
   "createProject.location": "项目文件夹",
-  "createProject.locationDefault": "文一的默认文件夹",
+  "createProject.locationDefault": "文译的默认文件夹",
   "createProject.chooseLocation": "选择文件夹",
   "createProject.locationUseDefault": "用默认位置",
   "review.currentRun": "本次审校",

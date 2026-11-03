@@ -6,15 +6,13 @@ call site. The layer a root belongs to is part of the name:
 | layer | root                            | lifetime                        |
 |-------|---------------------------------|---------------------------------|
 | one   | ~/.wenyi/desktop                | rebuilt with the application    |
-| two   | ~/Wenyi                         | backed up, shared by projects   |
+| two   | platform data directory         | backed up, shared by projects   |
 | three | a sibling of the installation   | the user's documents            |
 
 The entries below one workspace are resolved from the directory the native
-parent hands the engine as `--data-dir`. Layer two is resolved from the user
-profile instead, which is the base `user_root()` uses in `src/paths.rs`, so both
-halves of the application name the same directory. Layer two is not overridable
-by an environment variable on purpose: a variable that moved it would silently
-orphan every project the user already has.
+parent hands the engine as `--data-dir`. Layer two follows the same platform
+conventions as `user_root()` in `src/paths.rs`, including XDG_DATA_HOME on Unix,
+so both halves of the application name the same directory.
 
 Resolution is pure: nothing here creates, canonicalizes, or checks a directory
 on disk, and nothing here decides permissions. Every function is exactly the
@@ -73,7 +71,7 @@ _INSTANCE_LOCK = ".desktop.lock"
 #: Native single-instance lock in the same directory.
 _NATIVE_INSTANCE_LOCK = ".desktop-instance.lock"
 
-#: Layer two root under the user profile.
+#: Layer two directory name on Windows and macOS.
 _USER = "Wenyi"
 #: Layer one root under the user profile.
 _RUNTIME = ".wenyi"
@@ -447,12 +445,19 @@ def platform_home() -> Path:
 def user_root(*, home: Path | None = None) -> Path:
     """Layer two: user-level data that outlives the application.
 
-    `home` is the profile to resolve against and defaults to this machine's.
-    It is a parameter rather than an environment variable because layer two is
-    persisted configuration: moving it is a user-visible action, not something a
-    variable in the environment should be able to do by accident.
+    Unix uses XDG_DATA_HOME/wenyi, falling back to ~/.local/share/wenyi for
+    unset, blank or relative XDG values. macOS uses Application Support/Wenyi;
+    Windows keeps Wenyi under the user profile. `home` overrides only the home
+    directory used by these platform rules, not an absolute XDG_DATA_HOME.
     """
-    return (platform_home() if home is None else Path(home)) / _USER
+    profile = platform_home() if home is None else Path(home)
+    if sys.platform == "win32":
+        return profile / _USER
+    if sys.platform == "darwin":
+        return profile / "Library" / "Application Support" / _USER
+    configured = Path(os.environ.get("XDG_DATA_HOME", ""))
+    base = configured if configured.is_absolute() else profile / ".local" / "share"
+    return base / "wenyi"
 
 
 def user_storages(*, home: Path | None = None) -> Path:

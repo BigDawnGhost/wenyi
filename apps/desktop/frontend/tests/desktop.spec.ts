@@ -1,4 +1,4 @@
-import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
+import { expect, test, type Page, type Request, type WebSocketRoute } from "@playwright/test";
 import { fakeApi, globalConfiguration, pid, project, workflow } from "../../../../packages/ui/sandbox/fixtures";
 import type {} from "../src/runtime";
 
@@ -256,10 +256,15 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
     if (response.url().startsWith(origin)) initialResponses.add(new URL(response.url()).pathname);
   });
   const counts: Record<string, number> = {};
+  const pendingRequests = new Set<Request>();
   page.on("request", request => {
-    if (request.url().startsWith(origin))
+    if (request.url().startsWith(origin)) {
+      pendingRequests.add(request);
       counts[new URL(request.url()).pathname] = (counts[new URL(request.url()).pathname] || 0) + 1;
+    }
   });
+  page.on("requestfinished", request => pendingRequests.delete(request));
+  page.on("requestfailed", request => pendingRequests.delete(request));
   await page.goto(`/projects/${pid}`);
   // Startup queries cross process boundaries; tick their notifications until all fixtures arrive.
   await expect.poll(async () => {
@@ -280,7 +285,7 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
           const before = total();
           // Flush query notifications without moving the paused browser clock.
           await page.clock.runFor(0);
-          return total() - before;
+          return pendingRequests.size + total() - before;
         },
         { intervals: [50, 100, 200] },
       )
@@ -301,12 +306,15 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   socket!.send(JSON.stringify({ kind: "stats", project_id: pid, run_id: "run-a" }));
   await page.clock.runFor(1000);
   await expect.poll(() => total() - beforeStats).toBeGreaterThanOrEqual(1);
-  const beforeTranslation = total();
+  await settleQueries();
+  // Desktop translation frames refresh chapters and workflow, not project or stats.
+  const translationPaths = ["/chapters", "/workflow"].map(path => `/projects/${pid}${path}`);
+  const beforeTranslation = translationPaths.map(path => counts[path] || 0);
   socket!.send(JSON.stringify({ kind: "translation", project_id: pid, run_id: "run-a", label: "Saved local batch" }));
-  await page.clock.runFor(1000);
   await expect(page.getByRole("status")).toContainText("Saved local batch");
-  // A translation frame refreshes project, chapters and stats.
-  await expect.poll(() => total() - beforeTranslation).toBeGreaterThanOrEqual(3);
+  await page.clock.runFor(1000);
+  for (const [index, path] of translationPaths.entries())
+    await expect.poll(() => counts[path] - beforeTranslation[index]).toBeGreaterThanOrEqual(1);
   socket!.send(JSON.stringify({ kind: "translation", project_id: "other", run_id: "run-a", label: "Wrong project" }));
   socket!.send(JSON.stringify({ kind: "translation", project_id: pid, run_id: "old-run", label: "Old run" }));
   await page.clock.runFor(1000);

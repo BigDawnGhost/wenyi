@@ -18,6 +18,16 @@ async function desktop(page: import("@playwright/test").Page, chosen: string | n
   }, { origin, chosen });
 }
 
+test("the Chinese project folder placeholder uses the product name", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
+  await desktop(page, null);
+  await fakeApi(page, {}, origin);
+  await page.goto("/projects/new");
+  const dialog = page.getByRole("dialog", { name: "创建项目", exact: true });
+  await expect(dialog.getByLabel("项目文件夹", { exact: true }))
+    .toHaveAttribute("placeholder", "文译的默认文件夹");
+});
+
 test("the library offers an import entry that adopts the chosen folder", async ({ page }) => {
   await desktop(page, "D:/Downloads/book-1");
   await fakeApi(page, {}, origin);

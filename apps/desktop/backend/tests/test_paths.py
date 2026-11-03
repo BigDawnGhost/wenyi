@@ -38,9 +38,53 @@ def test_the_old_catalog_is_still_named_in_the_workspace(tmp_path: Path) -> None
     assert paths.catalog(workspace) == workspace / "local.sqlite3"
 
 
-def test_the_engine_catalog_is_the_one_under_the_user_profile(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("platform", "relative"),
+    [
+        ("linux", ".local/share/wenyi"),
+        ("freebsd14", ".local/share/wenyi"),
+        ("darwin", "Library/Application Support/Wenyi"),
+        ("win32", "Wenyi"),
+    ],
+)
+@pytest.mark.parametrize("xdg", [None, "", "   ", "relative/data"])
+def test_shared_data_uses_the_platform_location(tmp_path, monkeypatch, platform, relative, xdg):
     home = tmp_path / "profile"
-    assert paths.user_catalog(home=home) == home / "Wenyi" / "storages" / "catalog.sqlite3"
+    monkeypatch.setattr(paths.sys, "platform", platform)
+    if xdg is not None:
+        monkeypatch.setenv("XDG_DATA_HOME", xdg)
+    expected = home / relative
+    assert paths.user_root(home=home) == expected
+    assert paths.user_catalog(home=home) == expected / "storages" / "catalog.sqlite3"
+    assert paths.user_settings(home=home) == expected / "settings.yaml"
+    assert not expected.exists()
+
+
+@pytest.mark.parametrize(
+    ("platform", "relative"),
+    [
+        ("linux", None),
+        ("freebsd14", None),
+        ("darwin", "Library/Application Support/Wenyi"),
+        ("win32", "Wenyi"),
+    ],
+)
+def test_only_xdg_platforms_follow_an_absolute_data_home(tmp_path, monkeypatch, platform, relative):
+    home = tmp_path / "profile"
+    data_home = tmp_path / "separate-data"
+    monkeypatch.setattr(paths.sys, "platform", platform)
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    expected = data_home / "wenyi" if relative is None else home / relative
+    assert paths.user_root(home=home) == expected
+    assert paths.user_catalog(home=home).is_relative_to(expected)
+    assert not expected.exists()
+
+
+def test_the_engine_catalog_is_below_shared_data(tmp_path: Path) -> None:
+    home = tmp_path / "profile"
+    assert (
+        paths.user_catalog(home=home) == paths.user_root(home=home) / "storages" / "catalog.sqlite3"
+    )
 
 
 def test_the_two_catalog_names_are_different_files(tmp_path: Path) -> None:
@@ -274,16 +318,16 @@ def test_the_native_instance_lock_is_named_beside_the_engine_lock(tmp_path: Path
 def test_every_layer_two_entry_hangs_below_the_user_root(tmp_path: Path, name, expected) -> None:
     home = tmp_path / "profile"
     resolved = getattr(paths, name)(home=home)
-    assert resolved == home.joinpath("Wenyi", *expected)
+    assert resolved == paths.user_root(home=home).joinpath(*expected)
     assert resolved.is_relative_to(paths.user_root(home=home))
 
 
 def test_a_variable_cannot_move_layer_two(tmp_path, monkeypatch, private_profile) -> None:
-    # Layer two is persisted configuration, not an overridable root: a variable
-    # that moved it would orphan every project the user already has. Only the
-    # profile itself is read, and that is the value the fixture set.
+    # Only platform conventions can locate shared data, not a Wenyi-specific
+    # override that the native parent does not read.
+    expected = paths.user_root()
     monkeypatch.setenv("WENYI_USER_DIR", str(tmp_path / "elsewhere"))
-    assert paths.user_root() == private_profile / "Wenyi"
+    assert paths.user_root() == expected
 
 
 def test_a_blank_profile_variable_is_not_the_current_directory(
@@ -343,11 +387,13 @@ def test_the_native_instance_lock_name_is_the_one_the_native_parent_holds() -> N
 
 
 def test_the_layer_two_root_is_the_one_the_native_resolver_builds() -> None:
-    # user_root() in the native resolver is home_dir().join(USER). Layer two has
-    # to be the same directory from both halves, because the native side writes
-    # the diagnostic logs and the backup into it.
-    assert paths.user_root(home=Path("C:/profile")) == Path("C:/profile/Wenyi")
-    assert 'const USER: &str = "Wenyi";' in rust("src/paths.rs")
+    # The native parent and engine must follow the same platform conventions:
+    # the engine stores the catalog while the parent snapshots it before updates.
+    source = rust("src/paths.rs")
+    assert 'const USER: &str = "Wenyi";' in source
+    assert 'home.join("Library/Application Support").join(USER)' in source
+    assert 'home.join(".local/share")' in source
+    assert 'data_home.join("wenyi")' in source
 
 
 def test_the_diagnostics_name_is_the_one_the_native_resolver_builds() -> None:

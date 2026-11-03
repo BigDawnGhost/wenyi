@@ -77,8 +77,9 @@ for (const locale of ["en", "zh-CN"] as const) {
       const updatedToast = page.locator("[data-sonner-toast]").filter({
         hasText: chinese ? "已更新" : "Updated",
       });
-      await updatedToast.getByRole("button", { name: /close/i }).click();
-      await expect(updatedToast).toHaveCount(0);
+      // Let the notification expire instead of racing its animated close button.
+      await expect(updatedToast).toBeVisible();
+      await expect(updatedToast).toHaveCount(0, { timeout: 10_000 });
 
       await page.getByRole("button", {
         name: chinese ? "添加术语" : "Add term",
