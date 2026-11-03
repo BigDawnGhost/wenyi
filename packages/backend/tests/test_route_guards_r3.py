@@ -77,3 +77,19 @@ def test_glossary_import_rejects_oversized_term_list(backend_context):
     terms = [{"source": f"t{i}", "target": f"译{i}"} for i in range(1001)]
     response = client.post("/projects/pid1/glossary/import", json={"terms": terms})
     assert response.status_code == 422
+
+
+def test_health_degrades_without_driver_details(backend_context):
+    context = replace(
+        backend_context, health=Mock(side_effect=RuntimeError("psycopg: host db.internal:5432"))
+    )
+    response = _client_with(context).get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "db": "unavailable"}
+    assert "db.internal" not in response.text
+
+
+def test_health_ok_reports_ok(backend_context):
+    response = _client_with(backend_context).get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "db": "ok"}
