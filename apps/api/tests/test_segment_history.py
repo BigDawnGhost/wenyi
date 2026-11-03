@@ -4,7 +4,7 @@
 
 import pytest
 from api_test_support import initialize
-from wenyi_core.ingest.models import Chapter, Segment
+from wenyi_core.models.document import Chapter, Segment
 
 
 def test_batch_translation_polishing_and_manual_changes_share_history(domain_client, tmp_path):

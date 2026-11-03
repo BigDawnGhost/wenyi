@@ -383,7 +383,7 @@ output:
 - `bilingual`: request a source-and-translation edition as `<book-name>.<target-language>-bi.<extension>`, using the same selected format as monolingual output.
 - `bilingual_order`: `target_first` places the translation before the source; `source_first` reverses the order.
 - `bilingual_preserve_source_style`: controls source styling independently of `bilingual_order` in EPUB, HTML, and DOCX. In EPUB/HTML, `true` inherits the book's normal text style instead of the default subdued gray style. In DOCX, `false` uses normal body text without added gray text, highlighting, or reduced font sizes; `true` restores recorded source bold, italic, underline, color, and size, including mixed-style spans, in paragraphs and tables. Source text never receives the translation's target font or translated span positions. Only recorded styles can be restored.
-- `about_page`: append an “About this translation” project page to the book; set it to `false` to disable it.
+- `about_page`: append an “About this translation” project page to the book (EPUB output only); set it to `false` to disable it.
 - `punctuation_normalize`: normalize punctuation only on the in-memory export copy for Simplified Chinese targets. Traditional Chinese and other targets skip this deterministic conversion. Formal chapter `target` values, Review input, and resume state remain unchanged.
 
 The former top-level `punctuation.normalize` key is not accepted; remove it and configure only `output.punctuation_normalize`.
@@ -404,8 +404,8 @@ paths:
   state_dir: state
 ```
 
-- `max_tokens_per_batch`: source-token budget for one model translation request, counted with tiktoken `cl100k_base` (a universal estimator, not the live provider tokenizer).
-- `max_tokens_per_segment`: token threshold for splitting an exceptionally long source paragraph at sentence boundaries.
+- `max_tokens_per_batch`: source-token budget for one model translation request, counted with tiktoken `cl100k_base` (a universal estimator, not the live provider tokenizer). Must be at least 1.
+- `max_tokens_per_segment`: token threshold for splitting an exceptionally long source paragraph at sentence boundaries. `0` disables splitting.
 - `honorific.strategy`: Japanese-source honorific policy: `keep_style`, `normalize`, or `drop`.
 - `state_dir`: location of book checkpoints, chapter files, the glossary database, usage data, and reports.
 

@@ -12,10 +12,10 @@ from typing import Any, TypeAlias
 
 from ..i18n.policy.models import ExportTextInput, ExportTextResult, PolicyContext, PolicyPlan
 from ..i18n.policy.resolver import resolve_policy
-from ..ingest.models import Chapter
-from ..pipeline.runstore import ExportSnapshotStore, RunStore
+from ..models.document import Chapter
 from ..postprocess.export_text import boundary_map, normalize_chinese, validate_result
 from ..storage.protocol import Storage
+from ..storage.run_store import ExportSnapshotStore, RunStore
 from .writer_common import _manifest_target_lang
 
 TEXT_HANDLERS: MappingProxyType[str, Callable[[ExportTextInput], ExportTextResult]] = (

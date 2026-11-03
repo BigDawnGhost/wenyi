@@ -1,6 +1,6 @@
 // Desktop bridge contract tests; these do not drive OS/Wayland drag-and-drop.
 import { expect, test, type Page } from "@playwright/test";
-import { fakeApi, pid, project } from "../../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi, pid, project } from "../../../../packages/ui/sandbox/fixtures";
 import type { NativeDrag } from "../src/nativeDrop";
 
 const origin = "http://127.0.0.1:19481";
@@ -212,12 +212,12 @@ for (const mode of ["standard", "best_of_three"] as const) {
     await page.getByRole("button", { name: "Create project", exact: true }).click();
     await expect(zone).toHaveAttribute("aria-disabled", "true");
     const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
-    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
-    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeDisabled();
-    await page.keyboard.press("Escape");
-    await page.mouse.click(2, 2);
-    await expect(dialog).toBeVisible();
-    await expect(page).toHaveURL("/projects/new");
+    // The upload cannot be recalled once it is handed to the native bridge, so
+    // the dismiss control is relabelled rather than disabled. It stays on
+    // screen here, because the replacement drop below needs the open dialog.
+    await expect(dialog.getByRole("button", { name: "Close", exact: true }).first()).toBeEnabled();
+    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+    await expect(zone).toHaveAttribute("aria-disabled", "true");
     await expect.poll(() => calls(page)).toContainEqual({
       command: "native_drop_upload",
       args: {

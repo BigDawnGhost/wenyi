@@ -52,8 +52,8 @@ pipeline:
   terminology_context: false # CLI-only experimental whole-book terminology evidence
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
-  annotation_alignment: true # Align EPUB annotation links per paragraph; if disabled, target links fall back to paragraph ends
-  annotation_alignment_concurrency: 4 # Maximum concurrent alignment requests when a paragraph has multiple annotations
+  annotation_alignment: true # Align links after each annotated logical paragraph; if disabled, target links fall back to paragraph ends
+  annotation_alignment_concurrency: 4 # Maximum concurrent per-annotation requests for a logical paragraph with multiple annotations
   review_concurrency: 4 # Concurrent review blocks over a read-only translation/glossary snapshot; 1 runs serially
   review_output_retries: 2 # Additional retries for malformed single-paragraph review output; 2 allows 3 attempts total
   review_agent_loop: true # Use evidence-based verification after the initial review identifies candidates
@@ -86,7 +86,7 @@ output:
   # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
   bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page
-  punctuation_normalize: true # Normalize only exported copies; preserve formal translation state
+  punctuation_normalize: true # Normalize only exported copies; preserve formal translations in state
 """
 
 
@@ -95,8 +95,11 @@ class SegmentConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    max_tokens_per_batch: int = 1800
-    max_tokens_per_segment: int = 1200
+    # gt=0 on the batch budget: a persisted 0 would degrade packing to one request per
+    # segment with no error anywhere (audit Y-3/F-2). max_tokens_per_segment keeps 0 as
+    # a valid knob — the splitter then splits every sentence into its own segment.
+    max_tokens_per_batch: int = Field(default=1800, gt=0)
+    max_tokens_per_segment: int = Field(default=1200, ge=0)
 
 
 class PipelineConfig(BaseModel):

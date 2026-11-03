@@ -95,10 +95,11 @@ def save_config(pid: str, body: ConfigInput) -> dict:
 
 @router.get("/projects/{pid}/models", response_model=list[dict])
 def models(pid: str) -> list[dict]:
-    return [
-        route.describe()
-        for route in resolve_routes(effective_config(require_project(pid)).llm).values()
-    ]
+    try:
+        config = effective_config(require_project(pid))
+    except (ValueError, yaml.YAMLError) as error:
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from None
+    return [route.describe() for route in resolve_routes(config.llm).values()]
 
 
 @router.post("/projects/{pid}/models/check", response_model=ModelCheckResult)
@@ -144,7 +145,10 @@ def workflow(pid: str) -> dict:
     job = next((j for j in repository.list_jobs(pid) if j["kind"] != "export"), None)
     params = (job or {}).get("params") or {}
     snapshot = params.get("config_snapshot")
-    document = snapshot or config_document(effective_config(project))
+    try:
+        document = snapshot or config_document(effective_config(project))
+    except (ValueError, yaml.YAMLError) as error:
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from None
     pipeline = document.get("pipeline", {})
     kind = job["kind"] if job else "translation"
     stages = []

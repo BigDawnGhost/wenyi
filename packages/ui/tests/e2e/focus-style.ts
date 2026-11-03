@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../sandbox/fixtures";
+
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Asserts a dialog's keyboard and pointer focus rings share one rounded style; pure CSS and DOM, and the probe recorded no Desktop-only service.
+ */
+export const desktopHostSensitive = false;
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
   test("keyboard and pointer use the same rounded dialog controls", async ({

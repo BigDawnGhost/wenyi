@@ -21,7 +21,7 @@ export default function ProgressPage() {
   const { t: tr } = useI18n();
   const { pid = "" } = useParams();
   const qc = useQueryClient();
-  const { msg, connected } = useProjectProgress(pid);
+  const { msg, failure, connected } = useProjectProgress(pid);
   const projectQuery = useProjectQuery(pid, progressInterval(connected, 2500));
   const project = projectQuery.data;
   const busy = isProjectBusy(project?.status);
@@ -138,7 +138,13 @@ export default function ProgressPage() {
             </div>
           </CardContent>
         </Card>
-        <WorkflowPanel pid={pid} msg={msg} connected={connected} busy={busy} />
+        <WorkflowPanel
+          pid={pid}
+          msg={msg}
+          failure={failure}
+          connected={connected}
+          busy={busy}
+        />
         <p className="text-xs text-muted-foreground">
           {tr("progress.progressConnection")}:{" "}
           {connected ? tr("progress.live") : tr("progress.polling")}

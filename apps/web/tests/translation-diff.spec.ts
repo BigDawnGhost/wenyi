@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { fakeApi, pid, project } from "../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi, pid, project } from "../../../packages/ui/sandbox/fixtures";
 
 async function openHistory(
   page: Page,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -53,16 +55,22 @@ def create_app(
                     provided = (
                         request.headers.get("authorization", "").removeprefix("Bearer ").strip()
                     )
-                    if provided != context.api_token:
+                    # Compare bytes, not str: hmac.compare_digest rejects non-ASCII str
+                    # with TypeError, which would turn a failing check into a 500 for any
+                    # token containing non-ASCII characters. Matches the WebSocket path.
+                    if not hmac.compare_digest(provided.encode(), context.api_token.encode()):
                         return JSONResponse({"detail": "invalid api token"}, status_code=401)
                 return await call_next(request)
 
         app.add_middleware(TokenMiddleware)
 
+    allowed_origins = origins if origins is not None else ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins if origins is not None else ["*"],
-        allow_credentials=True,
+        allow_origins=allowed_origins,
+        # A wildcard deployment must not echo credentials: its origins are untrusted by
+        # definition. Explicit origin lists are admin-curated and may allow credentials.
+        allow_credentials="*" not in allowed_origins,
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["Content-Disposition"],

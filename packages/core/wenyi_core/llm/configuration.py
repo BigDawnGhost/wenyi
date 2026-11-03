@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from .operations import TIERS, require_operation
+from .operation_names import TIERS, require_operation_name
 
 
 class ProviderConfig(BaseModel):
@@ -156,7 +156,7 @@ class LLMConfig(BaseModel):
             if reference not in self.models:
                 raise ValueError(f"llm.tiers.{name}: unknown model profile {reference!r}")
         for operation, route in self.routes.items():
-            require_operation(operation)
+            require_operation_name(operation)
             for reference in ([route.model] if route.model is not None else []) + route.fallbacks:
                 if reference not in self.models:
                     raise ValueError(

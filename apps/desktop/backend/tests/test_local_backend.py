@@ -1,6 +1,7 @@
 """Desktop catalog uses isolated temporary workspaces and no external services."""
 
 import inspect
+import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 from wenyi_backend import paths
 from wenyi_backend.context import current_context, use_context
 from wenyi_backend.global_settings import load_settings, save_settings
+from wenyi_desktop import paths as desktop_paths
 from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.main import create_context
 
@@ -76,7 +78,11 @@ def test_catalog_durability_and_workspace_isolation(backend, tmp_path):
     assert current_context().repository.latest_resumable_job(pid) == saved
     workspace = backend.workspace
     backend.close()
-    other = create_context(tmp_path / "second")
+    # A second workspace shares this machine's layer two, so what this test can
+    # still isolate is the per-workspace project directory and the state inside
+    # it. Give the second workspace its own profile so the shared catalog does
+    # not answer the isolation question by itself.
+    other = create_context(tmp_path / "second", user_home=tmp_path / "second-profile")
     try:
         with use_context(other):
             assert other.repository.all_jobs() == []
@@ -587,6 +593,150 @@ def test_settings_projects_health_and_download_routes_without_pg(backend):
     assert client.get(f"/projects/{pid}").status_code == 404
 
 
+def test_deletion_refuses_a_registry_record_outside_every_project_root(backend, tmp_path):
+    # Deletion is recursive and the catalog is editable data, so a record that
+    # points anywhere else is refused rather than repaired. Without this the
+    # record alone decides which directory is removed.
+    pid = new_project()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    anchor = Path(tmp_path.anchor)
+    # A record pointing at another directory, at the profile directory, and at a
+    # filesystem root. None of these is created or read: the refusal happens
+    # before anything touches the path, which is the whole point.
+    victims = [elsewhere, anchor / "Users", anchor, elsewhere / ".."]
+    for victim in victims:
+        backend.update_project(pid, location=str(victim))
+        with pytest.raises(HTTPException) as error:
+            backend.remove_project(pid)
+        assert error.value.status_code == 409
+        assert backend.get_project(pid) is not None
+    assert elsewhere.is_dir()
+
+
+def test_deletion_refuses_a_project_directory_that_is_a_link(backend, tmp_path):
+    # The gate compares resolved paths, so a project entry that is a link is
+    # refused for where it points. The entry itself is still refused on its own
+    # account: a link to another project's directory resolves inside the root,
+    # and rmtree would follow it into a project that is not being deleted.
+    pid = new_project()
+    neighbour = new_project()
+    target = backend.project_dir(neighbour)
+    target.mkdir(parents=True)
+    (target / "keep.txt").write_text("not this project", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    directory = backend.project_dir(pid)
+    for destination, survivor in ((target, target), (outside, outside)):
+        if directory.exists() or directory.is_symlink():
+            directory.unlink()
+        try:
+            directory.symlink_to(destination, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("Creating links requires a privilege this session does not have")
+        with pytest.raises(HTTPException) as error:
+            backend.remove_project(pid)
+        assert error.value.status_code == 409
+        assert survivor.is_dir()
+    assert (target / "keep.txt").is_file()
+
+
+def test_deletion_refuses_a_directory_whose_marker_names_another_project(backend):
+    # The marker is what survives a rename, so it is the authority the record is
+    # checked against. A directory carrying another project's identifier is not
+    # this project's directory, whatever the record says.
+    pid = new_project()
+    directory = backend.project_dir(pid)
+    directory.mkdir(parents=True)
+    (directory / "project.json").write_text(
+        '{"pid": "ffffffffffffffff", "schema_version": 1}', encoding="utf-8"
+    )
+    with pytest.raises(HTTPException) as error:
+        backend.remove_project(pid)
+    assert error.value.status_code == 409
+    assert directory.is_dir()
+
+
+def test_deletion_removes_the_directory_its_identifier_names(backend):
+    # The allowed case: the directory the backend derives, agreeing with its own
+    # marker and with the record. Deriving the path is what makes a tampered
+    # record a refused deletion instead of a chosen one.
+    pid = new_project()
+    directory = backend.project_dir(pid)
+    directory.mkdir(parents=True)
+    (directory / "project.json").write_text(
+        '{"pid": "%s", "schema_version": 1}' % pid, encoding="utf-8"
+    )
+    backend.update_project(pid, location=str(directory))
+    backend.remove_project(pid)
+    assert not directory.exists()
+    assert backend.get_project(pid) is None
+
+
+def test_deletion_ignores_a_record_that_names_another_projects_directory(backend):
+    # Two projects on one machine: the record of the deleted one names the other
+    # one's directory. Deriving the path means the neighbour is untouched, and the
+    # disagreement is refused rather than acted on.
+    pid = new_project()
+    neighbour = new_project()
+    other = backend.project_dir(neighbour)
+    other.mkdir(parents=True)
+    backend.update_project(pid, location=str(other))
+    with pytest.raises(HTTPException) as error:
+        backend.remove_project(pid)
+    assert error.value.status_code == 409
+    assert other.is_dir()
+    assert backend.get_project(pid) is not None
+
+
+def test_deletion_of_an_unknown_project_is_a_refusal_not_a_no_op(backend):
+    with pytest.raises(HTTPException) as error:
+        backend.remove_project("f" * 16)
+    assert error.value.status_code == 404
+
+
+def test_a_deletion_interrupted_after_the_files_are_gone_can_be_retried(backend):
+    # The failure this guards against: the files are removed, and the process
+    # dies before the catalog row is. The next start would find a listed project
+    # whose directory is missing, and a startup repair cannot tell that from a
+    # project on a drive that was unplugged.
+    pid = new_project()
+    directory = backend.project_dir(pid)
+    directory.mkdir(parents=True)
+    (directory / desktop_paths.PROJECT_MARKER).write_text(
+        '{"pid": "%s", "schema_version": 1}' % pid, encoding="utf-8"
+    )
+    (directory / "source-book.txt").write_text("text", encoding="utf-8")
+    backend.update_project(pid, location=str(directory))
+    backend._write_deleting_sentinel(directory)
+    backend.update_project(pid, deleting=True)
+    # The interruption: files removed, row kept.
+    shutil.rmtree(directory)
+    assert not directory.exists()
+    assert backend._get("projects", pid)["deleting"] is True
+    # The retry finishes the row deletion instead of refusing a directory that
+    # is already gone or, worse, recreating it.
+    backend.remove_project(pid)
+    assert backend._get("projects", pid) is None
+    assert not directory.exists()
+
+
+def test_a_marked_project_is_still_refused_while_a_task_is_active(backend):
+    # The retry path skips the book and export locks, so it has to keep the
+    # catalog checks those locks exist to protect.
+    pid = new_project()
+    directory = backend.project_dir(pid)
+    directory.mkdir(parents=True)
+    backend.update_project(pid, location=str(directory), deleting=True)
+    identity = backend.create_export(pid, "txt", {})
+    backend.set_export_status(identity, "pending")
+    with pytest.raises(HTTPException) as error:
+        backend.remove_project(pid)
+    assert error.value.status_code == 409
+    assert directory.is_dir()
+    assert backend._get("projects", pid) is not None
+
+
 def test_backend_cannot_be_replaced_implicitly(backend, tmp_path):
     original = current_context()
     other = create_context(tmp_path / "other")
@@ -770,7 +920,11 @@ def test_verbatim_workspace_reopens_existing_catalog(tmp_path):
         assert reopened.workspace == workspace
         assert reopened.get_project(pid)["name"] == "Existing project"
         assert reopened.get_project_config(pid) == {"keep": True}
-        assert reopened.database.samefile(workspace / "local.sqlite3")
+        # The catalog moved to layer two; the workspace keeps the project
+        # directories and, from the old version, its untouched catalog.
+        from wenyi_desktop import paths as desktop_paths
+
+        assert reopened.database == desktop_paths.user_catalog()
         storage = reopened.storage_for(pid)
         try:
             storage.write_artifact("preview.json", {"title": "Still writable"})

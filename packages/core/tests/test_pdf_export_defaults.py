@@ -7,10 +7,10 @@ from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import RunStore
+from wenyi_core.storage.run_store import RunStore
 
 from tests.fake_llm import routing_handler
 
@@ -63,14 +63,14 @@ def pdf_project(tmp_path, monkeypatch):
         ],
     )
     monkeypatch.setattr(
-        "wenyi_core.pipeline.input_preparation.load_document",
+        "wenyi_core.pipeline.prepare.input_preparation.load_document",
         lambda *a, **kw: document.model_copy(deep=True),
     )
     monkeypatch.setattr(
         "wenyi_cli.commands.context.CommandContext.load_config", lambda self: config
     )
     monkeypatch.setattr(
-        "wenyi_core.pipeline.runtime.build_client",
+        "wenyi_core.pipeline.run.runtime.build_client",
         lambda cfg: FakeClient(handler=routing_handler, config=cfg.llm),
     )
     requests = []

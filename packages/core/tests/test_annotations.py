@@ -2,8 +2,8 @@
 
 import unittest
 
-from wenyi_core.ingest.models import Segment
-from wenyi_core.pipeline.annotations import AnnotationService
+from wenyi_core.models.document import Segment
+from wenyi_core.pipeline.annotate.annotations import AnnotationService
 
 
 class TestAnnotationContexts(unittest.TestCase):

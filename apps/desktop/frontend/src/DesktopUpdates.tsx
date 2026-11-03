@@ -49,7 +49,15 @@ export function DesktopUpdates({ blocked, onInstalling }: {
   const status = useQuery({
     queryKey: ["desktopUpdateStatus"],
     queryFn: () => invoke<Status>("desktop_update_status"),
-    refetchInterval: 1000,
+    // Only a moving phase needs to be followed closely. A settled phase changes
+    // solely when the user acts, and every action already refetches, so polling
+    // it every second would spend IPC on a value that cannot differ.
+    refetchInterval: (query) => {
+      const phase = query.state.data?.phase;
+      return phase === "checking" || phase === "downloading" || phase === "installing"
+        ? 1000
+        : 30_000;
+    },
     retry: false,
   });
   const data = status.data;

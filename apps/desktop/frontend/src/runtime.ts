@@ -69,5 +69,8 @@ export function progressUrl(pid: string) {
 }
 
 export function progressInterval(connected: boolean, fallback: number) {
-  return connected ? 30_000 : fallback;
+  // A live socket already carries every stage change, so this interval is only
+  // a safety net for the values a frame does not repeat (usage, run time). It
+  // must stay short enough that a silently dropped frame is invisible.
+  return connected ? 5_000 : fallback;
 }

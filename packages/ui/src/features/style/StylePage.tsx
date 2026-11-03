@@ -80,6 +80,8 @@ export default function StylePage() {
       return next;
     });
   const saveFields = (keys: string[]) => {
+    // A second click can arrive before the re-render that disables the button,
+    // so the guard is what keeps one edit from becoming two submissions.
     if (qc.isMutating({ mutationKey: saveKey, exact: true })) return;
     save.mutate({
       projectId: pid,
@@ -111,13 +113,20 @@ export default function StylePage() {
             <Card>
               <CardHeader className="flex-row items-center justify-between">
                 <CardTitle>{tr("style.styleOverview")}</CardTitle>
-                <Button
-                  size="sm"
-                  onClick={() => saveFields(styleKeys)}
-                  disabled={readOnly || !styleKeys.some((key) => key in draft)}
-                >
-                  {tr("common.save")}
-                </Button>
+                <div className="flex items-center gap-3">
+                  {saving && (
+                    <span role="status" className="text-sm text-muted-foreground">
+                      {tr("common.saving")}
+                    </span>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={() => saveFields(styleKeys)}
+                    disabled={readOnly || !styleKeys.some((key) => key in draft)}
+                  >
+                    {tr("common.save")}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-3 gap-4">
@@ -155,13 +164,20 @@ export default function StylePage() {
             <Card>
               <CardHeader className="flex-row items-center justify-between">
                 <CardTitle>{tr("style.wholeBookSynopsis")}</CardTitle>
-                <Button
-                  size="sm"
-                  onClick={() => saveFields(["book_synopsis"])}
-                  disabled={readOnly || !("book_synopsis" in draft)}
-                >
-                  {tr("common.save")}
-                </Button>
+                <div className="flex items-center gap-3">
+                  {saving && (
+                    <span role="status" className="text-sm text-muted-foreground">
+                      {tr("common.saving")}
+                    </span>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={() => saveFields(["book_synopsis"])}
+                    disabled={readOnly || !("book_synopsis" in draft)}
+                  >
+                    {tr("common.save")}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <Textarea

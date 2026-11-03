@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { fakeApi, pid, project } from "../../sandbox/fixtures";
+
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * A timing benchmark. `apps/desktop/frontend/playwright.config.ts` keeps it in a separate single-worker measurement project that only runs when PLAYWRIGHT_PERF=1, so it measures the Desktop runtime's rendering budget specifically.
+ */
+export const desktopHostSensitive = true;
 
 export function registerTests() {
 // Synthetic, offline mixed-language text: never load a user's book.

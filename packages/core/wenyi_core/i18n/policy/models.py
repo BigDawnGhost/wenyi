@@ -5,10 +5,21 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+def used_rule_keys(templates: Iterable[tuple[str, str]]) -> set[str]:
+    """Return the rule keys referenced by ``${key}``/``$key`` placeholders in templates.
+
+    Single source of truth for :meth:`PolicyPlan.task_fingerprint` and
+    ``resolver.resolve_policy``; the two previously kept divergent copies (audit X-4).
+    """
+    return set(re.findall(r"\$\{?(\w+)", "\n".join(text for _, text in templates)))
+
 
 Point = Literal[
     "prompt.compose",
@@ -48,6 +59,10 @@ class ExportDefaults(BaseModel):
     def reject_null(cls, value: Any) -> Any:
         if value is None:
             raise ValueError("Export policy defaults cannot be null")
+        if isinstance(value, str) and not value.strip():
+            # Align with registry.validate_options: blank strings are not valid values
+            # (audit Y-4/D-2).
+            raise ValueError("Export policy defaults cannot be blank")
         return value
 
 
@@ -169,7 +184,7 @@ class PolicyPlan:
         templates = tuple(
             (name, text) for name, text in self.templates if name.startswith(prefix + "_")
         )
-        used = set(re.findall(r"\$\{?(\w+)", "\n".join(text for _, text in templates)))
+        used = used_rule_keys(templates)
         values = {key: value for key, value in self.prompt_values if key in used}
         if prefix in {"translator", "review_fixer", "precision"} and "lang_guidance" in used:
             values["lang_guidance"] = dict(self.prompt_values)["configured_lang_guidance"]

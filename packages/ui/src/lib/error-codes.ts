@@ -23,6 +23,13 @@ export const errorCodeMessages: Record<string, MessageKey> = {
   segment_not_found: "error.segmentNotFound",
   invalid_configuration: "error.invalidConfiguration",
   unsupported_client: "error.unsupportedClient",
+  source_too_large: "error.sourceTooLarge",
+  // A validation rejection (400/422) has no stable code of its own; the envelope only
+  // carries a field-error list, so the UI needs its own copy for that shape.
+  validation_failed: "error.validationFailed",
+  // Raised by the client itself when a request exceeds its deadline; the server
+  // never sends it, so it has no backend envelope behind it.
+  request_timeout: "error.requestTimeout",
 };
 
 /** The HTTP failure shape `decodeResponse` produces. */
@@ -32,9 +39,34 @@ export type ApiFailure = Error & {
   detail?: string;
 };
 
+/** Anything that already carries the envelope fields, with or without a status.
+ *
+ * A progressed run reports its failure over the socket as plain JSON rather than
+ * as a thrown response, so the same decoding has to accept that shape. Requiring
+ * an `Error` instance would send those frames to the string fallback and render
+ * an object as `[object Object]` instead of the localized copy.
+ */
+export type ErrorEnvelope = {
+  status?: number;
+  code?: string;
+  detail?: string;
+  message?: string;
+};
+
+export function isErrorEnvelope(error: unknown): error is ErrorEnvelope {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as ErrorEnvelope;
+  // A numeric status means a real HTTP response; otherwise the code or detail
+  // is what makes the value an envelope rather than an arbitrary object.
+  return (
+    typeof candidate.status === "number" ||
+    typeof candidate.code === "string" ||
+    typeof candidate.detail === "string"
+  );
+}
+
+/** A failure with a numeric status: a request that actually reached a response. */
 export function isApiFailure(error: unknown): error is ApiFailure {
-  // A real envelope carries the HTTP status; a plain Error does not, and must
-  // keep its own message instead of being treated as a failed request.
   return error instanceof Error && typeof (error as ApiFailure).status === "number";
 }
 
@@ -49,11 +81,11 @@ export function errorMessage(
   error: unknown,
   translate: (key: MessageKey, values?: Record<string, unknown>) => string,
 ): string {
-  if (isApiFailure(error)) {
+  if (isErrorEnvelope(error)) {
     const key = error.code ? errorCodeMessages[error.code] : undefined;
     if (key) return translate(key);
     if (error.detail) return error.detail;
-    return error.message;
+    if (error.message) return error.message;
   }
   return error instanceof Error ? error.message : String(error);
 }

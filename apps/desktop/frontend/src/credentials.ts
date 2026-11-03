@@ -1,16 +1,12 @@
 import { useSyncExternalStore } from "react";
 import type { QueryClient } from "@tanstack/react-query";
+import type { desktopComponents } from "@wenyi/shared-schema";
 import { request } from "./transport";
 import { guardCredentialWrite, updateCredentialSafety } from "./updateSafety";
 
-export type CredentialStatus = {
-  mode: "environment" | "manual";
-  storage: "system" | "session" | null;
-  available: boolean;
-  environment: string | null;
-  system_storage_available: boolean;
-  requires_key: boolean;
-};
+// Generated from the Desktop route that answers it, so a field added in Python
+// cannot silently drift away from what this module reads.
+export type CredentialStatus = desktopComponents["schemas"]["CredentialStatus"];
 
 export const credentialQuery = {
   queryKey: ["credentials"],

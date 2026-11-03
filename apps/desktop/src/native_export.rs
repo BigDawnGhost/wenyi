@@ -901,6 +901,36 @@ enum SaveRequest {
     Glossary(GlossaryFormat),
 }
 
+/// Whether Windows refuses or rewrites this file name.
+///
+/// The engine already repairs the name it plans, so a rejected name means the
+/// two sides disagree about the rules. Refusing here keeps the native layer from
+/// silently writing to a different file than the one the plan named: the
+/// filesystem discards a trailing dot or space, and a reserved device name is
+/// never a file at all.
+fn name_is_unwritable(name: &str) -> bool {
+    if name.ends_with('.') || name.ends_with(' ') {
+        return true;
+    }
+    // A reserved name is resolved from the part before the first dot, so
+    // "CON.txt" names the device just as "CON" does.
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let reserved = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"];
+    if reserved.contains(&stem.as_str()) {
+        return true;
+    }
+    // COM1..COM9 and LPT1..LPT9 are reserved; COM0 is not, and neither is COM10.
+    ["COM", "LPT"].iter().any(|prefix| {
+        stem.strip_prefix(prefix).is_some_and(|suffix| {
+            matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+        })
+    })
+}
+
 fn run_save(
     connection: Connection,
     saves: Saves,
@@ -936,6 +966,7 @@ fn run_save(
     let plan: Plan = serde_json::from_value(value).map_err(|_| "Invalid export plan.")?;
     if plan.filename.is_empty()
         || plan.filename.contains(['/', '\\', '\0'])
+        || name_is_unwritable(&plan.filename)
         || plan.extension.is_empty()
         || !plan.extension.bytes().all(|b| b.is_ascii_alphanumeric())
         || plan.protected_roots.is_empty()
@@ -1443,6 +1474,58 @@ mod tests {
                 .contains("authorization: bearer fixture-only")));
             fixture.clean();
         }
+    }
+
+    #[test]
+    fn name_is_unwritable_rejects_device_names_and_trailing_separators() {
+        // The filesystem discards a trailing dot or space, so the file that
+        // appears is not the one the plan named.
+        for rejected in [
+            "CON", "con", "Con.txt", "PRN.md", "AUX", "NUL", "COM1.pdf", "COM9", "LPT1", "LPT9",
+            "CONIN$", "CONOUT$", "book.", "book ", "术语.",
+        ] {
+            assert!(name_is_unwritable(rejected), "{rejected} must be rejected");
+        }
+        // Ordinary names, including ones that merely start like a device.
+        for accepted in [
+            "book.md",
+            "术语.zh.docx",
+            "CONSOLE.md",
+            "COM10.md",
+            "COM0.md",
+            "LPT10.md",
+            "my-book.zh-bi.html.zip",
+        ] {
+            assert!(!name_is_unwritable(accepted), "{accepted} must be accepted");
+        }
+    }
+
+    #[test]
+    fn plans_naming_an_unwritable_file_are_refused_before_the_dialog() {
+        let fixture = Fixture::new();
+        for filename in ["CON.txt", "book.", "book "] {
+            let mut plan: Value = serde_json::from_str(&plan(&fixture.0)).unwrap();
+            plan["filename"] = filename.into();
+            let (connection, task) = server(vec![response("200 OK", &plan.to_string(), "")]);
+            let error = run_save(
+                connection,
+                Saves::default(),
+                "project-1".into(),
+                SaveRequest::Book {
+                    options: serde_json::json!({"format": "html", "bilingual": true}),
+                    export_id: None,
+                },
+                &FakeDialog {
+                    path: Some(fixture.0.join("out.zip")),
+                    replace: false,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.code, "export_request_invalid");
+            // Only the plan request reached the engine: nothing was created.
+            assert_eq!(task.join().unwrap().len(), 1);
+        }
+        fixture.clean();
     }
 
     #[test]

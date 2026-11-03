@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../sandbox/fixtures";
+
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Editor autosizing, one shared context menu and copy-source behaviour, driven through whatever transport the host installed. The probe recorded only `preferences` and `request`.
+ */
+export const desktopHostSensitive = false;
 
 export function registerTests() {
 test("collapsed chapter review notes mount only after expansion", async ({ page }) => {

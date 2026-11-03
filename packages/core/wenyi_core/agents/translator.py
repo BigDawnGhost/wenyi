@@ -7,9 +7,9 @@ entire paragraphs from being omitted.
 
 from __future__ import annotations
 
-from ..glossary.store import GlossaryTerm
 from ..llm.json_parser import JsonParseError
 from ..llm.retrying import TruncatedResponseError
+from ..models.glossary import GlossaryTerm
 from . import prompts
 from .base import Agent, Messages
 

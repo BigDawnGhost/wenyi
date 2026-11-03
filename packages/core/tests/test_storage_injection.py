@@ -3,21 +3,28 @@
 from __future__ import annotations
 
 import ast
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 from wenyi_core.config import Config
 from wenyi_core.ingest.segmenter import load_document
-from wenyi_core.pipeline.input_preparation import ingest_config, load_parsed_document
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import source_sha256
+from wenyi_core.pipeline.prepare.input_preparation import ingest_config, load_parsed_document
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
+from wenyi_core.storage.run_store import source_sha256
 from wenyi_core.storage.sqlite import SqliteStorage
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
 from tests.storage_fixtures import MemoryArtifacts
+
+
+@lru_cache(maxsize=None)
+def parsed_source(path: Path) -> ast.Module:
+    """Parse each module once per session instead of once per boundary assertion."""
+    return ast.parse(path.read_text(encoding="utf-8"))
 
 
 @pytest.mark.parametrize("storage_type", [FileStorage, SqliteStorage])
@@ -116,7 +123,9 @@ def test_preparation_reuses_matching_preview_and_invalidates_changed_settings(
     def unexpected_parse(*args, **kwargs):
         raise AssertionError("Preparation re-parsed a matching upload preview")
 
-    monkeypatch.setattr("wenyi_core.pipeline.input_preparation.load_document", unexpected_parse)
+    monkeypatch.setattr(
+        "wenyi_core.pipeline.prepare.input_preparation.load_document", unexpected_parse
+    )
     result = Orchestrator(
         config, client=MeteredFakeClient(handler=routing_handler), storage=store
     ).prepare(str(source))
@@ -128,10 +137,8 @@ def test_preparation_reuses_matching_preview_and_invalidates_changed_settings(
 
 def test_domain_services_have_no_direct_state_files_or_sqlite():
     core = Path(__file__).resolve().parents[1] / "wenyi_core"
-    for path in (core / "pipeline").glob("*.py"):
-        if path.name == "runstore.py":
-            continue  # The explicit CLI filesystem backend.
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path in (core / "pipeline").rglob("*.py"):
+        tree = parsed_source(path)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 assert not (
@@ -144,7 +151,7 @@ def test_domain_services_have_no_direct_state_files_or_sqlite():
     for path in core.rglob("*.py"):
         imports = [
             node
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            for node in ast.walk(parsed_source(path))
             if isinstance(node, (ast.Import, ast.ImportFrom))
         ]
         for node in imports:

@@ -7,8 +7,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from wenyi_core.ingest.models import Segment
 from wenyi_core.llm.retrying import ProviderRequestError
+from wenyi_core.models.document import Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.review.run_store import ReviewRunStore
 

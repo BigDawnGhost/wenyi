@@ -11,7 +11,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Health */
+        /**
+         * Health
+         * @description Report liveness, and whether the database answered.
+         *
+         *     The endpoint is unauthenticated, so a driver exception must never reach the body: it
+         *     echoes hosts, ports and file paths to anyone who asks. The failure is reported as a
+         *     fixed category instead, and the status stays 200 because the documented use is a
+         *     proxy diagnostic where a non-200 means the API container itself is down.
+         */
         get: operations["health_health_get"];
         put?: never;
         post?: never;
@@ -1346,6 +1354,16 @@ export interface components {
             } | null;
             /** Created At */
             created_at?: string | null;
+            /**
+             * Available
+             * @default true
+             */
+            available: boolean;
+            /**
+             * Source Changed
+             * @default false
+             */
+            source_changed: boolean;
         };
         /** ProjectConfigOut */
         ProjectConfigOut: {
@@ -1397,6 +1415,8 @@ export interface components {
              * @enum {string}
              */
             translation_mode: "standard" | "best_of_three";
+            /** Location */
+            location?: string | null;
         };
         /** ProjectDetail */
         ProjectDetail: {
@@ -1430,6 +1450,16 @@ export interface components {
             } | null;
             /** Created At */
             created_at?: string | null;
+            /**
+             * Available
+             * @default true
+             */
+            available: boolean;
+            /**
+             * Source Changed
+             * @default false
+             */
+            source_changed: boolean;
             /** Book Title */
             book_title?: string | null;
             /**

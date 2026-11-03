@@ -5,7 +5,7 @@ from copy import deepcopy
 from unittest.mock import Mock
 
 import pytest
-from wenyi_core.ingest.models import Chapter, Segment
+from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.storage.precision_archive import PrecisionArchive
 from wenyi_core.storage.precision_drafts import _identity, read_precision_drafts
 from wenyi_core.storage.protocol import Storage

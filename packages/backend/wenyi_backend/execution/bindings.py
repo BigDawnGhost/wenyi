@@ -2,16 +2,37 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
 from wenyi_core.config import Config
+from wenyi_core.llm.base import LLMClient
+from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.storage.protocol import Storage
 
 from ..context import BackendContext
 from ..project_service import effective_config
 from .contracts import ExecutionDependencies, ExportRequest
 from .exporting import ExportDependencies, render_export
 from .operations import OperationServices, run_operation
+from .ports import WorkflowRunner
+
+
+def build_workflow(
+    config: Config,
+    client: LLMClient,
+    storage: Storage,
+    *,
+    mineru_token_resolver: Callable[[], str | None] | None = None,
+) -> WorkflowRunner:
+    """Bind one workflow runner; the only module that names the orchestration class."""
+    return Orchestrator(
+        config,
+        client=client,
+        storage=storage,
+        mineru_token_resolver=mineru_token_resolver,
+    )
 
 
 def resolve_source(context: BackendContext, pid: str) -> str:
@@ -20,9 +41,12 @@ def resolve_source(context: BackendContext, pid: str) -> str:
         raise ValueError(f"Project not found: {pid}")
     if not project.get("source_path"):
         raise ValueError("Project has no uploaded source")
-    source = Path(project["source_path"])
-    if not source.is_absolute():
-        source = Path(context.data_dir) / source
+    if context.source_paths is not None:
+        source = context.source_paths.source_path(pid, project["source_path"])
+    else:
+        source = Path(project["source_path"])
+        if not source.is_absolute():
+            source = Path(context.data_dir) / source
     if not source.is_file():
         raise ValueError("Uploaded source file is missing")
     return str(source)
@@ -54,6 +78,7 @@ def operation_services(context: BackendContext) -> OperationServices:
         source_for=partial(resolve_source, context),
         build_client=context.build_client,
         exports_dir=exports_dir,
+        build_workflow=partial(build_workflow, mineru_token_resolver=context.mineru_token_resolver),
         mineru_token_resolver=context.mineru_token_resolver,
     )
 

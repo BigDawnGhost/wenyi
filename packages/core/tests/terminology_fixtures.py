@@ -7,8 +7,8 @@ from wenyi_core.agents.terminology import TerminologyAgent
 from wenyi_core.config import Config
 from wenyi_core.glossary.evidence_models import DiscoveryResult, KnowledgeResult, SourcePassage
 from wenyi_core.glossary.store import GlossaryTerm, source_matches_text
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.base import LLMClient
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.storage.file import FileStorage
 
 from tests.fake_llm import routing_handler

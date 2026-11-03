@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi } from "../../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi } from "../../../../packages/ui/sandbox/fixtures";
 
 test("Desktop tests saved model connections next to the credential fields", async ({ page }) => {
   await page.addInitScript(() => {

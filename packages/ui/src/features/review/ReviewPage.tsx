@@ -91,13 +91,15 @@ function ReviewWorkbench({ pid }: { pid: string }) {
     runs.isLoading ||
     (!!rid && run.isLoading) ||
     workflow.isLoading;
+  // Query errors make the page unreadable, so they also hide the submit button. A
+  // failed submit must not hide the retry button: it is the only path that clears the
+  // mutation error, so review.error stays out of this condition and is shown below.
   const error =
     project.error ||
     chapters.error ||
     runs.error ||
     run.error ||
-    workflow.error ||
-    review.error;
+    workflow.error;
   return (
     <>
       <PageHeader
@@ -146,7 +148,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
         }
       />
       <PageContainer className="space-y-5">
-        <ErrorNotice error={error} />
+        <ErrorNotice error={error || review.error} />
         {historical && (
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <span className="text-muted-foreground">

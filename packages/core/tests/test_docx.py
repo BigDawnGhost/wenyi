@@ -19,11 +19,11 @@ from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
 from wenyi_core.document_styles.docx import merge_align_results, proportional_range_placements
 from wenyi_core.ingest.docx_reader import read_docx
-from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.runstore import STATUS_DONE
+from wenyi_core.models.document import KIND_HEADING, KIND_TEXT
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.run_store import STATUS_DONE
 
 
 def _write_sample_docx(path: str) -> None:
@@ -90,6 +90,59 @@ class TestDocxReader(unittest.TestCase):
             book = read_docx(path, "en", "zh")
         self.assertEqual(book.chapters[0].segments[0].source, "Hello without lists.")
         self.assertNotIn("list_num_id", book.chapters[0].segments[0].meta)
+
+    def test_merged_gridspan_cells_keep_text_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "merged.docx")
+            doc = DocxDocument()
+            table = doc.add_table(rows=1, cols=2)
+            merged = table.cell(0, 0).merge(table.cell(0, 1))
+            merged.text = "Spanned"
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+        table_segs = [s for s in book.chapters[0].segments if s.meta.get("table_id") == 0]
+        self.assertEqual(len(table_segs), 2)
+        by_pos = {(s.meta["row"], s.meta["col"]): s.source for s in table_segs}
+        self.assertEqual(by_pos[(0, 0)], "Spanned")
+        self.assertEqual(by_pos[(0, 1)], "")
+
+    def test_multi_paragraph_cell_styles_shift_to_joined_offsets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "cell.docx")
+            doc = DocxDocument()
+            table = doc.add_table(rows=1, cols=1)
+            cell = table.cell(0, 0)
+            first = cell.paragraphs[0]
+            first.add_run("Bold title.")
+            first.runs[0].bold = True
+            cell.add_paragraph("Plain body text.")
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+        segment = next(s for s in book.chapters[0].segments if s.meta.get("table_id") == 0)
+        joined = segment.source
+        self.assertEqual(joined, "Bold title.\nPlain body text.")
+        items = segment.meta["docx_styles"]["items"]
+        self.assertEqual(len(items), 1)
+        bold = items[0]
+        self.assertTrue(bold.get("bold"))
+        self.assertEqual(joined[bold["source_start"] : bold["source_end"]], "Bold title.")
+
+    def test_uniform_multi_paragraph_cell_keeps_compact_style(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "uniform.docx")
+            doc = DocxDocument()
+            table = doc.add_table(rows=1, cols=1)
+            cell = table.cell(0, 0)
+            cell.paragraphs[0].add_run("Bold one.")
+            cell.paragraphs[0].runs[0].bold = True
+            second = cell.add_paragraph("")
+            second.add_run("Bold two.").bold = True
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+        segment = next(s for s in book.chapters[0].segments if s.meta.get("table_id") == 0)
+        self.assertEqual(segment.source, "Bold one.\nBold two.")
+        self.assertTrue(segment.meta.get("docx_style", {}).get("bold"))
+        self.assertNotIn("docx_styles", segment.meta)
 
     def test_load_document_routes_docx(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -189,6 +242,54 @@ class TestDocxReader(unittest.TestCase):
             self.assertTrue(style_name.startswith("List Number"))
             num_pr = first._p.pPr.find(qn("w:numPr")) if first._p.pPr is not None else None
             self.assertIsNotNone(num_pr)
+
+    def test_bilingual_export_keeps_list_numbering_on_target_only(self):
+        from docx.oxml.ns import qn
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "list.docx")
+            doc = DocxDocument()
+            doc.add_paragraph("One", style="List Number")
+            doc.add_paragraph("Two", style="List Number")
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+            store = FileStorage(os.path.join(directory, "state", "list"))
+            store.save_manifest(
+                {
+                    "title": "list",
+                    "fmt": "docx",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "source_path": path,
+                    "source_sha256": "x",
+                    "chapters": [
+                        {
+                            "index": 0,
+                            "title": book.chapters[0].title,
+                            "status": STATUS_DONE,
+                        }
+                    ],
+                }
+            )
+            for item in book.chapters[0].segments:
+                item.target = "译" + item.source
+            store.save_chapter(book.chapters[0])
+            out_path = os.path.join(directory, "out.docx")
+            _assemble_docx(store, out_path, bilingual=True)
+            result = DocxDocument(out_path)
+            paragraphs = [p for p in result.paragraphs if p.text]
+            self.assertEqual([p.text for p in paragraphs], ["译One", "One", "译Two", "Two"])
+            for paragraph in paragraphs:
+                target_side = paragraph.text.startswith("译")
+                style_name = paragraph.style.name if paragraph.style is not None else ""
+                assert isinstance(style_name, str)
+                self.assertEqual(
+                    style_name.startswith("List Number"),
+                    target_side,
+                    paragraph.text,
+                )
+                num_pr = paragraph._p.pPr.find(qn("w:numPr")) if paragraph._p.pPr else None
+                self.assertEqual(num_pr is not None, paragraph.text == "译One")
 
 
 class TestDocxStyles(unittest.TestCase):

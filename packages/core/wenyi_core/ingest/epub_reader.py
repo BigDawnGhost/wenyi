@@ -13,10 +13,10 @@ from wenyi_core.ingest.epub_package import (
     _parse_opf,
 )
 from wenyi_core.ingest.epub_toc import parse_toc_entries
-from wenyi_core.ingest.models import Document
 from wenyi_core.markup.anchors import fragment_anchor_map
 from wenyi_core.markup.contracts import INLINE_META_KEY
 from wenyi_core.markup.segments import annotate_epub_resource
+from wenyi_core.models.document import Document
 
 
 def peek_epub_title(path: str) -> str:

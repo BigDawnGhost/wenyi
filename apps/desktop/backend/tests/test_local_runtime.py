@@ -270,8 +270,10 @@ def test_shutdown_owns_every_workflow_before_worker_entry(catalog, monkeypatch, 
     async def run():
         runtime = LocalRuntime(catalog, current_context())
         runtime.accepting = True
-        # Exceed the former admission queue size without allocating model or worker threads.
-        for index in range(129):
+        # Several unstarted workflows, without allocating model or worker threads. The former
+        # fixed admission queue is gone (enqueue creates a task directly), so this asserts
+        # ownership rather than a capacity boundary; the export queue keeps its own 128 cap.
+        for index in range(8):
             pid = project()
             catalog.set_project_status(pid, "translating")
             enqueue(runtime, pid, f"unstarted-{index}")
@@ -279,7 +281,7 @@ def test_shutdown_owns_every_workflow_before_worker_entry(catalog, monkeypatch, 
         if supervisor_started:
             # Supervisors create their children; stop before those children enter the adapter.
             await asyncio.sleep(0)
-            assert len(runtime._active) == 129
+            assert len(runtime._active) == 8
         await runtime.stop()
         assert runtime.idle
         assert all(row["status"] == "interrupted" for row in catalog.all_jobs())
@@ -433,6 +435,111 @@ def test_websocket_first_frame_auth_snapshot_and_project_run_identity(desktop):
         client.app.state.backend.telemetry.connect().publish(f"project:{pid}", json.dumps(payload))
         assert ws.receive_json() == payload
     store.close()
+
+
+def test_an_idle_progress_hub_still_sends_a_heartbeat(catalog, monkeypatch):
+    from wenyi_desktop import main as module
+    from wenyi_desktop.main import DesktopServices
+
+    async def run():
+        pid = project()
+        hub = ProgressHub(catalog, asyncio.get_running_loop())
+        services = DesktopServices(catalog)
+        services.runtime = SimpleNamespace(hub=hub)
+        # A short deadline keeps the test fast; the relay reads this constant.
+        monkeypatch.setattr(module, "HEARTBEAT_SECONDS", 0.05)
+        sent = []
+
+        async def send_json(payload):
+            sent.append(payload)
+
+        async def send_text(payload):
+            sent.append(json.loads(payload))
+
+        async def receive():
+            # Heartbeats alone end the relay, so no peer is needed to close it.
+            while sum(frame.get("kind") == "heartbeat" for frame in sent) < 2:
+                await asyncio.sleep(0.01)
+            return {"type": "websocket.disconnect"}
+
+        await services.relay(
+            SimpleNamespace(send_json=send_json, send_text=send_text, receive=receive), pid
+        )
+        assert sent[0]["kind"] == "snapshot"
+        assert [frame for frame in sent if frame.get("kind") == "heartbeat"]
+        assert hub._subscribers == {}
+
+    anyio.run(run)
+
+
+def test_progress_after_heartbeats_is_delivered_and_all_receivers_are_drained(catalog, monkeypatch):
+    from wenyi_desktop import main as module
+    from wenyi_desktop.main import DesktopServices
+
+    async def run():
+        pid = project()
+        hub = ProgressHub(catalog, asyncio.get_running_loop())
+        services = DesktopServices(catalog)
+        services.runtime = SimpleNamespace(hub=hub)
+        monkeypatch.setattr(module, "HEARTBEAT_SECONDS", 0.01)
+        sent = asyncio.Queue()
+        idle = asyncio.Event()
+        disconnected = asyncio.Event()
+        heartbeats = 0
+        receivers = []
+        create_task = asyncio.create_task
+
+        def track(coro, **kwargs):
+            task = create_task(coro, **kwargs)
+            receivers.append(task)
+            return task
+
+        monkeypatch.setattr(asyncio, "create_task", track)
+
+        async def send_json(payload):
+            assert payload["kind"] == "snapshot"
+
+        async def send_text(payload):
+            nonlocal heartbeats
+            frame = json.loads(payload)
+            if frame["kind"] == "heartbeat":
+                heartbeats += 1
+                if heartbeats == 2:
+                    # Once idle delivery is proven, no timer competes with the
+                    # data frames. The test is driven by events, not fixed sleeps.
+                    monkeypatch.setattr(module, "HEARTBEAT_SECONDS", 60)
+                    idle.set()
+            else:
+                sent.put_nowait(frame)
+
+        async def receive():
+            await disconnected.wait()
+            return {"type": "websocket.disconnect"}
+
+        relay = create_task(
+            services.relay(
+                SimpleNamespace(send_json=send_json, send_text=send_text, receive=receive), pid
+            )
+        )
+        frames = [
+            {"kind": "progress", "done": 1},
+            {"kind": "progress", "done": 2},
+            {"kind": "error", "message": "Synthetic task failure"},
+        ]
+        try:
+            await asyncio.wait_for(idle.wait(), 3)
+            for frame in frames:
+                frame.update(project_id=pid, run_id="after-idle")
+                hub.publish(f"project:{pid}", json.dumps(frame))
+            for expected in frames:
+                assert await asyncio.wait_for(sent.get(), 3) == expected
+        finally:
+            disconnected.set()
+            await asyncio.wait_for(relay, 3)
+        assert receivers and all(task.done() for task in receivers)
+        assert hub._subscribers == {}
+
+    anyio.run(run)
 
 
 def test_progress_relay_cancellation_drains_children_and_unsubscribes(catalog, monkeypatch):

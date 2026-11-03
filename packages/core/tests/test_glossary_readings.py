@@ -5,18 +5,18 @@ import json
 from dataclasses import asdict
 
 import pytest
+from wenyi_core.agents.glossary_extractor import GlossaryExtractor
 from wenyi_core.agents.review_fixer import ReviewFixer
 from wenyi_core.agents.translator import Translator
 from wenyi_core.config import Config
-from wenyi_core.glossary.extractor import GlossaryExtractor
-from wenyi_core.glossary.store import GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.precision import PrecisionBatchExecutor
-from wenyi_core.pipeline.precision_records import load_precision_call
-from wenyi_core.pipeline.runtime import PipelineRuntime
-from wenyi_core.pipeline.title_translation import TitleTranslationService
-from wenyi_core.pipeline.translation_batch import BatchPlan
+from wenyi_core.models.document import Chapter, Segment
+from wenyi_core.models.glossary import GlossaryTerm
+from wenyi_core.pipeline.run.runtime import PipelineRuntime
+from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor
+from wenyi_core.pipeline.translate.precision_records import load_precision_call
+from wenyi_core.pipeline.translate.title_translation import TitleTranslationService
+from wenyi_core.pipeline.translate.translation_batch import BatchPlan
 from wenyi_core.review.evidence import BookEvidenceIndex
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.precision_archive import PrecisionArchive

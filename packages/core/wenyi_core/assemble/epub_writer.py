@@ -32,8 +32,9 @@ from wenyi_core.assemble.writer_common import (
     _merged_paragraphs,
     _sanitize_filename,
 )
+from wenyi_core.atomicio import publish_target
 from wenyi_core.ingest.fb2_reader import read_fb2_binaries
-from wenyi_core.ingest.models import KIND_HEADING
+from wenyi_core.models.document import KIND_HEADING
 
 from .export_view import AssembleStore
 from .policy import export_options
@@ -51,6 +52,9 @@ def _assemble_epub(
     """Copy the EPUB and replace physical body resources, exact TOC titles and target-language
     metadata.
     """
+    if os.path.abspath(source_path) == os.path.abspath(out_path):
+        # Opening the target for writing would truncate the archive still being read.
+        raise ValueError("--out must not point at the source file; choose a different output path")
     m = store.load_manifest()
     target_lang_code = _manifest_target_lang(m)
     target_lang = _epub_lang(target_lang_code)
@@ -87,69 +91,73 @@ def _assemble_epub(
         bilingual=bilingual,
     )
 
-    with zipfile.ZipFile(source_path, "r") as zin:
-        force_horizontal = _epub_looks_vertical(zin)
-        rendered = _render_epub_resources(
-            zin,
-            chapters,
-            meta,
-            # Use the original book title for annotation so export suffixes cannot be mistaken for body titles.
-            book_title=source_title,
-            bilingual=bilingual,
-            order=order,
-            preserve_source_style=preserve_source_style,
-            source_lang=source_lang,
-            preserve_source_ruby=export_options(store, "epub").preserve_source_ruby,
-        )
+    # Publish atomically: a failure mid-copy must not truncate or destroy an existing
+    # export at the same path. The publish context stays outermost so the source handle
+    # is closed before the Windows replacement runs (same constraint as about.py).
+    with publish_target(out_path) as temp_out:
+        with zipfile.ZipFile(source_path, "r") as zin:
+            force_horizontal = _epub_looks_vertical(zin)
+            rendered = _render_epub_resources(
+                zin,
+                chapters,
+                meta,
+                # Use the original book title for annotation so export suffixes cannot be mistaken for body titles.
+                book_title=source_title,
+                bilingual=bilingual,
+                order=order,
+                preserve_source_style=preserve_source_style,
+                source_lang=source_lang,
+                preserve_source_ruby=export_options(store, "epub").preserve_source_ruby,
+            )
 
-        infos = zin.infolist()
-        with zipfile.ZipFile(out_path, "w") as zout:
-            for info in infos:
-                name = info.filename
-                low = name.lower()
-                data = zin.read(name)
-                if name == "mimetype":
-                    zout.writestr(info, data, zipfile.ZIP_STORED)
-                elif low.endswith(".opf"):
-                    zout.writestr(
-                        info,
-                        _rewrite_opf_metadata(
-                            data,
-                            book_title=book_title,
-                            lang=target_lang,
-                            force_horizontal=force_horizontal,
-                        ),
-                    )
-                elif low.endswith(".ncx") or name in ncx_paths:
-                    zout.writestr(
-                        info,
-                        _rewrite_toc(
-                            data,
-                            toc_entries,
-                            is_ncx=True,
-                            toc_path=name,
-                        ),
-                    )
-                elif low.endswith(_HTML_EXTS):
-                    html_data = rendered[name].encode("utf-8") if name in rendered else data
-                    if name in toc_paths or _is_nav(html_data):
-                        html_data = _rewrite_toc(
-                            html_data,
-                            toc_entries,
-                            is_ncx=False,
-                            toc_path=name,
+            infos = zin.infolist()
+            with zipfile.ZipFile(temp_out, "w") as zout:
+                for info in infos:
+                    name = info.filename
+                    low = name.lower()
+                    data = zin.read(name)
+                    if name == "mimetype":
+                        zout.writestr(info, data, zipfile.ZIP_STORED)
+                    elif low.endswith(".opf"):
+                        zout.writestr(
+                            info,
+                            _rewrite_opf_metadata(
+                                data,
+                                book_title=book_title,
+                                lang=target_lang,
+                                force_horizontal=force_horizontal,
+                            ),
                         )
-                    zout.writestr(
-                        info,
-                        _rewrite_html_document(
-                            html_data,
-                            lang=target_lang,
-                            force_horizontal=force_horizontal,
-                            bilingual=bilingual and not preserve_source_style,
-                        ),
-                    )
-                else:
-                    zout.writestr(info, data)
+                    elif low.endswith(".ncx") or name in ncx_paths:
+                        zout.writestr(
+                            info,
+                            _rewrite_toc(
+                                data,
+                                toc_entries,
+                                is_ncx=True,
+                                toc_path=name,
+                            ),
+                        )
+                    elif low.endswith(_HTML_EXTS):
+                        html_data = rendered[name].encode("utf-8") if name in rendered else data
+                        if name in toc_paths or _is_nav(html_data):
+                            html_data = _rewrite_toc(
+                                html_data,
+                                toc_entries,
+                                is_ncx=False,
+                                toc_path=name,
+                            )
+                        zout.writestr(
+                            info,
+                            _rewrite_html_document(
+                                html_data,
+                                lang=target_lang,
+                                force_horizontal=force_horizontal,
+                                bilingual=bilingual and not preserve_source_style,
+                            ),
+                        )
+                    else:
+                        zout.writestr(info, data)
     return out_path
 
 
@@ -292,9 +300,11 @@ def _build_epub_from_chapters(
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
     book.spine = spine
-    epub.write_epub(out_path, book)
-    if bilingual and not preserve_source_style:
-        _inject_bilingual_style(out_path, chapter_filenames, lang)
+    # Publish atomically so a failed write cannot destroy an existing export (audit X-2).
+    with publish_target(out_path) as temp_out:
+        epub.write_epub(temp_out, book)
+        if bilingual and not preserve_source_style:
+            _inject_bilingual_style(str(temp_out), chapter_filenames, lang)
     return out_path
 
 
@@ -373,5 +383,6 @@ def _build_epub_from_html_templates(
     book.spine = spine
     book.add_item(epub.EpubNcx())
     book.add_item(epub.EpubNav())
-    epub.write_epub(out_path, book)
+    with publish_target(out_path) as temp_out:
+        epub.write_epub(temp_out, book)
     return out_path

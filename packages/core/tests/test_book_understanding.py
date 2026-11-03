@@ -9,14 +9,14 @@ import pytest
 from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.agents.synopsis import Synopsizer
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.limits import RequestCancelled, RequestStopped
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.book_understanding import BookUnderstandingService
-from wenyi_core.pipeline.preparation import PreparationService
-from wenyi_core.pipeline.runtime import PipelineRuntime
-from wenyi_core.pipeline.runtime_usage import UsageCoordinator
+from wenyi_core.models.document import Chapter, Document, Segment
+from wenyi_core.models.glossary import GlossaryTerm
+from wenyi_core.pipeline.prepare.book_understanding import BookUnderstandingService
+from wenyi_core.pipeline.prepare.preparation import PreparationService
+from wenyi_core.pipeline.run.runtime import PipelineRuntime
+from wenyi_core.pipeline.run.runtime_usage import UsageCoordinator
 from wenyi_core.storage.file import FileStorage
 
 from tests.pipeline_fixtures import fake_pipeline_config

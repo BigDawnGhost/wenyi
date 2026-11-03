@@ -122,6 +122,14 @@ const en = {
   "dashboard.noSourceUploaded": "(No source uploaded)",
   "dashboard.deleteProject": "Delete project {name}",
   "dashboard.deleteAction": "Delete project",
+  "dashboard.importProject": "Import existing project",
+  "dashboard.projectImported": "Project “{name}” imported",
+  "dashboard.couldNotImportProject": "Could not import that folder",
+  "dashboard.sourceChangedAfterImport":
+    "The original file changed since the last run. It will be parsed again.",
+  "dashboard.projectUnavailable": "The folder for this project is not available",
+  "dashboard.recoveredProjects": "Repaired the project list: {count} project(s) restored",
+  "dashboard.skippedFolders": "{count} folder(s) were not restored:",
   "events.project": "Project",
   "events.preparation": "Preparation",
   "events.translation": "Translation",
@@ -159,6 +167,7 @@ const en = {
     "Preserve source formatting in bilingual output",
   "common.submitting": "Submitting…",
   "export.generateExport": "Generate export",
+  "export.saving": "Saving the export…",
   "export.format": "Format",
   "export.size": "Size",
   "export.download": "Download",
@@ -179,7 +188,10 @@ const en = {
   "glossary.deleted": "Deleted",
   "glossary.conflictResolved": "Conflict resolved",
   "glossary.selectedTermsDeleted": "Selected terms deleted",
-  "glossary.couldNotDeleteSelectedTerms": "Could not delete selected terms",
+  "glossary.couldNotDeleteSelectedTerms":
+    "Could not delete selected terms: {error}",
+  "glossary.couldNotDeleteSelectedTermsPartially":
+    "Deleted {deleted}, failed {failed}: {error}",
   "glossary.csvFile": "CSV file",
   "glossary.jsonFile": "JSON file",
   "glossary.ankiDeck": "Anki deck (.apkg)",
@@ -224,6 +236,7 @@ const en = {
   "glossary.aliasPlaceholder": "alias1, alias2",
   "common.save": "Save",
   "glossary.couldNotParseJson": "Could not parse JSON",
+  "glossary.couldNotReadFile": "Could not read the selected file",
   "glossary.theTermFileMustBeAList":
     "The term file must be a list of entries with source and target fields.",
   "glossary.theFileIsEmptyOrHasAn":
@@ -351,6 +364,10 @@ const en = {
   "createProject.untitled": "Untitled",
   "createProject.starting": "Starting…",
   "createProject.openProject": "Open project",
+  "createProject.location": "Project folder",
+  "createProject.locationDefault": "Wenyi's default folder",
+  "createProject.chooseLocation": "Choose folder",
+  "createProject.locationUseDefault": "Use default",
   "review.currentRun": "Current review",
   "review.history": "Review history",
   "review.results": "Review results",
@@ -619,6 +636,7 @@ const en = {
   "settings.sectionPdf": "PDF parsing",
   "settings.sectionAdvanced": "Advanced",
   "settings.credentialsFailed": "Configuration saved, but an API key could not be saved. Save again to retry.",
+  "settings.credentialsFailedNotice": "Some API keys are still unsaved. They stay only for this session until you save the configuration successfully.",
   "providerSettings.connections": "Connections",
   "providerSettings.models": "Models",
   "settings.restoreDefaults": "Restore defaults",
@@ -644,6 +662,7 @@ const en = {
   "modelList.unsupported": "This provider cannot list models. Enter the name.",
   "connectivity.test": "Test connection",
   "connectivity.testing": "Testing…",
+  "connectivity.elapsed": "{seconds} s elapsed",
   "connectivity.saveFirst": "Save the configuration before testing the connection.",
   "connectivity.none": "No models are configured.",
   "connectivity.allPassed": "All {total} models are reachable.",
@@ -676,6 +695,9 @@ const en = {
   "error.segmentNotFound": "That paragraph no longer exists.",
   "error.invalidConfiguration": "The configuration is not valid. Check the settings.",
   "error.unsupportedClient": "This client version is not supported. Update Wenyi.",
+  "error.sourceTooLarge": "That file is larger than the 512 MiB upload limit.",
+  "error.validationFailed": "Some values were rejected. Check the input and try again.",
+  "error.requestTimeout": "The server did not answer in time. Try again.",
 } as const;
 
 export default en;

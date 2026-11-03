@@ -9,9 +9,9 @@ from typing import Any, Literal
 
 from ..config import Config
 from ..errors import WenyiError
-from ..glossary.store import GlossaryTerm
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
+from ..models.glossary import GlossaryTerm
 from ..review.models import text_hash
 from . import prompts
 from .base import Agent

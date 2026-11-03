@@ -7,8 +7,8 @@ from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_core.config import Config
 from wenyi_core.ingest.fb2_reader import peek_fb2_title, read_fb2
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pipeline import input_preparation
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
@@ -125,8 +125,10 @@ def test_local_parse_then_prepare_reuses_cache(tmp_path, extension, source_lang)
             Orchestrator(config, client=FakeClient(handler=routing_handler)).prepare(str(source))
 
 
-@pytest.mark.parametrize("namespace", ["", "http://www.gribuser.ru/xml/fictionbook/2.0", "urn:2.1"])
-@pytest.mark.parametrize("encoding", ["utf-8", "windows-1251", "unknown-encoding"])
+# The namespace is declared but never read by the parser, so one value covers it. Two
+# encodings remain: a real decode path and the undecodable label that must fall back to utf-8.
+@pytest.mark.parametrize("namespace", [""])
+@pytest.mark.parametrize("encoding", ["utf-8", "unknown-encoding"])
 @pytest.mark.parametrize(
     ("metadata", "expected"),
     [

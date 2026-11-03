@@ -4,11 +4,11 @@ import json
 from dataclasses import asdict, replace
 
 import pytest
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.retrying import TruncatedResponseError
 from wenyi_core.llm.routing import identity
-from wenyi_core.pipeline.precision import PrecisionBatchExecutor, _PrecisionRun
-from wenyi_core.pipeline.precision_records import PrecisionRecords, load_precision_call
+from wenyi_core.models.glossary import GlossaryTerm
+from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor, _PrecisionRun
+from wenyi_core.pipeline.translate.precision_records import PrecisionRecords, load_precision_call
 from wenyi_core.storage.precision_archive import PrecisionArchive
 
 from tests.fake_llm import MeteredFakeClient

@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { createTranslator } from "../../src/i18n/catalog";
-import { fakeApi, pid, project, workflow } from "./fixtures";
+import { fakeApi, pid, project, workflow } from "../../sandbox/fixtures";
+
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * It drives `progressInterval`, `connectProgress` and `activity`, so the Desktop-only 5s connected interval and the foreground gate are both under it. The layout assertions are shared but the data cadence beneath them is not.
+ */
+export const desktopHostSensitive = true;
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 for (const locale of ["en", "zh-CN"] as const) {

@@ -162,9 +162,9 @@ class TestTranslatorAlignment(unittest.TestCase):
 
 class TestMinerUEmptyTargetResume(unittest.TestCase):
     def test_blank_target_counts_as_translated_for_resume_batches(self):
-        from wenyi_core.ingest.models import Segment
-        from wenyi_core.pipeline.translation import _is_mineru_pdf
-        from wenyi_core.pipeline.translation_batch import resume_batches
+        from wenyi_core.models.document import Segment
+        from wenyi_core.pipeline.translate.translation import _is_mineru_pdf
+        from wenyi_core.pipeline.translate.translation_batch import resume_batches
 
         self.assertTrue(_is_mineru_pdf({"fmt": "pdf", "meta": {}}))
         self.assertFalse(_is_mineru_pdf({"fmt": "pdf", "meta": {"babeldoc": True}}))

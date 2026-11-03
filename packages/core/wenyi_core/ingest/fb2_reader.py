@@ -16,6 +16,7 @@ import os
 import re
 import xml.etree.ElementTree as ET
 
+from .encoding import decode_source
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
 
@@ -167,20 +168,24 @@ def _body_title_chapter(body: ET.Element) -> Chapter | None:
 
 
 def _read_xml(path: str) -> ET.Element:
-    """Read FB2 XML using the declared encoding with the existing UTF-8 fallback."""
+    """Read FB2 XML via the declared encoding, falling back to the shared decode ladder.
+
+    The historical ``errors="replace"`` silent mojibake is gone: a declared encoding is
+    honored strictly, and anything it cannot decode goes through
+    :func:`ingest.encoding.decode_source`, which either finds a legacy match explicitly
+    or raises an actionable error (audit X-4).
+    """
     with open(path, "rb") as f:
         raw = f.read()
 
-    # Remove encoding from the XML declaration; FB2 often declares windows-1251.
-    enc = "utf-8"
     m = re.search(rb"<\?xml.*?encoding\s*=\s*['\"]([^'\"]+)['\"]", raw)
     if m:
         enc = m.group(1).decode("ascii", errors="replace")
-    try:
-        text = raw.decode(enc)
-    except (UnicodeDecodeError, LookupError):
-        text = raw.decode("utf-8", errors="replace")
-
+        try:
+            return ET.fromstring(raw.decode(enc))
+        except (UnicodeDecodeError, LookupError):
+            pass  # Unusable declaration: let the shared ladder decide explicitly.
+    text, _encoding = decode_source(raw)
     return ET.fromstring(text)
 
 

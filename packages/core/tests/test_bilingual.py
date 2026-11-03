@@ -18,9 +18,9 @@ from wenyi_core.assemble.html_renderer import _render_chapter_html
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.assemble.writer_common import _default_out
 from wenyi_core.config import Config
-from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.markup.segments import annotate_epub_resource
+from wenyi_core.models.document import KIND_HEADING, KIND_TEXT, Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 
 from tests.fake_llm import routing_handler

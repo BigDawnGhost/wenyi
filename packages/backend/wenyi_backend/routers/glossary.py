@@ -9,8 +9,8 @@ from contextlib import closing
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
 from wenyi_core.glossary.anki import export_anki_glossary
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.i18n.metadata import normalize_term_type
+from wenyi_core.models.glossary import GlossaryTerm
 
 from ..context import current_context
 from ..schemas import (

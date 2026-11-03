@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { fakeApi, pid, project, configuration, effective } from "../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi, pid, project, configuration, effective } from "../../../packages/ui/sandbox/fixtures";
 
 test("project settings retain creation-time precision without a mode selector", async ({ page }) => {
   await fakeApi(page, {

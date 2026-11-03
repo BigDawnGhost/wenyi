@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.0",
+    "@wenyi/shared-schema": "workspace:*",
     "@wenyi/ui": "workspace:*",
     "mdast-util-to-string": "^4.0.0",
     "react": "^19.0.0",

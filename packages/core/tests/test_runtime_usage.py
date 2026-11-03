@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
-from wenyi_core.pipeline.runtime_usage import UsageCoordinator
+from wenyi_core.pipeline.run.runtime_usage import UsageCoordinator
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
 
@@ -124,7 +124,7 @@ def test_concurrent_flushes_bill_every_increment_once(store):
     original_load = store.load_usage
     reads = 0
     read_guard = threading.Lock()
-    both_read = threading.Barrier(2, timeout=5)
+    both_read = threading.Barrier(2, timeout=1)
 
     def delayed_load():
         nonlocal reads

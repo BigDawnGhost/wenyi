@@ -28,7 +28,15 @@ def create_project(
     source: dict | None = None,
     config: dict | None = None,
     connection: Connection[Any] | None = None,
+    library_root: str | None = None,
 ) -> str:
+    """Insert a project row.
+
+    `library_root` is accepted for signature parity with the platform repositories
+    and ignored: a Postgres deployment has no host that owns directories, so
+    `new_project_dir` resolves to None and the upload already landed under DATA_DIR.
+    """
+    del library_root
     pid = project_id or uuid.uuid4().hex[:16]
     source = source or {}
     with _conn(connection) as c:

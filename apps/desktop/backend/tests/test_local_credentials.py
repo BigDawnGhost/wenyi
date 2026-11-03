@@ -142,7 +142,7 @@ def provider():
 
 
 @pytest.mark.parametrize("failure", ["absent", "partial"])
-def test_default_storage_falls_back_without_persisting_secret(tmp_path, failure):
+def test_default_storage_falls_back_without_persisting_secret(private_profile, tmp_path, failure):
     vault = FakeVault()
     if failure == "partial":
 
@@ -157,10 +157,16 @@ def test_default_storage_falls_back_without_persisting_secret(tmp_path, failure)
     assert store.snapshot({"one": provider()})["one"] == "fake-auto-secret"
     assert not vault.values
     assert not CredentialStore(tmp_path).status("one", provider())["available"]
-    assert all(b"fake-auto-secret" not in path.read_bytes() for path in tmp_path.iterdir())
+    assert all(
+        b"fake-auto-secret" not in path.read_bytes()
+        for path in private_profile.rglob("*")
+        if path.is_file()
+    )
 
 
-def test_modes_clear_restart_and_no_plaintext(tmp_path, monkeypatch, isolated_vault):
+def test_modes_clear_restart_and_no_plaintext(
+    private_profile, tmp_path, monkeypatch, isolated_vault
+):
     monkeypatch.setenv("WENYI_TEST_FAKE_KEY", "fake-env-key")
     store = CredentialStore(tmp_path, vault=isolated_vault)
     cfg = provider()
@@ -171,7 +177,11 @@ def test_modes_clear_restart_and_no_plaintext(tmp_path, monkeypatch, isolated_va
         "two": "fake-env-key",
     }
     assert "fake-" not in json.dumps(store.status("one", cfg))
-    assert all(b"fake-manual-key" not in path.read_bytes() for path in tmp_path.iterdir())
+    assert all(
+        b"fake-manual-key" not in path.read_bytes()
+        for path in private_profile.rglob("*")
+        if path.is_file()
+    )
     reopened = CredentialStore(tmp_path, vault=isolated_vault)
     assert reopened.snapshot({"one": cfg})["one"] == "fake-manual-key"
     store.update("one", mode="environment")
@@ -229,7 +239,7 @@ def test_fallback_commit_failure_releases_session_and_keeps_old_key(
     assert list(isolated_vault.values.values()) == ["fake-old"]
 
 
-def test_no_vault_requires_explicit_session_and_session_expires(tmp_path):
+def test_no_vault_requires_explicit_session_and_session_expires(private_profile, tmp_path):
     store = CredentialStore(tmp_path)
     with pytest.raises(CredentialUnavailable, match="session-only"):
         store.update("one", mode="manual", secret="fake-secret", storage="system")
@@ -237,7 +247,11 @@ def test_no_vault_requires_explicit_session_and_session_expires(tmp_path):
     store.update("one", mode="manual", secret="fake-session-secret", storage="session")
     assert store.snapshot({"one": provider()})["one"] == "fake-session-secret"
     assert not CredentialStore(tmp_path).status("one", provider())["available"]
-    assert all(b"fake-session-secret" not in path.read_bytes() for path in tmp_path.iterdir())
+    assert all(
+        b"fake-session-secret" not in path.read_bytes()
+        for path in private_profile.rglob("*")
+        if path.is_file()
+    )
 
 
 def test_failed_writes_keep_old_selection(tmp_path, monkeypatch, isolated_vault):
@@ -339,7 +353,7 @@ def test_sdk_creation_receives_snapshot_not_environment(kind, monkeypatch):
 
 
 def test_router_is_local_authenticated_origin_restricted_and_never_echoes(
-    tmp_path, desktop_context
+    private_profile, desktop_context
 ):
     client = TestClient(create_app(context=desktop_context))
     assert client.get("/desktop/credentials").status_code == 401
@@ -365,7 +379,11 @@ def test_router_is_local_authenticated_origin_restricted_and_never_echoes(
     )
     assert response.status_code == 422
     assert "fake-router-secret" not in response.text
-    assert all(b"fake-router-secret" not in path.read_bytes() for path in tmp_path.iterdir())
+    assert all(
+        b"fake-router-secret" not in path.read_bytes()
+        for path in private_profile.rglob("*")
+        if path.is_file()
+    )
 
 
 def test_non_system_keyring_is_rejected(monkeypatch):

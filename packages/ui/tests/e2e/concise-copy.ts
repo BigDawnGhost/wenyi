@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test";
 import { createTranslator } from "../../src/i18n/catalog";
-import { chapter, fakeApi, pid, project, workflow } from "./fixtures";
+import { chapter, fakeApi, pid, project, workflow } from "../../sandbox/fixtures";
+
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Its register signature takes `exportAction`, and the Desktop host passes "saveAs" so the export control asserts native saving rather than a browser download. It is the only place that copy split is checked.
+ */
+export const desktopHostSensitive = true;
 
 export function registerTests(
   { apiOrigin, exportAction = "download" }: { apiOrigin?: string; exportAction?: "download" | "saveAs" } = {},

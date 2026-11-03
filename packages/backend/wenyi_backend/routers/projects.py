@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated
 from uuid import uuid4
 
@@ -38,6 +39,25 @@ from .dependencies import (
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
+def new_project_dir(pid: str, name: str, location: str | None) -> Path | None:
+    """Resolve a host's default or chosen directory before writing any source bytes.
+
+    The upload happens first -- the record has to name a file that is already
+    there -- so this answer is what the record is then created to agree with. It
+    comes from the host for the same reason deletion and lookup do: only the host
+    knows which directories it owns.
+
+    Only hosts without a resolver leave the directory to `save_source`. A host
+    with named directories needs the complete project name even for its default.
+    """
+    resolver = current_context().new_project_dir
+    if location is None and resolver is None:
+        return None
+    if resolver is None:
+        raise ValueError("This version of Wenyi cannot choose a project folder.")
+    return resolver(pid, name, location)
+
+
 @router.get("", response_model=list[Project])
 def list_projects() -> list[dict]:
     return current_context().repository.list_projects()
@@ -51,7 +71,18 @@ async def create_project(
     if project.source_lang == project.target_lang:
         raise HTTPException(422, "Source and target languages are identical")
     pid = uuid4().hex[:16]
-    source = await save_source(pid, file)
+    # The source is written into the project directory, so a chosen location has to
+    # be resolved before the upload, not after it. A refused location therefore
+    # costs nothing: no directory is created and no bytes are written.
+    try:
+        directory = new_project_dir(pid, project.name, project.location)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    source = (
+        await save_source(pid, file, directory=directory)
+        if directory
+        else await save_source(pid, file)
+    )
     try:
         with registry_guard() as conn:
             defaults = load_settings(connection=conn)
@@ -74,6 +105,7 @@ async def create_project(
                 source=source.fields(),
                 config=project_document(config),
                 connection=conn,
+                library_root=str(directory.parent) if directory is not None else project.location,
             )
     except ValueError as error:
         source.path.unlink(missing_ok=True)

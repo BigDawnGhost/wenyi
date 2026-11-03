@@ -9,7 +9,7 @@ from wenyi_core.assemble.docx_blocks import _add_heading, _emit_chapter_blocks
 from wenyi_core.assemble.writer_common import (
     _ch_title,
 )
-from wenyi_core.ingest.models import KIND_HEADING
+from wenyi_core.models.document import KIND_HEADING
 
 from .export_view import AssembleStore
 

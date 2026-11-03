@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from wenyi_core.pipeline.review_checkpoint import ReviewCheckpoint, ReviewTraceStore
-from wenyi_core.pipeline.review_chunks import ReviewChunkService, order_buffered_events
+from wenyi_core.pipeline.review.review_checkpoint import ReviewCheckpoint, ReviewTraceStore
+from wenyi_core.pipeline.review.review_chunks import ReviewChunkService, order_buffered_events
 from wenyi_core.review.contracts import ReviewTrace
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.review.session import ReviewRoundResult, ReviewSessionState

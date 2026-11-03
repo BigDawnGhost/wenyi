@@ -7,7 +7,6 @@ import posixpath
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString, Tag
 
-from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT, Segment
 from wenyi_core.markup.annotations import (
     _ANNOTATION_MARKER_ONLY,
     _annotation_roots,
@@ -26,6 +25,7 @@ from wenyi_core.markup.contracts import (
     LINE_WRAPPER_ATTR,
 )
 from wenyi_core.markup.ruby import RUBY_MARK_LEFT, RUBY_MARK_RIGHT
+from wenyi_core.models.document import KIND_HEADING, KIND_TEXT, Segment
 
 
 def _preserved_inline_roots(block: Tag) -> list[Tag]:

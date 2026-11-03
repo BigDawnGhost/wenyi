@@ -19,6 +19,35 @@ from bs4 import BeautifulSoup
 
 from .export_view import AssembleStore
 
+# File kinds that travel inside the source container and must be packaged beside the
+# export. XHTML/OPF/NCX stay out so the whole book is never resident in memory.
+_MEDIA_SUFFIXES = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".svg",
+        ".webp",
+        ".bmp",
+        ".tif",
+        ".tiff",
+        ".ico",
+        ".mp4",
+        ".webm",
+        ".ogv",
+        ".mp3",
+        ".ogg",
+        ".wav",
+        ".m4a",
+        ".pdf",
+        ".ttf",
+        ".otf",
+        ".woff",
+        ".woff2",
+    }
+)
+
 # Image MIME types mapped to extensions.
 _IMAGE_EXTENSION_BY_TYPE = {
     "image/gif": ".gif",
@@ -60,8 +89,15 @@ def _load_html_resource(
     reference: str,
     *,
     source_dir: str,
+    zip_resources: dict[str, bytes] | None = None,
 ) -> tuple[str, bytes] | None:
-    """Load a local or data-URI resource without escaping the HTML source tree."""
+    """Load a data URI or a resource from exactly one source namespace.
+
+    ``zip_resources=None`` selects local files contained beneath ``source_dir``.
+    Any mapping, including an empty one, selects ZIP-only lookup: ``source_dir`` is
+    a container-internal POSIX directory, never a filesystem path. References resolve
+    against that directory first and then as given, with no disk fallback.
+    """
     value = reference.strip()
     if not value or value.startswith(("#", "http://", "https://", "//")):
         return None
@@ -80,21 +116,32 @@ def _load_html_resource(
         return media_type, payload
 
     parsed = urlsplit(value)
+    relative = unquote(parsed.path)
+    if zip_resources is not None:
+        if parsed.scheme:
+            return None
+        for key in (
+            posixpath.normpath(posixpath.join(source_dir, relative)) if relative else source_dir,
+            posixpath.normpath(relative),
+        ):
+            if key in zip_resources:
+                media_type = mimetypes.guess_type(key)[0] or "application/octet-stream"
+                return media_type, zip_resources[key]
+        return None
+
     if parsed.scheme and parsed.scheme != "file":
         return None
-    relative = unquote(parsed.path)
     candidate = os.path.abspath(os.path.join(source_dir, relative))
     try:
-        if os.path.commonpath((candidate, os.path.abspath(source_dir))) != os.path.abspath(
+        contained = os.path.commonpath((candidate, os.path.abspath(source_dir))) == os.path.abspath(
             source_dir
-        ):
-            return None
+        )
     except ValueError:
-        return None
-    if not os.path.isfile(candidate):
-        return None
-    media_type = mimetypes.guess_type(candidate)[0] or "application/octet-stream"
-    return media_type, Path(candidate).read_bytes()
+        contained = False
+    if contained and os.path.isfile(candidate):
+        media_type = mimetypes.guess_type(candidate)[0] or "application/octet-stream"
+        return media_type, Path(candidate).read_bytes()
+    return None
 
 
 def _package_html_resources(
@@ -102,8 +149,9 @@ def _package_html_resources(
     *,
     source_dir: str,
     href_prefix: str,
+    zip_resources: dict[str, bytes] | None = None,
 ) -> tuple[str, dict[str, tuple[str, bytes]]]:
-    """Rewrite image/media references and return packaged href -> payload entries."""
+    """Package references using the exclusive source contract of ``_load_html_resource``."""
     soup = BeautifulSoup(html, "html.parser")
     packaged: dict[str, tuple[str, bytes]] = {}
     href_by_reference: dict[str, str] = {}
@@ -111,7 +159,7 @@ def _package_html_resources(
     def package(reference: str) -> str:
         if reference in href_by_reference:
             return href_by_reference[reference]
-        loaded = _load_html_resource(reference, source_dir=source_dir)
+        loaded = _load_html_resource(reference, source_dir=source_dir, zip_resources=zip_resources)
         if loaded is None:
             return reference
         media_type, payload = loaded
@@ -140,6 +188,15 @@ def _package_html_resources(
     return str(soup), packaged
 
 
+def _write_packaged(packaged: dict[str, tuple[str, bytes]], out_path: str) -> None:
+    """Materialize packaged resources beside the output document."""
+    for href, (_media_type, payload) in packaged.items():
+        destination = os.path.join(os.path.dirname(os.path.abspath(out_path)), *href.split("/"))
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        with open(destination, "wb") as file:
+            file.write(payload)
+
+
 def _materialize_html_resources(
     html: str,
     *,
@@ -153,11 +210,7 @@ def _materialize_html_resources(
         source_dir=os.path.dirname(os.path.abspath(source_path)),
         href_prefix=asset_dir_name,
     )
-    for href, (_media_type, payload) in packaged.items():
-        destination = os.path.join(os.path.dirname(os.path.abspath(out_path)), *href.split("/"))
-        os.makedirs(os.path.dirname(destination), exist_ok=True)
-        with open(destination, "wb") as file:
-            file.write(payload)
+    _write_packaged(packaged, out_path)
     return rewritten
 
 

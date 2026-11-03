@@ -20,8 +20,8 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 from wenyi_core.errors import WenyiError
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm, search_term_page
-from wenyi_core.ingest.models import Chapter, Document, Segment
-from wenyi_core.pipeline.runstore import ExportSnapshotStore, source_sha256
+from wenyi_core.models.document import Chapter, Document, Segment
+from wenyi_core.storage.run_store import ExportSnapshotStore, source_sha256
 
 from .segment_history import load_history, record_chapter_changes
 

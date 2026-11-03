@@ -16,15 +16,16 @@ Desktop owns collection and native publication; shared components expose optiona
 |---|---|
 | Entry points | `packages/cli/wenyi_cli/cli.py` assembles the CLI; `commands/` registers commands with an invocation context. Web entry points live in `apps/api/wenyi_api/`; the local Desktop entry point lives in `apps/desktop/backend/wenyi_desktop/`. |
 | HTTP applications | `packages/backend/wenyi_backend/` owns shared routes, schemas, application services and platform ports. Each app and worker receives its own backend context; platform adapters supply persistence, task scheduling, credentials and telemetry. |
-| Backend execution | `packages/backend/wenyi_backend/execution/` separates typed requests, workflow lifecycle, domain operations and export coordination. `bindings.py` supplies explicit project/job ports and existing platform services; `workers/tasks.py` retains stable scheduler entry points. |
+| Backend execution | `packages/backend/wenyi_backend/execution/` separates typed requests, workflow lifecycle, domain operations and export coordination. `bindings.py` supplies explicit project/job ports and existing platform services; `wenyi_backend/workers/tasks.py` retains stable scheduler entry points. |
 | User interface | `packages/ui/` owns shared pages, components and translations. `apps/web/` and `apps/desktop/frontend/` provide independent entries and platform services. Only Desktop includes native import/save and credential adapters. |
-| Pipeline routing | `pipeline/orchestrator.py` assembles services and owns routing and lock scopes; domain work stays in the services. |
-| Source preparation | `pipeline/input_preparation.py` owns model-free parsing, source/config identity and source snapshots; CLI `parse`, Backend previews and `PreparationService` share it. `packages/backend/wenyi_backend/source_view.py` projects uninitialized source chapters read-only; `pipeline/preparation.py` coordinates initialization and commits the manifest last. |
-| Book understanding | `pipeline/book_understanding.py` owns chapter digests, whole-book synopsis, stable-order concurrency and resumable caches. It receives agents/configuration/usage explicitly, not the whole Runtime. |
-| Runtime and accounting | `pipeline/runtime.py` assembles clients/agents and binds language/timing. `pipeline/runtime_usage.py` owns the single usage checkpoint and recoverable book/Review publication through consumer-sized ledger protocols. |
-| Translation | `pipeline/translation.py` coordinates translation; `translation_batch.py` returns explicit batch results; `title_translation.py` handles titles. |
-| Whole-book review | `pipeline/review_workflow.py` coordinates sessions; `review_checkpoint.py`, `review_rounds.py`, `review_chunks.py`, and `review_results.py` separate recovery, decisions, execution, and result handling. |
-| Autofix | `pipeline/review_autofix.py` coordinates the separate publication service; `autofix_candidates.py`, `autofix_plan.py`, and `autofix_publish.py` separate candidates, the recoverable index, and writes to formal translations. |
+| Pipeline layout | `pipeline/` groups modules by sub-stage: `run/` (runtime, usage checkpoint, language policies), `prepare/` (source parsing, prescans, book synthesis), `translate/` (batches, terminology, titles, context, precision), `annotate/` (EPUB annotations, DOCX styles), `review/`, `autofix/` and `finalize/`. `pipeline/__init__.py` re-exports every module, so both the flat and the staged import paths resolve. |
+| Pipeline routing | `pipeline/orchestrator.py` stays at the top of the package and assembles services, owns routing and lock scopes; domain work stays in the services. |
+| Source preparation | `pipeline/prepare/input_preparation.py` owns model-free parsing, source/config identity and source snapshots; CLI `parse`, Backend previews and `PreparationService` share it. `packages/backend/wenyi_backend/source_view.py` projects uninitialized source chapters read-only; `pipeline/prepare/preparation.py` coordinates initialization and commits the manifest last. |
+| Book understanding | `pipeline/prepare/book_understanding.py` owns chapter digests, whole-book synopsis, stable-order concurrency and resumable caches. It receives agents/configuration/usage explicitly, not the whole Runtime. |
+| Runtime and accounting | `pipeline/run/runtime.py` assembles clients/agents and binds language/timing. `pipeline/run/runtime_usage.py` owns the single usage checkpoint and recoverable book/Review publication through consumer-sized ledger protocols. |
+| Translation | `pipeline/translate/translation.py` coordinates translation; `translation_batch.py` returns explicit batch results; `title_translation.py` handles titles. |
+| Whole-book review | `pipeline/review/review_workflow.py` coordinates sessions; `review_checkpoint.py`, `review_rounds.py`, `review_chunks.py`, and `review_results.py` separate recovery, decisions, execution, and result handling. |
+| Autofix | `pipeline/autofix/review_autofix.py` coordinates the separate publication service; `autofix_candidates.py`, `autofix_plan.py`, and `autofix_publish.py` separate candidates, the recoverable index, and writes to formal translations. |
 | Review agents | `agents/review_*.py` owns model interactions; `review/` provides shared evidence, types, and run artifacts without depending on pipeline orchestration. |
 | EPUB / HTML | `markup/` owns shared deterministic anchors, annotations, ruby and segment handling; readers and writers remain in `ingest/` and `assemble/`. |
 | DOCX | `document_styles/docx.py` owns pure style policy; DOCX readers and writers own parsing and document emission. |
@@ -50,14 +51,16 @@ imports. `api/types.ts` depends on the generated schema, not the API client, and
 capabilities. `api/client.ts` and the pre-mount `platform()` facade remain single owners;
 the old `lib/api.ts` implementation/type forwarder is removed.
 
-`scripts/export_openapi.py` builds the shared HTTP schema with unavailable runtime ports,
+`wenyi_backend/schema_export.py` builds the shared HTTP schema with unavailable runtime ports,
 without platform entry points or a production lifespan. `pnpm check:schema` compares
 offline-generated types against the committed contract in CI. Frontend boundary tests
 resolve host imports and derive lazy chunks from the route manifest while retaining
-independent URL checks. All 20 cross-host suites, API fixtures and select test support
-live in `packages/ui/tests/e2e/`, outside runtime exports. Hosts register them explicitly
-with their own bootstrap and capability options; cross-host test imports and fixture
-forwarders are forbidden.
+independent URL checks. All 20 cross-host suites and select test support live in
+`packages/ui/tests/e2e/`; the API fixtures live in `packages/ui/sandbox/`, outside runtime
+exports, so the Web dev server can serve mock data without importing test files. Hosts
+register the suites explicitly with their own bootstrap and capability options; cross-host
+test imports, test-directory imports from a host build config, and fixture forwarders are
+forbidden.
 
 Backend execution, project, job-admission and source-view services receive explicit
 dependencies rather than discovering them through ambient context or dynamic DAL

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from starlette.responses import JSONResponse
@@ -14,6 +15,7 @@ CONTROL_PATHS = frozenset(
     {
         "/desktop/updates/prepare",
         "/desktop/updates/cancel",
+        "/desktop/updates/backup-plan",
         "/desktop/plugins/babeldoc/disable",
         "/desktop/plugins/babeldoc/update",
         "/desktop/plugins/babeldoc/cancel-update",
@@ -74,6 +76,30 @@ class UpdateGuard:
                 raise HTTPException(409, "Another operation owns Desktop admission")
             self.closed = False
 
+    async def backup_plan(self) -> dict:
+        """Resolve owned data while the native exclusive lease and gate are held."""
+        async with self._control:
+            self.runtime()
+            if not self.closed or self._plugin_control:
+                raise HTTPException(409, "Prepare the Desktop update before requesting a backup")
+            return await asyncio.to_thread(self._backup_plan)
+
+    def _backup_plan(self) -> dict:
+        backend = self.services.backend
+        # This is the catalog actually opened by this app, not a process-global
+        # default (tests and explicit contexts may supply their own profile).
+        storages = Path(backend.database).parent
+        if not backend.database.is_file():
+            raise HTTPException(409, "The Desktop catalog is unavailable; update was cancelled")
+        sources = [{"name": "user/storages", "path": str(storages)}]
+        for filename in ("settings.yaml", ".migrated-from.json"):
+            path = storages.parent / filename
+            if path.exists():
+                sources.append({"name": f"user/{filename}", "path": str(path)})
+        for index, directory in enumerate(backend.project_directories()):
+            sources.append({"name": f"projects/{index}", "path": str(directory)})
+        return {"schema_version": 1, "sources": sources}
+
 
 class UpdateAdmissionMiddleware:
     """Count the entire ASGI mutation, including streamed uploads and responses."""
@@ -121,3 +147,8 @@ async def prepare(request: Request) -> Response:
 async def cancel(request: Request) -> Response:
     await request.app.state.update_guard.cancel()
     return Response(status_code=204)
+
+
+@router.post("/backup-plan")
+async def backup_plan(request: Request) -> dict:
+    return await request.app.state.update_guard.backup_plan()

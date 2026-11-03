@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid, project } from "../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi, pid, project } from "../../../packages/ui/sandbox/fixtures";
 
 const term = {
   source: "Alice",
@@ -11,8 +11,11 @@ const term = {
   note: "",
 };
 
+// Readings appear for Japanese sources and for a detected source that turns Japanese on
+// refresh; every other language hides the field. Two locales keep the localized labels
+// honest and `i18n.spec.ts` owns the wider locale matrix.
 for (const locale of ["en", "zh-CN"] as const) {
-  for (const source of ["ja", "en", "vi", "auto"]) {
+  for (const source of ["ja", "en", "auto"]) {
     test(`glossary readings stay in Japanese-source details: ${source}, ${locale}`, async ({
       page,
     }) => {

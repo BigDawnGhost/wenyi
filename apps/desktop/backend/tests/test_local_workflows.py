@@ -18,7 +18,7 @@ from wenyi_backend.context import current_context, use_context
 from wenyi_backend.execution import operations, runner
 from wenyi_backend.execution.bindings import workflow_dependencies
 from wenyi_backend.execution.contracts import ExecutionRequest
-from wenyi_core.ingest.models import Document
+from wenyi_core.models.document import Document
 from wenyi_core.storage.sqlite import SqliteStorage
 from wenyi_desktop.main import create_context
 
@@ -736,7 +736,9 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
     from wenyi_desktop.main import create_app
 
     contexts, clients, lifespans = [], [], []
-    pid, run_id = "same-project", "same-run"
+    # A project identifier is always the first 16 characters of a version 4 UUID,
+    # and the workspace no longer accepts one that could not have been generated.
+    pid, run_id = "0123456789abcdef", "same-run"
     entered = Barrier(2)
     parse = operations.parse_source
 
@@ -757,10 +759,14 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
         for owner in range(2):
             workspace = tmp_path / str(owner)
             workspace.mkdir()
+            # Both apps share one machine profile, so each gets its own: the
+            # point of the test is that one project identity stays one project,
+            # not that two workspaces share a catalog.
             context = create_context(
                 workspace,
                 api_token=f"fake-token-{owner}",
-                credentials=CredentialStore(workspace),
+                credentials=CredentialStore(workspace, user_home=tmp_path / f"{owner}-profile"),
+                user_home=tmp_path / f"{owner}-profile",
             )
             contexts.append(context)
             stack.callback(context.repository.close)

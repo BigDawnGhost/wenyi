@@ -12,13 +12,13 @@ from unittest.mock import patch
 
 from wenyi_core.agents.reviewer import ReviewOutputError
 from wenyi_core.glossary.store import GlossaryStore
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample
+from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import STATUS_DONE, STATUS_PENDING
-from wenyi_core.pipeline.translation import TranslationService
+from wenyi_core.pipeline.translate.translation import TranslationService
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.run_store import STATUS_DONE, STATUS_PENDING
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
 from tests.pipeline_fixtures import fake_pipeline_config as _config
@@ -1387,7 +1387,7 @@ class TestReviewReporting(unittest.TestCase):
             orch = Orchestrator(cfg, client=client)
 
             with (
-                patch("wenyi_core.pipeline.preparation.load_document") as loader,
+                patch("wenyi_core.pipeline.prepare.preparation.load_document") as loader,
                 self.assertRaisesRegex(ValueError, "No translation progress found"),
             ):
                 orch.run_review(pdf)
@@ -1667,7 +1667,7 @@ class TestReviewReporting(unittest.TestCase):
             with (
                 patch.object(orch._review._chunks, "review_chapter", side_effect=fake_review),
                 patch(
-                    "wenyi_core.pipeline.review_rounds.ReviewConflictArbiter.arbitrate",
+                    "wenyi_core.pipeline.review.review_rounds.ReviewConflictArbiter.arbitrate",
                     new=fake_arbitrate,
                 ),
             ):

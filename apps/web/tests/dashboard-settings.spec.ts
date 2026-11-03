@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, project } from "../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi, project } from "../../../packages/ui/sandbox/fixtures";
 
 for (const chinese of [false, true]) {
   for (const populated of [false, true]) {

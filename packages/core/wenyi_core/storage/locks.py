@@ -5,13 +5,17 @@ Two interchangeable backends satisfy the same contract
 library, loaded through ctypes, and a pure-Python fallback.
 `WENYI_LOCKS_BACKEND` selects one with `auto` | `rust` | `python`;
 `auto` prefers the native library when one is found, and `WENYI_LOCKS_LIB`
-overrides the library search path.
+overrides the library search path. Both crates belong to one root Cargo
+workspace, so a checkout build lands in the root `target/` directory and is
+found without the override; `CARGO_TARGET_DIR` is searched as well, because a
+developer who builds out of tree would otherwise silently keep the fallback.
 """
 
 from __future__ import annotations
 
 import ctypes
 import errno
+import logging
 import os
 import sys
 import time
@@ -34,6 +38,9 @@ EXPORT_HISTORY_LOCK = ".export-history.lock"  # export history appends
 
 _RETRY_SECONDS = 0.05
 _FORCED_BACKEND: str | None = None
+_BACKENDS = ("auto", "rust", "python")
+
+_logger = logging.getLogger(__name__)
 
 # Return codes of the wenyi-locks C ABI.
 _LOCK_OK = 0
@@ -55,7 +62,10 @@ class StorageBusyError(WenyiError, BlockingIOError):
 
 
 def _backend_choice() -> str:
-    return _FORCED_BACKEND or os.environ.get("WENYI_LOCKS_BACKEND", "auto")
+    choice = _FORCED_BACKEND or os.environ.get("WENYI_LOCKS_BACKEND") or "auto"
+    if choice not in _BACKENDS:
+        raise ValueError(f"Unknown lock backend {choice!r}; expected one of {', '.join(_BACKENDS)}")
+    return choice
 
 
 def _library_name() -> str:
@@ -75,10 +85,19 @@ def _library_candidates() -> Iterator[str]:
     frozen = getattr(sys, "_MEIPASS", None)
     if frozen:
         yield os.path.join(frozen, name)
+    profiles = ("release", "debug")
+    # Cargo may put the artifact outside the crate. Ask the same variable it
+    # honours first, so a local out-of-tree build is found without the override.
+    cargo_target_dir = os.environ.get("CARGO_TARGET_DIR")
+    if cargo_target_dir:
+        for profile in profiles:
+            yield str(Path(cargo_target_dir) / profile / name)
     # In-place checkout: packages/core/wenyi_core/storage/locks.py -> repo root.
+    # Both crates share one root workspace, so the artifacts land in the root
+    # target directory rather than beside the crate.
     root = Path(__file__).resolve().parents[4]
-    for profile in ("release", "debug"):
-        yield str(root / "native" / "wenyi-locks" / "target" / profile / name)
+    for profile in profiles:
+        yield str(root / "target" / profile / name)
 
 
 _native: ctypes.CDLL | None = None
@@ -91,14 +110,20 @@ def _native_library() -> ctypes.CDLL | None:
     if _native_probed:
         return _native
     _native_probed = True
+    override = os.environ.get("WENYI_LOCKS_LIB")
+    override_error: Exception | None = None
+    tried = []
     for candidate in _library_candidates():
+        tried.append(candidate)
         try:
             library = ctypes.CDLL(candidate)
             acquire = library.wenyi_lock_acquire_v2
             release = library.wenyi_lock_release
-        except (OSError, AttributeError):
+        except (OSError, AttributeError) as error:
             # Older builds used the output handle for OS errors too; never call
             # them with the new layout or mistake an error number for an owned lock.
+            if override is not None and candidate == override:
+                override_error = error
             continue
         acquire.argtypes = [
             ctypes.c_char_p,
@@ -112,6 +137,23 @@ def _native_library() -> ctypes.CDLL | None:
         release.restype = ctypes.c_int
         _native = library
         break
+    # Probing happens once per process, so an unnoticed miss pins the fallback
+    # for the lifetime of a long-running sidecar.
+    if override_error is not None:
+        # An explicitly named library that does not load is always the operator's
+        # problem, even when a later candidate rescues the process.
+        _logger.error(
+            "WENYI_LOCKS_LIB=%s did not load (%s); the override is ignored. Tried: %s",
+            override,
+            override_error,
+            ", ".join(tried),
+        )
+    elif _native is None:
+        _logger.warning(
+            "wenyi-locks native library not found; serving locks with the Python backend. "
+            "Tried: %s",
+            ", ".join(tried),
+        )
     return _native
 
 
@@ -125,36 +167,57 @@ def _busy_error() -> StorageBusyError:
     return StorageBusyError("Local workflow is already running")
 
 
+# Errnos that mean "another owner holds this lock" rather than "this call
+# cannot work at all". Only these may be reported as contention: an EACCES from
+# a read-only directory or an ENOSPC from a full disk is a real failure, and
+# calling it "busy" sends the user looking for a workflow that is not running.
+_CONTENTION_ERRNOS = frozenset({errno.EACCES, errno.EAGAIN, errno.EDEADLK, errno.EWOULDBLOCK})
+
+
+def _is_contention(error: OSError) -> bool:
+    """Whether the OS refused because someone else owns the lock."""
+    return error.errno in _CONTENTION_ERRNOS
+
+
 def _still_waiting(error: OSError, blocking: bool, deadline: float | None) -> bool:
     """Decide whether a failed attempt is contention worth retrying."""
+    if not _is_contention(error):
+        return False
     if not blocking:
         return False
     if deadline is not None and time.monotonic() >= deadline:
         return False
-    if os.name == "nt":
-        return error.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK)
-    return isinstance(error, BlockingIOError)
+    return True
 
 
 class FileLockHandle:
     """Own one acquired cross-process lock until :meth:`release`."""
 
-    def __init__(self, lock_path: str):
-        self._path = os.fspath(lock_path)
+    def __init__(self, lock_path: str | bytes | os.PathLike[str] | os.PathLike[bytes]):
+        # Both backends hand the path to the OS as text, so a bytes path is
+        # decoded here rather than failing later inside one backend only.
+        self._path = os.fsdecode(lock_path)
         self._handle: int | None = None
         self._file: BinaryIO | None = None
+        self._served_by: str | None = None
 
     @property
-    def backend(self) -> str:
-        """The backend that actually served this handle."""
-        return "rust" if self._handle is not None else "python"
+    def backend(self) -> str | None:
+        """The backend that served this handle, or `None` before :meth:`acquire`.
+
+        It records who took the lock, not whether native state is still held, so
+        it keeps its value after :meth:`release`.
+        """
+        return self._served_by
 
     def acquire(self, *, blocking: bool = True, timeout_ms: int = 0) -> None:
         """Take the lock, waiting for another owner unless `blocking` is false."""
         if _use_native():
             self._acquire_native(blocking=blocking, timeout_ms=timeout_ms)
+            self._served_by = "rust"
         else:
             self._acquire_python(blocking=blocking, timeout_ms=timeout_ms)
+            self._served_by = "python"
 
     def _acquire_native(self, *, blocking: bool, timeout_ms: int) -> None:
         library = _native_library()
@@ -201,6 +264,11 @@ class FileLockHandle:
                         msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
                         break
                     except OSError as error:
+                        # A disk that is full or a directory we may not write is
+                        # not another owner: reporting it as busy would send the
+                        # operator hunting for a workflow that never started.
+                        if not _is_contention(error):
+                            raise
                         if not _still_waiting(error, blocking, deadline):
                             raise _busy_error() from error
                         time.sleep(_RETRY_SECONDS)
@@ -211,7 +279,9 @@ class FileLockHandle:
                     try:
                         fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
                         break
-                    except BlockingIOError as error:
+                    except OSError as error:
+                        if not _is_contention(error):
+                            raise
                         if not _still_waiting(error, blocking, deadline):
                             raise _busy_error() from error
                         time.sleep(_RETRY_SECONDS)
@@ -254,11 +324,23 @@ class FileLockHandle:
 
 @contextmanager
 def exclusive_file_lock(
-    lock_path: str, *, blocking: bool = True, timeout_ms: int = 0
+    lock_path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+    *,
+    blocking: bool = True,
+    timeout_ms: int = 0,
 ) -> Iterator[None]:
     """Hold an exclusive OS-level lock on `lock_path` (created if missing) until exit.
 
     A non-blocking acquisition raises :class:`StorageBusyError` instead of waiting.
+    A non-contention `OSError` (a missing parent directory, a read-only one, a
+    full disk) is raised unchanged, because it is not another owner.
+
+    Same-path re-entry is the caller's responsibility and is not detected here:
+    a second acquisition of a path this process already holds blocks like any
+    other contender. Every nesting the code base relies on is short-circuited by
+    a depth table above this layer (`RunStore.state_lock`, `SqliteStorage._file_lock`),
+    and treating a second handle as contention keeps same-process contention
+    observable and testable.
     """
     handle = FileLockHandle(lock_path)
     try:

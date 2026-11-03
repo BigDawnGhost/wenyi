@@ -26,7 +26,7 @@ from wenyi_core.i18n.prompts import render, template
 from wenyi_core.i18n.resources import read_text
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import translation_run_dir
+from wenyi_core.storage.run_store import translation_run_dir
 
 from tests.fake_llm import routing_handler
 from tests.pipeline_fixtures import require_file_storage

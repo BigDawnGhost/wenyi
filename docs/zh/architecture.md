@@ -16,15 +16,16 @@
 |---|---|
 | 入口 | `packages/cli/wenyi_cli/cli.py` 装配 CLI；`commands/` 通过调用上下文注册命令。Web 入口位于 `apps/api/wenyi_api/`，本地 Desktop 入口位于 `apps/desktop/backend/wenyi_desktop/`。 |
 | HTTP 应用 | `packages/backend/wenyi_backend/` 提供共享路由、schema、应用服务与平台端口。每个 app 和 worker 接收自身 backend context；平台适配器提供持久化、任务调度、凭据与进度遥测。 |
-| Backend 执行 | `packages/backend/wenyi_backend/execution/` 分离类型化请求、工作流生命周期、领域操作与导出协调；`bindings.py` 显式注入项目/任务端口及现有平台服务，`workers/tasks.py` 保留稳定调度入口。 |
+| Backend 执行 | `packages/backend/wenyi_backend/execution/` 分离类型化请求、工作流生命周期、领域操作与导出协调；`bindings.py` 显式注入项目/任务端口及现有平台服务，`wenyi_backend/workers/tasks.py` 保留稳定调度入口。 |
 | 用户界面 | `packages/ui/` 提供共享页面、组件与界面翻译；`apps/web/` 和 `apps/desktop/frontend/` 提供独立入口与平台服务。只有 Desktop 包含原生导入/保存和凭据适配。 |
-| 流程路由 | `pipeline/orchestrator.py` 装配服务、路由步骤并管理锁作用域，领域工作留在具体服务中。 |
-| 原文准备 | `pipeline/input_preparation.py` 负责无模型解析、源文/配置身份与原文快照，由 CLI `parse`、Backend 预览和 `PreparationService` 共用。`packages/backend/wenyi_backend/source_view.py` 提供未初始化章节的只读原文投影；`pipeline/preparation.py` 协调初始化，并最后提交 manifest。 |
-| 全书理解 | `pipeline/book_understanding.py` 拥有章节 digest、全书 synopsis、稳定顺序并发与可续跑缓存，显式接收 Agent/配置/用量，不接收整个 Runtime。 |
-| 运行时与记账 | `pipeline/runtime.py` 装配 client/Agent 并绑定语言与计时；`pipeline/runtime_usage.py` 拥有唯一用量检查点，通过消费者所需的账本协议执行可恢复书籍/Review 发布。 |
-| 翻译 | `pipeline/translation.py` 协调翻译；`translation_batch.py` 返回显式批次结果；`title_translation.py` 处理标题。 |
-| 全书审校 | `pipeline/review_workflow.py` 协调会话；`review_checkpoint.py`、`review_rounds.py`、`review_chunks.py` 和 `review_results.py` 分别处理恢复、决策、执行和结果。 |
-| 自动修复 | `pipeline/review_autofix.py` 协调独立发布服务；`autofix_candidates.py`、`autofix_plan.py` 和 `autofix_publish.py` 分离候选、可恢复索引与正式译文写回。 |
+| Pipeline 目录结构 | `pipeline/` 按子阶段分组：`run/`（运行时、用量检查点、语言策略）、`prepare/`（原文解析、预扫、全书理解）、`translate/`（批次、术语、标题、上下文、精修）、`annotate/`（EPUB 注释、DOCX 样式）、`review/`、`autofix/` 与 `finalize/`。`pipeline/__init__.py` 转出全部模块，扁平与分子包两种 import 路径都可用。 |
+| 流程路由 | `pipeline/orchestrator.py` 位于包顶层，装配服务、路由步骤并管理锁作用域，领域工作留在具体服务中。 |
+| 原文准备 | `pipeline/prepare/input_preparation.py` 负责无模型解析、源文/配置身份与原文快照，由 CLI `parse`、Backend 预览和 `PreparationService` 共用。`packages/backend/wenyi_backend/source_view.py` 提供未初始化章节的只读原文投影；`pipeline/prepare/preparation.py` 协调初始化，并最后提交 manifest。 |
+| 全书理解 | `pipeline/prepare/book_understanding.py` 拥有章节 digest、全书 synopsis、稳定顺序并发与可续跑缓存，显式接收 Agent/配置/用量，不接收整个 Runtime。 |
+| 运行时与记账 | `pipeline/run/runtime.py` 装配 client/Agent 并绑定语言与计时；`pipeline/run/runtime_usage.py` 拥有唯一用量检查点，通过消费者所需的账本协议执行可恢复书籍/Review 发布。 |
+| 翻译 | `pipeline/translate/translation.py` 协调翻译；`translation_batch.py` 返回显式批次结果；`title_translation.py` 处理标题。 |
+| 全书审校 | `pipeline/review/review_workflow.py` 协调会话；`review_checkpoint.py`、`review_rounds.py`、`review_chunks.py` 和 `review_results.py` 分别处理恢复、决策、执行和结果。 |
+| 自动修复 | `pipeline/autofix/review_autofix.py` 协调独立发布服务；`autofix_candidates.py`、`autofix_plan.py` 和 `autofix_publish.py` 分离候选、可恢复索引与正式译文写回。 |
 | 审校 Agent | `agents/review_*.py` 负责模型交互；`review/` 提供共享证据、类型和运行产物，不依赖 pipeline 编排。 |
 | EPUB / HTML | `markup/` 负责共享的确定性锚点、注释、ruby 与段落标记处理；Reader 和 Writer 保留在 `ingest/` 与 `assemble/`。 |
 | DOCX | `document_styles/docx.py` 负责纯样式策略；DOCX Reader 和 Writer 负责解析与文档生成。 |
@@ -47,12 +48,13 @@ i18n、文档语言、样式、允许复用的基础组件、设置布局与格�
 `api/client.ts` 与 React 挂载前配置的 `platform()` 门面仍各自保持唯一实现；
 旧 `lib/api.ts` 实现/类型转发已删除。
 
-`scripts/export_openapi.py` 使用不可调用的运行端口装配共享 HTTP schema，不导入平台
+`wenyi_backend/schema_export.py` 使用不可调用的运行端口装配共享 HTTP schema，不导入平台
 入口，也不启动生产 lifespan。CI 通过 `pnpm check:schema` 比较离线生成类型与已提交
 契约。前端边界测试检查宿主导入解析，从路由清单提取懒加载分包，并保留独立 URL
-断言。全部 20 个跨宿主套件、API fixture 和 select 测试支持位于
-`packages/ui/tests/e2e/`，不进入运行时导出。宿主用自身 bootstrap 与能力选项显式
-注册；禁止跨宿主测试导入和 fixture 转发。
+断言。全部 20 个跨宿主套件和 select 测试支持位于 `packages/ui/tests/e2e/`；
+API fixture 位于 `packages/ui/sandbox/`，不进入运行时导出，Web 开发服务器因此
+可以在不导入测试文件的前提下提供 mock 数据。宿主用自身 bootstrap 与能力选项显式
+注册；禁止跨宿主测试导入、宿主构建配置导入测试目录，以及 fixture 转发。
 
 Backend 执行、项目、任务准入和原文视图服务显式接收依赖，不通过隐式上下文或动态
 DAL 转发寻找依赖。HTTP 路由及调度/装配绑定负责解析作用域上下文，

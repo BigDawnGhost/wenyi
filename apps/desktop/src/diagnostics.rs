@@ -12,13 +12,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::mutex::lock;
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::{ambient_authority, fs::Dir};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use crate::mutex::lock;
 
 pub const MAX_RECORD: usize = 16 * 1024;
 const QUEUE: usize = 4096;
@@ -61,15 +61,33 @@ pub enum Event {
     FrontendRejection,
     FrontendRenderFailed,
     FrontendRequestFailed,
+    /// The shared client could not read a progress frame.
+    ///
+    /// Distinct from a failed request: the transport worked, and what arrived
+    /// was unusable. The frame is never recorded, because it can carry
+    /// translated text and provider messages.
+    FrontendMessageFailed,
     ExportCompleted,
     ExportFailed,
     UpdateFailed,
     CredentialsDegraded,
+    /// The startup repair rebuilt part of the catalog.
+    ///
+    /// Counts only: how many projects came back and how many folders were not
+    /// adopted. A path or a title would put book identity in the log.
+    CatalogRecovered,
     LoggerDropped,
     LogsCleared,
     DetailChanged,
     PreviousUnclean,
     NativePanic,
+    InstallLocationChanged,
+    /// The layers and the installation directory were not pairwise disjoint.
+    ///
+    /// Recorded by the native side only. It is a distinct event because the
+    /// remedy is different from every other failed start: nothing is broken, the
+    /// folders are arranged in a way this build refuses to run in.
+    LayoutRefused,
 }
 
 impl Event {
@@ -82,11 +100,14 @@ impl Event {
             | UpdateFailed | HttpError => "ERROR",
             HttpFailed
             | FrontendRequestFailed
+            | FrontendMessageFailed
             | LlmRetryWait
             | LlmModelFailover
             | CredentialsDegraded
             | LoggerDropped
-            | PreviousUnclean => "WARN",
+            | PreviousUnclean
+            | LayoutRefused
+            | InstallLocationChanged => "WARN",
             HttpCompleted | LlmRequestStarted | LlmUsage => "DEBUG",
             _ => "INFO",
         }
@@ -102,6 +123,7 @@ impl Event {
                     | FrontendRejection
                     | FrontendRenderFailed
                     | FrontendRequestFailed
+                    | FrontendMessageFailed
             ),
             Source::Engine => matches!(
                 self,
@@ -127,6 +149,7 @@ impl Event {
                     | LlmModelFailover
                     | LlmUsage
                     | CredentialsDegraded
+                    | CatalogRecovered
                     | LoggerDropped
             ),
             Source::Native => matches!(
@@ -145,6 +168,8 @@ impl Event {
                     | DetailChanged
                     | PreviousUnclean
                     | NativePanic
+                    | LayoutRefused
+                    | InstallLocationChanged
             ),
         }
     }
@@ -195,33 +220,75 @@ fn attributes(input: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
             "duration_ms" | "status_code" | "attempt" | "wait_ms" | "tokens" | "count" | "line" => {
                 value.as_u64().is_some_and(|n| n <= (1u64 << 53) - 1)
             }
-            "exit_code" | "os_error" | "win_error" | "sqlite_error" => {
-                value.as_i64().is_some_and(|n| (i32::MIN as i64..=u32::MAX as i64).contains(&n))
-            }
+            "exit_code" | "os_error" | "win_error" | "sqlite_error" => value
+                .as_i64()
+                .is_some_and(|n| (i32::MIN as i64..=u32::MAX as i64).contains(&n)),
             "signal" => value.as_u64().is_some_and(|n| (1..=255).contains(&n)),
             "project_ref" | "run_ref" | "call_ref" | "request_id" | "error_id" => {
                 value.as_str().is_some_and(identity)
             }
             "category" => matches!(
                 value.as_str(),
-                Some("timeout" | "permission" | "io" | "invalid" | "dependency" | "interrupted" | "unknown")
+                Some(
+                    "timeout"
+                        | "permission"
+                        | "io"
+                        | "invalid"
+                        | "dependency"
+                        | "interrupted"
+                        | "unknown"
+                )
             ),
             "stage" => matches!(
                 value.as_str(),
-                Some("bootstrap" | "application" | "runtime" | "plugins" | "listen" | "running" | "shutdown")
+                Some(
+                    "bootstrap"
+                        | "application"
+                        | "runtime"
+                        | "plugins"
+                        | "listen"
+                        | "running"
+                        | "shutdown"
+                )
             ),
             "reason" => matches!(
                 value.as_str(),
-                Some("failed" | "completed" | "setup_failed" | "spawn_failed" | "protocol_invalid"
-                    | "protocol_read_failed" | "protocol_eof" | "ready_timeout" | "channel_closed"
-                    | "process_exited" | "shutdown_requested" | "forced" | "wait_failed")
+                Some(
+                    "failed"
+                        | "completed"
+                        | "setup_failed"
+                        | "spawn_failed"
+                        | "protocol_invalid"
+                        | "protocol_read_failed"
+                        | "protocol_eof"
+                        | "ready_timeout"
+                        | "channel_closed"
+                        | "process_exited"
+                        | "shutdown_requested"
+                        | "forced"
+                        | "wait_failed"
+                )
             ),
             "exception" | "cause_exception" => matches!(
                 value.as_str(),
-                Some("TimeoutError" | "PermissionError" | "FileNotFoundError" | "FileExistsError"
-                    | "IsADirectoryError" | "NotADirectoryError" | "OSError" | "Error" | "ImportError"
-                    | "ValueError" | "TypeError" | "RuntimeError" | "SystemExit" | "KeyboardInterrupt"
-                    | "CancelledError" | "BaseException")
+                Some(
+                    "TimeoutError"
+                        | "PermissionError"
+                        | "FileNotFoundError"
+                        | "FileExistsError"
+                        | "IsADirectoryError"
+                        | "NotADirectoryError"
+                        | "OSError"
+                        | "Error"
+                        | "ImportError"
+                        | "ValueError"
+                        | "TypeError"
+                        | "RuntimeError"
+                        | "SystemExit"
+                        | "KeyboardInterrupt"
+                        | "CancelledError"
+                        | "BaseException"
+                )
             ),
             "phase" => matches!(
                 value.as_str(),
@@ -316,6 +383,60 @@ struct Store {
     previous_unclean: bool,
 }
 
+/// One entry of the log directory, with what this application is allowed to do to it.
+struct DiagFile {
+    name: String,
+    bytes: u64,
+    modified: std::time::SystemTime,
+    owner: Owner,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Owner {
+    /// A log file this application wrote, in the shape `owned_name` accepts.
+    /// Rotation and "clear" may remove these.
+    Managed,
+    /// This application's own directory bookkeeping, not a log.
+    ///
+    /// `.owner.lock` is the lock that makes this directory single-writer and
+    /// `.session-active` is the unclean-shutdown marker. Both are this
+    /// application's, so neither is reported as someone else's file, and
+    /// neither may be removed by retention: the lock is held while it is read.
+    Bookkeeping,
+    /// Anything else in the directory. Counted, never read and never removed.
+    Foreign,
+}
+
+impl Owner {
+    /// Whether retention or "clear" may remove the file.
+    fn removable(self) -> bool {
+        matches!(self, Self::Managed)
+    }
+
+    /// Whether the file is part of the diagnostic record of this application.
+    fn readable(self) -> bool {
+        matches!(self, Self::Managed)
+    }
+
+    fn foreign(self) -> bool {
+        matches!(self, Self::Foreign)
+    }
+}
+
+fn bookkeeping_name(name: &str) -> bool {
+    matches!(name, ".owner.lock" | ".session-active")
+}
+
+fn owner_of(name: &str) -> Owner {
+    if owned_name(name) {
+        Owner::Managed
+    } else if bookkeeping_name(name) {
+        Owner::Bookkeeping
+    } else {
+        Owner::Foreign
+    }
+}
+
 fn owned_name(name: &str) -> bool {
     let Some(name) = name
         .strip_prefix("wenyi-")
@@ -395,7 +516,18 @@ impl Store {
         }
     }
 
-    fn files(&self) -> std::io::Result<Vec<(String, u64, std::time::SystemTime)>> {
+    /// Every regular file in the log directory, newest last.
+    ///
+    /// Foreign files are listed rather than skipped. A limit that only counts
+    /// this application's own output is not a limit on the directory: another
+    /// program writing a large file here would leave the reported usage near
+    /// zero while the volume fills, and no rotation would ever take the file
+    /// away. Counting them is what makes the reported size the real one.
+    ///
+    /// Being listed is not permission to delete. `Owner` travels with each name
+    /// so the one caller that removes files can refuse the ones it did not
+    /// write; a log directory is a shared folder, not a private one.
+    fn files(&self) -> std::io::Result<Vec<DiagFile>> {
         let Some((_, dir, _)) = &self.root else {
             return Ok(vec![]);
         };
@@ -403,41 +535,59 @@ impl Store {
         for entry in dir.entries()? {
             let entry = entry?;
             let name = entry.file_name().to_string_lossy().into_owned();
-            if !owned_name(&name) {
-                continue;
-            }
             let meta = dir.symlink_metadata(&name)?;
             if !meta.is_file() || meta.is_symlink() {
                 continue;
             }
-            files.push((name, meta.len(), meta.modified()?.into_std()));
+            let owner = owner_of(&name);
+            files.push(DiagFile {
+                name,
+                bytes: meta.len(),
+                modified: meta.modified()?.into_std(),
+                owner,
+            });
             if files.len() > 4096 {
                 return Err(std::io::Error::other("Too many diagnostic files"));
             }
         }
-        files.sort_by_key(|(_, _, modified)| *modified);
+        files.sort_by_key(|file| file.modified);
         Ok(files)
     }
 
     fn maintain(&mut self, incoming: u64) -> std::io::Result<()> {
         let files = self.files()?;
-        let mut total: u64 = files.iter().map(|(_, bytes, _)| bytes).sum();
-        let cutoff = std::time::SystemTime::now() - Duration::from_secs(RETENTION_SECONDS as u64);
+        // The total counts every file, because the limit is on the directory
+        // rather than on what this application happens to have written there.
+        let mut total: u64 = files.iter().map(|file| file.bytes).sum();
+        let now = std::time::SystemTime::now();
+        let cutoff = now - Duration::from_secs(RETENTION_SECONDS as u64);
+        // A file touched in the last minute is one a reader may be inside right
+        // now: an export opens its inputs under this lock and reads them after
+        // it is released, and removal would turn a readable report into a
+        // partial one for no reason. Waiting one maintenance interval costs
+        // nothing, because the next pass runs within a minute anyway.
+        let settled = now - Duration::from_secs(60);
         if files
             .iter()
-            .any(|(name, _, modified)| name == &self.current_name && *modified < cutoff)
+            .any(|file| file.name == self.current_name && file.modified < cutoff)
         {
             self.file = None;
             self.current_name.clear();
         }
         if let Some((_, dir, _)) = &self.root {
-            for (name, bytes, modified) in files {
-                if name == self.current_name {
+            for file in files {
+                if file.name == self.current_name || file.modified > settled {
                     continue;
                 }
-                if modified < cutoff || total + incoming > self.limits.total {
-                    dir.remove_file(name)?;
-                    total = total.saturating_sub(bytes);
+                // Only this application's own files are removed. A foreign file
+                // counts toward the total and then stays where its owner put it,
+                // which is why the settings page reports it separately.
+                if !file.owner.removable() {
+                    continue;
+                }
+                if file.modified < cutoff || total + incoming > self.limits.total {
+                    dir.remove_file(file.name)?;
+                    total = total.saturating_sub(file.bytes);
                 }
             }
         }
@@ -519,8 +669,13 @@ impl Store {
         self.file = None;
         self.current_name.clear();
         if let Some((_, dir, _)) = &self.root {
-            for (name, _, _) in self.files()? {
-                dir.remove_file(name)?;
+            for file in self.files()? {
+                // "Clear application logs" removes this application's logs.
+                // Another program's files in the same folder are not ours to
+                // delete, and the settings page says so.
+                if file.owner.removable() {
+                    dir.remove_file(file.name)?;
+                }
             }
         }
         self.memory.clear();
@@ -549,6 +704,14 @@ pub struct Status {
     pub version: &'static str,
     pub directory: Option<String>,
     pub bytes: u64,
+    /// Files in the log folder this application did not write.
+    ///
+    /// Reported so the size above can be reconciled with the folder a person
+    /// sees in Explorer. They are counted toward the storage limit and never
+    /// removed by it, so the number explains a folder that is larger than this
+    /// application's own limit.
+    pub foreign_files: u64,
+    pub foreign_bytes: u64,
     pub degraded: bool,
     pub dropped: u64,
     pub detail_seconds: u64,
@@ -560,24 +723,12 @@ impl Diagnostics {
         Self::with_limits(path, Limits::default())
     }
 
+    /// The workspace copy first, then the user-level fallback that keeps logging
+    /// possible when the workspace is not writable. Both candidates are resolved
+    /// by paths.rs, and neither depends on layers one to three, so this can start
+    /// before any layout assertion runs.
     pub fn for_workspace(workspace: &Path) -> Self {
-        let mut candidates = vec![workspace.join("diagnostics")];
-        #[cfg(windows)]
-        let fallback = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
-        #[cfg(target_os = "macos")]
-        let fallback = std::env::var_os("HOME").map(|p| PathBuf::from(p).join("Library/Logs"));
-        #[cfg(not(any(windows, target_os = "macos")))]
-        let fallback = std::env::var_os("XDG_STATE_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/state")));
-        if let Some(base) = fallback.filter(|p| p.is_absolute()) {
-            let workspace_ref = format!(
-                "{:x}",
-                Sha256::digest(workspace.to_string_lossy().as_bytes())
-            );
-            candidates.push(base.join("Wenyi Desktop Logs").join(&workspace_ref[..16]));
-        }
-        Self::with_paths(candidates, Limits::default())
+        Self::with_paths(crate::paths::log_roots(workspace), Limits::default())
     }
 
     fn with_limits(path: Option<&Path>, limits: Limits) -> Self {
@@ -732,17 +883,19 @@ impl Diagnostics {
 
     pub fn status(&self) -> Status {
         let store = self.0.store.lock().unwrap_or_else(|e| e.into_inner());
+        let files = store.files().unwrap_or_default();
         Status {
             version: env!("WENYI_DESKTOP_VERSION"),
             directory: store
                 .root
                 .as_ref()
                 .map(|(path, _, _)| path.to_string_lossy().into_owned()),
-            bytes: store
-                .files()
-                .unwrap_or_default()
+            bytes: files.iter().map(|file| file.bytes).sum(),
+            foreign_files: files.iter().filter(|file| file.owner.foreign()).count() as u64,
+            foreign_bytes: files
                 .iter()
-                .map(|(_, bytes, _)| *bytes)
+                .filter(|file| file.owner.foreign())
+                .map(|file| file.bytes)
                 .sum(),
             degraded: store.degraded,
             dropped: self.0.dropped.load(Ordering::Relaxed),
@@ -785,8 +938,14 @@ impl Diagnostics {
                         Vec::new()
                     }
                 };
+                // Only this application's own files are log records. A file that
+                // merely happens to sit in the folder is not part of the report,
+                // and reading it would put someone else's content in an archive
+                // the user then sends to someone.
+                files.retain(|file| file.owner.readable());
                 files.reverse();
-                for (name, _, _) in files {
+                for file in files {
+                    let name = file.name;
                     let mut options = cap_std::fs::OpenOptions::new();
                     options.read(true).follow(FollowSymlinks::No);
                     #[cfg(unix)]
@@ -1172,6 +1331,18 @@ mod tests {
         assert!(diagnostics.status().degraded);
     }
 
+    fn age(path: &Path, seconds: u64) {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_times(
+                std::fs::FileTimes::new()
+                    .set_modified(std::time::SystemTime::now() - Duration::from_secs(seconds)),
+            )
+            .unwrap();
+    }
+
     #[test]
     fn rotation_and_clear_touch_only_owned_files() {
         let fixture = Fixture::new();
@@ -1195,6 +1366,67 @@ mod tests {
             std::fs::read_to_string(fixture.0.join("private-book.txt")).unwrap(),
             "untouched"
         );
+    }
+
+    #[test]
+    fn foreign_files_are_counted_and_never_removed() {
+        // A log folder is an ordinary directory: another program can leave a
+        // large file in it. If the size ignored such files the limit would be
+        // decorative, so the reported total has to include them -- while the
+        // removal below still refuses to touch what this application did not
+        // write.
+        let fixture = Fixture::new();
+        let foreign = fixture.0.join("other-program.bin");
+        std::fs::write(&foreign, vec![0u8; 8192]).unwrap();
+        age(&foreign, 90);
+        let diagnostics = Diagnostics::with_limits(
+            Some(&fixture.0),
+            Limits {
+                file: 1024,
+                total: 4096,
+            },
+        );
+        let status = diagnostics.status();
+        assert_eq!(status.foreign_files, 1);
+        assert_eq!(status.foreign_bytes, 8192);
+        assert!(status.bytes >= 8192);
+        // The limit is already exceeded by a file this process may not remove,
+        // so logging degrades instead of deleting someone else's data.
+        for _ in 0..20 {
+            diagnostics.record(Source::Native, Event::AppStarted, json!({}));
+        }
+        diagnostics.drain();
+        assert!(foreign.exists(), "a foreign file was removed");
+        assert_eq!(std::fs::metadata(&foreign).unwrap().len(), 8192);
+        diagnostics.clear().unwrap();
+        diagnostics.drain();
+        assert!(foreign.exists(), "clearing removed a foreign file");
+        assert_eq!(diagnostics.status().foreign_files, 1);
+    }
+
+    #[test]
+    fn eviction_skips_a_file_opened_within_the_last_minute() {
+        // Export opens its inputs under the store lock and reads them after the
+        // lock is released. Removing a file that recent would turn a readable
+        // report into a partial one for no gain: the next pass runs anyway.
+        let fixture = Fixture::new();
+        let fresh = fixture.0.join(format!("wenyi-{}-000001.jsonl", id()));
+        std::fs::write(&fresh, vec![b'x'; 8192]).unwrap();
+        age(&fresh, 8 * 86400);
+        // Aged past retention, then touched: the touch is what has to save it.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&fresh)
+            .unwrap()
+            .set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()))
+            .unwrap();
+        let mut store = Store::new(vec![fixture.0.clone()], id(), Limits::default());
+        store.maintain(0).unwrap();
+        assert!(fresh.exists(), "a recently opened log was evicted");
+        // Without the touch it is past retention and does go.
+        age(&fresh, 8 * 86400);
+        store.maintain(0).unwrap();
+        assert!(!fresh.exists());
     }
 
     #[test]
@@ -1244,23 +1476,41 @@ mod tests {
     #[test]
     fn startup_failure_details_survive_ingestion_and_report_export() {
         let diagnostics = Diagnostics::new(None);
-        assert!(diagnostics.ingest(Source::Engine, r#"{
+        assert!(diagnostics.ingest(
+            Source::Engine,
+            r#"{
             "event":"engine_bootstrap_failed","attributes":{
                 "stage":"runtime","category":"permission","exception":"RuntimeError",
                 "cause_exception":"PermissionError","module":"local_runtime","line":61,
                 "os_error":13,"message":"fake-private-book","traceback":"fake-private-key"
-            }}"#));
-        diagnostics.record(Source::Native, Event::EngineExited, json!({
-            "stage": "bootstrap", "reason": "process_exited", "exit_code": 3,
-        }));
+            }}"#
+        ));
+        diagnostics.record(
+            Source::Native,
+            Event::EngineExited,
+            json!({
+                "stage": "bootstrap", "reason": "process_exited", "exit_code": 3,
+            }),
+        );
         diagnostics.drain();
         let bytes = diagnostics.bundle(Range::Session, || false).unwrap();
         let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
         for name in ["logs/engine.jsonl", "report.md"] {
             let mut text = String::new();
-            archive.by_name(name).unwrap().read_to_string(&mut text).unwrap();
+            archive
+                .by_name(name)
+                .unwrap()
+                .read_to_string(&mut text)
+                .unwrap();
             assert!(!text.contains("fake-private"));
-            for field in ["runtime", "permission", "RuntimeError", "PermissionError", "local_runtime", "61"] {
+            for field in [
+                "runtime",
+                "permission",
+                "RuntimeError",
+                "PermissionError",
+                "local_runtime",
+                "61",
+            ] {
                 assert!(text.contains(field), "{name} lost {field}");
             }
             if name == "report.md" {

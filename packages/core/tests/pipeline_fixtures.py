@@ -1,8 +1,8 @@
 """Shared configuration and storage narrowing for offline pipeline tests."""
 
 from wenyi_core.config import Config
-from wenyi_core.ingest.models import Segment
-from wenyi_core.pipeline.translation_batch import BatchPlan
+from wenyi_core.models.document import Segment
+from wenyi_core.pipeline.translate.translation_batch import BatchPlan
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
 

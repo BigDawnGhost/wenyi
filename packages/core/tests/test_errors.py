@@ -2,7 +2,7 @@
 
 import pytest
 from wenyi_core.errors import WenyiError
-from wenyi_core.ingest.errors import IngestError, MinerUError, MinerUTimeoutError
+from wenyi_core.models.errors import IngestError, MinerUError, MinerUTimeoutError
 from wenyi_core.storage.sqlite import StorageBusyError
 
 

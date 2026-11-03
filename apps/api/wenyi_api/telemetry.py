@@ -10,6 +10,12 @@ from redis.asyncio import Redis as AsyncRedis
 from wenyi_backend.live_statistics import read_live_statistics
 from wenyi_backend.ports.projects import ProjectQueries
 
+# A run can legitimately publish nothing for minutes (one long model call), and
+# an idle socket is indistinguishable from a dead one from the client's side.
+# The frame is the only thing that proves the link is still carrying data.
+HEARTBEAT_SECONDS = 30.0
+HEARTBEAT_FRAME = json.dumps({"kind": "heartbeat"})
+
 
 class RedisTelemetry:
     def __init__(self, url: str, projects: ProjectQueries):
@@ -46,6 +52,8 @@ class RedisTelemetry:
                 {"kind": "snapshot", "project": project or {}, "chapters": chapters}
             )
             disconnected = asyncio.create_task(websocket.receive())
+            loop = asyncio.get_running_loop()
+            last_sent = loop.time()
             while not disconnected.done():
                 message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if message and message.get("type") == "message":
@@ -53,7 +61,11 @@ class RedisTelemetry:
                     if isinstance(data, bytes):
                         data = data.decode("utf-8")
                     await websocket.send_text(data if isinstance(data, str) else json.dumps(data))
+                    last_sent = loop.time()
                 else:
+                    if loop.time() - last_sent >= HEARTBEAT_SECONDS:
+                        await websocket.send_text(HEARTBEAT_FRAME)
+                        last_sent = loop.time()
                     await asyncio.sleep(0.1)
         except WebSocketDisconnect:
             pass

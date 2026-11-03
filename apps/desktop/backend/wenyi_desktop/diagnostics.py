@@ -44,6 +44,9 @@ EVENTS = frozenset(
         "llm_model_failover",
         "llm_usage",
         "credentials_degraded",
+        # The startup repair's own outcome: how many projects came back and how
+        # many folders were not adopted. Counts only; no path or title travels.
+        "catalog_recovered",
         "logger_dropped",
     }
 )

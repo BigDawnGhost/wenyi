@@ -51,13 +51,57 @@ export interface ProgressServices {
   progressKeys: (kind: string) => string[];
 }
 
+/** What a host can say about adopting a project folder that already exists.
+ *
+ * A native host can open a folder picker; the Web host cannot, so the entry
+ * point is absent there rather than shown and disabled. `choose` answers the
+ * selected absolute path, or null when the picker was dismissed.
+ */
+export interface LibraryServices {
+  choose: () => Promise<string | null>;
+  /** Adopt the chosen folder; the message of a refusal is written for a person. */
+  importProject: (path: string) => Promise<ProjectDetail>;
+  /**
+   * Say whether a folder may hold a new project, before one is created.
+   *
+   * A picker can name any folder the operating system allows, including ones the
+   * layout must refuse. Asking here is what lets the dialog explain a refusal
+   * while the choice is still on screen, rather than after an upload.
+   */
+  admitLocation?: (path: string) => Promise<string>;
+}
+
+export interface RecoveryReport {
+  /** Projects the startup repair rebuilt during this launch. */
+  recovered: number;
+  /** Folders it refused, with the sentence the import dialog would show. */
+  skipped: { name: string; reason: string; message: string }[];
+}
+
 export interface OptionalCapabilities {
+  library?: LibraryServices;
+  /**
+   * What the last startup repair found, or null when this host has no repair.
+   *
+   * A repaired catalog and an always-empty one look identical on the dashboard,
+   * and "where did my project go?" is the question that difference answers. The
+   * host supplies it because only a host can lose a catalog.
+   */
+  recoveryReport?: () => Promise<RecoveryReport | null>;
   diagnostics?: {
     label: (locale: string) => string;
     Section: ComponentType;
     ExportButton: ComponentType;
     /** No exception object or user text crosses this optional observation hook. */
     reportRenderFailure: () => void;
+    /**
+     * Record a defect in data a host delivered, never the payload itself.
+     *
+     * The channel is a fixed name so a native diagnostic log stays free of
+     * translated text, frame contents and user input. Hosts without a
+     * diagnostic sink omit it; the shared UI then reports nothing.
+     */
+    reportDiagnostic?: (channel: string, error: unknown) => void;
   };
   externalCredentials?: {
     MinerU: ComponentType;

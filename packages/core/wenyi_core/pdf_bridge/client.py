@@ -7,7 +7,8 @@ from typing import Any
 
 import httpx
 
-from ..ingest.errors import IngestError
+from ..atomicio import publish_bytes
+from ..models.errors import IngestError
 from .connection import resolve_connection
 
 
@@ -92,7 +93,8 @@ class BabeldocBridgeClient:
                 raise BabeldocBridgeError(
                     f"fillback failed with HTTP {response.status_code}: {response.text[:500]}"
                 )
-            out_path.write_bytes(response.content)
+            # Publish atomically: a crash must not leave a truncated PDF at the target.
+            publish_bytes(out_path, response.content)
             return str(out_path)
         except BabeldocBridgeError:
             raise

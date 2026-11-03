@@ -17,12 +17,29 @@ export function ReviewIssues({
   const { t } = useI18n();
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
+  // Search the fields the user can actually see, not the JSON serialization: key
+  // names, enum values and issue-id hashes made every query a near-full match
+  // (audit I-2).
+  const searchable = (item: ReviewItem) =>
+    [
+      item.detail,
+      item.suggestion,
+      item.location?.chapter_title,
+      item.location?.source,
+      item.location?.current_target,
+      ...Object.values(item.issue || {}).filter(
+        (value): value is string => typeof value === "string",
+      ),
+      ...(item.changes || []).flatMap((change) =>
+        Object.values(change).filter((value): value is string => typeof value === "string"),
+      ),
+    ]
+      .join(" ")
+      .toLocaleLowerCase();
   const filtered = items.filter(
     (item) =>
       (status === "all" || item.status === status) &&
-      JSON.stringify(item)
-        .toLocaleLowerCase()
-        .includes(search.trim().toLocaleLowerCase()),
+      searchable(item).includes(search.trim().toLocaleLowerCase()),
   );
   return (
     <div className="space-y-4">

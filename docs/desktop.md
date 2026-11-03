@@ -41,13 +41,17 @@ Desktop uses the system credential store when available. If it is unavailable, t
 
 Use **Create project** in the shared sidebar to open the centered dialog over the project list. The list remains visible but inactive behind it; `/projects/new` opens the same dialog directly. Focus starts in **Project name** and stays inside the dialog with Tab. Escape closes an open dropdown first. **Cancel**, **Close**, the backdrop, or Escape returns to the previous page (the project list for a direct link) without creating a project and restores focus to the sidebar entry. Browser Back also leaves the dialog. Closing releases any selected native source resource; reopening starts a clean form. In short windows the form scrolls while the close header stays visible.
 
-Drag in a supported book or choose it with **Browse files**, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost. During upload, source replacement and dialog dismissal are disabled; this is not a task cancellation action. Failed uploads retain the form and source selection; a failed native upload requires re-dropping the file to renew its single-use grant before retrying. Successful creation enters the project overview while parsing or optional preparation continues in the background. Legacy `/projects/new?project=<id>` links retain read-only source preview/resume controls.
+**Project folder** names where the new project's directory is created, and defaults to a folder beside the installed application (`Wenyi Desktop Data`). Choose **Choose folder** to put this project somewhere else; **Use default** returns to the default location. A folder that cannot hold project data is refused with the reason shown beside the control: the application's own program folder, a parent of it, Wenyi's cache and settings folders, a drive or user folder, and system folders. The choice applies to this project only, and existing projects keep the folder they already have.
+
+The uploaded original and project state stay together in that project directory, including when the chosen folder is on another local volume. Saving model settings or restarting Desktop does not forget existing project locations. If the recorded library is unavailable, reconnect it: Desktop does not automatically substitute a same-ID copy in another library.
+
+Drag in a supported book or choose it with **Browse files**, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost. During upload, source replacement is locked and **Cancel** becomes **Close**; dismissing stays available but is not a task cancellation action. Failed uploads retain the form and source selection; a failed native upload requires re-dropping the file to renew its single-use grant before retrying. Successful creation enters the project overview while parsing or optional preparation continues in the background. Legacy `/projects/new?project=<id>` links retain read-only source preview/resume controls.
 
 Browser Back can still leave during an upload; it does not cancel the request. The source resource remains available until the request settles, then is released. The project may be created in the background, and completion will not redirect you away from the list.
 
 Once parsing finishes, **Read contents & source** opens the chapter list and original text without waiting for AI preparation. The parsed source remains readable during preparation or after a model failure; title and translation editing require completed initialization. Parsing itself needs no translation-model credentials, although PDF conversion still uses the selected parser service.
 
-Start translation from the project page. Wenyi parses the source, prepares whole-book context, and translates in batches. Progress, usage, and completed chapters are visible in the application; polishing and whole-book review are configurable.
+Start translation from the project page. Wenyi parses the source, prepares whole-book context, and translates in batches. Progress, usage, and completed chapters are visible in the application; polishing and whole-book review are configurable. A failed task shows the reason the run ended beside the last readable stage, and every project page keeps a banner naming the failure. A request that never receives a response fails after its deadline instead of waiting indefinitely, and a progress socket that stays silent for 60 seconds reconnects while the local engine sends a heartbeat every 30 seconds during idle runs.
 
 **Current workflow** directly shows the task type, status, and reported stage in a flat section. There is no nested step checklist or project-report panel. Completed tasks show only their completion status; paused or failed tasks retain the last reported stage when available. Usage, chapter status, and **Read contents & source** remain available.
 
@@ -115,24 +119,160 @@ The default Desktop workspace is:
 | macOS | `~/Library/Application Support/Wenyi Desktop` |
 | Windows | `%LOCALAPPDATA%/Wenyi Desktop` |
 
-The workspace contains a SQLite catalog, per-project SQLite state, uploaded originals, parse caches, and generated exports. Keep the entire workspace when backing up; stop Desktop before taking a filesystem backup. Do not copy only a live SQLite database while omitting its WAL.
+**Keep the workspace on a local disk.** A folder on a network share, a mapped
+drive or a cloud-synced directory (OneDrive, Dropbox, iCloud Drive, Google
+Drive) is not a supported workspace location. Three things break there and none
+of them is detectable in advance: SQLite locking is unreliable over SMB, so two
+writes that this application serializes locally can interleave; OneDrive's
+Files On-Demand leaves placeholders that read as errors or block a save; and a
+sync client copies the database and its write-ahead log at different moments,
+which produces a backup that opens and is missing data. A workspace that is
+already on such a folder keeps working until one of those happens. The same
+local-disk requirement applies to the shared profile and project library folders.
+`--data-dir <new path>` selects a workspace; it does not move the shared profile
+or change existing projects' recorded library roots. Keep the original data until
+any explicit relocation/import is verified. This version does not detect network
+or cloud-synced folders; it only documents this restriction.
+
+The first launch of this layout imports the legacy Desktop catalog into
+`~/Wenyi/storages/catalog.sqlite3` (on Windows, `%USERPROFILE%/Wenyi/storages/`).
+The legacy database, its WAL and project directories remain untouched. Importing
+another legacy workspace adds nonconflicting records rather than replacing the
+shared catalog. Workspace-local job/export numbers are remapped without moving
+their existing output files. Existing settings take precedence; conflicting project
+or unique run identities and credential references stop migration for manual reconciliation.
+Keep both originals in that case. An incomplete migration stops startup before
+application writes begin. Reopening the same workspace retries it; an import receipt
+committed with the rows prevents replay from erasing newer catalog or credential data.
+
+The transactional receipt is authoritative; readable but stale provenance is repaired from it.
+If previous migration evidence remains but the shared catalog is missing or invalid,
+startup stops and asks for a consistent backup or manual reconciliation. Unreadable
+provenance also stops startup: one workspace's surviving receipt cannot prove that
+other imports' records survived. Reimporting only old catalogs would not recover
+later edits, deletions or settings and is not treated as a complete recovery.
+
+An in-app update first freezes writes and resolves the current catalog's exact
+project directories, including legacy, default and individually chosen locations.
+It then stops the engine and copies those directories, layer-two `storages`, settings
+and migration provenance into `~/Wenyi/backup/<version>-<timestamp>/`
+(`%USERPROFILE%/Wenyi/backup/` on Windows). It never copies a selected parent folder
+wholesale or includes earlier backups. The manifest records each source's original
+path and every copied file's size and SHA-256. SQLite WAL files are included when
+present; a forced shutdown is not assumed to have checkpointed them. Credential
+references are preserved, but secrets held by the operating-system vault or only in
+memory are not exported.
+
+Other Desktop workspaces may normally remain open, but an upgrade requires exclusive
+access to the shared profile until installation or recovery finishes. Close those
+instances and retry if update admission is refused. An unavailable project directory,
+unsafe link, insufficient space, copy or verification failure cancels the update
+before the installer runs; reconnect the missing drive or correct the reported
+problem and retry. The existing application is reopened after a failed snapshot.
+If the engine cannot acknowledge cancellation of update preparation, the window
+stays in an explicit error state rather than resuming writes. Quit and reopen Wenyi
+to restore normal operation.
+
+A setup file run by hand cannot take that snapshot, so the installer requires one:
+when Wenyi is already installed and no backup carrying a manifest exists, the
+installation stops before a single file is copied and says so. Updating from
+inside Wenyi always satisfies this, because it writes the backup first.
+
+### Where the installer will not put Wenyi
+
+On Windows the installer refuses four kinds of installation directory, before it
+copies anything, and says which folder it refused and why:
+
+- a drive or share root, such as `D:\`, because the projects folder is created
+  beside the installation and a root has nothing beside it
+- a folder inside or around `%USERPROFILE%\.wenyi`, which holds the runtime the
+  application deletes and rebuilds
+- a folder inside or around `%USERPROFILE%\Wenyi`, which holds settings, the
+  project list and the backups of projects
+- a folder Windows will not let this account write to, or one that already holds
+  another application's files. An existing empty folder and an existing Wenyi
+  installation are both accepted.
+
+These refusals are why installation runs as the current user and never asks for
+elevation. The installer's declaration is `"installMode": "currentUser"` in
+`apps/desktop/tauri.windows.conf.json`, which is the same value tauri-bundler
+would default to; the point of writing it down is that the uninstall hook depends
+on it. Layer two is `$PROFILE\Wenyi`, and `$PROFILE` is the profile of the
+account running setup. A per-machine or elevated install would make that the
+administrator's profile, so an uninstall would remove a directory the user never
+owned and leave the user's real data untouched.
+
+The application checks the same rule at every start. If layers one and two, the
+projects folder and the installation directory are not pairwise separate (equal,
+or one inside another), it refuses to start and names the rule that was broken.
+The check runs after the diagnostic log is open, so a refused start still leaves a
+record, and it applies to an installed copy only: a run from source, a test and an
+unpacked build have no installation directory to compare, so they are checked on
+the three layers they do have.
+
+A copy of the application that no installer installed (a portable directory, or
+the unpacked build) gets no installer refusal at all. Nothing prepares its
+installation directory, so the only protection is the startup check above, and
+that check has no installation directory to compare until the copy is recorded as
+installed. Projects created by such a copy stay in the workspace it was given,
+which is where the standalone layout has always kept them.
+
+Uninstalling leaves the workspace, `%USERPROFILE%/Wenyi`, and the rest of the
+user's data in place. Ticking **Delete the application data** on the uninstall
+confirmation page removes them; leaving it clear removes only the application's
+own files. Updating is never treated as an uninstall, so an update never removes
+project data.
+
+The installer also refuses to install an **older** version over a newer one. Each
+project database records the schema version that wrote it, and an older build
+refuses to open a database carrying a number it does not know rather than
+writing rows the newer build would then read as complete. The two halves are one
+rule: the schema guard is what makes the version check honest, and the version
+check is what keeps a user from reaching the guard at all. Reinstalling the same
+version, and installing a newer one, are both unaffected.
+
+For manual backups, stop every Desktop instance first. Copy `~/Wenyi/storages/`,
+the settings and migration-provenance files in `~/Wenyi/`, and every registered
+project directory, including chosen library locations. Each project directory
+contains its SQLite state, original, parse caches and generated exports. Keep any
+SQLite WAL beside its database. Copying only the old workspace is not a complete
+backup of this layout.
+
+Each project database records its schema version in SQLite's own header
+(`PRAGMA user_version`). Opening a project with a version this build does not
+know is refused with a message naming the newer build, and the project stays in
+the list marked unavailable so it is not silently dropped. Other projects remain
+listable and usable; both direct reads and writes to the newer database return
+the same upgrade-required error. A database written before this version existed
+reports 0, is stamped with the current number, and is otherwise untouched — no
+data is rewritten by the upgrade.
 
 Job-status polling reads committed catalog snapshots without reserving a write
 lock, so an active catalog writer does not block status lookups.
 
 Deleting from the project list opens an in-app confirmation with Cancel focused.
 Prepared projects without active tasks can also be deleted. While a request is
-pending, duplicate submissions are disabled; failures keep the dialog open for
-retry or cancellation.
+pending, duplicate submissions are disabled and the dismiss action is relabelled
+**Close**, because a delete in progress cannot be recalled; failures keep the
+dialog open for retry.
 
 **Deleting a Desktop project is permanent.** The confirmation covers its uploaded
-originals, translations, history, caches, and exports inside the workspace. Files
-saved elsewhere are not removed. Active tasks or export downloads block deletion.
+originals, translations, history, caches, and exports inside its project directory,
+whether in the default or a chosen library folder. Files saved outside that project
+directory are not removed. Active tasks or export downloads block deletion.
 If file cleanup fails, Desktop reports an error and retains the catalog entry so
 you can close files using the project and retry; some files may already be removed.
 Historical leftover directories are not bulk-cleaned.
 
-On Windows only, startup silently repairs an empty project catalog from readable
+Deletion runs in three steps so that an interruption at any point is recoverable:
+the project is first marked as being deleted, then its files are removed, then its
+catalog entry is deleted. The mark is what makes the difference. Before it, a crash
+leaves a whole project; after it, the project is no longer listed or openable, and
+a retry finishes only what is left. A directory that carries the mark is also
+skipped by the startup repair, so a lost catalog cannot turn an interrupted
+deletion back into a project.
+
+On Windows only, startup repairs an empty project catalog from readable
 `projects/<id>/state.sqlite3` metadata and matching uploaded originals. A nonempty
 catalog is left untouched; ambiguous, mismatched, or unreadable projects are skipped.
 Repair does not rewrite translations, start tasks, or add deletion markers. Lost
@@ -141,6 +281,14 @@ cannot be fully reconstructed: settings fall back to the current global configur
 Check settings before starting translation again; saved checkpoints are reused.
 Old versions retained files after project deletion, so such legacy directories may
 also reappear when repairing an empty catalog.
+
+A repair that recovered something also says so: how many projects came back and,
+for each folder it did not adopt, the same sentence the import dialog would have
+shown for that folder — no `state.sqlite3`, unreadable metadata, no original, or
+more than one possible original. The report is written to the diagnostic log as
+counts only, so no path or title is recorded. Without it a repaired catalog is
+indistinguishable from one that was always empty, which is the question a user
+asks first: where did my project go?
 
 The native launcher and Python backend normalize Windows workspace paths so the
 `\\?\` prefix added during single-instance admission cannot prevent catalog repair
@@ -199,7 +347,7 @@ from the repository root, then copy only `icon.ico` and `icon.icns` into `apps/d
 
 ### Versions and release downloads
 
-Python metadata continues to use `hatch-vcs`; `scripts/release_version.py` uses
+Python metadata continues to use `hatch-vcs`; `scripts/release/release_version.py` uses
 the same setuptools-scm Git source to derive the native application and asset
 version. For example, `v1.2.3` becomes `1.2.3`, and `v1.2.3rc1` becomes Python
 `1.2.3rc1` / native `1.2.3-rc.1`. Untagged commits and tracked local edits keep
@@ -303,15 +451,19 @@ than claiming it is ready. Old installations and project/session data are not
 deleted. Frozen sessions are not automatically migrated: re-parse affected PDFs
 when a bridge update changes extraction or session compatibility.
 
-Plugin files live under the independent Desktop workspace's `plugins/babeldoc/`:
-`plugin.json` records enablement and the selected installation, `downloads/`
-contains verified archives, `installed/` contains complete runtime/cache pairs,
-and `sessions/` retains frozen PDF snapshots. No CLI or Web state is used. The
-plugin has a separate process, random loopback port, memory-only bearer token,
-and an owner pipe so it exits when Desktop closes. Ports and tokens are not saved
-in projects; the default `http://127.0.0.1:8765` bridge address resolves to the
-managed instance only within Desktop workers. Explicit custom bridge URLs retain
-their existing HTTP behavior.
+Plugin files live in the application-level runtime directory,
+`~/.wenyi/desktop/plugins/babeldoc/` (`%USERPROFILE%\.wenyi\desktop\plugins\babeldoc\`
+on Windows), outside the Desktop workspace: `plugin.json` records enablement and
+the selected installation, `downloads/` contains verified archives, `installed/`
+contains complete runtime/cache pairs, and `sessions/` retains frozen PDF
+snapshots. A plugin directory an earlier version created inside the workspace
+keeps being used while the runtime directory holds no installation, so an
+existing plugin stays enabled; those files are neither copied nor deleted. No CLI
+or Web state is used. The plugin has a separate process, random loopback port,
+memory-only bearer token, and an owner pipe so it exits when Desktop closes.
+Ports and tokens are not saved in projects; the default
+`http://127.0.0.1:8765` bridge address resolves to the managed instance only within
+Desktop workers. Explicit custom bridge URLs retain their existing HTTP behavior.
 
 The plugin installer accepts only protocol-1 release manifests from the fixed
 bridge repository, downloads version-bound HTTPS asset URLs, checks sizes and
@@ -369,8 +521,16 @@ an older signed artifact cannot be relabeled as a newer release.
 
 ### Maintainer signing setup
 
-No update service is required. The native updater uses the fixed HTTPS endpoint
-`https://github.com/BigDawnGhost/wenyi/releases/latest/download/latest.json`.
+No update service is required. The native updater reads
+`https://github.com/<repository>/releases/latest/download/latest.json`, and the
+repository is a build-time constant: `WENYI_UPDATE_REPO` (default
+`BigDawnGhost/wenyi`) is read by `apps/desktop/build.rs`, which rejects a value
+that is not exactly one `owner/repository`. The release workflow sets it to
+`github.repository`, so a fork that reuses the workflow publishes installers
+that update from itself. The same value decides which download links are
+trusted, so the manifest a build fetches and the artifacts it accepts always
+come from one repository.
+
 Do not generate keys in this repository. From the repository root, generate a
 Tauri signer key into a protected location **outside the checkout**:
 
@@ -410,7 +570,7 @@ signing fails instead of publishing misleading update metadata.
 
 Signed release assets add `.sig` beside Windows `.exe` and Linux `.AppImage`;
 macOS adds `.app.tar.gz` plus `.sig` alongside the existing `.dmg` for each
-architecture. There are no extra installer ZIP wrappers. `scripts/desktop_updates.py`
+architecture. There are no extra installer ZIP wrappers. `scripts/release/desktop_updates.py`
 validates the complete four-platform set and produces a stable SemVer manifest
 with `windows-x86_64`, `linux-x86_64`, `darwin-aarch64` and `darwin-x86_64` entries,
 the actual renamed release URLs, and signature contents. All payloads and signatures must build and
@@ -485,7 +645,12 @@ Restart Desktop after changing its inherited environment externally.
 - Completed history entries offer **Save as…**. Saving streams through a temporary file in the destination directory and publishes only after completion. Existing files require confirmation; transfer failures leave the existing destination intact.
 - Export history keeps the latest five completed entries. An older entry disappears from history immediately; already-open saves remain readable. File downloads defer deletion until their last stream closes, including on cancellation or disconnect; an HTML ZIP uses its own temporary archive. Failed cleanup remains retryable on later export publication or restart.
 - HTML is explicitly saved as **HTML + assets (ZIP)**, with a `.html.zip` filename. Extract the archive before opening the HTML so relative image/media links continue to work. Only that published HTML and its owned assets are included.
-- Desktop refuses internal workspace destinations and source-file identities/paths recorded during the current app session. Source protection is bounded and kept in memory without retaining open source files. Do not replace a destination from another application while saving: an overwrite is an atomic file replacement, not a cross-process compare-and-swap. Web continues to use browser downloads.
+- Desktop refuses internal workspace destinations and source-file identities/paths recorded during the current app session. Source protection is bounded and kept in memory without retaining open source files. Do not replace a destination from another application while saving: an overwrite is an atomic file replacement on one volume when nothing else holds the target, not a cross-process compare-and-swap. The staged temporary file is complete before publication, but replacing an existing file is a plain rename: a process that opens, replaces or locks that destination during the save is not detected afterwards, and on Windows the rename fails rather than retrying if the target is held. Web continues to use browser downloads.
+- **Import existing project** on the project list adopts a project folder that already exists — one this installation moved, or one copied here from another computer. The folder is checked before anything changes; a folder without `state.sqlite3`, one whose saved metadata is unreadable, or one with no single recognizable original is refused, and the list names which of those it was. An accepted folder is moved into the workspace and added to the list with the state its saved chapters imply.
+- If no original matches the saved checksum, manual import refuses the folder before copying or moving it, and automatic startup repair also skips it. Restore the matching original or create a new project for changed text. Existing translations and checkpoints are not reset or attached to different source content.
+- Import also refuses a malformed project marker or a marker that disagrees with the directory's project ID. Legacy folders without a marker remain supported. Automatic catalog repair skips duplicate project identities rather than choosing a copy by scan order.
+- A project whose folder is not reachable — a removed drive, or an unmounted network share — stays in the list, greyed out with no way to open it. Writes refuse a missing uploaded-project directory rather than creating an empty replacement. Removing its catalog entry still works without recreating the folder or deleting another same-ID copy; data on the disconnected drive remains untouched.
+- The Web interface has no folder picker, so **Import existing project** is absent there rather than shown and disabled.
 
 ## Diagnostics and feedback
 
@@ -518,7 +683,9 @@ their localized retry guidance rather than displaying raw exceptions.
 
 Normal capture is INFO and above. **Enable detailed logging for 30 minutes** adds safe request/attempt/usage observations, never content; it expires automatically, can be stopped early and resets on restart. Reproduce the issue while it is enabled, then export. Logging settings do not change translation configuration or caches.
 
-The native process is the only file writer. Logs normally live in `<workspace>/diagnostics/`, rotate at 10 MiB or 24 hours, and have a 200 MiB total limit; files last written over 7 days ago are removed. Export additionally filters individual records to the selected time range. If that location is unavailable, Desktop tries a workspace-scoped folder under `Wenyi Desktop Logs` in the platform state/log location (Linux: `$XDG_STATE_HOME` or `~/.local/state`; macOS: `~/Library/Logs`; Windows: `%LOCALAPPDATA%`). The settings page shows the actual folder, stored size and dropped-record count. Both locations failing leaves only a bounded memory buffer; export before exiting. A previous active-session marker is reported as an unclean exit, not proof of a crash.
+The native process is the only file writer. Logs normally live in `<workspace>/diagnostics/`, rotate at 10 MiB or 24 hours, and have a 200 MiB total limit; files last written over 7 days ago are removed, and a file written in the last minute is left alone so an export that is reading it does not lose half a report. Export additionally filters individual records to the selected time range. If that location is unavailable, Desktop tries a workspace-scoped folder under `Wenyi Desktop Logs` in the platform state/log location (Linux: `$XDG_STATE_HOME` or `~/.local/state`; macOS: `~/Library/Logs`; Windows: `%LOCALAPPDATA%`). Both locations failing leaves only a bounded memory buffer; export before exiting. A previous active-session marker is reported as an unclean exit, not proof of a crash.
+
+The log folder is an ordinary directory, so a file that another program puts in it is counted toward the 200 MiB limit — otherwise the limit would describe only this application's own output while the disk filled. Those files are never read into a report, never removed by retention and never removed by **Clear application logs**. The settings page reports them separately ("N file(s) in this folder were written by another program, M MiB") and says that Desktop will not delete them, so a large figure can be traced to the right place.
 
 **Open log folder** opens only the managed location. **Clear application logs** asks for native confirmation and removes only owned log files, not projects, translations, checkpoints or usage. Clearing and export cannot run simultaneously; logging can continue. Logs are best-effort and not a backup or a second usage ledger. CLI and Web logging are unchanged.
 

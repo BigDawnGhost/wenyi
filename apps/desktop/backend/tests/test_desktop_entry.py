@@ -105,6 +105,10 @@ def test_owned_python_preserves_venv_and_process_identity(tmp_path):
         child.wait(timeout=5)
 
 
+# One group, because each variant starts a real engine process and tears down a loopback
+# server. Serialising them keeps a stalled shutdown on a single worker instead of letting
+# four of them compete with unrelated tests for the same machine.
+@pytest.mark.xdist_group("desktop-subprocess")
 @pytest.mark.parametrize("shutdown", ["command", "eof"])
 @pytest.mark.parametrize("diagnostics", [False, True])
 def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutdown, diagnostics):
@@ -246,7 +250,9 @@ def test_startup_failure_reports_original_error_before_uvicorn_exit(tmp_path, st
 def test_asgi_consumed_shutdown_failure_exits_unsuccessfully(monkeypatch, tmp_path):
     from wenyi_desktop import desktop
 
-    async def serve(workspace, stream, lifecycle):
+    # The engine also receives the three resolved roots as keyword arguments; this
+    # stub only exercises the lifecycle wiring, so it accepts and ignores them.
+    async def serve(workspace, stream, lifecycle, **_roots):
         lifecycle.ready = True
         # Mirror ASGI consuming a lifecycle failure instead of propagating it.
         with pytest.raises(OSError):

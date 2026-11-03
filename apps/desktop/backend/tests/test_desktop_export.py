@@ -11,8 +11,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from wenyi_backend.context import current_context
-from wenyi_core.glossary.store import GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Document, Segment
+from wenyi_core.models.document import Chapter, Document, Segment
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_desktop import main
 
 

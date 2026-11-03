@@ -7,8 +7,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..glossary.store import TYPE_PERSON, GlossaryTerm
 from ..i18n.metadata import normalize_gender
+from ..models.glossary import TYPE_PERSON, GlossaryTerm
 from .base import Agent
 
 

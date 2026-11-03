@@ -24,7 +24,7 @@
 - Web 拥有 PostgreSQL 与 Redis/Arq；Desktop 拥有独立工作区、SQLite 目录库、凭据与本地运行器。PostgreSQL 适配器必须留在 `apps/api`，不能移入 Core。
 - 共享 UI 已有 feature 目录与宿主能力注入。继续区分路由、外壳、基础组件与功能组件，不为更换父目录名称搬动所有页面。
 - `ArtifactStorage`、Review 证据/模型、markup、DOCX 样式策略及语言策略已经形成有效边界，应复用而不是再造一套抽象。
-- 已有 [Python 边界测试](../../../packages/backend/tests/test_backend_boundaries.py#L11)、[前端边界测试](../../../packages/ui/tests/platform-boundaries.test.mjs#L31) 和[干净安装隔离检查](../../../scripts/check_backend_packages.py#L19)。需要定向补强，而不是推倒重建。
+- 已有 [Python 边界测试](../../../packages/backend/tests/test_backend_boundaries.py#L11)、[前端边界测试](../../../packages/ui/tests/platform-boundaries.test.mjs#L31) 和[干净安装隔离检查](../../../scripts/release/check_backend_packages.py#L19)。需要定向补强，而不是推倒重建。
 
 ## 2. 检查发现与建议拆分点
 
@@ -94,9 +94,9 @@ runner 从持久任务身份复核、恢复直到领域执行结束持有书级�
 
 **风险：** 共享测试改动意外地由 Web 持有；新增路由或修改 schema 时，重复的测试/类型输入可能未同步。这些是护栏缺口，不表示当前类型或路由已经出错。
 
-**已落地的护栏：** [离线 schema 导出](../../../scripts/export_openapi.py#L21) 使用共享 app factory 与不可调用的运行端口，不启动生产 lifespan。`pnpm check:schema` 生成临时类型并与已提交文件比较，CI 在前端检查前执行。[路由 loader 检查](../../../packages/ui/tests/source-contracts.mjs#L43) 从 manifest 推导 chunk，同时保留独立的必要 URL/重定向断言及既有 audience/外壳 E2E 覆盖。
+**已落地的护栏：** [离线 schema 导出](../../../packages/backend/wenyi_backend/schema_export.py#L1) 使用共享 app factory 与不可调用的运行端口，不启动生产 lifespan。`pnpm check:schema` 生成临时类型并与已提交文件比较，CI 在前端检查前执行。[路由 loader 检查](../../../packages/ui/tests/source-contracts.mjs#L43) 从 manifest 推导 chunk，同时保留独立的必要 URL/重定向断言及既有 audience/外壳 E2E 覆盖。
 
-**已完成的测试归属迁移：** 全部 20 个跨宿主套件、API fixture、select 辅助函数与测试 harness 均归 UI 测试支持目录，各宿主用自身 bootstrap 和能力选项显式注册，不再导入另一宿主的测试。宿主 fixture 转发已删除。边界检查要求两端注册每个共享套件，并禁止共享测试支持包含原生 bootstrap。原生保存/拖入/凭据/bootstrap 与浏览器行为继续分开验证，测试支持不进入运行时导出。
+**已完成的测试归属迁移：** 全部 20 个跨宿主套件、select 辅助函数与测试 harness 归 UI 测试支持目录；API fixture 单独放在 `packages/ui/sandbox/`，使 Web 开发服务器无需让宿主构建配置导入测试文件即可提供 mock 数据。各宿主用自身 bootstrap 和能力选项显式注册，不再导入另一宿主的测试。宿主 fixture 转发已删除。边界检查要求两端注册每个共享套件，并禁止共享测试支持包含原生 bootstrap。原生保存/拖入/凭据/bootstrap 与浏览器行为继续分开验证，测试支持不进入运行时导出。
 
 ### F7：CLI 迁移命令直接调用文件存储私有方法
 
@@ -152,8 +152,9 @@ packages/
       components/ui/index.ts         # implemented approved host-facing primitives
       features/                      # retained; feature-local queries/components
       i18n/                          # retained
+    sandbox/
+      fixtures.ts                    # shared API fixtures, outside test-owned imports
     tests/e2e/
-      fixtures.ts                    # shared API fixtures
       shell.ts / ...                 # 20 explicitly registered cross-host suites
       select-helper.ts / select-harness.tsx
   shared-schema/src/api.d.ts          # retained generated contract

@@ -14,7 +14,7 @@ from wenyi_core.assemble.html_renderer import (
     _render_segments_html,
     _segment_render_maps,
 )
-from wenyi_core.ingest.models import Chapter, Segment
+from wenyi_core.models.document import Chapter, Segment
 
 
 def _epub_resource_specs(meta: dict[str, object]) -> list[tuple[int, str]]:
@@ -135,7 +135,11 @@ def _render_epub_resources(
                 current_anchor = segment.anchor
                 stored_sources[current_anchor] = segment.source
             else:
-                current_anchor = None
+                # Mirror _segment_render_maps: anchor-less segments in a template chapter
+                # mean truncated state; dropping them silently would hide corruption.
+                raise ValueError(
+                    f"EPUB state is inconsistent: segment {segment.index} has no anchor"
+                )
         changed_anchors = [
             anchor
             for anchor, source in stored_sources.items()

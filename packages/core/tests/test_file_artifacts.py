@@ -24,8 +24,15 @@ def windows_paths(monkeypatch):
                 text = "\\\\?\\UNC\\" + text[2:] if text.startswith("\\\\") else "\\\\?\\" + text
             return type(self)(text)
 
-    monkeypatch.setattr(artifacts, "os", SimpleNamespace(name="nt", path=ntpath, sep="\\"))
+    # to_io_path lives in its own module and reads *its* os, so patching only the
+    # artifacts module would leave the real platform in place and make these
+    # Windows-shaped expectations fail wherever the host is not Windows.
+    import wenyi_core.storage.io_path as io_path
+
+    windows_os = SimpleNamespace(name="nt", path=ntpath, sep="\\")
+    monkeypatch.setattr(artifacts, "os", windows_os)
     monkeypatch.setattr(artifacts, "Path", ResolvingWindowsPath)
+    monkeypatch.setattr(io_path, "os", windows_os)
     return ResolvingWindowsPath
 
 
@@ -246,3 +253,70 @@ def test_corrupt_artifact_raises_instead_of_reading_as_missing(tmp_path):
         artifacts.read_artifact("precision/ch0.json")
     assert isinstance(error.value, WenyiError)
     assert error.value.code == "artifact_corrupt"
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (r"\\?\C:\Users\Reader\Wenyi Desktop", r"C:\Users\Reader\Wenyi Desktop"),
+        (r"\\?\D:\工作区 # 100%\Wenyi", r"D:\工作区 # 100%\Wenyi"),
+        (r"\\?\UNC\server\share\Wenyi Desktop", r"\\server\share\Wenyi Desktop"),
+        (r"C:\Users\Reader\Wenyi Desktop", r"C:\Users\Reader\Wenyi Desktop"),
+        (r"\\server\share\Wenyi Desktop", r"\\server\share\Wenyi Desktop"),
+        # A device namespace and a volume GUID have no ordinary spelling, so
+        # unwrapping them would name a different object rather than the same one.
+        (r"\\.\C:\Wenyi", r"\\.\C:\Wenyi"),
+        (r"\\?\Volume{example}\Wenyi", r"\\?\Volume{example}\Wenyi"),
+        ("/tmp/Wenyi Desktop", "/tmp/Wenyi Desktop"),
+    ],
+)
+def test_plain_path_reports_the_spelling_a_person_recognises(path, expected):
+    """A path shown to a person must not carry the opening-time prefix."""
+    from wenyi_core.storage.io_path import plain_path
+
+    assert plain_path(path) == expected
+
+
+def test_plain_path_undoes_the_prefix_this_platform_adds():
+    """The two spellings are inverses, so reporting never drifts from opening."""
+    from wenyi_core.storage.io_path import plain_path, to_io_path
+
+    assert plain_path(to_io_path(r"C:\state\run")) == r"C:\state\run"
+
+
+def test_sqlite_paths_are_length_checked_instead_of_prefixed():
+    """SQLite rejects the extended-length prefix, so a long path has to fail loudly.
+
+    A URI built from a prefixed path percent-encodes the separator, and SQLite
+    reads that as an authority: the connection fails with "unable to open
+    database file" and says nothing about the length.
+    """
+    from wenyi_core.storage.io_path import SQLITE_PATH_LIMIT, require_sqlite_path
+
+    # The returned spelling is the plain one it was given: the length is measured
+    # against the resolved form, but nothing is rewritten on the way out. Comparing
+    # against os.path.abspath() only matched on Windows, where an absolute path is
+    # already its own abspath.
+    short_path = r"C:\state\run\state.sqlite3"
+    assert require_sqlite_path(short_path) == short_path
+    long_path = str(Path.cwd() / "run" / ("a" * SQLITE_PATH_LIMIT) / "state.sqlite3")
+    with pytest.raises(ValueError, match="SQLite cannot open a path longer than"):
+        require_sqlite_path(long_path)
+
+
+def test_long_run_directory_round_trips_through_the_extended_length_form(tmp_path):
+    """A 305-character run directory is usable end to end, not just constructible.
+
+    The prefix is the only spelling that makes the deep path openable, so this
+    exercises a write and a read instead of asserting on the string itself.
+    """
+    from wenyi_core.storage.run_store import RunStore
+
+    run_dir = tmp_path / ("a" * 100) / ("b" * 100) / ("c" * 80)
+    path = run_dir / "manifest.json"
+    assert len(str(path)) > 260
+
+    RunStore(str(run_dir))._write_json(str(path), {"target": "translation"})
+
+    assert RunStore._read_json(str(path)) == {"target": "translation"}
+    assert FileArtifacts(str(run_dir)).read_artifact("manifest.json") == {"target": "translation"}

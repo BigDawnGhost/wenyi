@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { fakeApi, pid, project } from "../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi, pid, project } from "../../../packages/ui/sandbox/fixtures";
 
 async function fileTransfer(
   page: Page,
@@ -194,15 +194,12 @@ test("uploading rejects replacement drops and creation enters the overview", asy
   try {
     await expect(zone).toHaveAttribute("aria-disabled", "true");
     const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
-    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
-    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeDisabled();
-    await page.keyboard.press("Escape");
-    await page.mouse.click(2, 2);
-    await expect(dialog).toBeVisible();
-    await expect(page).toHaveURL("/projects/new");
+    // The upload itself cannot be recalled, so the dismiss control is relabelled
+    // and stays available instead of being disabled with the rest of the form.
     await expect(
-      zone.getByRole("button", { name: "Browse files" }),
-    ).toBeDisabled();
+      dialog.getByRole("button", { name: "Close", exact: true }).first(),
+    ).toBeEnabled();
+    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
     await zone.dispatchEvent("dragenter", { dataTransfer: replacement });
     await expect(
       zone.getByText("Release to add the file"),

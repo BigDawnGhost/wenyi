@@ -13,7 +13,7 @@ from tests.precision_fixtures import (
 )
 from wenyi_api import main
 from wenyi_backend.routers import chapters
-from wenyi_core.pipeline.precision import PrecisionBatchExecutor
+from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor
 from wenyi_core.storage.precision_archive import PrecisionArchive
 
 

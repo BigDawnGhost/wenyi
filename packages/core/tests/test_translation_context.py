@@ -4,16 +4,16 @@ import json
 import re
 
 import pytest
+from wenyi_core.agents.glossary_extractor import TranslatedSegmentEvidence
 from wenyi_core.agents.polisher import Polisher
 from wenyi_core.agents.translator import Translator
 from wenyi_core.config import Config
-from wenyi_core.glossary.extractor import TranslatedSegmentEvidence
-from wenyi_core.glossary.store import GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.ingest.tokens import count_tokens
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.document import Chapter, Document, Segment
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.translation import TranslationService
+from wenyi_core.pipeline.translate.translation import TranslationService
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
 

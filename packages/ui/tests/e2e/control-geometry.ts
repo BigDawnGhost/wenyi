@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../sandbox/fixtures";
+
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Asserts checkbox and radio geometry plus draft retention at 1x and 1.25x zoom on the export page. The probe run recorded only `preferences`, `request` and no Desktop-only service, so both hosts exercise the same code.
+ */
+export const desktopHostSensitive = false;
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 for (const theme of ["light", "dark"]) {

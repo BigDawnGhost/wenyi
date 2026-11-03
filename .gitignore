@@ -29,6 +29,9 @@ explore/
 *.srt
 *.docx
 
+# Root Cargo workspace build directory shared by both crates.
+/target/
+
 # Web workspace artifacts.
 node_modules/
 .next/
@@ -43,6 +46,11 @@ data/
 .ruff_cache/
 .coverage
 htmlcov/
+# Pytest temporary roots. The fixed one comes from --basetemp in pyproject.toml;
+# the named one is what tempfile falls back to when TMPDIR is unusable, and a
+# leftover tree there changes what a repo-root scan collects between workers.
+.pytest-tmp/
+pytest-of-*/
 
 # tiktoken byte cache; falls back to the working directory when TMPDIR is unusable.
 data-gym-cache/

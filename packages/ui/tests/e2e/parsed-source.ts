@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
-import { chapter, fakeApi, pid, project } from "./fixtures";
+import { chapter, fakeApi, pid, project } from "../../sandbox/fixtures";
+
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Asserts a parsed-but-uninitialized chapter stays readable and read-only in both entry points. The only host input is `apiOrigin`, used purely as a route prefix; the probe recorded no Desktop-only service.
+ */
+export const desktopHostSensitive = false;
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 for (const { locale, entry } of [

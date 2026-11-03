@@ -1,7 +1,7 @@
 """Windows catalog repair uses only synthetic projects in temporary workspaces."""
 
 import asyncio
-import hashlib
+import json
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
@@ -9,53 +9,15 @@ from pathlib import Path
 from threading import Event
 
 import pytest
+from catalog_support import orphan
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from wenyi_backend.context import use_context
-from wenyi_core.ingest.models import Chapter, Document, Segment
+from wenyi_backend.execution.bindings import resolve_source
 from wenyi_core.storage.sqlite import SqliteStorage
-from wenyi_desktop import local_runtime
+from wenyi_desktop import local_runtime, paths
 from wenyi_desktop.local_runtime import LocalRuntime
 from wenyi_desktop.main import create_app, create_context
-
-
-def orphan(workspace, pid="a" * 16, *, initialized=True, done=False):
-    directory = workspace / "projects" / pid
-    directory.mkdir(parents=True)
-    source = directory / f"source-{'b' * 32}.txt"
-    source.write_text("A short original.\n", encoding="utf-8")
-    digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    storage = SqliteStorage(str(directory))
-    try:
-        if initialized:
-            storage.init_from_document(
-                Document(
-                    title="Example",
-                    source_path=str(source),
-                    fmt="text",
-                    source_lang="en",
-                    target_lang="zh",
-                    chapters=[
-                        Chapter(
-                            index=0,
-                            title="Chapter",
-                            segments=[Segment(index=0, source="A short original.")],
-                        )
-                    ],
-                )
-            )
-            if done:
-                chapter = storage.load_chapter(0)
-                chapter.segments[0].target = "一小段原文。"
-                storage.save_chapter_with_status(chapter, "done")
-        else:
-            storage.write_artifact(
-                "preview.json", {"title": "Example", "fmt": "text", "source_lang": "en"}
-            )
-            storage.write_artifact("initializing.json", {"source_sha256": digest})
-    finally:
-        storage.close()
-    return directory, source, digest
 
 
 @pytest.fixture
@@ -80,7 +42,7 @@ def test_windows_startup_repairs_empty_catalog_through_http(tmp_path, windows, i
         assert project["initialized"] == initialized
         assert project["status"] == ("done" if done else "prepared" if initialized else "uploaded")
         assert project["source_sha256"] == digest
-        assert workspace / "projects" / project["source_path"] == source
+        assert Path(resolve_source(app.state.backend, directory.name)) == source
         assert project["config"] == {}
         assert app.state.backend.repository.all_jobs() == []
         assert app.state.backend.repository.list_exports(directory.name) == []
@@ -88,6 +50,49 @@ def test_windows_startup_repairs_empty_catalog_through_http(tmp_path, windows, i
     # Repeated starts neither duplicate records nor invent scheduling history.
     with TestClient(create_app(workspace)) as client:
         assert len(client.get("/projects").json()) == 1
+
+
+def test_a_directory_with_a_readable_suffix_recovers_its_identifier(tmp_path, windows):
+    # This is the name the layer-three layout writes. A name-based scan must read
+    # the identifier out of it rather than skip the directory, which is what the
+    # old 16-hex-digit pattern did -- in silence, and only when a user had already
+    # lost the catalog that would have told them a project was missing.
+    workspace = tmp_path / "workspace"
+    directory, _, _ = orphan(workspace)
+    named = directory.with_name(paths.project_name(directory.name, "A example book"))
+    directory.rename(named)
+    context = create_context(workspace)
+    run_recovery(context)
+    assert [row["id"] for row in context.repository.list_projects()] == [directory.name]
+
+
+def test_a_marker_carries_the_identifier_past_a_rename(tmp_path, windows):
+    # The name is for people. The marker is what survives a directory someone
+    # renamed by hand, which is the case the catalog cannot answer for.
+    workspace = tmp_path / "workspace"
+    directory, _, _ = orphan(workspace)
+    (directory / paths.PROJECT_MARKER).write_text(
+        json.dumps({"pid": directory.name, "schema_version": 1}), encoding="utf-8"
+    )
+    renamed = directory.with_name("renamed by hand")
+    directory.rename(renamed)
+    context = create_context(workspace)
+    run_recovery(context)
+    assert [row["id"] for row in context.repository.list_projects()] == [directory.name]
+
+
+def test_a_marker_that_contradicts_its_directory_is_refused(tmp_path, windows):
+    # Two sources disagreeing means the pair was assembled by hand. Rebuilding a
+    # catalog entry would put a project id in front of files it does not own.
+    workspace = tmp_path / "workspace"
+    directory, _, _ = orphan(workspace)
+    (directory / paths.PROJECT_MARKER).write_text(
+        json.dumps({"pid": "0" * 16, "schema_version": 1}), encoding="utf-8"
+    )
+    context = create_context(workspace)
+    run_recovery(context)
+    assert context.repository.list_projects() == []
+    assert context.repository.get_project(directory.name) is None
 
 
 def run_recovery(context, *, startup=True):
@@ -157,6 +162,77 @@ def test_permanent_deletion_does_not_return_after_windows_restart(tmp_path, wind
         assert client.get("/projects").json() == []
     with TestClient(create_app(tmp_path)) as client:
         assert client.get("/projects").json() == []
+
+
+def test_a_directory_marked_for_deletion_is_not_restored_by_repair(tmp_path, windows):
+    # The sentinel is the whole reason the deletion is three steps. A crash
+    # between removing the files and removing the row leaves a directory with
+    # no row, which is exactly what the repair adopts. Restoring a project the
+    # person asked to delete would undo the request, so the marker wins.
+    workspace = tmp_path / "workspace"
+    directory, source, _ = orphan(workspace)
+    (directory / paths.PROJECT_DELETING).write_text("deleting\n", encoding="utf-8")
+    app = create_app(workspace)
+    with TestClient(app) as client:
+        assert client.get("/projects").json() == []
+        # The directory is reported rather than silently ignored, and left in
+        # place: finishing the removal is the user's call, not a startup effect.
+        answer = client.get("/desktop/recovery/last").json()
+    assert directory.exists() and source.exists()
+    assert answer["recovered"] == 0
+    assert [entry["reason"] for entry in answer["skipped"]] == ["project_deletion_incomplete"]
+
+
+def test_the_report_is_reachable_from_the_interface(tmp_path, windows):
+    # The scan runs before any request exists, so its result is asked for rather
+    # than pushed. Without the route the report would only reach the log file,
+    # which is exactly where someone asking "where did my project go?" does not
+    # look.
+    workspace = tmp_path / "workspace"
+    orphan(workspace)
+    empty = workspace / "projects" / ("c" * 16)
+    empty.mkdir(parents=True)
+    with TestClient(create_app(workspace)) as client:
+        answer = client.get("/desktop/recovery/last").json()
+    assert answer["recovered"] == 1
+    assert [entry["reason"] for entry in answer["skipped"]] == ["project_state_missing"]
+    assert "no state.sqlite3" in answer["skipped"][0]["message"]
+    # The folder is named for the person who has to find it; the reason is the
+    # same code the import refusal uses.
+    assert answer["skipped"][0]["name"] == empty.name
+
+
+def test_a_catalog_that_needed_no_repair_reports_nothing(tmp_path, windows):
+    # An ordinary launch must not raise a notice: a report saying "0 restored"
+    # on every start is noise that trains people to ignore the real one.
+    workspace = tmp_path / "workspace"
+    with TestClient(create_app(workspace)) as client:
+        assert client.get("/desktop/recovery/last").json() == {
+            "recovered": 0,
+            "skipped": [],
+        }
+
+
+def test_repair_reports_how_many_folders_it_skipped(tmp_path, windows):
+    # "Where did my project go?" is the question a repaired catalog raises, and
+    # a list that simply shows fewer projects cannot answer it. The report is
+    # what distinguishes "nothing was there" from "five folders were refused".
+    from wenyi_desktop.catalog_recovery import recover_empty_catalog
+
+    workspace = tmp_path / "workspace"
+    orphan(workspace)
+    empty = workspace / "projects" / ("b" * 16)
+    empty.mkdir(parents=True)
+    context = create_context(workspace)
+    report = recover_empty_catalog(context.repository)
+    assert report.recovered == 1
+    assert [reason for _, reason in report.skipped] == ["project_state_missing"]
+    assert "Recovered 1 project(s)" in report.describe()
+    assert "Skipped 1 folder(s)" in report.describe()
+    assert "no state.sqlite3" in report.describe()
+    described = report.as_dict()
+    assert described["recovered"] == 1
+    assert described["skipped"][0]["reason"] == "project_state_missing"
 
 
 def test_failed_file_cleanup_reports_error_and_keeps_catalog_for_retry(
@@ -308,7 +384,7 @@ def test_verbatim_workspace_recovers_projects_and_preserves_translations(tmp_pat
             project = backend.get_project(directory.name)
             assert project["status"] == "done"
             assert project["source_sha256"] == digest
-            assert backend.workspace / "projects" / project["source_path"] == source
+            assert Path(resolve_source(app.state.backend, directory.name)) == source
             assert backend.all_jobs() == []
             assert backend.list_exports(directory.name) == []
             storage = backend.storage_for(directory.name, create=False)

@@ -356,7 +356,7 @@ output:
 - `bilingual`：请求原文与译文对照版，文件名为 `<书名>.<目标语言>-bi.<扩展名>`，使用与单语输出相同的选定格式。
 - `bilingual_order`：`target_first` 表示译文在上，`source_first` 表示原文在上。
 - `bilingual_preserve_source_style`：控制 EPUB、HTML 和 DOCX 的原文样式，与 `bilingual_order` 独立。EPUB/HTML 中，`true` 表示继承书籍正文样式，替代默认的灰色淡化样式。DOCX 中，`false` 使用正常正文样式，不额外添加灰字、高亮或缩小字号；`true` 在正文和表格中恢复已记录的原文加粗、斜体、下划线、颜色和字号，包括段内混合样式。原文不会套用译文的目标字体或译文样式位置。只能恢复已记录的样式，不推测缺失信息。
-- `about_page`：在书籍末尾附加“关于此翻译”项目说明页；设为 `false` 可关闭。
+- `about_page`：在书籍末尾附加“关于此翻译”项目说明页（仅 EPUB 输出）；设为 `false` 可关闭。
 - `punctuation_normalize`：仅对简体中文目标的内存导出副本规范标点；繁体中文及其它目标语言跳过此机械转换。正式章节 `target`、Review 输入和续跑状态均保持不变。
 
 旧的顶层 `punctuation.normalize` 配置不再接受；请删除旧配置，并只使用 `output.punctuation_normalize`。
@@ -377,8 +377,8 @@ paths:
   state_dir: state
 ```
 
-- `max_tokens_per_batch`：单个模型翻译批次的源文 token 预算，使用 tiktoken `cl100k_base` 计数（通用估算，不等于线上提供商私有分词器）。
-- `max_tokens_per_segment`：超长段落按句拆分的 token 阈值。
+- `max_tokens_per_batch`：单个模型翻译批次的源文 token 预算，使用 tiktoken `cl100k_base` 计数（通用估算，不等于线上提供商私有分词器）。必须至少为 1。
+- `max_tokens_per_segment`：超长段落按句拆分的 token 阈值。`0` 表示禁用拆分。
 - `honorific.strategy`：日语源文本的敬称处理策略，可选 `keep_style`、`normalize`、`drop`。
 - `state_dir`：书籍断点、章节产物、术语库、用量和报告的位置。
 

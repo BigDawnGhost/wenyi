@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .diagnostics import EngineDiagnostics, Reporter
+from .migration.ownership import NativeOwner, profile_lock
 
 if TYPE_CHECKING:
     import uvicorn
@@ -26,9 +27,85 @@ ORIGINS = (
 )
 
 
+LOCATION_ERROR = (
+    "Wenyi could not determine where to keep its files on this computer. "
+    "Check the user profile environment and reopen Wenyi."
+)
+
+
+def local_app_data() -> Path:
+    """The local application data directory, however this process can find it.
+
+    `%LOCALAPPDATA%` is a convenience variable rather than the definition. A
+    process started without the user environment -- a scheduled task, a service,
+    an elevated shell, a shortcut that clears its environment block -- inherits
+    no value at all, and reading the dictionary raised `KeyError` instead of
+    resolving the path. `SHGetKnownFolderPath` is the definition, and it answers
+    in exactly those processes.
+
+    The variable is still read first. An existing installation and every project
+    directory beside it are named by the value this machine has, so a build that
+    consulted the shell first would move the workspace out from under them.
+    """
+    configured = os.environ.get("LOCALAPPDATA", "").strip()
+    if configured and Path(configured).is_absolute():
+        return Path(configured)
+    return _known_local_app_data()
+
+
+def _known_local_app_data() -> Path:
+    """Ask the shell for FOLDERID_LocalAppData, or explain why it cannot."""
+    import ctypes
+    from ctypes import wintypes
+
+    class GUID(ctypes.Structure):
+        _fields_ = [
+            ("data1", wintypes.DWORD),
+            ("data2", wintypes.WORD),
+            ("data3", wintypes.WORD),
+            ("data4", ctypes.c_ubyte * 8),
+        ]
+
+    folder = GUID(
+        0xF1B32785,
+        0x6FBA,
+        0x4FCF,
+        (ctypes.c_ubyte * 8)(0x9D, 0x55, 0x7B, 0x8E, 0x7F, 0x15, 0x70, 0x91),
+    )
+    shell32 = ctypes.windll.shell32  # type: ignore[attr-defined]
+    shell32.SHGetKnownFolderPath.argtypes = [
+        ctypes.POINTER(GUID),
+        wintypes.DWORD,
+        wintypes.HANDLE,
+        ctypes.POINTER(ctypes.c_wchar_p),
+    ]
+    shell32.SHGetKnownFolderPath.restype = ctypes.c_long
+    result = ctypes.c_wchar_p()
+    status = shell32.SHGetKnownFolderPath(ctypes.byref(folder), 0, None, ctypes.byref(result))
+    try:
+        if status < 0 or not result.value:
+            raise RuntimeError(LOCATION_ERROR)
+        path = Path(result.value)
+    finally:
+        # The shell owns the allocation and handing it back is the caller's job,
+        # including when the value turned out to be unusable.
+        if result.value:
+            ctypes.windll.ole32.CoTaskMemFree(result)  # type: ignore[attr-defined]
+    if not path.is_absolute():
+        raise RuntimeError(LOCATION_ERROR)
+    return path
+
+
 def default_workspace() -> Path:
+    """Fallback for running the engine as a standalone CLI.
+
+    The desktop parent always injects --data-dir from its own path resolution,
+    so this is never the application's path: it only exists so that a developer
+    can start the engine by hand. Both sides must keep resolving the same value
+    (a Rust test pins them together).
+    """
     if sys.platform == "win32":
-        base = Path(os.environ["LOCALAPPDATA"])
+        base = local_app_data()
     elif sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support"
     else:
@@ -78,17 +155,32 @@ def watch_parent(server: uvicorn.Server) -> None:
     watchdog.start()
 
 
-async def serve(workspace: Path, protocol_stream, lifecycle: EngineDiagnostics) -> None:
+async def serve(
+    workspace: Path,
+    protocol_stream,
+    lifecycle: EngineDiagnostics,
+    *,
+    runtime_dir: Path | None = None,
+    library_root: Path | None = None,
+    install_root: Path | None = None,
+    native_owner: NativeOwner | None = None,
+) -> None:
     with lifecycle.observe("application"):
         import uvicorn
 
         from .main import create_app
 
+        # The native parent resolves all three roots and injects them: the engine
+        # never derives a location of its own.
         app = create_app(
             workspace,
             api_token=os.environ.get("WENYI_API_TOKEN"),
             diagnostics=lifecycle.reporter,
             engine_diagnostics=lifecycle,
+            library_root=library_root,
+            install_root=install_root,
+            runtime_dir=runtime_dir,
+            native_owner=native_owner,
         )
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -133,6 +225,17 @@ async def serve(workspace: Path, protocol_stream, lifecycle: EngineDiagnostics) 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None)
+    parser.add_argument("--runtime-dir", type=Path, default=None)
+    parser.add_argument("--native-startup", action="store_true", help=argparse.SUPPRESS)
+    # Layer three is injected only by an installed native parent. Its absence is
+    # the ordinary state of a development run, and the engine then keeps creating
+    # projects in the workspace it was given (see `LocalBackend.project_roots`).
+    parser.add_argument("--library-root", type=Path, default=None)
+    # The installation the chosen library belongs to. Refusing a location that is
+    # inside it, or that contains it, needs both, and the engine must not derive
+    # the installation directory from its own executable: when it runs as a
+    # sidecar that path is the bundled runtime, not the application.
+    parser.add_argument("--install-root", type=Path, default=None)
     args = parser.parse_args()
     if not os.environ.get("WENYI_API_TOKEN"):
         parser.error("WENYI_API_TOKEN must be supplied by the desktop parent")
@@ -146,7 +249,21 @@ def main() -> None:
     lifecycle = EngineDiagnostics(reporter)
     try:
         with lifecycle.observe("bootstrap"):
-            asyncio.run(serve(args.data_dir or default_workspace(), protocol_stream, lifecycle))
+            # An injected directory is authoritative; the fallback is CLI-only.
+            workspace = args.data_dir or default_workspace()
+            owner = NativeOwner.read(sys.stdin, workspace) if args.native_startup else None
+            with profile_lock(workspace, owner):
+                asyncio.run(
+                    serve(
+                        workspace,
+                        protocol_stream,
+                        lifecycle,
+                        runtime_dir=args.runtime_dir,
+                        library_root=args.library_root,
+                        install_root=args.install_root,
+                        native_owner=owner,
+                    )
+                )
             # ASGI can consume shutdown failures too. Do not report failure and
             # then let the interpreter return a misleading successful exit code.
             if lifecycle.failed:

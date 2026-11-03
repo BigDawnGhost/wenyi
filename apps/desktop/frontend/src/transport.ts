@@ -1,4 +1,4 @@
-import { decodeResponse, requestHeaders } from "@wenyi/ui/http";
+import { decodeResponse, requestHeaders, sendRequest, withTimeout } from "@wenyi/ui/http";
 import type { GlossaryExportFormat } from "@wenyi/ui/api/types";
 import { apiBase, authToken } from "./runtime";
 import { saveNativeExport, saveNativeGlossary } from "./nativeExport";
@@ -6,17 +6,21 @@ import { reportDiagnostic } from "./diagnostics";
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
-    const response = await fetch(`${apiBase()}${path}`, {
-      ...init, headers: requestHeaders(init, authToken()),
-    });
-    try {
-      return await decodeResponse<T>(response);
-    } catch (error) {
-      const errorId = response.headers.get("X-Error-ID");
-      if (error instanceof Error && errorId && /^[0-9a-f]{32}$/.test(errorId))
-        error.message += ` [${errorId}]`;
-      throw error;
-    }
+    return await sendRequest<T>(
+      () => fetch(`${apiBase()}${path}`, withTimeout({
+        ...init, headers: requestHeaders(init, authToken()),
+      })),
+      async (answer) => {
+        try {
+          return await decodeResponse<T>(answer);
+        } catch (error) {
+          const errorId = answer.headers.get("X-Error-ID");
+          if (error instanceof Error && errorId && /^[0-9a-f]{32}$/.test(errorId))
+            error.message += ` [${errorId}]`;
+          throw error;
+        }
+      },
+    );
   } catch (error) {
     reportDiagnostic("frontend_request_failed");
     throw error;

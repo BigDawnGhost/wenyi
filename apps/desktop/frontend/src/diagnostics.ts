@@ -3,12 +3,19 @@ import { asIpcError } from "./ipcError";
 /** Native diagnostics accept event names, never errors, request objects or user text. */
 export type DiagnosticEvent =
   | "frontend_ready" | "frontend_error" | "frontend_rejection"
-  | "frontend_render_failed" | "frontend_request_failed";
+  | "frontend_render_failed" | "frontend_request_failed"
+  // The shared client could not read a progress frame. The frame itself is not
+  // recorded: it can carry translated text and provider messages.
+  | "frontend_message_failed";
 
 export type DiagnosticStatus = {
   version: string;
   directory: string | null;
   bytes: number;
+  /** Files in the log folder this application did not write. They count toward
+   * the storage limit but are never removed by rotation or by Clear. */
+  foreignFiles: number;
+  foreignBytes: number;
   degraded: boolean;
   dropped: number;
   detailSeconds: number;

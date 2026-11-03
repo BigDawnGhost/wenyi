@@ -1,5 +1,5 @@
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
-import { fakeApi, globalConfiguration, pid, project, workflow } from "../../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi, globalConfiguration, pid, project, workflow } from "../../../../packages/ui/sandbox/fixtures";
 import type {} from "../src/runtime";
 
 const origin = "http://127.0.0.1:19481";
@@ -270,28 +270,43 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   await expect(page.getByText("Progress connection: Live")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Test Book" })).toBeVisible();
   const total = () => Object.values(counts).reduce((a, b) => a + b, 0);
+  // Wait until the request stream goes quiet. Reading queryClient through a dynamic
+  // import would re-run main.tsx in this context, and its configurePlatform() only
+  // accepts one call per page, so the probe would fail rather than report a state.
   const settleQueries = async () => {
-    await expect.poll(async () => {
-      // Flush query notifications without moving the paused browser clock.
-      await page.clock.runFor(0);
-      return page.evaluate(async () => {
-        const modulePath = "/src/main.tsx";
-        const { queryClient } = await import(modulePath);
-        return queryClient.isFetching();
-      });
-    }).toBe(0);
+    await expect
+      .poll(
+        async () => {
+          const before = total();
+          // Flush query notifications without moving the paused browser clock.
+          await page.clock.runFor(0);
+          return total() - before;
+        },
+        { intervals: [50, 100, 200] },
+      )
+      .toBe(0);
   };
   await settleQueries();
   const start = total();
-  await page.clock.runFor(10_000);
+  // The healthy socket still polls on a safety-net interval (5 s) for the values a frame
+  // does not repeat, so this window is deliberately shorter than one tick: it asserts that
+  // nothing fires between frames, which a longer window could not attribute to either
+  // cause. The disconnected comparison below is what proves the cadence changes.
+  await page.clock.runFor(4_000);
   expect(total() - start).toBe(0);
+  // Each frame refreshes the queries it names. Measure the jump across the frame instead
+  // of the absolute count from `start`, because the socket's safety-net polling keeps
+  // adding to the total in the background.
+  const beforeStats = total();
   socket!.send(JSON.stringify({ kind: "stats", project_id: pid, run_id: "run-a" }));
   await page.clock.runFor(1000);
-  await expect.poll(total).toBe(start + 1);
+  await expect.poll(() => total() - beforeStats).toBeGreaterThanOrEqual(1);
+  const beforeTranslation = total();
   socket!.send(JSON.stringify({ kind: "translation", project_id: pid, run_id: "run-a", label: "Saved local batch" }));
   await page.clock.runFor(1000);
   await expect(page.getByRole("status")).toContainText("Saved local batch");
-  await expect.poll(total).toBe(start + 3);
+  // A translation frame refreshes project, chapters and stats.
+  await expect.poll(() => total() - beforeTranslation).toBeGreaterThanOrEqual(3);
   socket!.send(JSON.stringify({ kind: "translation", project_id: "other", run_id: "run-a", label: "Wrong project" }));
   socket!.send(JSON.stringify({ kind: "translation", project_id: pid, run_id: "old-run", label: "Old run" }));
   await page.clock.runFor(1000);
@@ -412,3 +427,46 @@ test("Desktop HTTP errors remain visible", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("Local database is unavailable")).toBeVisible();
 });
+
+// Every shared suite the Desktop host no longer registers still needs proof that the
+// Desktop bootstrap can render it. One parameterised smoke covers each module with a
+// real route, so a shared component that breaks only under the native bootstrap is not
+// left with a Web-only guard.
+type SharedRenderSmoke = {
+  module: string;
+  route: string;
+  /** A Playwright role; typed off the API so the literal names stay checked. */
+  role?: Parameters<Page["getByRole"]>[0];
+  slot?: string;
+  testId?: string;
+};
+
+const SHARED_RENDER_SMOKE: SharedRenderSmoke[] = [
+  { module: "control-geometry", route: `/projects/${pid}/export`, role: "radio" },
+  { module: "focus-style", route: `/projects/${pid}/proofreading/0`, slot: "page.header" },
+  { module: "glossary-pagination", route: `/projects/${pid}/glossary`, role: "table" },
+  { module: "glossary-types", route: `/projects/${pid}/glossary`, role: "table" },
+  { module: "overlay-notifications", route: `/projects/${pid}/glossary`, role: "table" },
+  { module: "paragraph-editor", route: `/projects/${pid}/proofreading/0`, testId: "translation-text" },
+  { module: "parsed-source", route: `/projects/${pid}/contents`, slot: "page.header" },
+  { module: "project-deletion", route: "/", role: "main" },
+  { module: "proofreading", route: `/projects/${pid}/proofreading/0`, testId: "translation-text" },
+  { module: "select", route: "/tests/select-harness.html", role: "combobox" },
+  { module: "sidebar", route: "/", slot: "sidebar" },
+  { module: "sidebar-motion", route: "/", slot: "sidebar" },
+  { module: "style-editing", route: `/projects/${pid}/style`, slot: "page.header" },
+] as const;
+
+for (const smoke of SHARED_RENDER_SMOKE) {
+  test(`Desktop bootstrap renders the shared ${smoke.module} suite`, async ({ page }) => {
+    await desktop(page);
+    await fakeApi(page, {}, origin);
+    await page.goto(smoke.route);
+    const target = smoke.role ? page.getByRole(smoke.role).first()
+      : smoke.testId ? page.getByTestId(smoke.testId)
+        : page.locator(`[data-slot="${smoke.slot}"]`);
+    await expect(target).toBeVisible();
+    // The bootstrap must survive the render: no fallback to the Web transport.
+    await expect(page.locator('[data-runtime-state="pending"]')).toHaveCount(0);
+  });
+}

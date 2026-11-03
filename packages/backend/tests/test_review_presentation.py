@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 from wenyi_backend.review_presentation import review_items
-from wenyi_core.ingest.models import Chapter, Segment
+from wenyi_core.models.document import Chapter, Segment
 
 
 def storage():

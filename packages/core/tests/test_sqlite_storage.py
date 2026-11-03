@@ -4,22 +4,24 @@ from __future__ import annotations
 
 import multiprocessing
 import os
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 from threading import Event
 
 import pytest
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Document, Segment
+from wenyi_core.errors import SchemaTooNew
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
+from wenyi_core.models.document import Chapter, Document, Segment
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import RunStore, source_sha256
 from wenyi_core.review.models import ReviewOutcome
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.protocol import Storage
-from wenyi_core.storage.sqlite import SqliteStorage, StorageBusyError
+from wenyi_core.storage.run_store import RunStore, source_sha256
+from wenyi_core.storage.sqlite import SCHEMA_VERSION, SqliteStorage, StorageBusyError
 
 
 @pytest.fixture
@@ -547,7 +549,6 @@ def test_export_lock_uses_the_api_integer_identity(store):
             store.export_lock(invalid)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="Windows lock compatibility is exercised in CI")
 def test_run_lock_compatible_with_legacy_runstore(store):
     legacy = RunStore(store.run_dir)
     with legacy.lock():
@@ -844,3 +845,75 @@ def test_manifest_title_edit_reload_and_export_snapshot(store, document, cleared
     assert "title_translated" not in cleared_snapshot.load_chapter(3).meta
     assert store.chapter_statistics()[0]["title_translated"] is None
     assert snapshot.load_chapter(3).meta["title_translated"] == "Manual title"
+
+
+def test_a_new_database_records_its_schema_version(tmp_path):
+    """The guard only works if the version is written where it is read."""
+    run_dir = tmp_path / "run"
+    SqliteStorage(str(run_dir)).close_all()
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+
+def test_an_existing_database_is_stamped_without_losing_its_rows(tmp_path):
+    """Every project written before the guard reads 0 and must upgrade in place."""
+    run_dir = tmp_path / "run"
+    storage = SqliteStorage(str(run_dir))
+    storage.write_artifact("probe.json", {"value": 1})
+    storage.close_all()
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        connection.execute("PRAGMA user_version = 0")
+        connection.commit()
+    upgraded = SqliteStorage(str(run_dir))
+    assert upgraded.read_artifact("probe.json") == {"value": 1}
+    upgraded.close_all()
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+
+def test_a_database_from_a_newer_build_is_refused_before_it_is_read(tmp_path):
+    """An older build would write rows the newer one then reads as complete."""
+    run_dir = tmp_path / "run"
+    storage = SqliteStorage(str(run_dir))
+    storage.write_artifact("probe.json", {"value": 1})
+    storage.close_all()
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+        connection.commit()
+    with pytest.raises(SchemaTooNew) as refused:
+        SqliteStorage(str(run_dir))
+    assert refused.value.code == "database_schema_too_new"
+    assert "newer version of Wenyi" in str(refused.value)
+    # The refusal must not rewrite the version, or the newer build would find
+    # its own database claiming to be older than it is.
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION + 1
+
+
+def test_a_read_only_store_refuses_a_newer_database_at_the_first_read(tmp_path):
+    """Read-only opens are lazy, so the refusal has to be re-raised there too."""
+    run_dir = tmp_path / "run"
+    SqliteStorage(str(run_dir)).close_all()
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+        connection.commit()
+    reader = SqliteStorage(str(run_dir), create=False)
+    with pytest.raises(SchemaTooNew):
+        reader.read_artifact("manifest.json")
+    reader.close()
+
+
+def test_a_refused_open_leaves_no_connection_behind(tmp_path):
+    """A refused open must not be tracked, or close_all would wait on it."""
+    run_dir = tmp_path / "run"
+    SqliteStorage(str(run_dir)).close_all()
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+        connection.commit()
+    writer = SqliteStorage(str(run_dir), create=False)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with pytest.raises(SchemaTooNew):
+            pool.submit(writer.write_artifact, "probe.json", {"value": 1}).result(timeout=5)
+    assert not writer._connections
+    # Draining must still work on a store whose open was refused.
+    writer.close_all()

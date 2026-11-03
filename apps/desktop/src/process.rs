@@ -35,14 +35,20 @@ impl Failure {
     }
 
     pub fn report(&self, diagnostics: &Diagnostics) -> &'static str {
-        diagnostics.record(Source::Native, Event::EngineFailed, json!({
-            "stage": "bootstrap", "reason": self.reason(),
-            "os_error": match self { Self::Spawn(code) => *code, _ => None },
-        }));
+        diagnostics.record(
+            Source::Native,
+            Event::EngineFailed,
+            json!({
+                "stage": "bootstrap", "reason": self.reason(),
+                "os_error": match self { Self::Spawn(code) => *code, _ => None },
+            }),
+        );
         match self {
             Self::Setup(message) => message,
             Self::Spawn(_) => "Could not start local engine.",
-            Self::ReadyTimeout => "The local engine timed out during startup. Export a diagnostic report.",
+            Self::ReadyTimeout => {
+                "The local engine timed out during startup. Export a diagnostic report."
+            }
             _ => "The local engine did not become ready. Export a diagnostic report.",
         }
     }
@@ -81,7 +87,7 @@ fn token() -> Result<String, &'static str> {
 /// Keeping the interpreter as our direct child preserves both PID authentication
 /// and forced shutdown ownership; readiness never authorizes opening another PID.
 #[cfg(any(windows, test))]
-fn windows_python_command(python: &Path) -> Result<Command, &'static str> {
+pub(crate) fn windows_python_command(python: &Path) -> Result<Command, &'static str> {
     // Do not canonicalize: resolving a venv symlink would lose its environment.
     let python = std::path::absolute(python).map_err(|_| "Invalid development Python path")?;
     if !python.is_file() {
@@ -140,13 +146,19 @@ pub fn wait_ready(signal: &ReadySignal, timeout: Duration) -> Result<String, Fai
 impl Backend {
     fn new(child: Child, diagnostics: Diagnostics) -> Self {
         Self {
-            child, diagnostics, ready: false, exit_recorded: false,
-            wait_failed: false, exit_reason: "process_exited",
+            child,
+            diagnostics,
+            ready: false,
+            exit_recorded: false,
+            wait_failed: false,
+            exit_reason: "process_exited",
         }
     }
 
     fn launch(command: &mut Command, diagnostics: Diagnostics) -> Result<Self, Failure> {
-        let child = command.spawn().map_err(|error| Failure::Spawn(error.raw_os_error()))?;
+        let child = command
+            .spawn()
+            .map_err(|error| Failure::Spawn(error.raw_os_error()))?;
         diagnostics.record(Source::Native, Event::EngineSpawned, json!({}));
         Ok(Self::new(child, diagnostics))
     }
@@ -154,6 +166,9 @@ impl Backend {
     pub fn spawn(
         resources: &Path,
         workspace: Option<&Path>,
+        runtime: Option<&Path>,
+        library: Option<&Path>,
+        native_owner: &crate::instance::NativeOwner,
         diagnostics: Diagnostics,
     ) -> Result<(Self, ReadySignal), Failure> {
         let token = token().map_err(Failure::Setup)?;
@@ -173,10 +188,29 @@ impl Backend {
                 command.args(["-m", "wenyi_desktop"]);
             }
         }
+        // Inject instead of letting the engine derive: the parent owns the
+        // resolution, and the engine only falls back when it runs standalone.
         if let Some(workspace) = workspace {
             command.arg("--data-dir").arg(workspace);
         }
+        if let Some(runtime) = runtime {
+            command.arg("--runtime-dir").arg(runtime);
+        }
+        // Layer three is passed only when there is an installation to put it
+        // beside. A development run has no installer record, and a sibling of
+        // target/debug is a directory the developer never chose; leaving the
+        // argument out makes the engine keep using the workspace it was given.
+        if let Some(library) = library {
+            command.arg("--library-root").arg(library);
+            // The engine cannot derive this: as a bundled sidecar its own
+            // executable lives beside the runtime it loads, not beside the
+            // installed application, so the parent names the installation.
+            if let Ok(install) = crate::paths::running_install_dir() {
+                command.arg("--install-root").arg(install);
+            }
+        }
         command
+            .arg("--native-startup")
             .env("WENYI_API_TOKEN", &token)
             .env("WENYI_DIAGNOSTICS_PROTOCOL", "1")
             .stdin(Stdio::piped())
@@ -189,7 +223,21 @@ impl Backend {
             command.creation_flags(0x08000000); // CREATE_NO_WINDOW
         }
         let mut backend = Self::launch(&mut command, diagnostics.clone())?;
-        let output = backend.child.stdout.take().ok_or(Failure::Setup("Missing protocol pipe"))?;
+        let proof = serde_json::to_string(native_owner).map_err(|_| Failure::InvalidProtocol)?;
+        writeln!(
+            backend
+                .child
+                .stdin
+                .as_mut()
+                .ok_or(Failure::InvalidProtocol)?,
+            "{proof}"
+        )
+        .map_err(|_| Failure::ReadProtocol)?;
+        let output = backend
+            .child
+            .stdout
+            .take()
+            .ok_or(Failure::Setup("Missing protocol pipe"))?;
         let pid = backend.child.id();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
@@ -206,12 +254,22 @@ impl Backend {
         self.ready
     }
 
+    pub fn id(&self) -> u32 {
+        self.child.id()
+    }
+
     fn stage(&self) -> &'static str {
-        if self.ready { "running" } else { "bootstrap" }
+        if self.ready {
+            "running"
+        } else {
+            "bootstrap"
+        }
     }
 
     fn record_exit(&mut self, status: ExitStatus) {
-        if self.exit_recorded { return; }
+        if self.exit_recorded {
+            return;
+        }
         self.exit_recorded = true;
         #[cfg(unix)]
         let signal = {
@@ -220,16 +278,23 @@ impl Backend {
         };
         #[cfg(not(unix))]
         let signal: Option<i32> = None;
-        self.diagnostics.record(Source::Native, Event::EngineExited, json!({
-            "stage": self.stage(), "reason": self.exit_reason,
-            "exit_code": status.code(), "signal": signal,
-        }));
+        self.diagnostics.record(
+            Source::Native,
+            Event::EngineExited,
+            json!({
+                "stage": self.stage(), "reason": self.exit_reason,
+                "exit_code": status.code(), "signal": signal,
+            }),
+        );
     }
 
     pub fn exited(&mut self) -> bool {
         match self.child.try_wait() {
             Ok(None) => false,
-            Ok(Some(status)) => { self.record_exit(status); true }
+            Ok(Some(status)) => {
+                self.record_exit(status);
+                true
+            }
             Err(error) => {
                 if !self.wait_failed {
                     self.wait_failed = true;
@@ -250,7 +315,9 @@ impl Backend {
     fn shutdown_with_timeout(&mut self, grace: Duration) {
         // Observe natural termination before cleanup; never report our later kill
         // as the original startup failure.
-        if self.exited() { return; }
+        if self.exited() {
+            return;
+        }
         self.exit_reason = "shutdown_requested";
         if let Some(mut input) = self.child.stdin.take() {
             let _ = input.write_all(b"{\"command\":\"shutdown\"}\n");
@@ -264,9 +331,13 @@ impl Backend {
         }
         if self.child.kill().is_ok() {
             self.exit_reason = "forced";
-        }
-        if let Ok(status) = self.child.wait() {
-            self.record_exit(status);
+            if let Ok(status) = self.child.wait() {
+                self.record_exit(status);
+            }
+        } else {
+            // A failed kill is not a stopped process. Keep the Child handle so
+            // callers can refuse replacement/snapshot instead of assuming exit.
+            self.exited();
         }
     }
 }
@@ -278,7 +349,9 @@ impl Drop for Backend {
 }
 
 fn receive_protocol(
-    output: impl Read, pid: u32, token: &str,
+    output: impl Read,
+    pid: u32,
+    token: &str,
     diagnostics: &Diagnostics,
     tx: mpsc::Sender<Result<String, Failure>>,
 ) {
@@ -287,15 +360,22 @@ fn receive_protocol(
     let mut discard = false;
     loop {
         let mut bytes = Vec::new();
-        let count = match reader.by_ref().take(crate::diagnostics::MAX_RECORD as u64 + 1)
-            .read_until(b'\n', &mut bytes) {
-                Ok(count) => count,
-                Err(_) => {
-                    if !sent { let _ = tx.send(Err(Failure::ReadProtocol)); }
-                    return;
+        let count = match reader
+            .by_ref()
+            .take(crate::diagnostics::MAX_RECORD as u64 + 1)
+            .read_until(b'\n', &mut bytes)
+        {
+            Ok(count) => count,
+            Err(_) => {
+                if !sent {
+                    let _ = tx.send(Err(Failure::ReadProtocol));
                 }
-            };
-        if count == 0 { break; }
+                return;
+            }
+        };
+        if count == 0 {
+            break;
+        }
         let complete = bytes.ends_with(b"\n");
         if discard || !complete || bytes.len() > crate::diagnostics::MAX_RECORD {
             if !sent {
@@ -324,7 +404,9 @@ fn receive_protocol(
         }
         // Unknown post-ready output is discarded, never saved as raw text.
     }
-    if !sent { let _ = tx.send(Err(Failure::ProtocolEof)); }
+    if !sent {
+        let _ = tx.send(Err(Failure::ProtocolEof));
+    }
 }
 
 fn engine_name() -> &'static str {
@@ -341,12 +423,20 @@ mod tests {
 
     fn native_records(diagnostics: &Diagnostics) -> Vec<serde_json::Value> {
         diagnostics.drain();
-        let bytes = diagnostics.bundle(crate::diagnostics::Range::Session, || false).unwrap();
+        let bytes = diagnostics
+            .bundle(crate::diagnostics::Range::Session, || false)
+            .unwrap();
         let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let mut text = String::new();
-        archive.by_name("logs/native.jsonl").unwrap().read_to_string(&mut text).unwrap();
+        archive
+            .by_name("logs/native.jsonl")
+            .unwrap()
+            .read_to_string(&mut text)
+            .unwrap();
         assert!(!text.contains("fake-private"));
-        text.lines().map(|line| serde_json::from_str(line).unwrap()).collect()
+        text.lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
     }
 
     #[test]
@@ -356,8 +446,14 @@ mod tests {
             (Vec::new(), Failure::ProtocolEof),
             (b"fake-private-token\n".to_vec(), Failure::InvalidProtocol),
             (vec![0xff, b'\n'], Failure::InvalidProtocol),
-            (vec![b'x'; crate::diagnostics::MAX_RECORD + 1], Failure::InvalidProtocol),
-            (b"WENYI_READY {\"protocol\":1,\"pid\":8,\"port\":1234}\n".to_vec(), Failure::InvalidProtocol),
+            (
+                vec![b'x'; crate::diagnostics::MAX_RECORD + 1],
+                Failure::InvalidProtocol,
+            ),
+            (
+                b"WENYI_READY {\"protocol\":1,\"pid\":8,\"port\":1234}\n".to_vec(),
+                Failure::InvalidProtocol,
+            ),
         ] {
             let (tx, rx) = mpsc::channel();
             receive_protocol(input.as_slice(), 9, "fake-private-token", &diagnostics, tx);
@@ -378,15 +474,27 @@ mod tests {
         drop(tx);
         assert_eq!(wait_ready(&rx, Duration::ZERO), Err(Failure::ChannelClosed));
         for failure in [
-            Failure::ProtocolEof, Failure::ReadProtocol, Failure::InvalidProtocol,
-            Failure::ReadyTimeout, Failure::ChannelClosed,
+            Failure::ProtocolEof,
+            Failure::ReadProtocol,
+            Failure::InvalidProtocol,
+            Failure::ReadyTimeout,
+            Failure::ChannelClosed,
         ] {
             failure.report(&diagnostics);
         }
         let records = native_records(&diagnostics);
         assert_eq!(
-            records.iter().map(|row| row["attributes"]["reason"].as_str().unwrap()).collect::<Vec<_>>(),
-            ["protocol_eof", "protocol_read_failed", "protocol_invalid", "ready_timeout", "channel_closed"],
+            records
+                .iter()
+                .map(|row| row["attributes"]["reason"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "protocol_eof",
+                "protocol_read_failed",
+                "protocol_invalid",
+                "ready_timeout",
+                "channel_closed"
+            ],
         );
     }
 
@@ -395,7 +503,8 @@ mod tests {
         let fixture = PythonFixture::new();
         let diagnostics = Diagnostics::new(None);
         let failure = match Backend::launch(
-            &mut Command::new(fixture.0.join("fake-private-missing")), diagnostics.clone(),
+            &mut Command::new(fixture.0.join("fake-private-missing")),
+            diagnostics.clone(),
         ) {
             Ok(_) => panic!("Missing executable unexpectedly started"),
             Err(failure) => failure,
@@ -413,7 +522,10 @@ mod tests {
         #[cfg(unix)]
         let child = Command::new("sh").args(["-c", "exit 3"]).spawn().unwrap();
         #[cfg(windows)]
-        let child = Command::new("cmd").args(["/D", "/C", "exit 3"]).spawn().unwrap();
+        let child = Command::new("cmd")
+            .args(["/D", "/C", "exit 3"])
+            .spawn()
+            .unwrap();
         let diagnostics = Diagnostics::new(None);
         let mut backend = Backend::new(child, diagnostics.clone());
         backend.child.wait().unwrap();
@@ -423,9 +535,12 @@ mod tests {
         let records = native_records(&diagnostics);
         assert_eq!(records.len(), 1);
         assert_eq!(records[0]["event"], "engine_exited");
-        assert_eq!(records[0]["attributes"], json!({
-            "stage": "bootstrap", "reason": "process_exited", "exit_code": 3,
-        }));
+        assert_eq!(
+            records[0]["attributes"],
+            json!({
+                "stage": "bootstrap", "reason": "process_exited", "exit_code": 3,
+            })
+        );
     }
 
     #[test]
@@ -433,11 +548,17 @@ mod tests {
     fn windows_native_status_is_not_lost_as_an_unsigned_overflow() {
         use std::os::windows::process::ExitStatusExt;
         let diagnostics = Diagnostics::new(None);
-        let child = Command::new("cmd").args(["/D", "/C", "exit 0"]).spawn().unwrap();
+        let child = Command::new("cmd")
+            .args(["/D", "/C", "exit 0"])
+            .spawn()
+            .unwrap();
         let mut backend = Backend::new(child, diagnostics.clone());
         backend.child.wait().unwrap();
         backend.record_exit(ExitStatus::from_raw(0xc0000005));
-        assert_eq!(native_records(&diagnostics)[0]["attributes"]["exit_code"], -1073741819i64);
+        assert_eq!(
+            native_records(&diagnostics)[0]["attributes"]["exit_code"],
+            -1073741819i64
+        );
     }
 
     #[test]
@@ -451,7 +572,8 @@ mod tests {
         );
         let (tx, rx) = mpsc::channel();
         receive_protocol(input.as_bytes(), 9, "owner-token", &diagnostics, tx);
-        let connection: serde_json::Value = serde_json::from_str(&rx.recv().unwrap().unwrap()).unwrap();
+        let connection: serde_json::Value =
+            serde_json::from_str(&rx.recv().unwrap().unwrap()).unwrap();
         assert_eq!(connection["apiBase"], "http://127.0.0.1:1234");
         assert_eq!(connection["token"], "owner-token");
         assert!(rx.try_recv().is_err());
@@ -638,9 +760,12 @@ mod tests {
         backend.shutdown_with_timeout(Duration::from_secs(2));
         assert!(backend.child.try_wait().unwrap().unwrap().success());
         let records = native_records(&diagnostics);
-        assert_eq!(records[0]["attributes"], json!({
-            "stage": "running", "reason": "shutdown_requested", "exit_code": 0,
-        }));
+        assert_eq!(
+            records[0]["attributes"],
+            json!({
+                "stage": "running", "reason": "shutdown_requested", "exit_code": 0,
+            })
+        );
     }
 
     #[test]
@@ -660,8 +785,11 @@ mod tests {
         assert!(!backend.child.try_wait().unwrap().unwrap().success());
         let records = native_records(&diagnostics);
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0]["attributes"], json!({
-            "stage": "bootstrap", "reason": "forced", "signal": 9,
-        }));
+        assert_eq!(
+            records[0]["attributes"],
+            json!({
+                "stage": "bootstrap", "reason": "forced", "signal": 9,
+            })
+        );
     }
 }

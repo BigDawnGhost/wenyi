@@ -11,12 +11,12 @@ from wenyi_core.agents.polisher import Polisher
 from wenyi_core.agents.translator import Translator
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.review_chunks import ReviewChunkService
-from wenyi_core.pipeline.translation import TranslationService
-from wenyi_core.pipeline.translation_batch import (
+from wenyi_core.pipeline.review.review_chunks import ReviewChunkService
+from wenyi_core.pipeline.translate.translation import TranslationService
+from wenyi_core.pipeline.translate.translation_batch import (
     TranslationBatchExecutor,
     resume_batches,
 )
@@ -83,7 +83,7 @@ def test_chapter_service_limits_blank_allowance_and_resumes_without_retranslatio
 ):
     from wenyi_core.agents.translator import AlignmentError
     from wenyi_core.pipeline.orchestrator import Orchestrator
-    from wenyi_core.pipeline.runstore import STATUS_PENDING
+    from wenyi_core.storage.run_store import STATUS_PENDING
 
     from tests.fake_llm import routing_handler
     from tests.review_fixtures import autofix_config as _config
@@ -199,7 +199,7 @@ class TestTranslationService(unittest.TestCase):
             captured: list[list[list[dict[str, str]]]] = []
 
             def process(plan, **kwargs):
-                from wenyi_core.pipeline.translation_batch import BatchResult
+                from wenyi_core.pipeline.translate.translation_batch import BatchResult
 
                 captured.append(plan.annotation_contexts)
                 return BatchResult(

@@ -20,6 +20,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.59.0
         version: 5.101.2(react@19.2.7)
+      '@wenyi/shared-schema':
+        specifier: workspace:*
+        version: link:../../../packages/shared-schema
       '@wenyi/ui':
         specifier: workspace:*
         version: link:../../../packages/ui

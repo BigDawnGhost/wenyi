@@ -14,12 +14,12 @@ from wenyi_core.assemble.html_bilingual import (
 )
 from wenyi_core.assemble.html_inline import _merge_epub_render_meta, _replace_block_content
 from wenyi_core.assemble.writer_common import _bilingual_source, _ordered_pair, _seg_text
-from wenyi_core.ingest.models import KIND_HEADING, Chapter, Segment
 from wenyi_core.markup.contracts import (
     ANNOTATION_ID_ATTR,
     INLINE_ID_ATTR,
     LINE_WRAPPER_ATTR,
 )
+from wenyi_core.models.document import KIND_HEADING, Chapter, Segment
 
 
 def _render_paragraph_html(
@@ -81,6 +81,13 @@ def _segment_render_maps(
             src_by_anchor[current_anchor] = segment.source
             kind_by_anchor[current_anchor] = segment.kind
             stored_meta_by_anchor[current_anchor] = segment.meta
+        else:
+            # Template chapters always carry anchors; reaching this branch means the
+            # persisted state was truncated or corrupted. Fail loudly instead of
+            # silently dropping text (audit X-4).
+            raise ValueError(
+                f"Chapter state is inconsistent: segment {segment.index} has no anchor"
+            )
     return by_anchor, src_by_anchor, kind_by_anchor, stored_meta_by_anchor
 
 

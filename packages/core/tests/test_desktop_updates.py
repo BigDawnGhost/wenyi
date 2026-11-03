@@ -25,7 +25,7 @@ def macos_payload(path, version="1.2.3"):
 @pytest.fixture
 def updates():
     spec = importlib.util.spec_from_file_location(
-        "desktop_updates", ROOT / "scripts/desktop_updates.py"
+        "desktop_updates", ROOT / "scripts/release/desktop_updates.py"
     )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

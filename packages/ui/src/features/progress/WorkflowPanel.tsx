@@ -10,11 +10,14 @@ import { progressInterval } from "../../lib/runtime";
 export function WorkflowPanel({
   pid,
   msg,
+  failure,
   connected = false,
   busy,
 }: {
   pid: string;
   msg: ProgressMessage | null;
+  /** The run's terminal failure, kept apart from the stage label it outlives. */
+  failure?: ProgressMessage | null;
   connected?: boolean;
   busy: boolean;
 }) {
@@ -57,6 +60,10 @@ export function WorkflowPanel({
         {tr("workflowPanel.currentWorkflow")}
       </h2>
       <ErrorNotice error={query.error} />
+      {/* The run's terminal failure arrives as a socket frame, so this is the
+          only place its code and message can still be read. The stage label
+          below is deliberately left as it was. */}
+      {failure && <ErrorNotice error={failure} />}
       {workflow && (
         <div role="status" aria-atomic="true" className="space-y-2 text-sm">
           <div className="flex flex-wrap items-center gap-3">

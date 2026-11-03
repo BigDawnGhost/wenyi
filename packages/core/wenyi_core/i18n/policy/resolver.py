@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from dataclasses import asdict, replace
 from string import Template
@@ -19,6 +18,7 @@ from .models import (
     PolicyPlan,
     ResolvedOperation,
     content_hash,
+    used_rule_keys,
 )
 from .registry import OPERATIONS, validate_bindings, validate_options
 
@@ -317,7 +317,7 @@ def resolve_policy(
     terminology = "terminology.context" in enabled_ids and context.path == "book"
     templates = _templates(context, terminology=terminology)
     rules = {} if context.phase == "export" else _rules(context)
-    used = set(re.findall(r"\$\{?(\w+)", "\n".join(text for _, text in templates)))
+    used = used_rule_keys(templates)
     effective_rules = {key: value for key, value in rules.items() if key in used}
     if any(
         task

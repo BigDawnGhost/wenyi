@@ -149,7 +149,7 @@ def test_worker_streams_time_and_usage_before_a_batch_finishes(worker_state, mon
     from redis import Redis
     from wenyi_backend.routers import configuration
     from wenyi_core.llm.usage import UsageSample
-    from wenyi_core.pipeline.runtime import PipelineRuntime
+    from wenyi_core.pipeline.run.runtime import PipelineRuntime
     from wenyi_core.timing import RunTimer
 
     redis_url = os.environ.get("WENYI_TEST_REDIS_URL")

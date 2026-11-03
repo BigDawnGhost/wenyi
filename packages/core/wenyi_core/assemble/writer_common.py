@@ -8,7 +8,7 @@ import re
 from ..i18n.languages import require_language
 from ..i18n.policy.models import PolicyContext
 from ..i18n.policy.resolver import resolve_policy
-from ..ingest.models import Chapter, Segment
+from ..models.document import Chapter, Segment
 
 _ILLEGAL_FN = re.compile(r'[\\/:*?"<>|\r\n\t]+')
 

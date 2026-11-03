@@ -1,11 +1,24 @@
 """Package imports must enforce deployment boundaries, not merely skip adapters at runtime."""
 
 import ast
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
+
+
+@lru_cache(maxsize=None)
+def parsed_source(path: Path) -> ast.Module:
+    """Parse each file once per session.
+
+    Several boundary tests walk the same trees and each used to re-read and re-parse every
+    module. The tests never rewrite product sources, so caching on the path is safe here.
+    """
+    return ast.parse(path.read_text(encoding="utf-8"))
+
+
 SHARED_FORBIDDEN = {
     "wenyi_api",
     "wenyi_desktop",
@@ -38,7 +51,7 @@ def test_platform_dependency_direction(directory, forbidden):
     assert files, "An empty architecture scan is not evidence of a boundary"
     violations = []
     for file in files:
-        for node in ast.walk(ast.parse(file.read_text(encoding="utf-8"))):
+        for node in ast.walk(parsed_source(file)):
             modules = (
                 [entry.name for entry in node.names]
                 if isinstance(node, ast.Import)
@@ -66,7 +79,7 @@ def test_execution_services_use_explicit_ports_not_scoped_lookup():
         for name in ("project_service.py", "job_service.py", "source_view.py")
     ]
     for file in files:
-        tree = ast.parse(file.read_text(encoding="utf-8"))
+        tree = parsed_source(file)
         for node in ast.walk(tree):
             if isinstance(node, ast.Name):
                 assert node.id not in {"current_context", "dal", "paths"}, file
@@ -75,7 +88,7 @@ def test_execution_services_use_explicit_ports_not_scoped_lookup():
                     name.name not in {"current_context", "dal", "paths"} for name in node.names
                 ), file
     entry = ROOT / "packages/backend/wenyi_backend/workers/tasks.py"
-    tree = ast.parse(entry.read_text(encoding="utf-8"))
+    tree = parsed_source(entry)
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             assert not (node.module or "").startswith(
@@ -96,7 +109,7 @@ def test_test_support_does_not_import_collected_test_modules():
         files = list((ROOT / directory).rglob("*.py"))
         assert files, f"An empty test-support scan is not evidence: {directory}"
         for file in files:
-            for node in ast.walk(ast.parse(file.read_text(encoding="utf-8"))):
+            for node in ast.walk(parsed_source(file)):
                 if isinstance(node, ast.Import):
                     modules = [entry.name for entry in node.names]
                 elif isinstance(node, ast.ImportFrom):
@@ -122,7 +135,7 @@ def test_retired_dynamic_repository_forwarding_has_no_remaining_consumers():
     assert files
     retired = "wenyi_backend" + ".dal"
     for file in files:
-        for node in ast.walk(ast.parse(file.read_text(encoding="utf-8"))):
+        for node in ast.walk(parsed_source(file)):
             if isinstance(node, ast.ImportFrom):
                 assert node.module != retired, file
                 if node.module == "wenyi_backend":
@@ -132,5 +145,5 @@ def test_retired_dynamic_repository_forwarding_has_no_remaining_consumers():
     adapter = ROOT / "apps/api/wenyi_api/adapters.py"
     assert not any(
         isinstance(node, ast.FunctionDef) and node.name == "__getattr__"
-        for node in ast.walk(ast.parse(adapter.read_text(encoding="utf-8")))
+        for node in ast.walk(parsed_source(adapter))
     )

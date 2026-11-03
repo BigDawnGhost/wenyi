@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi } from "../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi } from "../../../packages/ui/sandbox/fixtures";
 
 test("fetching models for a connection fills a searchable model-name list", async ({ page }) => {
   await fakeApi(page);

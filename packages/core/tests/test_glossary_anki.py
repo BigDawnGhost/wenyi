@@ -9,7 +9,7 @@ from dataclasses import replace
 
 import pytest
 from wenyi_core.glossary import anki
-from wenyi_core.glossary.store import GlossaryTerm
+from wenyi_core.models.glossary import GlossaryTerm
 
 TYPES = (
     "person",

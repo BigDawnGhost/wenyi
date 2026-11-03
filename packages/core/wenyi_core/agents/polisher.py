@@ -7,7 +7,7 @@ polishing cannot drop paragraphs.
 
 from __future__ import annotations
 
-from ..glossary.store import GlossaryTerm
+from ..models.glossary import GlossaryTerm
 from . import prompts
 from .base import Agent, Messages
 
@@ -49,9 +49,16 @@ class Polisher(Agent):
             numbered_target=prompts.numbered(targets),
             next_source=prompts.render_source_reference(next_source),
         )
-        items = self._ask_json(system, user, operation="polish.body", key="polished", default=None)
+        items = self._ask_json(
+            system,
+            user,
+            operation="polish.body",
+            key="polished",
+            default=None,
+            item_type=str,
+        )
         if isinstance(items, list) and len(items) == n:
-            return [str(x) for x in items]
+            return items
         return list(targets)
 
     def polish_continue(
@@ -84,7 +91,8 @@ class Polisher(Agent):
             operation="polish.body",
             key="polished",
             default=None,
+            item_type=str,
         )
         if isinstance(items, list) and len(items) == n:
-            return [str(x) for x in items]
+            return items
         return None

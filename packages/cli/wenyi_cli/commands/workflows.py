@@ -32,7 +32,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
     ) -> None:
         """Parse source chapters and list the contents without AI initialization."""
         from rich.table import Table
-        from wenyi_core.pipeline.input_preparation import (
+        from wenyi_core.pipeline.prepare.input_preparation import (
             locate_input_storage,
             parse_document,
         )

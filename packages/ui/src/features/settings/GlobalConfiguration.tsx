@@ -46,6 +46,9 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
   });
   const [draft, setDraft] = useState<GlobalConfig | null>(null);
   const [yamlDirty, setYamlDirty] = useState(false);
+  // A toast disappears; a key that failed to reach the credential store stays
+  // unsaved until the user acts, so the reason has to stay on the page.
+  const [credentialsFailed, setCredentialsFailed] = useState(false);
   const [uncommitted, setUncommitted] = useState(false);
   const [registryKey, setRegistryKey] = useState(0);
   const [editingIds, setEditingIds] = useState(false);
@@ -91,6 +94,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
       qc.setQueryData(["globalConfig"], value);
       for (const key of ["config", "models", "templates"])
         void qc.invalidateQueries({ queryKey: [key] });
+      setCredentialsFailed(keysFailed);
       if (keysFailed) toast.error(t("settings.credentialsFailed"));
       else toast.success(t("settings.globalSaved"));
     },
@@ -175,6 +179,11 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
   return (
     <>
       <ErrorNotice error={query.error || error} />
+      {/* Distinct from the toast that announces the failure: this one stays, so
+          it describes the state the keys are in rather than repeating the event. */}
+      {credentialsFailed && (
+        <ErrorNotice error={t("settings.credentialsFailedNotice")} />
+      )}
       {/* Keep controls mounted so category navigation preserves local ID/key drafts. */}
       <div className="flex-1">
         <div hidden={section !== "general"}>

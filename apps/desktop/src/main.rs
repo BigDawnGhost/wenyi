@@ -7,20 +7,24 @@ mod diagnostics_ui;
 mod graphics;
 mod instance;
 mod ipc_error;
+mod library_choose;
 mod local_connection;
+mod migration;
 mod mutex;
 mod native_drop;
 mod native_export;
+mod paths;
 mod process;
+mod profile;
 mod publish;
 mod updates;
 
+use crate::mutex::lock;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
-use crate::mutex::lock;
 
 fn trusted(url: &tauri::Url) -> bool {
     url.username().is_empty()
@@ -69,12 +73,20 @@ impl State {
 struct Engine {
     child: Arc<Mutex<Option<process::Backend>>>,
     workspace: Option<std::path::PathBuf>,
+    runtime: Option<std::path::PathBuf>,
+    library: Option<std::path::PathBuf>,
+    native_owner: instance::NativeOwner,
+    profile: Arc<profile::Profile>,
     closing: Arc<AtomicBool>,
     closed: Arc<AtomicBool>,
 }
 
 /// The same launch path is used at startup and to recover a failed installation.
-fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Result<(), &'static str> {
+fn start_backend(
+    app: &tauri::AppHandle,
+    engine: &Engine,
+    recovery: bool,
+) -> Result<(), &'static str> {
     let diagnostics = app.state::<diagnostics::Diagnostics>();
     let resources = app.path().resource_dir().map_err(|_| {
         process::Failure::Setup("Local resources unavailable.").report(&diagnostics)
@@ -86,8 +98,18 @@ fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Res
         {
             return Err("Wenyi is closing.");
         }
-        let (backend, ready) = process::Backend::spawn(&resources, engine.workspace.as_deref(), diagnostics.inner().clone())
-            .map_err(|failure| failure.report(&diagnostics))?;
+        if owner.as_mut().is_some_and(|backend| !backend.exited()) {
+            return Err("The previous local engine has not stopped. Quit and reopen Wenyi.");
+        }
+        let (backend, ready) = process::Backend::spawn(
+            &resources,
+            engine.workspace.as_deref(),
+            engine.runtime.as_deref(),
+            engine.library.as_deref(),
+            &engine.native_owner,
+            diagnostics.inner().clone(),
+        )
+        .map_err(|failure| failure.report(&diagnostics))?;
         *owner = Some(backend);
         ready
     };
@@ -96,7 +118,11 @@ fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Res
             if let Some(backend) = lock(&engine.child).as_mut() {
                 backend.mark_ready();
             }
-            diagnostics.record(diagnostics::Source::Native, diagnostics::Event::EngineReady, serde_json::json!({}));
+            diagnostics.record(
+                diagnostics::Source::Native,
+                diagnostics::Event::EngineReady,
+                serde_json::json!({}),
+            );
             let state = app.state::<Arc<Mutex<State>>>();
             let mut state = lock(&state);
             state.connected(connection);
@@ -104,8 +130,12 @@ fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Res
         }
         Err(failure) => {
             let message = failure.report(&diagnostics);
-            if let Some(mut backend) = lock(&engine.child).take() {
+            let mut owner = lock(&engine.child);
+            if let Some(backend) = owner.as_mut() {
                 backend.shutdown();
+                if backend.exited() {
+                    owner.take();
+                }
             }
             Err(message)
         }
@@ -137,6 +167,38 @@ fn fail(app: &tauri::AppHandle, state: &Mutex<State>, error: &'static str) {
     publish(app, state);
 }
 
+/// Refuse this start when the layout would let one cleanup reach another layer.
+///
+/// Layer three is the directory this start will actually use, so the six pairs
+/// are checked against what the engine is about to be handed rather than against
+/// what the default would have named. A development run, a test, and an unpacked
+/// build contribute no layer three, because none of them has an installer record
+/// and the only sibling of a `target/debug` executable is a build directory
+/// nobody chose; those starts are still checked on the three parties that remain.
+///
+/// The log is already open here on purpose. A start that ends at this point has
+/// no window, no engine, and no console in a release build, so the file is the
+/// only place that can say which folders were compared.
+fn assert_layout(
+    diagnostics: &diagnostics::Diagnostics,
+    library: Option<&std::path::Path>,
+) -> Result<(), &'static str> {
+    let running = paths::running_install_dir().map_err(|_| {
+        "Wenyi could not determine which folder it is running from. Reinstall Wenyi into a folder of its own."
+    })?;
+    let layout = paths::check_layout(&running, library);
+    if layout == paths::LayoutCheck::Consistent {
+        return Ok(());
+    }
+    diagnostics.record(
+        diagnostics::Source::Native,
+        diagnostics::Event::LayoutRefused,
+        serde_json::json!({}),
+    );
+    diagnostics.drain();
+    Err(layout.message().unwrap_or("Wenyi's data folders overlap."))
+}
+
 fn application_context() -> tauri::Context<tauri::Wry> {
     // macOS embeds a global Info.plist symbol; expand this macro only once.
     tauri::generate_context!()
@@ -144,13 +206,21 @@ fn application_context() -> tauri::Context<tauri::Wry> {
 
 impl tauri::Resource for instance::Instance {}
 
-fn instance_error(error: instance::Error) {
-    eprintln!("{}", error.message());
+/// Report one refusal raised before any window exists.
+///
+/// A start that ends here has no interface to report in, so the dialog and the
+/// console line are the whole report and the diagnostic log carries the record.
+fn notice(message: &str) {
+    eprintln!("{message}");
     rfd::MessageDialog::new()
         .set_title("Wenyi Desktop")
-        .set_description(error.message())
+        .set_description(message)
         .set_level(rfd::MessageLevel::Warning)
         .show();
+}
+
+fn instance_error(error: instance::Error) {
+    notice(error.message());
 }
 
 fn activate_instance(app: &tauri::AppHandle) {
@@ -161,19 +231,27 @@ fn activate_instance(app: &tauri::AppHandle) {
         }
         let (tx, rx) = std::sync::mpsc::channel();
         let activation_handle = handle.clone();
-        if handle.run_on_main_thread(move || {
-            let reply = if activation_handle.state::<Engine>().closing.load(Ordering::SeqCst) {
-                instance::Reply::Closing
-            } else if background::try_restore(&activation_handle) {
-                instance::Reply::Activated
-            } else {
-                instance::Reply::Unreachable
-            };
-            let _ = tx.send(reply);
-        }).is_err() {
+        if handle
+            .run_on_main_thread(move || {
+                let reply = if activation_handle
+                    .state::<Engine>()
+                    .closing
+                    .load(Ordering::SeqCst)
+                {
+                    instance::Reply::Closing
+                } else if background::try_restore(&activation_handle) {
+                    instance::Reply::Activated
+                } else {
+                    instance::Reply::Unreachable
+                };
+                let _ = tx.send(reply);
+            })
+            .is_err()
+        {
             return instance::Reply::Unreachable;
         }
-        rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or(instance::Reply::Unreachable)
+        rx.recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap_or(instance::Reply::Unreachable)
     }));
     if pending && !background::try_restore(app) {
         instance_error(instance::Error::Unreachable);
@@ -216,13 +294,54 @@ fn main() {
         }
     };
     let diagnostics = diagnostics::Diagnostics::for_workspace(&workspace);
-    diagnostics.record(diagnostics::Source::Native, diagnostics::Event::AppStarted, serde_json::json!({}));
+    let profile = match paths::user_root()
+        .map_err(|error| error.message().to_owned())
+        .and_then(|root| profile::Profile::enter(&root.join("storages")))
+    {
+        Ok(profile) => Arc::new(profile),
+        Err(message) => {
+            notice(&message);
+            diagnostics_ui::startup_failure(&diagnostics);
+            return;
+        }
+    };
+    diagnostics.record(
+        diagnostics::Source::Native,
+        diagnostics::Event::AppStarted,
+        serde_json::json!({}),
+    );
+    // An installation the registry places somewhere other than this executable is
+    // reported here and nowhere else. Acting on it would move a user's projects
+    // during a start that never asked to, so the detection stays a record until
+    // the batch that owns the project location decides what to do about it.
+    let install = paths::current_install();
+    if install.is_changed() {
+        diagnostics.record(
+            diagnostics::Source::Native,
+            diagnostics::Event::InstallLocationChanged,
+            serde_json::json!({}),
+        );
+    }
     let panic_diagnostics = diagnostics.clone();
     let previous_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        panic_diagnostics.record(diagnostics::Source::Native, diagnostics::Event::NativePanic, serde_json::json!({}));
+        panic_diagnostics.record(
+            diagnostics::Source::Native,
+            diagnostics::Event::NativePanic,
+            serde_json::json!({}),
+        );
         previous_panic(info);
     }));
+    // Refusing to start is the whole point of the assertion: a layout that would
+    // let one cleanup reach another layer is not a state this build runs in. The
+    // check runs before any window exists, so the reason is shown instead of an
+    // interface that fails later for a cause nothing connects back to this.
+    let library = paths::layer_three(&install, &workspace);
+    if let Err(error) = assert_layout(&diagnostics, library.as_deref()) {
+        notice(error);
+        diagnostics_ui::startup_failure(&diagnostics);
+        return;
+    }
     graphics::configure();
     let state = Arc::new(Mutex::new(State::default()));
     let closing = Arc::new(AtomicBool::new(false));
@@ -230,7 +349,12 @@ fn main() {
     let child = Arc::new(Mutex::new(None::<process::Backend>));
     let engine = Engine {
         child: child.clone(),
-        workspace: Some(workspace),
+        workspace: Some(workspace.clone()),
+        // Resolved once, at startup, and passed through unchanged.
+        runtime: paths::runtime_root().ok(),
+        library: library,
+        native_owner: primary.owner.clone(),
+        profile,
         closing: closing.clone(),
         closed: closed.clone(),
     };
@@ -251,6 +375,7 @@ fn main() {
         .manage(native_drop::Grants::default())
         .manage(native_export::Saves::default())
         .invoke_handler(tauri::generate_handler![
+            library_choose::native_library_choose,
             native_drop::native_drop_release,
             native_drop::native_drop_upload,
             native_export::native_export_save,
@@ -394,7 +519,11 @@ fn main() {
                     backend.shutdown();
                 }
                 let diagnostics = handle.state::<diagnostics::Diagnostics>();
-                diagnostics.record(diagnostics::Source::Native, diagnostics::Event::AppStopped, serde_json::json!({}));
+                diagnostics.record(
+                    diagnostics::Source::Native,
+                    diagnostics::Event::AppStopped,
+                    serde_json::json!({}),
+                );
                 diagnostics.drain();
                 closed.store(true, Ordering::SeqCst);
                 handle.exit(0);
@@ -475,7 +604,9 @@ mod tests {
         // Recovery publishes new credentials only after lifecycle admission reopens.
         state.closing = false;
         assert!(state.script().contains("secret"));
-        assert!(state.script().contains("__WENYI_DESKTOP_BACKGROUND__=true;"));
+        assert!(state
+            .script()
+            .contains("__WENYI_DESKTOP_BACKGROUND__=true;"));
     }
 
     #[test]
@@ -490,13 +621,17 @@ mod tests {
     #[test]
     fn reload_replays_latest_background_in_every_state() {
         let mut state = State::default();
-        assert!(state.script().contains("__WENYI_DESKTOP_BACKGROUND__=false;"));
+        assert!(state
+            .script()
+            .contains("__WENYI_DESKTOP_BACKGROUND__=false;"));
         state.background = true;
         for status in 0..4 {
             state.connection = (status == 1).then(|| "{}".into());
             state.error = (status == 2).then_some("Safe failure");
             state.closing = status == 3;
-            assert!(state.script().contains("__WENYI_DESKTOP_BACKGROUND__=true;"));
+            assert!(state
+                .script()
+                .contains("__WENYI_DESKTOP_BACKGROUND__=true;"));
             assert!(state.script().contains("wenyi:desktop-visibility"));
         }
     }

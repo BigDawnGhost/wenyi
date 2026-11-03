@@ -6,7 +6,7 @@ import pytest
 from wenyi_core.agents.terminology import TerminologyAgent, TerminologyReferenceError
 from wenyi_core.config import Config
 from wenyi_core.glossary.evidence_models import KnowledgeResult, SourcePassage
-from wenyi_core.glossary.store import GlossaryTerm
+from wenyi_core.models.glossary import GlossaryTerm
 
 from tests.terminology_fixtures import PASSAGES, TERM, FakeClient, agent
 

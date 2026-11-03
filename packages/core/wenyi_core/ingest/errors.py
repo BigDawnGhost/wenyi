@@ -1,20 +1,15 @@
-"""User-visible exceptions for document parsing and preprocessing."""
+"""Deprecated import path for the parsing errors that moved to `wenyi_core.models`.
 
-from ..errors import WenyiError
+`pdf_bridge` raises `IngestError` without importing the ingest pipeline, which is the whole
+reason the class lives in the models package. New code should import from `wenyi_core.models`.
+"""
 
+from __future__ import annotations
 
-class IngestError(WenyiError, RuntimeError):
-    """An input-processing error suitable for direct CLI display.
+from ..models.errors import (  # noqa: F401 (forwarded for existing importers)
+    IngestError,
+    MinerUError,
+    MinerUTimeoutError,
+)
 
-    Keeps ``RuntimeError`` so existing ``except RuntimeError`` guards and tests
-    continue to catch it during the migration; ``WenyiError`` adds the stable
-    code shared across layers.
-    """
-
-
-class MinerUError(IngestError):
-    """A MinerU request, parsing or result-processing failure."""
-
-
-class MinerUTimeoutError(MinerUError):
-    """A MinerU task that did not finish within its time limit."""
+__all__ = ["IngestError", "MinerUError", "MinerUTimeoutError"]

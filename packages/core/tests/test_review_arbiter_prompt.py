@@ -7,12 +7,12 @@ import re
 from pathlib import Path
 
 import pytest
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.i18n.prompts import render
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import STATUS_DONE
 from wenyi_core.review.evidence import BookEvidenceIndex
+from wenyi_core.storage.run_store import STATUS_DONE
 
 from tests.review_fixtures import _chapter, _config, autofix_store, review_json
 

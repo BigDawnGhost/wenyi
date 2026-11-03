@@ -10,9 +10,9 @@ from wenyi_core.agents.precision import PrecisionError
 from wenyi_core.config import Config
 from wenyi_core.pipeline import precision as precision_module
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.precision import PrecisionBatchExecutor
-from wenyi_core.pipeline.precision_records import load_precision_call
-from wenyi_core.pipeline.translation import TranslationService
+from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor
+from wenyi_core.pipeline.translate.precision_records import load_precision_call
+from wenyi_core.pipeline.translate.translation import TranslationService
 from wenyi_core.storage.precision_archive import PrecisionArchive
 
 from tests.fake_llm import MeteredFakeClient
@@ -335,7 +335,7 @@ def test_cli_exports_and_resumes_with_four_body_calls(tmp_path, monkeypatch):
     config, handler = _config(tmp_path / "state"), Handler()
     client = MeteredFakeClient(handler=handler)
     monkeypatch.setattr("wenyi_cli.commands.context.CommandContext.load_config", lambda *_: config)
-    monkeypatch.setattr("wenyi_core.pipeline.runtime.build_client", lambda *_: client)
+    monkeypatch.setattr("wenyi_core.pipeline.run.runtime.build_client", lambda *_: client)
     arguments = [
         "translate",
         str(source),

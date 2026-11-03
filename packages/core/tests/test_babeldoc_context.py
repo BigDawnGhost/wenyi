@@ -5,11 +5,11 @@ import re
 
 import pytest
 from wenyi_core.config import Config
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.babeldoc_context import BabeldocContext
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.translation import TranslationService
+from wenyi_core.pipeline.translate.babeldoc_context import BabeldocContext
+from wenyi_core.pipeline.translate.translation import TranslationService
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
 

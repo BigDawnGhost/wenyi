@@ -1,5 +1,5 @@
 import { useI18n } from "../../i18n";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "../../lib/toast";
@@ -41,22 +41,29 @@ export default function SettingsPage() {
     queryKey: ["models", pid],
     queryFn: () => api.modelRoutes(pid),
   });
-  const apply = (value: ProjectConfig) => {
+  const apply = (value: ProjectConfig, forPid: string) => {
+    // Responses from a save/validate started under the previous project must never
+    // overwrite this project's draft and re-enable the form (audit Y-2/F-1).
+    if (pidRef.current !== forPid) return;
     setDraft(value.yaml);
     setEffective(value.effective);
     setYamlDirty(false);
     setLoaded(true);
   };
   useEffect(() => {
-    if (config.data && !loaded) apply(config.data);
-  }, [config.data, loaded]);
+    if (config.data && !loaded) apply(config.data, pid);
+  }, [config.data, loaded, pid]);
+  const pidRef = useRef(pid);
+  pidRef.current = pid;
   useEffect(() => {
     setLoaded(false);
+    validate.reset();
+    check.reset();
   }, [pid]);
   const save = useMutation({
     mutationFn: () => api.saveConfig(pid, draft),
     onSuccess: (value) => {
-      apply(value);
+      apply(value, pid);
       qc.invalidateQueries({ queryKey: ["config", pid] });
       qc.invalidateQueries({ queryKey: ["models", pid] });
       toast.success(tr("settings.projectSettingsSaved"));
@@ -65,14 +72,14 @@ export default function SettingsPage() {
   const validate = useMutation({
     mutationFn: () => api.validateConfig(pid, draft),
     onSuccess: (value) => {
-      apply(value);
+      apply(value, pid);
       toast.success(tr("settings.configurationIsValidButNotSavedYet"));
     },
   });
   const restore = useMutation({
     mutationFn: () => api.getProjectDefaults(pid),
     onSuccess: (value) => {
-      apply(value);
+      apply(value, pid);
       toast.success(tr("settings.defaultsLoaded"));
     },
   });

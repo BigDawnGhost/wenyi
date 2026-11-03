@@ -7,20 +7,22 @@ import os
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
-from wenyi_core.assemble.about import append_about_page
+from wenyi_core.assemble.about import about_xhtml, append_about_page
 from wenyi_core.assemble.epub_presentation import _inject_bilingual_style, _rewrite_html_document
 from wenyi_core.assemble.html_renderer import _render_chapter_html, _render_segments_html
 from wenyi_core.assemble.writer import assemble
+from wenyi_core.assemble.writer_common import bilingual_out_path
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.markup.segments import annotate_epub_resource
+from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
 
@@ -144,6 +146,21 @@ def _run(input_path, state_dir):
     cfg = _config(state_dir)
     orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
     return require_file_storage(orch.run(input_path)), cfg
+
+
+class TestBilingualOutPath(unittest.TestCase):
+    """Lock the documented explicit --out contract (docs/cli.md): the bilingual
+    derivative appends -bi to the stem of whatever path the user gave."""
+
+    def test_appends_bi_to_stem(self):
+        self.assertEqual(bilingual_out_path("custom.epub"), "custom-bi.epub")
+        self.assertEqual(
+            bilingual_out_path(os.path.join("out", "my.book.epub")),
+            os.path.join("out", "my.book-bi.epub"),
+        )
+
+    def test_no_extension_still_appends_suffix(self):
+        self.assertEqual(bilingual_out_path("book"), "book-bi")
 
 
 class TestAssembleText(unittest.TestCase):
@@ -280,6 +297,38 @@ class TestAssembleText(unittest.TestCase):
 
             with zipfile.ZipFile(path) as archive:
                 self.assertFalse(any("trans-novel-about" in name for name in archive.namelist()))
+
+    def test_about_page_streams_entries_and_keeps_zip_invariants(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "book.epub")
+            payload = b"x" * (5 * 1024 * 1024)
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr(
+                    "META-INF/container.xml",
+                    """<container><rootfiles>
+                    <rootfile full-path="content.opf"/>
+                    </rootfiles></container>""",
+                )
+                archive.writestr("content.opf", "<package><manifest/><spine/></package>")
+                archive.writestr("images/cover.bin", payload)
+
+            self.assertTrue(append_about_page(path, "zh-Hans"))
+
+            with zipfile.ZipFile(path) as archive:
+                names = archive.namelist()
+                self.assertEqual(names[0], "mimetype")
+                self.assertEqual(archive.getinfo("mimetype").compress_type, zipfile.ZIP_STORED)
+                self.assertEqual(archive.read("mimetype"), b"application/epub+zip")
+                self.assertEqual(archive.read("images/cover.bin"), payload)
+                self.assertTrue(any("trans-novel-about" in name for name in names))
+                self.assertIn("trans-novel-about", archive.read("content.opf").decode())
+                self.assertFalse(any(name.endswith(".tmp") for name in names))
+
+    def test_about_template_tolerates_literal_dollar(self):
+        with patch("wenyi_core.assemble.about.read_text", return_value="Cost: $5 $unknown."):
+            data = about_xhtml("zh-Hans", locale="en")
+        self.assertIn(b"Cost: $5 $unknown.", data)
 
     def test_bilingual_rewrite_removes_temporary_file_on_failure(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1007,6 +1056,63 @@ data-tn-annotation-id="ann-0" href="chapter.xhtml#part">Chapter
         self.assertEqual(image_data, b"inline-image")
         self.assertIsNotNone(rendered.find(id="kobo.1.1"))
         self.assertIsNone(rendered.select_one("[data-tn-inline-id]"))
+
+    def test_epub_html_export_packages_media_and_keeps_image_pages(self):
+        container = (
+            '<?xml version="1.0"?>'
+            '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+            '<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>'
+            "</rootfiles></container>"
+        )
+        opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Plates</dc:title><dc:language>fr</dc:language>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="plate" href="plate.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img1" href="image.jpg" media-type="image/jpeg"/>
+    <item id="img2" href="plate.png" media-type="image/png"/>
+  </manifest>
+  <spine><itemref idref="ch1"/><itemref idref="plate"/></spine>
+</package>
+"""
+        ch1 = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>I</title></head>'
+            '<body><p><img src="image.jpg"/><span id="kobo.1.1">Je suis là.</span></p></body></html>'
+        )
+        plate = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>plate</title></head>'
+            '<body><img src="plate.png"/></body></html>'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            epub = os.path.join(directory, "plates.epub")
+            with zipfile.ZipFile(epub, "w") as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr("META-INF/container.xml", container)
+                archive.writestr("OEBPS/content.opf", opf)
+                archive.writestr("OEBPS/ch1.xhtml", ch1)
+                archive.writestr("OEBPS/plate.xhtml", plate)
+                archive.writestr("OEBPS/image.jpg", b"chapter-image")
+                archive.writestr("OEBPS/plate.png", b"plate-image")
+            store, _ = _run(epub, os.path.join(directory, "state"))
+
+            output = assemble(store, epub, out_format="html", about_page=False)
+            self.assertTrue(output.endswith(".html"))
+            with open(output, encoding="utf-8") as handle:
+                html = handle.read()
+            self.assertNotIn('src="image.jpg"', html)
+            self.assertNotIn('src="plate.png"', html)
+            self.assertEqual(html.count(".assets/"), 2)
+            assets_dir = os.path.join(os.path.dirname(output), f"{Path(output).stem}.assets")
+            packaged = {
+                name: Path(os.path.join(assets_dir, name)).read_bytes()
+                for name in os.listdir(assets_dir)
+            }
+            self.assertEqual(sorted(packaged.values()), [b"chapter-image", b"plate-image"])
 
     def test_epub_export_rejects_source_state_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:

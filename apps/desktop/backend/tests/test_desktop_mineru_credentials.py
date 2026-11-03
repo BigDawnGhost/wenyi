@@ -357,9 +357,13 @@ def test_each_context_binds_its_own_resolver(tmp_path):
         for name in ("first", "second"):
             workspace = tmp_path / name
             workspace.mkdir()
-            store = CredentialStore(workspace)
+            # One store per workspace; layer two is shared, so the profile has
+            # to be split the same way the workspaces are.
+            store = CredentialStore(workspace, user_home=tmp_path / f"{name}-profile")
             store.save_mineru(secret=f"fake-{name}", storage="session")
-            context = create_context(workspace, credentials=store)
+            context = create_context(
+                workspace, credentials=store, user_home=tmp_path / f"{name}-profile"
+            )
             contexts.append(context)
             assert context.settings_store.credentials is store
             assert context.mineru_token_resolver.__self__ is store

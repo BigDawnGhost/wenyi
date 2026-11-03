@@ -52,11 +52,25 @@ select = ["E", "F", "W", "I"]
 ignore = ["E501"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/core/tests", "packages/backend/tests", "apps/api/tests", "apps/desktop/backend/tests"]
+# Only packages/core/tests is a package; the other roots must stay plain
+# directories. pytest names a module after the path below its first directory
+# without an __init__.py, so a second package root would claim the module name
+# tests.* the core root already owns and collection would abort. See
+# packages/core/tests/test_test_layout.py.
+testpaths = ["packages/core/tests", "packages/cli/tests", "packages/backend/tests", "apps/api/tests", "apps/desktop/backend/tests"]
+# Both source roots stay on PYTHONPATH. The CLI entry is not only for the CLI
+# tests: several domain tests drive core behaviour through `wenyi` and import
+# `wenyi_cli` as their entry point, so removing it would break them from a
+# source checkout even though an installed environment would resolve it.
 pythonpath = ["packages/core", "packages/cli"]
-addopts = "--strict-markers"
+# A relative --basetemp keeps pytest's scratch tree inside the repository and in
+# one known place. Without it, tempfile falls back to the working directory when
+# the system temp root is unusable, leaving pytest-of-* beside the sources, where
+# tests that scan the repository root collect a different set per worker.
+addopts = "--strict-markers --basetemp=.pytest-tmp"
 markers = [
     "integration: requires isolated PostgreSQL/Redis or opt-in Docker test services",
+    "packaging: builds distributions or inspects bundled resources; release workflows run it",
 ]
 filterwarnings = [
     "error:Using `httpx` with `starlette.testclient` is deprecated",

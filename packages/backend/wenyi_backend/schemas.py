@@ -21,6 +21,12 @@ class ProjectCreate(RequestModel):
     prepare: bool = False
     pdf_backend: Literal["mineru", "babeldoc"] | None = None
     translation_mode: Literal["standard", "best_of_three"] = "standard"
+    #: Where the project directory is created, when the host lets a person choose.
+    #:
+    #: Omitted means "the default for this installation", which is also what a
+    #: client that never offers a choice sends. The value is validated by the host
+    #: that owns the filesystem; a host with no library concept ignores it.
+    location: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -53,6 +59,11 @@ class Project(BaseModel):
     initialized: bool = False
     strategy: Optional[dict[str, Any]] = None
     created_at: Optional[str] = None
+    #: False when the project's own directory is not reachable, which on a
+    #: Desktop build means its drive is not mounted. Absent means unknown.
+    available: bool = True
+    #: True when the original file no longer matches the recorded checksum.
+    source_changed: bool = False
 
 
 class ProjectDetail(Project):
@@ -270,7 +281,9 @@ class AssembleEnqueued(JobEnqueued):
 
 
 class GlossaryImport(RequestModel):
-    terms: list[TermIn]
+    # A bounded list keeps the single-transaction import from holding the project write
+    # lock for minutes on end (audit Y-4/E-5).
+    terms: list[TermIn] = Field(max_length=1000)
 
 
 class DigestUpdate(RequestModel):

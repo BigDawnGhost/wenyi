@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import type { ModelPingResult } from "@wenyi/ui/api/types";
-import { fakeApi } from "../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi } from "../../../packages/ui/sandbox/fixtures";
 
 test("global settings test saved model connections and explain failures", async ({ page }) => {
   const requests: unknown[] = [];
@@ -46,4 +46,24 @@ test("global settings test saved model connections and explain failures", async 
   await expect(test).toBeDisabled();
   await expect(page.getByText("Save the configuration before testing the connection.")).toBeVisible();
   expect(requests).toHaveLength(2);
+});
+
+test("a slow probe counts elapsed seconds and clears the count with its results", async ({ page }) => {
+  await fakeApi(page);
+  let release!: () => void;
+  const answered = new Promise<void>((resolve) => { release = resolve; });
+  await page.route("**/api/settings/models/ping", async (route) => {
+    await answered;
+    await route.fulfill({ json: [] });
+  });
+  await page.goto("/settings/providers");
+  await page.clock.install({ time: new Date("2025-01-01T00:00:00Z") });
+  await page.getByRole("button", { name: "Test connection", exact: true }).click();
+  const elapsed = page.getByText(/elapsed/);
+  await expect(elapsed).toHaveText("0 s elapsed");
+  await page.clock.runFor(3000);
+  await expect(elapsed).toHaveText("3 s elapsed");
+  release();
+  await expect(page.getByText("No models are configured.")).toBeVisible();
+  await expect(elapsed).toHaveCount(0);
 });

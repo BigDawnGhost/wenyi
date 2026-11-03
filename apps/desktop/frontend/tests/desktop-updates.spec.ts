@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, globalConfiguration } from "../../../../packages/ui/tests/e2e/fixtures";
+import { fakeApi, globalConfiguration } from "../../../../packages/ui/sandbox/fixtures";
 
 const releaseNotes = `# Wenyi 1.1.0
 
@@ -374,4 +374,38 @@ test("unsaved and pending credential inputs block installation", async ({ page }
   await expect(install).toBeDisabled();
   finish();
   await expect(install).toBeEnabled();
+});
+
+test("a settled update phase stops polling every second", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.assign(window, {
+      __UPDATE_COMMANDS__: [] as string[],
+      __WENYI_DESKTOP__: { apiBase: `${location.origin}/api`, token: "fixture" },
+      __TAURI_INTERNALS__: {
+        invoke: async (command: string) => {
+          if (command !== "desktop_update_status") return null;
+          (window as unknown as { __UPDATE_COMMANDS__: string[] })
+            .__UPDATE_COMMANDS__.push(command);
+          return {
+            currentVersion: "1.0.0", mode: "automatic", phase: "current",
+            downloaded: 0, total: 100,
+          };
+        },
+      },
+    });
+  });
+  await fakeApi(page);
+  await page.clock.install({ time: new Date("2025-01-01T00:00:00Z") });
+  await page.goto("/settings/updates");
+  const section = page.getByTestId("desktop-updates");
+  await expect(section).toContainText("You are up to date.");
+  const polls = () => page.evaluate(() =>
+    (window as unknown as { __UPDATE_COMMANDS__: string[] }).__UPDATE_COMMANDS__.length);
+  const settled = await polls();
+  await page.clock.runFor(10_000);
+  // A settled phase cannot change on its own, so ten seconds add no IPC calls.
+  expect(await polls()).toBe(settled);
+  await page.clock.runFor(60_000);
+  // Only the slow safety net runs, never the one-second cadence.
+  expect(await polls() - settled).toBeLessThanOrEqual(3);
 });

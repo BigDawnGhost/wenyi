@@ -9,10 +9,10 @@ from wenyi_core.agents.prompts import numbered
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore
 from wenyi_core.i18n.prompts import render
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.title_translation import plan_titles
+from wenyi_core.pipeline.translate.title_translation import plan_titles
 from wenyi_core.storage.file import FileStorage
 
 

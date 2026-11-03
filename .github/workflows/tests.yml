@@ -108,18 +108,18 @@ jobs:
           base="origin/${{ github.base_ref }}"
           # A base revision that predates the snapshot script cannot be
           # described, so it counts as changed and the specs run.
-          if ! git cat-file -e "$base:scripts/openapi_snapshot.py" 2>/dev/null; then
+          if ! git cat-file -e "$base:scripts/contract/openapi_snapshot.py" 2>/dev/null; then
             echo "No snapshot on the base revision; treating the contract as changed."
             echo "changed=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           uv sync --locked --all-packages --group dev --quiet
-          uv run --no-sync python scripts/openapi_snapshot.py > "$RUNNER_TEMP/head.json"
+          uv run --no-sync python scripts/contract/openapi_snapshot.py > "$RUNNER_TEMP/head.json"
           # The workspace is installed in editable mode, so the base tree only
           # needs to win on PYTHONPATH: no second resolve, no second install.
           git worktree add --detach "$RUNNER_TEMP/base" "$base"
           PYTHONPATH="$RUNNER_TEMP/base/packages/core:$RUNNER_TEMP/base/packages/backend" \
-            uv run --no-sync python "$RUNNER_TEMP/base/scripts/openapi_snapshot.py" \
+            uv run --no-sync python "$RUNNER_TEMP/base/scripts/contract/openapi_snapshot.py" \
             > "$RUNNER_TEMP/base.json"
           git worktree remove --force "$RUNNER_TEMP/base"
           if cmp -s "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json"; then
@@ -193,8 +193,8 @@ jobs:
         # The crate's own tests cover what Python cannot see: the platform lock
         # structures and the handle registry.
         run: |
-          cargo build --release --manifest-path native/wenyi-locks/Cargo.toml
-          cargo test --manifest-path native/wenyi-locks/Cargo.toml
+          cargo build --release -p wenyi-locks
+          cargo test -p wenyi-locks
       - name: Prepare token-budget vocabulary
         run: uv run --no-sync python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
       - name: Python style
@@ -206,8 +206,10 @@ jobs:
         # loadgroup keeps tests that share a group on one worker; -n auto sizes
         # to the runner. Both supported interpreters verify the full workspace.
         env:
-          WENYI_LOCKS_LIB: ${{ github.workspace }}/native/wenyi-locks/target/release/libwenyi_locks.so
-        run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration"
+          WENYI_LOCKS_LIB: ${{ github.workspace }}/target/release/libwenyi_locks.so
+        # Packaging coverage builds distributions and belongs to the release workflows,
+        # which run this marker explicitly; the regression job stays offline and fast.
+        run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration and not packaging"
       - name: Service integration tests (PostgreSQL and Redis enabled)
         # Two workers bound connections against the shared postgres service.
         # One rerun absorbs resource flake; a retried pass lands in the job
@@ -216,7 +218,7 @@ jobs:
         # pull request skips because it needs a running Docker daemon.
         env:
           WENYI_TEST_DOCKER: ${{ github.event_name == 'schedule' && '1' || '0' }}
-          WENYI_LOCKS_LIB: ${{ github.workspace }}/native/wenyi-locks/target/release/libwenyi_locks.so
+          WENYI_LOCKS_LIB: ${{ github.workspace }}/target/release/libwenyi_locks.so
         run: uv run --no-sync pytest -q -n 2 --dist loadgroup --reruns 1 -m integration
       - name: Build distributable packages and verify bundled resources
         if: matrix.python-version == '3.12'
@@ -226,8 +228,8 @@ jobs:
           uv build --package wenyi-backend
           uv build --package wenyi-api
           uv build --package wenyi-desktop
-          uv run --no-sync python scripts/check_wheel_resources.py dist
-          uv run --no-sync python scripts/check_backend_packages.py dist
+          uv run --no-sync python scripts/release/check_wheel_resources.py dist
+          uv run --no-sync python scripts/release/check_backend_packages.py dist
 
   web:
     needs: [changes, contract]
@@ -342,11 +344,11 @@ jobs:
       - name: Record the spec overlap once
         if: always() && matrix.name == 'web'
         run: |
-          python3 scripts/e2e_spec_inventory.py >> "$GITHUB_STEP_SUMMARY"
+          python3 scripts/dev/e2e_spec_inventory.py >> "$GITHUB_STEP_SUMMARY"
       - name: Record per-spec durations
         if: always()
         run: |
-          python3 scripts/e2e_spec_timings.py \
+          python3 scripts/dev/e2e_spec_timings.py \
             --input "${{ runner.temp }}/${{ matrix.name }}-results.json" \
             --label "${{ matrix.name }}" \
             --output "${{ runner.temp }}/${{ matrix.name }}-timings.md" || true

@@ -8,10 +8,10 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from .operation_names import TIERS, require_operation_name
+
 if TYPE_CHECKING:
     from ..config import Config
-
-TIERS = ("strong", "cheap", "fast")
 
 
 @dataclass(frozen=True)
@@ -185,10 +185,8 @@ OPERATIONS = register_operations(
 
 def require_operation(operation: str) -> OperationSpec:
     """Reject unknown operations instead of selecting an arbitrary model."""
-    try:
-        return OPERATIONS[operation]
-    except KeyError:
-        raise ValueError(f"Unknown model operation: {operation}") from None
+    require_operation_name(operation)
+    return OPERATIONS[operation]
 
 
 def workflow_operations(workflow: str, flags: Mapping[str, object]) -> tuple[str, ...]:

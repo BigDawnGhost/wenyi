@@ -57,6 +57,89 @@ def test_authenticated_private_endpoints_and_isolation(context, tmp_path):
         other.repository.close()
 
 
+def test_backup_plan_requires_frozen_authenticated_admission(context, monkeypatch, tmp_path):
+    app = create_app(context=context)
+    context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer test-token"}
+    project = tmp_path / "chosen" / "0123456789abcdef-Book"
+    project.mkdir(parents=True)
+    # The catalog/path adapter owns safe enumeration; the guard must call it only
+    # after preparation has excluded new writes.
+    calls = []
+
+    def directories():
+        calls.append(app.state.update_guard.closed)
+        return (project,)
+
+    monkeypatch.setattr(context.repository, "project_directories", directories, raising=False)
+    assert client.post("/desktop/updates/backup-plan").status_code == 401
+    assert client.post("/desktop/updates/backup-plan", headers=headers).status_code == 409
+    assert not calls
+    assert client.post("/desktop/updates/prepare", headers=headers).status_code == 204
+    response = client.post("/desktop/updates/backup-plan", headers=headers)
+    assert response.status_code == 200
+    assert calls == [True]
+    roots = response.json()["sources"]
+    assert {"path": str(project), "name": "projects/0"} in roots
+    assert {"path": str(context.repository.database.parent), "name": "user/storages"} in roots
+    assert not any(row["path"] == str(project.parent) for row in roots)
+    assert client.put("/config", headers=headers).status_code == 409
+    assert client.post("/desktop/updates/cancel", headers=headers).status_code == 204
+    assert client.post("/desktop/updates/backup-plan", headers=headers).status_code == 409
+
+
+def test_missing_authoritative_project_refuses_backup_plan(context, monkeypatch):
+    app = create_app(context=context)
+    context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer test-token"}
+
+    def missing():
+        raise HTTPException(409, "A registered project directory is unavailable")
+
+    monkeypatch.setattr(context.repository, "project_directories", missing, raising=False)
+    assert client.post("/desktop/updates/prepare", headers=headers).status_code == 204
+    response = client.post("/desktop/updates/backup-plan", headers=headers)
+    assert response.status_code == 409
+    assert "registered project" in response.json()["detail"]
+    assert app.state.update_guard.closed
+
+
+def test_backup_plan_discovers_all_live_layouts_without_copying_parent_folders(context, tmp_path):
+    backend = context.repository
+    legacy = backend.create_project("Legacy", "en", "zh", {})
+    backend.mark_project(legacy)
+    backend.library_root = tmp_path / "Default library"
+    current = backend.create_project("Default", "en", "zh", {})
+    backend.mark_project(current)
+    chosen = backend.create_project(
+        "Chosen", "en", "zh", {}, library_root=tmp_path / "Chosen library"
+    )
+    backend.mark_project(chosen)
+    settings = backend.database.parent.parent / "settings.yaml"
+    settings.write_text("schema_version: 1\n", encoding="utf-8")
+    app = create_app(context=context)
+    context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
+    client = TestClient(app)
+    headers = {"Authorization": "Bearer test-token"}
+    assert client.post("/desktop/updates/prepare", headers=headers).status_code == 204
+    response = client.post("/desktop/updates/backup-plan", headers=headers)
+    assert response.status_code == 200
+    sources = {row["path"] for row in response.json()["sources"]}
+    assert sources == {
+        str(backend.database.parent),
+        str(settings),
+        *(str(backend.project_dir(pid)) for pid in (legacy, current, chosen)),
+    }
+    # Removal of a drive/folder is not a successful backup of the remaining data.
+    backend.project_dir(chosen).rename(tmp_path / "disconnected")
+    response = client.post("/desktop/updates/backup-plan", headers=headers)
+    assert response.status_code == 409
+    assert response.json()["code"] == "project_location_unavailable"
+    assert chosen in response.json()["message"]
+
+
 @pytest.mark.parametrize("kind", ["parse", "translation", "review", "export"])
 @pytest.mark.parametrize("status", ["queued", "running"])
 def test_all_project_jobs_block_prepare(context, kind, status):

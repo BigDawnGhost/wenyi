@@ -25,7 +25,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ..agents import prompts
-from ..glossary.store import GlossaryTerm
+from ..models.glossary import GlossaryTerm
 from .protocol import ArtifactStorage
 
 _ROOT = "precision/shared/"
@@ -300,6 +300,12 @@ class PrecisionArchive:
             return self._glossary_text(ref)
 
     def _glossary_text(self, ref: str) -> str:
+        """Rejoin the glossary exactly as it read when the run was recorded.
+
+        Every line comes from `prompt_line`, never from a fresh render. A replay has
+        to reproduce the request the model actually saw, so it must not pick up a
+        prompt template that changed after capture.
+        """
         if self._capture_depth and ref in self._texts:
             return self._texts[ref]
         refs, _ = self._revision(ref)

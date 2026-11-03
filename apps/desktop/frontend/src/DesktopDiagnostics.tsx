@@ -91,6 +91,12 @@ export function DesktopDiagnostics() {
     {data && <div className="space-y-2 text-sm">
       <p className="break-all">{t("diagnostics.location", { path: data.directory ?? "—" })}</p>
       <p>{t("diagnostics.size", { size: (data.bytes / 1048576).toFixed(1), dropped: data.dropped })}</p>
+      {data.foreignFiles > 0 && <p role="status" data-testid="diagnostics-foreign">
+        {t("diagnostics.foreign", {
+          count: data.foreignFiles,
+          size: (data.foreignBytes / 1048576).toFixed(1),
+        })}
+      </p>}
       {data.lastErrorId && <p>{t("diagnostics.errorId", { id: data.lastErrorId })}</p>}
       {data.degraded && <p role="alert">{t("diagnostics.degraded")}</p>}
       {data.detailSeconds > 0 && <p role="status">{t("diagnostics.remaining", { seconds: data.detailSeconds })}</p>}

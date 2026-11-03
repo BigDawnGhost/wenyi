@@ -78,12 +78,13 @@ API, workflow worker, and export worker all load `deploy/.env`, mount the same r
 
 Custom WebSocket clients must send a JSON first packet `{"token":"…"}` within 10 seconds of connecting. Send the packet even when the server has no token configured (the token may be empty). Project snapshots and live events are delivered only after authentication succeeds.
 
-PostgreSQL stores projects, chapters, segments, glossary, review evidence/checkpoints, Autofix publish indexes, subtitle caches, usage, and timing. `DATA_DIR` does not keep JSON/SQLite copies of that mutable state.
+PostgreSQL stores projects, chapters, segments, glossary, review evidence/checkpoints, Autofix publish indexes, usage, and timing. `DATA_DIR` does not keep JSON/SQLite copies of that mutable state.
 
 Deleting from the project list opens an in-app confirmation with Cancel focused.
 Prepared projects without active tasks can also be deleted. While a request is
-pending, duplicate submissions are disabled; failures keep the dialog open for
-retry or cancellation.
+pending, duplicate submissions are disabled and the dismiss action is relabelled
+**Close**, because a delete in progress cannot be recalled; failures keep the
+dialog open for retry.
 
 **Deleting a project is permanent**, in Web and Desktop alike. The confirmation
 covers uploaded originals, translations, history, caches, and project exports.
@@ -128,7 +129,7 @@ pnpm -C apps/web dev
 
 The web app runs at http://localhost:5173. Vite proxies `/api` and `/ws` to the API. The API initializes a fresh database schema. Starting only the ordinary worker does not consume the export queue.
 
-To click through the UI without starting any backend, run `MOCK_API=1 pnpm -C apps/web dev`. Vite then answers `/api` with the same fixture data the Playwright suites use (`packages/ui/tests/e2e/fixtures.ts`), so every page opens with sample data and action buttons complete against the mock instead of a real service. The progress WebSocket stays unavailable and the UI falls back to polling the mock API. Leave `MOCK_API` unset for normal proxied development.
+To click through the UI without starting any backend, run `MOCK_API=1 pnpm -C apps/web dev`. Vite then answers `/api` with the same fixture data the Playwright suites use (`packages/ui/sandbox/fixtures.ts`), so every page opens with sample data and action buttons complete against the mock instead of a real service. The progress WebSocket stays unavailable and the UI falls back to polling the mock API. Leave `MOCK_API` unset for normal proxied development.
 
 ## Supported devices
 
@@ -162,7 +163,7 @@ live in the shared [frontend localization guide](../packages/ui/src/i18n/README.
 
 Desktop and Web share these workspace pages; see the [interface preview](../README.md#interface-preview) for a screenshot.
 
-The translation overview updates status, saved paragraph counts, usage, and run time automatically. The active run clock advances every second, including time spent waiting for a model response; token usage updates after the provider returns its actual usage. WebSocket events trigger updates, with polling as a fallback and automatic refresh after reconnection. On pause or completion, the final cumulative totals are loaded without reloading the page. Resuming retains previous totals and excludes time spent paused. Live statistics are temporary Redis snapshots, separate from the durable usage ledger; an expired heartbeat stops the local clock from advancing until fresh statistics arrive.
+The translation overview updates status, saved paragraph counts, usage, and run time automatically. The active run clock advances every second, including time spent waiting for a model response; token usage updates after the provider returns its actual usage. WebSocket events trigger updates, with polling as a fallback and automatic refresh after reconnection. On pause or completion, the final cumulative totals are loaded without reloading the page. Resuming retains previous totals and excludes time spent paused. Live statistics are temporary Redis snapshots, separate from the durable usage ledger; an expired heartbeat stops the local clock from advancing until fresh statistics arrive. A failed task shows the reason the run ended beside the last readable stage, in the interface language when the failure code is known; the project itself also keeps a banner naming the failure on every project page, not only on the overview. A request that never receives a response fails after its deadline (30 seconds for a read, 2 minutes for a write, 10 minutes for an export) instead of waiting indefinitely. A socket that stays silent for 60 seconds is treated as dead and reconnects; the server sends a heartbeat every 30 seconds while a run is idle.
 
 Project pages poll only while a task is active, including queueing and pausing. Completed, paused and other idle projects stop periodic requests after reconciling the final saved data. The project list also stops polling when no listed project is active. Opening pages, saving edits, starting/resuming tasks and connected progress events can still trigger reads; export jobs refresh independently until finished. On an idle page without a progress subscription, reopen or reload it to see work started by another client. Conflicting edits are still rejected by the server and reload the latest values without discarding the draft.
 
@@ -178,7 +179,7 @@ because they may include cache writes. See [usage accounting](cli.md#usage-and-e
 for supported usage dialects and ledger compatibility. These counters do not establish cost.
 
 1. Use **Create project** in the shared sidebar to open the centered dialog over the project list. The list stays visible behind it but cannot be interacted with. `/projects/new` opens the same dialog directly, not a separate page. Focus starts in **Project name**; Tab stays inside the dialog, and Escape closes an open dropdown before closing the dialog. **Cancel**, **Close**, clicking the backdrop, or Escape returns to the previous page (the project list for a direct link) without creating a project; focus returns to the sidebar entry and reopening starts a clean form. Browser Back also leaves the dialog. In short windows the form scrolls while its close header stays visible.
-   Choose source/target languages and a nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, or PDF file. Drag one file into the source area or use **Browse files**, then click **Create project** to upload it. Both methods use the same format and empty-file checks; multiple-file drops are rejected. Source selection and dialog dismissal are disabled while uploading, not a way to cancel a task. Failed uploads retain the form and source for retry. Legacy `/projects/new?project=<id>` links keep the saved source read-only and expose existing preview/resume controls. Optionally select **Prepare before translating**; PDF parser selection is available before upload.
+   Choose source/target languages and a nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, or PDF file. Drag one file into the source area or use **Browse files**, then click **Create project** to upload it. Both methods use the same format and empty-file checks; multiple-file drops are rejected. Source selection is locked while uploading, and **Cancel** becomes **Close**: dismissing is available throughout, because it never cancels the task that is already running. Failed uploads retain the form and source for retry. Legacy `/projects/new?project=<id>` links keep the saved source read-only and expose existing preview/resume controls. Optionally select **Prepare before translating**; PDF parser selection is available before upload.
    Browser Back can still leave during an upload; it does not cancel the request. The project may be created in the background, and completion will not redirect you away from the current page.
 2. Successful creation immediately opens the project overview; parsing or optional preparation continues in the background. As soon as parsing finishes, **Read contents & source** opens the chapter list and read-only original text without waiting for model preparation. Optional preparation parses before constructing/checking the model client, so missing credentials or later AI failures do not hide successfully parsed source. Titles and translations remain read-only until initialization completes. The overview refreshes task status, including queue failures and resume actions. Matching parse results are reused during preparation.
 3. The creation dialog uses a flat form for the project name, language direction, source file, and translation mode, with its actions pinned below the scrolling form. For books, choose **Standard translation** or **Three-draft precision** using the two-option switch only here. The mode defaults to standard independently of global settings; precision enables polishing and uses built-in three-branch concurrency, without a concurrency option. Global and project settings have no mode/template selectors, and Quick draft is retired. Use **Project settings** to adjust other workflow steps and registered model selections, and validate actual routes before starting translation. Changing translation mode requires creating another project.
@@ -317,7 +318,7 @@ running API, PostgreSQL, Redis or credentials. After installing the workspace Py
 dependencies and frontend dependencies, generate or check the contract offline:
 
 ```bash
-pnpm gen:schema  # Update shared types from the shared app factory, offline
+pnpm gen:schema  # Update both generated contracts offline
 pnpm check:schema  # Compare temporary generated types; does not change tracked files
 uv run --no-sync ruff check packages/core packages/cli apps/api
 uv run --no-sync pytest -q -n auto
@@ -331,6 +332,12 @@ CI runs `check:schema` before frontend typechecks. Generation uses unavailable r
 ports and no production lifespan; only the schema artifact's installation-dependent
 version is normalized. `GET /capabilities` still reports runtime languages, formats,
 providers and registered operations.
+
+Two documents are generated. `api.d.ts` covers the shared routes from
+`wenyi_backend/schema_export.py`. `desktop.d.ts` covers the routes the Desktop shell
+adds, from `wenyi_desktop/schema_export.py`, and lives in its own file: the shared
+contract stays free of platform routes, and the Desktop frontend imports its
+credential types from the generated document instead of redeclaring them by hand.
 
 Web and Desktop share the chunking rule in `packages/ui/vite.shared.ts`: React,
 React DOM and Scheduler form a separate `react-runtime` chunk, while pages keep

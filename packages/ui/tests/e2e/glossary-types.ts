@@ -1,7 +1,14 @@
 import { readFileSync } from "node:fs";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid } from "../../sandbox/fixtures";
 import { chooseOption } from "./select-helper";
+
+
+/** Whether the Desktop host must keep running this suite as well.
+ *
+ * Type labels come from the shared i18n catalog and the request body carries the same `type` field in both hosts. The probe recorded only `preferences` and `request`.
+ */
+export const desktopHostSensitive = false;
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
 const types = [

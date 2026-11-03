@@ -12,8 +12,11 @@ on:
     branches: [main]
     paths:
       - .github/workflows/build.yml
-      - scripts/release_version.py
-      - scripts/package_release.py
+      - scripts/release/release_version.py
+      - scripts/release/package_release.py
+      - scripts/release/check_backend_packages.py
+      - scripts/release/check_wheel_resources.py
+      - scripts/dev/cli_entry.py
       - packages/core/tests/test_release_packaging.py
   release:
     types: [published]
@@ -69,7 +72,7 @@ jobs:
           WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: |
           python -m pip install hatch-vcs
-          python scripts/release_version.py --github-output "$GITHUB_OUTPUT"
+          python scripts/release/release_version.py --github-output "$GITHUB_OUTPUT"
 
       - name: Install build dependencies
         run: python -m pip install ./packages/core ./packages/cli pyinstaller
@@ -78,7 +81,7 @@ jobs:
       - name: Build the wenyi-locks native library
         shell: bash
         run: |
-          cargo build --release --manifest-path native/wenyi-locks/Cargo.toml
+          cargo build --release -p wenyi-locks
           python - <<'PY'
           import os
           import sys
@@ -86,7 +89,7 @@ jobs:
               "win32": "wenyi_locks.dll",
               "darwin": "libwenyi_locks.dylib",
           }.get(sys.platform, "libwenyi_locks.so")
-          path = os.path.join("native", "wenyi-locks", "target", "release", name)
+          path = os.path.join("target", "release", name)
           if not os.path.isfile(path):
               raise SystemExit(f"Missing {path}; the cargo build above did not run")
           absolute = os.path.abspath(path)
@@ -106,7 +109,7 @@ jobs:
           --collect-data wenyi_core.i18n
           --copy-metadata wenyi-core --copy-metadata wenyi-cli
           --workpath build/pyinstaller --specpath build/pyinstaller-spec
-          --distpath dist scripts/cli_entry.py
+          --distpath dist scripts/dev/cli_entry.py
 
       - name: Smoke test executable
         run: |
@@ -163,7 +166,7 @@ jobs:
 
       - name: Package CLI ZIP (including executable permissions)
         run: >
-          python scripts/package_release.py cli
+          python scripts/release/package_release.py cli
           --version "${{ steps.version.outputs.version }}"
           --platform "${{ matrix.platform }}" --source "${{ matrix.binary }}"
 

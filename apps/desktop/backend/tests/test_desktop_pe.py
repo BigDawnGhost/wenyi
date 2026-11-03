@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[4] / "scripts/desktop_pe.py"
+SCRIPT = Path(__file__).resolve().parents[4] / "scripts/dev/desktop_pe.py"
 
 
 def pe_image(magic=0x20B, subsystem=2):
@@ -106,12 +106,31 @@ def test_cli_accepts_gui_executable(tmp_path):
 
 
 def test_windows_workflow_checks_native_binary_after_build():
-    workflow = (SCRIPT.parent.parent / ".github/workflows/desktop.yml").read_text()
+    workflow = (SCRIPT.parents[2] / ".github/workflows/desktop.yml").read_text()
     step = """      - name: Verify native Windows GUI subsystem
         if: runner.os == 'Windows' && matrix.tier == 'full'
-        run: uv run --no-project python scripts/desktop_pe.py apps/desktop/target/release/wenyi-desktop.exe
+        run: uv run --no-project python scripts/dev/desktop_pe.py target/release/wenyi-desktop.exe
 """
     assert step in workflow
     # The check must still follow the build and precede installer collection.
     assert workflow.index("name: Build installers") < workflow.index(step)
     assert workflow.index(step) < workflow.index("Collect standalone installers")
+
+
+def test_desktop_workflow_uses_the_workspace_target_directory():
+    """The crates share one workspace, so cargo writes outside apps/desktop.
+
+    Pinning the literal path inside each step only moves the drift around. The build
+    layout is a property of the workspace manifest, so it is asserted there and every
+    reference in the desktop workflow is checked against it.
+    """
+    root = SCRIPT.parents[2]
+    manifest = (root / "Cargo.toml").read_text()
+    assert "[workspace]" in manifest, "the native crates are expected to share a workspace"
+    assert "target-dir" not in manifest, (
+        "the desktop workflow assumes the default workspace target directory"
+    )
+
+    workflow = (root / ".github/workflows/desktop.yml").read_text()
+    stale = [line.strip() for line in workflow.splitlines() if "apps/desktop/target" in line]
+    assert not stale, f"desktop workflow still points inside the crate: {stale}"

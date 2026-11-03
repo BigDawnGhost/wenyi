@@ -20,10 +20,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from ..errors import ArtifactCorrupt
+from ..errors import ArtifactCorrupt, SchemaTooNew
 from ..glossary.store import GlossaryStore, GlossaryTerm
-from ..ingest.models import Chapter, Document
-from ..pipeline.runstore import ExportSnapshotStore, RunStore, source_sha256
+from ..models.document import Chapter, Document
+from .io_path import require_sqlite_path
 from .locks import (
     ASSEMBLE_LOCK,
     EXPORT_HISTORY_LOCK,
@@ -32,9 +32,23 @@ from .locks import (
     exclusive_file_lock,
 )
 from .protocol import STATUS_DONE, STATUS_PENDING
+from .run_store import ExportSnapshotStore, RunStore, source_sha256
+
+#: Schema version this build writes, stored in SQLite's own `user_version`.
+#:
+#: A database carrying a higher number was created by a newer build, so opening
+#: it is refused rather than attempted. The schema is declared with "if not
+#: exists" and rows are JSON documents, so an older build sharing a newer file
+#: leaves the newer tables untouched while writing rows the newer build reads as
+#: complete. Refusing is the only outcome that keeps both versions honest.
+#:
+#: A database carrying 0 predates this guard. It is stamped with the current
+#: number and otherwise left alone, which is what makes the upgrade free;
+#: refusing 0 instead would declare every existing project unsupported.
+SCHEMA_VERSION = 1
 
 # Re-exported: the class moved to locks.py, but callers still import it from here.
-__all__ = ["SqliteStorage", "StorageBusyError"]
+__all__ = ["SCHEMA_VERSION", "SqliteStorage", "StorageBusyError"]
 
 
 class SqliteStorage:
@@ -60,6 +74,9 @@ class SqliteStorage:
         self._connections_guard = threading.Condition()
         self._readers = 0
         self._closing = False
+        # Fail on an unopenable path before any directory is created, so a
+        # rejected project leaves nothing behind to clean up.
+        require_sqlite_path(self.database_path)
         if create:
             with self._mutex:
                 self._connection()
@@ -98,7 +115,12 @@ class SqliteStorage:
 
     def _open_connection(self) -> sqlite3.Connection:
         """Called under the short schema initialization lock."""
-        uri = Path(self.database_path).as_uri() + ("?mode=rwc" if self._create else "?mode=rw")
+        # SQLite rejects the extended-length prefix, so a long database path
+        # cannot be rescued the way an ordinary file path can. Checking first
+        # replaces "unable to open database file" with a message naming the limit.
+        uri = Path(require_sqlite_path(self.database_path)).as_uri() + (
+            "?mode=rwc" if self._create else "?mode=rw"
+        )
         conn = sqlite3.connect(uri, uri=True, isolation_level=None, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         try:
@@ -106,6 +128,9 @@ class SqliteStorage:
             conn.execute("PRAGMA foreign_keys = ON")
             if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
                 conn.execute("PRAGMA journal_mode = WAL")
+            # Every connection passes here, including the readers that drain on
+            # close, so the guard is stated once rather than at each open site.
+            self._check_schema_version(conn)
             if not conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifacts'"
             ).fetchone():
@@ -151,6 +176,33 @@ class SqliteStorage:
             conn.close()
             raise
         return conn
+
+    def _check_schema_version(self, conn: sqlite3.Connection) -> None:
+        """Refuse a database a newer build created, and stamp an older one.
+
+        The stamp is written here rather than beside schema creation because the
+        number has to be set for a database whose tables already exist as well:
+        the upgrade path is a file this build did not create, and leaving it at 0
+        would make every later open repeat the same upgrade.
+
+        Reading and writing are decided by how this store was constructed. A
+        read-only store is how a caller inspects or recovers a project without
+        writing to it, so the refusal still applies there while the stamp is
+        skipped: the writable path the caller eventually takes records it.
+        """
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if not isinstance(version, int) or isinstance(version, bool) or version < 0:
+            raise ValueError(f"Invalid local state database: {self.database_path}")
+        if version > SCHEMA_VERSION:
+            raise SchemaTooNew(
+                "This project was created by a newer version of Wenyi "
+                f"(database schema {version}, this version supports {SCHEMA_VERSION}). "
+                "Update Wenyi to open it: an older version would read the project "
+                "incompletely.",
+                code="database_schema_too_new",
+            )
+        if version == 0 and self._create:
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
     def close(self) -> None:
         """Release this thread's connection; other threads release their own.

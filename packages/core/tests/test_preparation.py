@@ -10,13 +10,13 @@ from unittest.mock import patch
 
 import pytest
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.i18n.languages import normalize_language
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.preparation import PreparationService
-from wenyi_core.pipeline.runstore import slugify, source_sha256
+from wenyi_core.pipeline.prepare.preparation import PreparationService
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.run_store import slugify, source_sha256
 
 from tests.fake_llm import routing_handler
 from tests.pipeline_fixtures import fake_pipeline_config
@@ -49,7 +49,7 @@ class TestLocateExistingStore(unittest.TestCase):
             orch = Orchestrator(cfg, client=FakeClient())
 
             with patch(
-                "wenyi_core.pipeline.preparation.load_document",
+                "wenyi_core.pipeline.prepare.preparation.load_document",
                 side_effect=AssertionError("locate 不应调用 load_document"),
             ):
                 located = orch._preparation.locate_existing(epub)
