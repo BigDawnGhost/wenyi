@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hmac
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -53,7 +55,10 @@ def create_app(
                     provided = (
                         request.headers.get("authorization", "").removeprefix("Bearer ").strip()
                     )
-                    if provided != context.api_token:
+                    # Compare bytes, not str: hmac.compare_digest rejects non-ASCII str
+                    # with TypeError, which would turn a failing check into a 500 for any
+                    # token containing non-ASCII characters. Matches the WebSocket path.
+                    if not hmac.compare_digest(provided.encode(), context.api_token.encode()):
                         return JSONResponse({"detail": "invalid api token"}, status_code=401)
                 return await call_next(request)
 
