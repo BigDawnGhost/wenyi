@@ -417,7 +417,16 @@ test("Desktop HTTP errors remain visible", async ({ page }) => {
 // Desktop bootstrap can render it. One parameterised smoke covers each module with a
 // real route, so a shared component that breaks only under the native bootstrap is not
 // left with a Web-only guard.
-const SHARED_RENDER_SMOKE = [
+type SharedRenderSmoke = {
+  module: string;
+  route: string;
+  /** A Playwright role; typed off the API so the literal names stay checked. */
+  role?: Parameters<Page["getByRole"]>[0];
+  slot?: string;
+  testId?: string;
+};
+
+const SHARED_RENDER_SMOKE: SharedRenderSmoke[] = [
   { module: "control-geometry", route: `/projects/${pid}/export`, role: "radio" },
   { module: "focus-style", route: `/projects/${pid}/proofreading/0`, slot: "page.header" },
   { module: "glossary-pagination", route: `/projects/${pid}/glossary`, role: "table" },
@@ -431,7 +440,7 @@ const SHARED_RENDER_SMOKE = [
   { module: "sidebar", route: "/", slot: "sidebar" },
   { module: "sidebar-motion", route: "/", slot: "sidebar" },
   { module: "style-editing", route: `/projects/${pid}/style`, slot: "page.header" },
-];
+] as const;
 
 for (const smoke of SHARED_RENDER_SMOKE) {
   test(`Desktop bootstrap renders the shared ${smoke.module} suite`, async ({ page }) => {
