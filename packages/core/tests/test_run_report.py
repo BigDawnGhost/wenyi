@@ -98,7 +98,16 @@ def test_a_torn_multibyte_final_line_keeps_the_earlier_records(tmp_path):
     # (audit Z-2/H-2).
     store = FakeStore(tmp_path)
     record = json.dumps({"event": "chapter_done", "title": "第十二章"}, ensure_ascii=False)
-    torn = "第五十章：暗流".encode("utf-8")[:6]
+    # Cut mid-character. Prefixes of a 3-byte CJK sequence are still valid UTF-8 at some
+    # lengths ([:6] of this string is), and a slice that lands on a boundary would let
+    # this test pass without ever reaching the decode guard it exists to cover.
+    torn = "第五十章：暗流".encode("utf-8")[:7]
+    try:
+        torn.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+    else:
+        raise AssertionError("the slice decoded cleanly, so nothing was torn")
     with open(store.event_log_path, "wb") as handle:
         handle.write(record.encode("utf-8") + b"\n")
         handle.write(b'{"event": "chapter_done", "title": "\n')
