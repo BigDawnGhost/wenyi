@@ -14,6 +14,20 @@ import { installDiagnostics } from "./diagnostics";
 import { DiagnosticExportButton } from "./DesktopDiagnostics";
 
 installDiagnostics();
+
+// Keep native text-editing menus, but not browser navigation menus in Desktop.
+// Bubble normally so React's paragraph context menu can still handle the event.
+document.addEventListener("contextmenu", (event) => {
+  const target = event.target;
+  const textField = (
+    target instanceof HTMLTextAreaElement ||
+    (target instanceof HTMLInputElement &&
+      ["text", "search", "email", "url", "tel", "password", "number"].includes(target.type))
+  ) && !target.disabled;
+  if (textField || (target instanceof HTMLElement && target.isContentEditable)) return;
+  event.preventDefault();
+});
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: { staleTime: 5_000, refetchOnWindowFocus: false, retry: 1 },

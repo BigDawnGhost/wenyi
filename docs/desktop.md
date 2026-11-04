@@ -81,6 +81,10 @@ Compare the translation with the source, edit paragraphs, inspect revisions, and
 
 Completed and paused projects do not periodically poll their pages, including chapters, glossary and revision history. When a task stops, the interface reads its final saved data; starting/resuming a task restarts active polling. Saving edits and restoring a hidden window still reconcile data without discarding drafts. Large chapters retain native find, cross-paragraph selection and deep links, with one shared paragraph menu and chapter review notes mounted only on first expansion.
 
+Right-clicking ordinary page areas does not open the browser's Back/Forward/Reload menu.
+Text fields retain their native editing menu, including copy and paste; proofreading
+paragraphs still open their paragraph actions menu. Web browser menus are unchanged.
+
 Choose an export format and, where supported, a bilingual edition. Desktop opens the system save dialog before starting the export; canceling creates no export task. HTML is saved as an HTML-and-assets ZIP, which should be extracted before reading.
 
 On the **Glossary** page, choose **Export → CSV file**, **JSON file**, or
