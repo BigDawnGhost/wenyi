@@ -6,7 +6,7 @@
   <img src="docs/images/wenyi-wordmark-en.svg" alt="Wenyi" width="180" height="54">
 </h1>
 
-**Carry stories across languages.**
+**Bringing literature into your language.**
 
 A desktop app for translating books and long-form writing, with the whole work in view.
 
