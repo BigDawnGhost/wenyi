@@ -65,6 +65,25 @@ CLI/Desktop 打包工作流有路径过滤，不应将这些条件检查设为�
 3. 停止使用旧集成分支。只有确认需要的工作均已保留、且获得明确删除授权后才能删除。
    仅修改本规则不代表授权合并 PR、修改远端设置或删除分支。
 
+## 从源码运行 CLI
+
+开发时，在源码仓库中使用 Python 3.10+ 和 [uv](https://docs.astral.sh/uv/)。
+如果只是使用已发布版本，无需拉取源码，按 [CLI 安装指南](cli.md#安装与运行)操作即可。
+
+从仓库根目录执行：
+
+```bash
+uv sync --locked
+uv run wenyi --version
+uv run wenyi models list
+```
+
+默认工作区安装本地 CLI 和 Core 包，在该源码仓库中使用 `uv run wenyi ...` 执行
+CLI 命令。开发包含共享 backend 和各应用的完整 Python 工作区时，使用下方的开发环境配置。
+
+Python 包版本由仓库 Git 标签生成：标签构建显示正式版本，开发构建包含距标签的提交数
+与提交哈希。自动发布流程见 [Python 包发布指南](publishing.md)。
+
 ## Python 回归测试
 
 按规则所属层组织测试：Core 覆盖领域规则和持久化、续跑不变量；共享 backend 覆盖平台无关的应用及 HTTP 契约；API/Desktop 覆盖适配装配、平台存储、队列和原生文件安全。Orchestrator 测试保留跨服务流程，不重复下层服务的细粒度矩阵。fixture 通过 `conftest.py` 共享，辅助函数放在 support 模块中，不通过导入其他 `test_*` 模块复用。
