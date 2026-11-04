@@ -14,6 +14,7 @@ from wenyi_cli.commands import presentation
 from wenyi_cli.commands import progress as progress_view
 
 from .context import ContextAccessor
+from .machine_output import MachineOutput
 from .validation import (
     require_input_file,
     resolve_output_format,
@@ -71,10 +72,21 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         review: bool | None = None,
         mono: bool | None = None,
         bilingual: bool | None = None,
+        progress_json: str | None = None,
+        result_json: str | None = None,
     ) -> None:
         """Run translation and report expected input or configuration errors concisely."""
         console = context().console
+        machine = None
         try:
+            machine = MachineOutput(
+                progress_json,
+                result_json,
+                source=input_path,
+                config=context().config_path,
+                output=out,
+            )
+            machine.start()
             _translate_impl_or_raise(
                 input_path,
                 chapter=chapter,
@@ -85,12 +97,21 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 review=review,
                 mono=mono,
                 bilingual=bilingual,
+                machine=machine,
             )
         except typer.Exit:
             raise
         except (WenyiError, ImportError, OSError, ValueError, RuntimeError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
+        finally:
+            # Includes cancellation and unexpected exceptions. Never leave a stale success
+            # receipt, and never replace the original error with a reporting failure.
+            if machine is not None and not machine.completed:
+                try:
+                    machine.failed()
+                except (OSError, WenyiError):
+                    console.print("[red]Could not publish the machine failure receipt.[/]")
 
     def _translate_impl_or_raise(
         input_path: str,
@@ -103,6 +124,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         review: bool | None = None,
         mono: bool | None = None,
         bilingual: bool | None = None,
+        machine: MachineOutput,
     ) -> None:
         """Run translation; let ``_translate_impl`` convert exceptions to CLI errors."""
         console = context().console
@@ -163,7 +185,11 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 console=console,
             ) as prog,
         ):
-            cb = progress_view.RichProgressBridge(prog, "Preparing…")
+            rich_progress = progress_view.RichProgressBridge(prog, "Preparing…")
+
+            def cb(done: int, total: int, label: str) -> None:
+                rich_progress(done, total, label)
+                machine(done, total, label)
 
             if chapter is not None:
                 try:
@@ -176,6 +202,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 )
                 presentation.print_usage(console, store.load_usage() or {})
                 presentation.print_timing(console, load_timing(store.run_dir))
+                machine.success([], store.run_dir)
                 return
 
             result = orch.run_all(
@@ -204,6 +231,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             presentation.print_review_details(
                 console, result.get("review_result"), result["review_dir"]
             )
+        machine.success(result.get("outputs") or [result["output"]], store.run_dir)
 
     def _prepare_impl(input_path: str) -> None:
         """Complete preparation without translating body text or exporting files."""
@@ -293,6 +321,12 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             "--bilingual/--no-bilingual",
             help="Override output.bilingual to enable or disable bilingual output",
         ),
+        progress_json: str | None = typer.Option(
+            None, "--progress-json", help="Atomically publish protocol-1 progress JSON"
+        ),
+        result_json: str | None = typer.Option(
+            None, "--result-json", help="Atomically publish a protocol-1 output receipt"
+        ),
     ):
         """Prepare, translate, optionally review and export. Repeat to resume."""
         _translate_impl(
@@ -305,6 +339,8 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             review=review,
             mono=mono,
             bilingual=bilingual,
+            progress_json=progress_json,
+            result_json=result_json,
         )
 
     @app.command(rich_help_panel="Main workflow")

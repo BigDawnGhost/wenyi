@@ -26,6 +26,10 @@ uv run wenyi translate book.epub
 CLI、Core 与 API 包使用同一版本来源，OpenAPI 读取已安装 API 包的版本。
 根虚拟工作区和私有前端包不维护独立发布版本。
 
+PyPI 版本发布后，可在虚拟环境中执行 `uv pip install wenyi-cli`，或通过
+`uv tool install wenyi-cli` 安装隔离的命令行工具。Core 会自动安装，不会安装 BabelDOC。
+自动发布和首次 PyPI 配置见[Python 包发布指南](publishing.md)。
+
 每次启动程序都会检查当前目录的 `config.yaml`；文件不存在时会创建一份带注释的默认配置。开始正式翻译前请检查模型配置。
 
 API Key 只从环境变量读取。请在本机进程环境中设置，或从共享工作区／会话之外的私有密钥文件加载到环境；不要把真实密钥写入配置、共享文件或对话。CLI 不会自动加载仓库根目录的 `.env` 文件。下方密钥值均为占位符，不是真实凭据。
@@ -129,6 +133,23 @@ notarization。macOS 仍可能隔离下载的程序；确认校验和无误后�
 - EPUB 中未翻译的段落只保留一份原文及其注音、链接。Web 导出和部分已译章节同样遵循此规则，双语排列顺序与原文样式选项不会额外生成重复段落。
 - EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。
 - 书籍状态位于 `state/<书名>/targets/<目标语言>/`，含章节中间结果、术语 SQLite 库、用量和报告。
+
+### 机器进度与输出回执
+
+外部管理程序可以为 `translate` 传入 `--progress-json /absolute/progress.json`
+和 `--result-json /absolute/result.json`。两者均为可选的 protocol version 1 JSON
+文件，通过同目录临时文件原子替换，终端输出保持不变。两个路径必须互不相同，
+且不能与原文、配置或显式输出路径相同。
+
+每次调用生成新的 `run_id`，在预检前以 `status: "running"` 替换旧回执。
+进度包含 `done`、可为空的 `total` 和 `label`，计数表示当前阶段而非全流程。
+成功回执包含 `source_sha256`、绝对路径 `state_dir`，以及带绝对 `path`、
+字节 `size` 和 `sha256` 的 `outputs`。失败时替换为 `status: "failed"`，
+输出清单为空；失败回执不写入原始异常文本，详情请查看终端或管理程序保存的日志。
+
+这些文件不是任务队列、常驻服务或取消接口。发布附件前，管理程序还需检查进程退出码、
+运行身份及文件哈希。进程被强制终止时可能留下 `running`，不能仅凭进度文件判断存活。
+回执和路径可能透露私有文档信息，分享前请检查。
 
 ### 实验性 PDF 支持
 

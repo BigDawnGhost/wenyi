@@ -1,0 +1,129 @@
+name: Publish Python packages to PyPI
+run-name: PyPI · ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Git tag to validate (empty means development checkout; never uploads)
+        type: string
+        default: ""
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-pypi.yml
+      - pyproject.toml
+      - uv.lock
+      - packages/core/pyproject.toml
+      - packages/core/README.md
+      - packages/cli/pyproject.toml
+      - packages/cli/README.md
+      - packages/core/tests/test_release_packaging.py
+      - scripts/release/release_version.py
+      - scripts/release/check_wheel_resources.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-${{ github.event.release.tag_name || inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: "0.13.7"
+      - name: Validate release identity
+        id: version
+        env:
+          WENYI_BUILD_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          uv run --isolated --no-project --python 3.12 --with hatch-vcs \
+            python scripts/release/release_version.py --github-output "$GITHUB_OUTPUT"
+      - name: Check packaging contracts
+        run: |
+          uv sync --locked --group dev
+          uv run --no-sync pytest -q -n auto packages/core/tests/test_release_packaging.py
+      - name: Build Core and CLI distributions
+        run: |
+          uv build --no-sources --package wenyi-core --out-dir dist/pypi
+          uv build --no-sources --package wenyi-cli --out-dir dist/pypi
+          uvx --from twine twine check --strict dist/pypi/*
+          uv run --no-sync python scripts/release/check_wheel_resources.py dist/pypi
+      - name: Smoke test wheels and source distributions
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.python }}
+          NO_COLOR: "1"
+          TERM: dumb
+        run: |
+          set -eu
+          distributions="$PWD/dist/pypi"
+          for extension in whl tar.gz; do
+            environment="$RUNNER_TEMP/wenyi-pypi-$extension"
+            uv venv "$environment" --python 3.12
+            uv pip install --python "$environment/bin/python" "$distributions"/*."$extension"
+            uv pip check --python "$environment/bin/python"
+            "$environment/bin/python" -I - <<'PY'
+          import importlib.util
+          import os
+          from importlib.metadata import version
+
+          for package in ("wenyi-core", "wenyi-cli"):
+              actual = version(package)
+              if actual != os.environ["EXPECTED_VERSION"]:
+                  raise SystemExit(f"{package}: unexpected version {actual}")
+          for module in ("babeldoc", "wenyi_babeldoc_bridge", "wenyi_api", "wenyi_desktop"):
+              if importlib.util.find_spec(module) is not None:
+                  raise SystemExit(f"Unexpected CLI dependency: {module}")
+          PY
+            (
+              cd "$RUNNER_TEMP"
+              "$environment/bin/wenyi" --version
+              "$environment/bin/wenyi" --help
+              "$environment/bin/wenyi" translate --help
+              "$environment/bin/wenyi" languages
+            )
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-distributions
+          path: dist/pypi/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: github.event_name == 'release' && github.repository == 'BigDawnGhost/wenyi'
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi
+      url: https://pypi.org/project/wenyi-cli/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-distributions
+          path: dist/pypi/
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: "0.13.7"
+      - name: Publish Core before CLI
+        run: |
+          uv publish --trusted-publishing always --check-url https://pypi.org/simple/ dist/pypi/wenyi_core-*
+          uv publish --trusted-publishing always --check-url https://pypi.org/simple/ dist/pypi/wenyi_cli-*

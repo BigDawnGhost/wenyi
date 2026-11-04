@@ -45,7 +45,8 @@ gh pr create --base main --head feat/short-description
 
 在 `main` 上经过验证的提交处创建版本标签，例如 `v1.2.8` 或 `v1.2.8rc1`，
 然后为该标签发布 GitHub Release。发布 Release 会触发 CLI/Desktop 打包与产物上传。
-仅合并 PR 或推送标签不会发布安装包；仍可手动触发工作流验证构建。修复同样经过
+完成[可信发布配置](publishing.md)后，还会将 CLI/Core 发布到 PyPI。
+仅合并 PR 或推送标签不会发布安装包或 PyPI 包；仍可手动触发工作流验证构建。修复同样经过
 短期分支 → PR → `main`，再用新标签发布。不移动已有发布标签，不维护长期 hotfix 分支。
 
 ### 仓库设置与迁移
