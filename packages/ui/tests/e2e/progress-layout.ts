@@ -22,6 +22,29 @@ for (const locale of ["en", "zh-CN"] as const) {
       await fakeApi(page, {}, apiOrigin);
     });
 
+    for (const status of ["parsing", "uploaded", "preparing", "error"]) {
+      test(`${status} projects do not offer source upload before AI preparation`, async ({ page }) => {
+        const apiBase = apiOrigin ?? "**/api";
+        await page.route(`${apiBase}/projects/${pid}`, (route) =>
+          route.fulfill({ json: { ...project, status, initialized: false } }),
+        );
+        if (status === "parsing") {
+          await page.route(`${apiBase}/projects/${pid}/chapters`, (route) =>
+            route.fulfill({ json: [] }),
+          );
+        }
+        await page.goto(`/projects/${pid}`);
+        await expect(page.getByRole("heading", { name: project.name, exact: true }))
+          .toBeVisible();
+        await expect(page.getByRole("link", { name: /Upload & preview source|上传与预览原文/ }))
+          .toHaveCount(0);
+        if (status !== "parsing") {
+          await expect(page.getByRole("link", { name: t("contents.readContentsSource") }))
+            .toBeVisible();
+        }
+      });
+    }
+
     test("shows the current stage directly without reports or nested workflow panels", async ({
       page,
     }) => {

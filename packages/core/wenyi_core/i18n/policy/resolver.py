@@ -84,7 +84,9 @@ def _rules(context: PolicyContext) -> dict[str, str]:
     target = profile(context.target)
     source = profile(context.source) if context.source != "auto" else {}
     source_guidance = source.get("source_guidance", common["source"])
-    target_guidance = target["target_guidance"]
+    target_guidance = "\n".join(
+        (target["target_guidance"], read_text("shared/target_language.txt").strip())
+    )
     default_guidance = "\n".join(
         (
             source_guidance,

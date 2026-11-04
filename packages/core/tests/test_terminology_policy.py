@@ -114,14 +114,15 @@ def test_shared_prescan_templates_freeze_actual_resource_paths(enabled):
         assert dict(plan.templates)[f"{task}_system"] == read_text(path)
 
 
-def test_default_polisher_preserves_original_resource_and_fingerprint():
+def test_default_polisher_preserves_resource_and_invalidates_old_language_rules():
     plan = Config.from_dict({"llm": {"preset": "fake"}}).language_policy("translation")
     path = "tasks/polisher_user.txt"
     assert path in dict(plan.resources)
     assert "tasks/polisher_terminology_user.txt" not in dict(plan.resources)
     assert dict(plan.templates)["polisher_user"] == read_text(path)
     assert "$source_context" not in dict(plan.templates)["polisher_user"]
-    assert plan.task_fingerprint("polisher") == (
+    # The shared target-language requirement intentionally invalidates the old prompt identity.
+    assert plan.task_fingerprint("polisher") != (
         "964a2d08eb651aea404703d04c6017a0f29655b03f35c93a5a373016bb2fc634"
     )
 
@@ -135,12 +136,12 @@ def test_default_polisher_preserves_original_resource_and_fingerprint():
         ("export", "d4de743d62c14ff316fee9bcb27075cae1f7f260a3cf9cf056914ed022d47fe6"),
     ],
 )
-def test_only_default_analysis_phase_changes_from_feature_baseline(phase, fingerprint):
-    # Recorded from main; Review includes the prompt revision in 63a1149.
-    # Exclude project-page copy from this terminology feature baseline.
+def test_model_phases_reject_older_prompt_baselines_but_export_is_unchanged(phase, fingerprint):
+    # Older preparation rules changed analysis; the output rule changes translation and Fixer.
+    # Exclude project-page copy from this baseline.
     selected = Config.from_dict({"llm": {"preset": "fake"}, "output": {"about_page": False}})
     plan = selected.language_policy(phase, format="epub" if phase == "export" else "")
-    assert (plan.fingerprint != fingerprint) == (phase == "analysis")
+    assert (plan.fingerprint != fingerprint) == (phase != "export")
 
 
 def test_selected_polisher_variant_freezes_the_source_context_resource():

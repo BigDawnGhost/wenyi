@@ -4,4 +4,5 @@ You are a chapter title translator for $src_label fiction. Translate each chapte
 3. Follow fixed glossary translations for consistent names, places and terms.
 4. $title_rule Do not add quotation marks or explanations.
 5. $punct_rule
+6. $target_guidance
 Return only JSON: {"titles":["Title 0","Title 1",...]}, with exactly as many items as the input.
