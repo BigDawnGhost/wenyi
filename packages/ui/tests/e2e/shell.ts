@@ -99,16 +99,16 @@ export function registerShellTests({ apiOrigin }: { apiOrigin?: string } = {}) {
     }
   });
 
-  test("source preview closes back to the originating project and restores focus", async ({ page }) => {
+  test("creation closes back to the originating project and restores sidebar focus", async ({ page }) => {
     await fakeApi(
       page,
       { [`/projects/${pid}`]: { ...project, initialized: false } },
       apiOrigin,
     );
     await page.goto(`/projects/${pid}`);
-    const source = page.getByRole("link", { name: "Upload & preview source", exact: true });
+    const create = page.getByRole("link", { name: "Create project", exact: true });
     for (const close of ["button", "escape"]) {
-      await source.click();
+      await create.click();
       const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
       await expect(dialog).toBeVisible();
       if (close === "button") {
@@ -117,7 +117,7 @@ export function registerShellTests({ apiOrigin }: { apiOrigin?: string } = {}) {
         await page.keyboard.press("Escape");
       }
       await expect(page).toHaveURL(`/projects/${pid}`);
-      await expect(source).toBeFocused();
+      await expect(create).toBeFocused();
     }
   });
 }
