@@ -2,12 +2,17 @@
 name = "wenyi-cli"
 dynamic = ["version"]
 description = "Local command-line interface for Wenyi's translation engine."
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "wenyi-core",
     "typer>=0.12",
     "rich>=13.7",
 ]
+
+[project.urls]
+Repository = "https://github.com/BigDawnGhost/wenyi"
+Documentation = "https://github.com/BigDawnGhost/wenyi/blob/main/docs/cli.md"
 
 [project.scripts]
 wenyi = "wenyi_cli.main:main"

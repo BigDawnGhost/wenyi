@@ -30,6 +30,11 @@ CLI, Core and API packages use this same version source; OpenAPI reads the insta
 package version. The virtual workspace root and private frontend packages do not maintain
 separate release versions.
 
+Published PyPI releases can be installed with `uv pip install wenyi-cli` inside
+a virtual environment, or `uv tool install wenyi-cli` for an isolated command.
+Core is installed automatically; BabelDOC is not. See [Python package publishing](publishing.md)
+for release automation and first-time PyPI setup.
+
 Whenever the program starts, it checks for `config.yaml` in the current directory and creates a documented default file when it is missing. Review the model settings before starting a real translation.
 
 API keys are read only from environment variables. Supply them in your local process environment, or load them into that environment from a private key file outside the shared workspace/session. Do not put real keys in configuration, shared files, or conversations. The CLI does not automatically load a repository-root `.env` file. Key values in examples are placeholders, not credentials.
@@ -135,6 +140,28 @@ checksum, approve it in **System Settings → Privacy & Security** if prompted.
 - Untranslated EPUB paragraphs appear once as the original text, retaining ruby readings and links. This also applies to Web exports and partially translated chapters; bilingual ordering and source styling do not add a second copy.
 - EPUB output includes an “About this translation” page by default. Set `output.about_page: false` to disable it.
 - Book runtime data is stored under `state/<book>/targets/<target-language>/`, including chapter intermediates, the SQLite glossary, usage data, and reports.
+
+### Machine progress and output receipts
+
+External supervisors can pass `translate --progress-json /absolute/progress.json`
+and `--result-json /absolute/result.json`. Both are optional, protocol-version-1
+JSON files, atomically replaced in their destination directory; normal terminal
+output is unchanged. Paths must differ from each other and from the source,
+configuration and explicit output path.
+
+Each invocation generates a fresh `run_id` and replaces any previous receipt with
+`status: "running"` before preflight. Progress provides `done`, nullable `total`,
+and `label`; counts refer to the current stage, not the whole workflow. A success
+receipt contains `source_sha256`, an absolute `state_dir`, and `outputs` entries
+with absolute `path`, byte `size` and `sha256`. Failures replace the receipt with
+`status: "failed"` and no outputs. Failure receipts omit raw exception text;
+consult terminal output or the supervisor's log.
+
+These files are not a job queue, daemon or cancellation API. A supervisor must
+also check the process exit code and match `run_id` and file hashes before
+publishing attachments. A killed process can leave `running` behind; progress
+files alone are not proof that a process is still alive. Receipts and paths may
+identify private documents; do not share them without review.
 
 ### Experimental PDF support
 

@@ -453,3 +453,81 @@ def test_cli_workflow_builds_every_platform_on_release_only():
     assert job["strategy"]["fail-fast"] == "false"
     # Publishing still waits on the build job.
     assert jobs["release"]["needs"] == "build"
+
+
+def test_pypi_workflow_only_publishes_verified_release_artifacts():
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/publish-pypi.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    assert document["on"]["release"]["types"] == ["published"]
+    assert document["on"]["pull_request"]["branches"] == ["main"]
+    assert "tag" in document["on"]["workflow_dispatch"]["inputs"]
+    assert "push" not in document["on"]
+    assert document["permissions"] == {"contents": "read"}
+    assert document["concurrency"]["cancel-in-progress"] == "false"
+
+    build = document["jobs"]["build"]
+    assert "id-token" not in build.get("permissions", {})
+    checkout = next(step for step in build["steps"] if "actions/checkout@" in step.get("uses", ""))
+    assert checkout["with"]["fetch-depth"] == "0"
+    assert checkout["with"]["persist-credentials"] == "false"
+    assert "github.event.release.tag_name" in checkout["with"]["ref"]
+    identity = next(step for step in build["steps"] if step.get("id") == "version")
+    assert "scripts/release/release_version.py" in identity["run"]
+    assert "github.event.release.tag_name" in identity["env"]["WENYI_BUILD_TAG"]
+
+    commands = "\n".join(step.get("run", "") for step in build["steps"])
+    for package in ("wenyi-core", "wenyi-cli"):
+        assert f"uv build --no-sources --package {package} --out-dir dist/pypi" in commands
+    assert "--all-packages" not in commands
+    assert "check_wheel_resources.py dist/pypi" in commands
+    assert "for extension in whl tar.gz" in commands
+    assert "uv pip check" in commands
+    assert "version(package)" in commands
+    assert '"$environment/bin/wenyi" languages' in commands
+    assert "uv publish" not in commands
+
+    assert document["jobs"]["publish-core"]["needs"] == "build"
+    assert "secrets." not in str(document)
+    producer = next(
+        step for step in build["steps"] if "actions/upload-artifact@" in step.get("uses", "")
+    )
+    for job in ("publish-core", "publish-cli"):
+        publish = document["jobs"][job]
+        assert publish["if"] == (
+            "github.event_name == 'release' && github.repository == 'BigDawnGhost/wenyi'"
+        )
+        assert publish["permissions"] == {"id-token": "write"}
+        assert not any("actions/checkout@" in step.get("uses", "") for step in publish["steps"])
+        upload = next(
+            step["run"] for step in publish["steps"] if "uv publish" in step.get("run", "")
+        )
+        assert "--trusted-publishing always" in upload
+        assert "--check-url https://pypi.org/simple/" in upload
+        consumer = next(
+            step
+            for step in publish["steps"]
+            if "actions/download-artifact@" in step.get("uses", "")
+        )
+        assert producer["with"]["name"] == consumer["with"]["name"]
+
+
+def test_pypi_pending_publishers_have_distinct_package_identities():
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/publish-pypi.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    publishers = {name: job for name, job in document["jobs"].items() if name.startswith("publish")}
+    assert set(publishers) == {"publish-core", "publish-cli"}
+    core, cli = publishers["publish-core"], publishers["publish-cli"]
+    assert core["environment"]["name"] == "pypi"
+    assert cli["environment"]["name"] == "pypi-cli"
+    assert cli["needs"] == ["build", "publish-core"]
+    for package, job in (("wenyi_core", core), ("wenyi_cli", cli)):
+        uploads = [step["run"] for step in job["steps"] if "uv publish" in step.get("run", "")]
+        assert len(uploads) == 1
+        assert uploads[0].count("uv publish") == 1
+        assert f"dist/pypi/{package}-*" in uploads[0]

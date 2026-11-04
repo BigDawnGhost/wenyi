@@ -50,11 +50,12 @@ workflow targets `main` and still requires explicit landing authorization.
 
 Create version tags such as `v1.2.8` or `v1.2.8rc1` at a verified commit on
 `main`, then publish the GitHub Release for that tag. Publishing the release
-triggers CLI/Desktop packaging and asset uploads. Merging a PR or pushing a tag
-alone does not publish installers; manual workflow dispatch remains available
-for build validation. Fixes follow the same branch → PR → `main` path and can
-then be released with a new tag. Do not move an existing release tag or maintain
-a separate long-lived hotfix branch.
+triggers CLI/Desktop packaging and asset uploads, plus CLI/Core publication to
+PyPI once [Trusted Publishing is configured](docs/publishing.md). Merging a PR or
+pushing a tag alone does not publish installers or PyPI packages; manual workflow
+dispatch remains available for build validation. Fixes follow the same branch →
+PR → `main` path and can then be released with a new tag. Do not move an existing
+release tag or maintain a separate long-lived hotfix branch.
 
 ### Repository settings and migration
 

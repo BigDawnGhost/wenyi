@@ -1,5 +1,7 @@
 """Default PDF export follows persisted BabelDOC metadata and snapshot boundaries."""
 
+import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -82,6 +84,37 @@ def pdf_project(tmp_path, monkeypatch):
 
     monkeypatch.setattr("wenyi_core.pdf_bridge.BabeldocBridgeClient.fillback", fillback)
     return config, source, requests
+
+
+def test_machine_receipts_cover_real_pdf_workflow_and_resume(pdf_project, tmp_path):
+    _, source, requests = pdf_project
+    progress, receipt = tmp_path / "progress.json", tmp_path / "result.json"
+    previous_id = None
+    for _ in range(2):
+        response = CliRunner().invoke(
+            app,
+            [
+                "translate",
+                str(source),
+                "--progress-json",
+                str(progress),
+                "--result-json",
+                str(receipt),
+            ],
+        )
+        assert response.exit_code == 0, response.output
+        result = json.loads(receipt.read_text())
+        snapshot = json.loads(progress.read_text())
+        assert result["status"] == snapshot["status"] == "success"
+        assert result["run_id"] == snapshot["run_id"] != previous_id
+        assert result["source_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+        output = Path(result["outputs"][0]["path"])
+        assert output.read_bytes() == b"%PDF-1.4 offline fillback"
+        assert result["outputs"][0]["sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()
+        assert Path(result["state_dir"]).is_dir()
+        previous_id = result["run_id"]
+    assert len(requests) == 2
+    assert all(request[:2] == ("offline-session", {"0:0": "译0"}) for request in requests)
 
 
 @pytest.mark.parametrize("command", ["translate", "assemble"])
