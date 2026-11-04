@@ -16,7 +16,7 @@ builds and retain the distributions as Actions artifacts.
 ### GitHub environment
 
 In [the Wenyi repository environments](https://github.com/BigDawnGhost/wenyi/settings/environments),
-create an environment named **`pypi`**.
+create **`pypi`** for Core and **`pypi-cli`** for CLI.
 
 - No PyPI token or repository secret is required.
 - For fully automatic release uploads, do not require a manual environment review.
@@ -36,12 +36,15 @@ For packages that do not yet exist, add **two pending publishers**:
 | Owner | `BigDawnGhost` | `BigDawnGhost` |
 | Repository name | `wenyi` | `wenyi` |
 | Workflow name | `publish-pypi.yml` | `publish-pypi.yml` |
-| Environment name | `pypi` | `pypi` |
+| Environment name | `pypi` | `pypi-cli` |
 
 Use the workflow **filename**, not its display name or full `.github/workflows/`
 path. Both packages need their own publisher even though one workflow publishes
-them. The first successful upload creates each project and converts its pending
-publisher into a normal publisher. Pending publishers do not reserve names.
+them. The environment names must differ: PyPI does not allow two pending projects
+to share the same owner/repository/workflow/environment identity. Keep an already
+registered Core publisher on `pypi`; use `pypi-cli` for the CLI publisher and its
+GitHub environment. The first successful upload creates each project and converts
+its pending publisher into a normal publisher. Pending publishers do not reserve names.
 For a project you already own, configure the same fields under its
 **Manage → Publishing** page instead.
 
@@ -62,7 +65,7 @@ Do not add it as a dependency of the MIT CLI/Core packages.
 4. In **Releases → Draft a new release**, select that tag and publish the release.
    Saving a draft does not trigger an upload. A prerelease tag should also be
    marked as a GitHub prerelease.
-5. Open the resulting Actions run. Both `build` and `publish` must succeed.
+5. Open the resulting Actions run. `build`, `publish-core`, and `publish-cli` must succeed.
    The existing CLI/Desktop binary workflows run separately.
 
 The build job checks tag/checkout/version consistency, packaging contracts,
@@ -71,10 +74,11 @@ the wheels and source distributions into separate clean Python 3.12 environments
 checks installed versions and dependency isolation, and runs CLI help/version/
 language-list smoke tests. These checks do not call a model or translate a PDF.
 
-Only the separate `publish` job receives `id-token: write`. It downloads the
-verified artifacts without checking out or executing repository build code, then
-uses Trusted Publishing to upload Core before CLI. Fork releases cannot use this
-repository's publish job.
+Only the separate `publish-core` and `publish-cli` jobs receive `id-token: write`.
+Each downloads the verified artifacts without checking out or executing
+repository build code, then uses its package-specific environment identity to
+upload exactly one package. CLI waits for Core to finish successfully. Fork
+releases cannot use this repository's publish jobs.
 
 ## Verify and recover
 
@@ -92,6 +96,9 @@ and `Scripts/wenyi.exe` instead of `bin/python` and `bin/wenyi`.
 
 - **Trusted Publisher rejected:** check all five fields, especially the
   environment and workflow filename. Configure both PyPI projects.
+- **Pending publisher already registered for a different project name:** keep
+  Core on `pypi` and register CLI with `pypi-cli`; create the matching GitHub
+  environment too. Do not delete the valid Core registration.
 - **Environment waiting:** approve the deployment or adjust its review/tag rules.
 - **Tag/version mismatch:** create a correctly versioned new release; do not move
   an already published tag or use a version override to hide the mismatch.

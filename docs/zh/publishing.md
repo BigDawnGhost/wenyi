@@ -14,7 +14,7 @@
 ### GitHub 环境
 
 在 [Wenyi 仓库环境设置](https://github.com/BigDawnGhost/wenyi/settings/environments)
-创建名为 **`pypi`** 的环境。
+分别创建 Core 使用的 **`pypi`** 和 CLI 使用的 **`pypi-cli`** 环境。
 
 - 不需要 PyPI Token，也不需要添加仓库 Secret。
 - 如果希望发布 Release 后全自动上传，不要启用环境人工审批；若配置了审批人，
@@ -34,10 +34,13 @@
 | Owner | `BigDawnGhost` | `BigDawnGhost` |
 | Repository name | `wenyi` | `wenyi` |
 | Workflow name | `publish-pypi.yml` | `publish-pypi.yml` |
-| Environment name | `pypi` | `pypi` |
+| Environment name | `pypi` | `pypi-cli` |
 
 Workflow name 填工作流的**文件名**，不是显示名称，也不带 `.github/workflows/` 路径。
-即使由同一个工作流上传，也需要为两个包分别配置。首次成功上传时，PyPI 自动创建项目，
+即使由同一个工作流上传，也需要为两个包分别配置，且环境名必须不同：
+PyPI 不允许两个待定项目共用完全相同的 Owner、仓库、工作流、环境身份。
+已经注册的 Core 保留 `pypi`，CLI 的发布者和 GitHub 环境使用 `pypi-cli`。
+首次成功上传时，PyPI 自动创建项目，
 并把待定发布者转换成正式发布者；待定发布者不会提前占用包名。
 如果项目已经存在且由你管理，则到项目的 **Manage → Publishing** 添加相同配置。
 
@@ -55,16 +58,16 @@ Workflow name 填工作流的**文件名**，不是显示名称，也不带 `.gi
    填入已存在的标签，验证构建；这一步不会上传。
 4. 打开 **Releases → Draft a new release**，选择该标签，发布 Release。
    只保存草稿不会触发上传；预发布标签也应在 GitHub 标记为预发布。
-5. 打开对应 Actions 运行，确认 `build` 和 `publish` 都成功。
+5. 打开对应 Actions 运行，确认 `build`、`publish-core` 和 `publish-cli` 都成功。
    现有 CLI/Desktop 可执行文件打包工作流仍独立运行。
 
 构建作业会检查标签、检出提交和版本一致性、打包契约、严格分发元数据，以及语言和提示词
 资源。随后分别将 wheel 与源码分发包安装到干净的 Python 3.12 环境，检查安装版本和
 依赖隔离，并执行 CLI 帮助、版本及语言列表冒烟。这些检查不调用模型，也不翻译 PDF。
 
-只有独立的 `publish` 作业获得 `id-token: write`。它下载已经验证的产物，不检出或执行
-仓库构建代码，再通过可信发布先上传 Core、后上传 CLI。Fork 的 Release 不会执行本仓库
-的上传作业。
+只有独立的 `publish-core` 和 `publish-cli` 作业获得 `id-token: write`。
+每个作业下载已经验证的产物，不检出或执行仓库构建代码，通过各自的环境身份只上传对应包。
+CLI 必须等 Core 上传成功后再执行。Fork 的 Release 不会执行本仓库的上传作业。
 
 ## 发布后验证与恢复
 
@@ -82,6 +85,8 @@ uv pip install --python .venv-pypi-verify/bin/python "wenyi-cli==1.4.2"
 
 - **可信发布者被拒绝：**核对表格的五个字段，尤其是环境名和工作流文件名；
   两个 PyPI 项目都要配置。
+- **提示待定发布者已注册给另一个项目名：**Core 保留 `pypi`，CLI 改用 `pypi-cli`，
+  并在 GitHub 创建对应环境；不要删除有效的 Core 注册。
 - **环境等待审批：**批准部署，或调整环境的审批和标签规则。
 - **标签与版本不符：**创建版本正确的新 Release；不要移动已发布标签，不用版本覆盖掩盖问题。
 - **部分上传或网络失败：**点击 **Re-run failed jobs**。显式 PyPI 检查地址让 uv 跳过

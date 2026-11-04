@@ -105,13 +105,34 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  publish:
+  publish-core:
     if: github.event_name == 'release' && github.repository == 'BigDawnGhost/wenyi'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
       name: pypi
+      url: https://pypi.org/project/wenyi-core/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-distributions
+          path: dist/pypi/
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          version: "0.13.7"
+      - name: Publish Core
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/ dist/pypi/wenyi_core-*
+
+  publish-cli:
+    if: github.event_name == 'release' && github.repository == 'BigDawnGhost/wenyi'
+    needs: [build, publish-core]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: pypi-cli
       url: https://pypi.org/project/wenyi-cli/
     permissions:
       id-token: write
@@ -123,7 +144,5 @@ jobs:
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           version: "0.13.7"
-      - name: Publish Core before CLI
-        run: |
-          uv publish --trusted-publishing always --check-url https://pypi.org/simple/ dist/pypi/wenyi_core-*
-          uv publish --trusted-publishing always --check-url https://pypi.org/simple/ dist/pypi/wenyi_cli-*
+      - name: Publish CLI
+        run: uv publish --trusted-publishing always --check-url https://pypi.org/simple/ dist/pypi/wenyi_cli-*

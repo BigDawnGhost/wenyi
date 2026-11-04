@@ -489,23 +489,45 @@ def test_pypi_workflow_only_publishes_verified_release_artifacts():
     assert '"$environment/bin/wenyi" languages' in commands
     assert "uv publish" not in commands
 
-    publish = document["jobs"]["publish"]
-    assert publish["if"] == (
-        "github.event_name == 'release' && github.repository == 'BigDawnGhost/wenyi'"
-    )
-    assert publish["needs"] == "build"
-    assert publish["environment"]["name"] == "pypi"
-    assert publish["permissions"] == {"id-token": "write"}
-    assert not any("actions/checkout@" in step.get("uses", "") for step in publish["steps"])
-    upload = next(step["run"] for step in publish["steps"] if "uv publish" in step.get("run", ""))
-    assert upload.index("wenyi_core-*") < upload.index("wenyi_cli-*")
-    assert upload.count("--trusted-publishing always") == 2
-    assert upload.count("--check-url https://pypi.org/simple/") == 2
+    assert document["jobs"]["publish-core"]["needs"] == "build"
     assert "secrets." not in str(document)
     producer = next(
         step for step in build["steps"] if "actions/upload-artifact@" in step.get("uses", "")
     )
-    consumer = next(
-        step for step in publish["steps"] if "actions/download-artifact@" in step.get("uses", "")
+    for job in ("publish-core", "publish-cli"):
+        publish = document["jobs"][job]
+        assert publish["if"] == (
+            "github.event_name == 'release' && github.repository == 'BigDawnGhost/wenyi'"
+        )
+        assert publish["permissions"] == {"id-token": "write"}
+        assert not any("actions/checkout@" in step.get("uses", "") for step in publish["steps"])
+        upload = next(
+            step["run"] for step in publish["steps"] if "uv publish" in step.get("run", "")
+        )
+        assert "--trusted-publishing always" in upload
+        assert "--check-url https://pypi.org/simple/" in upload
+        consumer = next(
+            step
+            for step in publish["steps"]
+            if "actions/download-artifact@" in step.get("uses", "")
+        )
+        assert producer["with"]["name"] == consumer["with"]["name"]
+
+
+def test_pypi_pending_publishers_have_distinct_package_identities():
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/publish-pypi.yml").read_text(), Loader=yaml.BaseLoader
     )
-    assert producer["with"]["name"] == consumer["with"]["name"]
+    publishers = {name: job for name, job in document["jobs"].items() if name.startswith("publish")}
+    assert set(publishers) == {"publish-core", "publish-cli"}
+    core, cli = publishers["publish-core"], publishers["publish-cli"]
+    assert core["environment"]["name"] == "pypi"
+    assert cli["environment"]["name"] == "pypi-cli"
+    assert cli["needs"] == ["build", "publish-core"]
+    for package, job in (("wenyi_core", core), ("wenyi_cli", cli)):
+        uploads = [step["run"] for step in job["steps"] if "uv publish" in step.get("run", "")]
+        assert len(uploads) == 1
+        assert uploads[0].count("uv publish") == 1
+        assert f"dist/pypi/{package}-*" in uploads[0]
