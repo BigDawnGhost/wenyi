@@ -79,6 +79,28 @@ When migrating existing work:
    Changing this policy alone does not authorize merging PRs, changing remote
    settings, or deleting branches.
 
+## Run the CLI from source
+
+For development, use Python 3.10+ and [uv](https://docs.astral.sh/uv/) in a repository
+checkout. To use a released version without a checkout, follow the
+[CLI installation guide](docs/cli.md#installation-and-first-run) instead.
+
+From the repository root:
+
+```bash
+uv sync --locked
+uv run wenyi --version
+uv run wenyi models list
+```
+
+The default workspace installs the local CLI and Core packages. Use `uv run wenyi ...`
+for CLI commands from this checkout. For the complete Python workspace, including
+the backend and apps, use the development setup below.
+
+Python package versions come from the repository's Git tags: tagged builds show the
+release version; development builds include their commit distance and hash.
+Release automation is documented in [Python package publishing](docs/publishing.md).
+
 ## Python regression tests
 
 Keep each rule at its owning layer: Core tests cover domain rules and persistence/resume invariants; shared backend tests cover platform-neutral application and HTTP contracts; API/Desktop tests cover adapter wiring, platform storage, queues, and native file safety. Orchestrator tests should retain cross-service workflows rather than duplicate lower-level service matrices. Share fixtures through `conftest.py` and helpers through support modules, not imports from other `test_*` modules.

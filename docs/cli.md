@@ -6,53 +6,73 @@ For the React/Vite + FastAPI stack, see [Web deployment](web.md).
 
 ## Installation and first run
 
-Running from source requires Python 3.10+ and [uv](https://docs.astral.sh/uv/).
+### 1. Install from PyPI
+
+Install the published [wenyi-cli](https://pypi.org/project/wenyi-cli/) package with
+Python 3.10+ and [uv](https://docs.astral.sh/uv/). No repository checkout is needed:
 
 ```bash
-uv sync
-export DEEPSEEK_API_KEY=sk-...
-uv run wenyi --version
-uv run wenyi translate book.epub
+uv tool install wenyi-cli
+wenyi --version
 ```
 
-From the repository root, `uv sync` installs the local CLI (`wenyi-cli`) and translation
-engine (`wenyi-core`). The command is `wenyi`; `python -m wenyi_cli` is the
-module entry point. To develop the complete Python workspace, including the Web API,
-use `uv sync --locked --all-packages --group dev`.
+If `wenyi` is not found, run `uv tool update-shell` and open a new terminal.
+Upgrade later with `uv tool upgrade wenyi-cli`.
 
-When upgrading from a checkout that used `trans-novel`, run `uv sync --locked` to
-refresh the installed command, then use `uv run wenyi ...`. The old command is no
-longer installed.
+Alternatively, install into an active virtual environment with
+`uv pip install wenyi-cli`; that environment also supports `python -m wenyi_cli`.
+For development from a checkout, see [Run the CLI from source](../CONTRIBUTING.md#run-the-cli-from-source).
 
-The displayed version is generated from the repository's Git tags. Tagged builds show the
-release version; development builds include their commit distance and hash.
-CLI, Core and API packages use this same version source; OpenAPI reads the installed API
-package version. The virtual workspace root and private frontend packages do not maintain
-separate release versions.
+### 2. Review the configuration
 
-Published PyPI releases can be installed with `uv pip install wenyi-cli` inside
-a virtual environment, or `uv tool install wenyi-cli` for an isolated command.
-Core is installed automatically; BabelDOC is not. See [Python package publishing](publishing.md)
-for release automation and first-time PyPI setup.
+In the directory where you want to work, run:
 
-Whenever the program starts, it checks for `config.yaml` in the current directory and creates a documented default file when it is missing. Review the model settings before starting a real translation.
+```bash
+wenyi models list
+```
+
+This previews the configured models without making a model request and creates a
+documented `config.yaml` in the current directory if it is missing. Review the
+providers, models, source/target languages, and pipeline options before translating;
+see [Configuration](configuration.md).
 
 API keys are read only from environment variables. Supply them in your local process environment, or load them into that environment from a private key file outside the shared workspace/session. Do not put real keys in configuration, shared files, or conversations. The CLI does not automatically load a repository-root `.env` file. Key values in examples are placeholders, not credentials.
+
+### 3. Translate a book
+
+For the default DeepSeek provider, set your key and start translation in a
+Linux/macOS shell:
+
+```bash
+export DEEPSEEK_API_KEY="YOUR_DEEPSEEK_API_KEY"
+wenyi translate book.epub
+```
+
+In Windows PowerShell:
+
+```powershell
+$env:DEEPSEEK_API_KEY = "YOUR_DEEPSEEK_API_KEY"
+wenyi translate .\book.epub
+```
+
+The examples below use the installed `wenyi` command. Standalone executables are
+also available for [Windows](#windows), [Linux](#linux), and [macOS](#macos).
+These do not require a separate Python installation.
 
 ## Inspect model routing
 
 ```bash
-uv run wenyi models list
-uv run wenyi models explain --operation review.fix
-uv run wenyi models check --for translate
-uv run wenyi models ping --for translate
+wenyi models list
+wenyi models explain --operation review.fix
+wenyi models check --for translate
+wenyi models ping --for translate
 ```
 
 The first three commands preview routes and check credentials locally without requests. `models ping` sends one short live request per reachable model profile to confirm the endpoint, key and model name work; it uses a few tokens. Keep the three default tiers or select models independently through `llm.routes`. See [configuration](configuration.md#models-and-operation-routing) for explicit config/usage conversion and budgets.
 
 ## Multilingual translation (experimental)
 
-Run `uv run wenyi languages` to list built-in languages. Use this fragment in your configuration, retaining your existing model settings, for direct Chinese-to-English translation:
+Run `wenyi languages` to list built-in languages. Use this fragment in your configuration, retaining your existing model settings, for direct Chinese-to-English translation:
 
 ```yaml
 language:
@@ -61,7 +81,7 @@ language:
 ```
 
 ```bash
-uv run wenyi --config config.yaml translate book.epub --bilingual
+wenyi --config config.yaml translate book.epub --bilingual
 ```
 
 Outputs are `output/book.en.epub` and `output/book.en-bi.epub`. For Japanese-to-English use `source: ja`, `target: en`; for English-to-Japanese use `source: en`, `target: ja`. A reverse run takes a file in the corresponding source language; each run selects one direction. Explicit `--out` names and their `-bi` derivatives retain their existing behavior.
@@ -163,9 +183,7 @@ publishing attachments. A killed process can leave `running` behind; progress
 files alone are not proof that a process is still alive. Receipts and paths may
 identify private documents; do not share them without review.
 
-### Experimental PDF support
-
-PDF input and PDF output are both experimental.
+### PDF support
 
 #### PDF input
 
@@ -201,7 +219,7 @@ The first MinerU PDF import requires `MINERU_API_KEY`:
 
 ```bash
 export MINERU_API_KEY=...
-uv run wenyi translate book.pdf
+wenyi translate book.pdf
 ```
 
 MinerU's converted HTML is saved at
@@ -219,7 +237,7 @@ export fallback does not change saved translations. No local PDF rendering
 dependencies or engine selection are needed:
 
 ```bash
-uv run wenyi assemble book.pdf --format pdf
+wenyi assemble book.pdf --format pdf
 ```
 
 MinerU projects and other book inputs cannot export PDF; use EPUB, DOCX or HTML
@@ -252,16 +270,16 @@ setting does not convert an existing project into BabelDOC state.
 - Default: `output/<stem>.zh.docx` (Navigation pane via heading outline). Override with `--format epub` (etc.).
 
 ```bash
-uv run wenyi translate book.docx
-uv run wenyi translate book.docx --bilingual
-uv run wenyi translate book.docx --format epub
+wenyi translate book.docx
+wenyi translate book.docx --bilingual
+wenyi translate book.docx --format epub
 ```
 
 ## Usage and event logs
 
 Each target directory stores cumulative token usage in `usage.json` and appends stage events and retries to `events.jsonl`. Review directories also record session usage; each increment is merged into the cumulative ledger once.
 
-Use `uv run wenyi inspect-run book.epub` to read a summary of the saved events,
+Use `wenyi inspect-run book.epub` to read a summary of the saved events,
 timing and cumulative usage for the selected target, without calling a model.
 Its `Tokens: in / out / cache read` values come from `prompt_tokens`,
 `completion_tokens` and `cache_hit_tokens` respectively; these are target-ledger
@@ -329,22 +347,22 @@ Manifests bind input content with `source_sha256`. A different file with the sam
 
 ```bash
 # Parse and list the source chapters without model calls
-uv run wenyi parse book.epub
+wenyi parse book.epub
 
 # Run the complete workflow, translate one chapter, or prepare without translating
-uv run wenyi translate book.epub
-uv run wenyi translate book.epub --chapter 3
-uv run wenyi translate book.epub --format txt
-uv run wenyi prepare book.epub
-uv run wenyi translate book.pdf
+wenyi translate book.epub
+wenyi translate book.epub --chapter 3
+wenyi translate book.epub --format txt
+wenyi prepare book.epub
+wenyi translate book.pdf
 
 # Override polishing and final review settings
-uv run wenyi translate book.epub --polish --review
-uv run wenyi translate book.epub --no-polish --no-review
+wenyi translate book.epub --polish --review
+wenyi translate book.epub --no-polish --no-review
 
 # Produce both editions, or only the bilingual edition
-uv run wenyi translate book.epub --bilingual
-uv run wenyi translate book.epub --no-mono --bilingual
+wenyi translate book.epub --bilingual
+wenyi translate book.epub --no-mono --bilingual
 ```
 
 `parse` lists zero-based chapter indices, source titles and paragraph counts, and saves the source document in `parsed_document.json` under the printed target-language state directory. It does not require LLM credentials, detect language with a model, generate digests/style/terms, or mark translation state initialized. `language.source: auto` remains unresolved until preparation. PDF parsing still needs the configured MinerU/BabelDOC service.
@@ -362,7 +380,7 @@ fixed for that project and does not appear as an option in global or project set
 Create another project to use a different mode. For CLI, use:
 
 ```bash
-uv run wenyi translate book.epub --translation-mode best_of_three --polish
+wenyi translate book.epub --translation-mode best_of_three --polish
 ```
 
 The equivalent configuration is `pipeline.translation_mode: best_of_three`
@@ -391,10 +409,10 @@ pipeline:
 ```
 
 ```bash
-uv run wenyi --config config.yaml models explain --operation terminology.evidence
-uv run wenyi --config config.yaml models check --for translate
-uv run wenyi --config config.yaml prepare book.epub
-uv run wenyi --config config.yaml translate book.epub
+wenyi --config config.yaml models explain --operation terminology.evidence
+wenyi --config config.yaml models check --for translate
+wenyi --config config.yaml prepare book.epub
+wenyi --config config.yaml translate book.epub
 ```
 
 `terminology_context` checks only person entries (`type: person`) discovered before and after translation against all matching whole-book source groups, and adds bounded, relevant read-only notes to translation, polishing, Review, and Fixer requests. Pretranslation discovery is person-only; other types retain ordinary posttranslation extraction and conflict handling without whole-book evidence or merge calls. It keeps the full glossary mappings, preserves existing person translations and protected manual fields, and records differing translations as conflicts. Existing notes are not deleted. `prepare` analyzes style and character voices but does not extract or seed glossary entries; evidence work begins with pending translation batches.
@@ -410,8 +428,8 @@ The `terminology.discover`, `terminology.evidence`, and `terminology.merge` oper
 Every completed batch is written to the state directory. To resume after an interruption, run the same source file again:
 
 ```bash
-uv run wenyi translate book.epub
-uv run wenyi status book.epub
+wenyi translate book.epub
+wenyi status book.epub
 ```
 
 Changing polishing settings does not automatically rerun translation batches that
@@ -428,12 +446,12 @@ Chapter digests now cover the complete source in chunks. Their v2 source-hash an
 ## Independent stages and glossary management
 
 ```bash
-uv run wenyi review book.epub
-uv run wenyi review book.epub --autofix
-uv run wenyi glossary list book.epub
-uv run wenyi glossary conflicts book.epub
-uv run wenyi glossary resolve book.epub "source term" "chosen translation"
-uv run wenyi assemble book.epub
+wenyi review book.epub
+wenyi review book.epub --autofix
+wenyi glossary list book.epub
+wenyi glossary conflicts book.epub
+wenyi glossary resolve book.epub "source term" "chosen translation"
+wenyi assemble book.epub
 ```
 
 The project summary report and `wenyi report` command have been removed. Translation

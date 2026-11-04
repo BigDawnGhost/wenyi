@@ -6,48 +6,70 @@ Web（React/Vite + FastAPI）部署与开发见 [Web 部署](web.md)。
 
 ## 安装与运行
 
-从源码运行需要 Python 3.10+ 与 [uv](https://docs.astral.sh/uv/)。
+### 1. 从 PyPI 安装
+
+使用 Python 3.10+ 和 [uv](https://docs.astral.sh/uv/) 安装已发布的
+[wenyi-cli](https://pypi.org/project/wenyi-cli/) 包，无需拉取源码：
 
 ```bash
-uv sync
-export DEEPSEEK_API_KEY=sk-...
-uv run wenyi --version
-uv run wenyi translate book.epub
+uv tool install wenyi-cli
+wenyi --version
 ```
 
-在仓库根目录执行 `uv sync` 会安装本地 CLI（`wenyi-cli`）和翻译内核（`wenyi-core`）。
-命令为 `wenyi`，模块入口为 `python -m wenyi_cli`。开发包含 Web API 的完整 Python
-工作区时，使用 `uv sync --locked --all-packages --group dev`。
+如果找不到 `wenyi` 命令，运行 `uv tool update-shell` 后重新打开终端。
+后续使用 `uv tool upgrade wenyi-cli` 升级。
 
-从使用 `trans-novel` 的旧版工作区升级时，执行 `uv sync --locked` 刷新已安装命令，
-之后使用 `uv run wenyi ...`。安装时不再提供旧命令。
+也可以在已激活的虚拟环境中执行 `uv pip install wenyi-cli`；
+该环境中还可使用 `python -m wenyi_cli`。
+需要从源码开发时，参见[从源码运行 CLI](CONTRIBUTING.md#从源码运行-cli)。
 
-显示的版本号由仓库 Git 标签自动生成：标签构建显示正式版本，开发构建还会包含距标签的提交数与提交哈希。
-CLI、Core 与 API 包使用同一版本来源，OpenAPI 读取已安装 API 包的版本。
-根虚拟工作区和私有前端包不维护独立发布版本。
+### 2. 检查配置
 
-PyPI 版本发布后，可在虚拟环境中执行 `uv pip install wenyi-cli`，或通过
-`uv tool install wenyi-cli` 安装隔离的命令行工具。Core 会自动安装，不会安装 BabelDOC。
-自动发布和首次 PyPI 配置见[Python 包发布指南](publishing.md)。
+在准备使用的工作目录中运行：
 
-每次启动程序都会检查当前目录的 `config.yaml`；文件不存在时会创建一份带注释的默认配置。开始正式翻译前请检查模型配置。
+```bash
+wenyi models list
+```
+
+该命令只预览模型配置，不发送模型请求；若当前目录没有 `config.yaml`，
+会创建一份带注释的默认配置。翻译前请检查提供商、模型、源／目标语言和流水线选项，
+详见[配置说明](configuration.md)。
 
 API Key 只从环境变量读取。请在本机进程环境中设置，或从共享工作区／会话之外的私有密钥文件加载到环境；不要把真实密钥写入配置、共享文件或对话。CLI 不会自动加载仓库根目录的 `.env` 文件。下方密钥值均为占位符，不是真实凭据。
+
+### 3. 翻译书籍
+
+默认使用 DeepSeek，在 Linux/macOS Shell 中设置密钥并开始翻译：
+
+```bash
+export DEEPSEEK_API_KEY="YOUR_DEEPSEEK_API_KEY"
+wenyi translate book.epub
+```
+
+Windows PowerShell：
+
+```powershell
+$env:DEEPSEEK_API_KEY = "YOUR_DEEPSEEK_API_KEY"
+wenyi translate .\book.epub
+```
+
+下文示例直接使用已安装的 `wenyi` 命令。[Windows](#windows)、[Linux](#linux)
+和 [macOS](#macos) 也提供独立可执行文件，无需另装 Python。
 
 ## 检查模型路由
 
 ```bash
-uv run wenyi models list
-uv run wenyi models explain --operation review.fix
-uv run wenyi models check --for translate
-uv run wenyi models ping --for translate
+wenyi models list
+wenyi models explain --operation review.fix
+wenyi models check --for translate
+wenyi models ping --for translate
 ```
 
 前三个命令只做本地预览与密钥检查，不发送请求。`models ping` 会对每个可达模型配置发送一次简短的真实请求，确认端点、密钥与模型名可用，会消耗少量 token。三个档位仍可作为默认入口；在 `llm.routes` 中独立配置操作即可混用模型。旧配置与用量账本的显式转换及预算设置见[配置说明](configuration.md#模型与操作路由)。
 
 ## 多语言互译（实验性）
 
-先运行 `uv run wenyi languages` 查看内置语言。将以下片段写入自己的配置文件（模型配置沿用已有设置），即可直接中译英：
+先运行 `wenyi languages` 查看内置语言。将以下片段写入自己的配置文件（模型配置沿用已有设置），即可直接中译英：
 
 ```yaml
 language:
@@ -56,7 +78,7 @@ language:
 ```
 
 ```bash
-uv run wenyi --config config.yaml translate book.epub --bilingual
+wenyi --config config.yaml translate book.epub --bilingual
 ```
 
 输出为 `output/book.en.epub` 和 `output/book.en-bi.epub`。日译英改为 `source: ja`、`target: en`；英译日用 `source: en`、`target: ja`。反向翻译以对应语言的文件为输入，每次选择一个方向。`--out` 仍遵循显式命名及 `-bi` 派生规则。
@@ -151,9 +173,7 @@ notarization。macOS 仍可能隔离下载的程序；确认校验和无误后�
 运行身份及文件哈希。进程被强制终止时可能留下 `running`，不能仅凭进度文件判断存活。
 回执和路径可能透露私有文档信息，分享前请检查。
 
-### 实验性 PDF 支持
-
-PDF 输入和 PDF 导出目前均属于实验性支持。
+### PDF 支持
 
 #### PDF 输入
 
@@ -169,7 +189,7 @@ pipeline:
   # babeldoc_pages: "15"   # 可选，1-based
 ```
 
-3. `uv run wenyi translate book.pdf` 会自动经 bridge `/fillback` 导出 PDF。之后执行 `assemble book.pdf` 也会根据已保存的 BabelDOC 状态默认导出 PDF，无需指定 `--format pdf`；需要其它格式时显式指定 `--format`。
+3. `wenyi translate book.pdf` 会自动经 bridge `/fillback` 导出 PDF。之后执行 `assemble book.pdf` 也会根据已保存的 BabelDOC 状态默认导出 PDF，无需指定 `--format pdf`；需要其它格式时显式指定 `--format`。
    回填 PDF 默认不绘制 BabelDOC 的版面定位框，也不输出 plain text / title 等角色标签。  
    bridge 会把抽取后的原始 IL 冻结为持久 session 快照；只要保留 session 目录并使用完全
    相同的 Python/BabelDOC 版本，服务重启后可按原 session ID 懒恢复，不会重跑版面识别。
@@ -184,7 +204,7 @@ BabelDOC 只适合带可提取文本层的 PDF。选择该后端时，Wenyi 会�
 
 ```bash
 export MINERU_API_KEY=...
-uv run wenyi translate book.pdf
+wenyi translate book.pdf
 ```
 
 MinerU 转换生成的 HTML 会保存到
@@ -200,7 +220,7 @@ PDF 导出仅支持由 BabelDOC 解析的项目，通过外部 bridge 的 `/fill
 无需安装本地 PDF 渲染依赖或选择引擎：
 
 ```bash
-uv run wenyi assemble book.pdf --format pdf
+wenyi assemble book.pdf --format pdf
 ```
 
 MinerU 项目及其他书籍输入不再支持导出 PDF，请使用 EPUB、DOCX 或 HTML。
@@ -232,16 +252,16 @@ CLI、Web、Desktop 使用同一规则；修改当前解析器设置不会将已
 - 默认：`output/<stem>.zh.docx`（标题大纲可供 Word 导航窗格）。可用 `--format epub` 等覆盖。
 
 ```bash
-uv run wenyi translate book.docx
-uv run wenyi translate book.docx --bilingual
-uv run wenyi translate book.docx --format epub
+wenyi translate book.docx
+wenyi translate book.docx --bilingual
+wenyi translate book.docx --format epub
 ```
 
 ## 用量与事件日志
 
 每个目标目录的 `usage.json` 保存跨续跑累计的 token 用量，`events.jsonl` 追加记录阶段事件与重试。Review 目录另存本次审校用量，其增量只合并到总账一次。
 
-使用 `uv run wenyi inspect-run book.epub` 可只读查看所选目标已保存的事件、耗时和
+使用 `wenyi inspect-run book.epub` 可只读查看所选目标已保存的事件、耗时和
 累计用量摘要，不调用模型。`Tokens: in / out / cache read` 分别取自
 `prompt_tokens`、`completion_tokens` 和 `cache_hit_tokens`，是跨续跑的目标账本总量，
 并非仅上一次命令的用量。摘要只能展示事件日志中实际记录的失败和重试。
@@ -295,22 +315,22 @@ manifest 通过 `source_sha256` 绑定输入内容。同名文件内容不同或
 
 ```bash
 # Parse and list the source chapters without model calls
-uv run wenyi parse book.epub
+wenyi parse book.epub
 
-# 一键完整翻译、只翻指定章节，或只准备而不翻译
-uv run wenyi translate book.epub
-uv run wenyi translate book.epub --chapter 3
-uv run wenyi translate book.epub --format txt
-uv run wenyi prepare book.epub
-uv run wenyi translate book.pdf
+# Run the complete workflow, translate one chapter, or prepare without translating
+wenyi translate book.epub
+wenyi translate book.epub --chapter 3
+wenyi translate book.epub --format txt
+wenyi prepare book.epub
+wenyi translate book.pdf
 
-# 覆盖配置中的润色与最终审校开关
-uv run wenyi translate book.epub --polish --review
-uv run wenyi translate book.epub --no-polish --no-review
+# Override polishing and final review settings
+wenyi translate book.epub --polish --review
+wenyi translate book.epub --no-polish --no-review
 
-# 同时生成单语和双语版 / 仅生成双语版
-uv run wenyi translate book.epub --bilingual
-uv run wenyi translate book.epub --no-mono --bilingual
+# Produce both editions, or only the bilingual edition
+wenyi translate book.epub --bilingual
+wenyi translate book.epub --no-mono --bilingual
 ```
 
 `parse` 列出从零开始的章节编号、原文标题与段落数，并将完整解析原文保存到所显示目标语言状态目录的 `parsed_document.json`。它不需要 LLM 凭据，不调用模型识别语言，不生成梗概、风格或术语，也不把翻译状态标记为初始化成功。`language.source: auto` 留到预处理时识别。PDF 解析仍需要配置的 MinerU/BabelDOC 服务。
@@ -327,7 +347,7 @@ uv run wenyi translate book.epub --no-mono --bilingual
 更换翻译方式需创建新项目。CLI 执行：
 
 ```bash
-uv run wenyi translate book.epub --translation-mode best_of_three --polish
+wenyi translate book.epub --translation-mode best_of_three --polish
 ```
 
 等价配置为 `pipeline.translation_mode: best_of_three` 与
@@ -352,10 +372,10 @@ pipeline:
 ```
 
 ```bash
-uv run wenyi --config config.yaml models explain --operation terminology.evidence
-uv run wenyi --config config.yaml models check --for translate
-uv run wenyi --config config.yaml prepare book.epub
-uv run wenyi --config config.yaml translate book.epub
+wenyi --config config.yaml models explain --operation terminology.evidence
+wenyi --config config.yaml models check --for translate
+wenyi --config config.yaml prepare book.epub
+wenyi --config config.yaml translate book.epub
 ```
 
 `terminology_context` 仅对译前发现和译后补漏候选中的人物条目（`type: person`），检查全书所有匹配原文组的证据，并向翻译、润色、Review 和 Fixer 请求补充有界、相关的只读备注。译前发现仅处理人物；其他类型保留常规译后抽取和冲突处理，不调用全书取证或合并。全量术语映射不变，既有人物译名和受保护的人工字段保留，不同译名建议记录为冲突，不删除已有备注。`prepare` 只分析风格与人物语气，不抽取或建立术语；取证从待译批次开始。
@@ -371,8 +391,8 @@ uv run wenyi --config config.yaml translate book.epub
 已完成的批次会写入状态目录。中断后使用同一个源文件执行：
 
 ```bash
-uv run wenyi translate book.epub
-uv run wenyi status book.epub
+wenyi translate book.epub
+wenyi status book.epub
 ```
 
 更改润色设置不会自动重跑已经完成的翻译批次。Review 不同：每次执行
@@ -387,12 +407,12 @@ uv run wenyi status book.epub
 ## 独立阶段与术语管理
 
 ```bash
-uv run wenyi review book.epub
-uv run wenyi review book.epub --autofix
-uv run wenyi glossary list book.epub
-uv run wenyi glossary conflicts book.epub
-uv run wenyi glossary resolve book.epub "原文术语" "指定译名"
-uv run wenyi assemble book.epub
+wenyi review book.epub
+wenyi review book.epub --autofix
+wenyi glossary list book.epub
+wenyi glossary conflicts book.epub
+wenyi glossary resolve book.epub "原文术语" "指定译名"
+wenyi assemble book.epub
 ```
 
 项目汇总报告及 `wenyi report` 命令已移除。翻译完成后仍直接从保存的状态读取并显示
