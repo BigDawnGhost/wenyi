@@ -371,14 +371,14 @@ test("an error event from the worker keeps the last stage readable", async ({
   await expect(page.getByRole("status")).toContainText("Recovered after error");
 });
 
-test("a known failure code is shown in the interface language on any project page", async ({
+test("a known failure code is shown in the interface language in the current workflow", async ({
   page,
 }) => {
   await page.clock.install();
   await fakeApi(page);
   let socket: WebSocketRoute | undefined;
-  // A failed project stays failed wherever the user navigates next, so the
-  // reason is served on every project read rather than only on the progress page.
+  // The saved reason remains available in the overview alongside the live
+  // failure code, without promoting either one to the application shell.
   await page.route(`**/api/projects/${pid}`, (route) =>
     route.fulfill({
       json: {
@@ -409,15 +409,17 @@ test("a known failure code is shown in the interface language on any project pag
       message: "raw worker text",
     }),
   );
-  const banner = page
+  const workflowPanel = page.getByRole("region", { name: "Current workflow", exact: true });
+  const banner = workflowPanel
     .getByRole("alert")
     .filter({ hasText: "The project is busy. Try again when the current task finishes." });
   await expect(banner).toBeVisible();
   // The frame's own message must not leak through next to the localized copy.
   await expect(banner).not.toContainText("raw worker text");
-  // The page that never rendered the failure itself must still show it.
-  await page.goto(`/projects/${pid}/glossary`);
   await expect(
     page.getByRole("alert").filter({ hasText: "Provider connection failed" }),
   ).toBeVisible();
+  await page.getByRole("link", { name: "Glossary", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Glossary", exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
 });
