@@ -5,12 +5,15 @@ from __future__ import annotations
 import os
 import zipfile
 from html import escape
+from urllib.parse import quote
+
+from bs4 import BeautifulSoup
 
 from wenyi_core.assemble.epub_navigation import _is_nav, _rewrite_opf_metadata, _rewrite_toc
+from wenyi_core.assemble.epub_package import EpubChapter, EpubResource, EpubTocEntry, write_epub
 from wenyi_core.assemble.epub_presentation import (
     _HTML_EXTS,
     _epub_looks_vertical,
-    _inject_bilingual_style,
     _rewrite_html_document,
 )
 from wenyi_core.assemble.epub_resources import _render_epub_resources
@@ -171,8 +174,6 @@ def _build_epub_from_chapters(
     preserve_source_style: bool = False,
 ) -> str:
     """Build a standard EPUB3 from chapters when no original EPUB template exists."""
-    from ebooklib import epub
-
     m = store.load_manifest()
     target_lang_code = _manifest_target_lang(m)
     title = _export_book_title(
@@ -182,15 +183,10 @@ def _build_epub_from_chapters(
     )
     lang = _epub_lang(target_lang_code)
 
-    book = epub.EpubBook()
-    book.set_identifier(f"trans-novel-{title}")
-    book.set_title(title)
-    book.set_language(lang)
-
-    spine: list = ["nav"]
-    toc: list = []
-    toc_stack: list[tuple[int, list]] = []
-    chapter_filenames: set[str] = set()
+    chapters: list[EpubChapter] = []
+    resources: list[EpubResource] = []
+    toc: list[EpubTocEntry] = []
+    toc_stack: list[tuple[int, list[EpubTocEntry]]] = []
     image_hrefs: dict[str, str] = {}
     raw_meta = m.get("meta")
     manifest_meta = raw_meta if isinstance(raw_meta, dict) else {}
@@ -208,18 +204,15 @@ def _build_epub_from_chapters(
                 href = f"images/{safe_stem}-{suffix}{extension}"
                 suffix += 1
             used_hrefs.add(href)
-            image_hrefs[resource_id] = href
-            if resource_id == cover_id:
-                book.set_cover(href, payload, create_page=True)
-            else:
-                book.add_item(
-                    epub.EpubItem(
-                        uid=f"fb2-image-{index}",
-                        file_name=href,
-                        media_type=content_type,
-                        content=payload,
-                    )
+            image_hrefs[resource_id] = quote(href, safe="/")
+            resources.append(
+                EpubResource(
+                    href=href,
+                    media_type=content_type,
+                    content=payload,
+                    cover_image=resource_id == cover_id,
                 )
+            )
 
     for c in m["chapters"]:
         ch = store.load_chapter(c["index"])
@@ -261,17 +254,24 @@ def _build_epub_from_chapters(
             for href in images_by_position.get(len(paragraphs), [])
         )
         fname = f"ch{c['index']}.xhtml"
-        chapter_filenames.add(fname)
-        item = epub.EpubHtml(title=ch_title, file_name=fname, lang=lang)
-        item.content = (
+        content = (
             f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}">'
             f"<head><title>{escape(ch_title)}</title></head>"
             f"<body>{''.join(body_parts)}</body></html>"
         )
-        book.add_item(item)
-        spine.append(item)
-        children: list = []
-        entry = (item, children)
+        chapters.append(
+            EpubChapter(
+                fname,
+                ch_title,
+                _rewrite_html_document(
+                    content,
+                    lang=lang,
+                    force_horizontal=False,
+                    bilingual=bilingual and not preserve_source_style,
+                ).decode("utf-8"),
+            )
+        )
+        entry = EpubTocEntry(fname, ch_title)
         heading = next(
             (
                 segment
@@ -290,21 +290,9 @@ def _build_epub_from_chapters(
             toc_stack.pop()
         siblings = toc_stack[-1][1] if toc_stack else toc
         siblings.append(entry)
-        toc_stack.append((level, children))
+        toc_stack.append((level, entry.children))
 
-    def toc_items(entries: list) -> list:
-        """Use plain items for leaves so NAV does not contain empty nested lists."""
-        return [(item, toc_items(children)) if children else item for item, children in entries]
-
-    book.toc = toc_items(toc)
-    book.add_item(epub.EpubNcx())
-    book.add_item(epub.EpubNav())
-    book.spine = spine
-    # Publish atomically so a failed write cannot destroy an existing export (audit X-2).
-    with publish_target(out_path) as temp_out:
-        epub.write_epub(temp_out, book)
-        if bilingual and not preserve_source_style:
-            _inject_bilingual_style(str(temp_out), chapter_filenames, lang)
+    write_epub(out_path, title=title, lang=lang, chapters=chapters, toc=toc, resources=resources)
     return out_path
 
 
@@ -318,8 +306,6 @@ def _build_epub_from_html_templates(
     preserve_source_style: bool = False,
 ) -> str:
     """Build EPUB from rendered HTML templates and package their media resources."""
-    from ebooklib import epub
-
     manifest = store.load_manifest()
     target_lang_code = _manifest_target_lang(manifest)
     raw_title = manifest.get("title", "translated")
@@ -333,14 +319,14 @@ def _build_epub_from_html_templates(
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     head_html = meta.get("head_html", "")
     head_html = head_html if isinstance(head_html, str) else ""
+    # Carry inline styles, not unbundled external head resources or source scripts.
+    head_html = "".join(
+        str(style) for style in BeautifulSoup(head_html, "html.parser").find_all("style")
+    )
     resource_source = _template_resource_source(store, manifest, source_path)
 
-    book = epub.EpubBook()
-    book.set_identifier(f"trans-novel-{title}")
-    book.set_title(title)
-    book.set_language(lang)
-    spine: list = ["nav"]
-    toc: list = []
+    chapters: list[EpubChapter] = []
+    toc: list[EpubTocEntry] = []
     packaged_assets: dict[str, tuple[str, bytes]] = {}
 
     for chapter_meta in manifest["chapters"]:
@@ -360,29 +346,28 @@ def _build_epub_from_html_templates(
         )
         packaged_assets.update(assets)
         filename = f"ch{chapter.index}.xhtml"
-        item = epub.EpubHtml(title=chapter_title, file_name=filename, lang=lang)
-        item.content = (
+        content = (
             f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}">'
             f"<head><title>{escape(chapter_title)}</title>{head_html}</head>"
             f"<body>{rendered}</body></html>"
         )
-        book.add_item(item)
-        spine.append(item)
-        toc.append(item)
-
-    for index, (href, (media_type, payload)) in enumerate(packaged_assets.items()):
-        book.add_item(
-            epub.EpubItem(
-                uid=f"html-resource-{index}",
-                file_name=href,
-                media_type=media_type,
-                content=payload,
+        chapters.append(
+            EpubChapter(
+                filename,
+                chapter_title,
+                _rewrite_html_document(
+                    content,
+                    lang=lang,
+                    force_horizontal=False,
+                    bilingual=bilingual and not preserve_source_style,
+                ).decode("utf-8"),
             )
         )
-    book.toc = toc
-    book.spine = spine
-    book.add_item(epub.EpubNcx())
-    book.add_item(epub.EpubNav())
-    with publish_target(out_path) as temp_out:
-        epub.write_epub(temp_out, book)
+        toc.append(EpubTocEntry(filename, chapter_title))
+
+    resources = [
+        EpubResource(href, media_type, payload)
+        for href, (media_type, payload) in packaged_assets.items()
+    ]
+    write_epub(out_path, title=title, lang=lang, chapters=chapters, toc=toc, resources=resources)
     return out_path

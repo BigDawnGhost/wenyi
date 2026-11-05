@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import zipfile
 
@@ -124,29 +123,3 @@ def _rewrite_html_document(
         return output.encode("utf-8")
     except (ParserRejectedMarkup, UnicodeError, ValueError):
         return data if isinstance(data, bytes) else data.encode("utf-8")
-
-
-def _inject_bilingual_style(out_path: str, chapter_filenames: set[str], lang: str) -> None:
-    """ebooklib rebuilds chapter heads from templates and drops inline styles. Postprocess the
-    written ZIP to restore bilingual styles through _rewrite_html_document.
-    """
-    with zipfile.ZipFile(out_path, "r") as zin:
-        infos = zin.infolist()
-        entries = {info.filename: zin.read(info.filename) for info in infos}
-    tmp_path = f"{out_path}.tmp"
-    try:
-        with zipfile.ZipFile(tmp_path, "w") as zout:
-            for info in infos:
-                data = entries[info.filename]
-                if os.path.basename(info.filename) in chapter_filenames:
-                    data = _rewrite_html_document(
-                        data,
-                        lang=lang,
-                        force_horizontal=False,
-                        bilingual=True,
-                    )
-                zout.writestr(info, data)
-        os.replace(tmp_path, out_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)

@@ -60,11 +60,12 @@ import importlib.util
 import pkgutil
 import sys
 installed, absent = sys.argv[1].split(","), sys.argv[2].split(",")
-for name in absent:
+for name in [*absent, "ebooklib"]:
     assert importlib.util.find_spec(name) is None, f"Unexpected installed dependency: {name}"
 for name in installed:
     importlib.import_module(name)
 if "wenyi_core" in installed:
+    import wenyi_core.assemble.epub_package
     import wenyi_core.pipeline.prepare.book_understanding
     import wenyi_core.pipeline.run.runtime_usage
     import wenyi_core.storage.file_migrations
@@ -80,6 +81,38 @@ if "wenyi_desktop" in installed:
     import wenyi_desktop.main
     import wenyi_desktop.__main__
     import keyring
+"""
+
+EPUB_SMOKE = """
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from zipfile import ZipFile
+from wenyi_core.assemble.writer import assemble
+from wenyi_core.ingest.segmenter import load_document
+from wenyi_core.storage.file import FileStorage
+with TemporaryDirectory(prefix="wenyi-epub-smoke-") as temporary:
+    root = Path(temporary)
+    for extension, content in {
+        "txt": "# Chapter\\n\\nOriginal text.\\n",
+        "html": "<html><body><h1>Chapter</h1><p>Original text.</p></body></html>",
+    }.items():
+        source = root / ("source." + extension)
+        source.write_text(content, encoding="utf-8")
+        document = load_document(str(source), "en", "zh")
+        for chapter in document.chapters:
+            for segment in chapter.segments:
+                segment.target = "Translated text."
+        store = FileStorage(str(root / ("state-" + extension)))
+        store.init_from_document(document)
+        for bilingual in (False, True):
+            output = root / f"{extension}-{bilingual}.epub"
+            assemble(store, str(source), str(output), "epub", bilingual=bilingual)
+            with ZipFile(output) as archive:
+                assert archive.testzip() is None
+                assert archive.read("mimetype") == b"application/epub+zip"
+                body = archive.read("EPUB/ch0.xhtml")
+                assert b"Translated text." in body
+                assert (b"Original text." in body) == bilingual
 """
 
 # This tests HTTP assembly without starting the production lifespan or touching services.
@@ -131,6 +164,7 @@ def archives(directory: Path) -> dict[str, Path]:
                 # silently dropped a sub-package would still satisfy the "some .py exists"
                 # check above.
                 assert {
+                    "wenyi_core/assemble/epub_package.py",
                     "wenyi_core/pipeline/prepare/book_understanding.py",
                     "wenyi_core/pipeline/run/runtime_usage.py",
                     "wenyi_core/pipeline/translate/babeldoc_context.py",
@@ -184,6 +218,13 @@ def installations(wheels: dict[str, Path]) -> None:
             )
             subprocess.run(
                 [str(python), "-I", "-c", IMPORT_SMOKE, ",".join(installed), ",".join(absent)],
+                check=True,
+                cwd=root,
+                env=env,
+                timeout=60,
+            )
+            subprocess.run(
+                [str(python), "-I", "-c", EPUB_SMOKE],
                 check=True,
                 cwd=root,
                 env=env,

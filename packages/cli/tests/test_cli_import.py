@@ -11,7 +11,6 @@ HEAVY = (
     "bs4",
     "lxml",
     "soupsieve",
-    "ebooklib",
     "openai",
     "wenyi_core.ingest",
 )

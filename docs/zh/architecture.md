@@ -27,13 +27,18 @@
 | 全书审校 | `pipeline/review/review_workflow.py` 协调会话；`review_checkpoint.py`、`review_rounds.py`、`review_chunks.py` 和 `review_results.py` 分别处理恢复、决策、执行和结果。 |
 | 自动修复 | `pipeline/autofix/review_autofix.py` 协调独立发布服务；`autofix_candidates.py`、`autofix_plan.py` 和 `autofix_publish.py` 分离候选、可恢复索引与正式译文写回。 |
 | 审校 Agent | `agents/review_*.py` 负责模型交互；`review/` 提供共享证据、类型和运行产物，不依赖 pipeline 编排。 |
-| EPUB / HTML | `markup/` 负责共享的确定性锚点、注释、ruby 与段落标记处理；Reader 和 Writer 保留在 `ingest/` 与 `assemble/`。 |
+| EPUB / HTML | `markup/` 负责共享的确定性锚点、注释、ruby 与段落标记处理；Reader 和 Writer 保留在 `ingest/` 与 `assemble/`。`assemble/epub_package.py` 使用本地 XML 序列化和 `zipfile` 打包新生成的 EPUB 3，不依赖 EbookLib。 |
 | DOCX | `document_styles/docx.py` 负责纯样式策略；DOCX Reader 和 Writer 负责解析与文档生成。 |
 | 持久化 | 领域服务使用 `storage/protocol.py`；CLI 使用 `storage/file.py`，Desktop 在独立工作区注入 `storage/sqlite.py`，Web 注入 `apps/api/wenyi_api/storage_pg.py` 保存 PostgreSQL 状态。 |
 | CLI 文件迁移 | `storage/file_migrations.py` 拥有显式本地账本枚举、校验、原始字节备份、运行锁与原子发布；CLI 处理参数和展示，不发现 Web/Desktop 状态。 |
 
 Core 不依赖 CLI 或 HTTP 框架；Agent 不依赖 pipeline 或具体状态存储。
 共享标记处理和样式策略不依赖 LLM 或特定 Writer。BabelDOC 保持外部 HTTP 服务。
+
+按章节构建和 HTML/PDF 模板导出共用一个 EPUB 打包器，原子写入 OPF、分层 NAV/NCX、
+章节和媒体资源；章节 head 保留内联样式，包括双语 CSS。HTML 源文 head 仅携带内联
+style 元素，不携带未打包的外部 head 资源或脚本。原始 EPUB 输入仍沿用原模板与资源
+回填路径，对外导出选项及已保存的项目状态保持不变。
 
 Web 与 Desktop 共享行为，不共享项目状态或基础设施。Web 使用 PostgreSQL 与
 Redis/Arq；Desktop 使用独立 SQLite 目录库、各项目 SQLite 状态及本地运行器，
