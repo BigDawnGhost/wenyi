@@ -266,7 +266,6 @@ const zhCN = {
   "progress.polling": "自动轮询",
   "common.preparation": "译前准备",
   "common.wholeBookReview": "全书审校",
-  "progress.uploadPreviewSource": "上传与预览原文",
   "progress.totalUsageRunTime": "累计用量与运行耗时",
   "progress.chapterTranslationStarted": "单章翻译已开始",
   "common.chapter": "章节",

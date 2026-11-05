@@ -275,7 +275,6 @@ const en = {
   "progress.polling": "Polling",
   "common.preparation": "Preparation",
   "common.wholeBookReview": "Whole-book review",
-  "progress.uploadPreviewSource": "Upload & preview source",
   "progress.totalUsageRunTime": "Total usage & run time",
   "progress.chapterTranslationStarted": "Chapter translation started",
   "common.chapter": "Chapter",

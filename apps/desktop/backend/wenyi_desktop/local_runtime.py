@@ -74,6 +74,7 @@ class ProgressHub:
         self.backend = backend
         self.loop = loop
         self._lock = threading.Lock()
+        self._flush_lock = asyncio.Lock()
         self._cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
         self._dirty: dict[str, dict] = {}
         self._subscribers: dict[str, set[asyncio.Queue[str | None]]] = {}
@@ -136,14 +137,16 @@ class ProgressHub:
                 self._subscribers.pop(channel, None)
 
     async def flush(self) -> None:
-        with self._lock:
-            pending, self._dirty = self._dirty, {}
-        for pid, payload in pending.items():
-            try:
-                await asyncio.to_thread(self.backend.save_progress, pid, payload)
-            except Exception:
-                # Advisory progress is not a replacement for committed checkpoints.
-                log.warning("Could not persist Desktop progress", exc_info=True)
+        """Wait for earlier saves before draining pending progress in order."""
+        async with self._flush_lock:
+            with self._lock:
+                pending, self._dirty = self._dirty, {}
+            for pid, payload in pending.items():
+                try:
+                    await asyncio.to_thread(self.backend.save_progress, pid, payload)
+                except Exception:
+                    # Advisory progress is not a replacement for committed checkpoints.
+                    log.warning("Could not persist Desktop progress", exc_info=True)
 
     async def _persist(self) -> None:
         while True:

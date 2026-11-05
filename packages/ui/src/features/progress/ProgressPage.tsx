@@ -149,16 +149,6 @@ export default function ProgressPage() {
           {tr("progress.progressConnection")}:{" "}
           {connected ? tr("progress.live") : tr("progress.polling")}
         </p>
-        {!project?.initialized && (
-          <Link
-            id="project-source-trigger"
-            className="inline-block text-sm text-primary underline"
-            to={`/projects/new?project=${pid}`}
-            state={{ fromAppNavigation: true, returnFocusId: "project-source-trigger" }}
-          >
-            {tr("progress.uploadPreviewSource")}
-          </Link>
-        )}
         {chapters.length > 0 && (
           <div className="space-y-2">
             <Link

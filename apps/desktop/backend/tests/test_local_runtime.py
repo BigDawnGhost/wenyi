@@ -417,6 +417,54 @@ def test_progress_cache_is_bounded_expires_and_persists_latest(catalog, monkeypa
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("newer_pending", [False, True])
+def test_progress_flush_waits_for_inflight_save(catalog, monkeypatch, newer_pending):
+    async def run():
+        hub = ProgressHub(catalog, asyncio.get_running_loop())
+        pid = project()
+        key = f"project:{pid}:progress"
+        first = {"project_id": pid, "done": 1}
+        latest = {**first, "done": 2} if newer_pending else first
+        saving = asyncio.Event()
+        release = asyncio.Event()
+        second_started = asyncio.Event()
+        submitted = []
+        to_thread = asyncio.to_thread
+
+        async def delayed_save(function, *args, **kwargs):
+            if function == catalog.save_progress:
+                submitted.append(args[1])
+                if args[1] == first:
+                    saving.set()
+                    await release.wait()
+            return await to_thread(function, *args, **kwargs)
+
+        async def flush_again():
+            second_started.set()
+            await hub.flush()
+
+        monkeypatch.setattr(asyncio, "to_thread", delayed_save)
+        hub.set(key, json.dumps(first), ex=60)
+        first_flush = asyncio.create_task(hub.flush())
+        second_flush = None
+        try:
+            await asyncio.wait_for(saving.wait(), 3)
+            if newer_pending:
+                hub.set(key, json.dumps(latest), ex=60)
+            second_flush = asyncio.create_task(flush_again())
+            await asyncio.wait_for(second_started.wait(), 3)
+            assert not second_flush.done(), "Flush returned before the in-flight save completed"
+            assert submitted == [first], "Progress saves must not overlap"
+        finally:
+            release.set()
+            tasks = [first_flush] + ([second_flush] if second_flush is not None else [])
+            await asyncio.wait_for(asyncio.gather(*tasks), 3)
+        assert submitted == ([first, latest] if newer_pending else [first])
+        assert catalog.load_progress(pid) == latest
+
+    asyncio.run(run())
+
+
 def test_websocket_first_frame_auth_snapshot_and_project_run_identity(desktop):
     client, backend, _ = desktop
     pid, store = initialize(backend)
