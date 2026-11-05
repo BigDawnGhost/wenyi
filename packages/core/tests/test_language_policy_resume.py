@@ -2,6 +2,7 @@
 
 import pytest
 from wenyi_core.config import Config
+from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.i18n.resources import read_json, read_text
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
@@ -114,6 +115,38 @@ def test_builtin_analysis_change_rebuilds_analysis_without_retranslating(tmp_pat
     assert current is not None
     assert current["analysis"] != previous["analysis"]
     assert current["translation"] == previous["translation"]
+
+
+def test_target_language_revision_preserves_saved_translations_and_glossary(tmp_path, monkeypatch):
+    source, config, store = book(tmp_path)
+    Orchestrator(config, client=FakeClient(handler=routing_handler), storage=store).run(
+        str(source), only_chapter=0
+    )
+    store.upsert_term(GlossaryTerm(source="灯台", target="灯塔", note="User-approved wording."))
+    saved_chapter = store.load_chapter(0).model_dump()
+    saved_analysis = store.load_analysis()
+    saved_terms = store.all_terms()
+    monkeypatch.setattr(
+        "wenyi_core.i18n.policy.resolver.read_text",
+        lambda path: (
+            read_text(path)
+            + (
+                "\nUse the revised target-language requirements."
+                if path == "shared/target_language.txt"
+                else ""
+            )
+        ),
+    )
+    client = FakeClient(handler=routing_handler)
+    Orchestrator(config, client=client, storage=store).run(str(source))
+    assert store.load_chapter(0).model_dump() == saved_chapter
+    assert store.load_analysis() == saved_analysis
+    assert store.all_terms() == saved_terms
+    assert all(segment.target is not None for segment in store.load_chapter(1).text_segments)
+    assert "analysis.style" not in [call["operation"] for call in client.calls]
+    call_count = len(client.calls)
+    Orchestrator(config, client=client, storage=store).run(str(source))
+    assert len(client.calls) == call_count
 
 
 def test_builtin_font_and_unused_languages_do_not_invalidate_paid_checkpoints(

@@ -49,6 +49,8 @@ Drag in a supported book or choose it with **Browse files**, and select the sour
 
 Browser Back can still leave during an upload; it does not cancel the request. The source resource remains available until the request settles, then is released. The project may be created in the background, and completion will not redirect you away from the list.
 
+The source is already uploaded when the project overview opens, so it has no upload entry, including before AI initialization completes.
+
 Once parsing finishes, **Read contents & source** opens the chapter list and original text without waiting for AI preparation. The parsed source remains readable during preparation or after a model failure; title and translation editing require completed initialization. Parsing itself needs no translation-model credentials, although PDF conversion still uses the selected parser service.
 
 Start translation from the project page. Wenyi parses the source, prepares whole-book context, and translates in batches. Progress, usage, and completed chapters are visible in the application; polishing and whole-book review are configurable. A failed task shows the reason the run ended beside the last readable stage, and every project page keeps a banner naming the failure. A request that never receives a response fails after its deadline instead of waiting indefinitely, and a progress socket that stays silent for 60 seconds reconnects while the local engine sends a heartbeat every 30 seconds during idle runs.
