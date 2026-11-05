@@ -1,6 +1,21 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { fakeApi, pid } from "../../sandbox/fixtures";
 
+async function expectInsetCloseButton(toast: Locator) {
+  const close = toast.getByRole("button", { name: /close/i });
+  await expect(close).toBeEnabled();
+  const card = (await toast.boundingBox())!;
+  const button = (await close.boundingBox())!;
+  const content = (await toast.locator("[data-content]").boundingBox())!;
+  expect(button.width).toBeGreaterThanOrEqual(44);
+  expect(button.height).toBeGreaterThanOrEqual(44);
+  expect(button.x).toBeGreaterThan(card.x + card.width / 2);
+  expect(button.y).toBeGreaterThan(card.y);
+  expect(button.x + button.width).toBeLessThan(card.x + card.width);
+  expect(button.y + button.height).toBeLessThanOrEqual(card.y + card.height);
+  expect(content.x + content.width).toBeLessThanOrEqual(button.x - 8);
+  return close;
+}
 
 /** Whether the Desktop host must keep running this suite as well.
  *
@@ -36,13 +51,14 @@ test("glossary options are selectable and failed saves stay readable over the di
   await expect(toast).toBeInViewport();
   await page.waitForTimeout(1600);
   await expect(toast).toBeVisible();
-  await expect(toast.getByRole("button", { name: /close/i })).toBeEnabled();
+  const close = await expectInsetCloseButton(toast);
   // Verify the notification paints above the modal, not merely within viewport.
   expect(await toast.evaluate(element => {
     const rect = element.getBoundingClientRect();
     return element.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
   })).toBe(true);
-  await toast.getByRole("button", { name: /close/i }).click();
+  // The whole target is clickable, not just the cross at its center.
+  await close.click({ position: { x: 4, y: 4 } });
   await expect(toast).toHaveCount(0);
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("alert")).toContainText("Fixture save failed");
@@ -52,6 +68,41 @@ test("glossary options are selectable and failed saves stay readable over the di
   await page.getByRole("button", { name: "Add term", exact: true }).click();
   await expect(dialog.getByRole("alert")).toHaveCount(0);
 });
+
+for (const width of [1280, 420]) {
+  test(`long notifications keep an inset, keyboard-accessible close button at ${width}px`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 800 });
+    await fakeApi(page, {
+      [`/projects/${pid}/glossary/terms`]: [{
+        source: "fixture", target: "translation", type: "term",
+        reading: "", note: "", gender: "", aliases: [],
+      }],
+    }, apiOrigin);
+    const message = "术语保存失败，请稍后重试。The terminology service is temporarily unavailable: "
+      + "a-long-unbroken-request-identifier-".repeat(4);
+    await page.route(`**/projects/${pid}/glossary/terms/fixture`, route =>
+      route.fulfill({ status: 500, json: { detail: message } }),
+    );
+    await page.goto(`/projects/${pid}/glossary`);
+    await page.getByRole("button", { name: "Delete term", exact: true }).first().click();
+    const toast = page.locator("[data-sonner-toast]").filter({ hasText: message });
+    await expect(toast).toBeInViewport();
+    await expect(toast).toHaveAttribute("data-mounted", "true");
+    await page.keyboard.press("Alt+t");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
+    const close = toast.getByRole("button", { name: /close/i });
+    await expect(close).toBeFocused();
+    await info.attach("notification-layout", {
+      body: await page.screenshot({ animations: "disabled" }),
+      contentType: "image/png",
+    });
+    await expectInsetCloseButton(toast);
+    expect(await toast.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await page.keyboard.press("Enter");
+    await expect(toast).toHaveCount(0);
+  });
+}
 
 test("slow asynchronous feedback ignores scrolling and unrelated button clicks", async ({ page }, info) => {
   const terms = Array.from({ length: 60 }, (_, index) => ({
