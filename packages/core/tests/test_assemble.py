@@ -14,7 +14,7 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 from wenyi_core.assemble.about import about_xhtml, append_about_page
-from wenyi_core.assemble.epub_presentation import _inject_bilingual_style, _rewrite_html_document
+from wenyi_core.assemble.epub_presentation import _rewrite_html_document
 from wenyi_core.assemble.html_renderer import _render_chapter_html, _render_segments_html
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.assemble.writer_common import bilingual_out_path
@@ -165,6 +165,27 @@ class TestBilingualOutPath(unittest.TestCase):
 
 
 class TestAssembleText(unittest.TestCase):
+    def test_generated_epub_does_not_require_ebooklib(self):
+        import builtins
+
+        original_import = builtins.__import__
+
+        def without_ebooklib(name, *args, **kwargs):
+            if name == "ebooklib" or name.startswith("ebooklib."):
+                raise ModuleNotFoundError("EbookLib must not be required for EPUB export")
+            return original_import(name, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "sample.txt")
+            write_sample_txt(source)
+            store = FileStorage(os.path.join(directory, "state"))
+            store.init_from_document(load_document(source, "ja", "zh"))
+            with patch("builtins.__import__", side_effect=without_ebooklib):
+                output = assemble(store, source, out_format="epub", about_page=False)
+            with zipfile.ZipFile(output) as archive:
+                self.assertEqual(archive.read("mimetype"), b"application/epub+zip")
+            self.assertTrue(load_document(output, "zh", "en").chapters)
+
     def test_markdown_heading_levels_and_epub_toc_hierarchy(self):
         levels = [5, 6, 5, 3, 6, 6, 2, 4, 1, 2]
         parents = [None, None, 1, None, None, 4, 4, None, 7, None, 9]
@@ -331,25 +352,14 @@ class TestAssembleText(unittest.TestCase):
             data = about_xhtml("zh-Hans", locale="en")
         self.assertIn(b"Cost: $5 $unknown.", data)
 
-    def test_bilingual_rewrite_removes_temporary_file_on_failure(self):
-        with tempfile.TemporaryDirectory() as directory:
-            path = os.path.join(directory, "book.epub")
-            with zipfile.ZipFile(path, "w") as archive:
-                archive.writestr(
-                    "ch0.xhtml",
-                    "<html><head></head><body><p>text</p></body></html>",
-                )
-
-            with (
-                patch(
-                    "wenyi_core.assemble.epub_presentation.os.replace",
-                    side_effect=OSError("replace failed"),
-                ),
-                self.assertRaisesRegex(OSError, "replace failed"),
-            ):
-                _inject_bilingual_style(path, {"ch0.xhtml"}, "zh-Hans")
-
-            self.assertFalse(os.path.exists(path + ".tmp"))
+    def test_about_page_uses_markup_for_text_direction(self):
+        soup = BeautifulSoup(about_xhtml("zh-Hans", locale="zh"), "xml")
+        html = soup.find("html")
+        style = soup.find("style")
+        assert isinstance(html, Tag)
+        assert isinstance(style, Tag)
+        self.assertEqual(html.get("dir"), "ltr")
+        self.assertNotIn("direction:", style.get_text())
 
     def test_pipeline_passes_about_page_config_to_writer(self):
         with tempfile.TemporaryDirectory() as d:

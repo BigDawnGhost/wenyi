@@ -27,7 +27,7 @@ Desktop owns collection and native publication; shared components expose optiona
 | Whole-book review | `pipeline/review/review_workflow.py` coordinates sessions; `review_checkpoint.py`, `review_rounds.py`, `review_chunks.py`, and `review_results.py` separate recovery, decisions, execution, and result handling. |
 | Autofix | `pipeline/autofix/review_autofix.py` coordinates the separate publication service; `autofix_candidates.py`, `autofix_plan.py`, and `autofix_publish.py` separate candidates, the recoverable index, and writes to formal translations. |
 | Review agents | `agents/review_*.py` owns model interactions; `review/` provides shared evidence, types, and run artifacts without depending on pipeline orchestration. |
-| EPUB / HTML | `markup/` owns shared deterministic anchors, annotations, ruby and segment handling; readers and writers remain in `ingest/` and `assemble/`. |
+| EPUB / HTML | `markup/` owns shared deterministic anchors, annotations, ruby and segment handling; readers and writers remain in `ingest/` and `assemble/`. `assemble/epub_package.py` packages generated EPUB 3 books with local XML serialization and `zipfile`, without EbookLib. |
 | DOCX | `document_styles/docx.py` owns pure style policy; DOCX readers and writers own parsing and document emission. |
 | Persistence | Domain services use `storage/protocol.py`. CLI uses `storage/file.py`; Desktop injects `storage/sqlite.py` into its own workspace; Web injects `apps/api/wenyi_api/storage_pg.py` for PostgreSQL state. |
 | CLI file migration | `storage/file_migrations.py` owns explicit local-ledger discovery, validation, exact-byte backups, run locking and atomic publication. CLI handles arguments/presentation; this does not discover Web/Desktop state. |
@@ -35,6 +35,12 @@ Desktop owns collection and native publication; shared components expose optiona
 Keep Core independent of CLI and HTTP frameworks. Agents must not depend on the pipeline
 or concrete state stores. Shared markup and style policy must not depend on LLMs or a
 particular writer. BabelDOC remains an external HTTP service.
+
+Generated EPUBs share one package writer for chapter-based and HTML/PDF-template exports.
+It writes OPF, hierarchical NAV/NCX, chapters and media atomically; chapter heads retain
+inline styles, including bilingual CSS. HTML source heads contribute inline style elements,
+not unbundled external head resources or scripts. Existing EPUB inputs still use the original
+template/resource backfill path. Public export options and saved project state are unchanged.
 
 Web and Desktop share behavior, not project state or infrastructure. Web uses PostgreSQL
 and Redis/Arq; Desktop owns a SQLite catalog, per-project SQLite stores, and a local runner.

@@ -102,7 +102,7 @@ jobs:
           python -m PyInstaller --name wenyi --onefile --clean --noconfirm
           --add-binary "${{ env.LOCKS_LIB }}${{ runner.os == 'Windows' && ';' || ':' }}."
           --paths packages/core --paths packages/cli
-          --collect-all ebooklib --collect-all bs4 --collect-all lxml
+          --collect-all bs4 --collect-all lxml
           --collect-all openai --collect-all pydantic --collect-all yaml
           --collect-all wenyi_core --collect-all tiktoken --collect-all tiktoken_ext
           --collect-all docx --collect-all google.genai

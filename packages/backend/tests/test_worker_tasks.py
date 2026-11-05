@@ -6,12 +6,11 @@ from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from zipfile import ZipFile
+from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 import pytest
 from bs4 import BeautifulSoup
 from bs4.element import Tag
-from ebooklib import epub
 from fastapi import HTTPException
 from wenyi_backend.context import current_context
 from wenyi_backend.execution import bindings, exporting, runner
@@ -52,12 +51,7 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
     monkeypatch, tmp_path, order, preserve_source_style, source_changes
 ):
     source = tmp_path / "source.epub"
-    book = epub.EpubBook()
-    book.set_identifier("partial-translation")
-    book.set_title("Sample")
-    book.set_language("ja")
-    pages = []
-    for name, body in [
+    pages = [
         (
             "first.xhtml",
             '<p id="translated"><ruby>翻訳<rt>ほんやく</rt></ruby>済み</p>'
@@ -65,16 +59,45 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
             '<p><a href="last.xhtml#last">次へ</a></p>',
         ),
         ("last.xhtml", '<p id="last"><ruby>未訳<rt>みやく</rt></ruby>の章</p>'),
-    ]:
-        page = epub.EpubHtml(title=name, file_name=name, lang="ja")
-        page.content = f"<html><body>{body}</body></html>"
-        book.add_item(page)
-        pages.append(page)
-    book.toc = pages
-    book.spine = pages
-    book.add_item(epub.EpubNcx())
-    book.add_item(epub.EpubNav())
-    epub.write_epub(str(source), book)
+    ]
+    # Keep the source fixture independent of the EPUB writer under test.
+    with ZipFile(source, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("mimetype", "application/epub+zip", compress_type=ZIP_STORED)
+        archive.writestr(
+            "META-INF/container.xml",
+            '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">'
+            '<rootfiles><rootfile full-path="EPUB/content.opf" '
+            'media-type="application/oebps-package+xml"/></rootfiles></container>',
+        )
+        archive.writestr(
+            "EPUB/content.opf",
+            '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="id">partial-translation</dc:identifier>'
+            "<dc:title>Sample</dc:title><dc:language>ja</dc:language></metadata><manifest>"
+            '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
+            + "".join(
+                f'<item id="page-{index}" href="{name}" media-type="application/xhtml+xml"/>'
+                for index, (name, _) in enumerate(pages)
+            )
+            + "</manifest><spine>"
+            + "".join(f'<itemref idref="page-{index}"/>' for index in range(len(pages)))
+            + "</spine></package>",
+        )
+        archive.writestr(
+            "EPUB/nav.xhtml",
+            '<html xmlns="http://www.w3.org/1999/xhtml" '
+            'xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Contents</title></head>'
+            '<body><nav epub:type="toc"><ol>'
+            + "".join(f'<li><a href="{name}">{name}</a></li>' for name, _ in pages)
+            + "</ol></nav></body></html>",
+        )
+        for name, body in pages:
+            archive.writestr(
+                f"EPUB/{name}",
+                '<html xmlns="http://www.w3.org/1999/xhtml">'
+                f"<head><title>{name}</title></head><body>{body}</body></html>",
+            )
 
     document = load_document(str(source), "ja", "en")
     assert len(document.chapters) == 2
