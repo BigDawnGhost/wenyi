@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import tempfile
 import unittest
@@ -399,6 +400,69 @@ class TestAssembleText(unittest.TestCase):
 
 
 class TestAssembleEpub(unittest.TestCase):
+    def test_hybrid_range_alignment_survives_real_epub_ingest_and_both_exports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "linked-notes.epub")
+            _write_linked_notes_epub(source_path)
+            document = load_document(source_path, "en", "zh")
+            store = FileStorage(os.path.join(directory, "state"))
+            manifest = store.stage_document(document)
+            config = _config(os.path.join(directory, "state"))
+            config.source_lang = "en"
+
+            def handler(messages, tier, json_mode):
+                payload = json.loads(messages[-1]["content"].split("INPUT JSON:\n", 1)[1])
+                self.assertEqual(set(payload), {"source_with_focus", "immutable_target"})
+                self.assertIn("<focus>border tunnel", payload["source_with_focus"])
+                return json.dumps({"target_quote": "边境隧道", "context": "边境隧道通了。"})
+
+            client = FakeClient(handler=handler)
+            orchestrator = Orchestrator(config, client=client)
+            for chapter_meta in manifest["chapters"]:
+                chapter = store.load_chapter(chapter_meta["index"])
+                assert chapter.href is not None
+                is_body = chapter.href.endswith("text/body.xhtml")
+                for segment in chapter.segments:
+                    segment.target = "边境隧道通了。" if is_body else "注释译文。"
+                store.save_chapter(chapter)
+                if is_body:
+                    orchestrator._annotations.align_annotations_after_batch(
+                        chapter.index, chapter, 0, len(chapter.text_segments), store
+                    )
+                    placement = (
+                        store.load_chapter(chapter.index)
+                        .segments[0]
+                        .meta["epub_annotations"]["placements"][0]
+                    )
+                    self.assertEqual(placement["method"], "llm_source_focus")
+                    self.assertEqual((placement["target_start"], placement["target_end"]), (0, 4))
+            manifest["initialized"] = True
+            store.save_manifest(manifest)
+            self.assertEqual(len(client.calls), 1)
+
+            for bilingual in (False, True):
+                output_path = os.path.join(directory, f"output-{bilingual}.epub")
+                assemble(
+                    store,
+                    source_path,
+                    out_path=output_path,
+                    out_format="epub",
+                    bilingual=bilingual,
+                    about_page=False,
+                )
+                with zipfile.ZipFile(output_path) as archive:
+                    body = BeautifulSoup(archive.read("OEBPS/text/body.xhtml"), "html.parser")
+                paragraph = body.select_one("p:not(.tn-source)")
+                self.assertIsNotNone(paragraph)
+                assert isinstance(paragraph, Tag)
+                link = paragraph.find("a", href="../notes/notes.xhtml#note-1")
+                self.assertIsNotNone(link)
+                assert isinstance(link, Tag)
+                self.assertEqual(link.get_text().replace("1", ""), "边境隧道")
+                self.assertIsNotNone(link.find("sup", id="key-1"))
+                self.assertEqual(paragraph.get_text().replace("1", ""), "边境隧道通了。")
+            self.assertEqual(len(client.calls), 1)
+
     def test_nested_fragment_id_survives_textual_markup_flattening(self):
         html = '<html><body><h2><span id="inside">Section</span></h2></body></html>'
         title, segments, template = annotate_epub_resource(html, 0, "chapter.xhtml")

@@ -45,16 +45,14 @@ class TestOrchestrator(unittest.TestCase):
             cfg.pipeline.annotation_alignment = True
 
             def handler(messages, tier, json_mode):
-                if "align EPUB annotation markers" in messages[0]["content"]:
+                if "SEARCH/REPLACE PATCH" in messages[0]["content"]:
                     self.assertEqual(tier, "cheap")
+                    payload = json.loads(messages[-1]["content"].split("INPUT JSON:\n", 1)[1])
                     return json.dumps(
                         {
-                            "items": [
-                                {
-                                    "unit_id": "ch0:tn0_0",
-                                    "marked_target": "阿尔法⟪tn0_0_annotation_0⟫ 贝塔",
-                                }
-                            ],
+                            "id": payload["id"],
+                            "search": "阿尔法 ",
+                            "replacement": f"阿尔法{payload['markers'][0]} ",
                         },
                         ensure_ascii=False,
                     )
@@ -109,7 +107,7 @@ class TestOrchestrator(unittest.TestCase):
             calls = [
                 call
                 for call in client.calls
-                if "align EPUB annotation markers" in call["messages"][0]["content"]
+                if "SEARCH/REPLACE PATCH" in call["messages"][0]["content"]
             ]
             self.assertEqual(len(calls), 1)
 
@@ -120,16 +118,14 @@ class TestOrchestrator(unittest.TestCase):
             requested: list[str] = []
 
             def handler(messages, tier, json_mode):
-                if "align EPUB annotation markers" in messages[0]["content"]:
+                if "SEARCH/REPLACE PATCH" in messages[0]["content"]:
                     requested.append(messages[-1]["content"])
+                    payload = json.loads(messages[-1]["content"].split("INPUT JSON:\n", 1)[1])
                     return json.dumps(
                         {
-                            "items": [
-                                {
-                                    "unit_id": "ch0:tn0_0",
-                                    "marked_target": "甲,⟪tn0_0_annotation_0⟫乙",
-                                }
-                            ]
+                            "id": payload["id"],
+                            "search": "甲,乙",
+                            "replacement": f"甲,{payload['markers'][0]}乙",
                         },
                         ensure_ascii=False,
                     )
@@ -183,16 +179,14 @@ class TestOrchestrator(unittest.TestCase):
             requested: list[str] = []
 
             def handler(messages, tier, json_mode):
-                if "align EPUB annotation markers" in messages[0]["content"]:
+                if "SEARCH/REPLACE PATCH" in messages[0]["content"]:
                     requested.append(messages[-1]["content"])
+                    payload = json.loads(messages[-1]["content"].split("INPUT JSON:\n", 1)[1])
                     return json.dumps(
                         {
-                            "items": [
-                                {
-                                    "unit_id": "ch0:tn0_0",
-                                    "marked_target": "甲⟪tn0_0_annotation_0⟫乙",
-                                }
-                            ]
+                            "id": payload["id"],
+                            "search": "甲乙",
+                            "replacement": f"甲{payload['markers'][0]}乙",
                         },
                         ensure_ascii=False,
                     )
@@ -269,22 +263,17 @@ class TestOrchestrator(unittest.TestCase):
                 }
 
             def handler(messages, tier, json_mode):
-                if "align EPUB annotation markers" not in messages[0]["content"]:
+                if "SEARCH/REPLACE PATCH" not in messages[0]["content"]:
                     return routing_handler(messages, tier, json_mode)
-                user = messages[-1]["content"]
-                if '"unit_id": "ch0:a"' in user:
-                    unit_id, target, annotation_id = "ch0:a", "甲", "a_note"
-                else:
-                    unit_id, target, annotation_id = "ch0:b", "乙", "b_note"
+                payload = json.loads(messages[-1]["content"].split("INPUT JSON:\n", 1)[1])
+                unit_id = "ch0:a" if payload["id"] == "a_note" else "ch0:b"
+                target = payload["immutable_target"]
                 requested_units.append(unit_id)
                 return json.dumps(
                     {
-                        "items": [
-                            {
-                                "unit_id": unit_id,
-                                "marked_target": f"{target}⟪{annotation_id}⟫",
-                            }
-                        ]
+                        "id": payload["id"],
+                        "search": target,
+                        "replacement": target + payload["markers"][0],
                     },
                     ensure_ascii=False,
                 )
