@@ -137,6 +137,14 @@ The frontend is for computers. A mobile/tablet user agent (UA) shows **Please us
 
 Narrow computer windows keep the same desktop sidebar and multi-column layout, with horizontal scrolling in the content area when needed. Resizing does not remount pages or discard unsaved drafts. There is no separate phone navigation or stacked mobile workspace.
 
+## Notifications
+
+Web and Desktop share notifications fixed at the top right, above open dialogs.
+The close button sits inside the card on the right with a 44 × 44 px click target
+and a subtle hover or keyboard-focus background. Text wraps in its own space
+without overlapping the button. Closing a notification leaves the active dialog
+and its unsaved inputs open. Status colors and automatic dismissal times are unchanged.
+
 ## Interface language
 
 The interface defaults to English, regardless of browser language. Open global
