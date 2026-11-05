@@ -4,7 +4,6 @@ import { Link, Outlet, useLocation, useMatch, useParams } from "react-router-dom
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
-import { ErrorNotice } from "../ui/data";
 import { SelectDismissScope } from "../ui/select";
 import { NavigationLink, ProjectNavigation, SettingsNavigation } from "./Navigation";
 import { navEntries } from "../../routes/manifest";
@@ -265,14 +264,6 @@ export function AppLayout() {
             confines route failures to the content area. Preserve desktop columns
             in narrow windows and scroll only this pane (704px content + 48px padding). */}
         <div className="min-h-full min-w-[752px]">
-          {/* A failed project is a property of the project, not of the page that
-              happens to be open, so the reason stays visible on every route
-              under this project rather than only on the page that started it. */}
-          {project?.status === "error" && project.error ? (
-            <div className="px-6 pt-4">
-              <ErrorNotice error={project.error} />
-            </div>
-          ) : null}
           <RouteGate>
             <SelectDismissScope dismissKey={`${location.key}:${location.hash}`}>
               <Outlet />
