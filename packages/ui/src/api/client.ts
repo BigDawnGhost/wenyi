@@ -32,7 +32,7 @@ export const api = {
   pingModels: (timeout?: number) =>
     request<ModelPingResult[]>("/settings/models/ping", {
       method: "POST",
-      body: JSON.stringify(timeout === undefined ? {} : { timeout }),
+      body: JSON.stringify({ ...(timeout === undefined ? {} : { timeout }), detect_json: true }),
     }),
   listModels: (body: ModelListRequest) =>
     request<ModelListResult>("/settings/models/list", {

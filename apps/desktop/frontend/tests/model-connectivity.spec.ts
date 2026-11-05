@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi } from "../../../../packages/ui/sandbox/fixtures";
+import { jsonModeChecks } from "../../../../packages/ui/sandbox/json-mode-checks";
+
+jsonModeChecks(true);
 
 test("Desktop tests saved model connections next to the credential fields", async ({ page }) => {
   await page.addInitScript(() => {

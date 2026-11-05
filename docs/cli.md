@@ -66,9 +66,10 @@ wenyi models list
 wenyi models explain --operation review.fix
 wenyi models check --for translate
 wenyi models ping --for translate
+wenyi models ping --for translate --detect-json --json
 ```
 
-The first three commands preview routes and check credentials locally without requests. `models ping` sends one short live request per reachable model profile to confirm the endpoint, key and model name work; it uses a few tokens. Keep the three default tiers or select models independently through `llm.routes`. See [configuration](configuration.md#models-and-operation-routing) for explicit config/usage conversion and budgets.
+The first three commands preview routes and check credentials locally without requests. `models ping` sends one short live request per reachable model profile to confirm the endpoint, key and model name work; it uses a few tokens. Add `--detect-json` to detect usable JSON output modes with 1–2 extra short requests per reachable profile; results are reported without writing configuration. Keep the three default tiers or select models independently through `llm.routes`. See [configuration](configuration.md#models-and-operation-routing) for explicit config/usage conversion and budgets.
 
 ## Multilingual translation (experimental)
 

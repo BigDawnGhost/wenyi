@@ -399,6 +399,7 @@ class ModelCheckResult(BaseModel):
 
 class ModelPingRequest(RequestModel):
     timeout: float = Field(default=30, gt=0, le=120)
+    detect_json: bool = False
 
 
 class ModelPingResult(BaseModel):
@@ -413,6 +414,9 @@ class ModelPingResult(BaseModel):
     message: str
     status_code: Optional[int] = None
     latency_ms: Optional[int] = None
+    json_mode: Optional[Literal["native", "json_object", "json_schema"]] = None
+    json_category: Optional[str] = None
+    json_status_code: Optional[int] = None
 
 
 class ModelListRequest(RequestModel):

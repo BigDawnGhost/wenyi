@@ -96,14 +96,19 @@ def register_model_commands(
             30.0, "--timeout", min=0.1, help="Seconds to wait for each provider"
         ),
         as_json: bool = typer.Option(False, "--json", help="Print structured probe results"),
+        detect_json: bool = typer.Option(
+            False, "--detect-json", help="Also detect usable JSON output modes; uses extra tokens"
+        ),
     ):
-        """Send one short live request per reachable model profile; uses a few tokens."""
+        """Test reachable profiles, optionally negotiating their JSON output mode."""
         from wenyi_core.llm.connectivity import probe_connections
 
         try:
             config = load_config()
             operations = configured_operations(config, workflow)
-            results = probe_connections(config.llm, operations, timeout=timeout)
+            results = probe_connections(
+                config.llm, operations, timeout=timeout, detect_json=detect_json
+            )
         except (ValueError, RuntimeError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
@@ -111,6 +116,8 @@ def register_model_commands(
             typer.echo(json.dumps([result.describe() for result in results], indent=2))
         else:
             table = Table("Profile", "Connection / adapter", "Model", "Status", "Latency", "Detail")
+            if detect_json:
+                table.add_column("JSON mode")
             for result in results:
                 table.add_row(
                     result.profile,
@@ -119,6 +126,7 @@ def register_model_commands(
                     "[green]ok[/]" if result.ok else f"[red]{result.category}[/]",
                     "-" if result.latency_ms is None else f"{result.latency_ms} ms",
                     result.message,
+                    *([result.json_mode or result.json_category or "-"] if detect_json else []),
                 )
             console.print(table)
         failed = sum(not result.ok for result in results)
@@ -128,6 +136,10 @@ def register_model_commands(
             raise typer.Exit(1)
         if not as_json:
             console.print(f"All {len(results)} model profiles reachable for {workflow}.")
+        if detect_json and any(result.json_category != "ok" for result in results):
+            if not as_json:
+                console.print("[red]Some models did not pass the JSON capability test.[/]")
+            raise typer.Exit(1)
 
     @models.command("migrate-config")
     def migrate_config(

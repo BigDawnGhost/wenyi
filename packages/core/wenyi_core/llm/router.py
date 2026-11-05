@@ -81,7 +81,11 @@ class RoutedLLMClient(LLMClient):
         self.limits.cancel()
 
     def probe_profiles(
-        self, profiles: Iterable[str] | None = None, *, timeout: float | None = None
+        self,
+        profiles: Iterable[str] | None = None,
+        *,
+        timeout: float | None = None,
+        detect_json: bool = False,
     ) -> list:
         """Send live probes using this invocation's frozen configuration and credentials."""
         from .connectivity import DEFAULT_PROBE_TIMEOUT, probe_profiles
@@ -91,6 +95,7 @@ class RoutedLLMClient(LLMClient):
             profiles,
             credentials=self._credentials,
             timeout=DEFAULT_PROBE_TIMEOUT if timeout is None else timeout,
+            detect_json=detect_json,
         )
 
     def request_snapshot(self, operation: str) -> dict[str, Any]:

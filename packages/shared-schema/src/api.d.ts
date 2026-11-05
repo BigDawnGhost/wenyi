@@ -421,7 +421,7 @@ export interface paths {
         put?: never;
         /**
          * Ping Models
-         * @description Send one short live request per saved model profile; this uses provider tokens.
+         * @description Probe saved profiles, optionally negotiating JSON; never mutate the saved configuration.
          */
         post: operations["ping_models_settings_models_ping_post"];
         delete?: never;
@@ -1253,6 +1253,11 @@ export interface components {
              * @default 30
              */
             timeout: number;
+            /**
+             * Detect Json
+             * @default false
+             */
+            detect_json: boolean;
         };
         /** ModelPingResult */
         ModelPingResult: {
@@ -1278,6 +1283,12 @@ export interface components {
             status_code?: number | null;
             /** Latency Ms */
             latency_ms?: number | null;
+            /** Json Mode */
+            json_mode?: ("native" | "json_object" | "json_schema") | null;
+            /** Json Category */
+            json_category?: string | null;
+            /** Json Status Code */
+            json_status_code?: number | null;
         };
         /** PDFCapabilities */
         PDFCapabilities: {

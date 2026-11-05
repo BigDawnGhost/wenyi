@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
+from threading import Lock
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..transport import Messages, ResolvedModel
+from ..configuration import ProviderConfig
+from ..retrying import error_status_code
+from ..transport import Messages, RequestContext, ResolvedModel
 from ._openai_compatible import (
     OpenAICompatibleBaseClient,
     base_request_kwargs,
@@ -29,6 +33,7 @@ class OpenAICompatibleOptions(BaseModel):
     thinking: bool = False
     reasoning_effort: str = "high"
     json_response_fallback: Literal["none", "reasoning_content"] = "none"
+    json_output_mode: Literal["json_object", "json_schema"] = "json_object"
     request_overrides: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -62,6 +67,11 @@ def build_request_kwargs(
 ) -> dict[str, Any]:
     """Build compatible request arguments according to the configured reasoning dialect."""
     kwargs = base_request_kwargs(model_config.model, messages, json_mode=json_mode)
+    if json_mode and model_config.options.json_output_mode == "json_schema":
+        kwargs["response_format"] = {
+            "type": "json_schema",
+            "json_schema": {"name": "response", "schema": {"type": "object"}, "strict": True},
+        }
     reasoning_kwargs, extra_body = _reasoning_body(
         model_config.options,
         reasoning_style,
@@ -81,6 +91,99 @@ def build_request_kwargs(
 
 class OpenAICompatibleClient(OpenAICompatibleBaseClient[OpenAICompatibleOptions]):
     connection_options = CompatibleConnectionOptions
+    protocol_version = 2
+
+    def __init__(self, cfg: ProviderConfig, *, credentials: tuple[str | None] | None = None):
+        super().__init__(cfg, credentials=credentials)
+        # The adapter already scopes this cache to a frozen connection/credential snapshot.
+        self._json_modes: dict[tuple[str, str], str] = {}
+        self._json_modes_lock = Lock()
+
+    def generate(
+        self,
+        messages: Messages,
+        model: ResolvedModel[OpenAICompatibleOptions],
+        *,
+        json_mode: bool,
+        context: RequestContext,
+    ) -> str:
+        if not json_mode or not context.allow_json_negotiation:
+            return super().generate(messages, model, json_mode=json_mode, context=context)
+
+        key = (model.model, json.dumps(model.options.model_dump(mode="json"), sort_keys=True))
+        candidates = dict(self.json_probe_candidates(model))
+        configured = model.options.json_output_mode
+        with self._json_modes_lock:
+            mode = self._json_modes.get(key, configured)
+        source = "configured" if mode == configured else "cached"
+        switched = False
+
+        def attempt() -> str:
+            # Never hold the cache lock while waiting for quotas, HTTP, or retry backoff.
+            with context.attempt_scope():
+                context.emit(
+                    "llm_json_mode_selected", json_output_mode=mode, json_mode_source=source
+                )
+                return self._request(messages, candidates[mode], json_mode=True, context=context)
+
+        def request() -> str:
+            nonlocal mode, source, switched
+            try:
+                return attempt()
+            except Exception as error:
+                if switched or not self.is_json_mode_unsupported(error):
+                    raise
+                with self._json_modes_lock:
+                    if self._json_modes.get(key) == mode:
+                        del self._json_modes[key]
+                # Retain this per-call choice across shared transient retries; switch only once.
+                mode = next(candidate for candidate in candidates if candidate != mode)
+                source = "fallback"
+                switched = True
+            return attempt()
+
+        text = self._generate_with_retry(request, context=context)
+        try:
+            valid_object = isinstance(json.loads(text), dict)
+        except ValueError:
+            valid_object = False
+        if valid_object:
+            with self._json_modes_lock:
+                self._json_modes[key] = mode
+        # Leave task-level parsing/validation unchanged; invalid output is never cached.
+        return text
+
+    def json_probe_candidates(
+        self, model: ResolvedModel[OpenAICompatibleOptions]
+    ) -> tuple[tuple[str, ResolvedModel], ...]:
+        selected = model.options.json_output_mode
+        alternate = "json_schema" if selected == "json_object" else "json_object"
+        return tuple(
+            (
+                mode,
+                ResolvedModel(
+                    model.model, model.options.model_copy(update={"json_output_mode": mode})
+                ),
+            )
+            for mode in (selected, alternate)
+        )
+
+    def is_json_mode_unsupported(self, error: Exception) -> bool:
+        if error_status_code(error) not in {400, 422}:
+            return False
+        # Inspect locally, before safe error projection; never retain provider error text.
+        body = getattr(error, "body", None)
+        detail = body.get("error", body) if isinstance(body, dict) else body
+        if isinstance(detail, dict):
+            detail = detail.get("message")
+        if not isinstance(detail, str):
+            return False
+        text = detail.lower()
+        return (
+            "response_format" in text
+            and any(mode in text for mode in ("json_object", "json_schema"))
+            and any(word in text for word in ("must", "only", "unsupported", "not supported"))
+        )
 
     @property
     def reasoning_style(self) -> ReasoningStyle:

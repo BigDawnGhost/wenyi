@@ -84,10 +84,10 @@ def save(body: GlobalConfigInput) -> dict:
 
 @router.post("/models/ping", response_model=list[ModelPingResult])
 def ping_models(body: ModelPingRequest) -> list[dict]:
-    """Send one short live request per saved model profile; this uses provider tokens."""
+    """Probe saved profiles, optionally negotiating JSON; never mutate the saved configuration."""
     try:
         client = current_context().build_client(load_settings().config)
-        results = client.probe_profiles(timeout=body.timeout)
+        results = client.probe_profiles(timeout=body.timeout, detect_json=body.detect_json)
     except (ValueError, RuntimeError) as error:
         raise HTTPException(422, str(error)) from error
     return [result.describe() for result in results]

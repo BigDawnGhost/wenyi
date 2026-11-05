@@ -32,6 +32,8 @@ llm:
   preset: deepseek # All tiers: deepseek-flash, thinking enabled, reasoning_effort high
   # Add providers, models and routes to override individual operations.
   # Inspect effective settings with: wenyi models list
+  # Compatible model options.json_output_mode: json_object (default) or json_schema.
+  # Detect JSON support without saving: wenyi models ping --detect-json --json
 
 # ── Segmentation ─────────────────────────────────────────────────────────────────
 segment:

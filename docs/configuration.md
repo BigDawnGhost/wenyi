@@ -160,12 +160,16 @@ Replace `YOUR_EDITOR_MODEL` with a model supported by your endpoint. Other opera
 | `openrouter` | OpenRouter endpoint; `OPENROUTER_API_KEY` | `thinking`, `reasoning_effort`, `extra_body` |
 | `opencode-go` | OpenCode Go gateway (`https://opencode.ai/zen/go/v1`); `OPENCODE_API_KEY`. Sends `User-Agent: wenyi` and a stable per-connection `x-opencode-session`. No built-in preset — configure models explicitly | `thinking`, `reasoning_effort`, `extra_body` |
 | `gemini` | Native Gemini API; `GEMINI_API_KEY`, falling back to `GOOGLE_API_KEY` when no custom variable is set | `thinking_level` or `thinking_budget`, `temperature`, `extra_body` |
-| `openai-compatible` | Explicit `base_url`; optional `api_key_env`; `reasoning_style` | `thinking`, `reasoning_effort`, `json_response_fallback`, `request_overrides` |
+| `openai-compatible` | Explicit `base_url`; optional `api_key_env`; `reasoning_style` | `thinking`, `reasoning_effort`, `json_response_fallback`, `json_output_mode`, `request_overrides` |
 | `orcarouter` | `https://api.orcarouter.ai/v1`; `ORCAROUTER_API_KEY`; `reasoning_style` | Same as `openai-compatible` |
 | `ollama`, `vllm` | `http://localhost:11434/v1`, `http://localhost:8000/v1`; optional credentials; `reasoning_style` | Same as `openai-compatible` |
 | `fake` | No network or credentials | No provider options |
 
 Compatible endpoints accept `reasoning_style: none` (default), `deepseek`, `openai`, or `openrouter`. `json_response_fallback: reasoning_content` is an explicit option for gateways placing JSON there; the default is `none`, and non-JSON reasoning is never accepted. Gemini thinking level and thinking budget are mutually exclusive. Raw extension dictionaries are endpoint-specific; offline validation cannot prove a remote model supports them.
+
+Compatible model `options.json_output_mode` defaults to `json_object`. Select `json_schema` for endpoints such as LM Studio that require it. This sends a generic `{"type":"object"}` schema, not task-specific field constraints; prompts and existing output validation still define the result. Only JSON requests change: chapter/book summaries remain plain text. Other adapters retain their native JSON behavior.
+
+During actual JSON calls, an explicit HTTP 400/422 rejection of the selected `response_format` allows one switch between `json_object` and `json_schema`. A complete JSON object confirms the choice; later calls with the same connection, model and options reuse it for this client invocation. A rejected cached choice can be checked again, but each call switches at most once. The cache is thread-safe, is not shared with other model configurations, and does not modify saved settings or survive a new client/job. LLM events record the selected mode, without the provider error body. Invalid JSON, truncation, authentication, rate limits, and unrelated 4xx errors do not trigger format switching. There is no fallback to unconstrained text; transient retries retain their existing shared budget, and every wire attempt still observes quotas, usage accounting and cancellation. Connectivity probes test each candidate separately so the reported mode remains accurate. To retain a detected preference across jobs, apply and save it in settings.
 
 Provider SDK retries are disabled. Wenyi retries transient connections/timeouts, HTTP 408/409/429 and 5xx responses, and empty responses through one shared policy. Retry backoff releases the connection permit and responds to cancellation. Ordinary 4xx errors are not retried. PDF's default MinerU import uses a separate `MINERU_API_KEY`; the optional BabelDOC HTTP bridge is independent of model routing.
 
@@ -217,9 +221,14 @@ To confirm that providers are actually reachable, run a live connectivity test:
 ```bash
 uv run wenyi models ping --for translate
 uv run wenyi models ping --for review --timeout 10 --json
+uv run wenyi models ping --for translate --detect-json --json
 ```
 
 `ping` sends one short request (`max_output_tokens` 16, or the provider minimum such as 4096 with thinking enabled) to every model profile reachable by the workflow, including explicit fallbacks. It never retries, caps each request at `--timeout` seconds (default 30), does not record usage in any run, and exits with status 1 if any profile fails. Failures are reported by category, such as `authentication_failed`, `model_or_endpoint_not_found`, `connection_failed` or `missing_credential`, without echoing provider responses. A truncated or empty reply counts as reachable.
+
+`--detect-json` adds 1–2 short JSON requests per reachable profile, sharing its timeout budget. It starts with the configured mode and tries the alternative only after an explicit format rejection, never after authentication, rate-limit, network or unrelated request failures. The complete fixed test object must parse without repairs and match its expected fields and values; empty, truncated or incorrect JSON fails even if the model is reachable. JSON probes allow 128 output tokens or the provider's higher minimum. Results include `json_mode`, `json_category` and `json_status_code`; `native` means the adapter's existing JSON protocol. A failed JSON test also exits with status 1. CLI tests never write configuration.
+
+In Web/Desktop, **Test connection** includes JSON detection for all saved profiles. **Apply detected JSON modes** copies successful compatible modes into the settings draft; **Save configuration** persists them using the normal revision checks. Failed profiles are left unchanged. Results from an edited configuration cannot be applied. Retest after changing the endpoint, model or inference settings; a small probe establishes usable output, not strict schema enforcement or translation quality.
 
 Optional local controls, illustrated with an offline provider:
 

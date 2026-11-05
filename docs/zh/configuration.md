@@ -146,12 +146,16 @@ llm:
 | `openrouter` | OpenRouter 端点；`OPENROUTER_API_KEY` | `thinking`、`reasoning_effort`、`extra_body` |
 | `opencode-go` | OpenCode Go 网关（`https://opencode.ai/zen/go/v1`）；`OPENCODE_API_KEY`。会发送 `User-Agent: wenyi` 与连接级稳定的 `x-opencode-session`。无内置 preset，需自行配置模型 | `thinking`、`reasoning_effort`、`extra_body` |
 | `gemini` | 原生 Gemini API；未指定自定义变量时，从 `GEMINI_API_KEY` 回退到 `GOOGLE_API_KEY` | `thinking_level` 或 `thinking_budget`、`temperature`、`extra_body` |
-| `openai-compatible` | 必填 `base_url`；可选 `api_key_env`；`reasoning_style` | `thinking`、`reasoning_effort`、`json_response_fallback`、`request_overrides` |
+| `openai-compatible` | 必填 `base_url`；可选 `api_key_env`；`reasoning_style` | `thinking`、`reasoning_effort`、`json_response_fallback`、`json_output_mode`、`request_overrides` |
 | `orcarouter` | `https://api.orcarouter.ai/v1`；`ORCAROUTER_API_KEY`；`reasoning_style` | 同 `openai-compatible` |
 | `ollama`、`vllm` | `http://localhost:11434/v1`、`http://localhost:8000/v1`；可选密钥；`reasoning_style` | 同 `openai-compatible` |
 | `fake` | 无网络、无需密钥 | 无提供商选项 |
 
 兼容端点的 `reasoning_style` 支持 `none`（默认）、`deepseek`、`openai`、`openrouter`。只有明确配置 `json_response_fallback: reasoning_content`，才会从网关的该字段读取有效 JSON；默认 `none`，非 JSON 推理文本不会被当作结果。Gemini 的 thinking level 和 budget 互斥。原始扩展字典依赖具体端点；离线校验无法保证远端模型接受这些参数。
+
+兼容模型的 `options.json_output_mode` 默认为 `json_object`；LM Studio 等要求 Schema 的端点可选择 `json_schema`。它发送通用的 `{"type":"object"}` Schema，不约束各任务的具体字段；结果契约仍由提示词和已有输出校验负责。只影响 JSON 请求，章节摘要和全书梗概仍返回纯文本，其他适配器保留原生 JSON 行为。
+
+实际 JSON 调用中，只有 HTTP 400/422 明确拒绝所选 `response_format` 时，才会在 `json_object` 与 `json_schema` 之间切换一次。返回完整 JSON 对象后，同一客户端本次运行内、相同连接/模型/选项的后续调用会沿用该模式。缓存模式再次被明确拒绝时可以重新检查，但每次调用最多切换一次。缓存支持并发，不与其他模型配置混用，不修改已保存设置；新客户端或新任务不会继承。LLM 运行事件记录所用模式，不记录提供商错误正文。无效 JSON、截断、鉴权、限流及无关 4xx 错误不会触发格式切换，也不会降级为无约束文本。瞬时错误仍共用原有重试额度，每次实际请求仍遵守配额、用量记账和取消。连接测试逐一检查候选格式，避免报告错误模式。若希望跨任务保留检测结果，请在设置中应用并保存。
 
 SDK 内置重试统一关闭。Wenyi 统一重试连接/超时、HTTP 408/409/429、5xx 瞬时错误及空响应；退避期间释放连接并发名额，并响应取消。普通 4xx 错误不重试。PDF 默认 MinerU 解析另用 `MINERU_API_KEY`；可选 BabelDOC HTTP bridge 独立于模型路由。
 
@@ -201,9 +205,14 @@ uv run wenyi models check --for translate
 ```bash
 uv run wenyi models ping --for translate
 uv run wenyi models ping --for review --timeout 10 --json
+uv run wenyi models ping --for translate --detect-json --json
 ```
 
 `ping` 向该流程可达的每个模型配置（含显式 fallback）发送一次简短请求（`max_output_tokens` 为 16；开启 thinking 时取 provider 的最低值，例如 4096）。它不重试，每次请求最长等待 `--timeout` 秒（默认 30），不计入任何运行的用量；任一配置失败时退出码为 1。失败按类别报告，例如 `authentication_failed`、`model_or_endpoint_not_found`、`connection_failed` 或 `missing_credential`，不回显 provider 响应内容。回复被截断或为空也视为可连通。
+
+`--detect-json` 为每个可连通模型额外发送 1–2 次短 JSON 请求，共享该模型的超时预算。从已配置的模式开始，仅在服务明确拒绝格式时尝试另一种；鉴权、限流、网络或无关请求错误不会触发切换。固定测试对象必须无需修复即可解析，且字段和值完全匹配；空回复、截断或内容不符均算 JSON 检测失败，即使模型已连通。JSON 探针使用 128 个输出 token 或提供商更高的最低值。结果包含 `json_mode`、`json_category` 和 `json_status_code`；`native` 表示适配器已有的 JSON 协议。JSON 检测失败也以状态码 1 退出。CLI 检测不写配置。
+
+Web/Desktop 的**测试连接**会同时检测所有已保存模型的 JSON 输出。**应用检测到的 JSON 模式**将成功的兼容模式写入设置草稿，再点击**保存配置**，通过现有版本检查持久化；失败的模型保持不变。配置编辑后的旧结果不能应用。修改端点、模型或推理设置后请重新检测；短探针只能证明测试输出可用，不代表严格 Schema 约束或翻译质量已验证。
 
 可选本地控制示例（使用离线提供商）：
 

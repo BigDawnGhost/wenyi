@@ -16,9 +16,11 @@ class ProbingClient:
         self.results = list(results)
         self.error = error
         self.calls = []
+        self.json_calls = []
 
-    def probe_profiles(self, profiles=None, *, timeout=None):
+    def probe_profiles(self, profiles=None, *, timeout=None, detect_json=False):
         self.calls.append(timeout)
+        self.json_calls.append(detect_json)
         if self.error is not None:
             raise self.error
         return self.results
@@ -87,6 +89,20 @@ def test_ping_defaults_and_bounds_the_timeout(api):
     for timeout in (0, 121):
         assert client.post("/settings/models/ping", json={"timeout": timeout}).status_code == 422
     assert client.post("/settings/models/ping", json={"workflow": "x"}).status_code == 422
+
+
+def test_ping_returns_json_capability_without_saving_settings(api, monkeypatch):
+    client, state, saved = api
+    state.client = ProbingClient(saved, [_result(json_mode="json_schema", json_category="ok")])
+    monkeypatch.setattr(
+        "wenyi_backend.routers.settings.save_settings",
+        lambda *args, **kwargs: pytest.fail("Probing must not save settings"),
+    )
+    response = client.post("/settings/models/ping", json={"detect_json": True})
+    assert response.status_code == 200
+    assert response.json()[0]["json_mode"] == "json_schema"
+    assert response.json()[0]["json_category"] == "ok"
+    assert state.client.json_calls == [True]
 
 
 def test_ping_configuration_errors_are_actionable(api):

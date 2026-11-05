@@ -281,11 +281,46 @@ export function ProviderSettings({
                 }
                 onChange={(value) => update("models", id, { model: value })}
               />
+              {["openai-compatible", "ollama", "vllm", "orcarouter"].includes(
+                String(object(providers[String(model.provider)]).kind),
+              ) && (
+                <div className="col-span-3 min-w-0 space-y-2">
+                  <Label htmlFor={`json-mode-${id}`}>{tr("connectivity.jsonMode")}</Label>
+                  <Select
+                    id={`json-mode-${id}`}
+                    value={String(object(model.options).json_output_mode ?? "json_object")}
+                    onValueChange={(value) => update("models", id, {
+                      options: { ...object(model.options), json_output_mode: value },
+                    })}
+                  >
+                    <SelectItem value="json_object">json_object</SelectItem>
+                    <SelectItem value="json_schema">json_schema</SelectItem>
+                  </Select>
+                </div>
+              )}
             </div>
           );
         })}
       </div>
-      <ModelConnectivity saved={saved} disabled={disabled} />
+      <ModelConnectivity
+        saved={saved}
+        disabled={disabled}
+        configuration={JSON.stringify(llm)}
+        onApply={(results) => {
+          const updated = { ...models };
+          for (const result of results) {
+            const model = object(models[result.profile]);
+            const provider = object(providers[String(model.provider)]);
+            if (model.provider !== result.connection || model.model !== result.model ||
+                provider.kind !== result.provider ||
+                !["openai-compatible", "ollama", "vllm", "orcarouter"].includes(String(provider.kind))) continue;
+            updated[result.profile] = {
+              ...model, options: { ...object(model.options), json_output_mode: result.json_mode },
+            };
+          }
+          onChange({ ...llm, models: updated });
+        }}
+      />
     </fieldset>
   );
 }

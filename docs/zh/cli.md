@@ -63,9 +63,10 @@ wenyi models list
 wenyi models explain --operation review.fix
 wenyi models check --for translate
 wenyi models ping --for translate
+wenyi models ping --for translate --detect-json --json
 ```
 
-前三个命令只做本地预览与密钥检查，不发送请求。`models ping` 会对每个可达模型配置发送一次简短的真实请求，确认端点、密钥与模型名可用，会消耗少量 token。三个档位仍可作为默认入口；在 `llm.routes` 中独立配置操作即可混用模型。旧配置与用量账本的显式转换及预算设置见[配置说明](configuration.md#模型与操作路由)。
+前三个命令只做本地预览与密钥检查，不发送请求。`models ping` 会对每个可达模型配置发送一次简短的真实请求，确认端点、密钥与模型名可用，会消耗少量 token。增加 `--detect-json` 可检测可用的 JSON 输出模式，每个可连通模型额外发送 1–2 次短请求，只报告结果、不写配置。三个档位仍可作为默认入口；在 `llm.routes` 中独立配置操作即可混用模型。旧配置与用量账本的显式转换及预算设置见[配置说明](configuration.md#模型与操作路由)。
 
 ## 多语言互译（实验性）
 

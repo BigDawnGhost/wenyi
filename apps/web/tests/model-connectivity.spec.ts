@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import type { ModelPingResult } from "@wenyi/ui/api/types";
 import { fakeApi } from "../../../packages/ui/sandbox/fixtures";
+import { jsonModeChecks } from "../../../packages/ui/sandbox/json-mode-checks";
+
+jsonModeChecks();
 
 test("global settings test saved model connections and explain failures", async ({ page }) => {
   const requests: unknown[] = [];
@@ -17,6 +20,9 @@ test("global settings test saved model connections and explain failures", async 
       message: "Provider authentication failed. Check the API key.",
       status_code: 401,
       latency_ms: 210,
+      json_mode: null,
+      json_category: null,
+      json_status_code: null,
     },
   ];
   await fakeApi(page);
@@ -32,7 +38,7 @@ test("global settings test saved model connections and explain failures", async 
   await expect(status).toContainText("1 of 1 models are unreachable.");
   await expect(status).toContainText("Authentication failed. Check the API key. (HTTP 401)");
   await expect(status).toContainText("210 ms");
-  expect(requests).toEqual([{}]);
+  expect(requests).toEqual([{ detect_json: true }]);
 
   results = [{ ...results[0], ok: true, category: "ok", status_code: null, latency_ms: 95 }];
   await test.click();

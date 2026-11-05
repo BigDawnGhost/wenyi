@@ -50,15 +50,35 @@ function useElapsedSeconds(active: boolean): number | undefined {
 export function ModelConnectivity({
   saved,
   disabled,
+  configuration,
+  onApply,
 }: {
   saved: boolean;
   disabled: boolean;
+  configuration: string;
+  onApply: (results: ModelPingResult[]) => void;
 }) {
   const { t } = useI18n();
-  const ping = useMutation({ mutationFn: () => api.pingModels() });
+  const [applied, setApplied] = useState(false);
+  const ping = useMutation({
+    mutationFn: async () => ({ configuration, results: await api.pingModels() }),
+  });
   const elapsed = useElapsedSeconds(ping.isPending);
-  const results = ping.data;
+  // A delayed reply must never be applied to an edited or replaced configuration.
+  const results = saved && ping.data?.configuration === configuration ? ping.data.results : undefined;
+  const applicable = results?.filter((result) =>
+    result.json_category === "ok" &&
+    (result.json_mode === "json_object" || result.json_mode === "json_schema"),
+  ) ?? [];
   const failed = results?.filter((result) => !result.ok).length ?? 0;
+  const jsonDetail = (result: ModelPingResult) => {
+    if (result.json_category === "ok") return result.json_mode === "native"
+      ? t("connectivity.nativeJson") : result.json_mode;
+    if (!result.json_category) return "—";
+    const key = categoryMessages[result.json_category];
+    const text = key ? t(key) : t("connectivity.invalidJson");
+    return result.json_status_code ? `${text} (HTTP ${result.json_status_code})` : text;
+  };
   const detail = (result: ModelPingResult) => {
     const key = categoryMessages[result.category];
     const text = key ? t(key) : result.message;
@@ -72,10 +92,20 @@ export function ModelConnectivity({
           variant="outline"
           size="sm"
           disabled={!saved || disabled || ping.isPending}
-          onClick={() => ping.mutate()}
+          onClick={() => { setApplied(false); ping.mutate(); }}
         >
           {ping.isPending ? t("connectivity.testing") : t("connectivity.test")}
         </Button>
+        {applicable.length > 0 && (
+          <Button
+            type="button"
+            variant="outline"
+            disabled={disabled || ping.isPending || !saved}
+            onClick={() => { onApply(applicable); setApplied(true); }}
+          >
+            {t("connectivity.applyJson")}
+          </Button>
+        )}
         {ping.isPending && elapsed !== undefined && (
           <p className="text-xs tabular-nums text-muted-foreground">
             {t("connectivity.elapsed", { seconds: elapsed })}
@@ -85,6 +115,8 @@ export function ModelConnectivity({
           <p className="text-xs text-muted-foreground">{t("connectivity.saveFirst")}</p>
         )}
       </div>
+      <p className="text-xs text-muted-foreground">{t("connectivity.jsonProbeHint")}</p>
+      {applied && !saved && <p role="status">{t("connectivity.jsonApplied")}</p>}
       <ErrorNotice error={ping.error} />
       <div role="status" aria-live="polite" className="space-y-2">
         {results && (
@@ -105,6 +137,7 @@ export function ModelConnectivity({
                   <th scope="col" className="py-1 pr-3 font-medium">{t("providerSettings.apiConnection")}</th>
                   <th scope="col" className="py-1 pr-3 font-medium">{t("connectivity.status")}</th>
                   <th scope="col" className="py-1 pr-3 font-medium">{t("connectivity.latency")}</th>
+                  <th scope="col" className="py-1 pr-3 font-medium">{t("connectivity.jsonMode")}</th>
                   <th scope="col" className="py-1 font-medium">{t("connectivity.detail")}</th>
                 </tr>
               </thead>
@@ -126,6 +159,7 @@ export function ModelConnectivity({
                     <td className="py-2 pr-3 whitespace-nowrap">
                       {result.latency_ms == null ? "—" : `${result.latency_ms} ms`}
                     </td>
+                    <td className="py-2 pr-3">{jsonDetail(result)}</td>
                     <td className="py-2">{detail(result)}</td>
                   </tr>
                 ))}
