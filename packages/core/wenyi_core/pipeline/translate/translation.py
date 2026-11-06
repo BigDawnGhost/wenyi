@@ -122,6 +122,7 @@ class TranslationService:
             # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
             if not store.pending_chapters():
                 self._titles.run(store, glossary, progress=progress)
+                self._annotations.repair_fallbacks(store, progress=progress)
         finally:
             self._runtime.usage.flush(store, scope="translate")
         if progress and total:
