@@ -54,3 +54,8 @@ _ATOMIC_INLINE_TAGS = {
 
 
 LINE_WRAPPER_ATTR = "data-tn-line"
+
+
+HTML_MARKUP_META_KEY = "html_markup"
+HTML_ATTRIBUTE_META_KEY = "html_attribute"
+HTML_ATTRIBUTE_ID_ATTR = "data-tn-attribute-id"

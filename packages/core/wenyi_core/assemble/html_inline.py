@@ -10,6 +10,7 @@ from bs4.element import ProcessingInstruction, Tag
 from wenyi_core.markup.contracts import (
     ANNOTATION_ID_ATTR,
     ANNOTATION_META_KEY,
+    HTML_MARKUP_META_KEY,
     INLINE_ID_ATTR,
     INLINE_META_KEY,
 )
@@ -117,6 +118,29 @@ def _annotation_restorations(
     ranges: list[tuple[int, int, int, Tag, list[Tag]]] = []
     fallbacks: list[Tag] = []
     pending_ranges: list[tuple[int, int, int, Tag, list[Tag], str]] = []
+    html_markup = bool(meta.get(HTML_MARKUP_META_KEY))
+    # Snapshot nested roots before extracting any of them. Extracting an outer shell
+    # must not make its descendants invisible to subsequent lookups.
+    roots = {
+        node.get(ANNOTATION_ID_ATTR): node
+        for node in el.find_all(True, attrs={ANNOTATION_ID_ATTR: True})
+    }
+
+    def fallback(root: Tag, item: dict[str, object], marker_text: str) -> None:
+        if html_markup and item.get("html_tag"):
+            _clean_annotation_attrs(root)
+            root.clear()
+            if root.name == "a" and root.has_attr("href"):
+                # Keep navigation available without pretending a failed range was aligned.
+                root.append(str(item.get("source_text", "")))
+            elif not (root.has_attr("id") or root.has_attr("name")):
+                return
+            fallbacks.append(root)
+        else:
+            fallbacks.append(
+                _fallback_annotation_node(root, mode=str(item["mode"]), marker_text=marker_text)
+            )
+
     for order, item in enumerate(items):
         if not isinstance(item, dict):
             continue
@@ -124,7 +148,7 @@ def _annotation_restorations(
         mode = item.get("mode")
         if not isinstance(annotation_id, str) or mode not in {"point", "range"}:
             continue
-        root = el.find(True, attrs={ANNOTATION_ID_ATTR: annotation_id})
+        root = roots.get(annotation_id)
         if not isinstance(root, Tag):
             continue
         root.extract()
@@ -156,7 +180,7 @@ def _annotation_restorations(
             covers_whole_source = (
                 mode == "range"
                 and not marker_text
-                and len(items) == 1
+                and (len(items) == 1 or html_markup)
                 and isinstance(source_start, int)
                 and not isinstance(source_start, bool)
                 and isinstance(source_end, int)
@@ -169,7 +193,7 @@ def _annotation_restorations(
             if covers_whole_source:
                 pending_ranges.append((0, len(text), order, root, [], marker_text))
                 continue
-            fallbacks.append(_fallback_annotation_node(root, mode=mode, marker_text=marker_text))
+            fallback(root, item, marker_text)
             continue
         assert isinstance(start, int) and not isinstance(start, bool)
         assert isinstance(end, int) and not isinstance(end, bool)
@@ -180,9 +204,44 @@ def _annotation_restorations(
             markers = _range_marker_nodes(root, marker_text)
             pending_ranges.append((start, end, order, root, markers, marker_text))
             continue
-        fallbacks.append(_fallback_annotation_node(root, mode=mode, marker_text=marker_text))
+        fallback(root, item, marker_text)
 
-    # HTML links cannot cross or nest. Degrade invalid ranges to avoid producing a broken DOM.
+    if html_markup:
+        # HTML style ranges may nest, but must retain their original parent. Source
+        # siblings cannot become overlapping styles or bind text to the wrong link.
+        stack: list[tuple[int, int, int, Tag, list[Tag]]] = []
+        accepted_ids: dict[int, str] = {}
+        for start, end, order, root, markers, marker_text in sorted(
+            pending_ranges, key=lambda row: (row[0], -row[1], row[2])
+        ):
+            item = items[order]
+            while stack and start >= stack[-1][1]:
+                stack.pop()
+            parent_id = item.get("html_parent")
+            actual_parent = accepted_ids[stack[-1][2]] if stack else None
+            valid_parent = parent_id == actual_parent
+            valid_bounds = not stack or end <= stack[-1][1]
+            nested_link = root.name == "a" and any(row[3].name == "a" for row in stack)
+            if not valid_parent or not valid_bounds or nested_link:
+                fallback(root, item, marker_text)
+                continue
+            row = (start, end, order, root, markers)
+            ranges.append(row)
+            stack.append(row)
+            accepted_ids[order] = str(item["id"])
+        # Point links inside a range link cannot become nested anchors.
+        safe_points = []
+        for offset, order, root in points:
+            if any(
+                start < offset < end and range_root.name == "a"
+                for start, end, _, range_root, _ in ranges
+            ):
+                fallbacks.append(root)
+            else:
+                safe_points.append((offset, order, root))
+        return safe_points, ranges, fallbacks
+
+    # EPUB note links cannot cross or nest. Keep its existing conservative policy.
     last_end = -1
     for start, end, order, root, markers, marker_text in sorted(pending_ranges):
         if start < last_end:
@@ -212,8 +271,10 @@ def _render_text_with_nodes(
     nodes: list[tuple[int, int, Tag]],
     ranges: list[tuple[int, int, int, Tag, list[Tag]]],
     fallbacks: list[Tag],
+    *,
+    nested: bool = False,
 ) -> None:
-    """Backfill inline nodes, annotation points and nonoverlapping ranges at target offsets."""
+    """Backfill inline nodes and validated flat or nested ranges at target offsets."""
     ordered_nodes = sorted(nodes, key=lambda value: (value[0], value[1]))
     node_index = 0
 
@@ -246,21 +307,36 @@ def _render_text_with_nodes(
             if isinstance(node, ProcessingInstruction):
                 el.insert_before(node.extract())
     el.clear()
-    cursor = 0
-    for start, end, _order, root, markers in sorted(ranges):
-        append_until(el, cursor, start)
-        root.clear()
-        # Point annotations at a range's end are siblings after the link, not nested anchors inside it.
-        append_until(root, start, end, include_end=False)
-        for marker in markers:
-            root.append(marker)
-        el.append(root)
-        cursor = end
-    append_until(el, cursor, len(text))
+    children: dict[int | None, list[int]] = {}
+    stack: list[int] = []
+    ordered_ranges = sorted(ranges, key=lambda row: (row[0], -row[1], row[2]))
+    for index, (start, _end, _order, _root, _markers) in enumerate(ordered_ranges):
+        while stack and (not nested or start >= ordered_ranges[stack[-1]][1]):
+            stack.pop()
+        children.setdefault(stack[-1] if stack else None, []).append(index)
+        stack.append(index)
+
+    def render_ranges(parent: Tag, start: int, end: int, owner: int | None) -> None:
+        cursor = start
+        for index in children.get(owner, []):
+            range_start, range_end, _order, root, markers = ordered_ranges[index]
+            append_until(parent, cursor, range_start)
+            root.clear()
+            render_ranges(root, range_start, range_end, index)
+            for marker in markers:
+                root.append(marker)
+            parent.append(root)
+            cursor = range_end
+        # End-boundary points remain siblings after links, never nested anchors.
+        append_until(parent, cursor, end, include_end=owner is None)
+
+    render_ranges(el, 0, len(text), None)
     # Adjacent fallback links at paragraph ends have no separating text, so footnote numbers can
     # merge (11, 12, 13 becomes 111213). Insert a separator to keep them readable.
     for index, fallback in enumerate(fallbacks):
-        if index > 0:
+        if nested and fallback.get_text(strip=True):
+            el.append(" ")
+        elif index > 0:
             el.append("、")
         el.append(fallback)
 
@@ -339,6 +415,7 @@ def _replace_block_content(
         restored,
         annotation_ranges,
         annotation_fallbacks,
+        nested=bool(meta.get(HTML_MARKUP_META_KEY)),
     )
     for marker in self_markers:
         el.append(marker)

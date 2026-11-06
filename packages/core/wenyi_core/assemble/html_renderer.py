@@ -16,10 +16,25 @@ from wenyi_core.assemble.html_inline import _merge_epub_render_meta, _replace_bl
 from wenyi_core.assemble.writer_common import _bilingual_source, _ordered_pair, _seg_text
 from wenyi_core.markup.contracts import (
     ANNOTATION_ID_ATTR,
+    HTML_ATTRIBUTE_ID_ATTR,
+    HTML_ATTRIBUTE_META_KEY,
+    HTML_MARKUP_META_KEY,
     INLINE_ID_ATTR,
     LINE_WRAPPER_ATTR,
 )
+from wenyi_core.markup.html import html_attribute_names
 from wenyi_core.models.document import KIND_HEADING, Chapter, Segment
+
+
+def _html_open_tag(name: str, attrs: object, **overrides: str) -> str:
+    """Serialize preserved shell attributes using the parser's escaping rules."""
+    element = BeautifulSoup("", "html.parser").new_tag(name)
+    if isinstance(attrs, dict):
+        element.attrs.update(attrs)
+    element.attrs.update(overrides)
+    if "lang" in overrides and element.has_attr("xml:lang"):
+        element["xml:lang"] = overrides["lang"]
+    return str(element).removesuffix(f"</{name}>")
 
 
 def _render_paragraph_html(
@@ -116,6 +131,10 @@ def _render_segments_html(
     # Index once so anchor lookups are O(1), avoiding a full DOM scan with soup.find for every anchor.
     # Reuse the resulting index throughout this resource.
     occupied_ids, tn_id_index = _index_soup_ids(soup)
+    attribute_nodes = {
+        node.get(HTML_ATTRIBUTE_ID_ATTR): node
+        for node in soup.find_all(True, attrs={HTML_ATTRIBUTE_ID_ATTR: True})
+    }
     if bilingual and source_ids_by_anchor is None:
         source_ids_by_anchor = _build_source_anchor_ids(
             by_anchor,
@@ -139,12 +158,32 @@ def _render_segments_html(
         }
     source_link_targets = source_link_targets or {}
     for anchor, text in by_anchor.items():
+        stored_meta = stored_meta_by_anchor.get(anchor, {})
+        fresh_meta = (
+            render_meta_by_anchor.get(anchor, {}) if render_meta_by_anchor is not None else {}
+        )
+        render_meta = _merge_epub_render_meta(stored_meta, fresh_meta)
+        attribute = (fresh_meta if render_meta_by_anchor is not None else stored_meta).get(
+            HTML_ATTRIBUTE_META_KEY
+        )
+        if isinstance(attribute, dict):
+            node_id = attribute.get("node_id")
+            name = attribute.get("name")
+            node = attribute_nodes.get(node_id) if isinstance(node_id, str) else None
+            if (
+                node is not None
+                and isinstance(name, str)
+                and name in html_attribute_names(node)
+                and node.has_attr(name)
+            ):
+                node[name] = text
+            continue
         el = tn_id_index.get(anchor)
         if el is None:
             continue
         src = (
             _bilingual_source(src_by_anchor.get(anchor, ""), text)
-            if bilingual and kind_by_anchor.get(anchor) != KIND_HEADING
+            if bilingual and kind_by_anchor.get(anchor) != KIND_HEADING and el.name != "option"
             else ""
         )
         source_markup = (
@@ -159,21 +198,30 @@ def _render_segments_html(
             else ""
         )
         line_wrapper = el.has_attr(LINE_WRAPPER_ATTR)
-        stored_meta = stored_meta_by_anchor.get(anchor, {})
-        fresh_meta = (
-            render_meta_by_anchor.get(anchor, {}) if render_meta_by_anchor is not None else {}
-        )
-        render_meta = _merge_epub_render_meta(stored_meta, fresh_meta)
         if text != src_by_anchor.get(anchor, ""):
+            # Temporary HTML runs omit edge whitespace from model input. Preserve it
+            # around fixed code/media without shifting aligned target offsets.
+            original = (
+                el.get_text() if line_wrapper and render_meta.get(HTML_MARKUP_META_KEY) else ""
+            )
+            leading = original[: len(original) - len(original.lstrip())]
+            trailing = original[len(original.rstrip()) :]
             _replace_block_content(soup, el, text, render_meta)
+            if leading:
+                el.insert(0, leading)
+            if trailing:
+                el.append(trailing)
         del el["data-tn-id"]
         if not src:
             continue
         # Source text for p can be an adjacent paragraph. Keep li/blockquote content inside its container
         # to avoid invalid structures such as <ul><li>...</li><p>...</p></ul>
         # and preserve blockquote semantics and styling.
-        nested_source = el.name in {"li", "blockquote"}
-        src_el = soup.new_tag("span" if line_wrapper else "div" if nested_source else "p")
+        html_nested_source = bool(render_meta.get(HTML_MARKUP_META_KEY)) and el.name != "p"
+        nested_source = html_nested_source or el.name in {"li", "blockquote"}
+        src_el = soup.new_tag(
+            "span" if line_wrapper or html_nested_source else "div" if nested_source else "p"
+        )
         source_classes = ["tn-source"]
         if preserve_source_style:
             original_classes = el.get("class")
@@ -198,8 +246,12 @@ def _render_segments_html(
             el.insert_after(src_el)
             el.insert_after(soup.new_tag("br"))
         elif nested_source and order == "source_first":
+            if html_nested_source:
+                el.insert(0, soup.new_tag("br"))
             el.insert(0, src_el)
         elif nested_source:
+            if html_nested_source:
+                el.append(soup.new_tag("br"))
             el.append(src_el)
         elif order == "source_first":
             el.insert_before(src_el)
@@ -212,6 +264,8 @@ def _render_segments_html(
         node.attrs.pop(ANNOTATION_ID_ATTR, None)
     for node in soup.find_all(True, attrs={INLINE_ID_ATTR: True}):
         node.attrs.pop(INLINE_ID_ATTR, None)
+    for node in soup.find_all(True, attrs={HTML_ATTRIBUTE_ID_ATTR: True}):
+        node.attrs.pop(HTML_ATTRIBUTE_ID_ATTR, None)
     return str(soup)
 
 

@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import os
-import shutil
 import stat
 import tempfile
-import zipfile
 from contextlib import ExitStack, contextmanager
 from io import BufferedReader
 from pathlib import Path
@@ -106,7 +104,7 @@ class _Directory:
 
     def __init__(self, path: Path, parent: _Directory | None = None):
         self.path = path
-        # Trusted absolute ancestors need not obey portable ZIP-entry rules.
+        # Trusted absolute ancestors need not obey portable asset-name rules.
         if parent is not None and path.name in {"", ".", ".."}:
             raise ValueError("Invalid directory component")
         if os.name == "nt":
@@ -175,19 +173,19 @@ def open_regular(file: Path) -> BinaryIO:
         return directory.open_file(file.name)
 
 
-def _copy_file(
-    bundle: zipfile.ZipFile, directory: _Directory, name: str, archive_name: str
-) -> None:
+def _read_file(directory: _Directory, name: str) -> bytes:
     with directory.open_file(name) as source:
         before = os.fstat(source.fileno())
-        with bundle.open(archive_name, "w", force_zip64=True) as destination:
-            shutil.copyfileobj(source, destination, length=64 * 1024)
+        payload = source.read()
         after = os.fstat(source.fileno())
         if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
-            raise ValueError("Export changed while archiving")
+            raise ValueError("Export changed while reading")
+        return payload
 
 
-def _assets(bundle: zipfile.ZipFile, directory: _Directory, prefix: str, depth: int = 0) -> None:
+def _asset_resources(
+    directory: _Directory, prefix: str, depth: int = 0
+) -> Iterator[tuple[str, bytes]]:
     if depth > 64:
         raise ValueError("Export assets are nested too deeply")
     for name in directory.names():
@@ -197,38 +195,41 @@ def _assets(bundle: zipfile.ZipFile, directory: _Directory, prefix: str, depth: 
         if stat.S_ISDIR(metadata.st_mode):
             child = _Directory(directory.path / name, directory)
             try:
-                _assets(bundle, child, f"{prefix}/{name}", depth + 1)
+                yield from _asset_resources(child, f"{prefix}/{name}", depth + 1)
             finally:
                 child.close()
         elif stat.S_ISREG(metadata.st_mode):
-            _copy_file(bundle, directory, name, f"{prefix}/{name}")
+            yield f"{prefix}/{name}", _read_file(directory, name)
         else:
             raise ValueError("Export assets contain a non-regular file")
 
 
-def html_bundle(file: Path) -> BinaryIO:
-    """Build a temporary archive of exactly one HTML export and its owned assets.
+def html_document(file: Path) -> BinaryIO:
+    """Convert legacy HTML-plus-assets history to one temporary, self-contained HTML.
 
-    The caller holds the project export-history lock, but no catalog transaction.
-    Compression uses bounded buffers and the archive is deleted when its stream closes.
+    Reuse the pinned-directory inventory so conversion cannot read unrelated files,
+    symlinks or resources swapped outside the published export.
     """
-    archive = tempfile.TemporaryFile()
+    from wenyi_core.assemble.html_resources import _embed_html_resources
+
+    output = tempfile.TemporaryFile()
     try:
         with _root(file.parent) as directory:
-            with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
-                _copy_file(bundle, directory, file.name, file.name)
-                name = f"{file.stem}.assets"
+            html = _read_file(directory, file.name).decode("utf-8")
+            name = f"{file.stem}.assets"
+            try:
+                child = _Directory(directory.path / name, directory)
+            except FileNotFoundError:
+                resources = {}
+            else:
                 try:
-                    child = _Directory(directory.path / name, directory)
-                except FileNotFoundError:
-                    child = None
-                if child is not None:
-                    try:
-                        _assets(bundle, child, name)
-                    finally:
-                        child.close()
-        archive.seek(0)
-        return archive
+                    resources = dict(_asset_resources(child, name))
+                finally:
+                    child.close()
+            rendered = _embed_html_resources(html, source_dir="", zip_resources=resources)
+        output.write(rendered.encode("utf-8"))
+        output.seek(0)
+        return output
     except BaseException:
-        archive.close()
+        output.close()
         raise

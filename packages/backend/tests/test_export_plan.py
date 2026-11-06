@@ -9,11 +9,18 @@ from wenyi_backend.schemas import ExportRequest
 
 @pytest.mark.parametrize(
     "source_format,meta,expected",
-    [("epub", {}, "epub"), ("docx", {}, "docx"), ("pdf", {"pdf_export": "babeldoc"}, "pdf")],
+    [
+        ("epub", {}, "epub"),
+        ("docx", {}, "docx"),
+        ("html", {}, "html"),
+        ("pdf", {"pdf_export": "babeldoc"}, "pdf"),
+    ],
 )
 def test_default_plan_policy_matches_source(source_format, meta, expected):
     fmt, options = export_plan.resolve_export(
-        {"initialized": True, "fmt": source_format}, {"meta": meta}, ExportRequest(bilingual=True)
+        {"initialized": True, "fmt": source_format},
+        {"fmt": source_format, "meta": meta},
+        ExportRequest(bilingual=True),
     )
     assert fmt == expected
     assert options["bilingual"] is True

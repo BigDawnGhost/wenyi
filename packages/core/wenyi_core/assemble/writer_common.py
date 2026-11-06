@@ -8,6 +8,7 @@ import re
 from ..i18n.languages import require_language
 from ..i18n.policy.models import PolicyContext
 from ..i18n.policy.resolver import resolve_policy
+from ..markup.contracts import HTML_ATTRIBUTE_META_KEY
 from ..models.document import Chapter, Segment
 
 _ILLEGAL_FN = re.compile(r'[\\/:*?"<>|\r\n\t]+')
@@ -47,6 +48,8 @@ def output_backend(manifest: dict, fmt: str) -> str:
 
 def default_output_format(manifest: dict) -> str:
     """Select the export format from the backend recorded in the same state snapshot."""
+    if manifest.get("fmt") == "html":
+        return "html"
     return "pdf" if supports_pdf_export(manifest) else "epub"
 
 
@@ -141,7 +144,12 @@ def _merged_paragraphs(chapter: Chapter) -> list[tuple[str, str, str, int]]:
     srcs: list[list[str]] = []  # Source fragments accumulated for each paragraph.
     kinds: list[str] = []
     levels: list[int] = []
+    attribute_continuation = False
     for s in chapter.segments:
+        if not s.cont:
+            attribute_continuation = HTML_ATTRIBUTE_META_KEY in s.meta
+        if attribute_continuation:
+            continue
         if not s.source.strip():
             continue
         if s.cont and paras:

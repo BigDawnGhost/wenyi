@@ -23,6 +23,7 @@ from wenyi_core.assemble.writer_common import (
 from wenyi_core.document_styles.docx import (
     text_has_visible_list_prefix,
 )
+from wenyi_core.markup.contracts import HTML_ATTRIBUTE_META_KEY
 from wenyi_core.models.document import KIND_HEADING, Chapter
 
 
@@ -218,6 +219,11 @@ def _emit_chapter_blocks(
     while i < len(segs):
         seg = segs[i]
         meta = seg.meta if isinstance(seg.meta, dict) else {}
+        if HTML_ATTRIBUTE_META_KEY in meta:
+            i += 1
+            while i < len(segs) and segs[i].cont:
+                i += 1
+            continue
         table_id = meta.get("table_id")
         if isinstance(table_id, int):
             cells: dict[tuple[int, int], tuple[str, str, dict[str, Any]]] = {}
