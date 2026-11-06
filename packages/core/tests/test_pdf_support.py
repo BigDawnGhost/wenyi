@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import tempfile
 import unittest
@@ -419,7 +420,7 @@ class TestPdfIngest(unittest.TestCase):
 
 
 class TestHtmlAndMarkdownIntegration(unittest.TestCase):
-    def test_html_images_survive_translation_and_resources_are_copied(self):
+    def test_html_images_survive_translation_and_resources_are_embedded(self):
         with tempfile.TemporaryDirectory() as directory:
             os.makedirs(os.path.join(directory, "images"))
             image_path = os.path.join(directory, "images", "chart.svg")
@@ -455,11 +456,23 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
             self.assertIsNotNone(rendered.find("figcaption"))
             mixed = rendered.find("p", string=None)
             self.assertIsNotNone(mixed)
+            with open(image_path, "rb") as image_file:
+                expected_image = image_file.read()
             for image in rendered.find_all("img"):
                 src = image.get("src")
                 self.assertIsInstance(src, str)
                 assert isinstance(src, str)
-                self.assertTrue(os.path.isfile(os.path.join(directory, "output", src)))
+                self.assertTrue(src.startswith("data:image/svg+xml;base64,"))
+                self.assertEqual(
+                    base64.b64decode(src.split(",", 1)[1]),
+                    expected_image,
+                )
+            source = rendered.find("source")
+            self.assertIsNotNone(source)
+            image = rendered.find("img")
+            assert source is not None and image is not None
+            self.assertEqual(source.get("srcset"), image.get("src"))
+            self.assertFalse(os.path.exists(os.path.splitext(output_path)[0] + ".assets"))
 
     def test_html_images_are_packaged_in_generated_epub(self):
         with tempfile.TemporaryDirectory() as directory:

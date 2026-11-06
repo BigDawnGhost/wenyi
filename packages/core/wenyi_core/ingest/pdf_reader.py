@@ -107,8 +107,8 @@ def read_pdf(
                 "and the input PDF, then retry."
             ) from None
 
-    # Parse intermediate HTML with html_reader.
-    doc = read_html(html_path, source_lang, target_lang)
+    # Converted books retain their existing block segmentation, not webpage UI regions.
+    doc = read_html(html_path, source_lang, target_lang, preserve_inline_markup=False)
     if source_sha256(path) != digest:
         if converted:
             shutil.rmtree(os.path.dirname(html_path), ignore_errors=True)

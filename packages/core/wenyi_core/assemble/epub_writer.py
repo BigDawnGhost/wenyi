@@ -18,6 +18,7 @@ from wenyi_core.assemble.epub_presentation import (
 )
 from wenyi_core.assemble.epub_resources import _render_epub_resources
 from wenyi_core.assemble.html_renderer import (
+    _html_open_tag,
     _render_chapter_html,
     _render_paragraph_html,
 )
@@ -346,10 +347,16 @@ def _build_epub_from_html_templates(
         )
         packaged_assets.update(assets)
         filename = f"ch{chapter.index}.xhtml"
+        html_open = _html_open_tag(
+            "html",
+            meta.get("html_attrs"),
+            lang=lang,
+            **{"xmlns": "http://www.w3.org/1999/xhtml", "xml:lang": lang},
+        )
+        body_open = _html_open_tag("body", meta.get("body_attrs"))
         content = (
-            f'<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="{lang}">'
-            f"<head><title>{escape(chapter_title)}</title>{head_html}</head>"
-            f"<body>{rendered}</body></html>"
+            html_open + f"<head><title>{escape(chapter_title)}</title>{head_html}</head>"
+            f"{body_open}{rendered}</body></html>"
         )
         chapters.append(
             EpubChapter(

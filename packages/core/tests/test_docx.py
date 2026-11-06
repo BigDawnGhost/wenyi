@@ -583,6 +583,8 @@ class TestDocxAssemble(unittest.TestCase):
 class TestDocxCliDefaults(unittest.TestCase):
     def testresolve_output_format_defaults(self):
         self.assertEqual(resolve_output_format("a.docx", None), "docx")
+        for extension in ("html", "htm", "xhtml", "HTML"):
+            self.assertEqual(resolve_output_format(f"a.{extension}", None), "html")
         self.assertEqual(resolve_output_format("a.epub", None), "epub")
         self.assertEqual(resolve_output_format("a.docx", "epub"), "epub")
         self.assertEqual(resolve_output_format("a.txt", "docx"), "docx")

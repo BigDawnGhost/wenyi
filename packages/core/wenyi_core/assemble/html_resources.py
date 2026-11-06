@@ -1,6 +1,5 @@
-"""Read and materialize HTML/FB2 resources: data URIs, local files and template assets.
-Resolve image/media references from local files, data URIs and FB2 binaries. Deduplicate and
-package them or materialize them in an .assets directory beside the output.
+"""Embed HTML media or package it for EPUB from one explicit local/container namespace.
+Keep existing data URIs intact in single-file output and never fetch remote references.
 """
 
 from __future__ import annotations
@@ -144,12 +143,37 @@ def _load_html_resource(
     return None
 
 
+def _srcset_candidates(value: str) -> list[tuple[str, str]]:
+    """Read URL/descriptor pairs without splitting the commas inside data URLs."""
+    space = "\t\n\f\r "
+    candidates = []
+    position = 0
+    while position < len(value):
+        while position < len(value) and value[position] in space + ",":
+            position += 1
+        start = position
+        while position < len(value) and value[position] not in space:
+            position += 1
+        reference = value[start:position]
+        if not reference:
+            break
+        if reference.endswith(","):
+            candidates.append((reference.rstrip(","), ""))
+            continue
+        start = position
+        while position < len(value) and value[position] != ",":
+            position += 1
+        candidates.append((reference, value[start:position].strip(space)))
+    return candidates
+
+
 def _package_html_resources(
     html: str,
     *,
     source_dir: str,
     href_prefix: str,
     zip_resources: dict[str, bytes] | None = None,
+    inline: bool = False,
 ) -> tuple[str, dict[str, tuple[str, bytes]]]:
     """Package references using the exclusive source contract of ``_load_html_resource``."""
     soup = BeautifulSoup(html, "html.parser")
@@ -157,12 +181,18 @@ def _package_html_resources(
     href_by_reference: dict[str, str] = {}
 
     def package(reference: str) -> str:
+        if inline and reference.lstrip().lower().startswith("data:"):
+            return reference
         if reference in href_by_reference:
             return href_by_reference[reference]
         loaded = _load_html_resource(reference, source_dir=source_dir, zip_resources=zip_resources)
         if loaded is None:
             return reference
         media_type, payload = loaded
+        if inline:
+            href = f"data:{media_type};base64,{base64.b64encode(payload).decode('ascii')}"
+            href_by_reference[reference] = href
+            return href
         digest = hashlib.sha256(payload).hexdigest()[:16]
         extension = _resource_extension(media_type, reference)
         href = posixpath.join(href_prefix, f"{digest}{extension}")
@@ -177,40 +207,28 @@ def _package_html_resources(
                 if isinstance(value, str):
                     element[attr] = package(value)
             srcset = element.get("srcset")
-            if isinstance(srcset, str) and not srcset.lstrip().startswith("data:"):
-                rewritten = []
-                for candidate in srcset.split(","):
-                    bits = candidate.strip().split()
-                    if bits:
-                        bits[0] = package(bits[0])
-                    rewritten.append(" ".join(bits))
-                element["srcset"] = ", ".join(rewritten)
+            if isinstance(srcset, str):
+                element["srcset"] = ", ".join(
+                    f"{package(reference)} {descriptor}".rstrip()
+                    for reference, descriptor in _srcset_candidates(srcset)
+                )
     return str(soup), packaged
 
 
-def _write_packaged(packaged: dict[str, tuple[str, bytes]], out_path: str) -> None:
-    """Materialize packaged resources beside the output document."""
-    for href, (_media_type, payload) in packaged.items():
-        destination = os.path.join(os.path.dirname(os.path.abspath(out_path)), *href.split("/"))
-        os.makedirs(os.path.dirname(destination), exist_ok=True)
-        with open(destination, "wb") as file:
-            file.write(payload)
-
-
-def _materialize_html_resources(
+def _embed_html_resources(
     html: str,
     *,
-    source_path: str,
-    out_path: str,
+    source_dir: str,
+    zip_resources: dict[str, bytes] | None = None,
 ) -> str:
-    """Copy HTML media beside an exported document and rewrite its references."""
-    asset_dir_name = f"{Path(out_path).stem}.assets"
-    rewritten, packaged = _package_html_resources(
+    """Inline readable local/container media while retaining data and remote references."""
+    rewritten, _packaged = _package_html_resources(
         html,
-        source_dir=os.path.dirname(os.path.abspath(source_path)),
-        href_prefix=asset_dir_name,
+        source_dir=source_dir,
+        href_prefix="",
+        zip_resources=zip_resources,
+        inline=True,
     )
-    _write_packaged(packaged, out_path)
     return rewritten
 
 

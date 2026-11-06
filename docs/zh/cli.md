@@ -148,9 +148,11 @@ notarization。macOS 仍可能隔离下载的程序；确认校验和无误后�
 - EPUB 输入中，目录项指向的锚点在文件中不存在、且该文件没有被同一目录中的其他目录项引用时，以该文件开头作为章节边界。
 - Markdown 标题层级会保留在 EPUB 正文标题、自动生成的 EPUB 导航目录和 DOCX 大纲样式中。导航将标题嵌套到前面最近且等级数字更小的标题下；跳级不会补造目录条目。已有状态若章节划分正确且保存了标题等级，只需重新导出，无需重新翻译。
 - 书籍默认输出：源文件旁 `output/` 下的单语版 `<书名>.zh.epub`（`.docx` 输入默认为 `<书名>.zh.docx`，BabelDOC PDF 状态默认为 `<书名>.zh.pdf`）；双语版 `*.zh-bi.*` 按需开启。
-- `--format epub|txt|html|markdown|pdf|docx`：书籍导出格式；`pdf` 仅适用于已保存的 BabelDOC 项目。未指定时 BabelDOC PDF 状态→`pdf`，`.docx`→`docx`，其它书籍（含 MinerU PDF 状态）→`epub`。显式指定的受支持格式优先；PDF 是否可用及默认格式均依据已保存的后端信息，即使当前 `pdf_backend` 配置改变也不会改用另一套规则。
+- `--format epub|txt|html|markdown|pdf|docx`：书籍导出格式；`pdf` 仅适用于已保存的 BabelDOC 项目。未指定时 HTML 输入→`html`，BabelDOC PDF 状态→`pdf`，`.docx`→`docx`，其它书籍（含 MinerU PDF 状态）→`epub`。显式指定的受支持格式优先；PDF 是否可用及默认格式均依据已保存的后端信息，即使当前 `pdf_backend` 配置改变也不会改用另一套规则。
 - EPUB 输入会尽量按原 XHTML 模板回填译文，保留样式、图片、目录和锚点。
-- EPUB 导出 HTML 时，只会从 EPUB 容器内复制图片等媒体文件到 `<输出文件名主干>.assets/`。缺失的资源引用保持原样，不会回退读取工作目录或 EPUB 旁的本地文件。仍支持内嵌 data URI，不会下载外部 URL。HTML 输入仍会打包其源文件目录中的本地资源。
+- HTML 输入会整组翻译连续的行内正文，包括布局容器、列表、表格及控件中的直接文本。行内链接和样式复用译后的注释对齐；HTML/EPUB 导出按校验后的嵌套范围回填，不让模型改写 URL 或结构属性。`alt`、`title`、`placeholder` 及 ARIA 标签等文案属性单独翻译，隐藏、禁译、可编辑、代码和公式子树保持原样。这是静态文件适配，不是实时网页翻译；适用边界、对齐成本和降级行为见 [HTML 翻译与回填](pipeline.md#html-翻译与回填)。
+- HTML 导出 HTML 改为完整源文件回填，不再拼接保存的章节布局；即使省略 `<head>`，也保留全局 CSS 和头部元数据。兼容的已有译文无需重译即可重新导出，但需要匹配的原文件。HTML 输入默认导出单文件 HTML，data URI 保持内嵌，可读取的本地图片／媒体也以内嵌方式保存，不生成 `.assets/` 目录。
+- EPUB 导出 HTML 时，只会从 EPUB 容器内读取图片等媒体文件并内嵌到单个 HTML。缺失的资源引用保持原样，不会回退读取工作目录或 EPUB 旁的本地文件。已有 data URI 保持内嵌，不会下载外部 URL。
 - 双语版按段展示译文与原文。EPUB/HTML 原文默认淡化，设置 `output.bilingual_preserve_source_style: true` 可改为继承书籍正文样式。DOCX 原文默认使用正常正文样式，不再额外添加灰字、高亮或缩小字号；开启同一选项后，正文和表格会恢复已记录的原文字符样式，包括段内混合样式。排列顺序由 `output.bilingual_order` 独立控制。已有翻译状态只需重新导出。
 - EPUB 中未翻译的段落只保留一份原文及其注音、链接。Web 导出和部分已译章节同样遵循此规则，双语排列顺序与原文样式选项不会额外生成重复段落。
 - EPUB 默认在书末附加“关于此翻译”说明，可通过 `output.about_page: false` 关闭。

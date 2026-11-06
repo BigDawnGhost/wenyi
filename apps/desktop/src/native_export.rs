@@ -325,11 +325,7 @@ struct Plan {
 
 impl Plan {
     fn destination(&self, mut path: PathBuf) -> PathBuf {
-        let suffix = if self.filename.ends_with(".html.zip") {
-            ".html.zip".to_string()
-        } else {
-            format!(".{}", self.extension)
-        };
+        let suffix = format!(".{}", self.extension);
         if !path
             .file_name()
             .unwrap_or_default()
@@ -1413,8 +1409,8 @@ mod tests {
 
     fn plan(root: &Path) -> String {
         serde_json::json!({
-            "filename": "book.zh-bi.html.zip", "extension": "zip",
-            "label": "HTML + assets (ZIP)",
+            "filename": "book.zh-bi.html", "extension": "html",
+            "label": "HTML",
             "protected_roots": [root],
             "request": {"format": "html", "bilingual": true}
         })
@@ -1494,7 +1490,7 @@ mod tests {
             "COM10.md",
             "COM0.md",
             "LPT10.md",
-            "my-book.zh-bi.html.zip",
+            "my-book.zh-bi.html",
         ] {
             assert!(!name_is_unwritable(accepted), "{accepted} must be accepted");
         }
@@ -1595,7 +1591,7 @@ mod tests {
     fn cancel_and_declined_overwrite_do_not_create_jobs_or_files() {
         let fixture = Fixture::new();
         let protected = Fixture::new();
-        let old = fixture.file("existing.html.zip", b"old");
+        let old = fixture.file("existing.html", b"old");
         for path in [None, Some(old.clone())] {
             let (connection, task) = server(vec![response("200 OK", &plan(&protected.0), "")]);
             let result = run(
@@ -1675,7 +1671,7 @@ mod tests {
         ] {
             let fixture = Fixture::new();
             let protected = Fixture::new();
-            let path = fixture.file("saved.html.zip", b"old");
+            let path = fixture.file("saved.html", b"old");
             let (connection, task) =
                 server(vec![response("200 OK", &plan(&protected.0), ""), creation]);
             let error = run(
@@ -1703,7 +1699,7 @@ mod tests {
         for failure in ["poll", "download", "local"] {
             let fixture = Fixture::new();
             let protected = Fixture::new();
-            let path = fixture.file("saved.html.zip", b"old");
+            let path = fixture.file("saved.html", b"old");
             let mut responses = vec![
                 response("200 OK", &plan(&protected.0), ""),
                 response("200 OK", r#"{"export_id":7}"#, ""),
@@ -1767,7 +1763,7 @@ mod tests {
         for history in [false, true] {
             let fixture = Fixture::new();
             let protected = Fixture::new();
-            let path = fixture.file("saved.html.zip", b"old");
+            let path = fixture.file("saved.html", b"old");
             let mut responses = vec![response("200 OK", &plan(&protected.0), "")];
             if !history {
                 responses.push(response("200 OK", r#"{"export_id":7}"#, ""));
@@ -1973,7 +1969,8 @@ mod tests {
             ("md", "book.en.md"),
             ("pdf", "book.zh-bi.pdf"),
             ("txt", "book.en.txt"),
-            ("zip", "book.zh-bi.html.zip"),
+            ("html", "book.zh-bi.html"),
+            ("zip", "workspace-backup.zip"),
         ] {
             let plan = Plan {
                 filename: filename.into(),
@@ -1986,14 +1983,9 @@ mod tests {
                 plan.destination(PathBuf::from(filename)),
                 PathBuf::from(filename)
             );
-            let suffix = if extension == "zip" {
-                "html.zip"
-            } else {
-                extension
-            };
             assert_eq!(
                 plan.destination(PathBuf::from("chosen")),
-                PathBuf::from(format!("chosen.{suffix}"))
+                PathBuf::from(format!("chosen.{extension}"))
             );
         }
     }
