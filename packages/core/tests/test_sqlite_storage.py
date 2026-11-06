@@ -917,3 +917,27 @@ def test_a_refused_open_leaves_no_connection_behind(tmp_path):
     assert not writer._connections
     # Draining must still work on a store whose open was refused.
     writer.close_all()
+
+
+def test_export_snapshot_reads_the_manifest_once_for_many_chapters(store, document):
+    template = document.chapters[0]
+    document.chapters = [
+        template.model_copy(update={"index": index, "title": f"Chapter {index}"}, deep=True)
+        for index in range(20)
+    ]
+    manifest = store.init_from_document(document)
+    manifest["chapters"][5]["title_translated"] = "Fifth"
+    store.save_manifest(manifest)
+    reads = []
+    read_artifact = store.read_artifact
+
+    def track(key):
+        reads.append(key)
+        return read_artifact(key)
+
+    store.read_artifact = track
+    snapshot = store.create_export_snapshot(actual_sha256=manifest["source_sha256"])
+    assert reads.count("manifest.json") == 1
+    assert [entry["index"] for entry in snapshot.load_manifest()["chapters"]] == list(range(20))
+    assert snapshot.load_chapter(5).meta["title_translated"] == "Fifth"
+    assert "title_translated" not in snapshot.load_chapter(6).meta

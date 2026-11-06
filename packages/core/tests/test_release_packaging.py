@@ -291,6 +291,28 @@ def test_sidecar_rebuilds_local_packages_instead_of_reusing_cached_wheels(monkey
         assert ("--reinstall-package", package) in set(zip(sync, sync[1:]))
 
 
+def test_sidecar_smoke_test_uses_a_private_user_profile(monkeypatch, tmp_path):
+    sidecar = script("desktop_sidecar")
+    real = tmp_path / "real-profile"
+    monkeypatch.setenv("HOME", str(real))
+    monkeypatch.setenv("USERPROFILE", str(real))
+    monkeypatch.setenv("XDG_DATA_HOME", str(real / "data"))
+    launches = []
+
+    def launch(executable, workspace, env, **kwargs):
+        profile = Path(env["HOME"])
+        assert profile.is_dir() and workspace.parent == profile.parent
+        launches.append(env)
+
+    monkeypatch.setattr(sidecar, "smoke_launch", launch)
+    sidecar.smoke_test(tmp_path / "wenyi-engine")
+    assert len(launches) == 2
+    for env in launches:
+        # The engine resolves the shared catalog from these, so none may name the real one.
+        assert env["HOME"] == env["USERPROFILE"] != str(real)
+        assert "XDG_DATA_HOME" not in env
+
+
 @pytest.mark.parametrize("dockerfile", ["Dockerfile.api", "Dockerfile.api.buildx"])
 def test_web_images_do_not_reuse_cached_local_package_versions(dockerfile):
     text = (ROOT / "docker" / dockerfile).read_text().replace("\\\n", " ")

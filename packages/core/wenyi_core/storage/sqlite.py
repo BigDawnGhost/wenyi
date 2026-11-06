@@ -534,7 +534,8 @@ class SqliteStorage:
                     raise ValueError("Invalid chapter index in translation state")
                 if index in chapters:
                     raise ValueError(f"Duplicate chapter index in translation state: {index}")
-                chapter = self.load_chapter(index)
+                # Reuse this manifest: per-chapter reloads make large exports quadratic.
+                chapter = self._load_chapter(index, entry)
                 if chapter.index != index:
                     raise ValueError(f"Chapter index mismatch: {index}")
                 chapters[index] = chapter
@@ -794,20 +795,37 @@ class SqliteStorage:
         if not self._database_present():
             raise FileNotFoundError(f"Chapter not found: {ci}")
         with self._read_lock():
-            value = self.read_artifact(f"chapters/ch{ci}.json")
-            if value is None:
-                raise FileNotFoundError(f"Chapter not found: {ci}")
-            chapter = Chapter.model_validate(value)
             manifest = self.read_artifact("manifest.json") or {}
             entry = next(
                 (entry for entry in manifest.get("chapters", []) if entry["index"] == ci), {}
             )
-            translated = self._translated_title(entry, chapter.meta)
-            if translated is not None:
-                chapter.meta["title_translated"] = translated
-            elif "title_translated" in entry:
-                chapter.meta.pop("title_translated", None)
-            return chapter
+            return self._load_chapter(ci, entry)
+
+    def load_manifest_with_chapters(self) -> tuple[dict, list[Chapter]]:
+        """Read the manifest and every chapter it lists from one consistent snapshot.
+
+        The manifest is parsed once. Calling `load_chapter` per entry instead re-parses
+        it for every chapter, which grows with the square of the chapter count.
+        """
+        with self._read_lock():
+            manifest = self.load_manifest()
+            chapters = [
+                self._load_chapter(entry["index"], entry) for entry in manifest.get("chapters", [])
+            ]
+        return manifest, chapters
+
+    def _load_chapter(self, ci: int, entry: dict) -> Chapter:
+        """Load one chapter body, applying its already-read manifest entry's title."""
+        value = self.read_artifact(f"chapters/ch{ci}.json")
+        if value is None:
+            raise FileNotFoundError(f"Chapter not found: {ci}")
+        chapter = Chapter.model_validate(value)
+        translated = self._translated_title(entry, chapter.meta)
+        if translated is not None:
+            chapter.meta["title_translated"] = translated
+        elif "title_translated" in entry:
+            chapter.meta.pop("title_translated", None)
+        return chapter
 
     def save_annotation_contexts(self, data: dict) -> None:
         self.write_artifact("annotation_contexts.json", data)
