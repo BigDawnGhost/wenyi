@@ -19,7 +19,7 @@ Wenyi 是支持多语言互译、术语、润色、全书 Review 和多格式导
 - Desktop：`apps/desktop`（Tauri）、`apps/desktop/frontend`、`apps/desktop/backend/wenyi_desktop`；共享 UI 在 `packages/ui`。开发启动与打包见 [Desktop 文档](docs/desktop.md)。
 - CLI/Core/backend/API/Desktop Python 包的发布版本由仓库 Git 标签通过 `hatch-vcs` 生成，运行时读取已安装包的元数据；根虚拟工作区和私有前端包不维护独立发布版本。包描述统一使用英语。
 - 默认配置：仓库根目录 `config.yaml`；内置模板位于 `packages/core/wenyi_core/config.py` 的 `_DEFAULT_CONFIG_YAML`。
-- 主仓许可证为 MIT；BabelDOC 是独立 AGPL 服务。
+- 主仓许可证为 GNU GPL v3，条款见 [LICENSE](LICENSE)；BabelDOC 是独立 AGPL 服务。
 
 ## 按任务查阅
 
@@ -68,7 +68,7 @@ CLI / Web / Desktop → Orchestrator → Runtime / Preparation / Translation / A
 - `agents/` 不得依赖 pipeline 编排、状态机或 RunStore；可使用顶层 `review/` 的纯模型。
 - `markup/` 和 `document_styles/` 不依赖 pipeline、LLM 或具体 writer。拆分时分离决策、执行与状态写入，不通过共享整个 runtime 延续耦合。
 - 并发属于具体领域服务。结果必须按稳定的原始顺序合并，不得让线程完成顺序改变输出。
-- BabelDOC 集成必须保持进程隔离。主仓只发送 HTTP 请求；不要给 MIT 包新增 AGPL Python 依赖。
+- BabelDOC 集成必须保持进程隔离。主仓只发送 HTTP 请求；不要给 CLI/Core 包新增 AGPL Python 依赖。
 
 涉及模块依赖关系时运行 `packages/core/tests/test_architecture_boundaries.py`；涉及 pipeline 装配或依赖关系时同时运行 `packages/core/tests/test_orchestrator_contract.py`。存储适配变更还需运行 `test_storage_injection.py` 和对应后端测试。
 

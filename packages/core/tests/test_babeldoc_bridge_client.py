@@ -1,4 +1,4 @@
-"""Tests for MIT-side BabelDOC bridge HTTP client (no babeldoc import)."""
+"""Tests for Wenyi's BabelDOC bridge HTTP client (no babeldoc import)."""
 
 from __future__ import annotations
 

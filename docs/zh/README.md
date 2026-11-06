@@ -13,7 +13,7 @@
 全书理解 · 术语一致 · 取证式审校
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/BigDawnGhost/wenyi/tests.yml?style=flat-square&labelColor=00263D)](https://github.com/BigDawnGhost/wenyi/actions/workflows/tests.yml)
-[![License](https://img.shields.io/badge/license-MIT-D4B56A?style=flat-square&labelColor=00263D)](../../LICENSE)
+[![License](https://img.shields.io/badge/license-GPLv3-D4B56A?style=flat-square&labelColor=00263D)](../../LICENSE)
 [![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square&labelColor=00263D&color=D4B56A)](https://github.com/BigDawnGhost/wenyi/stargazers)
 [![Discord](https://img.shields.io/badge/Discord-join-D4B56A?style=flat-square&labelColor=00263D&logo=discord&logoColor=white)](https://discord.gg/sM3AQcF5D2)
 
@@ -168,7 +168,10 @@ Desktop 与 Web 共用校阅工作台，可查看实时进度、编辑段落并�
 
 ## 许可证
 
-[MIT](../../LICENSE)
+文译采用 [GNU 通用公共许可证 v3.0（GPLv3）](../../LICENSE)。
+
+可选的 BabelDOC bridge 是独立采用 AGPL 许可的服务，在独立进程中通过 HTTP 调用。
+详见 [PDF 设置](cli.md#pdf-支持)。
 
 ---
 
