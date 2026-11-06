@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from threading import Event
 from types import SimpleNamespace
 
 import httpx
@@ -68,14 +69,20 @@ def _status_error(status: int) -> APIStatusError:
 
 
 @pytest.fixture
-def sdk(monkeypatch):
+def sdk(monkeypatch, request):
     """Replace the OpenAI SDK client; ``behaviors`` maps model names to replies or errors."""
     calls: list[dict] = []
     behaviors: dict[str, object] = {}
     clients: list[dict] = []
+    small_requested = Event()
+    reverse = getattr(request, "param", False)
 
     def create(**kwargs):
+        if reverse and kwargs["model"] == "big":
+            assert small_requested.wait(timeout=5), "Concurrent small-model probe did not start"
         calls.append(kwargs)
+        if kwargs["model"] == "small":
+            small_requested.set()
         behavior = behaviors.get(kwargs["model"], _response())
         if isinstance(behavior, Exception):
             raise behavior
@@ -101,12 +108,13 @@ def test_targets_deduplicate_profiles_and_include_fallbacks():
     assert targets["small"] == ("glossary.extract",)
 
 
+@pytest.mark.parametrize("sdk", [False, True], indirect=True, ids=["normal", "reversed"])
 def test_probe_sends_one_minimal_request_per_profile(sdk):
     results = probe_connections(_config(), ("translation.body", "glossary.extract"), timeout=5)
     assert [result.profile for result in results] == ["strong", "small"]
     assert all(result.ok and result.category == "ok" for result in results)
     assert all(result.latency_ms is not None for result in results)
-    assert [call["model"] for call in sdk.calls] == ["big", "small"]
+    assert sorted(call["model"] for call in sdk.calls) == ["big", "small"]
     assert all(call["max_completion_tokens"] == PROBE_OUTPUT_TOKENS for call in sdk.calls)
     # Probes never retry and never wait the full workflow timeout.
     assert sdk.clients == [{"timeout": 5, "max_retries": 0}] * 2
@@ -178,12 +186,13 @@ def test_thinking_profiles_keep_their_minimum_output(sdk):
     assert sdk.calls[0]["max_completion_tokens"] == 4096
 
 
+@pytest.mark.parametrize("sdk", [False, True], indirect=True, ids=["normal", "reversed"])
 def test_profile_probes_cover_unrouted_profiles_in_registry_order(sdk):
     results = probe_profiles(_config())
     assert [result.profile for result in results] == ["strong", "small", "spare"]
     assert results[2].operations == ()
     assert results[2].endpoint == "https://backup.invalid/v1"
-    assert [call["model"] for call in sdk.calls] == ["big", "small", "spare"]
+    assert sorted(call["model"] for call in sdk.calls) == ["big", "small", "spare"]
     assert [result.profile for result in probe_profiles(_config(), ["spare"])] == ["spare"]
     with pytest.raises(ValueError, match="Unknown model profile"):
         probe_profiles(_config(), ["missing"])
