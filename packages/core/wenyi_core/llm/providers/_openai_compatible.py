@@ -176,11 +176,14 @@ class OpenAICompatibleBaseClient(ProviderAdapter, Generic[OptionsT]):
         *,
         json_mode: bool,
         context: RequestContext,
+        response_format: dict[str, Any] | None = None,
     ) -> str:
         model_config = model
         kwargs = self._build_request_kwargs(
             model, messages, json_mode=json_mode, max_tokens=context.max_tokens
         )
+        if response_format is not None:
+            kwargs["response_format"] = response_format
         response = self._ensure_client().chat.completions.create(**kwargs)
         context.record_usage(self._normalize_usage(getattr(response, "usage", None)))
         choice = response.choices[0]

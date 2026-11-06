@@ -153,6 +153,10 @@ llm:
 
 兼容端点的 `reasoning_style` 支持 `none`（默认）、`deepseek`、`openai`、`openrouter`。只有明确配置 `json_response_fallback: reasoning_content`，才会从网关的该字段读取有效 JSON；默认 `none`，非 JSON 推理文本不会被当作结果。Gemini 的 thinking level 和 budget 互斥。原始扩展字典依赖具体端点；离线校验无法保证远端模型接受这些参数。
 
+实际任务执行时，兼容适配器的 JSON 请求从 `json_object` 开始。只有端点以 HTTP 400/422 明确拒绝该 `response_format` 时，才会尝试带通用 `{"type":"object"}` Schema 的 `json_schema`。返回完整 JSON 对象后，同一客户端本次运行内、相同连接/模型/选项的后续调用会在内存中沿用该模式。缓存模式再次被拒绝时可重新检查，但每次调用最多切换一次。不新增 JSON 偏好配置，也不跨客户端或任务保存偏好。连接测试仍只发送短纯文本请求，不增加 JSON 检测或设置控件。章节摘要、全书梗概及其他适配器的 JSON 协议不变。
+
+无关请求错误、鉴权、限流、无效 JSON 或截断不会触发格式切换，也不会降级为无约束文本。每次实际请求仍遵守配额、取消和用量记账；瞬时错误共用原有重试额度。LLM 运行事件记录所用模式，不记录提供商错误正文。通用 Schema 不约束任务具体字段，输出契约与翻译质量仍由已有提示词和校验负责。
+
 SDK 内置重试统一关闭。Wenyi 统一重试连接/超时、HTTP 408/409/429、5xx 瞬时错误及空响应；退避期间释放连接并发名额，并响应取消。普通 4xx 错误不重试。PDF 默认 MinerU 解析另用 `MINERU_API_KEY`；可选 BabelDOC HTTP bridge 独立于模型路由。
 
 总设置中的 **MinerU PDF 解析**卡片独立于模型连接。Web 和 CLI 从部署/进程环境变量

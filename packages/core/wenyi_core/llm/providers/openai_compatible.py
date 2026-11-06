@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
+from threading import Lock
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..transport import Messages, ResolvedModel
+from ..configuration import ProviderConfig
+from ..retrying import error_status_code
+from ..transport import Messages, RequestContext, ResolvedModel
 from ._openai_compatible import (
     OpenAICompatibleBaseClient,
     base_request_kwargs,
@@ -81,6 +85,100 @@ def build_request_kwargs(
 
 class OpenAICompatibleClient(OpenAICompatibleBaseClient[OpenAICompatibleOptions]):
     connection_options = CompatibleConnectionOptions
+    protocol_version = 2
+
+    def __init__(self, cfg: ProviderConfig, *, credentials: tuple[str | None] | None = None):
+        super().__init__(cfg, credentials=credentials)
+        # The adapter scopes these observations to one frozen connection/credential snapshot.
+        self._json_modes: dict[tuple[str, str], Literal["json_object", "json_schema"]] = {}
+        self._json_modes_lock = Lock()
+
+    def generate(
+        self,
+        messages: Messages,
+        model: ResolvedModel[OpenAICompatibleOptions],
+        *,
+        json_mode: bool,
+        context: RequestContext,
+    ) -> str:
+        if not json_mode:
+            return super().generate(messages, model, json_mode=False, context=context)
+
+        key = (model.model, json.dumps(model.options.model_dump(mode="json"), sort_keys=True))
+        with self._json_modes_lock:
+            cached = self._json_modes.get(key)
+        mode: Literal["json_object", "json_schema"] = cached or "json_object"
+        source = "cached" if cached else "default"
+        switched = False
+
+        def attempt() -> str:
+            response_format: dict[str, Any] = {"type": mode}
+            if mode == "json_schema":
+                response_format["json_schema"] = {
+                    "name": "response",
+                    "schema": {"type": "object"},
+                    "strict": True,
+                }
+            # Never hold the cache lock while waiting for quotas, HTTP or retry backoff.
+            with context.attempt_scope():
+                context.emit(
+                    "llm_json_mode_selected", json_output_mode=mode, json_mode_source=source
+                )
+                return self._request(
+                    messages,
+                    model,
+                    json_mode=True,
+                    context=context,
+                    response_format=response_format,
+                )
+
+        def request() -> str:
+            nonlocal mode, source, switched
+            try:
+                return attempt()
+            except Exception as error:
+                if switched or not self._is_json_mode_unsupported(error):
+                    raise
+                with self._json_modes_lock:
+                    if self._json_modes.get(key) == mode:
+                        del self._json_modes[key]
+                # Preserve this per-call choice across transient retries; switch only once.
+                mode = "json_schema" if mode == "json_object" else "json_object"
+                source = "fallback"
+                switched = True
+            return attempt()
+
+        text = self._generate_with_retry(request, context=context)
+        try:
+            valid_object = isinstance(json.loads(text), dict)
+        except ValueError:
+            valid_object = False
+        if valid_object:
+            with self._json_modes_lock:
+                self._json_modes[key] = mode
+        # Task-level validation stays with the caller; no preferences are saved.
+        return text
+
+    @staticmethod
+    def _is_json_mode_unsupported(error: Exception) -> bool:
+        if error_status_code(error) not in {400, 422}:
+            return False
+        # Inspect locally, before safe error projection; never retain provider error text.
+        body = getattr(error, "body", None)
+        detail = body.get("error", body) if isinstance(body, dict) else body
+        if isinstance(detail, dict):
+            detail = detail.get("message")
+        if not isinstance(detail, str):
+            return False
+        text = detail.lower()
+        return (
+            "response_format" in text
+            and any(mode in text for mode in ("json_object", "json_schema"))
+            and (
+                any(word in text for word in ("only", "unsupported", "not supported"))
+                or ("response_format.type" in text and "must" in text)
+            )
+        )
 
     @property
     def reasoning_style(self) -> ReasoningStyle:
