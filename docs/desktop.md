@@ -245,6 +245,13 @@ confirmation page removes them; leaving it clear removes only the application's
 own files. Updating is never treated as an uninstall, so an update never removes
 project data.
 
+On Windows, keeping data also keeps the previous installation folder as a setup
+preference. That preference does not mean the application is still installed:
+the manual-install backup check uses the Windows Add/Remove Programs registration,
+which is removed on uninstall. Reinstalling after an uninstall that kept data
+therefore does not require an upgrade backup; manually overwriting an application
+that is still registered does.
+
 The installer also refuses to install an **older** version over a newer one. Each
 project database records the schema version that wrote it, and an older build
 refuses to open a database carrying a number it does not know rather than
