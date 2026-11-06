@@ -51,7 +51,7 @@ For a project you already own, configure the same fields under its
 The separately licensed bridge needs its own publisher in
 `BigDawnGhost/wenyi-babeldoc-bridge`; see
 [its publishing guide](https://github.com/BigDawnGhost/wenyi-babeldoc-bridge/blob/main/docs/publishing.md).
-Do not add it as a dependency of the MIT CLI/Core packages.
+Do not add it as a dependency of the [GPLv3-licensed](../LICENSE) CLI/Core packages.
 
 ## Releasing a version
 

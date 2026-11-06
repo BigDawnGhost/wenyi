@@ -46,7 +46,7 @@ PyPI 不允许两个待定项目共用完全相同的 Owner、仓库、工作流
 
 独立许可证的桥接服务需要在 `BigDawnGhost/wenyi-babeldoc-bridge` 配置自己的发布者，
 详见[桥接仓库发布指南](https://github.com/BigDawnGhost/wenyi-babeldoc-bridge/blob/main/docs/publishing.md)。
-不要把它添加为 MIT CLI/Core 包的依赖。
+不要把它添加为采用 [GPLv3](../../LICENSE) 许可的 CLI/Core 包的依赖。
 
 ## 每次发布版本
 

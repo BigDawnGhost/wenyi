@@ -123,7 +123,7 @@ def toc_chapter_starts(pdf_path: str | Path) -> list[tuple[int, str]]:
     """Read PDF bookmarks and return ``(0-based page, title)`` chapter starts.
 
     Prefer level-2 entries when present (e.g. CHAPTER under PART); otherwise
-    level-1. Same page keeps the deeper title. Uses pypdf only (MIT path).
+    level-1. Same page keeps the deeper title. Uses pypdf only, without importing BabelDOC.
     """
     try:
         from pypdf import PdfReader

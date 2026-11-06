@@ -9,7 +9,7 @@ def _assemble_pdf(
     *,
     timeout: float,
 ) -> str:
-    """Fill back translations without importing BabelDOC into the MIT runtime."""
+    """Fill back translations without importing BabelDOC into the Wenyi runtime."""
     from ..ingest.pdf_babeldoc import translations_from_store
     from ..pdf_bridge import BabeldocBridgeClient
 
