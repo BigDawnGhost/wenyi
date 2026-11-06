@@ -17,7 +17,7 @@ class BabeldocBridgeError(IngestError):
 
 
 class BabeldocBridgeClient:
-    """Talk to an AGPL bridge process. Wenyi stays MIT-only."""
+    """Talk to the external AGPL bridge over HTTP without importing BabelDOC."""
 
     def __init__(self, base_url: str, *, timeout: float = 600.0) -> None:
         self.base_url = base_url.rstrip("/")

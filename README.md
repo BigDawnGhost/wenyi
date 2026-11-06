@@ -13,7 +13,7 @@ A desktop app for translating books and long-form writing, with the whole work i
 Whole-book understanding · Consistent terminology · Evidence-based review
 
 [![Tests](https://img.shields.io/github/actions/workflow/status/BigDawnGhost/wenyi/tests.yml?style=flat-square&labelColor=00263D)](https://github.com/BigDawnGhost/wenyi/actions/workflows/tests.yml)
-[![License](https://img.shields.io/badge/license-MIT-D4B56A?style=flat-square&labelColor=00263D)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPLv3-D4B56A?style=flat-square&labelColor=00263D)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square&labelColor=00263D&color=D4B56A)](https://github.com/BigDawnGhost/wenyi/stargazers)
 [![Discord](https://img.shields.io/badge/Discord-join-D4B56A?style=flat-square&labelColor=00263D&logo=discord&logoColor=white)](https://discord.gg/sM3AQcF5D2)
 
@@ -168,7 +168,10 @@ Wenyi is a personal project created to help bring books and long-form writing ac
 
 ## License
 
-[MIT](LICENSE)
+Wenyi is licensed under the [GNU General Public License v3.0 (GPLv3)](LICENSE).
+
+The optional BabelDOC bridge is a separately licensed AGPL service, accessed over
+HTTP in a separate process. See [PDF setup](docs/cli.md#pdf-support).
 
 ---
 
