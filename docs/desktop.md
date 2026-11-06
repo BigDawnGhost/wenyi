@@ -47,6 +47,8 @@ The uploaded original and project state stay together in that project directory,
 
 Drag in a supported book or choose it with **Browse files**, and select the source and target languages. Source-language detection can be automatic. Choose **Standard** translation or, for books, **Three drafts + synthesis**, which creates three drafts and synthesizes them at higher model cost. During upload, source replacement is locked and **Cancel** becomes **Close**; dismissing stays available but is not a task cancellation action. Failed uploads retain the form and source selection; a failed native upload requires re-dropping the file to renew its single-use grant before retrying. Successful creation enters the project overview while parsing or optional preparation continues in the background. Legacy `/projects/new?project=<id>` links retain read-only source preview/resume controls.
 
+If **Project name** is empty or contains only whitespace, selecting a valid file by either method fills it with the filename minus its final extension (for example, `book.v2.epub` becomes `book.v2`). If that would leave an empty name, the full filename is used. Existing names are never overwritten when choosing another file, and the suggested name remains editable.
+
 Browser Back can still leave during an upload; it does not cancel the request. The source resource remains available until the request settles, then is released. The project may be created in the background, and completion will not redirect you away from the list.
 
 The source is already uploaded when the project overview opens, so it has no upload entry, including before AI initialization completes.
