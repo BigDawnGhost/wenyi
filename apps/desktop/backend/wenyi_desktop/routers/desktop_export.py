@@ -32,9 +32,9 @@ def _backend() -> LocalBackend:
 
 def _plan(filename: str, fmt: str, request: ExportRequest | None = None) -> NativeExportPlan:
     return NativeExportPlan(
-        filename=filename + ".zip" if fmt == "html" else filename,
-        extension="zip" if fmt == "html" else Path(filename).suffix.lstrip("."),
-        label="HTML + assets (ZIP)" if fmt == "html" else fmt.upper(),
+        filename=filename,
+        extension=Path(filename).suffix.lstrip("."),
+        label=fmt.upper(),
         request=request,
         protected_roots=[str(_backend().workspace.resolve())],
     )
@@ -80,7 +80,7 @@ def save_content(pid: str, export_id: int) -> ExportResponse:
     backend = _backend()
     require_project(pid)
     try:
-        stream, _ = backend.open_export(pid, export_id, bundle_html=True)
+        stream, _ = backend.open_export(pid, export_id, inline_html=True)
     except FileNotFoundError as error:
         raise ApiError(EXPORT_NOT_FOUND, 404, "Completed export not found") from error
     except (OSError, ValueError) as error:

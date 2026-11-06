@@ -41,13 +41,13 @@ for (const babeldoc of [false, true]) {
   });
 }
 
-test("HTML native save preserves the options and reports the archive path", async ({ page }) => {
+test("HTML native save preserves the options and reports the HTML path", async ({ page }) => {
   await page.addInitScript(() => {
     window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
     window.__TAURI_INTERNALS__ = {
       invoke: (_command, args) => {
         Object.assign(window, { savedOptions: args.options });
-        return Promise.resolve({ path: "/fixture/book.html.zip" } as never);
+        return Promise.resolve({ path: "/fixture/book.html" } as never);
       },
     };
   });
@@ -59,7 +59,7 @@ test("HTML native save preserves the options and reports the archive path", asyn
   await page.goto(`/projects/${pid}/export`);
   await page.getByRole("button", { name: "HTML", exact: true }).click();
   await page.getByRole("button", { name: "Generate export", exact: true }).click();
-  await expect(page.getByText("Saved to /fixture/book.html.zip")).toBeVisible();
+  await expect(page.getByText("Saved to /fixture/book.html", { exact: true })).toBeVisible();
   expect(await page.evaluate(() =>
     (window as unknown as { savedOptions: { format: string } }).savedOptions.format,
   )).toBe("html");

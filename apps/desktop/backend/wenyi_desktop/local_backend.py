@@ -1314,11 +1314,11 @@ class LocalBackend:
             log.warning("Could not reclaim exports after closing %s", export_id, exc_info=True)
 
     def open_export(
-        self, pid: str, export_id: int, *, bundle_html: bool = False
+        self, pid: str, export_id: int, *, inline_html: bool = False
     ) -> tuple[BinaryIO, Path]:
         from wenyi_backend.export_paths import export_path
 
-        from .local_export_files import ExportLease, html_bundle, open_regular
+        from .local_export_files import ExportLease, html_document, open_regular
 
         with self._export_history_lock(pid):
             self._reject_removing(pid)
@@ -1334,9 +1334,10 @@ class LocalBackend:
             )
             if file is None or not file.is_file():
                 raise FileNotFoundError("Completed export not found")
-            # Keep owned assets alive until bundled, without a catalog transaction.
-            if bundle_html and file.suffix == ".html":
-                return html_bundle(file), file
+            # Convert legacy multi-file history without changing published artifacts.
+            # Keep owned assets alive during conversion, without a catalog transaction.
+            if inline_html and file.suffix == ".html" and file.with_suffix(".assets").exists():
+                return html_document(file), file
             stream = open_regular(file)
             try:
                 leased = ExportLease(stream, lambda: self._release_export(pid, export_id))

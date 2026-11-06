@@ -289,7 +289,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         fmt: str | None = typer.Option(
             None,
             "--format",
-            help="Output format: epub / txt / html / markdown / docx / pdf (BabelDOC only); default: pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
+            help="Output format: epub / txt / html / markdown / docx / pdf (BabelDOC only); default: html for HTML input, pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
         ),
         out: str | None = typer.Option(
             None,

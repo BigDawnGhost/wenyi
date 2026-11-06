@@ -49,7 +49,7 @@ def validate_output_format(fmt: str, *, console: Console | None = None) -> str:
 def resolve_output_format(
     input_path: str, fmt: str | None, *, console: Console | None = None
 ) -> str | None:
-    """Defer PDF defaults to saved backend metadata; keep DOCX and EPUB defaults."""
+    """Keep HTML/DOCX input formats; defer PDF defaults to saved backend metadata."""
     console = console or Console()
     if fmt is not None and str(fmt).strip():
         return validate_output_format(str(fmt), console=console)
@@ -57,6 +57,8 @@ def resolve_output_format(
         return None
     if os.path.splitext(input_path)[1].lower() == ".docx":
         return "docx"
+    if os.path.splitext(input_path)[1].lower() in {".html", ".htm", ".xhtml"}:
+        return "html"
     return "epub"
 
 

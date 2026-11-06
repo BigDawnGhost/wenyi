@@ -165,6 +165,40 @@ class TestBilingualOutPath(unittest.TestCase):
 
 
 class TestAssembleText(unittest.TestCase):
+    def test_template_free_bilingual_html_keeps_both_languages_and_document_shell(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "plain.txt"
+            source.write_text("First.\n\nSecond.", encoding="utf-8")
+            store = FileStorage(os.path.join(directory, "state"))
+            store.init_from_document(load_document(str(source), "en", "zh"))
+            for row in store.load_manifest()["chapters"]:
+                chapter = store.load_chapter(row["index"])
+                for segment in chapter.segments:
+                    segment.target = f"译{segment.source}"
+                store.save_chapter(chapter)
+            for order in ("target_first", "source_first"):
+                with self.subTest(order=order):
+                    output = assemble(
+                        store,
+                        str(source),
+                        out_path=str(Path(directory) / f"{order}.html"),
+                        out_format="html",
+                        bilingual=True,
+                        order=order,
+                    )
+                    soup = BeautifulSoup(Path(output).read_text(encoding="utf-8"), "html.parser")
+                    self.assertIsNotNone(soup.html)
+                    self.assertIsNotNone(soup.head)
+                    self.assertIsNotNone(soup.body)
+                    expected = [
+                        value
+                        for text in ("First.", "Second.")
+                        for value in (
+                            (text, f"译{text}") if order == "source_first" else (f"译{text}", text)
+                        )
+                    ]
+                    self.assertEqual([node.get_text() for node in soup.find_all("p")], expected)
+
     def test_generated_epub_does_not_require_ebooklib(self):
         import builtins
 
@@ -1180,13 +1214,10 @@ data-tn-annotation-id="ann-0" href="chapter.xhtml#part">Chapter
                 html = handle.read()
             self.assertNotIn('src="image.jpg"', html)
             self.assertNotIn('src="plate.png"', html)
-            self.assertEqual(html.count(".assets/"), 2)
+            self.assertIn("data:image/jpeg;base64,Y2hhcHRlci1pbWFnZQ==", html)
+            self.assertIn("data:image/png;base64,cGxhdGUtaW1hZ2U=", html)
             assets_dir = os.path.join(os.path.dirname(output), f"{Path(output).stem}.assets")
-            packaged = {
-                name: Path(os.path.join(assets_dir, name)).read_bytes()
-                for name in os.listdir(assets_dir)
-            }
-            self.assertEqual(sorted(packaged.values()), [b"chapter-image", b"plate-image"])
+            self.assertFalse(os.path.exists(assets_dir))
 
     def test_epub_export_rejects_source_state_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:

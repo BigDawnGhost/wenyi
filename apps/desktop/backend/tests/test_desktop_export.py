@@ -60,7 +60,7 @@ def test_plan_is_side_effect_free_and_matches_export_filename(desktop_exports, f
     )
     assert response.status_code == 200, response.text
     plan = response.json()
-    extension = {"markdown": "md", "html": "html.zip"}.get(fmt, fmt)
+    extension = {"markdown": "md"}.get(fmt, fmt)
     assert plan["filename"] == f"Example book.zh{'-bi' if bilingual else ''}.{extension}"
     assert plan["request"]["format"] == fmt
     assert plan["request"]["bilingual"] is bilingual
@@ -157,29 +157,32 @@ def publish(backend, pid, fmt, content):
 
 def test_html_save_contains_only_published_document_and_owned_assets(desktop_exports):
     client, backend, pid = desktop_exports
-    export_id, file = publish(backend, pid, "html", b'<img src="Example.zh.assets/image.png">')
+    export_id, file = publish(
+        backend, pid, "html", b'<img src="Example.zh.assets/icons/image.png">'
+    )
     assets = file.with_suffix(".assets")
-    assets.mkdir()
-    (assets / "image.png").write_bytes(b"image payload")
+    (assets / "icons").mkdir(parents=True)
+    (assets / "icons" / "image.png").write_bytes(b"image payload")
     (file.parent / "not-owned.txt").write_bytes(b"not exported")
     url = f"/desktop/projects/{pid}/exports/{export_id}"
     plan = client.get(url + "/plan")
     assert plan.status_code == 200
-    assert plan.json()["filename"] == "Example.zh.html.zip"
-    assert plan.json()["label"] == "HTML + assets (ZIP)"
+    assert plan.json()["filename"] == "Example.zh.html"
+    assert plan.json()["extension"] == "html"
+    assert plan.json()["label"] == "HTML"
     content = client.get(url + "/content")
     assert content.status_code == 200, content.text
     assert len(content.content) == int(content.headers["content-length"])
-    with zipfile.ZipFile(io.BytesIO(content.content)) as bundle:
-        assert bundle.namelist() == ["Example.zh.html", "Example.zh.assets/image.png"]
-        assert bundle.read("Example.zh.assets/image.png") == b"image payload"
-        assert b"Example.zh.assets/image.png" in bundle.read("Example.zh.html")
+    assert not zipfile.is_zipfile(io.BytesIO(content.content))
+    assert b"data:image/png;base64,aW1hZ2UgcGF5bG9hZA==" in content.content
+    assert b"not exported" not in content.content
+    assert b"Example.zh.assets/icons/image.png" not in content.content
     # Web downloads remain the original HTML, not a silently substituted archive.
     assert client.get(f"/projects/{pid}/exports/{export_id}/download").content == file.read_bytes()
 
 
 @pytest.mark.parametrize("linked_directory", [False, True])
-def test_html_bundle_rejects_links_outside_export(desktop_exports, tmp_path, linked_directory):
+def test_html_save_rejects_links_outside_export(desktop_exports, tmp_path, linked_directory):
     client, backend, pid = desktop_exports
     export_id, file = publish(backend, pid, "html", b"document")
     outside = tmp_path / "private"
@@ -211,8 +214,8 @@ def test_native_content_is_project_scoped_and_requires_published_status(desktop_
     assert response.headers["content-length"] == "11"
 
 
-def test_bundle_rejects_hard_linked_private_file(tmp_path):
-    from wenyi_desktop.local_export_files import html_bundle
+def test_html_conversion_rejects_hard_linked_private_file(tmp_path):
+    from wenyi_desktop.local_export_files import html_document
 
     file = tmp_path / "book.html"
     file.write_bytes(b"document")
@@ -222,30 +225,31 @@ def test_bundle_rejects_hard_linked_private_file(tmp_path):
     private.write_bytes(b"private")
     os.link(private, assets / "alias.txt")
     with pytest.raises(ValueError, match="multiply linked"):
-        html_bundle(file)
+        html_document(file)
 
 
-def test_archiving_does_not_hold_catalog_transaction(desktop_exports, monkeypatch):
+def test_html_conversion_does_not_hold_catalog_transaction(desktop_exports, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
 
     from wenyi_desktop import local_export_files
 
     client, backend, pid = desktop_exports
-    export_id, _ = publish(backend, pid, "html", b"document")
-    original = local_export_files._copy_file
+    export_id, file = publish(backend, pid, "html", b"document")
+    file.with_suffix(".assets").mkdir()
+    original = local_export_files._read_file
 
-    def copy(*args, **kwargs):
-        # A separate thread/connection must be able to commit while compression runs.
+    def read(*args, **kwargs):
+        # A separate thread/connection must be able to commit during conversion.
         with ThreadPoolExecutor(max_workers=1) as pool:
             pool.submit(backend.set_project_status, pid, "done").result(timeout=2)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(local_export_files, "_copy_file", copy)
+    monkeypatch.setattr(local_export_files, "_read_file", read)
     assert client.get(f"/desktop/projects/{pid}/exports/{export_id}/content").status_code == 200
 
 
-def test_bundle_handles_directory_swap_without_following_link(tmp_path, monkeypatch):
-    from wenyi_desktop.local_export_files import html_bundle
+def test_html_conversion_handles_directory_swap_without_following_link(tmp_path, monkeypatch):
+    from wenyi_desktop.local_export_files import html_document
 
     root = tmp_path / "export"
     root.mkdir()
@@ -274,7 +278,7 @@ def test_bundle_handles_directory_swap_without_following_link(tmp_path, monkeypa
 
     monkeypatch.setattr(os, "open", swap)
     with pytest.raises((OSError, ValueError)):
-        html_bundle(file)
+        html_document(file)
     assert swapped
 
 
@@ -325,8 +329,8 @@ def test_disconnect_closes_export_stream(desktop_exports, monkeypatch, native, f
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows forbids these characters in directory names")
-def test_posix_workspace_ancestors_are_not_zip_entry_names(tmp_path):
-    from wenyi_desktop.local_export_files import html_bundle, open_regular
+def test_posix_workspace_ancestors_are_not_asset_reference_names(tmp_path):
+    from wenyi_desktop.local_export_files import html_document, open_regular
 
     root = tmp_path / "wenyi:desktop\\workspace"
     root.mkdir()
@@ -334,8 +338,8 @@ def test_posix_workspace_ancestors_are_not_zip_entry_names(tmp_path):
     file.write_bytes(b"document")
     with open_regular(file) as stream:
         assert stream.read() == b"document"
-    with html_bundle(file) as stream, zipfile.ZipFile(stream) as archive:
-        assert archive.read("book.html") == b"document"
+    with html_document(file) as stream:
+        assert stream.read() == b"document"
 
 
 @pytest.mark.parametrize("missing", ["new", "removed"])

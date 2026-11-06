@@ -192,15 +192,12 @@ def test_epub_html_export_never_packages_files_outside_container(
     assert _image_source(soup, "missing") == "local-only.txt"
     assets = output.with_suffix(".assets")
     if include_image:
-        assert [path.read_bytes() for path in assets.iterdir()] == [b"epub-image"]
         image_href = _image_source(soup, "cover")
-        assert image_href.startswith("book.assets/")
-        assert (output.parent / image_href).read_bytes() == b"epub-image"
-    else:
-        assert not assets.exists()
+        assert image_href == "data:image/png;base64,ZXB1Yi1pbWFnZQ=="
+    assert not assets.exists()
 
 
-def test_html_input_still_packages_local_and_embedded_images(tmp_path: Path) -> None:
+def test_html_input_embeds_local_images_and_preserves_embedded_images(tmp_path: Path) -> None:
     source = tmp_path / "source.html"
     source.write_text(
         "<html><body><p>静かな朝だった。</p>"
@@ -216,10 +213,10 @@ def test_html_input_still_packages_local_and_embedded_images(tmp_path: Path) -> 
     output = Path(assemble(store, str(source), out_format="html", about_page=False))
 
     soup = BeautifulSoup(output.read_text(encoding="utf-8"), "html.parser")
-    for image_id, payload in (("local", b"local-image"), ("inline", b"inline")):
-        href = _image_source(soup, image_id)
-        assert href.startswith(f"{output.stem}.assets/")
-        assert (output.parent / href).read_bytes() == payload
+    href = _image_source(soup, "local")
+    assert href == "data:image/png;base64,bG9jYWwtaW1hZ2U="
+    assert not output.with_suffix(".assets").exists()
+    assert _image_source(soup, "inline") == "data:image/png;base64,aW5saW5l"
     assert _image_source(soup, "external") == "https://example.invalid/cover.png"
 
 

@@ -137,7 +137,7 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         fmt: str | None = typer.Option(
             None,
             "--format",
-            help="Output format: epub / txt / html / markdown / docx / pdf (BabelDOC only); default: pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
+            help="Output format: epub / txt / html / markdown / docx / pdf (BabelDOC only); default: html for HTML input, pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
         ),
         mono: bool | None = typer.Option(
             None,

@@ -1,38 +1,53 @@
-"""Standalone HTML output.
-Read the manifest and chapters to find reusable HTML/PDF templates. Backfill template nodes
-with html_renderer and materialize assets with html_resources; otherwise reconstruct
-headings, paragraphs and bilingual content.
-"""
+"""Single-file HTML output with source-backed HTML/EPUB layout and embedded local media."""
 
 from __future__ import annotations
 
 import os
 import posixpath
-import re
 import zipfile
 from html import escape
-from pathlib import Path
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
 from wenyi_core.assemble.epub_resources import _epub_resource_specs, _render_epub_resources
 from wenyi_core.assemble.html_bilingual import _BILINGUAL_CSS, _BILINGUAL_STYLE_ID
-from wenyi_core.assemble.html_renderer import _render_chapter_html
+from wenyi_core.assemble.html_renderer import _html_open_tag, _render_chapter_html
 from wenyi_core.atomicio import publish_target
+from wenyi_core.markup.html import html_document_soup
 
 from ..ingest.epub_package import _decode_markup
 from ..models.document import KIND_HEADING
 from .export_view import AssembleStore
 from .html_resources import (
     _MEDIA_SUFFIXES,
-    _materialize_html_resources,
-    _package_html_resources,
+    _embed_html_resources,
     _template_resource_source,
-    _write_packaged,
 )
+from .html_source import _render_html_source
 from .policy import export_options
 from .writer_common import _bilingual_source, _epub_lang, _manifest_target_lang, _merged_paragraphs
+
+
+def _html_presentation(
+    html: str, target_lang: str, *, bilingual: bool, preserve_source_style: bool
+) -> str:
+    """Update output language/encoding without replacing the source head or shell."""
+    soup = html_document_soup(html)
+    head = soup.head
+    assert head is not None and soup.html is not None
+    for node in head.find_all("meta"):
+        if node.has_attr("charset") or str(node.get("http-equiv", "")).lower() == "content-type":
+            node.decompose()
+    head.insert(0, soup.new_tag("meta", charset="utf-8"))
+    if bilingual and not preserve_source_style and not soup.find(id=_BILINGUAL_STYLE_ID):
+        style = soup.new_tag("style", id=_BILINGUAL_STYLE_ID)
+        style.string = _BILINGUAL_CSS
+        head.append(style)
+    soup.html["lang"] = _epub_lang(target_lang)
+    if soup.html.has_attr("xml:lang"):
+        soup.html["xml:lang"] = _epub_lang(target_lang)
+    return str(soup)
 
 
 def _assemble_html(
@@ -44,7 +59,7 @@ def _assemble_html(
     order: str = "target_first",
     preserve_source_style: bool = False,
 ) -> str:
-    """Backfill chapter templates and combine them into a complete HTML document."""
+    """Backfill a complete HTML source, or construct HTML for other input formats."""
     if os.path.abspath(source_path) == os.path.abspath(out_path):
         raise ValueError("--out must not point at the source file; choose a different output path")
     m = store.load_manifest()
@@ -52,23 +67,24 @@ def _assemble_html(
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     raw_head_html = meta.get("head_html", "")
     head_html = raw_head_html if isinstance(raw_head_html, str) else ""
-    # Always declare the charset so browsers decode Unicode text correctly. Source heads
-    # can carry stale declarations (e.g. gb2312 for content that is now UTF-8), so every
-    # meta charset is stripped before adding our own (audit X-4).
-    head_html = re.sub(r"<meta[^>]*charset[^>]*>", "", head_html, flags=re.IGNORECASE)
-    head_html = '<meta charset="utf-8"/>\n' + head_html
-    if bilingual and not preserve_source_style and _BILINGUAL_STYLE_ID not in head_html:
-        head_html += f'<style id="{_BILINGUAL_STYLE_ID}">\n{_BILINGUAL_CSS}</style>'
 
     body_parts: list[str] = []
     rendered_epub = False
-    packaged: dict[str, tuple[str, bytes]] = {}
-    if m.get("fmt") == "epub" and _epub_resource_specs(meta):
+    rendered_source_html: str | None = None
+    if m.get("fmt") == "html":
+        rendered_source_html = _render_html_source(
+            source_path,
+            m,
+            [store.load_chapter(c["index"]) for c in m["chapters"]],
+            bilingual=bilingual,
+            order=order,
+            preserve_source_style=preserve_source_style,
+            preserve_source_ruby=export_options(store, "html").preserve_source_ruby,
+        )
+    elif m.get("fmt") == "epub" and _epub_resource_specs(meta):
         chapters = [store.load_chapter(c["index"]) for c in m["chapters"]]
-        asset_prefix = f"{Path(out_path).stem}.assets"
         with zipfile.ZipFile(source_path, "r") as archive:
-            # Media entries are read once here: their bytes end up in the .assets
-            # directory either way, and keeping the XHTML out of memory bounds usage.
+            # Resolve media only inside the EPUB, never against adjacent local files.
             media = {
                 info.filename: archive.read(info.filename)
                 for info in archive.infolist()
@@ -103,19 +119,16 @@ def _assemble_html(
                     if isinstance(resource_body, Tag)
                     else str(resource_soup)
                 )
-                # EPUB references are page-relative; resolve them against the page's own
-                # zip directory and rewrite into the flat .assets namespace (audit X-1).
-                rewritten, page_packaged = _package_html_resources(
+                # Embed page-relative media before combining physical resources.
+                rewritten = _embed_html_resources(
                     body_html,
                     source_dir=posixpath.dirname(href),
-                    href_prefix=asset_prefix,
                     zip_resources=media,
                 )
-                packaged.update(page_packaged)
                 body_parts.append(rewritten)
         rendered_epub = bool(body_parts)
 
-    for c in [] if rendered_epub else m["chapters"]:
+    for c in [] if rendered_epub or rendered_source_html is not None else m["chapters"]:
         ch = store.load_chapter(c["index"])
         if ch.template:
             # Reuse EPUB rendering for data-tn-id replacement, continuations and bilingual content.
@@ -147,28 +160,34 @@ def _assemble_html(
             else:
                 body_parts.extend((target_html, source_html))
 
-    full_html = f"""<!DOCTYPE html>
-<html lang="{escape(_epub_lang(_manifest_target_lang(m)))}">
+    if rendered_source_html is not None:
+        full_html = rendered_source_html
+    else:
+        html_open = _html_open_tag("html", meta.get("html_attrs"))
+        body_open = _html_open_tag("body", meta.get("body_attrs"))
+        full_html = f"""<!DOCTYPE html>
+{html_open}
 <head>
 {head_html}
 </head>
-<body>
+{body_open}
 {"".join(body_parts)}
 </body>
 </html>"""
-    if m.get("fmt") == "epub":
-        # EPUB references were resolved only inside the ZIP. An empty result must not
-        # retry unresolved references against files beside the source EPUB.
-        _write_packaged(packaged, out_path)
-    else:
-        full_html = _materialize_html_resources(
+    full_html = _html_presentation(
+        full_html,
+        _manifest_target_lang(m),
+        bilingual=bilingual,
+        preserve_source_style=preserve_source_style,
+    )
+    if m.get("fmt") != "epub":
+        # EPUB references were already resolved in the container, with no disk fallback.
+        full_html = _embed_html_resources(
             full_html,
-            source_path=_template_resource_source(store, m, source_path),
-            out_path=out_path,
+            source_dir=os.path.dirname(_template_resource_source(store, m, source_path)),
         )
 
-    # Publish atomically: the .assets directory is keyed to the final out_path, only the
-    # document file itself is swapped (audit X-2).
+    # The document and all embedded media publish together as one atomic file.
     with publish_target(out_path) as temp_out:
         with open(temp_out, "w", encoding="utf-8") as f:
             f.write(full_html)

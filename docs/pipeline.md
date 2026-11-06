@@ -50,6 +50,73 @@ relevant glossary subset, and nearby source/translation context used to preserve
 the book's voice. Its normal Review-loop replacements remain temporary; the
 optional Autofix publisher can later reuse it to produce formal segment targets.
 
+## HTML translation and backfill
+
+Static HTML import groups consecutive inline text into complete prose regions rather than
+translating individual DOM text nodes. Text before, between and after nested body blocks is
+retained in source order. Block boundaries, `<br>`, media and protected subtrees separate
+regions. Links, emphasis and styled spans inside a region remain part of the same translation.
+Their source ranges and original nesting are recorded in the existing annotation metadata.
+
+HTML-to-HTML export backfills the complete original file, like EPUB's physical-resource
+backfill; chapters only group translation work. The original doctype, head metadata,
+CSS, shell attributes and body layout remain authoritative, including saved webpages
+that omit the `<head>` tag. Export reparses stable anchors using the saved extraction
+policy, merges long-paragraph continuations and reuses saved translations and alignment
+results. Compatible older projects, including sources without an explicit `<body>`,
+can recover missing layout without retranslation even when their saved chapter
+templates or head metadata are incomplete. The original file is required: its hash,
+when recorded, and extracted segment sources must match the state before any output
+file is replaced. Export never rewrites the original or paid state.
+
+HTML input defaults to HTML output, without requiring `--format html`. HTML exports
+are single `.html` files: embedded data URIs stay embedded, and readable local or EPUB
+image/media resources are embedded as data URIs instead of copied into `.assets/`.
+Remote resources are not downloaded. Desktop saves HTML directly, without a ZIP wrapper;
+its older HTML-plus-assets history is converted to single-file HTML at save time without
+modifying the published artifacts.
+
+Linked stylesheets (including local CSS files) and CSS `url(...)` resources remain
+references rather than being embedded. This preserves already self-contained snapshots,
+but does not turn arbitrary multi-file sites into fully offline single-file pages.
+
+After translation and polishing, the existing annotation aligner locates each inline range
+in the immutable target. A partial range normally adds one `annotation.align` request, using
+the configured model and concurrency; whole-source wrappers map to the whole target without
+a model call. The model returns exact target quotes and unique context, never HTML or
+replacement attributes. Completed logical paragraphs, including long-paragraph continuations,
+persist target-digest-bound placements through the normal alignment service. Resume reuses
+both successful and fallback results, and Review Autofix realigns changed formal targets.
+Disabling `pipeline.annotation_alignment` disables these additional model requests.
+
+HTML and generated EPUB exports reconstruct only validated ranges, retaining original
+tag attributes and compatible parent-child nesting. Crossed or overlapping sibling ranges
+are rejected. Failed or stale style ranges do not acquire guessed formatting; their named
+destinations survive as empty shells. An ordinary link whose range cannot be aligned is
+retained at the paragraph end with its source label, rather than converted into a footnote
+arrow or silently removed. The complete translation remains intact. Whole-source wrappers
+remain structurally safe without a placement. Bilingual source mirrors do not duplicate
+IDs, and cell/list mirrors stay inside their containers.
+
+Human-readable attributes (`alt`, `title`, `placeholder`, `label`, `abbr` and descriptive
+ARIA attributes) use separate plain-text segments and local-only DOM destinations.
+Button/reset/submit input values are translatable; other input values and textarea drafts
+are not. Attribute segments are not appended to TXT, Markdown or DOCX body paragraphs.
+HTML shell attributes, non-translatable fragments and media references are retained.
+
+Scripts, styles, templates, code/preformatted content, formulas, explicitly hidden content,
+editable regions and `translate="no"`/`notranslate` subtrees are not sent for translation.
+Protected content and media remain in their original positions, with surrounding run
+whitespace preserved, separating nearby prose regions when necessary. The importer
+recognizes semantic HTML tags, literal inline layout and visibility declarations,
+and conventional math/icon/hidden classes. It does not compute
+external stylesheets, execute JavaScript, inspect live shadow DOM, fetch remote assets or
+apply Read Frog's site-specific browser rules. Existing EPUB and MinerU PDF segmentation
+remain unchanged. Already saved projects keep their original segments and translations;
+the new extraction applies when creating new parsed state, not by rewriting paid state.
+Offline tests establish extraction, alignment validation, persistence and export behavior,
+not translation quality on a real model.
+
 ## Language rules and state scope
 
 Source and target are independent choices. Body translation, titles, term renderings and notes, analysis descriptions, polishing, chapter digests, and book synopses are requested in the target language. In every mode, digests and synopses retain source-language character identities rather than independently inventing translated names; existing authoritative mappings guide interpretation, while the live glossary owns character-name mappings. `source` and `aliases` retain their original spelling. Task instructions use English and live in `packages/core/wenyi_core/i18n/data/tasks/`; source understanding, target expression, pair-specific honorific rules, and metadata language constraints live alongside them in `languages/`, `pairs/`, and `shared/`. JSON keys and stable identities remain unchanged. Glossary type/gender values use English identifiers; older Chinese enum values are no longer converted. Analysis also accepts a model's list of style-guide bullets without discarding it. Matching policies reuse saved analysis; changed built-in semantic revisions automatically rebuild affected analysis while retaining glossary notes.
