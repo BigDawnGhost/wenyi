@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from ...agents.annotation_aligner import AnnotationUnit, target_digest
+from ...events import ProgressFn
 from ...models.document import Chapter, Segment
 from ...storage.protocol import Storage
 
@@ -168,6 +169,8 @@ class AnnotationService:
         chapter: Chapter,
         start_position: int,
         store: Storage,
+        *,
+        retry_fallbacks: bool = False,
     ) -> None:
         """Align EPUB links for one fully translated logical paragraph.
         Only the first slice has an anchor and parsing metadata, so wait for all
@@ -175,6 +178,7 @@ class AnnotationService:
         punctuation normalization remaps placements only on a copy.
         Persist both valid placements and deterministic fallbacks immediately. Skip model
         calls when annotations are absent or translation is incomplete.
+        Repair mode retries only cached fallback items for the unchanged logical target.
         """
         segments = chapter.text_segments
         if not 0 <= start_position < len(segments):
@@ -208,14 +212,25 @@ class AnnotationService:
             for item in placements or []
             if isinstance(item, dict) and item.get("id")
         }
-        if (
+        cache_current = (
             metadata.get("target_digest") == target_digest(target)
             and expected_ids
             and placement_ids == expected_ids
-        ):
+        )
+        if cache_current and not retry_fallbacks:
             return
 
         items = tuple(dict(item) for item in raw_items if isinstance(item, dict))
+        if retry_fallbacks:
+            # Never bless stale offsets or repeat an already successful paid placement.
+            if not cache_current or not isinstance(placements, list):
+                return
+            fallback_ids = {
+                str(item.get("id"))
+                for item in placements
+                if isinstance(item, dict) and item.get("status") == "fallback"
+            }
+            items = tuple(item for item in items if str(item.get("id")) in fallback_ids)
         if not items:
             return
         anchor = segment.anchor or f"segment-{segment.index}"
@@ -251,7 +266,14 @@ class AnnotationService:
             return
 
         metadata["target_digest"] = result.target_digest
-        metadata["placements"] = [dict(item) for item in result.placements]
+        if retry_fallbacks:
+            replacements = {str(item["id"]): dict(item) for item in result.placements}
+            metadata["placements"] = [
+                replacements.get(str(item.get("id")), item) if isinstance(item, dict) else item
+                for item in placements or []
+            ]
+        else:
+            metadata["placements"] = [dict(item) for item in result.placements]
         # Persist each logical paragraph atomically so interruptions do not repeat paid alignment calls
         # and users can inspect exports before the complete book finishes translating.
         store.save_chapter(chapter)
@@ -263,7 +285,40 @@ class AnnotationService:
             unit_id=unit.unit_id,
             annotations=len(items),
             used_fallback=result.used_fallback,
+            retry_fallbacks=retry_fallbacks,
         )
+
+    def repair_fallbacks(self, store: Storage, *, progress: ProgressFn | None = None) -> None:
+        """Make one separate, resumable pass over fallback annotations, including done chapters.
+
+        The caller holds the book lock. Each repaired paragraph is persisted before
+        proceeding; remaining fallbacks wait for a later run rather than looping here.
+        """
+        if not self._runtime.config.pipeline.annotation_alignment:
+            return
+        chapter_indices = sorted(
+            chapter["index"]
+            for chapter in store.load_manifest().get("chapters", [])
+            if isinstance(chapter.get("index"), int)
+        )
+        label = "Repairing fallback annotations"
+        if progress:
+            progress(0, len(chapter_indices), label)
+        for done, ci in enumerate(chapter_indices, 1):
+            chapter = store.load_chapter(ci)
+            for position, segment in enumerate(chapter.text_segments):
+                metadata = segment.meta.get("epub_annotations")
+                if segment.cont or not isinstance(metadata, dict):
+                    continue
+                placements = metadata.get("placements")
+                if not isinstance(placements, list) or not any(
+                    isinstance(item, dict) and item.get("status") == "fallback"
+                    for item in placements
+                ):
+                    continue
+                self.align_segment_annotation(ci, chapter, position, store, retry_fallbacks=True)
+            if progress:
+                progress(done, len(chapter_indices), label)
 
     def align_annotations_after_batch(
         self,
