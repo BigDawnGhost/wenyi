@@ -8,7 +8,7 @@ is involved. The existing annotation aligner locates inline ranges after transla
 from __future__ import annotations
 
 from bs4 import BeautifulSoup
-from bs4.element import Comment, Doctype, NavigableString, ProcessingInstruction, Tag
+from bs4.element import Comment, Doctype, NavigableString, PageElement, ProcessingInstruction, Tag
 
 from wenyi_core.markup.annotations import _annotation_roots, _is_text_string
 from wenyi_core.markup.contracts import (
@@ -153,8 +153,8 @@ def html_document_soup(html: str) -> BeautifulSoup:
     body = root.find("body", recursive=False)
     head_tags = {"base", "link", "meta", "noscript", "script", "style", "template", "title"}
     in_head = True
-    before_body: list[Tag | NavigableString] = []
-    after_body: list[Tag | NavigableString] = []
+    before_body: list[PageElement] = []
+    after_body: list[PageElement] = []
     body_seen = False
     for node in list(root.contents):
         if node is head:
@@ -258,7 +258,7 @@ def html_translation_targets(soup: BeautifulSoup) -> list[Tag]:
     targets: list[Tag] = []
 
     def walk(parent: Tag) -> None:
-        run: list[Tag | NavigableString] = []
+        run: list[PageElement] = []
 
         def flush() -> None:
             if not run:
@@ -304,7 +304,10 @@ def html_inline_roots(block: Tag, anchor: str, href: str) -> dict[int, dict[str,
             and (
                 parent.name == "ruby"
                 or roots.get(id(parent), {}).get("mode") == "point"
-                or id(node) in roots.get(id(parent), {}).get("marker_node_ids", set())
+                or (
+                    isinstance(marker_ids := roots.get(id(parent), {}).get("marker_node_ids"), set)
+                    and id(node) in marker_ids
+                )
             )
             for parent in node.parents
             if parent is not block

@@ -219,7 +219,7 @@ def test_alignment_waits_for_continuations_and_stale_ranges_are_not_reused(tmp_p
     assert len(client.calls) == 2
     chapter.segments[-1].target = "新译文。"
     rendered = BeautifulSoup(_render_chapter_html(chapter), "html.parser")
-    assert "".join(segment.target for segment in chapter.segments) in rendered.get_text()
+    assert "".join(segment.target or "" for segment in chapter.segments) in rendered.get_text()
     assert not rendered.find("strong", string="登录")
     assert rendered.find(id="login") is not None
 
@@ -334,7 +334,7 @@ def test_invalid_inline_ranges_never_remove_or_rewrite_translation(tmp_path, inv
     assert rendered.get_text() == segment.target
     assert required(rendered.find(id="one")).parent is not None
     assert required(rendered.find(id="two")).get_text() == ("二" if invalid == "failed" else "")
-    assert rendered.find("strong").find("em") is None
+    assert required(rendered.find("strong")).find("em") is None
 
 
 def test_failed_link_keeps_navigation_without_fabricating_a_translated_range(tmp_path):
@@ -348,7 +348,7 @@ def test_failed_link_keeps_navigation_without_fabricating_a_translated_range(tmp
     rendered = BeautifulSoup(_render_chapter_html(saved), "html.parser")
     assert rendered.get_text() == "若要继续，请先登录。 sign in"
     assert required(rendered.find("a"))["href"] == "/login"
-    assert rendered.find("a").get_text() == "sign in"
+    assert required(rendered.find("a")).get_text() == "sign in"
     assert "↩" not in rendered.get_text()
 
 
@@ -401,7 +401,8 @@ def test_attribute_segments_do_not_become_body_paragraphs(tmp_path, fmt):
     assert "图片说明" not in text
 
 
-def test_full_translation_pipeline_and_resume_reuse_html_alignment(tmp_path):
+@pytest.mark.parametrize("initial_fallback", [False, True], ids=["aligned", "repaired"])
+def test_full_translation_pipeline_and_resume_reuse_html_alignment(tmp_path, initial_fallback):
     document = read(
         tmp_path,
         '<p>Please <a href="/login"><strong>sign in</strong></a> to continue.</p>',
@@ -410,14 +411,24 @@ def test_full_translation_pipeline_and_resume_reuse_html_alignment(tmp_path):
         {
             "language": {"source": "en", "target": "zh"},
             "llm": {"preset": "fake"},
-            "pipeline": {"book_understanding": False, "polish": False, "review": False},
+            "pipeline": {
+                "book_understanding": False,
+                "polish": False,
+                "review": False,
+                "annotation_alignment_concurrency": 1,
+            },
             "paths": {"state_dir": str(tmp_path / "state")},
             "output": {"about_page": False},
         }
     )
+    alignment_calls = 0
 
     def handler(messages, tier, json_mode):
+        nonlocal alignment_calls
         if "INPUT JSON:\n" in messages[-1]["content"]:
+            alignment_calls += 1
+            if initial_fallback and alignment_calls <= 2:
+                return "{}"
             return focus_response(messages)
         if "literary translator" in messages[0]["content"]:
             return json.dumps({"translations": ["若要继续，请先登录。"]})
@@ -429,6 +440,7 @@ def test_full_translation_pipeline_and_resume_reuse_html_alignment(tmp_path):
     runner.run_all(document.source_path, out_format="html", out_path=str(output))
     rendered = BeautifulSoup(output.read_text(), "html.parser")
     assert required(rendered.select_one("p > a > strong")).get_text() == "登录"
+    assert alignment_calls == (4 if initial_fallback else 2)
     calls = len(client.calls)
     runner.run_all(document.source_path, out_format="html", out_path=str(output))
     assert len(client.calls) == calls

@@ -469,7 +469,9 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
                 )
             source = rendered.find("source")
             self.assertIsNotNone(source)
-            self.assertEqual(source.get("srcset"), rendered.find("img").get("src"))
+            image = rendered.find("img")
+            assert source is not None and image is not None
+            self.assertEqual(source.get("srcset"), image.get("src"))
             self.assertFalse(os.path.exists(os.path.splitext(output_path)[0] + ".assets"))
 
     def test_html_images_are_packaged_in_generated_epub(self):

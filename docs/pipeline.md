@@ -87,7 +87,9 @@ the configured model and concurrency; whole-source wrappers map to the whole tar
 a model call. The model returns exact target quotes and unique context, never HTML or
 replacement attributes. Completed logical paragraphs, including long-paragraph continuations,
 persist target-digest-bound placements through the normal alignment service. Resume reuses
-both successful and fallback results, and Review Autofix realigns changed formal targets.
+both successful and fallback results during translation batches; the end-of-translation
+repair pass also retries HTML fallbacks once, without repeating successful placements.
+Review Autofix realigns changed formal targets.
 Disabling `pipeline.annotation_alignment` disables these additional model requests.
 
 HTML and generated EPUB exports reconstruct only validated ranges, retaining original

@@ -98,7 +98,7 @@ def test_saved_state_recovers_source_layout_without_retranslation(tmp_path, pres
     assert required(rendered.html)["class"] == ["original-shell"]
     assert required(rendered.body)["class"] == ["original-body"]
     assert required(rendered.head)["id"] == "source-head"
-    assert required(rendered.head.find("style"))["id"] == "global"
+    assert required(required(rendered.head).find("style"))["id"] == "global"
     assert [paragraph.get_text() for paragraph in rendered.find_all("p")] == [
         "译First.",
         "译Second.",
@@ -233,7 +233,7 @@ def test_complete_document_backfill_merges_continuations_and_adds_bilingual_css(
     )
     rendered = BeautifulSoup(output.read_text(), "html.parser")
     assert required(rendered.head).find("style", id="global") is not None
-    assert rendered.head.find("style", id="tn-bilingual-style") is not None
+    assert required(rendered.head).find("style", id="tn-bilingual-style") is not None
     paragraph = required(rendered.find(id="paragraph"))
     expected = "".join(
         segment.target or "" for segment in chapter.segments if segment.kind != "heading"
