@@ -169,10 +169,10 @@ def test_installer_hooks_never_name_bundler_defines():
         assert define not in code, f"{define} is undefined where the hooks are included"
 
 
-def test_the_nsis_hook_guards_the_registry_key_rust_also_reads():
-    # The key in the hooks file and INSTALL_KEY in src/paths.rs are two spellings
-    # of one key: the uninstaller reads the first and the startup check reads the
-    # second. A divergence would make the PREINSTALL block never fire.
+def test_the_nsis_hook_names_the_same_install_location_key_as_rust():
+    # The folder-ownership check and Rust's startup check must agree on the saved
+    # location. Unlike the active uninstall registration, this preference can
+    # survive an uninstall that keeps application data.
     rust = (ROOT / "apps/desktop/src/paths.rs").read_text(encoding="utf-8")
     declared = next(
         line.split("=", 1)[1].strip().rstrip(";").strip()
@@ -183,6 +183,24 @@ def test_the_nsis_hook_guards_the_registry_key_rust_also_reads():
     # the two spellings are compared after undoing the source escaping.
     assert declared == '"Software\\\\wenyi\\\\Wenyi Desktop"'
     assert declared.strip('"').replace("\\\\", "\\") in _hook_code()
+
+
+def test_the_backup_guard_uses_active_uninstall_registration_not_saved_location():
+    # Tauri keeps the saved installation directory after an ordinary uninstall,
+    # but always removes the Add/Remove Programs entry. A saved location alone
+    # must not make a reinstall require a backup of an application already removed.
+    code = _hook_code()
+    product = json.loads((ROOT / "apps/desktop/tauri.conf.json").read_text())["productName"]
+    uninstall_key = rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{product}"
+    assert f'!define WENYI_UNINSTALL_KEY "{uninstall_key}"' in code
+    pre = code.split("!macro NSIS_HOOK_PREINSTALL", 1)[1].split("!macroend", 1)[0]
+    read = 'ReadRegStr $R5 HKCU "${WENYI_UNINSTALL_KEY}" "UninstallString"'
+    assert read in pre
+    assert "${WENYI_INSTALL_KEY}" not in pre
+    assert pre.index(read) < pre.index("wenyi_has_backup")
+    assert '${If} $UpdateMode != "1"' in pre
+    assert '${If} $R5 != ""' in pre
+    assert '${If} $R8 != "1"' in pre
 
 
 def test_the_nsis_hook_names_layer_two_under_the_user_profile():

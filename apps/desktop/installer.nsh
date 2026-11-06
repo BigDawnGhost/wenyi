@@ -39,10 +39,13 @@
 ; FILE_ATTRIBUTE_REPARSE_POINT.
 !define WENYI_REPARSE_POINT 0x400
 
-; Must match INSTALL_KEY in apps/desktop/src/paths.rs. The installer writes this
-; value before any of this runs, so during an upgrade it still names the
-; directory the previous version was installed into.
+; Must match INSTALL_KEY in apps/desktop/src/paths.rs. Tauri restores the previous
+; installation directory from this value and keeps it after an ordinary
+; uninstall. It is a location preference, not proof the application is installed.
 !define WENYI_INSTALL_KEY "Software\wenyi\Wenyi Desktop"
+; Tauri removes the Add/Remove Programs entry on every uninstall, even when the
+; user keeps application data and the saved installation directory above.
+!define WENYI_UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Wenyi Desktop"
 ; Layer two, under the user profile. It is deliberately not $LOCALAPPDATA: the
 ; original isolation review had that wrong, and the wrong value deletes the
 ; disposable runtime layer while leaving the user's real data in place.
@@ -313,10 +316,9 @@
 
 ; Answer "1" in RESULT when PATH already holds a Wenyi installation.
 ;
-; The installation record is the authority: the installer writes it before any of
-; this runs and keeps it across upgrades. The uninstaller beside the executable is
-; the second spelling of the same answer, for an installation whose record was
-; removed by hand.
+; The uninstaller identifies an existing installation. The saved installation
+; directory also allows reusing its old folder after an uninstall that kept data,
+; even when files remain there.
 !macro wenyi_is_own_installation PATH RESULT
   StrCpy ${RESULT} "0"
   ${If} ${FileExists} "${PATH}\${WENYI_UNINSTALLER}"
@@ -454,9 +456,11 @@
 ; the upgrade; refusing here as well would only stop an installation old enough
 ; to predate that code from ever updating to this one.
 ;
-; "Already installed" comes from the installation record rather than from
-; /UPDATE, because a manual double-click on a machine that already has Wenyi
-; would otherwise look like a first install.
+; "Already installed" comes from the active Add/Remove Programs entry rather
+; than from /UPDATE: a manual double-click can overwrite an existing install too.
+; The saved installation directory is deliberately not used here, because Tauri
+; keeps it after an uninstall that preserves data. Requiring a backup on that
+; preference alone would block the uninstall-and-reinstall recovery path.
 !macro NSIS_HOOK_PREINSTALL
   ; The four installation-location refusals of the isolation design run first
   ; and leave the backup refusal below untouched. They apply to an upgrade as
@@ -478,7 +482,7 @@
   ${EndIf}
 
   ${If} $UpdateMode != "1"
-    ReadRegStr $R5 HKCU "${WENYI_INSTALL_KEY}" ""
+    ReadRegStr $R5 HKCU "${WENYI_UNINSTALL_KEY}" "UninstallString"
     ${If} $R5 != ""
       !insertmacro wenyi_has_backup $R8
       ${If} $R8 != "1"
