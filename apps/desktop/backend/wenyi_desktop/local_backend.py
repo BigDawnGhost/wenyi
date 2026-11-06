@@ -11,6 +11,7 @@ import os
 import shutil
 import sqlite3
 import uuid
+from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PureWindowsPath
@@ -1103,9 +1104,16 @@ class LocalBackend:
             if not store.exists():
                 return []
             review = store.load_latest_review_result() or {}
+            issue_counts = Counter(
+                issue.get("chapter")
+                for issue in review.get("issues", [])
+                if isinstance(issue.get("chapter"), int)
+            )
+            # One manifest read for the whole book: per-chapter loads re-parse it each
+            # time and time out the UI on books with ~1,500 chapters.
+            manifest, chapters = store.load_manifest_with_chapters()
             result = []
-            for entry in store.load_manifest().get("chapters", []):
-                chapter = store.load_chapter(entry["index"])
+            for entry, chapter in zip(manifest.get("chapters", []), chapters):
                 state, current = chapter_review_state(
                     review, chapter.meta, entry.get("review_status")
                 )
@@ -1119,12 +1127,7 @@ class LocalBackend:
                         "word_count": len(segments),
                         "target_word_count": sum(s.target is not None for s in segments),
                         "review_status": state or "pending",
-                        "review_issue_count": sum(
-                            issue.get("chapter") == chapter.index
-                            for issue in review.get("issues", [])
-                        )
-                        if current
-                        else 0,
+                        "review_issue_count": issue_counts[chapter.index] if current else 0,
                     }
                 )
             return result
