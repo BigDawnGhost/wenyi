@@ -305,6 +305,9 @@ export default function CreateProjectDialog() {
           disabled={locked}
           onSelectFile={(file) => {
             setFile(file);
+            setName((current) =>
+              current.trim() ? current : file.name.replace(/\.[^.]+$/, "").trim() || file.name,
+            );
             setSourceConsumed(false);
             create.reset();
           }}
