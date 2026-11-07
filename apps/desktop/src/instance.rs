@@ -797,7 +797,8 @@ owner = NativeOwner.read(io.StringIO(json.dumps(proof) + "\n"), workspace)
 with profile_lock(workspace, owner):
     from wenyi_desktop.local_backend import LocalBackend
     backend = LocalBackend(workspace)
-    assert backend.database == workspace / "catalog.sqlite3"
+    # Windows may expand a short temp-directory alias while resolving the backend root.
+    assert backend.database.samefile(workspace / "catalog.sqlite3")
     backend.close()
 "#,
             ])
