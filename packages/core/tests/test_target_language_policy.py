@@ -9,6 +9,7 @@ from wenyi_core.i18n.resources import read_text
 
 
 @pytest.mark.parametrize("source,target", [("fr", "zh"), ("fr", "en"), ("en", "ja")])
+@pytest.mark.parametrize("genre", ["literary", "academic"])
 @pytest.mark.parametrize(
     "task,phase",
     [
@@ -20,7 +21,9 @@ from wenyi_core.i18n.resources import read_text
         ("review_fixer_system", "review"),
     ],
 )
-def test_generated_text_uses_target_language_with_narrow_exceptions(task, phase, source, target):
+def test_generated_text_keeps_complete_output_rules_in_every_stage(
+    task, phase, source, target, genre
+):
     config = Config.from_dict(
         {
             "language": {"source": source, "target": target},
@@ -32,6 +35,7 @@ def test_generated_text_uses_target_language_with_narrow_exceptions(task, phase,
             },
         }
     )
+    config.set_experimental_prompt_genre(genre)
     config.freeze_language_policies()
     prompt = render(
         task,

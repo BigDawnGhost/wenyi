@@ -59,6 +59,31 @@ The examples below use the installed `wenyi` command. Standalone executables are
 also available for [Windows](#windows), [Linux](#linux), and [macOS](#macos).
 These do not require a separate Python installation.
 
+### Experimental prompt genres (CLI only)
+
+The root option `--experimental-prompt-genre literary|academic` selects the prompt genre
+for one invocation; the default is literary. Academic prompts emphasize arguments, conceptual
+distinctions, qualifications and citations without imposing an experimental-paper structure.
+This is not a YAML setting or an automatic genre detector. Web/Desktop retain the literary default.
+
+The selection covers analysis, summaries, translation, terminology, polishing and review,
+including shared guidance and language profiles. Pass the same option on each `prepare`,
+`translate` or `review` invocation, including resumes: selection is not restored from saved
+state or the style analyzer's output. A change refreshes affected derived analysis and pending
+work, not completed translations.
+
+For a comparison, keep language, model and workflow settings identical in two YAML files,
+with separate `paths.state_dir` values, such as `state/compare/literary` and
+`state/compare/academic`. Different output names alone do not isolate caches.
+
+```bash
+wenyi --experimental-prompt-genre literary --config literary.yaml translate book.docx --out output/book.literary.zh.docx
+wenyi --experimental-prompt-genre academic --config academic.yaml translate book.docx --out output/book.academic.zh.docx
+```
+
+Both commands send source content to the configured provider and incur usage; repeating one
+resumes its state. Academic prompt quality still requires evaluation on representative texts.
+
 ## Inspect model routing
 
 ```bash
