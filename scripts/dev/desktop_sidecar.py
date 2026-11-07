@@ -65,8 +65,7 @@ def smoke_test(executable: Path) -> None:
         env["NO_PROXY"] = "127.0.0.1,localhost"
         env["WENYI_API_TOKEN"] = token
         env["WENYI_DIAGNOSTICS_PROTOCOL"] = "1"
-        # The shared catalog lives under the user profile, not the data directory.
-        # Without a private profile the smoke project lands in the builder's catalog.
+        # Keep platform-default lookups private too; --data-dir owns all app data.
         profile = Path(temporary) / "profile"
         profile.mkdir()
         env["HOME"] = env["USERPROFILE"] = str(profile)
@@ -75,7 +74,7 @@ def smoke_test(executable: Path) -> None:
         # A real filesystem error exercises ASGI startup failure in the frozen
         # engine, without shipping a test-only fault switch or touching user data.
         blocked = Path(temporary) / "fake-private-workspace"
-        (blocked / ".desktop.lock").mkdir(parents=True)
+        (blocked / "locks" / ".desktop.lock").mkdir(parents=True)
         smoke_launch(executable, blocked, env, failed_stage="runtime")
 
 

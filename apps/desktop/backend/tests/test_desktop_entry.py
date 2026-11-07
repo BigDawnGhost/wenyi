@@ -196,11 +196,11 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
 def test_startup_failure_reports_original_error_before_uvicorn_exit(tmp_path, stage):
     """A real failed lifespan must not become just bootstrap + stopped."""
     workspace = tmp_path / "fake-private-workspace"
+    workspace.mkdir()
     if stage == "application":
-        workspace.write_text("A file cannot be a workspace.")
+        (workspace / "catalog.sqlite3").write_text("Not a SQLite database.")
     else:
-        workspace.mkdir()
-        (workspace / ".desktop.lock").mkdir()
+        (workspace / "locks" / ".desktop.lock").mkdir(parents=True)
     token = secrets.token_hex(32)
     env = {k: v for k, v in os.environ.items() if not k.startswith("WENYI_")}
     env.update(WENYI_API_TOKEN=token, WENYI_DIAGNOSTICS_PROTOCOL="1")
@@ -235,7 +235,7 @@ def test_startup_failure_reports_original_error_before_uvicorn_exit(tmp_path, st
     failures = [row for row in observations if row["event"] == "engine_bootstrap_failed"]
     assert len(failures) == 1
     assert failures[0]["attributes"]["stage"] == stage
-    assert failures[0]["attributes"]["module"] in {"local_backend", "local_runtime"}
+    assert failures[0]["attributes"]["module"] in {"catalog", "local_backend", "local_runtime"}
     assert failures[0]["attributes"]["line"] > 0
     assert observations[-1] == {
         "event": "engine_stopped",

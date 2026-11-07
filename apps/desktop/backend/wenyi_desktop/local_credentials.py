@@ -19,7 +19,7 @@ from wenyi_core.llm.credentials import validate_credential
 from wenyi_core.llm.registry import provider_spec
 from wenyi_core.llm.router import RoutedLLMClient
 
-from . import paths
+from . import catalog, paths
 from .diagnostic_client import DesktopLLMClient
 
 SERVICE = "org.wenyi.desktop"
@@ -76,14 +76,9 @@ class CredentialStore:
         *,
         vault=None,
         vault_factory: Callable | None = None,
-        user_home: Path | None = None,
     ):
-        # The same file the catalog uses: the two stores shared one database in
-        # the old layout, and splitting them now would give the user an empty
-        # project list in one process and signed-out providers in the other.
-        del workspace
-        self.database = paths.user_catalog(home=user_home)
-        self.database.parent.mkdir(parents=True, exist_ok=True)
+        self.database = paths.catalog(workspace.resolve())
+        catalog.initialize(self.database)
         self._vault = vault
         self._vault_factory = vault_factory
         self._lock = RLock()

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from .diagnostics import EngineDiagnostics, Reporter
-from .migration.ownership import NativeOwner, profile_lock
+from .ownership import NativeOwner, profile_lock
 
 if TYPE_CHECKING:
     import uvicorn
@@ -43,9 +43,7 @@ def local_app_data() -> Path:
     resolving the path. `SHGetKnownFolderPath` is the definition, and it answers
     in exactly those processes.
 
-    The variable is still read first. An existing installation and every project
-    directory beside it are named by the value this machine has, so a build that
-    consulted the shell first would move the workspace out from under them.
+    An absolute environment override is read first, matching the native parent.
     """
     configured = os.environ.get("LOCALAPPDATA", "").strip()
     if configured and Path(configured).is_absolute():
@@ -109,8 +107,13 @@ def default_workspace() -> Path:
     elif sys.platform == "darwin":
         base = Path.home() / "Library" / "Application Support"
     else:
-        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-    return base / "Wenyi Desktop"
+        configured = os.environ.get("XDG_DATA_HOME", "").strip()
+        base = (
+            Path(configured)
+            if configured and Path(configured).is_absolute()
+            else Path.home() / ".local" / "share"
+        )
+    return base / ("wenyi" if sys.platform not in {"win32", "darwin"} else "Wenyi") / "Desktop"
 
 
 class LocalBoundary:
@@ -160,27 +163,19 @@ async def serve(
     protocol_stream,
     lifecycle: EngineDiagnostics,
     *,
-    runtime_dir: Path | None = None,
-    library_root: Path | None = None,
     install_root: Path | None = None,
-    native_owner: NativeOwner | None = None,
 ) -> None:
     with lifecycle.observe("application"):
         import uvicorn
 
         from .main import create_app
 
-        # The native parent resolves all three roots and injects them: the engine
-        # never derives a location of its own.
         app = create_app(
             workspace,
             api_token=os.environ.get("WENYI_API_TOKEN"),
             diagnostics=lifecycle.reporter,
             engine_diagnostics=lifecycle,
-            library_root=library_root,
             install_root=install_root,
-            runtime_dir=runtime_dir,
-            native_owner=native_owner,
         )
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
@@ -225,12 +220,7 @@ async def serve(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=None)
-    parser.add_argument("--runtime-dir", type=Path, default=None)
     parser.add_argument("--native-startup", action="store_true", help=argparse.SUPPRESS)
-    # Layer three is injected only by an installed native parent. Its absence is
-    # the ordinary state of a development run, and the engine then keeps creating
-    # projects in the workspace it was given (see `LocalBackend.project_roots`).
-    parser.add_argument("--library-root", type=Path, default=None)
     # The installation the chosen library belongs to. Refusing a location that is
     # inside it, or that contains it, needs both, and the engine must not derive
     # the installation directory from its own executable: when it runs as a
@@ -250,7 +240,7 @@ def main() -> None:
     try:
         with lifecycle.observe("bootstrap"):
             # An injected directory is authoritative; the fallback is CLI-only.
-            workspace = args.data_dir or default_workspace()
+            workspace = (args.data_dir or default_workspace()).expanduser().resolve()
             owner = NativeOwner.read(sys.stdin, workspace) if args.native_startup else None
             with profile_lock(workspace, owner):
                 asyncio.run(
@@ -258,10 +248,7 @@ def main() -> None:
                         workspace,
                         protocol_stream,
                         lifecycle,
-                        runtime_dir=args.runtime_dir,
-                        library_root=args.library_root,
                         install_root=args.install_root,
-                        native_owner=owner,
                     )
                 )
             # ASGI can consume shutdown failures too. Do not report failure and

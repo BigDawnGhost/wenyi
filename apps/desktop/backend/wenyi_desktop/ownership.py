@@ -19,9 +19,9 @@ from typing import TextIO
 
 from wenyi_core.storage.locks import FileLockHandle, StorageBusyError
 
-from .. import paths
+from . import paths
 
-MAGIC = b"WENYI_MIGRATE\0\0\x01"
+MAGIC = b"WENYI_OWNER\0\0\0\0\x01"
 
 
 @dataclass(frozen=True)
@@ -62,9 +62,7 @@ class NativeOwner:
                 or any(type(byte) is not int or not 0 <= byte <= 255 for byte in self.instance)
             ):
                 return False
-            endpoint = json.loads(
-                (workspace / ".desktop-instance.json").read_text(encoding="utf-8")
-            )
+            endpoint = json.loads(paths.instance_endpoint(workspace).read_text(encoding="utf-8"))
             if (
                 endpoint["protocol"] != 1
                 or endpoint["pid"] != self.pid
@@ -116,19 +114,10 @@ def _shared_lock(file) -> None:
         fcntl.flock(file, fcntl.LOCK_SH | fcntl.LOCK_NB)
 
 
-def _linked(path: Path) -> bool:
-    try:
-        metadata = path.lstat()
-    except FileNotFoundError:
-        return False
-    # Windows junctions/reparse points are not always reported as symlinks.
-    return path.is_symlink() or bool(getattr(metadata, "st_file_attributes", 0) & 0x400)
-
-
 @contextmanager
 def profile_lock(workspace: Path, owner: NativeOwner | None) -> Iterator[None]:
     """Every engine participates in upgrade admission, even when run standalone."""
-    root = paths.user_storages()
+    root = paths.locks(workspace)
     root.mkdir(parents=True, exist_ok=True)
     gate = FileLockHandle(root / ".desktop-profile-admission.lock")
     file = None
@@ -137,6 +126,11 @@ def profile_lock(workspace: Path, owner: NativeOwner | None) -> Iterator[None]:
         try:
             gate.acquire(blocking=False)
             if owner is None:
+                native = FileLockHandle(paths.native_instance_lock(workspace))
+                try:
+                    native.acquire(blocking=False)
+                finally:
+                    native.release()
                 file = (root / ".desktop-profile.lock").open("a+b")
                 _shared_lock(file)
             else:
@@ -148,7 +142,7 @@ def profile_lock(workspace: Path, owner: NativeOwner | None) -> Iterator[None]:
                 directory.mkdir(exist_ok=True)
                 name = f"{bytes(owner.instance).hex()}-{os.getpid()}.lock"
                 lease = directory / name
-                if _linked(directory) or _linked(lease):
+                if paths.is_link(directory) or paths.is_link(lease):
                     raise RuntimeError("The Desktop writer lease directory is unsafe")
                 writer = FileLockHandle(lease)
                 writer.acquire(blocking=False)

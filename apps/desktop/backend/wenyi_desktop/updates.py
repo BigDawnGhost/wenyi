@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from starlette.responses import JSONResponse
@@ -86,16 +85,12 @@ class UpdateGuard:
 
     def _backup_plan(self) -> dict:
         backend = self.services.backend
-        # This is the catalog actually opened by this app, not a process-global
-        # default (tests and explicit contexts may supply their own profile).
-        storages = Path(backend.database).parent
         if not backend.database.is_file():
             raise HTTPException(409, "The Desktop catalog is unavailable; update was cancelled")
-        sources = [{"name": "user/storages", "path": str(storages)}]
-        for filename in ("settings.yaml", ".migrated-from.json"):
-            path = storages.parent / filename
-            if path.exists():
-                sources.append({"name": f"user/{filename}", "path": str(path)})
+        # The native snapshot adds WAL/SHM after stopping the engine: clean
+        # shutdown may remove them, and forced shutdown may leave new ones.
+        # Never copy the root, which also holds the backup destination.
+        sources = [{"name": "catalog.sqlite3", "path": str(backend.database)}]
         for index, directory in enumerate(backend.project_directories()):
             sources.append({"name": f"projects/{index}", "path": str(directory)})
         return {"schema_version": 1, "sources": sources}
