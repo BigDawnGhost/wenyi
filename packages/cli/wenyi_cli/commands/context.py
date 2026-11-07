@@ -10,6 +10,7 @@ import yaml
 from rich.console import Console
 from typer.main import get_current_context
 from wenyi_core.config import Config
+from wenyi_core.i18n.genres import DEFAULT_GENRE
 
 
 @dataclass
@@ -17,11 +18,14 @@ class CommandContext:
     config_path: str
     skip_api_check: bool
     console: Console
+    experimental_prompt_genre: str = DEFAULT_GENRE
 
     def load_config(self) -> Config:
-        """Load the configuration selected for this invocation."""
+        """Load this invocation's config and apply its non-persisted CLI experiment."""
         try:
-            return Config.load(self.config_path)
+            config = Config.load(self.config_path)
+            config.set_experimental_prompt_genre(self.experimental_prompt_genre)
+            return config
         except (OSError, ValueError, yaml.YAMLError) as error:
             self.console.print(f"[red]Configuration error: {error}[/]")
             raise typer.Exit(1) from None

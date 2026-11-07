@@ -53,6 +53,37 @@ def test_changed_semantic_revision_refreshes_pending_work_and_keeps_completed_ta
     assert store.load_manifest()["language_policies"] == initial_manifest["language_policies"]
 
 
+@pytest.mark.parametrize("initial_genre", ["literary", "academic"])
+def test_genre_switch_rebuilds_analysis_for_pending_work_but_keeps_completed_targets(
+    tmp_path, initial_genre
+):
+    source, config, store = book(tmp_path)
+    config.set_experimental_prompt_genre(initial_genre)
+    Orchestrator(config, client=FakeClient(handler=routing_handler), storage=store).run(
+        str(source), only_chapter=0
+    )
+    saved = store.load_chapter(0).model_dump()
+    previous = store.read_artifact(CHECKPOINT)
+    assert previous is not None
+
+    next_genre = "academic" if initial_genre == "literary" else "literary"
+    config.set_experimental_prompt_genre(next_genre)
+    client = FakeClient(handler=routing_handler)
+    Orchestrator(config, client=client, storage=store).run(str(source))
+    assert store.load_chapter(0).model_dump() == saved
+    current = store.read_artifact(CHECKPOINT)
+    assert current is not None
+    assert current["analysis"] != previous["analysis"]
+    assert "analysis.style" in [call["operation"] for call in client.calls]
+    translations = [call for call in client.calls if call["operation"] == "translation.body"]
+    assert len(translations) == 1
+    assert f"{next_genre} translator" in translations[0]["messages"][0]["content"]
+    assert all(segment.target is not None for segment in store.load_chapter(1).text_segments)
+    calls = len(client.calls)
+    Orchestrator(config, client=client, storage=store).run(str(source))
+    assert len(client.calls) == calls
+
+
 @pytest.mark.parametrize("cached", [False, True])
 def test_missing_identity_rebuilds_analysis_and_failed_rebuild_is_resumable(
     tmp_path, monkeypatch, cached

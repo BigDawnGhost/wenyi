@@ -1,6 +1,7 @@
 import pytest
 from wenyi_core.config import Config, PipelineConfig
-from wenyi_core.i18n.policy.models import OperationBinding
+from wenyi_core.i18n.genres import compose
+from wenyi_core.i18n.policy.models import OperationBinding, content_hash
 from wenyi_core.i18n.policy.registry import OPERATIONS
 from wenyi_core.i18n.policy.resolver import resolve_policy
 from wenyi_core.i18n.resources import read_text
@@ -111,7 +112,9 @@ def test_shared_prescan_templates_freeze_actual_resource_paths(enabled):
         path = f"tasks/{task}_system.txt"
         assert path in dict(plan.resources)
         assert f"tasks/{task}_terminology_system.txt" not in dict(plan.resources)
-        assert dict(plan.templates)[f"{task}_system"] == read_text(path)
+        expected = compose(read_text(path))
+        assert dict(plan.templates)[f"{task}_system"] == expected
+        assert dict(plan.resources)[path] == content_hash(expected)
 
 
 def test_default_polisher_preserves_resource_and_invalidates_old_language_rules():
@@ -119,7 +122,9 @@ def test_default_polisher_preserves_resource_and_invalidates_old_language_rules(
     path = "tasks/polisher_user.txt"
     assert path in dict(plan.resources)
     assert "tasks/polisher_terminology_user.txt" not in dict(plan.resources)
-    assert dict(plan.templates)["polisher_user"] == read_text(path)
+    expected = compose(read_text(path))
+    assert dict(plan.templates)["polisher_user"] == expected
+    assert dict(plan.resources)[path] == content_hash(expected)
     assert "$source_context" not in dict(plan.templates)["polisher_user"]
     # The shared target-language requirement intentionally invalidates the old prompt identity.
     assert plan.task_fingerprint("polisher") != (
@@ -149,7 +154,9 @@ def test_selected_polisher_variant_freezes_the_source_context_resource():
     path = "tasks/polisher_terminology_user.txt"
     assert path in dict(plan.resources)
     assert "tasks/polisher_user.txt" not in dict(plan.resources)
-    assert dict(plan.templates)["polisher_user"] == read_text(path)
+    expected = compose(read_text(path))
+    assert dict(plan.templates)["polisher_user"] == expected
+    assert dict(plan.resources)[path] == content_hash(expected)
     assert "$source_context" in dict(plan.templates)["polisher_user"]
 
 

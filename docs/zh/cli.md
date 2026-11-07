@@ -56,6 +56,28 @@ wenyi translate .\book.epub
 下文示例直接使用已安装的 `wenyi` 命令。[Windows](#windows)、[Linux](#linux)
 和 [macOS](#macos) 也提供独立可执行文件，无需另装 Python。
 
+### 实验性提示词题材（仅 CLI）
+
+根参数 `--experimental-prompt-genre literary|academic` 只为本次 CLI 调用选择题材，
+默认使用文学类。学术类侧重论证、概念区分、限定条件和引文，不强行套成实验论文结构。
+这不是 YAML 配置项，也不会自动识别题材；Web/Desktop 保持文学默认值。
+
+所选题材统一应用于分析、摘要、翻译、术语、润色和审校，包括共享指导与语言档案。
+每次执行 `prepare`、`translate` 或 `review`（包括续跑）都要传入相同参数，
+不会从已有状态或风格分析结果恢复选择。
+切换题材会刷新受影响的派生分析及待完成任务，但不会重译已完成段落。
+
+对照时准备两份 YAML，语言、模型和流程设置保持一致，但 `paths.state_dir` 必须独立，例如
+`state/compare/literary` 和 `state/compare/academic`。仅更换输出文件名不能隔离缓存。
+
+```bash
+wenyi --experimental-prompt-genre literary --config literary.yaml translate book.docx --out output/book.literary.zh.docx
+wenyi --experimental-prompt-genre academic --config academic.yaml translate book.docx --out output/book.academic.zh.docx
+```
+
+两条命令都会向配置的提供商发送原文并产生用量，重复执行会续跑各自状态。
+学术提示词的实际质量仍需使用代表性原文评估。
+
 ## 检查模型路由
 
 ```bash

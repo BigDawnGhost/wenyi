@@ -8,6 +8,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
+from .i18n.genres import DEFAULT_GENRE, Genre, require_genre
 from .i18n.languages import require_language
 from .i18n.policy.models import Phase, PolicyContext, PolicyPlan, content_hash
 from .i18n.policy.resolver import resolve_policy
@@ -190,6 +191,7 @@ class Config(BaseModel):
     source_lang: str = "auto"  # auto | ja | en | … (auto uses model detection)
     target_lang: str = "zh"
     _language_plans: dict[str, PolicyPlan] = PrivateAttr(default_factory=dict)
+    _prompt_genre: Genre = PrivateAttr(default=DEFAULT_GENRE)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     segment: SegmentConfig = Field(default_factory=SegmentConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
@@ -207,6 +209,11 @@ class Config(BaseModel):
             ),
         )
         return self
+
+    def set_experimental_prompt_genre(self, genre: str) -> None:
+        """Select a CLI experiment before constructing agents; never serialize this override."""
+        self._prompt_genre = require_genre(genre)
+        self._language_plans.clear()
 
     def language_policy(
         self,
@@ -235,6 +242,7 @@ class Config(BaseModel):
             preserve_source_style=self.output.bilingual_preserve_source_style,
             about_page=self.output.about_page,
             terminology_context=self.pipeline.terminology_context,
+            genre=self._prompt_genre,
         )
         return resolve_policy(context)
 

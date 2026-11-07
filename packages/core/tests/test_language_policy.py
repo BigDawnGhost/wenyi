@@ -161,8 +161,8 @@ def test_exact_pairs_and_cross_role_conflicts_need_explicit_resolution(monkeypat
 
     original = resolver.profile
 
-    def profile(code):
-        value = original(code)
+    def profile(code, *, genre):
+        value = original(code, genre=genre)
         value["policy"] = (
             {"source": {"prompt.language_rules": {"options": {}}}}
             if code == "ja"
