@@ -21,6 +21,17 @@ function sidebarLinks(items) {
   ])
 }
 
+test('the favicon uses the Wenyi emblem under the GitHub Pages base path', async () => {
+  const icons = config.site.head.filter(([tag, attributes]) => (
+    tag === 'link' && attributes.rel === 'icon'
+  ))
+  assert.equal(icons.length, 1)
+  const [, attributes] = icons[0]
+  assert.equal(attributes.type, 'image/png')
+  assert.equal(attributes.href, `${config.site.base}wenyi-emblem.png`)
+  await access(join(config.vite.publicDir, 'wenyi-emblem.png'))
+})
+
 for (const [locale, prefix] of [['root', ''], ['zh', 'zh/']]) {
   test(`${locale}: the homepage has only documentation and repository actions`, async () => {
     const page = `${prefix}index.md`

@@ -4,6 +4,7 @@ import { slug } from 'github-slugger'
 import { defineConfig, type DefaultTheme } from 'vitepress'
 
 const repository = 'https://github.com/BigDawnGhost/wenyi'
+const base = '/wenyi/'
 
 const sidebar: DefaultTheme.SidebarItem[] = [
   {
@@ -108,7 +109,10 @@ const zhSidebar: DefaultTheme.SidebarItem[] = [
 export default defineConfig({
   title: 'Wenyi',
   description: 'Bringing literature into your language.',
-  base: '/wenyi/',
+  base,
+  head: [
+    ['link', { rel: 'icon', type: 'image/png', href: `${base}wenyi-emblem.png` }],
+  ],
   // Application development URLs are examples, not documentation pages.
   ignoreDeadLinks: [/^https?:\/\/localhost(?::\d+)?(?:\/|$)/],
   srcExclude: ['**/README.md', '**/CONTRIBUTING.md'],
