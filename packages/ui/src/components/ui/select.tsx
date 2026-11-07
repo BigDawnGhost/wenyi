@@ -90,6 +90,8 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
           </Primitive.Icon>
         </Primitive.Trigger>
         <Primitive.Portal>
+          {/* Match the trigger width but never narrow the list below its widest
+              option; a short current value would otherwise wrap longer labels. */}
           <Primitive.Content
             position="popper"
             sideOffset={4}
@@ -121,7 +123,7 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
               (controls[index + tabDirection.current] ?? triggerRef.current)?.focus();
               tabDirection.current = 0;
             }}
-            className="z-[100] max-h-[min(320px,var(--radix-select-content-available-height))] w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-16px)] overflow-hidden rounded-md border bg-background text-foreground shadow-lg"
+            className="z-[100] max-h-[min(320px,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-16px)] overflow-hidden rounded-md border bg-background text-foreground shadow-lg"
           >
             <Primitive.ScrollUpButton className="flex justify-center py-1">
               <ChevronUp className="h-4 w-4" />
