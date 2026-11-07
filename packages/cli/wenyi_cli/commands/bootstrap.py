@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Sequence
+from enum import Enum
 from importlib.metadata import version as package_version
 from typing import Any
 
@@ -12,8 +13,14 @@ import typer
 from rich.console import Console
 from typer.core import TyperGroup
 from wenyi_core.config import Config
+from wenyi_core.i18n.genres import DEFAULT_GENRE
 
 from .context import CommandContext, current_context
+
+
+class ExperimentalPromptGenre(str, Enum):
+    literary = "literary"
+    academic = "academic"
 
 
 def configure_windows_console(
@@ -95,6 +102,11 @@ def register_bootstrap(app: typer.Typer) -> None:
             "-c",
             help="Configuration path; created automatically if missing",
         ),
+        experimental_prompt_genre: ExperimentalPromptGenre = typer.Option(
+            ExperimentalPromptGenre(DEFAULT_GENRE),
+            "--experimental-prompt-genre",
+            help="CLI-only experimental prompt genre for this invocation; not saved in configuration",
+        ),
         version: bool = typer.Option(
             False,
             "--version",
@@ -106,3 +118,4 @@ def register_bootstrap(app: typer.Typer) -> None:
         """Record the config path; workflow commands validate credentials after their overrides."""
         del version
         current_context().config_path = config
+        current_context().experimental_prompt_genre = experimental_prompt_genre.value

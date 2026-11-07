@@ -11,6 +11,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ..genres import DEFAULT_GENRE, Genre
+
 
 def used_rule_keys(templates: Iterable[tuple[str, str]]) -> set[str]:
     """Return the rule keys referenced by ``${key}``/``$key`` placeholders in templates.
@@ -117,6 +119,7 @@ class PolicyContext:
     preserve_source_style: bool = False
     about_page: bool = True
     terminology_context: bool = False
+    genre: Genre = DEFAULT_GENRE
 
 
 @dataclass(frozen=True)

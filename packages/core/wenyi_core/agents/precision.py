@@ -59,6 +59,7 @@ class PrecisionAgent(Agent):
                     "glossary": prompts.render_glossary(
                         list(inputs.terms),
                         source_lang=self.src,
+                        genre=self.language_policy.context.genre,
                         note_source="\n".join(inputs.sources)
                         if self.config.pipeline.terminology_context
                         else None,

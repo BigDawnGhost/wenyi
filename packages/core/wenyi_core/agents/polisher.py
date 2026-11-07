@@ -34,6 +34,7 @@ class Polisher(Agent):
             glossary=prompts.render_glossary(
                 glossary_terms or [],
                 source_lang=self.src,
+                genre=self.language_policy.context.genre,
                 note_source=(
                     "\n".join(sources or []) if self.config.pipeline.terminology_context else None
                 ),

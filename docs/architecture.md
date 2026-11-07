@@ -95,3 +95,23 @@ once-only usage accounting remain contracts across storage backends. See the
 [repository guide](../AGENTS.md) for the full constraints and required verification.
 
 `i18n/policy/` provides the pure typed language-operation registry and deterministic resolver. Profiles keep source and target roles separate; plans freeze the consumed prompt resources and selected export capabilities. Agents consume prompt plans, export adapters execute text and writer operations, and pipeline services persist phase identities through Storage. CLI and Web execution share this resolver; only read-only developer CLI diagnostics expose its plans. Policy bindings and options are defined in source, without YAML switches. Semantic checkpoints and export snapshots have separate identities, so layout changes do not invalidate paid translation. See [built-in language policies](configuration.md#built-in-language-policies) for supported behavior and developer diagnostics.
+
+### Prompt genre fragments
+
+Task templates, shared guidance and language profiles under `i18n/data/` keep common rules
+separate from `${genre_*}` slots. `genres/literary/fragments.json` supplies the complete
+default; `genres/academic/fragments.json` explicitly overrides every slot, using empty
+strings to clear inapplicable literary instructions. Grammar, punctuation, output protocols
+and source-evidence safeguards stay in the common resources.
+
+`i18n/genres.py` composes only trusted resource slots before language-variable substitution
+and policy freezing/fingerprinting, including inherited language profiles and fallback
+templates. The default composition preserves the pre-split literary prompts byte-for-byte.
+The [CLI experiment](cli.md#experimental-prompt-genres-cli-only) applies an invocation-local,
+non-serialized `Config` override and passes it through `PolicyContext`; there is no YAML/schema
+field or process-global selector. Web/Desktop retain the literary default.
+
+Future genres add `genres/<genre>/fragments.json` and register a name in `i18n/genres.py`
+and the CLI choices. Omitted slots inherit literary defaults, so replace or clear any
+inapplicable instructions. `test_genre_prompts.py` checks resource boundaries and the
+pre-split literary baseline across every registered language direction.

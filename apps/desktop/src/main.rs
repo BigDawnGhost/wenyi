@@ -405,8 +405,11 @@ fn main() {
             app.resources_table().add(primary);
             app.state::<native_drop::Grants>().start_expiry();
             let reload_state = startup_state.clone();
+            // The shared shell reserves 752 logical px for content plus the 240 px
+            // expanded sidebar, so a narrower minimum would clip settings behind a
+            // horizontal scrollbar; 1024 leaves room for both scrollbar styles.
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-                .title("Wenyi").inner_size(1280.0, 850.0).min_inner_size(800.0, 600.0)
+                .title("Wenyi").inner_size(1280.0, 850.0).min_inner_size(1024.0, 600.0)
                 .initialization_script(lock(&startup_state).script())
                 .on_navigation(trusted)
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)

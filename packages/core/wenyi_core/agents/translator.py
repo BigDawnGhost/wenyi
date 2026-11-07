@@ -118,6 +118,7 @@ class Translator(Agent):
             glossary=prompts.render_glossary(
                 glossary_terms,
                 source_lang=self.src,
+                genre=self.language_policy.context.genre,
                 note_source="\n".join(sources)
                 if self.config.pipeline.terminology_context
                 else None,
