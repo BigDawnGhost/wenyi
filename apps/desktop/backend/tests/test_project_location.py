@@ -25,7 +25,7 @@ def roots(tmp_path):
 @pytest.fixture
 def backend(roots):
     workspace, library = roots
-    value = LocalBackend(workspace, user_home=workspace.parent / "profile", library_root=library)
+    value = LocalBackend(workspace, library_root=library)
     try:
         yield value
     finally:
@@ -33,9 +33,15 @@ def backend(roots):
 
 
 def old_style_project(backend: LocalBackend, pid: str = PROJECT) -> Path:
-    """A project written by the version that had no layer three at all."""
-    backend.create_project("An old book", "en", "zh", {}, project_id=pid)
-    backend.update_project(pid, library_root=None)
+    """A current-format project explicitly placed in the data-root library."""
+    backend.create_project(
+        "A default book",
+        "en",
+        "zh",
+        {},
+        project_id=pid,
+        library_root=paths.projects(backend.workspace),
+    )
     directory = paths.project(backend.workspace, pid)
     directory.mkdir(parents=True, exist_ok=True)
     return directory
@@ -77,7 +83,7 @@ def test_a_new_and_an_old_project_live_side_by_side(backend):
 
 def test_a_project_chosen_location_is_recorded_and_still_found(tmp_path):
     workspace = tmp_path / "Wenyi Desktop"
-    backend = LocalBackend(workspace, user_home=tmp_path / "profile")
+    backend = LocalBackend(workspace)
     chosen = tmp_path / "Elsewhere"
     try:
         pid = backend.create_project("A book", "en", "zh", {}, library_root=str(chosen))
@@ -93,15 +99,14 @@ def test_a_project_found_after_a_restart_that_names_no_default(tmp_path):
     # folder the person chose still has to be reachable, or it is simply gone from
     # the list while its files sit on disk.
     workspace = tmp_path / "Wenyi Desktop"
-    profile = tmp_path / "profile"
     chosen = tmp_path / "Elsewhere"
-    first = LocalBackend(workspace, user_home=profile)
+    first = LocalBackend(workspace)
     try:
         pid = first.create_project("A book", "en", "zh", {}, library_root=str(chosen))
         first.storage_for(pid).close()
     finally:
         first.close()
-    second = LocalBackend(workspace, user_home=profile)
+    second = LocalBackend(workspace)
     try:
         assert second.project_dir(pid).parent == chosen
         assert second.get_project(pid)["available"] is True
@@ -149,15 +154,14 @@ def test_the_marker_of_a_new_project_describes_its_own_directory(backend, roots)
 def test_a_location_the_layout_owns_is_refused(backend, roots, tmp_path, monkeypatch, victim):
     workspace, library = roots
     profile = paths.platform_home()
-    monkeypatch.setenv("WENYI_RUNTIME_DIR", str(profile / ".wenyi" / "desktop"))
     candidates = {
         "workspace": workspace,
         "workspace-inner": workspace / "data",
         "library": library,
         # Choosing exactly the default library is refused: that is the default,
         # not a choice, and every project would land in one undifferentiated pile.
-        "runtime": profile / ".wenyi" / "desktop" / "cache",
-        "user": paths.user_root(),
+        "runtime": paths.runtime_root(workspace) / "cache",
+        "user": workspace,
         "profile": profile,
         "image": Path(tmp_path.anchor) / "Windows",
         "parent": workspace.parent,
@@ -193,7 +197,7 @@ def test_a_refused_location_leaves_no_record_and_no_directory(backend, roots, tm
 
 
 def test_the_route_refuses_a_location_before_the_upload_is_written(tmp_path):
-    context = create_context(tmp_path / "desktop", user_home=tmp_path / "profile")
+    context = create_context(tmp_path / "desktop")
     try:
         with TestClient(create_app(context=context)) as client:
             answer = client.post("/desktop/library/admit", json={"path": str(tmp_path / "desktop")})
@@ -208,7 +212,7 @@ def test_the_route_refuses_a_location_before_the_upload_is_written(tmp_path):
 
 
 def test_a_project_created_through_the_route_lands_in_the_chosen_folder(tmp_path):
-    context = create_context(tmp_path / "desktop", user_home=tmp_path / "profile")
+    context = create_context(tmp_path / "desktop")
     chosen = tmp_path / "Books"
     try:
         with use_context(context), TestClient(create_app(context=context)) as client:

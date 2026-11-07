@@ -759,14 +759,10 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
         for owner in range(2):
             workspace = tmp_path / str(owner)
             workspace.mkdir()
-            # Both apps share one machine profile, so each gets its own: the
-            # point of the test is that one project identity stays one project,
-            # not that two workspaces share a catalog.
             context = create_context(
                 workspace,
                 api_token=f"fake-token-{owner}",
-                credentials=CredentialStore(workspace, user_home=tmp_path / f"{owner}-profile"),
-                user_home=tmp_path / f"{owner}-profile",
+                credentials=CredentialStore(workspace),
             )
             contexts.append(context)
             stack.callback(context.repository.close)

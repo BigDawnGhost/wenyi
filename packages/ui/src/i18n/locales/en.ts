@@ -128,8 +128,6 @@ const en = {
   "dashboard.sourceChangedAfterImport":
     "The original file changed since the last run. It will be parsed again.",
   "dashboard.projectUnavailable": "The folder for this project is not available",
-  "dashboard.recoveredProjects": "Repaired the project list: {count} project(s) restored",
-  "dashboard.skippedFolders": "{count} folder(s) were not restored:",
   "events.project": "Project",
   "events.preparation": "Preparation",
   "events.translation": "Translation",

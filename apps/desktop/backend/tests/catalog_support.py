@@ -5,14 +5,20 @@ can share one fixture without importing each other's test module.
 """
 
 import hashlib
+import json
 
 from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.storage.sqlite import SqliteStorage
+from wenyi_desktop import paths
 
 
 def orphan(workspace, pid="a" * 16, *, initialized=True, done=False):
     directory = workspace / "projects" / pid
     directory.mkdir(parents=True)
+    paths.marker_in(directory).write_text(
+        json.dumps({"pid": pid, "schema_version": paths.PROJECT_SCHEMA_VERSION}),
+        encoding="utf-8",
+    )
     source = directory / f"source-{'b' * 32}.txt"
     source.write_text("A short original.\n", encoding="utf-8")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()

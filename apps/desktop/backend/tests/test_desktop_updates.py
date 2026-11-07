@@ -83,27 +83,25 @@ def test_backup_plan_requires_frozen_authenticated_admission(context, monkeypatc
     assert calls == [True]
     roots = response.json()["sources"]
     assert {"path": str(project), "name": "projects/0"} in roots
-    assert {"path": str(context.repository.database.parent), "name": "user/storages"} in roots
+    assert {"path": str(context.repository.database), "name": "catalog.sqlite3"} in roots
     assert not any(row["path"] == str(project.parent) for row in roots)
     assert client.put("/config", headers=headers).status_code == 409
     assert client.post("/desktop/updates/cancel", headers=headers).status_code == 204
     assert client.post("/desktop/updates/backup-plan", headers=headers).status_code == 409
 
 
-def test_xdg_shared_data_is_used_by_catalog_credentials_and_backup_plan(
+def test_explicit_root_overrides_xdg_for_catalog_credentials_and_backup_plan(
     tmp_path, monkeypatch, private_profile
 ):
     if paths.sys.platform in {"win32", "darwin"}:
         pytest.skip("XDG_DATA_HOME applies only to XDG platforms")
     data_home = tmp_path / "separate-data"
     monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
-    root = data_home / "wenyi"
-    context = create_context(tmp_path / "workspace", api_token="test-token")
+    root = tmp_path / "workspace"
+    context = create_context(root, api_token="test-token")
     try:
-        assert context.repository.database == root / "storages" / "catalog.sqlite3"
+        assert context.repository.database == root / "catalog.sqlite3"
         assert context.settings_store.credentials.database == context.repository.database
-        settings = root / "settings.yaml"
-        settings.write_text("schema_version: 1\n", encoding="utf-8")
         context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
         client = TestClient(create_app(context=context))
         headers = {"Authorization": "Bearer test-token"}
@@ -111,9 +109,9 @@ def test_xdg_shared_data_is_used_by_catalog_credentials_and_backup_plan(
         response = client.post("/desktop/updates/backup-plan", headers=headers)
         assert response.status_code == 200
         assert response.json()["sources"] == [
-            {"path": str(root / "storages"), "name": "user/storages"},
-            {"path": str(settings), "name": "user/settings.yaml"},
+            {"path": str(context.repository.database), "name": "catalog.sqlite3"},
         ]
+        assert not data_home.exists()
         assert not (private_profile / "Wenyi").exists()
     finally:
         context.repository.close()
@@ -147,8 +145,6 @@ def test_backup_plan_discovers_all_live_layouts_without_copying_parent_folders(c
         "Chosen", "en", "zh", {}, library_root=tmp_path / "Chosen library"
     )
     backend.mark_project(chosen)
-    settings = backend.database.parent.parent / "settings.yaml"
-    settings.write_text("schema_version: 1\n", encoding="utf-8")
     app = create_app(context=context)
     context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
     client = TestClient(app)
@@ -158,8 +154,7 @@ def test_backup_plan_discovers_all_live_layouts_without_copying_parent_folders(c
     assert response.status_code == 200
     sources = {row["path"] for row in response.json()["sources"]}
     assert sources == {
-        str(backend.database.parent),
-        str(settings),
+        str(backend.database),
         *(str(backend.project_dir(pid)) for pid in (legacy, current, chosen)),
     }
     # Removal of a drive/folder is not a successful backup of the remaining data.

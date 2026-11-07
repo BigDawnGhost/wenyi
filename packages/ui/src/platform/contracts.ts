@@ -71,23 +71,8 @@ export interface LibraryServices {
   admitLocation?: (path: string) => Promise<string>;
 }
 
-export interface RecoveryReport {
-  /** Projects the startup repair rebuilt during this launch. */
-  recovered: number;
-  /** Folders it refused, with the sentence the import dialog would show. */
-  skipped: { name: string; reason: string; message: string }[];
-}
-
 export interface OptionalCapabilities {
   library?: LibraryServices;
-  /**
-   * What the last startup repair found, or null when this host has no repair.
-   *
-   * A repaired catalog and an always-empty one look identical on the dashboard,
-   * and "where did my project go?" is the question that difference answers. The
-   * host supplies it because only a host can lose a catalog.
-   */
-  recoveryReport?: () => Promise<RecoveryReport | null>;
   diagnostics?: {
     label: (locale: string) => string;
     Section: ComponentType;

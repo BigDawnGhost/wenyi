@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 from wenyi_backend.context import use_context
 from wenyi_backend.errors import ApiError
 from wenyi_backend.execution.bindings import resolve_source
-from wenyi_desktop import catalog_recovery, paths
+from wenyi_desktop import paths, project_import
 from wenyi_desktop.main import create_app, create_context
 
 PROJECT = "0123456789abcdef"
@@ -151,7 +151,7 @@ def test_ambiguous_or_conflicting_owner_is_refused_for_every_operation(tmp_path,
     assert backend._get("projects", PROJECT) is not None
 
 
-def test_legacy_rows_refuse_duplicate_identity_across_roots(tmp_path):
+def test_rows_without_an_owner_are_refused_without_discovery(tmp_path):
     context, directory, stale = project_with_stale_copy(tmp_path)
     backend = context.repository
     backend.update_project(PROJECT, library_root=None)
@@ -164,7 +164,7 @@ def test_legacy_rows_refuse_duplicate_identity_across_roots(tmp_path):
         with use_context(context), pytest.raises(HTTPException) as error:
             operation()
         assert error.value.status_code == 409
-        assert "ambiguous" in error.value.detail.lower()
+        assert "root" in error.value.detail.lower()
     assert directory.is_dir() and stale.is_dir()
 
 
@@ -242,14 +242,9 @@ def test_recovery_reports_all_same_id_copies_instead_of_choosing_a_root(tmp_path
             connection,
         )
     before = {folder: (folder / "state.sqlite3").read_bytes() for folder in (first, second)}
-    report = catalog_recovery.recover_empty_catalog(backend)
-    assert report.recovered == 1
-    assert {row["id"] for row in backend.list_projects()} == {healthy.name}
-    assert set(report.skipped) == {
-        (first, "project_identity_ambiguous"),
-        (second, "project_identity_ambiguous"),
-    }
-    assert "same project" in report.describe().lower()
+    with TestClient(create_app(context=context)) as client:
+        assert client.get("/projects").json() == []
+    assert healthy.is_dir()
     assert {folder: (folder / "state.sqlite3").read_bytes() for folder in before} == before
 
 
@@ -270,8 +265,8 @@ def test_import_refuses_invalid_identity_before_copying_or_removing(tmp_path, ma
     original_state = (directory / "state.sqlite3").read_bytes()
     original_source = source.read_bytes()
     context = create_context(tmp_path / "workspace")
-    with pytest.raises(catalog_recovery.ImportRefused) as error:
-        catalog_recovery.import_project(context.repository, directory)
+    with pytest.raises(project_import.ImportRefused) as error:
+        project_import.import_project(context.repository, directory)
     assert error.value.reason == "project_identity_invalid"
     assert "marker" in error.value.message.lower()
     assert context.repository.list_projects() == []
@@ -283,11 +278,13 @@ def test_import_refuses_invalid_identity_before_copying_or_removing(tmp_path, ma
 def test_import_preserves_marker_identity_after_a_directory_rename(tmp_path):
     directory, source, digest = orphan(tmp_path / "Downloads", done=True)
     pid = directory.name
-    paths.marker_in(directory).write_text(json.dumps({"pid": pid}), encoding="utf-8")
+    paths.marker_in(directory).write_text(
+        json.dumps({"pid": pid, "schema_version": paths.PROJECT_SCHEMA_VERSION}), encoding="utf-8"
+    )
     renamed = directory.with_name("Renamed book")
     directory.rename(renamed)
     context = create_context(tmp_path / "workspace")
-    imported = catalog_recovery.import_project(context.repository, renamed)
+    imported = project_import.import_project(context.repository, renamed)
     assert imported["id"] == pid
     assert imported["source_sha256"] == digest
     assert imported["status"] == "done"
@@ -301,7 +298,6 @@ def test_recovery_reports_invalid_markers_and_preserves_healthy_projects(tmp_pat
     healthy, _, _ = orphan(workspace, "b" * 16)
     paths.marker_in(invalid).write_text(json.dumps({"pid": "f" * 16}), encoding="utf-8")
     context = create_context(workspace)
-    report = catalog_recovery.recover_empty_catalog(context.repository)
-    assert report.recovered == 1
-    assert report.skipped == [(invalid, "project_identity_invalid")]
-    assert [row["id"] for row in context.repository.list_projects()] == [healthy.name]
+    with TestClient(create_app(context=context)) as client:
+        assert client.get("/projects").json() == []
+    assert healthy.is_dir() and invalid.is_dir()
