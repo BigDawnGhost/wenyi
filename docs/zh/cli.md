@@ -60,7 +60,8 @@ wenyi translate .\book.epub
 
 根参数 `--experimental-prompt-genre literary|academic` 只为本次 CLI 调用选择题材，
 默认使用文学类。学术类侧重论证、概念区分、限定条件和引文，不强行套成实验论文结构。
-这不是 YAML 配置项，也不会自动识别题材；Web/Desktop 保持文学默认值。
+这不是 Core YAML 配置项，也不会自动识别题材；Web/Desktop 另提供
+[创建项目时的选择](configuration.md#流水线)，同样默认文学。
 
 所选题材统一应用于分析、摘要、翻译、术语、润色和审校，包括共享指导与语言档案。
 每次执行 `prepare`、`translate` 或 `review`（包括续跑）都要传入相同参数，

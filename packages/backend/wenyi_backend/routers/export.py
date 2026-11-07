@@ -9,6 +9,7 @@ from uuid import uuid4
 from fastapi import APIRouter
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from ..config_documents import runtime_document
 from ..context import current_context
 from ..errors import (
     EXPORT_NOT_FOUND,
@@ -19,7 +20,6 @@ from ..errors import (
 )
 from ..export_plan import resolve_export
 from ..export_response import ExportResponse
-from ..project_service import config_document
 from ..schemas import AssembleEnqueued, ExportOut, ExportRequest
 from ..workers import enqueue
 from .dependencies import effective_config, require_project, storage_for
@@ -43,7 +43,7 @@ async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export")
     finally:
         store.close()
     try:
-        snapshot = config_document(effective_config(project))
+        snapshot = runtime_document(effective_config(project))
     except ValueError as error:
         # Corrupt or legacy-saved project config must read as invalid_configuration like
         # the config endpoints, not as a bare 500 (audit Y-4/E-3).

@@ -51,7 +51,7 @@ test("creation enters the overview while preparation continues after reload", as
     buffer: Buffer.from("fixture"),
   });
   await page
-    .getByRole("checkbox", { name: "Prepare before translating" })
+    .getByRole("switch", { name: "Prepare before translating" })
     .check();
   await page
     .getByRole("button", { name: "Create project", exact: true })
@@ -140,7 +140,7 @@ test("PDF parser is selected before creation", async ({
   await page.getByLabel("PDF parser", { exact: true }).click();
   await page.getByRole("option", { name: "BabelDOC", exact: true }).click();
   await page
-    .getByRole("checkbox", { name: "Prepare before translating" })
+    .getByRole("switch", { name: "Prepare before translating" })
     .check();
   await page
     .getByRole("button", { name: "Create project", exact: true })
@@ -170,11 +170,11 @@ test("precision creation saves multipart options and enters the overview after r
     await route.fulfill({ json: { ...project, fmt: "docx" } });
   });
   await page.goto("/projects/new");
-  const standard = page.getByRole("radio", { name: "Standard", exact: true });
-  const mode = page.getByRole("radio", { name: "Three drafts + synthesis", exact: true });
-  await expect(standard).toBeChecked();
-  await standard.focus();
-  await page.keyboard.press("ArrowRight");
+  const mode = page.getByRole("switch", { name: "Three drafts + synthesis", exact: true });
+  await expect(mode).not.toBeChecked();
+  await expect(page.getByRole("radio")).toHaveCount(0);
+  await mode.focus();
+  await page.keyboard.press("Space");
   await expect(mode).toBeChecked();
   await expect(page.getByRole("spinbutton")).toHaveCount(0);
   await page.getByLabel("Project name", { exact: true }).fill("Precision book");
@@ -280,7 +280,7 @@ test("Chinese creation fits a compact desktop window and opens the overview befo
   });
   await page.goto("/projects/new");
   await page.getByLabel("项目名称", { exact: true }).fill("新书翻译");
-  await page.getByRole("radio", { name: "三译合润", exact: true }).check();
+  await page.getByRole("switch", { name: "三译合润", exact: true }).check();
   await expect(page.getByRole("spinbutton")).toHaveCount(0);
   await page.getByLabel("上传原文", { exact: true }).setInputFiles({
     name: "原文.docx",
@@ -288,7 +288,7 @@ test("Chinese creation fits a compact desktop window and opens the overview befo
     buffer: Buffer.from("fixture"),
   });
   await expect(
-    page.getByRole("checkbox", { name: "创建后执行译前准备" }),
+    page.getByRole("switch", { name: "创建后执行译前准备" }),
   ).not.toBeChecked();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),

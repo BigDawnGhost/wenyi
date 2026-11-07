@@ -77,7 +77,7 @@ test("creates a multilingual project and waits for background parsing", async ({
   await expect(create).toBeDisabled();
   expect(created).toBeUndefined();
   await expect(
-    page.getByRole("checkbox", { name: "Prepare before translating" }),
+    page.getByRole("switch", { name: "Prepare before translating" }),
   ).not.toBeChecked();
   const browseFiles = page.getByRole("button", {
     name: "Browse files",

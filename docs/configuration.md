@@ -278,6 +278,21 @@ Use isolated public-domain fixtures before choosing a mixed-model setup. No new 
 
 ## Pipeline
 
+In Web and Desktop, **Create project → Translation style** selects **Literary**
+(`literary`, the default) or **Academic** (`academic`), independently of the
+standard/three-draft translation method. Academic prompts preserve arguments,
+conceptual distinctions, qualifications and citations instead of prioritizing
+narrative voice and characterization. The choice applies to preparation, summaries,
+translation, terminology, polishing and review.
+
+The backend saves this creation-time choice as `pipeline.prompt_genre` in the
+project document and frozen job snapshots. Project settings show it read-only;
+partial configuration edits, restoring defaults, restarts and resumes preserve it.
+Changing it requires a new project so completed work and derived caches cannot mix
+prompt families. Older projects and snapshots without this field remain literary.
+This is not a global or Core YAML setting: do not add it to `config.yaml`.
+CLI invocations still use the [experimental option](cli.md#experimental-prompt-genres-cli-only).
+
 `pipeline.translation_mode` accepts `standard` (default) or `best_of_three`.
 Precision mode requires `pipeline.polish: true`; invalid combinations are rejected,
 including project YAML settings. In Web, choose the translation mode

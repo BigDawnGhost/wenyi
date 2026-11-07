@@ -19,7 +19,7 @@ const nonNegativeInt = (value: string) => {
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
 };
 
-/** Update workflow settings without changing the project's creation-time translation mode. */
+/** Update workflow settings while retaining creation-time translation choices. */
 export function workflowField(
   config: Record<string, unknown>,
   group: string,
@@ -63,6 +63,24 @@ export function WorkflowSettings({
 
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
+      {scope === "project" && (
+        <div className="space-y-2">
+          <Label htmlFor="project-prompt-genre">{tr("createProject.promptGenre")}</Label>
+          <Input
+            id="project-prompt-genre"
+            readOnly
+            value={tr(
+              section(config, "pipeline").prompt_genre === "academic"
+                ? "createProject.academicGenre"
+                : "createProject.literaryGenre",
+            )}
+            aria-describedby="project-prompt-genre-help"
+          />
+          <p id="project-prompt-genre-help" className="text-xs text-muted-foreground">
+            {tr("settings.promptGenreLocked")}
+          </p>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3">
         {PIPELINE.map(([key, label]) => (
           <label key={key} className="flex gap-2 items-center text-sm">
