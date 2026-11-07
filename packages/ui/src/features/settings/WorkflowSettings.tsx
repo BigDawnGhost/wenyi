@@ -1,25 +1,10 @@
 import { useI18n } from "../../i18n";
 import { Input, Label } from "../../components/ui/form";
-import { Select, SelectItem } from "../../components/ui/select";
-import { SettingsGroup } from "./SettingsSection";
 
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;
 
-/** Number inputs yield "" when cleared; fall back to the current value rather than
- * submitting 0. Anything else the person typed is passed through unchanged, so an
- * out-of-range entry reaches the backend and comes back as a field-specific error
- * instead of being silently rewritten under their hands. */
-const orFallback = (value: string, fallback: number) =>
-  value.trim() === "" ? fallback : Number(value);
-
-/** 0 is a valid max_tokens_per_segment value: the splitter treats it as disabled. */
-const nonNegativeInt = (value: string) => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
-};
-
-/** Update workflow settings while retaining creation-time translation choices. */
+/** Retain creation-time choices and advanced settings when changing a visible field. */
 export function workflowField(
   config: Record<string, unknown>,
   group: string,
@@ -39,15 +24,11 @@ export function WorkflowSettings({
   config,
   scope,
   disabled,
-  error,
-  pdf = false,
   onField,
 }: {
   config: Record<string, unknown>;
   scope: "global" | "project";
   disabled: boolean;
-  error?: unknown;
-  pdf?: boolean;
   onField: (group: string, key: string, value: unknown) => void;
 }) {
   const { t: tr } = useI18n();
@@ -94,106 +75,6 @@ export function WorkflowSettings({
           </label>
         ))}
       </div>
-      <SettingsGroup title={tr("settings.performance")} error={error} collapsible={scope === "project"}>
-        <label className="flex gap-2 items-center text-sm">
-          <input
-            type="checkbox"
-            checked={Boolean(
-              section(config, "pipeline").annotation_alignment,
-            )}
-            onChange={(e) =>
-              onField("pipeline", "annotation_alignment", e.target.checked)
-            }
-          />
-          {tr("settings.paragraphAnnotationAlignment")}
-        </label>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <Label htmlFor="batch-tokens">
-              {tr("settings.tokensPerBatch")}
-            </Label>
-            <Input
-              id="batch-tokens"
-              type="number"
-              min={1}
-              value={Number(
-                section(config, "segment").max_tokens_per_batch ?? 1800,
-              )}
-              onChange={(e) =>
-                onField(
-                  "segment",
-                  "max_tokens_per_batch",
-                  orFallback(e.target.value, 1800),
-                )
-              }
-              className="mt-2"
-            />
-          </div>
-          <div>
-            <Label htmlFor="segment-tokens">
-              {tr("settings.tokensPerParagraph")}
-            </Label>
-            <Input
-              id="segment-tokens"
-              type="number"
-              min={0}
-              value={Number(
-                section(config, "segment").max_tokens_per_segment ?? 1200,
-              )}
-              onChange={(e) =>
-                onField(
-                  "segment",
-                  "max_tokens_per_segment",
-                  nonNegativeInt(e.target.value),
-                )
-              }
-              className="mt-2"
-            />
-          </div>
-          <div>
-            <Label htmlFor="review-concurrency">
-              {tr("settings.reviewConcurrency")}
-            </Label>
-            <Input
-              id="review-concurrency"
-              type="number"
-              min={1}
-              value={Number(
-                section(config, "pipeline").review_concurrency ?? 4,
-              )}
-              onChange={(e) =>
-                onField(
-                  "pipeline",
-                  "review_concurrency",
-                  orFallback(e.target.value, 4),
-                )
-              }
-              className="mt-2"
-            />
-          </div>
-          {pdf && (
-            <div>
-              <Label htmlFor="pdf-backend">{tr("settings.pdfParser")}</Label>
-              <Select
-                id="pdf-backend"
-                value={String(
-                  section(config, "pipeline").pdf_backend || "mineru",
-                )}
-                onValueChange={(value) =>
-                  onField("pipeline", "pdf_backend", value)
-                }
-                className="mt-2"
-              >
-                {["mineru", "babeldoc"].map((s) => (
-                  <SelectItem key={s} value={s}>
-                    {s}
-                  </SelectItem>
-                ))}
-              </Select>
-            </div>
-          )}
-        </div>
-      </SettingsGroup>
     </fieldset>
   );
 }

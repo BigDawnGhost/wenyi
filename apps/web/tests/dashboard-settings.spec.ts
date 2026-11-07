@@ -80,7 +80,7 @@ test("compact desktop dashboard cards and settings categories remain scrollable 
   await expect(last).toBeInViewport();
   await page.goto("/settings");
   for (const [category, title] of [
-    ["Advanced", "Advanced YAML configuration"], ["Workflow", "Segmentation and performance"],
+    ["Advanced", "Advanced YAML configuration"], ["Workflow", "Workflow"],
   ]) {
     await page.getByRole("link", { name: category, exact: true }).click();
     await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();

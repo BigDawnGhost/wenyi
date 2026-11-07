@@ -206,10 +206,8 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
         <div hidden={section !== "defaults"}>
           <SettingsSection title={t("settings.sectionDefaultModels")}>
             <ModelSelection
-              scope="global"
               llm={llm}
               models={object(llm.models)}
-              operations={caps?.operations}
               disabled={disabled}
               onChange={changeLlm}
             />
@@ -221,8 +219,6 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
               scope="global"
               config={effective}
               disabled={disabled}
-              pdf
-              error={error}
               onField={(group, key, value) => change(workflowField(effective, group, key, value))}
             />
           </SettingsSection>
@@ -297,13 +293,15 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
         <Button variant="ghost" disabled={!draft || pending} onClick={() => restore.mutate()}>
           {t("settings.restoreDefaults")}
         </Button>
-        <Button
-          variant="outline"
-          disabled={!draft || pending || editingIds}
-          onClick={() => validate.mutate()}
-        >
-          {t("settings.validateConfiguration")}
-        </Button>
+        {section === "advanced" && (
+          <Button
+            variant="outline"
+            disabled={!draft || pending || editingIds}
+            onClick={() => validate.mutate()}
+          >
+            {t("settings.validateConfiguration")}
+          </Button>
+        )}
         <Button disabled={!draft || pending || editingIds} onClick={() => save.mutate()}>
           {pending ? t("common.saving") : t("settings.saveConfiguration")}
         </Button>
