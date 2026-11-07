@@ -43,7 +43,7 @@ Use **Create project** in the shared sidebar to open the centered dialog over th
 
 The compact form places languages and translation style on one row, followed by the source file and an inline project-folder picker. The **Three drafts + synthesis** and **Prepare before translating** switches sit side by side and default to off. Narrow windows wrap the controls; footer actions stay visible.
 
-**Project folder** names where the new project's directory is created, and defaults to a folder beside the installed application (`Wenyi Desktop Data`). Choose **Choose folder** to put this project somewhere else; **Use default** returns to the default location. A folder that cannot hold project data is refused with the reason shown beside the control: the application's own program folder, a parent of it, Wenyi's cache and settings folders, a drive or user folder, and system folders. The choice applies to this project only, and existing projects keep the folder they already have.
+**Project folder** names where the new project's directory is created, and defaults to `projects/` inside the [Desktop data root](#independent-data), not a folder beside the installed application. Choose **Choose folder** to put this project somewhere else; **Use default** returns to the default location. A folder that cannot hold project data is refused with the reason shown beside the control: the application's own program folder, a parent of it, Wenyi's cache and settings folders, a drive or user folder, and system folders. The choice applies to this project only, and existing projects keep the folder they already have.
 
 The uploaded original and project state stay together in that project directory, including when the chosen folder is on another local volume. Saving model settings or restarting Desktop does not forget existing project locations. If the recorded library is unavailable, reconnect it: Desktop does not automatically substitute a same-ID copy in another library.
 
@@ -131,161 +131,140 @@ labels, not the book's source/target languages, content, or model-generated anal
 
 Desktop does not adopt or migrate existing Web projects. It also does not read or modify the CLI's `config.yaml`, `state/`, or `output/`. CLI behavior remains unchanged.
 
-The default Desktop workspace is:
+Desktop has **one data root**, separate from its program directory:
 
 | Platform | Location |
 | --- | --- |
-| Linux | `${XDG_DATA_HOME:-~/.local/share}/Wenyi Desktop` |
-| macOS | `~/Library/Application Support/Wenyi Desktop` |
-| Windows | `%LOCALAPPDATA%/Wenyi Desktop` |
-
-The shared data root for settings, the catalog, migration provenance and upgrade
-backups is separate from the workspace:
-
-| Platform | Shared data root |
-| --- | --- |
-| Linux and other XDG platforms | `${XDG_DATA_HOME:-~/.local/share}/wenyi` |
-| macOS | `~/Library/Application Support/Wenyi` |
-| Windows | `%USERPROFILE%/Wenyi` |
+| Linux | `${XDG_DATA_HOME:-~/.local/share}/wenyi/Desktop` |
+| macOS | `~/Library/Application Support/Wenyi/Desktop` |
+| Windows | `%LOCALAPPDATA%\Wenyi\Desktop` |
 
 Only an absolute `XDG_DATA_HOME` is used; unset, blank or relative values fall
-back to `~/.local/share`. Changing it selects a different shared data root; it
+back to `~/.local/share`. Changing it selects a different data root; it
 does not relocate existing data. macOS and Windows ignore `XDG_DATA_HOME`.
 
-**Keep the workspace on a local disk.** A folder on a network share, a mapped
-drive or a cloud-synced directory (OneDrive, Dropbox, iCloud Drive, Google
-Drive) is not a supported workspace location. Three things break there and none
-of them is detectable in advance: SQLite locking is unreliable over SMB, so two
-writes that this application serializes locally can interleave; OneDrive's
-Files On-Demand leaves placeholders that read as errors or block a save; and a
-sync client copies the database and its write-ahead log at different moments,
-which produces a backup that opens and is missing data. A workspace that is
-already on such a folder keeps working until one of those happens. The same
-local-disk requirement applies to the shared profile and project library folders.
-`--data-dir <new path>` selects a workspace; it does not move the shared profile
-or change existing projects' recorded library roots. Keep the original data until
-any explicit relocation/import is verified. This version does not detect network
-or cloud-synced folders; it only documents this restriction.
+```text
+<data-root>/
+  catalog.sqlite3   # project list, jobs, settings and opaque credential references
+  projects/         # default project files, originals, state, caches and exports
+  logs/             # diagnostic logs
+  locks/            # native/engine locks, writer leases and activation endpoint
+  runtime/          # disposable plugins and Windows/Linux WebView data
+  backups/          # verified pre-update snapshots
+```
 
-The first launch of this layout imports the legacy Desktop catalog into
-`<shared-data-root>/storages/catalog.sqlite3`, using the platform root above.
-The legacy database, its WAL and project directories remain untouched. Importing
-another legacy workspace adds nonconflicting records rather than replacing the
-shared catalog. Workspace-local job/export numbers are remapped without moving
-their existing output files. Existing settings take precedence; conflicting project
-or unique run identities and credential references stop migration for manual reconciliation.
-Keep both originals in that case. An incomplete migration stops startup before
-application writes begin. Reopening the same workspace retries it; an import receipt
-committed with the rows prevents replay from erasing newer catalog or credential data.
+Settings stay transactionally in SQLite; there is no second `settings.yaml`.
+API keys remain in the OS credential vault or session memory, never this database.
+`--data-dir <path>` selects this **entire** data root, including settings, plugin
+runtime and logs. Two roots do not share a hidden catalog. Individually chosen
+external project libraries remain supported and retain their recorded locations.
+Windows/Linux WebView caches and presentation preferences also use
+`runtime/webview/`; macOS WKWebView storage is managed by the operating system
+and cannot be relocated with Tauri's data-directory option. OS credential vaults
+likewise remain OS-managed, outside the data root.
 
-The transactional receipt is authoritative; readable but stale provenance is repaired from it.
-If previous migration evidence remains but the shared catalog is missing or invalid,
-startup stops and asks for a consistent backup or manual reconciliation. Unreadable
-provenance also stops startup: one workspace's surviving receipt cannot prove that
-other imports' records survived. Reimporting only old catalogs would not recover
-later edits, deletions or settings and is not treated as a complete recovery.
+**Breaking change:** previous Desktop catalogs, settings, credentials and projects
+are not migrated, merged, discovered or repaired automatically. The old
+`Wenyi Desktop` workspace, `%USERPROFILE%\Wenyi`, `~/.wenyi/desktop` and
+installation-adjacent `Wenyi Desktop Data` directories are left untouched.
+The new default starts with an empty library. Renaming an old catalog to
+`catalog.sqlite3` does not upgrade it: unidentified or unsupported catalogs are
+refused before store initialization. Keep old data if you need to open it with an
+old release; this release provides no old-format import or migration command.
 
-An in-app update first freezes writes and resolves the current catalog's exact
-project directories, including legacy, default and individually chosen locations.
-It then stops the engine and copies those directories, layer-two `storages`, settings
-and migration provenance into `<shared-data-root>/backup/<version>-<timestamp>/`.
-It never copies a selected parent folder
-wholesale or includes earlier backups. The manifest records each source's original
-path and every copied file's size and SHA-256. SQLite WAL files are included when
-present; a forced shutdown is not assumed to have checkpointed them. Credential
-references are preserved, but secrets held by the operating-system vault or only in
-memory are not exported.
+**Use local disks** for the data root and project libraries, not network shares,
+mapped drives or cloud-synced folders. SQLite/WAL locking, placeholders and
+non-atomic synchronization can corrupt or incompletely copy data. Desktop does not
+detect those locations. Selecting another root never moves or deletes existing data.
 
-Other Desktop workspaces may normally remain open, but an upgrade requires exclusive
-access to the shared profile until installation or recovery finishes. Close those
-instances and retry if update admission is refused. An unavailable project directory,
-unsafe link, insufficient space, copy or verification failure cancels the update
-before the installer runs; reconnect the missing drive or correct the reported
-problem and retry. The existing application is reopened after a failed snapshot.
-If the engine cannot acknowledge cancellation of update preparation, the window
-stays in an explicit error state rather than resuming writes. Quit and reopen Wenyi
-to restore normal operation.
+### Windows installation and uninstallation
 
-A setup file run by hand cannot take that snapshot, so the installer requires one:
-when Wenyi is already installed and no backup carrying a manifest exists, the
-installation stops before a single file is copied and says so. Updating from
-inside Wenyi always satisfies this, because it writes the backup first.
+The default program directory is `%LOCALAPPDATA%\Programs\Wenyi Desktop`.
+For example, for user `Alice`:
 
-### Where the installer will not put Wenyi
+```text
+C:\Users\Alice\AppData\Local\Programs\Wenyi Desktop\wenyi-desktop.exe
+C:\Users\Alice\AppData\Local\Wenyi\Desktop\catalog.sqlite3
+C:\Users\Alice\AppData\Local\Wenyi\Desktop\projects\<project-id>\
+C:\Users\Alice\AppData\Local\Wenyi\Desktop\logs\
+```
 
-On Windows the installer refuses four kinds of installation directory, before it
-copies anything, and says which folder it refused and why:
+Changing the program directory does not change the data root or create a sibling
+project library. English and Simplified Chinese setup UI are available.
+Setup is current-user only and rejects an elevated launch: run normally, not
+**Run as administrator**. A shared setup/uninstall mutex prevents concurrent
+replacement. Before writing payloads, setup checks both the native executable and
+`sidecar\wenyi-engine\wenyi-engine.exe`. Quit through the tray and wait for tasks
+to stop if prompted; setup does not force-stop translations. Silent/passive setup
+fails instead of bypassing these checks.
 
-- a drive or share root, such as `D:\`, because the projects folder is created
-  beside the installation and a root has nothing beside it
-- a folder inside or around `%USERPROFILE%\.wenyi`, which holds the runtime the
-  application deletes and rebuilds
-- a folder inside or around `%USERPROFILE%\Wenyi`, which holds settings, the
-  project list and the backups of projects
-- a folder Windows will not let this account write to, or one that already holds
-  another application's files. An existing empty folder and an existing Wenyi
-  installation are both accepted.
+Setup refuses volume/share roots, the user profile itself, Windows/Program Files,
+overlap with the data root or legacy Wenyi data folders, linked ancestors,
+unwritable folders and occupied folders not owned by the current installation.
+The application also compares its **actual** executable directory with the
+selected data root on every launch, including unpacked and `--data-dir` launches.
+Application-side directory checks resolve existing parent directories even when
+the final directory does not exist yet. A Windows short-path alias or directory
+link cannot hide an overlap with program/data folders or place a backup inside
+its own source.
 
-These refusals are why installation runs as the current user and never asks for
-elevation. The installer's declaration is `"installMode": "currentUser"` in
-`apps/desktop/tauri.windows.conf.json`, which is the same value tauri-bundler
-would default to; the point of writing it down is that the uninstall hook depends
-on it. Layer two is `$PROFILE\Wenyi`, and `$PROFILE` is the profile of the
-account running setup. A per-machine or elevated install would make that the
-administrator's profile, so an uninstall would remove a directory the user never
-owned and leave the user's real data untouched.
+Replacing a registered old program removes only that program's recorded files
+through its uninstaller, refreshes shortcuts and registers the new location.
+It does not recursively remove the old mixed program/data directory, import old
+data or retain that directory as the new default. Installing an older version over
+a newer one is refused in interactive, silent and passive modes.
 
-The application checks the same rule at every start. If layers one and two, the
-projects folder and the installation directory are not pairwise separate (equal,
-or one inside another), it refuses to start and names the rule that was broken.
-The check runs after the diagnostic log is open, so a refused start still leaves a
-record, and it applies to an installed copy only: a run from source, a test and an
-unpacked build have no installation directory to compare, so they are checked on
-the three layers they do have.
+A current-format in-place upgrade preserves unrelated files in the registered
+program directory; those files do not make the upgrade fail after uninstalling
+the previous program. A different or unregistered target must still be empty,
+and path, link and writability checks still apply.
 
-A copy of the application that no installer installed (a portable directory, or
-the unpacked build) gets no installer refusal at all. Nothing prepares its
-installation directory, so the only protection is the startup check above, and
-that check has no installation directory to compare until the copy is recorded as
-installed. Projects created by such a copy stay in the workspace it was given,
-which is where the standalone layout has always kept them.
+Uninstall keeps data by default. Two independent, initially unchecked options are:
 
-Uninstalling leaves the workspace, `%USERPROFILE%/Wenyi`, and the rest of the
-user's data in place. Ticking **Delete the application data** on the uninstall
-confirmation page removes them; leaving it clear removes only the application's
-own files. Updating is never treated as an uninstall, so an update never removes
-project data.
+1. Delete the catalog, settings, logs, locks and runtime, **not project files**.
+2. Permanently delete default project files and upgrade backups.
 
-On Windows, keeping data also keeps the previous installation folder as a setup
-preference. That preference does not mean the application is still installed:
-the manual-install backup check uses the Windows Add/Remove Programs registration,
-which is removed on uninstall. Reinstalling after an uninstall that kept data
-therefore does not require an upgrade backup; manually overwriting an application
-that is still registered does.
+Both apply only to `%LOCALAPPDATA%\Wenyi\Desktop`. Custom `--data-dir` roots,
+external project libraries and all legacy directories are always kept. Directory
+links are removed without following their targets. Deleting the catalog loses the
+project list even if project files are kept; they are not automatically rediscovered.
+Silent uninstall and upgrade replacement never select either deletion option.
 
-The installer also refuses to install an **older** version over a newer one. Each
-project database records the schema version that wrote it, and an older build
-refuses to open a database carrying a number it does not know rather than
-writing rows the newer build would then read as complete. The two halves are one
-rule: the schema guard is what makes the version check honest, and the version
-check is what keeps a user from reaching the guard at all. Reinstalling the same
-version, and installing a newer one, are both unaffected.
+Before release, validate on a real Windows standard-user account using temporary
+synthetic projects: fresh install, old-program replacement with old files retained,
+changing the install folder, English/Chinese UI, simultaneous setup/uninstall,
+tray-hidden and orphan-engine refusal, elevated launch, downgrade in every mode,
+all four uninstall-option combinations, and nested junction targets remaining
+untouched. A cross-compiled installer or browser fixture is not that platform test.
 
-For manual backups, stop every Desktop instance first. Copy `<shared-data-root>/storages/`,
-the settings and migration-provenance files in `<shared-data-root>/`, and every registered
-project directory, including chosen library locations. Each project directory
-contains its SQLite state, original, parse caches and generated exports. Keep any
-SQLite WAL beside its database. Copying only the old workspace is not a complete
-backup of this layout.
+### Backups and current-format imports
 
-Each project database records its schema version in SQLite's own header
-(`PRAGMA user_version`). Opening a project with a version this build does not
-know is refused with a message naming the newer build, and the project stays in
-the list marked unavailable so it is not silently dropped. Other projects remain
-listable and usable; both direct reads and writes to the newer database return
-the same upgrade-required error. A database written before this version existed
-reports 0, is stamped with the current number, and is otherwise untouched — no
-data is rewritten by the upgrade.
+An in-app update freezes writes, resolves every registered project's exact
+directory, stops the engine and backs up those directories and `catalog.sqlite3`
+(including any WAL/SHM files) to `<data-root>/backups/<version>-<timestamp>/`.
+It does not copy the whole data root or earlier backups into itself. The manifest,
+written last, records original paths, file sizes and SHA-256 hashes. Credential
+references are included; OS-vault/session secrets are not.
+
+An unavailable project directory, unsafe link, insufficient space or failed
+verification cancels the update before setup runs. Close other copies of the same
+program before replacing it, even if they use different data roots. Failed
+snapshots reopen the existing application; failed acknowledgement of preparation
+cancellation requires quitting and reopening Wenyi rather than resuming writes.
+Manual setup does not generate a snapshot or require a historical backup marker:
+back up the current data yourself before replacing the program.
+
+For manual backups, stop Desktop first, copy the entire data root and every
+registered external project directory, keeping SQLite WAL files beside their
+databases. Restore a consistent set, not only project files or only the catalog.
+Project databases retain their independent schema-version guard: newer, unsupported
+state stays listed as unavailable instead of being silently dropped or modified.
+
+Explicit folder import accepts only current-format projects (`project.json`
+schema version 2), with readable state and an original matching its saved SHA-256.
+Old/missing markers and ambiguous sources are refused before copying. A successful
+import moves the selected project into the current default library after verifying
+the copied files; it is not automatic recovery of a lost catalog or old-version data.
 
 Job-status polling reads committed catalog snapshots without reserving a write
 lock, so an active catalog writer does not block status lookups.
@@ -308,34 +287,11 @@ Deletion runs in three steps so that an interruption at any point is recoverable
 the project is first marked as being deleted, then its files are removed, then its
 catalog entry is deleted. The mark is what makes the difference. Before it, a crash
 leaves a whole project; after it, the project is no longer listed or openable, and
-a retry finishes only what is left. A directory that carries the mark is also
-skipped by the startup repair, so a lost catalog cannot turn an interrupted
-deletion back into a project.
+a retry finishes only what is left. Explicit import also refuses a directory
+carrying this mark. Startup never scans folders to reconstruct catalog rows.
 
-On Windows only, startup repairs an empty project catalog from readable
-`projects/<id>/state.sqlite3` metadata and matching uploaded originals. A nonempty
-catalog is left untouched; ambiguous, mismatched, or unreadable projects are skipped.
-Repair does not rewrite translations, start tasks, or add deletion markers. Lost
-project names, original filenames, project-specific settings, and job/export history
-cannot be fully reconstructed: settings fall back to the current global configuration.
-Check settings before starting translation again; saved checkpoints are reused.
-Old versions retained files after project deletion, so such legacy directories may
-also reappear when repairing an empty catalog.
-
-A repair that recovered something also says so: how many projects came back and,
-for each folder it did not adopt, the same sentence the import dialog would have
-shown for that folder — no `state.sqlite3`, unreadable metadata, no original, or
-more than one possible original. The report is written to the diagnostic log as
-counts only, so no path or title is recorded. Without it a repaired catalog is
-indistinguishable from one that was always empty, which is the question a user
-asks first: where did my project go?
-
-The native launcher and Python backend normalize Windows workspace paths so the
-`\\?\` prefix added during single-instance admission cannot prevent catalog repair
-or access to existing project state. The workspace location is unchanged; no
-project files need to be moved or reimported.
-
-Use `--data-dir <path>` to select a separate workspace, for example for testing. One backend process owns a workspace at a time. Choosing another workspace neither imports nor deletes the old one.
+The native launcher and backend normalize Windows `\\?\` path spellings to the
+same data-root identity. One backend owns a data root at a time.
 
 ## Run from source
 
@@ -491,14 +447,12 @@ than claiming it is ready. Old installations and project/session data are not
 deleted. Frozen sessions are not automatically migrated: re-parse affected PDFs
 when a bridge update changes extraction or session compatibility.
 
-Plugin files live in the application-level runtime directory,
-`~/.wenyi/desktop/plugins/babeldoc/` (`%USERPROFILE%\.wenyi\desktop\plugins\babeldoc\`
-on Windows), outside the Desktop workspace: `plugin.json` records enablement and
+Plugin files live in `<data-root>/runtime/plugins/babeldoc/`:
+`plugin.json` records enablement and
 the selected installation, `downloads/` contains verified archives, `installed/`
 contains complete runtime/cache pairs, and `sessions/` retains frozen PDF
-snapshots. A plugin directory an earlier version created inside the workspace
-keeps being used while the runtime directory holds no installation, so an
-existing plugin stays enabled; those files are neither copied nor deleted. No CLI
+snapshots. Earlier plugin directories are neither reused nor migrated; install
+the plugin again in the new data root when needed. No CLI
 or Web state is used. The plugin has a separate process, random loopback port,
 memory-only bearer token, and an owner pipe so it exits when Desktop closes.
 Ports and tokens are not saved in projects; the default
@@ -689,8 +643,8 @@ Restart Desktop after changing its inherited environment externally.
 - HTML is saved directly as **HTML**, with a `.html` filename and embedded readable image/media resources; there is no ZIP wrapper or companion assets directory. Existing embedded resources remain unchanged; remote URLs are not downloaded. Legacy HTML-plus-assets history is converted at save time using only that published HTML and its owned assets.
 - Desktop refuses internal workspace destinations and source-file identities/paths recorded during the current app session. Source protection is bounded and kept in memory without retaining open source files. Do not replace a destination from another application while saving: an overwrite is an atomic file replacement on one volume when nothing else holds the target, not a cross-process compare-and-swap. The staged temporary file is complete before publication, but replacing an existing file is a plain rename: a process that opens, replaces or locks that destination during the save is not detected afterwards, and on Windows the rename fails rather than retrying if the target is held. Web continues to use browser downloads.
 - **Import existing project** on the project list adopts a project folder that already exists — one this installation moved, or one copied here from another computer. The folder is checked before anything changes; a folder without `state.sqlite3`, one whose saved metadata is unreadable, or one with no single recognizable original is refused, and the list names which of those it was. An accepted folder is moved into the workspace and added to the list with the state its saved chapters imply.
-- If no original matches the saved checksum, manual import refuses the folder before copying or moving it, and automatic startup repair also skips it. Restore the matching original or create a new project for changed text. Existing translations and checkpoints are not reset or attached to different source content.
-- Import also refuses a malformed project marker or a marker that disagrees with the directory's project ID. Legacy folders without a marker remain supported. Automatic catalog repair skips duplicate project identities rather than choosing a copy by scan order.
+- If no original matches the saved checksum, explicit import refuses the folder before copying or moving it. Restore the matching original or create a new project for changed text. Existing translations and checkpoints are not reset or attached to different source content.
+- Import requires a current-format project marker agreeing with the project ID. Old-format or unmarked folders are not supported. Startup does not reconstruct the catalog from project folders.
 - A project whose folder is not reachable — a removed drive, or an unmounted network share — stays in the list, greyed out with no way to open it. Writes refuse a missing uploaded-project directory rather than creating an empty replacement. Removing its catalog entry still works without recreating the folder or deleting another same-ID copy; data on the disconnected drive remains untouched.
 - The Web interface has no folder picker, so **Import existing project** is absent there rather than shown and disabled.
 
@@ -725,7 +679,7 @@ their localized retry guidance rather than displaying raw exceptions.
 
 Normal capture is INFO and above. **Enable detailed logging for 30 minutes** adds safe request/attempt/usage observations, never content; it expires automatically, can be stopped early and resets on restart. Reproduce the issue while it is enabled, then export. Logging settings do not change translation configuration or caches.
 
-The native process is the only file writer. Logs normally live in `<workspace>/diagnostics/`, rotate at 10 MiB or 24 hours, and have a 200 MiB total limit; files last written over 7 days ago are removed, and a file written in the last minute is left alone so an export that is reading it does not lose half a report. Export additionally filters individual records to the selected time range. If that location is unavailable, Desktop tries a workspace-scoped folder under `Wenyi Desktop Logs` in the platform state/log location (Linux: `$XDG_STATE_HOME` or `~/.local/state`; macOS: `~/Library/Logs`; Windows: `%LOCALAPPDATA%`). Both locations failing leaves only a bounded memory buffer; export before exiting. A previous active-session marker is reported as an unclean exit, not proof of a crash.
+The native process is the only file writer. Logs live in `<data-root>/logs/`, rotate at 10 MiB or 24 hours, and have a 200 MiB total limit; files last written over 7 days ago are removed, and a file written in the last minute is left alone so an export that is reading it does not lose half a report. Export additionally filters individual records to the selected time range. If that location is unavailable, only a bounded memory buffer is used; export before exiting. Logs never fall back to a hidden second data directory. A previous active-session marker is reported as an unclean exit, not proof of a crash.
 
 The log folder is an ordinary directory, so a file that another program puts in it is counted toward the 200 MiB limit — otherwise the limit would describe only this application's own output while the disk filled. Those files are never read into a report, never removed by retention and never removed by **Clear application logs**. The settings page reports them separately ("N file(s) in this folder were written by another program, M MiB") and says that Desktop will not delete them, so a large figure can be traced to the right place.
 

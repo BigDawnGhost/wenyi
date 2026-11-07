@@ -958,6 +958,24 @@ mod tests {
         assert!(snapshot_sources(&escaped, &scratch.path("another"), "1.4.0").is_err());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn backup_inside_source_is_refused_through_an_existing_parent_alias() {
+        let scratch = Scratch::new();
+        let source = scratch.workspace();
+        let alias = scratch.path("alias");
+        std::os::unix::fs::symlink(&source, &alias).unwrap();
+        let sources = [BackupSource {
+            name: "projects/0".into(),
+            path: source.clone(),
+        }];
+        let target = alias.join("not-created/backup");
+        assert!(snapshot_sources(&sources, &target, "1.4.0").is_err());
+        assert!(!source.join("not-created").exists());
+        let snapshot = snapshot_sources(&sources, &alias.join("../backup"), "1.4.0").unwrap();
+        verify(&snapshot).unwrap();
+    }
+
     #[test]
     fn sizes_are_scaled_with_headroom_and_rounded_up() {
         assert_eq!(scaled(0), 0);

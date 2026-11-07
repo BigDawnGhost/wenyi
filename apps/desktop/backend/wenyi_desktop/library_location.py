@@ -1,27 +1,7 @@
-"""Where a project directory may live, and why a chosen one may be refused.
+"""Admit custom libraries only outside the program, data root and system folders.
 
-Layer three is the one directory a person picks. Everything else in the layout is
-derived, so this module exists to keep a choice from landing somewhere the rest of
-the application already treats as its own.
-
-Six categories are refused (design §3.4). They are not a list of paths to compare
-against -- a list is always incomplete, and the entries on it are one machine's
-idea of where its system files are. Each refusal below is derived from the roots
-the application already resolves, so a differently configured machine is judged by
-the same rule rather than by a copy of one machine's layout:
-
-| refused | why |
-|---|---|
-| the installation and anything inside it | uninstall and upgrade own that directory |
-| anything the installation sits inside | a recursive removal takes the whole parent |
-| layer one (~/.wenyi) and anything inside it | discarded and rebuilt on every launch |
-| layer two (shared platform data) and anything inside it | settings and catalog; uninstall may delete it |
-| the user profile itself | its children belong to other applications |
-| a volume root, and the platform's system directories | recursive removal is unrecoverable |
-
-The workspace is a participant too, and it is compared as its own root rather than
-assumed to sit under one of the above: it can be named on the command line, so it
-is wherever this installation was told to put it.
+The actual data root participates, including a root selected with --data-dir.
+The default projects child is internal; this policy is for externally chosen roots.
 """
 
 from __future__ import annotations
@@ -161,7 +141,7 @@ def _owned_roots(backend) -> list[tuple[Path, tuple[str, str]]]:
             ),
         ),
         (
-            paths.runtime_root(),
+            paths.runtime_root(backend.workspace),
             (
                 "project_location_runtime",
                 "That folder is inside Wenyi's own cache, which it clears. "
@@ -192,17 +172,4 @@ def _owned_roots(backend) -> list[tuple[Path, tuple[str, str]]]:
                 ),
             )
         )
-    try:
-        owned.append(
-            (
-                paths.user_root(),
-                (
-                    "project_location_user",
-                    "That folder is where Wenyi keeps its settings and catalog. "
-                    "Choose a different folder.",
-                ),
-            )
-        )
-    except RuntimeError:
-        pass
     return owned

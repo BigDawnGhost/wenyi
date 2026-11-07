@@ -5,6 +5,9 @@
       "allowDowngrades": false,
       "nsis": {
         "installMode": "currentUser",
+        "template": "installer.nsi",
+        "languages": ["English", "SimpChinese"],
+        "displayLanguageSelector": true,
         "installerHooks": "installer.nsh"
       }
     }

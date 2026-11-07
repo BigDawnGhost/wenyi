@@ -78,11 +78,8 @@ def test_catalog_durability_and_workspace_isolation(backend, tmp_path):
     assert current_context().repository.latest_resumable_job(pid) == saved
     workspace = backend.workspace
     backend.close()
-    # A second workspace shares this machine's layer two, so what this test can
-    # still isolate is the per-workspace project directory and the state inside
-    # it. Give the second workspace its own profile so the shared catalog does
-    # not answer the isolation question by itself.
-    other = create_context(tmp_path / "second", user_home=tmp_path / "second-profile")
+    # The complete data root, including the catalog, is isolated per app.
+    other = create_context(tmp_path / "second")
     try:
         with use_context(other):
             assert other.repository.all_jobs() == []
@@ -665,7 +662,7 @@ def test_deletion_removes_the_directory_its_identifier_names(backend):
     directory = backend.project_dir(pid)
     directory.mkdir(parents=True)
     (directory / "project.json").write_text(
-        '{"pid": "%s", "schema_version": 1}' % pid, encoding="utf-8"
+        '{"pid": "%s", "schema_version": 2}' % pid, encoding="utf-8"
     )
     backend.update_project(pid, location=str(directory))
     backend.remove_project(pid)
@@ -698,8 +695,8 @@ def test_deletion_of_an_unknown_project_is_a_refusal_not_a_no_op(backend):
 def test_a_deletion_interrupted_after_the_files_are_gone_can_be_retried(backend):
     # The failure this guards against: the files are removed, and the process
     # dies before the catalog row is. The next start would find a listed project
-    # whose directory is missing, and a startup repair cannot tell that from a
-    # project on a drive that was unplugged.
+    # whose directory is missing, indistinguishable from a project on a drive
+    # that was unplugged unless deletion intent was recorded first.
     pid = new_project()
     directory = backend.project_dir(pid)
     directory.mkdir(parents=True)
@@ -920,11 +917,9 @@ def test_verbatim_workspace_reopens_existing_catalog(tmp_path):
         assert reopened.workspace == workspace
         assert reopened.get_project(pid)["name"] == "Existing project"
         assert reopened.get_project_config(pid) == {"keep": True}
-        # The catalog moved to layer two; the workspace keeps the project
-        # directories and, from the old version, its untouched catalog.
         from wenyi_desktop import paths as desktop_paths
 
-        assert reopened.database == desktop_paths.user_catalog()
+        assert reopened.database == desktop_paths.catalog(workspace)
         storage = reopened.storage_for(pid)
         try:
             storage.write_artifact("preview.json", {"title": "Still writable"})

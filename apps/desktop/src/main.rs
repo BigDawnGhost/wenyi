@@ -73,8 +73,6 @@ impl State {
 struct Engine {
     child: Arc<Mutex<Option<process::Backend>>>,
     workspace: Option<std::path::PathBuf>,
-    runtime: Option<std::path::PathBuf>,
-    library: Option<std::path::PathBuf>,
     native_owner: instance::NativeOwner,
     profile: Arc<profile::Profile>,
     closing: Arc<AtomicBool>,
@@ -104,8 +102,6 @@ fn start_backend(
         let (backend, ready) = process::Backend::spawn(
             &resources,
             engine.workspace.as_deref(),
-            engine.runtime.as_deref(),
-            engine.library.as_deref(),
             &engine.native_owner,
             diagnostics.inner().clone(),
         )
@@ -167,26 +163,20 @@ fn fail(app: &tauri::AppHandle, state: &Mutex<State>, error: &'static str) {
     publish(app, state);
 }
 
-/// Refuse this start when the layout would let one cleanup reach another layer.
-///
-/// Layer three is the directory this start will actually use, so the six pairs
-/// are checked against what the engine is about to be handed rather than against
-/// what the default would have named. A development run, a test, and an unpacked
-/// build contribute no layer three, because none of them has an installer record
-/// and the only sibling of a `target/debug` executable is a build directory
-/// nobody chose; those starts are still checked on the three parties that remain.
+/// Refuse overlap between the actual executable directory and actual data root,
+/// including source, unpacked and --data-dir launches; no registry lookup.
 ///
 /// The log is already open here on purpose. A start that ends at this point has
 /// no window, no engine, and no console in a release build, so the file is the
 /// only place that can say which folders were compared.
 fn assert_layout(
     diagnostics: &diagnostics::Diagnostics,
-    library: Option<&std::path::Path>,
+    workspace: &std::path::Path,
 ) -> Result<(), &'static str> {
     let running = paths::running_install_dir().map_err(|_| {
         "Wenyi could not determine which folder it is running from. Reinstall Wenyi into a folder of its own."
     })?;
-    let layout = paths::check_layout(&running, library);
+    let layout = paths::check_layout(&running, workspace);
     if layout == paths::LayoutCheck::Consistent {
         return Ok(());
     }
@@ -294,10 +284,7 @@ fn main() {
         }
     };
     let diagnostics = diagnostics::Diagnostics::for_workspace(&workspace);
-    let profile = match paths::user_root()
-        .map_err(|error| error.message().to_owned())
-        .and_then(|root| profile::Profile::enter(&root.join("storages")))
-    {
+    let profile = match profile::Profile::enter(&paths::locks(&workspace)) {
         Ok(profile) => Arc::new(profile),
         Err(message) => {
             notice(&message);
@@ -310,18 +297,6 @@ fn main() {
         diagnostics::Event::AppStarted,
         serde_json::json!({}),
     );
-    // An installation the registry places somewhere other than this executable is
-    // reported here and nowhere else. Acting on it would move a user's projects
-    // during a start that never asked to, so the detection stays a record until
-    // the batch that owns the project location decides what to do about it.
-    let install = paths::current_install();
-    if install.is_changed() {
-        diagnostics.record(
-            diagnostics::Source::Native,
-            diagnostics::Event::InstallLocationChanged,
-            serde_json::json!({}),
-        );
-    }
     let panic_diagnostics = diagnostics.clone();
     let previous_panic = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -336,8 +311,7 @@ fn main() {
     // let one cleanup reach another layer is not a state this build runs in. The
     // check runs before any window exists, so the reason is shown instead of an
     // interface that fails later for a cause nothing connects back to this.
-    let library = paths::layer_three(&install, &workspace);
-    if let Err(error) = assert_layout(&diagnostics, library.as_deref()) {
+    if let Err(error) = assert_layout(&diagnostics, &workspace) {
         notice(error);
         diagnostics_ui::startup_failure(&diagnostics);
         return;
@@ -350,9 +324,6 @@ fn main() {
     let engine = Engine {
         child: child.clone(),
         workspace: Some(workspace.clone()),
-        // Resolved once, at startup, and passed through unchanged.
-        runtime: paths::runtime_root().ok(),
-        library: library,
         native_owner: primary.owner.clone(),
         profile,
         closing: closing.clone(),
@@ -405,11 +376,14 @@ fn main() {
             app.resources_table().add(primary);
             app.state::<native_drop::Grants>().start_expiry();
             let reload_state = startup_state.clone();
+            let webview_data = paths::webview(&workspace);
+            std::fs::create_dir_all(&webview_data)?;
             // The shared shell reserves 752 logical px for content plus the 240 px
             // expanded sidebar, so a narrower minimum would clip settings behind a
             // horizontal scrollbar; 1024 leaves room for both scrollbar styles.
             WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Wenyi").inner_size(1280.0, 850.0).min_inner_size(1024.0, 600.0)
+                .data_directory(webview_data)
                 .initialization_script(lock(&startup_state).script())
                 .on_navigation(trusted)
                 .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)

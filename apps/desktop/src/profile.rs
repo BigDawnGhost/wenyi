@@ -280,9 +280,8 @@ mod tests {
         fs::remove_dir_all(directory).unwrap();
     }
 
-    /// Each Python child gets an isolated XDG root as well as an isolated home.
-    fn shared_storages(home: &Path) -> PathBuf {
-        crate::paths::user_root_in(home, Some(&home.join("data"))).join("storages")
+    fn data_locks(workspace: &Path) -> PathBuf {
+        crate::paths::locks(workspace)
     }
 
     #[test]
@@ -306,7 +305,7 @@ mod tests {
                 r#"
 import sys
 from pathlib import Path
-from wenyi_desktop.migration.ownership import profile_lock
+from wenyi_desktop.ownership import profile_lock
 with profile_lock(Path(sys.argv[1]), None):
     print("ready", flush=True)
     sys.stdin.readline()
@@ -325,7 +324,7 @@ with profile_lock(Path(sys.argv[1]), None):
             .read_line(&mut line)
             .unwrap();
         assert_eq!(line.trim(), "ready");
-        let native = Profile::enter(&shared_storages(&root)).unwrap();
+        let native = Profile::enter(&data_locks(&root.join("workspace"))).unwrap();
         assert!(native.exclusive(None).is_err());
         writeln!(child.stdin.as_mut().unwrap()).unwrap();
         assert!(child.wait().unwrap().success());
@@ -336,7 +335,7 @@ with profile_lock(Path(sys.argv[1]), None):
                     r#"
 import sys
 from pathlib import Path
-from wenyi_desktop.migration.ownership import profile_lock
+from wenyi_desktop.ownership import profile_lock
 try:
     with profile_lock(Path(sys.argv[1]), None):
         sys.exit(0)
@@ -344,7 +343,7 @@ except RuntimeError:
     sys.exit(9)
 "#,
                 ])
-                .arg(root.join("other"))
+                .arg(root.join("workspace"))
                 .env("HOME", &root)
                 .env("USERPROFILE", &root)
                 .env("XDG_DATA_HOME", root.join("data"))
@@ -374,7 +373,7 @@ except RuntimeError:
         let home = root.join("profile");
         let workspace = root.join("workspace");
         let owner = crate::instance::enter(&workspace).unwrap().unwrap();
-        let profile = Profile::enter(&shared_storages(&home)).unwrap();
+        let profile = Profile::enter(&data_locks(&workspace)).unwrap();
         let python = Path::new(env!("CARGO_MANIFEST_DIR")).join(if cfg!(windows) {
             "../../.venv/Scripts/python.exe"
         } else {
@@ -392,7 +391,7 @@ import json, socket, sqlite3, sys
 from contextlib import closing
 from pathlib import Path
 from wenyi_desktop import paths
-from wenyi_desktop.migration.ownership import NativeOwner, profile_lock
+from wenyi_desktop.ownership import NativeOwner, profile_lock
 workspace = Path(sys.argv[1])
 owner = NativeOwner.read(sys.stdin, workspace)
 with socket.socket() as listener:
@@ -401,7 +400,7 @@ with socket.socket() as listener:
     with profile_lock(workspace, owner):
         # This is deliberately before the runtime/workspace lock exists.
         assert not paths.instance_lock(workspace).exists()
-        with closing(sqlite3.connect(paths.user_storages() / "orphan-write.sqlite3")) as db:
+        with closing(sqlite3.connect(workspace / "orphan-write.sqlite3")) as db:
             db.execute("CREATE TABLE writes(value INTEGER)")
             db.execute("INSERT INTO writes VALUES(1)")
             db.commit()
@@ -468,7 +467,7 @@ with socket.socket() as listener:
         assert!(child.wait().unwrap().success());
         update.quiescent().unwrap();
         drop(update);
-        drop(Profile::enter(&shared_storages(&home)).unwrap());
+        drop(Profile::enter(&data_locks(&workspace)).unwrap());
     }
 
     #[test]
@@ -548,7 +547,7 @@ with socket.socket() as listener:
         let mut reply = [0u8];
         control.read_exact(&mut reply).unwrap();
         assert_eq!(&reply, b"w");
-        let other = Profile::enter(&shared_storages(&root.join("profile"))).unwrap();
+        let other = Profile::enter(&data_locks(&root.join("workspace"))).unwrap();
         let refused = other.exclusive(None).is_err();
         control.write_all(b"q").unwrap();
         control.read_exact(&mut reply).unwrap();

@@ -1,495 +1,126 @@
-//! The single place where Wenyi's directory roots are named and resolved.
-//!
-//! The isolation design defines three layers, and every one of them is resolved
-//! here instead of at its call site:
-//!
-//! | layer | root | lifetime |
-//! |---|---|---|
-//! | one | ~/.wenyi/desktop | rebuilt with the application |
-//! | two | platform data directory (see `user_root`) | backed up, shared across projects |
-//! | three | a sibling of the installation directory | user documents |
-//!
-//! Resolution is pure: nothing here creates, canonicalizes, or checks a
-//! directory on disk. Diagnostics deliberately derives its roots from the
-//! admitted workspace and the platform base only (never from layers one to
-//! three), so a startup that later fails its layout assertions can still write
-//! the log that explains why.
-use std::path::{Path, PathBuf};
-
-use sha2::{Digest, Sha256};
-
-/// Product name shared by the desktop workspace and its fallback log directory.
-const PRODUCT: &str = "Wenyi Desktop";
-/// Fallback log directory. The spelling deliberately differs from PRODUCT:
-/// logs have to stay available when the workspace itself is not writable.
-const LOGS: &str = "Wenyi Desktop Logs";
-/// Directory inside a workspace that owns the diagnostic log files.
-const DIAGNOSTICS: &str = "diagnostics";
-/// Layer one root under the user profile.
-const RUNTIME: &str = ".wenyi";
-/// Layer one entry for this application inside RUNTIME.
-const ENTRY: &str = "desktop";
-/// Layer two directory name on Windows and macOS.
-const USER: &str = "Wenyi";
-/// Layer three directory created next to the installation directory.
-const LIBRARY: &str = "Wenyi Desktop Data";
-/// Environment override for layer one. Layer two follows platform conventions
-/// (including XDG_DATA_HOME on Unix); layer three is recorded per project.
-const RUNTIME_OVERRIDE: &str = "WENYI_RUNTIME_DIR";
+//! The native half of the unified Desktop data-root contract.
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
-    /// The platform does not expose the base directory these roots derive from.
     Base,
-    /// The installation directory is a volume root, so it has no sibling.
-    InstallDirAtVolumeRoot,
-    /// Two roots are equal or one contains the other.
     Overlap,
-    /// A chosen library location is one the layout cannot keep data in.
     LibraryRootInvalid,
 }
 
 impl Error {
     pub fn message(self) -> &'static str {
         match self {
-            Self::Base => "Wenyi could not determine where to keep its files on this computer. Check the user profile environment and reopen Wenyi.",
-            Self::InstallDirAtVolumeRoot => "Wenyi is installed at a drive root. Reinstall it into a folder so its data can live beside it.",
-            Self::Overlap => "Wenyi's data folders overlap. Move one of them and reopen Wenyi.",
-            Self::LibraryRootInvalid => "Wenyi cannot keep project data in that folder. Choose a folder that is not Wenyi's own program folder, a drive or user folder, or a system folder.",
+            Self::Base => "Wenyi could not determine its data folder. Check the user profile environment and reopen Wenyi.",
+            Self::Overlap => "The Desktop data folder overlaps the program folder. Choose a separate data folder and reopen Wenyi.",
+            Self::LibraryRootInvalid => "Choose a named project folder outside Wenyi's data, program and system folders.",
         }
     }
 }
 
-/// The workspace a native parent admits and hands to the engine.
-///
-/// An explicit --data-dir always wins; otherwise the platform default below
-/// applies. This is the value the engine receives, so it must stay identical to
-/// the Python standalone fallback in wenyi_desktop.desktop.
 pub fn workspace(explicit: Option<PathBuf>) -> Result<PathBuf, Error> {
-    match explicit {
-        Some(path) => Ok(path),
-        None => default_workspace(),
+    let root = match explicit {
+        Some(root) => std::path::absolute(root).map_err(|_| Error::Base)?,
+        None => default_workspace()?,
+    };
+    if root.parent().is_none() || home_dir().is_ok_and(|home| same_directory(&home, &root)) {
+        return Err(Error::LibraryRootInvalid);
     }
+    Ok(root)
 }
 
-/// %LOCALAPPDATA%\\Wenyi Desktop and its per-platform equivalents.
 pub fn default_workspace() -> Result<PathBuf, Error> {
-    Ok(data_base()?.join(PRODUCT))
-}
-
-/// Ordered diagnostic roots: the workspace copy first, then the user-level copy.
-///
-/// Both candidates are kept on purpose. The fallback serves the case that needs
-/// logs most: a workspace that cannot be written to. The second entry uses the
-/// workspace identity hash so that several workspaces never share one log file.
-pub fn log_roots(workspace: &Path) -> Vec<PathBuf> {
-    let mut candidates = vec![workspace.join(DIAGNOSTICS)];
-    if let Some(base) = log_base().filter(|path| path.is_absolute()) {
-        let reference = format!(
-            "{:x}",
-            Sha256::digest(workspace.to_string_lossy().as_bytes())
-        );
-        candidates.push(base.join(LOGS).join(&reference[..16]));
-    }
-    candidates
-}
-
-/// Layer one: application runtime that may be discarded and rebuilt.
-pub fn runtime_root() -> Result<PathBuf, Error> {
-    if let Some(explicit) = override_path(RUNTIME_OVERRIDE) {
-        return Ok(explicit);
-    }
-    Ok(home_dir()?.join(RUNTIME).join(ENTRY))
-}
-
-/// Layer two: user-level data that is backed up and shared across projects.
-///
-/// Unix uses XDG_DATA_HOME/wenyi, falling back to ~/.local/share/wenyi.
-/// macOS uses ~/Library/Application Support/Wenyi; Windows keeps ~/Wenyi.
-pub fn user_root() -> Result<PathBuf, Error> {
-    Ok(user_root_in(
-        &home_dir()?,
-        env_path("XDG_DATA_HOME").as_deref(),
-    ))
-}
-
-/// Resolve the shared root from explicit inputs without reading the environment.
-pub(crate) fn user_root_in(home: &Path, xdg_data_home: Option<&Path>) -> PathBuf {
-    if cfg!(windows) {
-        home.join(USER)
-    } else if cfg!(target_os = "macos") {
-        home.join("Library/Application Support").join(USER)
+    let product = if cfg!(any(windows, target_os = "macos")) {
+        "Wenyi"
     } else {
-        let data_home = xdg_data_home
-            .filter(|path| path.is_absolute())
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| home.join(".local/share"));
-        data_home.join("wenyi")
-    }
+        "wenyi"
+    };
+    Ok(data_base()?.join(product).join("Desktop"))
 }
 
-/// Layer three: the default directory that holds one folder per project.
-///
-/// The parent is a *sibling* of the installation, never a child of it: upgrading
-/// or uninstalling touches $INSTDIR, and a directory beside it is one the
-/// installer can never reach by any policy change upstream might make.
-///
-/// A drive root has no parent of its own, and a bare drive spelling reports an
-/// empty parent, so both are refused rather than silently resolved to the volume
-/// the installation sits in. No caller may build this path itself: the defence
-/// only holds while there is one place that names it.
-pub fn library_root(install_dir: &Path) -> Result<PathBuf, Error> {
-    let parent = install_dir.parent().ok_or(Error::InstallDirAtVolumeRoot)?;
-    if parent == install_dir || parent.as_os_str().is_empty() {
-        return Err(Error::InstallDirAtVolumeRoot);
-    }
-    Ok(parent.join(LIBRARY))
+pub fn locks(root: &Path) -> PathBuf {
+    root.join("locks")
 }
 
-/// What this start found when it compared the install location on record with
-/// the directory it is actually running from.
-///
-/// The installer writes the chosen directory into the registry and reads it back
-/// on upgrade, so a mismatch means the data the previous version wrote is not
-/// where this version will look. It is reported, never acted on here: deciding
-/// what to do about it (scan, migrate, ask) belongs to the batch that changes
-/// where a project directory lives, and guessing at it would move a user's
-/// projects on a start that was not asked to.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum InstallCheck {
-    /// No record of an installation, so there is nothing to compare. A
-    /// development run and a portable copy both land here, and neither is a
-    /// fault: the check exists to catch a *changed* install location, and an
-    /// installation that was never recorded has not changed.
-    NotInstalled,
-    /// The recorded directory and the running directory are the same.
-    Unchanged,
-    /// The registry records a different directory than the running one.
-    Changed { recorded: PathBuf, running: PathBuf },
-    /// The registry holds a record that could not be read as a path.
-    Unreadable,
+pub fn catalog(root: &Path) -> PathBuf {
+    root.join("catalog.sqlite3")
 }
 
-impl InstallCheck {
-    /// Whether this start should be reported as running from a moved install.
-    pub fn is_changed(&self) -> bool {
-        matches!(self, Self::Changed { .. })
-    }
+pub fn runtime_root(root: &Path) -> PathBuf {
+    root.join("runtime")
 }
 
-/// The directory an installation of this application is running from.
-///
-/// `current_exe()` is the only answer that needs no configuration and no guess:
-/// it is the directory the user double-clicked into. A path that cannot be
-/// resolved is reported rather than replaced with a default, because substituting
-/// one would make every later comparison agree about the wrong directory.
+pub fn webview(root: &Path) -> PathBuf {
+    runtime_root(root).join("webview")
+}
+
+pub fn library_root(root: &Path) -> PathBuf {
+    root.join("projects")
+}
+
+pub fn backups(root: &Path) -> PathBuf {
+    root.join("backups")
+}
+
+/// Unwritable logs degrade to bounded memory, never another data directory.
+pub fn log_roots(root: &Path) -> Vec<PathBuf> {
+    vec![root.join("logs")]
+}
+
 pub fn running_install_dir() -> Result<PathBuf, Error> {
-    let executable = std::env::current_exe().map_err(|_| Error::Base)?;
-    executable
+    std::env::current_exe()
+        .map_err(|_| Error::Base)?
         .parent()
         .map(Path::to_path_buf)
         .ok_or(Error::Base)
 }
 
-/// Compare the installation record with the directory this build runs from.
-///
-/// `recorded` is whatever the registry held. `None` means the key was absent,
-/// which is the ordinary state of a development run, an unpacked build, and any
-/// installation made before the installer started writing it -- so it is
-/// `NotInstalled` and never an error.
-///
-/// Comparison is case-insensitive on Windows because the filesystem is, and it
-/// normalizes separators so that a record written with a trailing slash does not
-/// report a move that did not happen.
-pub fn check_install(recorded: Option<&Path>, running: &Path) -> InstallCheck {
-    let Some(recorded) = recorded else {
-        return InstallCheck::NotInstalled;
-    };
-    let recorded = recorded.to_path_buf();
-    if recorded.as_os_str().is_empty() {
-        return InstallCheck::Unreadable;
-    }
-    if same_directory(&recorded, running) {
-        return InstallCheck::Unchanged;
-    }
-    InstallCheck::Changed {
-        recorded,
-        running: running.to_path_buf(),
-    }
-}
-
-/// Whether two spellings name the same directory on this platform.
-///
-/// Neither side is resolved: `canonicalize()` fails for a recorded directory that
-/// has since been removed, and that case must still be reported as unchanged
-/// rather than as a second, unrelated failure. Only spelling is compared, which
-/// is enough because both sides name a directory this application installed.
-fn same_directory(left: &Path, right: &Path) -> bool {
-    let left = normalized(left);
-    let right = normalized(right);
-    if cfg!(windows) {
-        left.eq_ignore_ascii_case(&right)
-    } else {
-        left == right
-    }
-}
-
-/// One directory spelling: forward slashes, no trailing separator.
 fn normalized(path: &Path) -> String {
-    let text = path.to_string_lossy().replace('\\', "/");
-    if text.len() > 1 {
-        text.trim_end_matches('/').to_string()
-    } else {
-        text
+    // A not-yet-created destination still inherits its existing parent's
+    // identity, including Windows short names and directory links.
+    let canonical = path
+        .ancestors()
+        .find_map(|ancestor| {
+            let root = ancestor.canonicalize().ok()?;
+            Some(root.join(path.strip_prefix(ancestor).ok()?))
+        })
+        .unwrap_or_else(|| path.to_path_buf());
+    let mut cleaned = PathBuf::new();
+    for component in canonical.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                cleaned.pop();
+            }
+            part => cleaned.push(part.as_os_str()),
+        }
     }
-}
-
-/// Registry key the installer writes the chosen directory into.
-///
-/// The bundler derives both components from `tauri.conf.json`: with no
-/// `publisher` set, the manufacturer falls back to the second component of the
-/// bundle identifier (`org.wenyi.desktop` -> `wenyi`), and the product name is
-/// `productName`. Spelling the result here rather than reading it keeps the
-/// resolver independent of build-time configuration, and a test pins both
-/// components against that file so they cannot drift apart in silence.
-#[cfg(any(windows, test))]
-pub const INSTALL_KEY: &str = "Software\\wenyi\\Wenyi Desktop";
-
-/// The run of installations this build can compare itself against.
-///
-/// `None` is the ordinary answer for a development run and for an installation
-/// that predates the record, and it is deliberately not an error: the check exists
-/// to notice a location that changed, and nothing changed if nothing was recorded.
-pub fn recorded_install_dir() -> Option<PathBuf> {
-    read_install_dir()
-}
-
-#[cfg(windows)]
-fn read_install_dir() -> Option<PathBuf> {
-    use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY_CURRENT_USER, KEY_READ, REG_SZ,
-    };
-
-    // The value is the key's default value, which NSIS writes with no name.
-    let wide = |text: &str| -> Vec<u16> {
-        let mut units: Vec<u16> = text.encode_utf16().collect();
-        units.push(0);
-        units
-    };
-    let key = wide(INSTALL_KEY);
-    let value = wide("");
-    let mut handle: windows_sys::Win32::System::Registry::HKEY = std::ptr::null_mut();
-    // SAFETY: both strings are null-terminated and outlive the call, and the
-    // handle is closed below on every path that opened it.
-    let opened =
-        unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, key.as_ptr(), 0, KEY_READ, &mut handle) };
-    if opened != 0 {
-        return None;
-    }
-    let mut kind = 0u32;
-    let mut bytes = 0u32;
-    // SAFETY: the handle is open, and a null buffer with a zero length is the
-    // documented way to ask how much space the value needs.
-    let sized = unsafe {
-        RegQueryValueExW(
-            handle,
-            value.as_ptr(),
-            std::ptr::null_mut(),
-            &mut kind,
-            std::ptr::null_mut(),
-            &mut bytes,
-        )
-    };
-    if sized != 0 || kind != REG_SZ || bytes < 2 {
-        // SAFETY: the handle was opened above and is closed exactly once.
-        unsafe { RegCloseKey(handle) };
-        return None;
-    }
-    let mut buffer = vec![0u16; (bytes as usize).div_ceil(2)];
-    let mut written = bytes;
-    // SAFETY: the buffer holds the size that was just queried, and `written` is
-    // that same length in bytes.
-    let read = unsafe {
-        RegQueryValueExW(
-            handle,
-            value.as_ptr(),
-            std::ptr::null_mut(),
-            &mut kind,
-            buffer.as_mut_ptr().cast(),
-            &mut written,
-        )
-    };
-    // SAFETY: the handle was opened above and is closed exactly once.
-    unsafe { RegCloseKey(handle) };
-    if read != 0 {
-        return None;
-    }
-    let end = buffer
-        .iter()
-        .position(|unit| *unit == 0)
-        .unwrap_or(buffer.len());
-    let text = String::from_utf16_lossy(&buffer[..end]);
-    let text = text.trim();
-    // A record that is not a path is reported as no record: comparing this build
-    // against a value the installer could not have written would only produce a
-    // warning nobody can act on.
-    let path = PathBuf::from(text);
-    path.is_absolute().then_some(path)
-}
-
-/// Every other platform has no installer record, so no comparison is made.
-#[cfg(not(windows))]
-fn read_install_dir() -> Option<PathBuf> {
-    None
-}
-
-/// Compare this build against the installation the registry records.
-pub fn current_install() -> InstallCheck {
-    let recorded = recorded_install_dir();
-    match running_install_dir() {
-        Ok(running) => check_install(recorded.as_deref(), &running),
-        // A running directory that cannot be named is not a moved installation;
-        // reporting one would send the user looking for a directory problem that
-        // this start never observed.
-        Err(_) => InstallCheck::NotInstalled,
-    }
-}
-
-/// The directory a person may choose for layer three, or the reason they may not.
-///
-/// This is the creation-time half of the same rule the startup assertion applies:
-/// a library root the application accepts here must be one the rest of the layout
-/// can live beside. Six categories are refused, and they are all instances of one
-/// question -- is this directory the installation, the profile, or a root that a
-/// recursive removal would take whole?
-///
-/// No category is spelled as a list of paths to compare against. Every refusal is
-/// derived from the two roots the application already resolves, so a machine
-/// configured differently is judged by the same rule rather than by a copy of one
-/// machine's idea of a dangerous path.
-pub fn admit_library_root(
-    candidate: &Path,
-    install_dir: &Path,
-    workspace: &Path,
-) -> Result<(), Error> {
-    // A relative or empty spelling names nothing, and would resolve against
-    // whatever directory the process happens to be in.
-    if !candidate.is_absolute() || candidate.as_os_str().is_empty() {
-        return Err(Error::LibraryRootInvalid);
-    }
-    // A drive root, a UNC share root, and the user profile are all "roots" in the
-    // sense that matters: everything below them belongs to something else, and a
-    // recursive removal in one takes unrelated work with it.
-    let at_volume_root = candidate
-        .parent()
-        .is_none_or(|parent| parent == candidate || parent.as_os_str().is_empty());
-    if at_volume_root {
-        return Err(Error::LibraryRootInvalid);
-    }
-    let user = home_dir().map_err(|_| Error::Base)?;
-    if same_directory(candidate, &user) {
-        return Err(Error::LibraryRootInvalid);
-    }
-    let system = system_directories();
-    let roots: [(&'static str, PathBuf); 4] = [
-        ("install", install_dir.to_path_buf()),
-        ("layer-one", runtime_root().map_err(|_| Error::Base)?),
-        ("layer-two", user_root()?),
-        // The whole profile is refused for the same reason a volume root is: its
-        // children are other applications' directories.
-        ("profile", user),
-    ];
-    // Only the candidate is compared against each root. Asking the pairwise check
-    // to judge the whole set would fail on the roots themselves: layer one and
-    // layer two are both inside the profile, which is exactly why the profile is
-    // one of the four.
-    if roots.iter().any(|(_, root)| overlaps(candidate, root)) {
-        return Err(Error::LibraryRootInvalid);
-    }
-    // The workspace is the directory the engine was actually given, and it is not
-    // necessarily the platform default: it can be named on the command line, so it
-    // is compared as its own participant rather than assumed to be under anything.
-    if overlaps(candidate, workspace) {
-        return Err(Error::LibraryRootInvalid);
-    }
-    if system.iter().any(|path| overlaps(candidate, path)) {
-        return Err(Error::LibraryRootInvalid);
-    }
-    Ok(())
-}
-
-/// Directories the operating system owns, in the spelling the platform uses.
-///
-/// These are read from the environment the operating system sets for its own
-/// directories rather than typed out, so a non-English installation is judged by
-/// where its system directories actually are.
-fn system_directories() -> Vec<PathBuf> {
-    let names: &[&str] = if cfg!(windows) {
-        &[
-            "SystemRoot",
-            "windir",
-            "ProgramFiles",
-            "ProgramFiles(x86)",
-            "ProgramData",
-        ]
-    } else {
-        &["SystemRoot"]
-    };
-    let mut found: Vec<PathBuf> = names
-        .iter()
-        .filter_map(|name| env_path(name))
-        .filter(|path| path.is_absolute())
-        .collect();
+    let text = cleaned.to_string_lossy().replace('\\', "/");
+    let text = text.strip_prefix("//?/").unwrap_or(&text);
+    let text = text.trim_end_matches('/');
     if cfg!(windows) {
-        // /Windows/System32 is what an application can actually name, and it is a
-        // descendant of the root the variables above describe.
-        found.extend(env_path("SystemRoot").map(|root| root.join("System32")));
+        text.to_lowercase()
     } else {
-        found.extend(
-            ["/usr", "/bin", "/sbin", "/etc", "/boot", "/var"]
-                .iter()
-                .map(PathBuf::from),
-        );
+        text.to_owned()
     }
-    found
 }
 
-/// Whether two roots are equal or nested either way, comparing whole components.
-///
-/// Resolving is deliberately avoided: the candidate is a directory that may not
-/// exist yet, and a path that cannot be resolved must be refused on its spelling
-/// rather than admitted because the check could not run.
+fn same_directory(left: &Path, right: &Path) -> bool {
+    normalized(left) == normalized(right)
+}
+
 fn overlaps(left: &Path, right: &Path) -> bool {
     let left = normalized(left);
     let right = normalized(right);
-    let (left, right) = if cfg!(windows) {
-        (left.to_lowercase(), right.to_lowercase())
-    } else {
-        (left, right)
-    };
-    let boundary =
-        |prefix: &str, whole: &str| whole == prefix || whole.starts_with(&format!("{prefix}/"));
-    boundary(&left, &right) || boundary(&right, &left)
+    let contains =
+        |outer: &str, inner: &str| outer == inner || inner.starts_with(&format!("{outer}/"));
+    contains(&left, &right) || contains(&right, &left)
 }
 
-/// Roots must be pairwise disjoint: neither equal nor nested either way, because
-/// cleaning, backing up, or uninstalling one must never reach another.
-///
-/// Two callers depend on this shape. The pre-upgrade snapshot refuses a backup
-/// directory that sits inside the data directory it is about to copy, and the
-/// library-root admission refuses a location that is the installation, the
-/// workspace, or either user-level layer.
-///
-/// Comparison is by whole path component and case-insensitive on Windows, through
-/// the same rules the admission uses. A spelling mismatch would make the opposite
-/// mistake: an installation inside a user's data directory would pass in silence,
-/// because "D:/Apps/Wenyi" and "d:/apps/wenyi" are one directory to the filesystem
-/// and two strings to a byte comparison. It would also refuse layer one beside
-/// layer two on a profile whose two halves differ by case, which on Windows they
-/// cannot, and on any other platform they must not.
-pub fn check_disjoint(roots: &[(&'static str, &Path)]) -> Result<(), Error> {
+/// Used by layout admission and by exact-source backup planning.
+pub fn check_disjoint(roots: &[(&str, &Path)]) -> Result<(), Error> {
     for (index, (_, path)) in roots.iter().enumerate() {
-        for (_, other) in roots[index + 1..].iter() {
+        for (_, other) in &roots[index + 1..] {
             if overlaps(path, other) {
                 return Err(Error::Overlap);
             }
@@ -498,108 +129,64 @@ pub fn check_disjoint(roots: &[(&'static str, &Path)]) -> Result<(), Error> {
     Ok(())
 }
 
-/// The two user-level layers, in the order the layout names them.
-///
-/// The Windows installer applies the same pair to `$INSTDIR` before a single
-/// file is copied. This function is the single spelling of that pair on the
-/// native side; the NSIS hook has to repeat it, because the two programs share
-/// no code, and a test pins the repeated spelling against these literals.
-pub fn user_layers() -> Result<[(&'static str, PathBuf); 2], Error> {
-    Ok([("layer-one", runtime_root()?), ("layer-two", user_root()?)])
-}
-
-/// The layer-three root this start will actually use, when it can name one.
-///
-/// `None` is the ordinary answer for a development run, a test, and an unpacked
-/// build: none of them has an installer record, so none of them has a directory
-/// beside an installation. It is also the answer for a refused choice — an
-/// installation at a volume root has no sibling, and `main` then runs without a
-/// layer-three root rather than inventing one. The startup assertion reports the
-/// roots it is given and never derives a fourth.
-pub fn layer_three(install: &InstallCheck, workspace: &Path) -> Option<PathBuf> {
-    if matches!(
-        install,
-        InstallCheck::NotInstalled | InstallCheck::Unreadable
-    ) {
-        return None;
+pub fn admit_library_root(candidate: &Path, install: &Path, workspace: &Path) -> Result<(), Error> {
+    if !candidate.is_absolute() || candidate.parent().is_none() {
+        return Err(Error::LibraryRootInvalid);
     }
-    let install_dir = running_install_dir().ok()?;
-    let library = library_root(&install_dir).ok()?;
-    admit_library_root(&library, &install_dir, workspace)
-        .ok()
-        .map(|()| library)
+    if home_dir().is_ok_and(|home| same_directory(candidate, &home))
+        || overlaps(candidate, install)
+        || overlaps(candidate, workspace)
+        || system_directories()
+            .iter()
+            .any(|root| overlaps(candidate, root))
+    {
+        return Err(Error::LibraryRootInvalid);
+    }
+    Ok(())
 }
 
-/// What this start found when it compared the four parties of the layout.
-///
-/// The four are layers one and two, layer three, and the installation directory.
-/// `check_disjoint` is called with all of them at once, so the layout is admitted
-/// only when no two of the six pairs share a directory or contain one another.
-#[derive(Clone, Debug, PartialEq, Eq)]
+fn system_directories() -> Vec<PathBuf> {
+    if cfg!(windows) {
+        [
+            "SystemRoot",
+            "windir",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
+            "ProgramData",
+        ]
+        .into_iter()
+        .filter_map(env_path)
+        .collect()
+    } else {
+        ["/usr", "/bin", "/sbin", "/etc", "/boot", "/var"]
+            .into_iter()
+            .map(PathBuf::from)
+            .collect()
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayoutCheck {
-    /// Every pair answered, and the layout is live.
     Consistent,
-    /// Two of the four parties share a directory or contain one another.
     Overlap,
-    /// One of the user-level roots cannot be resolved on this computer.
-    Unresolved,
 }
 
-/// Whether the layers and the installation directory are pairwise disjoint.
-///
-/// This is the startup half of the layout rule; the installer applies its own
-/// half to `$INSTDIR` before copying anything, and admitting a new layer-three
-/// folder applies a third to the folder a person picked. All three exist because
-/// each one runs when the others cannot: the installer never runs again, and the
-/// admission only ever sees a folder someone chose.
-///
-/// The participants are supplied rather than resolved here, so that the caller
-/// decides what a development run contributes. `library` is `None` when no
-/// installation was recorded, which is the state of every `cargo run`, every test,
-/// and every unpacked build: with three parties the three pairs that remain are
-/// still checked, and a start that would fail because a developer has no
-/// installer record never happens.
-pub fn check_layout(install_dir: &Path, library: Option<&Path>) -> LayoutCheck {
-    let Some(layers) = user_layers().ok() else {
-        return LayoutCheck::Unresolved;
-    };
-    let mut roots: Vec<(&'static str, &Path)> = Vec::with_capacity(4);
-    roots.extend(layers.iter().map(|(name, path)| (*name, path.as_path())));
-    roots.push(("install", install_dir));
-    if let Some(library) = library {
-        roots.push(("layer-three", library));
-    }
-    match check_disjoint(&roots) {
+pub fn check_layout(install: &Path, root: &Path) -> LayoutCheck {
+    match check_disjoint(&[("install", install), ("data", root)]) {
         Ok(()) => LayoutCheck::Consistent,
         Err(_) => LayoutCheck::Overlap,
     }
 }
 
 impl LayoutCheck {
-    /// The message shown when a start is refused, or `None` when it proceeds.
-    ///
-    /// A refusal has to say what to do, because the user cannot see a directory
-    /// layout: the file that explains the arrangement is the one below, and it is
-    /// written before this runs.
-    pub fn message(&self) -> Option<&'static str> {
+    pub fn message(self) -> Option<&'static str> {
         match self {
             Self::Consistent => None,
-            Self::Overlap => Some(
-                "Wenyi's data folders overlap. One of them is inside another, which would let an upgrade or an uninstall remove more than it should. Move the installation or the project folder so the two are separate, then reopen Wenyi. The diagnostic log in the workspace records which folders were compared.",
-            ),
-            Self::Unresolved => Some(
-                "Wenyi could not determine where its user folders are. Check that the user profile is available, then reopen Wenyi. The diagnostic log in the workspace records which folders were compared.",
-            ),
+            Self::Overlap => Some(Error::Overlap.message()),
         }
     }
 }
 
-/// Platform base the workspace and its log fallback derive from.
-///
-/// The chain is kept byte-for-byte as it was before this module existed, so the
-/// paths an installed application uses do not move. The environment variable
-/// still comes first for that reason: an existing installation, and every
-/// workspace a person has already created beside it, is named by it.
 fn data_base() -> Result<PathBuf, Error> {
     #[cfg(windows)]
     {
@@ -609,109 +196,21 @@ fn data_base() -> Result<PathBuf, Error> {
     }
     #[cfg(target_os = "macos")]
     {
-        let home = env_path("HOME").ok_or(Error::Base)?;
-        Ok(home.join("Library/Application Support"))
+        Ok(home_dir()?.join("Library/Application Support"))
     }
     #[cfg(not(any(windows, target_os = "macos")))]
     {
-        match env_path("XDG_DATA_HOME") {
-            Some(path) => Ok(path),
-            None => {
-                let home = env_path("HOME").ok_or(Error::Base)?;
-                Ok(home.join(".local/share"))
-            }
-        }
+        env_path("XDG_DATA_HOME")
+            .map(Ok)
+            .unwrap_or_else(|| Ok(home_dir()?.join(".local/share")))
     }
 }
 
-/// Platform base for the log fallback, matching the previous resolution order.
-fn log_base() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        env_path("LOCALAPPDATA").or_else(local_app_data)
-    }
-    #[cfg(target_os = "macos")]
-    {
-        env_path("HOME").map(|path| path.join("Library/Logs"))
-    }
-    #[cfg(not(any(windows, target_os = "macos")))]
-    {
-        env_path("XDG_STATE_HOME")
-            .or_else(|| env_path("HOME").map(|path| path.join(".local/state")))
-    }
-}
-
-/// The user profile that owns layers one and two.
 fn home_dir() -> Result<PathBuf, Error> {
-    #[cfg(windows)]
-    {
-        env_path("USERPROFILE").ok_or(Error::Base)
-    }
-    #[cfg(not(windows))]
-    {
-        env_path("HOME").ok_or(Error::Base)
-    }
+    env_path(if cfg!(windows) { "USERPROFILE" } else { "HOME" }).ok_or(Error::Base)
 }
 
 fn env_path(name: &str) -> Option<PathBuf> {
-    std::env::var_os(name).map(PathBuf::from)
-}
-
-/// The local application data directory as the shell knows it.
-///
-/// `%LOCALAPPDATA%` is a convenience variable, not the definition: a process
-/// started without the user environment -- a scheduled task, a service, a
-/// shortcut that clears its block, an installer run from an elevated shell --
-/// inherits no value at all. The known folder is the definition, and it answers
-/// in exactly those processes.
-///
-/// The fallback is deliberately second. Reading the variable first keeps every
-/// existing workspace where it is, since a variable a person set on purpose (a
-/// roaming-profile test, a redirection to another drive) would otherwise be
-/// overruled by the shell's answer and the projects would appear to vanish.
-#[cfg(windows)]
-fn local_app_data() -> Option<PathBuf> {
-    use std::ffi::OsString;
-    use std::os::windows::ffi::OsStringExt;
-    use windows_sys::Win32::System::Com::CoTaskMemFree;
-    use windows_sys::Win32::UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath};
-
-    let mut raw: *mut u16 = std::ptr::null_mut();
-    // SAFETY: `raw` is a valid out-pointer for a `PWSTR`. The call either
-    // leaves it null or fills it with an allocation this function owns and
-    // frees below, which is the contract `SHGetKnownFolderPath` documents.
-    let status =
-        unsafe { SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut raw) };
-    if status < 0 || raw.is_null() {
-        if !raw.is_null() {
-            // SAFETY: non-null means the shell allocated the string.
-            unsafe { CoTaskMemFree(raw.cast()) };
-        }
-        return None;
-    }
-    let length = (0..).take_while(|offset| *offset < 32768).find(|offset| {
-        // SAFETY: the allocation is NUL-terminated by contract; the bound above
-        // keeps a non-conforming value from reading without end.
-        unsafe { *raw.add(*offset) == 0 }
-    });
-    let Some(length) = length else {
-        // SAFETY: non-null means the shell allocated the string.
-        unsafe { CoTaskMemFree(raw.cast()) };
-        return None;
-    };
-    // SAFETY: `length` was just measured inside the same allocation.
-    let value = unsafe { std::slice::from_raw_parts(raw, length) };
-    let path = PathBuf::from(OsString::from_wide(value));
-    // SAFETY: non-null means the shell allocated the string, and it is no longer
-    // read here: `path` has copied the contents.
-    unsafe { CoTaskMemFree(raw.cast()) };
-    path.is_absolute().then_some(path)
-}
-
-/// An override is honoured only when it is a real, absolute path. A blank value
-/// means "not set" so that no configuration can silently select the working
-/// directory.
-fn override_path(name: &str) -> Option<PathBuf> {
     let value = std::env::var_os(name)?;
     if value.to_string_lossy().trim().is_empty() {
         return None;
@@ -720,440 +219,119 @@ fn override_path(name: &str) -> Option<PathBuf> {
     path.is_absolute().then_some(path)
 }
 
+#[cfg(windows)]
+fn local_app_data() -> Option<PathBuf> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::System::Com::CoTaskMemFree;
+    use windows_sys::Win32::UI::Shell::{FOLDERID_LocalAppData, SHGetKnownFolderPath};
+
+    let mut raw: *mut u16 = std::ptr::null_mut();
+    // SAFETY: the shell returns a NUL-terminated allocation, freed on every path.
+    let status =
+        unsafe { SHGetKnownFolderPath(&FOLDERID_LocalAppData, 0, std::ptr::null_mut(), &mut raw) };
+    if status < 0 || raw.is_null() {
+        if !raw.is_null() {
+            unsafe { CoTaskMemFree(raw.cast()) };
+        }
+        return None;
+    }
+    let length = (0..32768).find(|offset| unsafe { *raw.add(*offset) == 0 });
+    let result = length.map(|length| {
+        let units = unsafe { std::slice::from_raw_parts(raw, length) };
+        PathBuf::from(OsString::from_wide(units))
+    });
+    unsafe { CoTaskMemFree(raw.cast()) };
+    result.filter(|path| path.is_absolute())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    #[cfg(windows)]
-    fn the_known_folder_answers_where_the_variable_does() {
-        // The fallback only has to be equivalent. If it named a different
-        // directory, a process without the environment would open a second,
-        // empty workspace and every project would look deleted.
-        let known = local_app_data().expect("the shell names a local app data folder");
-        assert!(known.is_absolute());
-        assert!(known.is_dir());
-        if let Some(configured) = env_path("LOCALAPPDATA") {
-            // Compared case-insensitively: Windows path identity does not
-            // depend on the spelling of its components.
-            assert_eq!(
-                known.to_string_lossy().to_lowercase(),
-                configured.to_string_lossy().to_lowercase()
-            );
-        }
+    fn default_root_is_not_the_legacy_workspace_or_installation() {
+        let root = default_workspace().unwrap();
+        assert_eq!(root.file_name().unwrap(), "Desktop");
+        assert!(root.is_absolute());
+        assert_ne!(root.file_name().unwrap(), "Wenyi Desktop");
     }
 
     #[test]
-    fn the_workspace_name_is_spelled_once() {
+    fn every_data_path_follows_one_explicit_root() {
+        let root = Path::new("/chosen/data");
+        assert_eq!(catalog(root), root.join("catalog.sqlite3"));
+        assert_eq!(locks(root), root.join("locks"));
+        assert_eq!(runtime_root(root), root.join("runtime"));
+        assert_eq!(webview(root), root.join("runtime/webview"));
+        assert_eq!(library_root(root), root.join("projects"));
+        assert_eq!(backups(root), root.join("backups"));
+        assert_eq!(log_roots(root), vec![root.join("logs")]);
+    }
+
+    #[test]
+    fn layout_checks_the_actual_explicit_root_not_a_global_profile() {
+        let install = Path::new("/chosen/program");
+        assert_eq!(check_layout(install, install), LayoutCheck::Overlap);
         assert_eq!(
-            Path::new("C:/profile").join(PRODUCT),
-            Path::new("C:/profile/Wenyi Desktop")
+            check_layout(install, &install.join("data")),
+            LayoutCheck::Overlap
         );
-    }
-
-    #[test]
-    fn the_shared_profile_uses_the_platform_data_directory() {
-        let home = home_dir().unwrap();
-        let expected = if cfg!(windows) {
-            home.join("Wenyi")
-        } else if cfg!(target_os = "macos") {
-            home.join("Library/Application Support/Wenyi")
-        } else {
-            override_path("XDG_DATA_HOME")
-                .unwrap_or_else(|| home.join(".local/share"))
-                .join("wenyi")
-        };
-        assert_eq!(user_root().unwrap(), expected);
-    }
-
-    #[test]
-    fn the_shared_profile_cannot_be_chosen_as_a_project_library() {
-        let root = user_root().unwrap();
         assert_eq!(
-            admit_library_root(
-                &root,
-                &root.with_file_name("app"),
-                &root.with_file_name("workspace")
-            ),
-            Err(Error::LibraryRootInvalid)
+            check_layout(install, Path::new("/chosen/data")),
+            LayoutCheck::Consistent
         );
-    }
-
-    #[test]
-    fn only_an_absolute_xdg_data_home_changes_the_unix_shared_root() {
-        let home = Path::new("/profile");
-        let default = user_root_in(home, None);
-        for invalid in [Path::new(""), Path::new("   "), Path::new("relative/data")] {
-            assert_eq!(user_root_in(home, Some(invalid)), default);
-        }
-        let data_home = Path::new("/separate-data");
-        let expected = if cfg!(any(windows, target_os = "macos")) {
-            default
-        } else {
-            data_home.join("wenyi")
-        };
-        assert_eq!(user_root_in(home, Some(data_home)), expected);
-    }
-
-    #[test]
-    fn the_workspace_copy_of_the_logs_comes_first() {
-        let workspace = Path::new("C:/profile/Wenyi Desktop");
-        let roots = log_roots(workspace);
-        assert_eq!(roots[0], workspace.join("diagnostics"));
-        // The fallback depends on the platform base, so it may be absent here.
-        assert!(roots.len() <= 2);
-        let identity = format!(
-            "{:x}",
-            Sha256::digest(workspace.to_string_lossy().as_bytes())
-        );
-        for root in &roots[1..] {
-            assert!(root.to_string_lossy().contains(LOGS));
-            // One directory per workspace identity, never a shared file name.
-            assert_eq!(root.file_name().unwrap().to_str().unwrap(), &identity[..16]);
-        }
-    }
-
-    #[test]
-    fn several_workspaces_do_not_share_one_log_directory() {
-        let first = log_roots(Path::new("C:/profile/Wenyi Desktop"));
-        let second = log_roots(Path::new("D:/work/Wenyi Desktop"));
-        assert_eq!(first[0], Path::new("C:/profile/Wenyi Desktop/diagnostics"));
-        assert_eq!(second[0], Path::new("D:/work/Wenyi Desktop/diagnostics"));
-        assert_ne!(first, second);
-    }
-
-    #[test]
-    fn an_installed_directory_gets_a_sibling_library_root() {
         assert_eq!(
-            library_root(Path::new("D:/Apps/Wenyi")).unwrap(),
-            PathBuf::from("D:/Apps/Wenyi Desktop Data")
+            check_layout(install, Path::new("/chosen/program2")),
+            LayoutCheck::Consistent
         );
     }
 
     #[test]
-    #[cfg(windows)]
-    fn a_volume_root_is_refused_instead_of_invented() {
-        for install in ["D:/", "D:"] {
-            assert_eq!(
-                library_root(Path::new(install)).err(),
-                Some(Error::InstallDirAtVolumeRoot)
-            );
-        }
+    fn lexical_parent_components_cannot_bypass_overlap_checks() {
+        assert!(check_disjoint(&[
+            ("install", Path::new("/chosen/program")),
+            ("data", Path::new("/chosen/data/../program/data")),
+        ])
+        .is_err());
     }
 
     #[test]
-    fn the_install_record_key_matches_the_bundler_configuration() {
-        // The bundler derives the manufacturer from the second component of the
-        // identifier when no publisher is set, and the product name from
-        // productName. A change to either would move the key, and the check would
-        // then compare against a record that does not exist -- reporting nothing,
-        // forever, without a single test failing.
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-        let config: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(root.join("tauri.conf.json")).unwrap())
-                .unwrap();
-        let identifier = config["identifier"].as_str().unwrap();
+    fn nonexistent_descendants_keep_the_existing_parents_identity() {
+        let parent = std::env::temp_dir();
+        let canonical = parent.canonicalize().unwrap();
+        let missing = parent.join(format!(
+            "wenyi-missing-path-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(!missing.exists());
+        assert!(check_disjoint(&[("source", &canonical), ("backup", &missing)]).is_err());
+        assert!(check_disjoint(&[("source", &missing), ("backup", &canonical)]).is_err());
+        assert_eq!(
+            normalized(&missing),
+            normalized(&canonical.join(missing.file_name().unwrap()))
+        );
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn project_locations_cannot_overlap_program_or_data() {
+        let install = std::env::temp_dir().join("wenyi-program-path-test");
+        let root = std::env::temp_dir().join("wenyi-data-path-test");
+        for unsafe_path in [
+            &install,
+            &root,
+            &root.join("runtime"),
+            &root.join("projects"),
+        ] {
+            assert!(admit_library_root(unsafe_path, &install, &root).is_err());
+        }
         assert!(
-            config["publisher"].is_null(),
-            "a publisher would replace the derived manufacturer"
-        );
-        let manufacturer = identifier.split('.').nth(1).unwrap();
-        let product = config["productName"].as_str().unwrap();
-        assert_eq!(
-            INSTALL_KEY,
-            format!("Software\\{manufacturer}\\{product}"),
-            "INSTALL_KEY must name the key installer.nsi writes"
-        );
-    }
-
-    #[test]
-    fn an_installation_with_no_record_is_not_a_moved_installation() {
-        // This is the state of every development run and every unpacked build. It
-        // must be reported as "nothing to compare", never as a fault: a check that
-        // fires on a developer's machine is a check that gets disabled.
-        assert_eq!(
-            check_install(None, Path::new("D:/Apps/Wenyi Desktop")),
-            InstallCheck::NotInstalled
-        );
-        assert!(!check_install(None, Path::new("D:/Apps/Wenyi Desktop")).is_changed());
-    }
-
-    #[test]
-    fn a_record_that_matches_the_running_directory_is_unchanged() {
-        let running = Path::new("D:/Apps/Wenyi Desktop");
-        // Separator and trailing-separator spellings differ on every platform. Case
-        // differs only where the filesystem folds it, and same_directory follows the
-        // platform on purpose, so the lower-case spelling is asserted on Windows only.
-        let mut spellings = vec![
-            "D:/Apps/Wenyi Desktop",
-            "D:\\Apps\\Wenyi Desktop",
-            "D:/Apps/Wenyi Desktop/",
-        ];
-        if cfg!(windows) {
-            spellings.push("d:/apps/wenyi desktop");
-        }
-        for recorded in spellings {
-            assert_eq!(
-                check_install(Some(Path::new(recorded)), running),
-                InstallCheck::Unchanged,
-                "{recorded} names the directory this build runs from"
-            );
-        }
-    }
-
-    #[test]
-    fn a_record_that_names_another_directory_is_reported() {
-        let recorded = Path::new("D:/Apps/Wenyi Desktop");
-        let running = Path::new("E:/Other/Wenyi Desktop");
-        assert_eq!(
-            check_install(Some(recorded), running),
-            InstallCheck::Changed {
-                recorded: recorded.to_path_buf(),
-                running: running.to_path_buf(),
-            }
-        );
-        assert!(check_install(Some(recorded), running).is_changed());
-        // A nested directory is not the same directory: the installer records one
-        // location, and a build running below it is a different installation.
-        assert!(check_install(Some(recorded), &recorded.join("bin")).is_changed());
-    }
-
-    #[test]
-    fn a_record_that_is_not_a_path_is_unreadable() {
-        assert_eq!(
-            check_install(Some(Path::new("")), Path::new("D:/Apps/Wenyi Desktop")),
-            InstallCheck::Unreadable
-        );
-    }
-
-    #[test]
-    fn the_running_install_directory_is_the_one_holding_the_executable() {
-        // current_exe() is the only answer that needs no configuration and no
-        // guess; substituting a default would make every later comparison agree
-        // about the wrong directory.
-        let running = running_install_dir().unwrap();
-        let executable = std::env::current_exe().unwrap();
-        assert_eq!(running, executable.parent().unwrap());
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn a_chosen_library_root_beside_the_installation_is_admitted() {
-        // The default layer-three location: a sibling of the installation, which
-        // no uninstall or upgrade policy can reach. A drive-letter spelling is not
-        // absolute off Windows and admit_library_root refuses relative candidates,
-        // so this case only exists where that spelling resolves.
-        let install = Path::new("D:/Apps/Wenyi Desktop");
-        let library = library_root(install).unwrap();
-        assert_eq!(
-            admit_library_root(&library, install, Path::new("C:/profile/Wenyi Desktop")),
-            Ok(())
-        );
-    }
-
-    #[test]
-    #[cfg(windows)]
-    fn the_installation_and_its_ancestors_are_refused() {
-        // The candidates below are drive-letter spellings. Off Windows those are
-        // relative, so admit_library_root would refuse them for the wrong reason and
-        // the case would pass without exercising the ancestor rule it names.
-        let install = Path::new("D:/Apps/Wenyi Desktop");
-        for candidate in [
-            Path::new("D:/Apps/Wenyi Desktop"),
-            Path::new("D:/Apps/Wenyi Desktop/data"),
-            // An ancestor is the more dangerous case: a recursive removal of the
-            // chosen folder would take the installation with it.
-            Path::new("D:/Apps"),
-            Path::new("D:/"),
-        ] {
-            assert_eq!(
-                admit_library_root(candidate, install, Path::new("C:/profile/Wenyi Desktop")).err(),
-                Some(Error::LibraryRootInvalid),
-                "{candidate:?} must not be admitted"
-            );
-        }
-    }
-
-    #[test]
-    fn the_volume_root_and_relative_spellings_are_refused() {
-        let install = Path::new("D:/Apps/Wenyi Desktop");
-        let workspace = Path::new("C:/profile/Wenyi Desktop");
-        for candidate in [Path::new(""), Path::new("relative/folder"), Path::new(".")] {
-            assert_eq!(
-                admit_library_root(candidate, install, workspace).err(),
-                Some(Error::LibraryRootInvalid),
-                "{candidate:?} is not an absolute location"
-            );
-        }
-    }
-
-    #[test]
-    fn sibling_names_that_merely_share_a_prefix_do_not_overlap() {
-        // D:/Apps and D:/Apps2 share a prefix and neither contains the other.
-        // Comparing whole components is what keeps that from being a silent pass.
-        assert!(!overlaps(Path::new("D:/Apps"), Path::new("D:/Apps2")));
-        assert!(overlaps(Path::new("D:/Apps"), Path::new("D:/Apps/data")));
-        assert!(!overlaps(Path::new("D:/Apps"), Path::new("D:/Apps2/data")));
-    }
-
-    #[test]
-    fn the_four_parties_are_admitted_only_when_pairwise_disjoint() {
-        // The layout of an installation whose layer three is the sibling directory
-        // the default names. This is the ordinary case, and it must pass.
-        let home = Path::new("C:/Users/Reader");
-        let runtime = home.join(".wenyi/desktop");
-        let user = home.join("Wenyi");
-        let install = Path::new("D:/Apps/Wenyi Desktop");
-        for (first, second) in [
-            (runtime.clone(), user.clone()),
-            (runtime.clone(), install.to_path_buf()),
-            (user.clone(), install.to_path_buf()),
-        ] {
-            assert_eq!(
-                check_disjoint(&[("first", &first), ("second", &second)]),
-                Ok(()),
-                "{first:?} and {second:?} are separate"
-            );
-        }
-        // The installation sits beside layer three, not inside it, so the fourth
-        // pair is separate as well.
-        let library = library_root(install).unwrap();
-        assert_eq!(
-            check_disjoint(&[
-                ("layer-one", &runtime),
-                ("layer-two", &user),
-                ("install", install),
-                ("layer-three", &library),
-            ]),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn an_installation_inside_a_layer_is_rejected_whatever_the_spelling() {
-        // "相等的" and "互为祖先" are the same failure for this check, and the
-        // spelling must not decide it: the filesystem treats these as one directory.
-        let install = Path::new("C:/Users/Reader/Wenyi/Install");
-        // Backslash spelling differs on every platform; the lower-case spelling is one
-        // directory only where the filesystem folds case, which is what same_directory
-        // encodes per platform.
-        let mut spellings = vec!["C:/Users/Reader/Wenyi", "C:\\Users\\Reader\\Wenyi"];
-        if cfg!(windows) {
-            spellings.push("c:/users/reader/wenyi");
-        }
-        for layer in spellings {
-            assert_eq!(
-                check_disjoint(&[("layer-two", Path::new(layer)), ("install", install)]).err(),
-                Some(Error::Overlap),
-                "{layer:?} and {install:?} must not be admitted"
-            );
-        }
-        // The installation itself is the equality case on every platform.
-        assert_eq!(
-            check_disjoint(&[("layer-two", install), ("install", install)]).err(),
-            Some(Error::Overlap),
-        );
-    }
-
-    #[test]
-    fn sibling_directories_that_share_a_name_prefix_are_admitted() {
-        // A byte-prefix test would reject "Wenyi Desktop Data" beside "Wenyi
-        // Desktop". Whole components are what make the fourth pair work at all.
-        let install = Path::new("D:/Apps/Wenyi Desktop");
-        let library = Path::new("D:/Apps/Wenyi Desktop Data");
-        assert_eq!(
-            check_disjoint(&[("install", install), ("layer-three", library)]),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn a_development_run_contributes_three_parties_and_still_passes() {
-        // With no installation record there is no layer three. The remaining
-        // pairs are still checked; what must never happen is a start that fails
-        // because a developer has no installer record.
-        let home = env_path(if cfg!(windows) { "USERPROFILE" } else { "HOME" });
-        if home.is_none() {
-            return;
-        }
-        let running = match running_install_dir() {
-            Ok(running) => running,
-            Err(_) => return,
-        };
-        assert_eq!(
-            check_layout(&running, None),
-            LayoutCheck::Consistent,
-            "a run outside any installation must not be refused"
-        );
-        assert!(LayoutCheck::Consistent.message().is_none());
-        // And the same three parties are not where the engine was told to work.
-        assert_eq!(
-            check_disjoint(&[("layer-two", &user_root().unwrap()), ("install", &running)]),
-            Ok(())
-        );
-    }
-
-    #[test]
-    fn a_refusal_always_explains_what_to_do() {
-        // A refusal the user cannot act on is a refusal that gets reported as a
-        // broken application. Both failure kinds carry a message, and the two
-        // messages differ so that the log says which rule was broken.
-        let overlap = LayoutCheck::Overlap.message().unwrap();
-        let unresolved = LayoutCheck::Unresolved.message().unwrap();
-        assert_ne!(overlap, unresolved);
-        assert!(overlap.contains("overlap"));
-        assert!(overlap.contains("reopen Wenyi"));
-        assert!(unresolved.contains("user profile"));
-    }
-
-    #[test]
-    fn the_user_layers_are_the_two_documented_directories() {
-        let Ok(layers) = user_layers() else {
-            return;
-        };
-        assert_eq!(layers[0].0, "layer-one");
-        assert_eq!(layers[1].0, "layer-two");
-        assert_eq!(layers[0].1.file_name().unwrap(), ENTRY);
-        assert_eq!(layers[1].1, user_root().unwrap());
-        let roots: Vec<(&'static str, &Path)> = layers
-            .iter()
-            .map(|(name, path)| (*name, path.as_path()))
-            .collect();
-        assert_eq!(check_disjoint(&roots), Ok(()));
-    }
-
-    #[test]
-    fn an_unrecorded_installation_has_no_layer_three() {
-        // The development door of the assertion. Nothing is derived for a build
-        // that was never installed, so the assertion cannot refuse a start for a
-        // directory nobody chose.
-        for install in [InstallCheck::NotInstalled, InstallCheck::Unreadable] {
-            assert_eq!(
-                layer_three(&install, Path::new("C:/profile/Wenyi Desktop")),
-                None
-            );
-        }
-    }
-
-    #[test]
-    fn overlapping_roots_are_rejected() {
-        for (first, second) in [
-            ("D:/Apps", "D:/Apps"),
-            ("D:/Apps", "D:/Apps/Wenyi"),
-            ("D:/Apps/Wenyi", "D:/Apps"),
-        ] {
-            assert_eq!(
-                check_disjoint(&[("first", Path::new(first)), ("second", Path::new(second))]).err(),
-                Some(Error::Overlap)
-            );
-        }
-        assert_eq!(
-            check_disjoint(&[
-                ("one", Path::new("C:/profile/.wenyi/desktop")),
-                ("two", Path::new("C:/profile/Wenyi")),
-                ("three", Path::new("D:/Apps/Wenyi Desktop Data")),
-            ]),
-            Ok(())
+            admit_library_root(&std::env::temp_dir().join("chosen-books"), &install, &root).is_ok()
         );
     }
 }
