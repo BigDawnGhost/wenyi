@@ -203,6 +203,10 @@ overlap with the data root or legacy Wenyi data folders, linked ancestors,
 unwritable folders and occupied folders not owned by the current installation.
 The application also compares its **actual** executable directory with the
 selected data root on every launch, including unpacked and `--data-dir` launches.
+Application-side directory checks resolve existing parent directories even when
+the final directory does not exist yet. A Windows short-path alias or directory
+link cannot hide an overlap with program/data folders or place a backup inside
+its own source.
 
 Replacing a registered old program removes only that program's recorded files
 through its uninstaller, refreshes shortcuts and registers the new location.

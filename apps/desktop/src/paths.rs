@@ -76,7 +76,15 @@ pub fn running_install_dir() -> Result<PathBuf, Error> {
 }
 
 fn normalized(path: &Path) -> String {
-    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    // A not-yet-created destination still inherits its existing parent's
+    // identity, including Windows short names and directory links.
+    let canonical = path
+        .ancestors()
+        .find_map(|ancestor| {
+            let root = ancestor.canonicalize().ok()?;
+            Some(root.join(path.strip_prefix(ancestor).ok()?))
+        })
+        .unwrap_or_else(|| path.to_path_buf());
     let mut cleaned = PathBuf::new();
     for component in canonical.components() {
         match component {
@@ -286,6 +294,28 @@ mod tests {
             ("data", Path::new("/chosen/data/../program/data")),
         ])
         .is_err());
+    }
+
+    #[test]
+    fn nonexistent_descendants_keep_the_existing_parents_identity() {
+        let parent = std::env::temp_dir();
+        let canonical = parent.canonicalize().unwrap();
+        let missing = parent.join(format!(
+            "wenyi-missing-path-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        assert!(!missing.exists());
+        assert!(check_disjoint(&[("source", &canonical), ("backup", &missing)]).is_err());
+        assert!(check_disjoint(&[("source", &missing), ("backup", &canonical)]).is_err());
+        assert_eq!(
+            normalized(&missing),
+            normalized(&canonical.join(missing.file_name().unwrap()))
+        );
+        assert!(!missing.exists());
     }
 
     #[test]
