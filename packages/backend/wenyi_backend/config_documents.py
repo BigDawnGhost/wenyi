@@ -38,7 +38,7 @@ def config_from_document(document: dict[str, Any]) -> Config:
     pipeline = dict(pipeline)
     genre = pipeline.pop("prompt_genre", DEFAULT_GENRE)
     config = Config.from_dict({**document, "pipeline": pipeline})
-    config.set_experimental_prompt_genre(genre)
+    config.set_prompt_genre(genre)
     return config
 
 

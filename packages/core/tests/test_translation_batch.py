@@ -54,7 +54,7 @@ def test_batch_polish_preserves_filtered_positions_and_fallback(invalid_continua
         return json.dumps({"polished": ["ONE", "123", "TWO"]})
 
     config = Config.from_dict({"llm": {"preset": "fake"}})
-    config.set_experimental_prompt_genre(genre)
+    config.set_prompt_genre(genre)
     client = FakeClient(handler=handler)
     executor = TranslationBatchExecutor(Translator(client, config), Polisher(client, config))
     plan = _plan(["alpha", "123", "beta"])

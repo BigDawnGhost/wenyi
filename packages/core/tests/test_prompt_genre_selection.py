@@ -19,11 +19,11 @@ from wenyi_core.i18n.resources import read_json
 
 def config(genre: str) -> Config:
     result = Config.from_dict({"language": {"source": "ja", "target": "en-GB"}})
-    result.set_experimental_prompt_genre(genre)
+    result.set_prompt_genre(genre)
     return result
 
 
-def test_experimental_genre_is_absent_from_config_documents_and_schemas():
+def test_runtime_genre_is_absent_from_core_config_documents_and_schemas():
     academic = config("academic")
     document = academic.model_dump(mode="json")
     assert "prompt_genre" not in document
@@ -44,6 +44,24 @@ def test_prompt_genre_is_not_a_yaml_configuration_field():
 def test_invalid_runtime_genres_fail_before_model_calls(genre):
     with pytest.raises(ValueError, match="prompt genre"):
         config(genre)
+
+
+@pytest.mark.parametrize("setter", ["set_prompt_genre", "set_experimental_prompt_genre"])
+def test_genre_setters_clear_frozen_policies_and_validate_before_changes(setter):
+    cfg = config("literary")
+    cfg.freeze_language_policies()
+    original = cfg.language_policy()
+    select = getattr(cfg, setter)
+    with pytest.raises(ValueError, match="prompt genre"):
+        select("unknown")
+    assert cfg.prompt_genre == "literary"
+    assert cfg.language_policy() is original
+
+    select("academic")
+    assert cfg.prompt_genre == "academic"
+    for phase in ("analysis", "translation", "review"):
+        assert cfg.language_policy(phase).context.genre == "academic"
+    assert cfg.language_policy().fingerprint != original.fingerprint
 
 
 @pytest.mark.parametrize("phase", ["analysis", "translation", "review"])
