@@ -18,13 +18,13 @@ class CommandContext:
     config_path: str
     skip_api_check: bool
     console: Console
-    experimental_prompt_genre: str = DEFAULT_GENRE
+    prompt_genre: str = DEFAULT_GENRE
 
     def load_config(self) -> Config:
-        """Load this invocation's config and apply its non-persisted CLI experiment."""
+        """Load this invocation's config and apply its non-persisted translation style."""
         try:
             config = Config.load(self.config_path)
-            config.set_experimental_prompt_genre(self.experimental_prompt_genre)
+            config.set_prompt_genre(self.prompt_genre)
             return config
         except (OSError, ValueError, yaml.YAMLError) as error:
             self.console.print(f"[red]Configuration error: {error}[/]")

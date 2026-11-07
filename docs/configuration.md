@@ -291,7 +291,8 @@ partial configuration edits, restoring defaults, restarts and resumes preserve i
 Changing it requires a new project so completed work and derived caches cannot mix
 prompt families. Older projects and snapshots without this field remain literary.
 This is not a global or Core YAML setting: do not add it to `config.yaml`.
-CLI invocations still use the [experimental option](cli.md#experimental-prompt-genres-cli-only).
+CLI uses [`--prompt-genre literary|academic`](cli.md#translation-style) for invocation-local
+selection, also defaulting to literary.
 
 `pipeline.translation_mode` accepts `standard` (default) or `best_of_three`.
 Precision mode requires `pipeline.polish: true`; invalid combinations are rejected,

@@ -24,7 +24,7 @@ def defaults() -> Config:
 @pytest.mark.parametrize("initialized", [False, True])
 def test_saved_academic_project_restores_every_semantic_phase(tmp_path, initialized):
     config = defaults()
-    config.set_experimental_prompt_genre("academic")
+    config.set_prompt_genre("academic")
     document = project_document(config)
     assert document["pipeline"]["prompt_genre"] == "academic"
     project = {
@@ -42,7 +42,7 @@ def test_saved_academic_project_restores_every_semantic_phase(tmp_path, initiali
 
 def test_old_projects_and_application_defaults_remain_literary(tmp_path):
     config = defaults()
-    config.set_experimental_prompt_genre("academic")
+    config.set_prompt_genre("academic")
     restored = effective_config({}, defaults=config, state_dir=str(tmp_path))
     assert restored.language_policy().context.genre == "literary"
     assert "prompt_genre" not in global_document(config)["pipeline"]
@@ -75,7 +75,7 @@ def test_global_yaml_rejects_project_prompt_genre():
 @pytest.mark.parametrize("genre", ["literary", "academic"])
 def test_execution_snapshots_restore_genre_without_mutating_documents(genre):
     config = defaults()
-    config.set_experimental_prompt_genre(genre)
+    config.set_prompt_genre(genre)
     document = runtime_document(config)
     before = deepcopy(document)
     restored = config_from_document(document)
@@ -117,7 +117,7 @@ def test_worker_without_snapshot_uses_saved_project_genre(backend_context):
 
 def test_changing_workflow_strategy_preserves_runtime_genre():
     config = defaults()
-    config.set_experimental_prompt_genre("academic")
+    config.set_prompt_genre("academic")
     restored = strategy_to_config({"steps": {"review": False}}, config)
     assert restored.prompt_genre == "academic"
     assert restored.pipeline.review is False

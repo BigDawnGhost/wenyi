@@ -23,7 +23,7 @@ def create_app(*, console: Console | None = None) -> typer.Typer:
         cls=initializing_group(console),
         add_completion=False,
         no_args_is_help=True,
-        help="Multilingual translation workflows for long-form fiction.",
+        help="Multilingual translation workflows for long-form texts.",
     )
     register_bootstrap(application)
     register_model_commands(application, lambda: current_context().load_config(), console)

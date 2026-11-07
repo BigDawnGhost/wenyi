@@ -215,10 +215,14 @@ class Config(BaseModel):
         """Return the runtime prompt family without adding a Core YAML setting."""
         return self._prompt_genre
 
-    def set_experimental_prompt_genre(self, genre: str) -> None:
+    def set_prompt_genre(self, genre: str) -> None:
         """Select a runtime prompt family before constructing agents; keep Core YAML unchanged."""
         self._prompt_genre = require_genre(genre)
         self._language_plans.clear()
+
+    def set_experimental_prompt_genre(self, genre: str) -> None:
+        """Keep the original experimental API as an alias for existing callers."""
+        self.set_prompt_genre(genre)
 
     def language_policy(
         self,
