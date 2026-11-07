@@ -32,14 +32,15 @@ def test_builtin_policy_diagnostics_need_no_credentials(tmp_path):
     assert config.language_document() == {"source": "ja", "target": "zh-Hant"}
 
 
-def test_experimental_genre_is_cli_only_and_does_not_leak_between_invocations(tmp_path):
+@pytest.mark.parametrize("option", ["--prompt-genre", "--experimental-prompt-genre"])
+def test_prompt_genre_is_invocation_local_and_does_not_change_config(tmp_path, option):
     path = tmp_path / "config.yaml"
     original = "language: {source: en, target: zh}\n"
     path.write_text(original, encoding="utf-8")
     for options, expected in (
-        (["--experimental-prompt-genre", "academic"], "academic"),
+        ([option, "academic"], "academic"),
         ([], "literary"),
-        (["--experimental-prompt-genre", "literary"], "literary"),
+        ([option, "literary"], "literary"),
     ):
         result = CliRunner().invoke(
             app, ["--config", str(path), *options, "language-policy", "--format", "docx"]
@@ -53,16 +54,50 @@ def test_experimental_genre_is_cli_only_and_does_not_leak_between_invocations(tm
         assert path.read_text(encoding="utf-8") == original
 
 
-@pytest.mark.parametrize("genre", ["neutral", "../academic", ""])
-def test_experimental_genre_rejects_unknown_values_before_workflows(tmp_path, genre):
+@pytest.mark.parametrize("option", ["--prompt-genre", "--experimental-prompt-genre"])
+@pytest.mark.parametrize("genre", ["neutral", "Academic", "../academic", ""])
+def test_prompt_genre_rejects_unknown_values_before_workflows(tmp_path, option, genre):
     path = tmp_path / "config.yaml"
     path.write_text("language: {source: en, target: zh}\n", encoding="utf-8")
-    result = CliRunner().invoke(
-        app, ["--config", str(path), "--experimental-prompt-genre", genre, "language-policy"]
-    )
+    result = CliRunner().invoke(app, ["--config", str(path), option, genre, "language-policy"])
     assert result.exit_code == 2
     assert "Invalid value" in result.output
     assert "Traceback" not in result.output
+
+
+def test_help_advertises_translation_style_as_a_supported_option(tmp_path):
+    result = CliRunner().invoke(app, ["--config", str(tmp_path / "config.yaml"), "--help"])
+    assert result.exit_code == 0, result.output
+    assert "long-form texts" in result.output
+    assert "--prompt-genre" in result.output
+    assert "Translation style" in result.output
+    assert "literary" in result.output
+    assert "academic" in result.output
+    assert "--experimental-prompt-genre" not in result.output
+    assert "CLI-only experimental prompt genre" not in result.output
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+@pytest.mark.parametrize("genre", ["literary", "academic"])
+@pytest.mark.parametrize("conflicting", [False, True])
+def test_prompt_genre_and_legacy_option_must_agree(tmp_path, reverse, genre, conflicting):
+    path = tmp_path / "config.yaml"
+    path.write_text("language: {source: en, target: zh}\n", encoding="utf-8")
+    legacy_genre = ("literary" if genre == "academic" else "academic") if conflicting else genre
+    options = [["--prompt-genre", genre], ["--experimental-prompt-genre", legacy_genre]]
+    if reverse:
+        options.reverse()
+    result = CliRunner().invoke(
+        app, ["--config", str(path), *options[0], *options[1], "language-policy"]
+    )
+    if conflicting:
+        assert result.exit_code == 2, result.output
+        assert "Conflicting translation styles" in result.output
+        assert "Traceback" not in result.output
+    else:
+        assert result.exit_code == 0, result.output
+        preview = json.loads(result.output)
+        assert preview["translation"]["context"]["genre"] == genre
 
 
 def test_policy_diagnostics_reject_unavailable_format_before_execution(tmp_path):

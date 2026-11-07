@@ -267,7 +267,7 @@ def test_creation_persists_prompt_genre_independently_of_mode_and_defaults(
     creation_api, mode, genre
 ):
     client, defaults, saved, queued, _ = creation_api
-    defaults.set_experimental_prompt_genre("academic")
+    defaults.set_prompt_genre("academic")
     choices = {"name": "Book", "translation_mode": mode}
     if genre is not None:
         choices["prompt_genre"] = genre

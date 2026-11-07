@@ -149,7 +149,7 @@ def strategy_to_config(
     if not cfg.pipeline.review:
         cfg.pipeline.review_autofix = False
     validated = Config.model_validate(cfg.model_dump())
-    validated.set_experimental_prompt_genre(base.prompt_genre)
+    validated.set_prompt_genre(base.prompt_genre)
     return validated
 
 

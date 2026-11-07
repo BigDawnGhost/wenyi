@@ -59,13 +59,19 @@ The examples below use the installed `wenyi` command. Standalone executables are
 also available for [Windows](#windows), [Linux](#linux), and [macOS](#macos).
 These do not require a separate Python installation.
 
-### Experimental prompt genres (CLI only)
+### Translation style
 
-The root option `--experimental-prompt-genre literary|academic` selects the prompt genre
-for one invocation; the default is literary. Academic prompts emphasize arguments, conceptual
-distinctions, qualifications and citations without imposing an experimental-paper structure.
-This is not a Core YAML setting or an automatic genre detector. Web/Desktop offer a
-separate [creation-time project choice](configuration.md#pipeline), also defaulting to literary.
+The root option `--prompt-genre literary|academic` selects the translation style for one
+invocation; the default is literary. Place it before the subcommand, for example:
+`wenyi --prompt-genre academic translate book.docx`. Academic prompts emphasize arguments,
+conceptual distinctions, qualifications and citations without imposing an experimental-paper
+structure. CLI, Web and Desktop share the same literary and academic prompt families;
+Web/Desktop save the selection as a [creation-time project choice](configuration.md#pipeline).
+The CLI option is not a Core YAML setting or an automatic genre detector.
+
+The former `--experimental-prompt-genre` spelling remains accepted for existing scripts
+but is hidden from help; use `--prompt-genre` in new commands. If both are supplied,
+their values must agree.
 
 The selection covers analysis, summaries, translation, terminology, polishing and review,
 including shared guidance and language profiles. Pass the same option on each `prepare`,
@@ -78,8 +84,8 @@ with separate `paths.state_dir` values, such as `state/compare/literary` and
 `state/compare/academic`. Different output names alone do not isolate caches.
 
 ```bash
-wenyi --experimental-prompt-genre literary --config literary.yaml translate book.docx --out output/book.literary.zh.docx
-wenyi --experimental-prompt-genre academic --config academic.yaml translate book.docx --out output/book.academic.zh.docx
+wenyi --prompt-genre literary --config literary.yaml translate book.docx --out output/book.literary.zh.docx
+wenyi --prompt-genre academic --config academic.yaml translate book.docx --out output/book.academic.zh.docx
 ```
 
 Both commands send source content to the configured provider and incur usage; repeating one

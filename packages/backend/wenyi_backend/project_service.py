@@ -101,7 +101,7 @@ def effective_config(
         resolved = Config.model_validate(
             {**config.model_dump(), "source_lang": project["source_lang"]}
         )
-        resolved.set_experimental_prompt_genre(config.prompt_genre)
+        resolved.set_prompt_genre(config.prompt_genre)
     else:
         resolved = config
     resolved.language_policy("translation")
