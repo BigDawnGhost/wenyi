@@ -11,6 +11,7 @@ import os
 import shutil
 import sqlite3
 import uuid
+from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PureWindowsPath
@@ -1103,30 +1104,31 @@ class LocalBackend:
             if not store.exists():
                 return []
             review = store.load_latest_review_result() or {}
+            issue_counts = Counter(
+                issue.get("chapter")
+                for issue in review.get("issues", [])
+                if isinstance(issue.get("chapter"), int)
+            )
             result = []
-            for entry in store.load_manifest().get("chapters", []):
-                chapter = store.load_chapter(entry["index"])
-                state, current = chapter_review_state(
-                    review, chapter.meta, entry.get("review_status")
-                )
-                segments = [s for s in chapter.text_segments if s.source]
-                result.append(
-                    {
-                        "index": chapter.index,
-                        "title": chapter.title,
-                        "title_translated": entry.get("title_translated"),
-                        "status": entry.get("status") or "pending",
-                        "word_count": len(segments),
-                        "target_word_count": sum(s.target is not None for s in segments),
-                        "review_status": state or "pending",
-                        "review_issue_count": sum(
-                            issue.get("chapter") == chapter.index
-                            for issue in review.get("issues", [])
-                        )
-                        if current
-                        else 0,
-                    }
-                )
+            # Parse the manifest once without retaining the whole book's chapter bodies.
+            with store.read_chapters_snapshot() as chapters:
+                for entry, chapter in chapters:
+                    state, current = chapter_review_state(
+                        review, chapter.meta, entry.get("review_status")
+                    )
+                    segments = [s for s in chapter.text_segments if s.source]
+                    result.append(
+                        {
+                            "index": chapter.index,
+                            "title": chapter.title,
+                            "title_translated": entry.get("title_translated"),
+                            "status": entry.get("status") or "pending",
+                            "word_count": len(segments),
+                            "target_word_count": sum(s.target is not None for s in segments),
+                            "review_status": state or "pending",
+                            "review_issue_count": issue_counts[chapter.index] if current else 0,
+                        }
+                    )
             return result
         finally:
             store.close()
