@@ -695,8 +695,8 @@ def test_deletion_of_an_unknown_project_is_a_refusal_not_a_no_op(backend):
 def test_a_deletion_interrupted_after_the_files_are_gone_can_be_retried(backend):
     # The failure this guards against: the files are removed, and the process
     # dies before the catalog row is. The next start would find a listed project
-    # whose directory is missing, and a startup repair cannot tell that from a
-    # project on a drive that was unplugged.
+    # whose directory is missing, indistinguishable from a project on a drive
+    # that was unplugged unless deletion intent was recorded first.
     pid = new_project()
     directory = backend.project_dir(pid)
     directory.mkdir(parents=True)

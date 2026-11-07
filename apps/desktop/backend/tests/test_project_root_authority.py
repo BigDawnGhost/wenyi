@@ -224,7 +224,7 @@ def test_unrelated_api_errors_are_not_hidden_as_location_failures(tmp_path, monk
     assert error.value.code == "unrelated_error"
 
 
-def test_recovery_reports_all_same_id_copies_instead_of_choosing_a_root(tmp_path):
+def test_startup_does_not_adopt_unregistered_projects_from_saved_library_roots(tmp_path):
     first, _, _ = orphan(tmp_path / "First")
     second = tmp_path / "Second" / "projects" / f"{first.name}-Copy"
     shutil.copytree(first, second)
@@ -292,7 +292,7 @@ def test_import_preserves_marker_identity_after_a_directory_rename(tmp_path):
     assert not renamed.exists()
 
 
-def test_recovery_reports_invalid_markers_and_preserves_healthy_projects(tmp_path):
+def test_startup_leaves_unregistered_projects_untouched_regardless_of_marker_validity(tmp_path):
     workspace = tmp_path / "workspace"
     invalid, _, _ = orphan(workspace)
     healthy, _, _ = orphan(workspace, "b" * 16)
