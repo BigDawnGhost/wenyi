@@ -17,8 +17,8 @@ export default function InterfaceSettingsPage() {
   return (
     <div className="flex min-h-dvh flex-col">
       <PageHeader title={active.label} />
-      {/* The page heading replaces the title column, including in platform-supplied sections. */}
-      <PageContainer className="flex w-full flex-1 flex-col [&_[data-slot='settings.section']]:block [&_[data-slot='settings.section']>h2]:hidden">
+      {/* The page heading replaces section headings, including in platform-supplied sections. */}
+      <PageContainer className="flex w-full flex-1 flex-col [&_[data-slot='settings.section']>h2]:hidden">
         <GlobalConfiguration section={active.id} />
       </PageContainer>
     </div>
