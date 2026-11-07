@@ -120,12 +120,10 @@ test("known workflow labels and language names are localized without changing AP
   await expect(page.getByRole("option", { name: "English (en)", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByLabel("Translation workflow")).toHaveCount(0);
+  await expect(page.getByRole("radio")).toHaveCount(0);
   await expect(
-    page.getByRole("radio", { name: "Standard", exact: true }),
-  ).toHaveValue("standard");
-  await expect(
-    page.getByRole("radio", { name: "Three drafts + synthesis", exact: true }),
-  ).toHaveValue("best_of_three");
+    page.getByRole("switch", { name: "Three drafts + synthesis", exact: true }),
+  ).not.toBeChecked();
   await page.goto("/settings");
   await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
   await page.goto(`/projects/${pid}`);

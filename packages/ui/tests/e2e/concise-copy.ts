@@ -88,9 +88,9 @@ for (const locale of ["en", "zh-CN"] as const) {
       await expect(creation).not.toHaveAttribute("aria-describedby");
       await expect(creation.getByLabel(t("createProject.projectName")))
         .toBeVisible();
-      await expect(creation.getByRole("checkbox", { name: t("createProject.prepareSource") }))
+      await expect(creation.getByRole("switch", { name: t("createProject.prepareSource") }))
         .toBeVisible();
-      // Options carry their own names; there is no explanatory prose under them.
+      // Controls carry their own names; there is no explanatory prose under them.
       await expect(creation.locator("p")).toHaveCount(0);
 
       await page.goto(`/projects/${pid}/proofreading/0`);

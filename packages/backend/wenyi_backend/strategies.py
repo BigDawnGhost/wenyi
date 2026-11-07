@@ -148,7 +148,9 @@ def strategy_to_config(
             cfg.pipeline.polish = True
     if not cfg.pipeline.review:
         cfg.pipeline.review_autofix = False
-    return Config.model_validate(cfg.model_dump())
+    validated = Config.model_validate(cfg.model_dump())
+    validated.set_experimental_prompt_genre(base.prompt_genre)
+    return validated
 
 
 def workflow_steps(config: Config) -> dict[str, bool]:

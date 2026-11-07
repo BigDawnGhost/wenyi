@@ -27,27 +27,6 @@
 
 ---
 
-## 赞助商
-
-感谢 PackyCode 对 Wenyi 的赞助。
-
-<table>
-  <tr>
-    <td align="center" width="200">
-      <a href="https://www.packyapi.ai/register?aff=KIzj">
-        <img src="../images/packycode-logo-transparent.png" alt="PackyCode logo" width="160">
-      </a>
-    </td>
-    <td>
-      <a href="https://www.packyapi.ai/register?aff=KIzj">
-        PackyCode 是一家 API 中转服务商，通过统一入口和密钥接入主流大模型，提供自动容灾切换，以及 Codex 和 Claude Code 专属通道。
-      </a>
-    </td>
-  </tr>
-</table>
-
----
-
 ## 为什么选择文译
 
 文译为**长文本**设计 —— 长篇小说、社科专著、纪实文学……

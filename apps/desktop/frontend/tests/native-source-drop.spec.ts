@@ -1,6 +1,7 @@
 // Desktop bridge contract tests; these do not drive OS/Wayland drag-and-drop.
 import { expect, test, type Page } from "@playwright/test";
 import { fakeApi, pid, project } from "../../../../packages/ui/sandbox/fixtures";
+import { chooseOption } from "../../../../packages/ui/tests/e2e/select-helper";
 import type { NativeDrag } from "../src/nativeDrop";
 
 const origin = "http://127.0.0.1:19481";
@@ -49,7 +50,7 @@ test("native drops default an unspecified project name and upload it", async ({ 
       handle: "final",
       project: {
         name: "原文.第二版", source_lang: "auto", target_lang: "zh",
-        prepare: false, translation_mode: "standard", pdf_backend: null,
+        prepare: false, translation_mode: "standard", prompt_genre: "literary", pdf_backend: null,
       },
     },
   });
@@ -62,6 +63,7 @@ test("native drops default an unspecified project name and upload it", async ({ 
 test("cancel releases the native selection and reopening starts clean", async ({ page }) => {
   await setup(page);
   const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
+  await chooseOption(page.getByLabel("Translation style", { exact: true }), "Academic");
   await nativeEvent(page, { kind: "drop", source: source("cancelled") });
   await expect(dialog.getByText("cancelled.docx", { exact: true })).toBeVisible();
   await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
@@ -75,6 +77,7 @@ test("cancel releases the native selection and reopening starts clean", async ({
   await expect(dialog).toBeVisible();
   await expect(page.getByLabel("Project name", { exact: true })).toBeFocused();
   await expect(page.getByLabel("Project name", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("Translation style", { exact: true })).toHaveText("Literary");
   await expect(dialog.getByText("cancelled.docx", { exact: true })).toHaveCount(0);
   await expect(dialog.getByRole("button", { name: "Create project", exact: true })).toBeDisabled();
 });
@@ -232,16 +235,23 @@ test("Desktop bridge selects without upload, highlights/leaves and preserves sel
 });
 
 for (const mode of ["standard", "best_of_three"] as const) {
-  test(`Desktop bridge uploads ${mode} on Create, refuses pending replacement and opens overview`, async ({ page }) => {
+  test(`Desktop bridge uploads academic ${mode} on Create, refuses pending replacement and opens overview`, async ({ page }) => {
     await setup(page);
-    await page.getByRole("radio", {
-      name: mode === "standard" ? "Standard" : "Three drafts + synthesis",
-      exact: true,
-    }).check();
+    const style = page.getByLabel("Translation style", { exact: true });
+    await chooseOption(style, "Academic");
+    const precisionSwitch = page.getByRole("switch", { name: "Three drafts + synthesis", exact: true });
+    await expect(precisionSwitch).not.toBeChecked();
+    await precisionSwitch.setChecked(mode === "best_of_three");
+    const prepareSwitch = page.getByRole("switch", { name: "Prepare before translating", exact: true });
+    await expect(prepareSwitch).not.toBeChecked();
+    await prepareSwitch.setChecked(mode === "best_of_three");
     const zone = page.getByRole("group", { name: "Source file selection" });
     await nativeEvent(page, { kind: "drop", source: source("original") });
     await page.getByRole("button", { name: "Create project", exact: true }).click();
     await expect(zone).toHaveAttribute("aria-disabled", "true");
+    await expect(style).toBeDisabled();
+    await expect(precisionSwitch).toBeDisabled();
+    await expect(prepareSwitch).toBeDisabled();
     const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
     // The upload cannot be recalled once it is handed to the native bridge, so
     // the dismiss control is relabelled rather than disabled. It stays on
@@ -255,7 +265,7 @@ for (const mode of ["standard", "best_of_three"] as const) {
         handle: "original",
         project: {
           name: "Native book", source_lang: "auto", target_lang: "zh",
-          prepare: false, translation_mode: mode, pdf_backend: null,
+          prepare: mode === "best_of_three", translation_mode: mode, prompt_genre: "academic", pdf_backend: null,
         },
       },
     });

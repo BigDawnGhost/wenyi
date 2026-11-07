@@ -27,27 +27,6 @@ Whole-book understanding · Consistent terminology · Evidence-based review
 
 ---
 
-## Sponsors
-
-Thank you to PackyCode for sponsoring Wenyi.
-
-<table>
-  <tr>
-    <td align="center" width="200">
-      <a href="https://www.packyapi.ai/register?aff=KIzj">
-        <img src="docs/images/packycode-logo-transparent.png" alt="PackyCode logo" width="160">
-      </a>
-    </td>
-    <td>
-      <a href="https://www.packyapi.ai/register?aff=KIzj">
-        PackyCode provides access to leading AI models through one API endpoint and one API key, with automatic failover and dedicated routes for Codex and Claude Code.
-      </a>
-    </td>
-  </tr>
-</table>
-
----
-
 ## Why Wenyi
 
 Wenyi is designed for **long-form texts** — novels, social-science monographs, narrative nonfiction, and more.

@@ -1,5 +1,6 @@
-"""Project creation owns precision choices, independently of application defaults."""
+"""Project creation owns translation choices, independently of application defaults."""
 
+import json
 from contextlib import nullcontext
 from copy import deepcopy
 from dataclasses import replace
@@ -45,6 +46,9 @@ def creation_api(monkeypatch, tmp_path):
     def set_project_config(pid, config, **kwargs):
         saved[pid]["config"] = config
 
+    def set_project_strategy(pid, strategy, **kwargs):
+        saved[pid]["strategy"] = strategy
+
     def set_project_languages(pid, source, target, **kwargs):
         saved[pid].update(source_lang=source, target_lang=target)
 
@@ -62,6 +66,7 @@ def creation_api(monkeypatch, tmp_path):
             create_project=create_project,
             get_project=lambda pid: saved.get(pid),
             set_project_config=set_project_config,
+            set_project_strategy=set_project_strategy,
             set_project_languages=set_project_languages,
             set_project_source=lambda pid, **data: saved[pid].update(data),
         ),
@@ -113,6 +118,9 @@ def test_creation_defaults_to_standard_even_with_legacy_global_precision(creatio
     "choice,filename",
     [
         ('"translation_mode":"unknown"', "book.txt"),
+        ('"prompt_genre":"unknown"', "book.txt"),
+        ('"prompt_genre":null', "book.txt"),
+        ('"prompt_genre":"Academic"', "book.txt"),
         ('"precision_concurrency":1', "book.txt"),
         ('"precision_concurrency":0', "book.txt"),
         ('"precision_concurrency":4', "book.txt"),
@@ -251,3 +259,64 @@ def test_start_body_cannot_select_retired_template(creation_api):
     )
     assert rejected.status_code == 422, rejected.text
     assert (saved[pid], queued) == before
+
+
+@pytest.mark.parametrize("mode", ["standard", "best_of_three"])
+@pytest.mark.parametrize("genre", [None, "literary", "academic"])
+def test_creation_persists_prompt_genre_independently_of_mode_and_defaults(
+    creation_api, mode, genre
+):
+    client, defaults, saved, queued, _ = creation_api
+    defaults.set_experimental_prompt_genre("academic")
+    choices = {"name": "Book", "translation_mode": mode}
+    if genre is not None:
+        choices["prompt_genre"] = genre
+    response = client.post(
+        "/projects",
+        data={"project": json.dumps(choices)},
+        files={"file": ("book.txt", b"A temporary source.")},
+    )
+    assert response.status_code == 201, response.text
+    pid = response.json()["id"]
+    pipeline = saved[pid]["config"]["pipeline"]
+    assert pipeline["prompt_genre"] == (genre or "literary")
+    assert pipeline["translation_mode"] == mode
+    assert queued == [(pid, "parse")]
+    assert defaults.prompt_genre == "academic"
+
+
+@pytest.mark.parametrize("method,suffix", [("post", "/validate"), ("put", "")])
+def test_academic_config_is_readonly_and_survives_edits_defaults_and_strategy(
+    creation_api, method, suffix
+):
+    client, _, saved, _, _ = creation_api
+    created = client.post(
+        "/projects",
+        data={"project": '{"name":"Book","prompt_genre":"academic"}'},
+        files={"file": ("book.txt", b"A temporary source.")},
+    )
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+    root = f"/projects/{pid}/config"
+    loaded = client.get(root)
+    assert loaded.status_code == 200, loaded.text
+    assert loaded.json()["effective"]["pipeline"]["prompt_genre"] == "academic"
+    before = deepcopy(saved[pid])
+    rejected = getattr(client, method)(
+        root + suffix, json={"yaml": "pipeline: {prompt_genre: literary}"}
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert "new project" in rejected.text
+    assert saved[pid] == before
+    for yaml in (loaded.json()["yaml"], "pipeline: {review: false}"):
+        accepted = getattr(client, method)(root + suffix, json={"yaml": yaml})
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["effective"]["pipeline"]["prompt_genre"] == "academic"
+    restored = client.get(root + "/defaults")
+    assert restored.status_code == 200, restored.text
+    assert restored.json()["effective"]["pipeline"]["prompt_genre"] == "academic"
+    started = client.post(
+        f"/projects/{pid}/translate", json={"strategy": {"steps": {"review": False}}}
+    )
+    assert started.status_code == 200, started.text
+    assert saved[pid]["config"]["pipeline"]["prompt_genre"] == "academic"
