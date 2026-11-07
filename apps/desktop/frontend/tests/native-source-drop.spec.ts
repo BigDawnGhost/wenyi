@@ -5,7 +5,7 @@ import type { NativeDrag } from "../src/nativeDrop";
 
 const origin = "http://127.0.0.1:19481";
 
-async function setup(page: Page) {
+async function setup(page: Page, name = "Native book") {
   await page.addInitScript(() => {
     window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
     const calls: { command: string; args: Record<string, unknown> }[] = [];
@@ -24,9 +24,40 @@ async function setup(page: Page) {
   });
   await fakeApi(page, {}, origin);
   await page.goto("/projects/new");
-  await page.getByLabel("Project name", { exact: true }).fill("Native book");
+  await page.getByLabel("Project name", { exact: true }).fill(name);
   await expect(page.getByRole("button", { name: "Browse files" })).toBeEnabled();
 }
+
+test("native drops default an unspecified project name and upload it", async ({ page }) => {
+  await setup(page, "");
+  const name = page.getByLabel("Project name", { exact: true });
+  const create = page.getByRole("button", { name: "Create project", exact: true });
+  await expect(create).toBeDisabled();
+  await nativeEvent(page, { kind: "drop", source: source("first", "原文.第二版.DOCX") });
+  await expect(name).toHaveValue("原文.第二版");
+  await expect(create).toBeEnabled();
+  await name.fill("My project");
+  await nativeEvent(page, { kind: "drop", source: source("replacement") });
+  await expect(name).toHaveValue("My project");
+  await name.fill("   ");
+  await nativeEvent(page, { kind: "drop", source: source("final", "原文.第二版.DOCX") });
+  await expect(name).toHaveValue("原文.第二版");
+  await create.click();
+  await expect.poll(() => calls(page)).toContainEqual({
+    command: "native_drop_upload",
+    args: {
+      handle: "final",
+      project: {
+        name: "原文.第二版", source_lang: "auto", target_lang: "zh",
+        prepare: false, translation_mode: "standard", pdf_backend: null,
+      },
+    },
+  });
+  await page.evaluate(project => (window as unknown as {
+    completeNativeUpload: (value: unknown) => void;
+  }).completeNativeUpload(project), { ...project, name: "原文.第二版", status: "parsing" });
+  await expect(page).toHaveURL(`/projects/${pid}`);
+});
 
 test("cancel releases the native selection and reopening starts clean", async ({ page }) => {
   await setup(page);

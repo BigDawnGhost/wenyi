@@ -117,12 +117,64 @@ for (const chinese of [false, true]) {
   });
 }
 
+for (const selection of ["drop", "browse"] as const) {
+  for (const [filename, expectedName] of [
+    ["bản thảo.第二版.DOCX", "bản thảo.第二版"],
+    [".docx", ".docx"],
+  ]) {
+    test(`${selection} defaults an unspecified project name from ${filename}`, async ({ page }) => {
+      await fakeApi(page);
+      let uploadedProject: Record<string, unknown> | undefined;
+      await page.route("**/api/projects", async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        const form = await new Response(
+          new Uint8Array(route.request().postDataBuffer()!),
+          { headers: { "content-type": route.request().headers()["content-type"] } },
+        ).formData();
+        uploadedProject = JSON.parse(String(form.get("project")));
+        await route.fulfill({ json: { ...project, name: uploadedProject!.name, status: "parsing" } });
+      });
+      await page.goto("/projects/new");
+      const name = page.getByLabel("Project name", { exact: true });
+      const create = page.getByRole("button", { name: "Create project", exact: true });
+      const select = async (filename: string) => {
+        if (selection === "drop") {
+          const dataTransfer = await fileTransfer(page, [{ name: filename }]);
+          await page.getByRole("group", { name: "Source file selection" })
+            .dispatchEvent("drop", { dataTransfer });
+          await dataTransfer.dispose();
+        } else {
+          await page.getByLabel("Upload source", { exact: true }).setInputFiles({
+            name: filename,
+            mimeType: "application/octet-stream",
+            buffer: Buffer.from("source fixture"),
+          });
+        }
+      };
+      await expect(create).toBeDisabled();
+      if (selection === "browse") await name.fill("   ");
+      await select(filename);
+      await expect(name).toHaveValue(expectedName);
+      await expect(create).toBeEnabled();
+      await name.fill("  My project  ");
+      await select("replacement.docx");
+      await expect(name).toHaveValue("  My project  ");
+      await name.fill("   ");
+      await select(filename);
+      await expect(name).toHaveValue(expectedName);
+      await create.click();
+      await expect(page).toHaveURL(`/projects/${pid}`);
+      expect(uploadedProject).toEqual(expect.objectContaining({ name: expectedName }));
+    });
+  }
+}
+
 test("drops validate files and reject multiple files without replacing the selection", async ({
   page,
 }) => {
   await fakeApi(page);
   await page.goto("/projects/new");
-  await page.getByLabel("Project name", { exact: true }).fill("Dropped book");
+  const name = page.getByLabel("Project name", { exact: true });
   const zone = page.getByRole("group", { name: "Source file selection" });
   const create = page.getByRole("button", {
     name: "Create project",
@@ -137,13 +189,19 @@ test("drops validate files and reject multiple files without replacing the selec
   await expect(
     page.getByText("The source file is empty. Choose a file with content."),
   ).toBeVisible();
+  await expect(name).toHaveValue("");
   await expect(create).toBeDisabled();
   await drop([{ name: "archive.zip" }]);
   await expect(
     page.getByText("This file format is not supported."),
   ).toBeVisible();
+  await expect(name).toHaveValue("");
+  await expect(create).toBeDisabled();
+  await drop([{ name: "one.docx" }, { name: "two.docx" }]);
+  await expect(name).toHaveValue("");
   await expect(create).toBeDisabled();
   await drop([{ name: "book.PDF" }]);
+  await expect(name).toHaveValue("book");
   await expect(page.getByLabel("PDF parser", { exact: true })).toBeVisible();
   await expect(create).toBeEnabled();
   await drop([{ name: "one.docx" }, { name: "two.docx" }]);
@@ -151,6 +209,7 @@ test("drops validate files and reject multiple files without replacing the selec
     "Choose one source file at a time.",
   );
   await expect(zone.getByText("book.PDF", { exact: true })).toBeVisible();
+  await expect(name).toHaveValue("book");
   const text = await page.evaluateHandle(() => {
     const data = new DataTransfer();
     data.setData("text/plain", "not a source file");
