@@ -6,6 +6,7 @@ import multiprocessing
 import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from contextlib import nullcontext
 from pathlib import Path
 from threading import Event
 
@@ -941,3 +942,114 @@ def test_export_snapshot_reads_the_manifest_once_for_many_chapters(store, docume
     assert [entry["index"] for entry in snapshot.load_manifest()["chapters"]] == list(range(20))
     assert snapshot.load_chapter(5).meta["title_translated"] == "Fifth"
     assert "title_translated" not in snapshot.load_chapter(6).meta
+
+
+def test_chapter_snapshot_is_lazy_and_preserves_manifest_order_and_titles(
+    store, document, monkeypatch
+):
+    template = document.chapters[0]
+    template.meta["title_translated"] = "Old title"
+    document.chapters = [
+        template.model_copy(update={"index": index}, deep=True) for index in (8, 3, 5)
+    ]
+    manifest = store.init_from_document(document)
+    manifest["chapters"][0]["title_translated"] = "New title"
+    manifest["chapters"][1]["title_translated"] = None
+    store.save_manifest(manifest)
+    reads, loaded = [], []
+    read_artifact, load_chapter = store.read_artifact, store._load_chapter
+
+    def read(key):
+        reads.append(key)
+        return read_artifact(key)
+
+    def load(ci, entry):
+        loaded.append(ci)
+        return load_chapter(ci, entry)
+
+    monkeypatch.setattr(store, "read_artifact", read)
+    monkeypatch.setattr(store, "_load_chapter", load)
+    with store.read_chapters_snapshot() as chapters:
+        assert reads == ["manifest.json"]
+        assert loaded == []
+        entry, chapter = next(chapters)
+        assert entry == manifest["chapters"][0]
+        assert chapter.index == 8
+        assert chapter.meta["title_translated"] == "New title"
+        assert loaded == [8]
+        remaining = list(chapters)
+        assert [entry["index"] for entry, _ in remaining] == [3, 5]
+        assert [chapter.index for _, chapter in remaining] == [3, 5]
+        assert "title_translated" not in remaining[0][1].meta
+        assert remaining[1][1].meta["title_translated"] == "Old title"
+    assert reads.count("manifest.json") == 1
+    assert loaded == [8, 3, 5]
+
+
+def test_chapter_snapshot_is_consistent_during_concurrent_publication(store, document):
+    document.chapters.append(document.chapters[0].model_copy(update={"index": 4}, deep=True))
+    manifest = store.init_from_document(document)
+    manifest["chapters"][1]["title_translated"] = "Before"
+    store.save_manifest(manifest)
+
+    def publish():
+        try:
+            with store.state_lock():
+                chapter = store.load_chapter(4)
+                chapter.segments[0].target = "After"
+                store.save_chapter_with_status(chapter, "done")
+                updated = store.load_manifest()
+                updated["chapters"][1]["title_translated"] = "After"
+                store.save_manifest(updated)
+        finally:
+            store.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with store.read_chapters_snapshot() as chapters:
+            assert next(chapters)[1].index == 3
+            pool.submit(publish).result(timeout=5)
+            entry, chapter = next(chapters)
+            assert entry["index"] == chapter.index == 4
+            assert entry["status"] == "pending"
+            assert entry["title_translated"] == chapter.meta["title_translated"] == "Before"
+            assert chapter.segments[0].target is None
+    with store.read_chapters_snapshot() as chapters:
+        next(chapters)
+        entry, chapter = next(chapters)
+        assert entry["status"] == "done"
+        assert entry["title_translated"] == chapter.meta["title_translated"] == "After"
+        assert chapter.segments[0].target == "After"
+
+
+@pytest.mark.parametrize("stop_with_error", [False, True])
+def test_chapter_snapshot_closes_after_partial_iteration(store, document, stop_with_error):
+    document.chapters.append(document.chapters[0].model_copy(update={"index": 4}, deep=True))
+    store.init_from_document(document)
+    outcome = (
+        pytest.raises(RuntimeError, match="reader stopped") if stop_with_error else nullcontext()
+    )
+    with outcome:
+        with store.read_chapters_snapshot() as chapters:
+            assert next(chapters)[1].index == 3
+            if stop_with_error:
+                raise RuntimeError("reader stopped")
+    with pytest.raises(StopIteration):
+        next(chapters)
+    assert store._readers == 0
+    store.close()
+    assert store.exists()
+
+
+def test_chapter_snapshot_releases_reader_after_load_error(store, document):
+    manifest = store.init_from_document(document)
+    manifest["chapters"].append({"index": 4})
+    store.save_manifest(manifest)
+    with pytest.raises(FileNotFoundError, match="Chapter not found: 4"):
+        with store.read_chapters_snapshot() as chapters:
+            assert next(chapters)[1].index == 3
+            next(chapters)
+    with pytest.raises(StopIteration):
+        next(chapters)
+    assert store._readers == 0
+    store.close()
+    assert store.exists()

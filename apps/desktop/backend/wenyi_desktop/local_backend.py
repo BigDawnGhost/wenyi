@@ -1109,27 +1109,26 @@ class LocalBackend:
                 for issue in review.get("issues", [])
                 if isinstance(issue.get("chapter"), int)
             )
-            # One manifest read for the whole book: per-chapter loads re-parse it each
-            # time and time out the UI on books with ~1,500 chapters.
-            manifest, chapters = store.load_manifest_with_chapters()
             result = []
-            for entry, chapter in zip(manifest.get("chapters", []), chapters):
-                state, current = chapter_review_state(
-                    review, chapter.meta, entry.get("review_status")
-                )
-                segments = [s for s in chapter.text_segments if s.source]
-                result.append(
-                    {
-                        "index": chapter.index,
-                        "title": chapter.title,
-                        "title_translated": entry.get("title_translated"),
-                        "status": entry.get("status") or "pending",
-                        "word_count": len(segments),
-                        "target_word_count": sum(s.target is not None for s in segments),
-                        "review_status": state or "pending",
-                        "review_issue_count": issue_counts[chapter.index] if current else 0,
-                    }
-                )
+            # Parse the manifest once without retaining the whole book's chapter bodies.
+            with store.read_chapters_snapshot() as chapters:
+                for entry, chapter in chapters:
+                    state, current = chapter_review_state(
+                        review, chapter.meta, entry.get("review_status")
+                    )
+                    segments = [s for s in chapter.text_segments if s.source]
+                    result.append(
+                        {
+                            "index": chapter.index,
+                            "title": chapter.title,
+                            "title_translated": entry.get("title_translated"),
+                            "status": entry.get("status") or "pending",
+                            "word_count": len(segments),
+                            "target_word_count": sum(s.target is not None for s in segments),
+                            "review_status": state or "pending",
+                            "review_issue_count": issue_counts[chapter.index] if current else 0,
+                        }
+                    )
             return result
         finally:
             store.close()

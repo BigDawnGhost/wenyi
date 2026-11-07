@@ -801,18 +801,24 @@ class SqliteStorage:
             )
             return self._load_chapter(ci, entry)
 
-    def load_manifest_with_chapters(self) -> tuple[dict, list[Chapter]]:
-        """Read the manifest and every chapter it lists from one consistent snapshot.
+    @contextmanager
+    def read_chapters_snapshot(self) -> Iterator[Iterator[tuple[dict, Chapter]]]:
+        """Yield manifest entries and chapter bodies lazily from one read snapshot.
 
-        The manifest is parsed once. Calling `load_chapter` per entry instead re-parses
-        it for every chapter, which grows with the square of the chapter count.
+        Parse the manifest once, preserving its chapter order and translated titles.
+        Close the iterator before releasing the snapshot, including on early exits,
+        so it cannot read chapters outside this context.
         """
         with self._read_lock():
             manifest = self.load_manifest()
-            chapters = [
-                self._load_chapter(entry["index"], entry) for entry in manifest.get("chapters", [])
-            ]
-        return manifest, chapters
+            chapters = (
+                (entry, self._load_chapter(entry["index"], entry))
+                for entry in manifest.get("chapters", [])
+            )
+            try:
+                yield chapters
+            finally:
+                chapters.close()
 
     def _load_chapter(self, ci: int, entry: dict) -> Chapter:
         """Load one chapter body, applying its already-read manifest entry's title."""

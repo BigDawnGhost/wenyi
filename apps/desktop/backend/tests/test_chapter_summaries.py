@@ -1,5 +1,7 @@
 """Desktop chapter summaries stay linear for very long books."""
 
+from weakref import WeakValueDictionary
+
 import pytest
 from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.storage.sqlite import SqliteStorage
@@ -87,3 +89,23 @@ def test_summaries_read_the_manifest_once(desktop_context, tmp_path, monkeypatch
     # never one per chapter.
     assert reads.count("manifest.json") <= 2
     assert backend.total_word_count(pid) == 90
+
+
+def test_summaries_release_chapters_as_they_are_read(desktop_context, tmp_path, monkeypatch):
+    backend = desktop_context.repository
+    pid, store = _project(backend, tmp_path, 30)
+    store.close()
+    live_chapters = WeakValueDictionary()
+    load_chapter = SqliteStorage._load_chapter
+
+    def track(storage, ci, entry):
+        chapter = load_chapter(storage, ci, entry)
+        live_chapters[ci] = chapter
+        # Loading the next chapter may overlap with the previous loop iteration,
+        # but the summary must not retain the whole book's bodies and templates.
+        assert len(live_chapters) <= 2
+        return chapter
+
+    monkeypatch.setattr(SqliteStorage, "_load_chapter", track)
+    assert backend.chapter_summaries(pid) == _expected(30)
+    assert not live_chapters
