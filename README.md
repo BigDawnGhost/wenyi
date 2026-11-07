@@ -35,7 +35,7 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 - **Consistent terminology** — names, terms, and recurring expressions are extracted during translation; conflicting translations are surfaced for resolution and feed back into subsequent batches.
 - **Translation and review** — optional polishing and evidence-driven whole-book review complement paragraph editing with revision history.
 - **Resumable progress** — completed batches and chapters are saved; reopen the project and continue from its checkpoints.
-- **Flexible models** — use DeepSeek, OpenAI, OpenRouter, OrcaRouter, Google Gemini, Ollama, vLLM, or other OpenAI-compatible services. Choose models per operation and share request limits through [model routing](docs/configuration.md#models-and-operation-routing).
+- **Flexible models** — use DeepSeek, OpenAI, OpenRouter, OrcaRouter, Google Gemini, Ollama, vLLM, or other OpenAI-compatible services. Choose models per operation and share request limits through [model routing](docs/reference/configuration.md).
 
 ---
 
@@ -46,7 +46,7 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 | EPUB, PDF, DOCX, FB2, TXT, Markdown, HTML | EPUB, PDF (BabelDOC projects), DOCX, TXT, HTML, Markdown |
 
 - **EPUB** — translated text is written back into the original XHTML templates, preserving styles, images, table of contents, and anchors where possible. Vertical layout is converted to horizontal for Chinese reading.
-- **PDF** — MinerU is the default input backend; the initial conversion requires its API key, and the resulting HTML is cached. For PDFs with a text layer, the optional BabelDOC bridge can preserve layout through translation and PDF export. **PDF output is available only for saved BabelDOC projects**; MinerU projects export to the other formats above. See [PDF setup](docs/cli.md#pdf-support).
+- **PDF** — MinerU is the default input backend; the initial conversion requires its API key, and the resulting HTML is cached. For PDFs with a text layer, the optional BabelDOC bridge can preserve layout through translation and PDF export. **PDF output is available only for saved BabelDOC projects**; MinerU projects export to the other formats above. See [PDF support](docs/reference/formats.md#pdf).
 - **DOCX** — headings, simple tables, lists, and common character/paragraph styles are preserved where possible; translated Chinese uses Song (宋体).
 - **Bilingual editions** — export source-and-translation editions where supported; EPUB and HTML offer subdued source text with dark-mode support.
 
@@ -60,7 +60,7 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 2. Open **Settings → Models & connections**, choose a provider, enter your API key if required, and save.
 3. Create a project, import a book, and start translating. Proofread in the app, then choose an export format and save destination.
 
-The installer includes the translation engine and Python runtime. Projects stay in a local workspace; translation uses your configured model service. See the [Desktop guide](docs/desktop.md#quick-start) for platform requirements and setup.
+The installer includes the translation engine and Python runtime. Projects stay in a local workspace; translation uses your configured model service. See the [Desktop guide](docs/guide/desktop.md) for platform requirements and setup.
 
 ### CLI (PyPI)
 
@@ -78,11 +78,11 @@ export DEEPSEEK_API_KEY="YOUR_DEEPSEEK_API_KEY"
 wenyi translate book.epub
 ```
 
-For Windows commands, other providers, upgrades, and resume/export options, see the [CLI guide](docs/cli.md).
+For Windows commands, other providers, upgrades, and resume/export options, see the [CLI guide](docs/guide/cli.md).
 
-### Web and development
+### Web
 
-For a self-hosted browser workspace, see [Web deployment](docs/web.md). To run or modify the source, see [Contributing](CONTRIBUTING.md#run-the-cli-from-source).
+For a self-hosted browser workspace, see [Web deployment](docs/guide/web.md).
 
 ---
 
@@ -110,15 +110,11 @@ Desktop and Web share the proofreading workspace: live progress, paragraph editi
 
 ## Documentation
 
-| Guide | Contents |
-|---|---|
-| [Desktop](docs/desktop.md) | Downloads, model setup, proofreading, exports, and local data |
-| [CLI](docs/cli.md) | PyPI installation, commands, resume, and export |
-| [Web deployment](docs/web.md) | Self-hosted browser workspace with independent project data |
-| [Configuration](docs/configuration.md) | Providers, model routing, pipeline options, and paths |
-| [Translation pipeline](docs/pipeline.md) | Whole-book analysis, terminology, context, polishing, and review |
-| [Architecture](docs/architecture.md) | Module responsibilities, shared services, and platform boundaries |
-| [Contributing](CONTRIBUTING.md) | Source setup, development, testing, and contributions |
+**Documentation site:** [bigdawnghost.github.io/wenyi](https://bigdawnghost.github.io/wenyi/)
+
+The site groups user guides, reference material, and developer documentation in its
+sidebar. Switch between English and Simplified Chinese using the site's language menu.
+Contribution and review requirements remain in [Contributing](CONTRIBUTING.md).
 
 ---
 
@@ -150,7 +146,7 @@ Wenyi is a personal project created to help bring books and long-form writing ac
 Wenyi is licensed under the [GNU General Public License v3.0 (GPLv3)](LICENSE).
 
 The optional BabelDOC bridge is a separately licensed AGPL service, accessed over
-HTTP in a separate process. See [PDF setup](docs/cli.md#pdf-support).
+HTTP in a separate process. See [PDF support](docs/reference/formats.md#pdf).
 
 ---
 

@@ -35,7 +35,7 @@
 - **术语一致** — 翻译中提取人名、术语和固定表达，发现译法冲突后提示裁决，并将结果用于后续批次。
 - **翻译与审校** — 可选润色和取证式全书审校，结合带版本记录的段落编辑完成校阅。
 - **断点续跑** — 自动保存已完成批次和章节进度，重新打开项目即可从检查点继续。
-- **灵活选模型** — 支持 DeepSeek、OpenAI、OpenRouter、OrcaRouter、Google Gemini、Ollama、vLLM 及其他 OpenAI 兼容服务，可通过[模型路由](configuration.md#模型与操作路由)按操作选择模型、共享请求限额。
+- **灵活选模型** — 支持 DeepSeek、OpenAI、OpenRouter、OrcaRouter、Google Gemini、Ollama、vLLM 及其他 OpenAI 兼容服务，可通过[模型路由](reference/configuration.md)按操作选择模型、共享请求限额。
 
 ---
 
@@ -46,7 +46,7 @@
 | EPUB、PDF、DOCX、FB2、TXT、Markdown、HTML | EPUB、PDF（BabelDOC 项目）、DOCX、TXT、HTML、Markdown |
 
 - **EPUB** — 将译文回填到原书 XHTML 模板，尽量保留样式、图片、目录和锚点；竖排转为横排以适配中文阅读。
-- **PDF** — 默认使用 MinerU 解析，首次转换需要其 API Key，生成的 HTML 会缓存复用。带文本层的 PDF 可选择 BabelDOC bridge，在翻译与 PDF 导出时尽量保留版式。**PDF 导出仅适用于已保存的 BabelDOC 项目**；MinerU 项目可导出为上表中的其他格式。详见 [PDF 设置](cli.md#pdf-支持)。
+- **PDF** — 默认使用 MinerU 解析，首次转换需要其 API Key，生成的 HTML 会缓存复用。带文本层的 PDF 可选择 BabelDOC bridge，在翻译与 PDF 导出时尽量保留版式。**PDF 导出仅适用于已保存的 BabelDOC 项目**；MinerU 项目可导出为上表中的其他格式。详见 [PDF 支持](reference/formats.md#pdf)。
 - **DOCX** — 尽量保留标题、简易表格、列表和常见字符／段落样式；已译中文使用宋体。
 - **双语对照** — 在支持的格式中导出原文与译文对照版；EPUB、HTML 支持原文淡化显示和深色阅读。
 
@@ -60,7 +60,7 @@
 2. 打开**设置 → 模型与接口**，选择提供商，按需填写 API Key 并保存。
 3. 创建项目、导入书籍并开始翻译；在应用内校阅后，选择导出格式和保存位置。
 
-安装包内置翻译引擎和 Python 运行环境。项目保存在本地工作区，翻译使用你配置的模型服务。平台要求和设置步骤见 [Desktop 使用说明](desktop.md#快速开始)。
+安装包内置翻译引擎和 Python 运行环境。项目保存在本地工作区，翻译使用你配置的模型服务。平台要求和设置步骤见 [Desktop 使用指南](guide/desktop.md)。
 
 ### CLI（PyPI）
 
@@ -78,11 +78,11 @@ export DEEPSEEK_API_KEY="YOUR_DEEPSEEK_API_KEY"
 wenyi translate book.epub
 ```
 
-Windows 命令、其他提供商、升级及续跑／导出选项见 [CLI 使用指南](cli.md)。
+Windows 命令、其他提供商、升级及续跑／导出选项见 [CLI 使用指南](guide/cli.md)。
 
-### Web 与开发
+### Web
 
-需要自部署浏览器工作台时，参见 [Web 部署](web.md)。从源码运行或参与开发，参见[贡献指南](CONTRIBUTING.md#从源码运行-cli)。
+需要自部署浏览器工作台时，参见 [Web 部署](guide/web.md)。
 
 ---
 
@@ -110,15 +110,10 @@ Desktop 与 Web 共用校阅工作台，可查看实时进度、编辑段落并�
 
 ## 文档
 
-| 文档 | 内容 |
-|---|---|
-| [Desktop](desktop.md) | 下载、模型设置、校阅、导出与本地数据 |
-| [CLI](cli.md) | PyPI 安装、命令、续跑与导出 |
-| [Web 部署](web.md) | 自部署浏览器工作台与独立项目数据 |
-| [配置说明](configuration.md) | 模型提供商、模型路由、流水线选项与路径 |
-| [翻译流程](pipeline.md) | 全书理解、术语、上下文、润色与审校 |
-| [模块职责](architecture.md) | 模块归属、共享服务与平台边界 |
-| [贡献指南](CONTRIBUTING.md) | 源码运行、开发、测试与贡献 |
+**文档站**：[bigdawnghost.github.io/wenyi/zh](https://bigdawnghost.github.io/wenyi/zh/)
+
+站点侧栏按用户指南、参考资料和开发维护分类，中英文通过站点语言菜单切换。
+贡献与审查要求见[贡献指南](CONTRIBUTING.md)。
 
 ---
 
@@ -150,7 +145,7 @@ Desktop 与 Web 共用校阅工作台，可查看实时进度、编辑段落并�
 文译采用 [GNU 通用公共许可证 v3.0（GPLv3）](../../LICENSE)。
 
 可选的 BabelDOC bridge 是独立采用 AGPL 许可的服务，在独立进程中通过 HTTP 调用。
-详见 [PDF 设置](cli.md#pdf-支持)。
+详见 [PDF 支持](reference/formats.md#pdf)。
 
 ---
 

@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[3]
         ("apps/desktop/backend/wenyi_desktop/main.py", True, True),
         ("apps/web/src/main.tsx", False, True),
         ("pnpm-lock.yaml", False, True),
-        ("docs/web.md", False, False),
+        ("docs/guide/web.md", False, False),
     ],
 )
 def test_contract_or_browser_signal_always_builds_before_e2e(path, contract_changed, expected):
@@ -67,6 +67,62 @@ def test_both_python_versions_run_the_full_workspace(name):
     # The interpreter matrix must not silently narrow the testpaths from pyproject.toml.
     assert step["run"].strip().startswith("uv run --no-sync pytest ")
     assert "packages/core/tests" not in step["run"]
+
+
+@pytest.mark.parametrize(
+    ("event", "ref", "expected"),
+    [
+        ("push", "refs/heads/main", True),
+        ("workflow_dispatch", "refs/heads/main", True),
+        ("pull_request", "refs/pull/42/merge", False),
+        ("workflow_dispatch", "refs/heads/docs/local-preview", False),
+        ("push", "refs/heads/docs/local-preview", False),
+    ],
+)
+def test_documentation_deploys_only_from_main(event, ref, expected):
+    workflow = yaml.safe_load((ROOT / ".github/workflows/docs.yml").read_text())
+    jobs = workflow["jobs"]
+    upload = next(
+        step
+        for step in jobs["build"]["steps"]
+        if step.get("uses", "").startswith("actions/upload-pages-artifact@")
+    )
+    assert upload["if"] == jobs["deploy"]["if"]
+    expression = jobs["deploy"]["if"].replace("&&", "and")
+    assert (
+        eval(
+            expression,
+            {"__builtins__": {}},
+            {"github": SimpleNamespace(event_name=event, ref=ref)},
+        )
+        is expected
+    )
+    assert jobs["deploy"]["needs"] == "build"
+
+
+def test_documentation_build_is_read_only_and_uploads_only_the_static_site():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/docs.yml").read_text())
+    build = workflow["jobs"]["build"]
+    deploy = workflow["jobs"]["deploy"]
+    assert workflow["permissions"] == {"contents": "read"}
+    assert build.get("permissions", workflow["permissions"]) == {"contents": "read"}
+    assert deploy["permissions"] == {
+        "contents": "read",
+        "pages": "write",
+        "id-token": "write",
+    }
+    assert deploy["environment"]["name"] == "github-pages"
+    assert workflow["concurrency"] == {
+        "group": "docs-${{ github.ref }}",
+        "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+    }
+    steps = build["steps"]
+    commands = [step["run"] for step in steps if "run" in step]
+    assert commands == ["pnpm install --frozen-lockfile", "pnpm docs:build"]
+    upload = next(
+        step for step in steps if step.get("uses", "").startswith("actions/upload-pages-artifact@")
+    )
+    assert upload["with"]["path"] == "docs/.vitepress/dist"
 
 
 def _bundle_entries() -> list[tuple[str, str]]:

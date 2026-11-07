@@ -5,6 +5,10 @@
   "scripts": {
     "dev:web": "pnpm -C apps/web dev",
     "build:web": "pnpm -C apps/web build",
+    "docs:dev": "vitepress dev docs --host 127.0.0.1 --port 5175 --strictPort",
+    "docs:build": "pnpm test:docs && vitepress build docs",
+    "docs:preview": "vitepress preview docs --host 127.0.0.1 --port 4175 --strictPort",
+    "test:docs": "node --test docs/.vitepress/docs.test.mjs",
     "dev:desktop-ui": "pnpm -C apps/desktop/frontend dev",
     "build:desktop-ui": "pnpm -C apps/desktop/frontend build",
     "test:frontend-boundaries": "node --test \"packages/ui/tests/*.test.mjs\"",
@@ -18,6 +22,8 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.10.0",
-    "openapi-typescript": "^7.4.4"
+    "github-slugger": "^2.0.0",
+    "openapi-typescript": "^7.4.4",
+    "vitepress": "^1.6.4"
   }
 }

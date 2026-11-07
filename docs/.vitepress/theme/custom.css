@@ -1,0 +1,204 @@
+/* Warm paper surfaces, with the emblem's ink and gold as reading accents. */
+:root {
+  --vp-c-bg: #f7f2e8;
+  --vp-c-bg-alt: #eee7da;
+  --vp-c-bg-elv: #fcf9f2;
+  --vp-c-bg-soft: #f0e9dd;
+
+  --vp-c-text-1: #302e28;
+  --vp-c-text-2: #615b50;
+  --vp-c-text-3: #6e6558;
+
+  --vp-c-border: #c7bca9;
+  --vp-c-divider: #ded4c3;
+  --vp-c-gutter: #ded4c3;
+
+  --vp-c-default-1: #d9cfbd;
+  --vp-c-default-2: #e4dac9;
+  --vp-c-default-3: #eee7da;
+  --vp-c-default-soft: rgba(89, 73, 45, 0.08);
+
+  --vp-c-brand-1: #315962;
+  --vp-c-brand-2: #244951;
+  --vp-c-brand-3: #284f58;
+  --vp-c-brand-soft: rgba(49, 89, 98, 0.12);
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(110deg, #315962 20%, #756032);
+
+  --vp-c-neutral: #302e28;
+  --vp-c-neutral-inverse: #fbf8f0;
+  --vp-button-brand-text: #fbf8f0;
+  --vp-button-brand-hover-text: #fbf8f0;
+  --vp-button-brand-active-text: #fbf8f0;
+  --vp-button-alt-border: var(--vp-c-divider);
+  --vp-button-alt-hover-border: var(--vp-c-border);
+  --vp-button-alt-active-border: var(--vp-c-border);
+}
+
+.dark {
+  --vp-c-bg: #22201c;
+  --vp-c-bg-alt: #1c1a17;
+  --vp-c-bg-elv: #302c25;
+  --vp-c-bg-soft: #2b2822;
+
+  --vp-c-text-1: #ede3d0;
+  --vp-c-text-2: #c5b9a5;
+  --vp-c-text-3: #a99b85;
+
+  --vp-c-border: #605747;
+  --vp-c-divider: #423c32;
+  --vp-c-gutter: #423c32;
+
+  --vp-c-default-1: #514939;
+  --vp-c-default-2: #413a2f;
+  --vp-c-default-3: #332e26;
+  --vp-c-default-soft: rgba(207, 185, 143, 0.1);
+
+  --vp-c-brand-1: #d9bd85;
+  --vp-c-brand-2: #e7cca0;
+  --vp-c-brand-3: #c9aa70;
+  --vp-c-brand-soft: rgba(217, 189, 133, 0.12);
+  --vp-home-hero-name-background: linear-gradient(110deg, #d9bd85 20%, #afc2b8);
+
+  --vp-c-neutral: #ede3d0;
+  --vp-c-neutral-inverse: #22201c;
+  --vp-button-brand-text: #22201c;
+  --vp-button-brand-hover-text: #22201c;
+  --vp-button-brand-active-text: #22201c;
+}
+
+/* Keep the landing page focused; documentation retains the default reading layout. */
+.VPContent .VPHome {
+  margin-bottom: 0;
+}
+
+.VPHome .VPHero {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  min-height: calc(100svh - 132px);
+  padding: calc(var(--vp-nav-height) + 48px) 24px 64px;
+}
+
+.VPHome .VPHero::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: radial-gradient(ellipse at 65% 55%, var(--vp-c-brand-soft), transparent 65%);
+  content: '';
+  pointer-events: none;
+}
+
+.VPHome .VPHero .container {
+  position: relative;
+  isolation: isolate;
+  align-items: center;
+  width: 100%;
+  max-width: 1000px;
+}
+
+.VPHome .VPHero.has-image .main {
+  flex: 1;
+  width: auto;
+  max-width: 640px;
+}
+
+.VPHome .VPHero .name {
+  max-width: none;
+  font-size: clamp(64px, 9vw, 112px);
+  line-height: 1.1;
+  letter-spacing: -2px;
+}
+
+.VPHome .VPHero .tagline {
+  padding-top: 24px;
+  color: var(--vp-c-text-1);
+  font-weight: 400;
+  line-height: 1.7;
+}
+
+.VPHome .VPHero .actions {
+  padding-top: 32px;
+}
+
+.VPHome .VPHero .VPButton {
+  min-width: 144px;
+  padding: 0 28px;
+  border-radius: 999px;
+  font-size: 15px;
+  line-height: 46px;
+}
+
+.VPHome .VPHero .VPButton.brand {
+  box-shadow: 0 6px 24px var(--vp-c-brand-soft);
+}
+
+.VPHome .VPHero .image {
+  position: absolute;
+  z-index: -1;
+  top: 50%;
+  right: 50%;
+  width: min(108vw, 640px);
+  height: min(108vw, 640px);
+  min-height: 0;
+  margin: 0;
+  opacity: 0.17;
+  transform: translate(50%, -50%);
+  pointer-events: none;
+  user-select: none;
+}
+
+.VPHome .VPHero .image-container {
+  width: 100%;
+  height: 100%;
+  transform: none;
+}
+
+.VPHome .VPHero .image-src {
+  width: 100%;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.home-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  justify-content: center;
+  gap: 12px 16px;
+  min-height: 132px;
+  padding: 24px 24px 40px;
+}
+
+.home-badges a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+.home-badges a:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid var(--vp-c-brand-1);
+  outline-offset: 4px;
+}
+
+.home-badges img {
+  height: 28px;
+  width: auto;
+  max-width: 100%;
+}
+
+@media (min-width: 960px) {
+  .VPHome .VPHero {
+    padding: calc(var(--vp-nav-height) + 64px) 64px 80px;
+  }
+
+  .VPHome .VPHero .image {
+    right: -48px;
+    width: min(72vw, 760px);
+    height: min(72vw, 760px);
+    transform: translateY(-50%);
+  }
+}
