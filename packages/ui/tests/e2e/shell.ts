@@ -99,6 +99,17 @@ export function registerShellTests({ apiOrigin }: { apiOrigin?: string } = {}) {
     }
   });
 
+  test("create project sidebar entry stays borderless when expanded and collapsed", async ({ page }) => {
+    await fakeApi(page, {}, apiOrigin);
+    await page.goto("/");
+    const create = page.getByRole("link", { name: "Create project", exact: true });
+    await expect(create).toBeVisible();
+    await expect(create).toHaveCSS("border-width", "0px");
+    await page.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
+    await expect(create).toBeVisible();
+    await expect(create).toHaveCSS("border-width", "0px");
+  });
+
   test("creation closes back to the originating project and restores sidebar focus", async ({ page }) => {
     await fakeApi(
       page,
