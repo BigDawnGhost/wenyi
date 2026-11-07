@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from rich.text import Text
 from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_core.config import _DEFAULT_CONFIG_YAML, Config, parse_config_yaml
@@ -65,16 +66,23 @@ def test_prompt_genre_rejects_unknown_values_before_workflows(tmp_path, option, 
     assert "Traceback" not in result.output
 
 
-def test_help_advertises_translation_style_as_a_supported_option(tmp_path):
+@pytest.mark.parametrize("force_terminal", [False, True])
+def test_help_advertises_translation_style_as_a_supported_option(
+    tmp_path, monkeypatch, force_terminal
+):
+    monkeypatch.setattr("typer.rich_utils.FORCE_TERMINAL", force_terminal)
     result = CliRunner().invoke(app, ["--config", str(tmp_path / "config.yaml"), "--help"])
     assert result.exit_code == 0, result.output
-    assert "long-form texts" in result.output
-    assert "--prompt-genre" in result.output
-    assert "Translation style" in result.output
-    assert "literary" in result.output
-    assert "academic" in result.output
-    assert "--experimental-prompt-genre" not in result.output
-    assert "CLI-only experimental prompt genre" not in result.output
+    if force_terminal:
+        assert "\x1b[" in result.output
+    output = Text.from_ansi(result.output).plain
+    assert "long-form texts" in output
+    assert "--prompt-genre" in output
+    assert "Translation style" in output
+    assert "literary" in output
+    assert "academic" in output
+    assert "--experimental-prompt-genre" not in output
+    assert "CLI-only experimental prompt genre" not in output
 
 
 @pytest.mark.parametrize("reverse", [False, True])
