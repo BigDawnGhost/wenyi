@@ -1415,6 +1415,12 @@ export interface components {
              * @enum {string}
              */
             translation_mode: "standard" | "best_of_three";
+            /**
+             * Prompt Genre
+             * @default literary
+             * @enum {string}
+             */
+            prompt_genre: "literary" | "academic";
             /** Location */
             location?: string | null;
         };

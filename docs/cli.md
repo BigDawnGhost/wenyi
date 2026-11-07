@@ -64,7 +64,8 @@ These do not require a separate Python installation.
 The root option `--experimental-prompt-genre literary|academic` selects the prompt genre
 for one invocation; the default is literary. Academic prompts emphasize arguments, conceptual
 distinctions, qualifications and citations without imposing an experimental-paper structure.
-This is not a YAML setting or an automatic genre detector. Web/Desktop retain the literary default.
+This is not a Core YAML setting or an automatic genre detector. Web/Desktop offer a
+separate [creation-time project choice](configuration.md#pipeline), also defaulting to literary.
 
 The selection covers analysis, summaries, translation, terminology, polishing and review,
 including shared guidance and language profiles. Pass the same option on each `prepare`,

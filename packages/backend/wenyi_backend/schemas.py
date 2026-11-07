@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from wenyi_core.i18n.genres import DEFAULT_GENRE, Genre
 from wenyi_core.i18n.languages import require_language
 
 
@@ -21,6 +22,7 @@ class ProjectCreate(RequestModel):
     prepare: bool = False
     pdf_backend: Literal["mineru", "babeldoc"] | None = None
     translation_mode: Literal["standard", "best_of_three"] = "standard"
+    prompt_genre: Genre = DEFAULT_GENRE
     #: Where the project directory is created, when the host lets a person choose.
     #:
     #: Omitted means "the default for this installation", which is also what a

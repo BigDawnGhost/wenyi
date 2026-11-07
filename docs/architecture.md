@@ -108,8 +108,12 @@ and source-evidence safeguards stay in the common resources.
 and policy freezing/fingerprinting, including inherited language profiles and fallback
 templates. The default composition preserves the pre-split literary prompts byte-for-byte.
 The [CLI experiment](cli.md#experimental-prompt-genres-cli-only) applies an invocation-local,
-non-serialized `Config` override and passes it through `PolicyContext`; there is no YAML/schema
-field or process-global selector. Web/Desktop retain the literary default.
+non-serialized `Config` override and passes it through `PolicyContext`; Core has no genre
+YAML field or process-global selector. Web/Desktop choose the prompt family at project
+creation, defaulting to literary. The backend serializes it as `pipeline.prompt_genre`
+in project documents and complete job snapshots, then restores the runtime override
+at execution. Project configuration edits cannot change it; legacy documents and
+snapshots without the field remain literary. Global configuration never includes it.
 
 Future genres add `genres/<genre>/fragments.json` and register a name in `i18n/genres.py`
 and the CLI choices. Omitted slots inherit literary defaults, so replace or clear any

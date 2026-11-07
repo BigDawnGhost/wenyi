@@ -34,36 +34,38 @@ export function ProjectLocationPicker({
   };
   return (
     <div className="space-y-2">
-      <Label htmlFor="project-location">{t("createProject.location")}</Label>
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          id="project-location"
-          readOnly
-          value={location ?? ""}
-          placeholder={t("createProject.locationDefault")}
-          aria-label={t("createProject.location")}
-          disabled={disabled}
-          className="min-w-0 flex-1 basis-48"
-        />
-        <Button
-          type="button"
-          variant="outline"
-          disabled={disabled}
-          onClick={() => void choose()}
-        >
-          <FolderOpen className="h-4 w-4" aria-hidden="true" />
-          {t("createProject.chooseLocation")}
-        </Button>
-        {location && (
+      <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
+        <Label htmlFor="project-location">{t("createProject.location")}</Label>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <Input
+            id="project-location"
+            readOnly
+            value={location ?? ""}
+            placeholder={t("createProject.locationDefault")}
+            aria-label={t("createProject.location")}
+            disabled={disabled}
+            className="min-w-0 flex-1 basis-48"
+          />
           <Button
             type="button"
-            variant="ghost"
+            variant="outline"
             disabled={disabled}
-            onClick={() => onChange(null)}
+            onClick={() => void choose()}
           >
-            {t("createProject.locationUseDefault")}
+            <FolderOpen className="h-4 w-4" aria-hidden="true" />
+            {t("createProject.chooseLocation")}
           </Button>
-        )}
+          {location && (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={disabled}
+              onClick={() => onChange(null)}
+            >
+              {t("createProject.locationUseDefault")}
+            </Button>
+          )}
+        </div>
       </div>
       <ErrorNotice error={failure} />
     </div>

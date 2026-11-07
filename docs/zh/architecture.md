@@ -92,8 +92,10 @@ claim、render、publish 和终态写入；渲染自身不发布文件。
 `i18n/genres.py` 只组合可信资源插槽，之后才替换语言变量并冻结策略、计算指纹，
 包括语言档案继承与回退模板。默认组合逐字节保留拆分前的文学提示词。
 [CLI 实验参数](cli.md#实验性提示词题材仅-cli) 使用本次调用内、不参与序列化的 `Config` 私有覆盖，
-通过 `PolicyContext` 显式传递；不增加 YAML／schema 字段，也不使用进程全局选择器。
-Web/Desktop 保持文学默认值。
+通过 `PolicyContext` 显式传递；Core 不增加题材 YAML 字段，也不使用进程全局选择器。
+Web/Desktop 在创建项目时选择题材，默认文学。后端在项目文档和完整任务快照中
+以 `pipeline.prompt_genre` 保存选择，执行时恢复运行期覆盖。
+项目配置修改不能改变它；缺少此字段的旧文档和快照仍使用文学，总设置不包含它。
 
 后续题材在 `genres/<genre>/fragments.json` 中提供片段，并在 `i18n/genres.py` 和 CLI 选项中注册名称。
 遗漏的插槽继承文学默认值，因此应替换或清除不适用的指令。

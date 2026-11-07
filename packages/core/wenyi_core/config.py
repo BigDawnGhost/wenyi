@@ -210,8 +210,13 @@ class Config(BaseModel):
         )
         return self
 
+    @property
+    def prompt_genre(self) -> Genre:
+        """Return the runtime prompt family without adding a Core YAML setting."""
+        return self._prompt_genre
+
     def set_experimental_prompt_genre(self, genre: str) -> None:
-        """Select a CLI experiment before constructing agents; never serialize this override."""
+        """Select a runtime prompt family before constructing agents; keep Core YAML unchanged."""
         self._prompt_genre = require_genre(genre)
         self._language_plans.clear()
 

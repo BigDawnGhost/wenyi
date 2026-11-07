@@ -9,11 +9,12 @@ from uuid import uuid4
 from fastapi import HTTPException
 from wenyi_core.config import Config
 
+from .config_documents import runtime_document
 from .context import BackendStorage
 from .errors import QUEUE_UNAVAILABLE, ApiError
 from .ports.jobs import JobAdmission
 from .ports.projects import ProjectReader
-from .project_service import config_document, project_write
+from .project_service import project_write
 
 TASK_FUNCTIONS = {
     "parse": "run_parse",
@@ -51,7 +52,7 @@ async def start_job(
             raise HTTPException(409, "upload a source file first")
         run_id = uuid4().hex
         try:
-            snapshot = config_document(config_for(project))
+            snapshot = runtime_document(config_for(project))
         except ValueError as error:
             raise HTTPException(422, str(error)) from error
         db_id = jobs.admit_job(

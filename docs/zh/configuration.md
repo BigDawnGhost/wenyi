@@ -262,6 +262,18 @@ uv run wenyi models migrate-usage state/BOOK/targets/zh
 
 ## 流水线
 
+Web 和 Desktop 在**创建项目 → 翻译风格**中选择**文学**（`literary`，默认）
+或**学术**（`academic`），与标准／三译合润的翻译方式独立。
+学术提示词着重保留论证、概念区分、限定条件与引文，而不是优先处理叙事声音和人物塑造。
+选择统一应用于译前准备、摘要、翻译、术语、润色和审校。
+
+后端将这一创建时确定的选择保存为项目文档和冻结任务快照中的 `pipeline.prompt_genre`。
+项目配置以只读方式显示；局部配置修改、恢复默认、重启和续跑都会保留它。
+更换风格需创建新项目，避免已完成译文和派生缓存混用两套提示词。
+没有此字段的旧项目和旧快照仍使用文学风格。
+这不是全局或 Core YAML 配置项，请勿加入 `config.yaml`；
+CLI 仍使用[实验参数](cli.md#实验性提示词题材仅-cli)。
+
 `pipeline.translation_mode` 可选 `standard`（默认）或 `best_of_three`。
 精翻模式必须设置 `pipeline.polish: true`；包括项目 YAML 在内的无效组合会被拒绝。
 Web 在创建书籍项目时选择翻译模式；新项目默认 `standard`，不继承全局模式。

@@ -11,6 +11,7 @@ from wenyi_core.llm.base import LLMClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.protocol import Storage
 
+from ..config_documents import config_from_document
 from ..context import BackendContext
 from ..project_service import effective_config
 from .contracts import ExecutionDependencies, ExportRequest
@@ -60,7 +61,7 @@ def build_config_for(context: BackendContext, pid: str, run_id: str | None = Non
     snapshot = ((job or {}).get("params") or {}).get("config_snapshot")
     state_dir = str(context.project_dir(pid))
     if snapshot:
-        return Config.from_dict({**snapshot, "paths": {"state_dir": state_dir}})
+        return config_from_document({**snapshot, "paths": {"state_dir": state_dir}})
     return effective_config(
         project, defaults=context.settings_store.load().config, state_dir=state_dir
     )
