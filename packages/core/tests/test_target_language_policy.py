@@ -35,7 +35,7 @@ def test_generated_text_keeps_complete_output_rules_in_every_stage(
             },
         }
     )
-    config.set_experimental_prompt_genre(genre)
+    config.set_prompt_genre(genre)
     config.freeze_language_policies()
     prompt = render(
         task,

@@ -18,7 +18,7 @@ from wenyi_core.i18n.genres import DEFAULT_GENRE
 from .context import CommandContext, current_context
 
 
-class ExperimentalPromptGenre(str, Enum):
+class PromptGenre(str, Enum):
     literary = "literary"
     academic = "academic"
 
@@ -102,10 +102,16 @@ def register_bootstrap(app: typer.Typer) -> None:
             "-c",
             help="Configuration path; created automatically if missing",
         ),
-        experimental_prompt_genre: ExperimentalPromptGenre = typer.Option(
-            ExperimentalPromptGenre(DEFAULT_GENRE),
+        prompt_genre: PromptGenre | None = typer.Option(
+            None,
+            "--prompt-genre",
+            help="Translation style for this invocation; not saved in configuration",
+            show_default=DEFAULT_GENRE,
+        ),
+        legacy_prompt_genre: PromptGenre | None = typer.Option(
+            None,
             "--experimental-prompt-genre",
-            help="CLI-only experimental prompt genre for this invocation; not saved in configuration",
+            hidden=True,
         ),
         version: bool = typer.Option(
             False,
@@ -117,5 +123,15 @@ def register_bootstrap(app: typer.Typer) -> None:
     ):
         """Record the config path; workflow commands validate credentials after their overrides."""
         del version
+        if (
+            prompt_genre is not None
+            and legacy_prompt_genre is not None
+            and prompt_genre != legacy_prompt_genre
+        ):
+            raise typer.BadParameter(
+                "Conflicting translation styles; use --prompt-genre with one value.",
+                param_hint="--prompt-genre",
+            )
+        genre = prompt_genre or legacy_prompt_genre or PromptGenre(DEFAULT_GENRE)
         current_context().config_path = config
-        current_context().experimental_prompt_genre = experimental_prompt_genre.value
+        current_context().prompt_genre = genre.value

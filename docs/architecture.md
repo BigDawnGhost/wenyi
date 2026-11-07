@@ -107,7 +107,7 @@ and source-evidence safeguards stay in the common resources.
 `i18n/genres.py` composes only trusted resource slots before language-variable substitution
 and policy freezing/fingerprinting, including inherited language profiles and fallback
 templates. The default composition preserves the pre-split literary prompts byte-for-byte.
-The [CLI experiment](cli.md#experimental-prompt-genres-cli-only) applies an invocation-local,
+The [CLI translation-style option](cli.md#translation-style) applies an invocation-local,
 non-serialized `Config` override and passes it through `PolicyContext`; Core has no genre
 YAML field or process-global selector. Web/Desktop choose the prompt family at project
 creation, defaulting to literary. The backend serializes it as `pipeline.prompt_genre`

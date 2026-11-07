@@ -58,7 +58,7 @@ def test_genre_switch_rebuilds_analysis_for_pending_work_but_keeps_completed_tar
     tmp_path, initial_genre
 ):
     source, config, store = book(tmp_path)
-    config.set_experimental_prompt_genre(initial_genre)
+    config.set_prompt_genre(initial_genre)
     Orchestrator(config, client=FakeClient(handler=routing_handler), storage=store).run(
         str(source), only_chapter=0
     )
@@ -67,7 +67,7 @@ def test_genre_switch_rebuilds_analysis_for_pending_work_but_keeps_completed_tar
     assert previous is not None
 
     next_genre = "academic" if initial_genre == "literary" else "literary"
-    config.set_experimental_prompt_genre(next_genre)
+    config.set_prompt_genre(next_genre)
     client = FakeClient(handler=routing_handler)
     Orchestrator(config, client=client, storage=store).run(str(source))
     assert store.load_chapter(0).model_dump() == saved
