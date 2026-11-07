@@ -35,5 +35,5 @@ Unsupported saved locale codes use English. Cross-tab changes use the browser st
 storage errors retain the selection in memory for the session.
 
 UI language is separate from book language. Preserve user content, backend identifiers, server errors,
-and live log text. See [Web interface language](../../../../docs/web.md#interface-language)
+and live log text. See [interface language](../../../../docs/guide/workspace.md#interface-language)
 and [browser localization tests](../../../../apps/web/tests/i18n.spec.ts).

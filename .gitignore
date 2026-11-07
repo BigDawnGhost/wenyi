@@ -36,6 +36,8 @@ explore/
 node_modules/
 .next/
 .turbo/
+/docs/.vitepress/cache/
+/docs/.vitepress/.temp/
 .env
 .env.local
 data/

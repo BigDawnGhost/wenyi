@@ -94,8 +94,8 @@ components whose behavior needs confirmation.
 
 Sources of truth:
 
-- `docs/desktop.md`, section "Application updates".
-- `docs/zh/desktop.md`, section "应用更新".
+- `docs/development/releasing.md`, section "Release notes".
+- `docs/zh/development/releasing.md`, section "发行说明".
 - `apps/desktop/frontend/src/localizedReleaseNotes.ts`, when present, and its affected
   regressions in `apps/desktop/frontend/tests/desktop-updates.spec.ts`.
 

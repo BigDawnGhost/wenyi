@@ -4,7 +4,7 @@ Domain services receive this interface. Resource directories contain uploaded or
 parser caches and exports; mutable workflow state must use these methods.
 
 The three path properties are a known contract gap, tracked in
-`docs/storage-contract-inventory.md`. They exist because one CLI filesystem backend also
+`docs/development/architecture.md#storage-boundary`. They exist because one CLI backend also
 carries the logical run identity that `review/` and `assemble/` still spell as a
 directory path. Every implementation already declares them, so `FileStorage` needs no
 catch-all forwarding. Closing the gap means replacing the path with a run-identity
@@ -36,7 +36,7 @@ class ArtifactStorage(Protocol):
 @runtime_checkable
 class Storage(ArtifactStorage, Protocol):
     # Read-only path attributes: implementations expose @property (FileStorage / PostgresStorage).
-    # Status: contract gap, not a target contract. See docs/storage-contract-inventory.md.
+    # Contract gap, not a target contract: docs/development/architecture.md#storage-boundary.
     @property
     def run_dir(self) -> str: ...
 

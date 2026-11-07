@@ -150,7 +150,7 @@ def _run(input_path, state_dir):
 
 
 class TestBilingualOutPath(unittest.TestCase):
-    """Lock the documented explicit --out contract (docs/cli.md): the bilingual
+    """Lock the explicit --out contract (docs/reference/formats.md): the bilingual
     derivative appends -bi to the stem of whatever path the user gave."""
 
     def test_appends_bi_to_stem(self):

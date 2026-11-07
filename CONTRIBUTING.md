@@ -51,7 +51,7 @@ workflow targets `main` and still requires explicit landing authorization.
 Create version tags such as `v1.2.8` or `v1.2.8rc1` at a verified commit on
 `main`, then publish the GitHub Release for that tag. Publishing the release
 triggers CLI/Desktop packaging and asset uploads, plus CLI/Core publication to
-PyPI once [Trusted Publishing is configured](docs/publishing.md). Merging a PR or
+PyPI once [Trusted Publishing is configured](docs/development/publishing.md). Merging a PR or
 pushing a tag alone does not publish installers or PyPI packages; manual workflow
 dispatch remains available for build validation. Fixes follow the same branch →
 PR → `main` path and can then be released with a new tag. Do not move an existing
@@ -83,7 +83,7 @@ When migrating existing work:
 
 For development, use Python 3.10+ and [uv](https://docs.astral.sh/uv/) in a repository
 checkout. To use a released version without a checkout, follow the
-[CLI installation guide](docs/cli.md#installation-and-first-run) instead.
+[CLI installation guide](docs/guide/cli.md) instead.
 
 From the repository root:
 
@@ -99,7 +99,21 @@ the backend and apps, use the development setup below.
 
 Python package versions come from the repository's Git tags: tagged builds show the
 release version; development builds include their commit distance and hash.
-Release automation is documented in [Python package publishing](docs/publishing.md).
+Release automation is documented in [Python package publishing](docs/development/publishing.md)
+and [Desktop releases](docs/development/releasing.md).
+
+## Development documentation
+
+Use the [development guide](docs/development/index.md) for architecture, Web/Desktop
+source setup, frontend conventions and release procedures. User operations live
+separately in `docs/guide/`; configuration and format lookup live in `docs/reference/`.
+Update the owning topic rather than appending a change log to a manual, and keep the
+matching `docs/zh/` page in sync.
+
+The [documentation preview instructions](docs/development/index.md#documentation-preview)
+cover local VitePress setup, static builds and link checks. The same guide covers
+[GitHub Pages deployment](docs/development/index.md#github-pages-deployment):
+pull requests validate the site, and relevant changes on `main` publish it.
 
 ## Python regression tests
 
@@ -123,4 +137,13 @@ API tests that depend on the `pg_pool` fixture (including indirect dependencies)
 
 Set `WENYI_TEST_DATABASE_URL` and `WENYI_TEST_REDIS_URL` only to isolated test services. PostgreSQL fixtures create a private schema and drop it afterward. Docker proxy tests are also marked `integration` and additionally require `WENYI_TEST_DOCKER=1`. Missing services produce skips, not successful integration validation.
 
-CI runs both selections on Python 3.10 and 3.12 with PostgreSQL and Redis enabled, and applies the same layering locally: a `changes` job classifies each pull request so a documentation-only change skips the Python and web jobs entirely, while a push to `main` and a manual dispatch always run everything. Both Python steps use `pytest-xdist`, with integration capped at two workers. Desktop keeps a smoke tier on pull requests and builds every platform only for a release or a manual dispatch. Integration retries once, but any test that only passes on the retry is listed as flaky in the job summary, so a retry never hides a real problem.
+CI runs both selections on Python 3.10 and 3.12 with PostgreSQL and Redis enabled.
+The `changes` job filters pull requests and pushes to `main`; manual and scheduled
+runs perform the full sweep. Documentation-only paths can skip application jobs,
+but changes to shared configuration, lockfiles or workflows force the relevant
+checks. This filtering does not waive the full-check requirement for landing.
+Both Python steps use `pytest-xdist`, with integration capped at two workers.
+Desktop PRs run Linux tests or a full Linux package build according to changed
+paths, plus Windows smoke checks; releases and manual dispatches cover every
+packaging platform. Integration retries once, but a retried pass is reported as
+flaky in the job summary rather than silently treated as a clean pass.

@@ -20,7 +20,7 @@ PDF layout preservation additionally requires an independently installed
 `wenyi-babeldoc-bridge` HTTP service. This package does not install BabelDOC,
 the Web API, or the Desktop application.
 
-- [CLI guide](https://github.com/BigDawnGhost/wenyi/blob/main/docs/cli.md)
-- [Configuration](https://github.com/BigDawnGhost/wenyi/blob/main/docs/configuration.md)
+- [CLI guide](https://github.com/BigDawnGhost/wenyi/blob/main/docs/guide/cli.md)
+- [Configuration](https://github.com/BigDawnGhost/wenyi/blob/main/docs/reference/configuration.md)
 - [Source and license](https://github.com/BigDawnGhost/wenyi)
-- [简体中文](https://github.com/BigDawnGhost/wenyi/blob/main/docs/zh/cli.md)
+- [简体中文](https://github.com/BigDawnGhost/wenyi/blob/main/docs/zh/guide/cli.md)
