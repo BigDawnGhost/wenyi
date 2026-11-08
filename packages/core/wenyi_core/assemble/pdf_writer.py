@@ -4,6 +4,7 @@ import hashlib
 import math
 from io import BytesIO
 from pathlib import Path
+from typing import Literal
 
 from pypdf import PageObject, PdfReader, PdfWriter, Transformation
 from pypdf.errors import PdfReadError
@@ -37,9 +38,14 @@ def _page_layout(page: PageObject) -> tuple[float, float, Transformation]:
 
 
 def _write_spreads(
-    source: PdfReader, translated: PdfReader, indices: list[int], path: Path
+    source: PdfReader,
+    translated: PdfReader,
+    indices: list[int],
+    path: Path,
+    *,
+    order: Literal["target_first", "source_first"],
 ) -> None:
-    """Pair the bridge's selected pages with the same original pages, without rasterizing."""
+    """Pair matching pages left to right in the requested order, without rasterizing."""
     if not indices or len(translated.pages) != len(indices):
         raise BabeldocBridgeError(
             f"Cannot pair bilingual PDF pages: expected {len(indices)} translated pages "
@@ -56,20 +62,24 @@ def _write_spreads(
             target_width, target_height, target_transform = _page_layout(target)
             height = max(source_height, target_height)
             spread = writer.add_blank_page(width=source_width + target_width, height=height)
-            source_transform = source_transform.translate(ty=height - source_height)
+            source_transform = source_transform.translate(
+                tx=target_width if order == "target_first" else 0, ty=height - source_height
+            )
             target_transform = target_transform.translate(
-                tx=source_width, ty=height - target_height
+                tx=source_width if order == "source_first" else 0, ty=height - target_height
             )
             source_destinations[index] = (spread, source_transform, original)
             target_destinations[target_index] = (spread, target_transform, target)
             pairs.append((spread, original, target, source_transform, target_transform))
         for spread, original, target, source_transform, target_transform in pairs:
-            merge_page_with_links(
-                writer, spread, original, source_transform, source, source_destinations
+            parts = (
+                (original, source_transform, source, source_destinations),
+                (target, target_transform, translated, target_destinations),
             )
-            merge_page_with_links(
-                writer, spread, target, target_transform, translated, target_destinations
-            )
+            for page, transform, reader, destinations in (
+                parts if order == "source_first" else reversed(parts)
+            ):
+                merge_page_with_links(writer, spread, page, transform, reader, destinations)
         writer.write(path)
 
 
@@ -80,8 +90,9 @@ def _assemble_pdf(
     *,
     timeout: float,
     bilingual: bool = False,
+    order: Literal["target_first", "source_first"] = "target_first",
 ) -> str:
-    """Fill back translations; bilingual output places the original page on the left."""
+    """Fill back translations, placing the first bilingual version on the left."""
     session_id, bridge_url, mapping = translations_from_store(store)
     annotations = annotations_from_store(store, mapping)
     annotation_options = {"annotations": annotations} if annotations else {}
@@ -105,7 +116,7 @@ def _assemble_pdf(
         # Keep both the bridge result and any failed composition private until the spread is complete.
         with publish_target(out_path) as temp:
             client.fillback(session_id, mapping, out_path=temp, **annotation_options)
-            _write_spreads(source, PdfReader(temp), indices, temp)
+            _write_spreads(source, PdfReader(temp), indices, temp, order=order)
     except (OSError, PdfReadError, ValueError) as error:
         raise BabeldocBridgeError(f"Cannot assemble bilingual PDF: {error}") from error
     return out_path

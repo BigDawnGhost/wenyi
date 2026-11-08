@@ -72,7 +72,7 @@ export default function ExportPage() {
       const options = {
         format: fmt || undefined,
         bilingual,
-        order: pdf ? "source_first" as const : order,
+        order,
         about_page: about,
         preserve_source_style: !pdf && preserveStyle,
         punctuation_normalize: punctuation,
@@ -176,7 +176,7 @@ export default function ExportPage() {
                 />
                 {tr("settings.normalizePunctuationOnExport")}
               </label>
-              {bilingual && !pdf && (
+              {bilingual && (
                 <Select
                   aria-label={tr("export.bilingualOrder")}
                   value={order}

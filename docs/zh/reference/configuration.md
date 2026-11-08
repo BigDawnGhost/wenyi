@@ -446,7 +446,7 @@ BabelDOC 是可选的独立 AGPL 服务，用于尽量保留 PDF 版式。
 |---|---|---|
 | `output.mono` | `true` | 生成单语版。 |
 | `output.bilingual` | `false` | 另生成原文／译文对照版。 |
-| `output.bilingual_order` | `target_first` | `target_first` 或 `source_first`；PDF 固定左侧原文页。 |
+| `output.bilingual_order` | `target_first` | `target_first` 或 `source_first`；选择按段配对格式中在前的版本，以及 PDF 并列页中位于左侧的版本。 |
 | `output.bilingual_preserve_source_style` | `false` | 保留已记录的原文样式，替代该格式的默认原文显示方式。 |
 | `output.about_page` | `true` | 为 EPUB 添加“关于此翻译”项目说明页。 |
 | `output.punctuation_normalize` | `true` | 只在导出副本上规范简体中文标点。 |
