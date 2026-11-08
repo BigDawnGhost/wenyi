@@ -375,10 +375,18 @@ def test_desktop_rebuild_preflight_requires_an_existing_stable_release(
     )
     assert preflight["shell"] == "bash"
     assert "--json isDraft,isPrerelease" in preflight["run"]
+    bash = "bash"
+    if os.name == "nt":
+        # PATH may resolve bash to the WSL launcher rather than Git for Windows.
+        git_root = Path(git(ROOT, "--exec-path")).parents[2]
+        git_bash = git_root / "bin" / "bash.exe"
+        assert git_bash.is_file(), "Git for Windows Bash is required for workflow checks"
+        bash = str(git_bash)
     # Override gh in this shell so the actual workflow guard runs entirely offline.
     fake_gh = 'gh() { printf "%s\\n" "$PUBLISHED_STABLE"; return "$GH_EXIT_CODE"; }\n'
+    shell_script = "printf '%s\\n' workflow-guard-started\n" + fake_gh + preflight["run"]
     result = subprocess.run(
-        ["bash", "-eu", "-c", fake_gh + preflight["run"]],
+        [bash, "-eu", "-c", shell_script],
         env={
             **os.environ,
             "TAG": tag,
@@ -388,6 +396,8 @@ def test_desktop_rebuild_preflight_requires_an_existing_stable_release(
         text=True,
         capture_output=True,
     )
+    # A shell-launch failure must not pass as an expected admission rejection.
+    assert "workflow-guard-started\n" in result.stdout, result.stdout + result.stderr
     assert (result.returncode == 0) is accepted, result.stdout + result.stderr
 
 
