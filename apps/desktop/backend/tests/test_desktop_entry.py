@@ -14,6 +14,7 @@ import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 from wenyi_desktop.desktop import ORIGINS, LocalBoundary
@@ -190,6 +191,52 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
         if child.poll() is None:
             child.kill()
         child.wait(timeout=5)
+
+
+@pytest.mark.parametrize("encoding", ["cp936", "cp1252", "utf-8"])
+def test_native_startup_reads_utf8_proof_with_legacy_stdin_encoding(
+    tmp_path, monkeypatch, encoding
+):
+    from wenyi_desktop import desktop, paths
+    from wenyi_desktop.ownership import MAGIC
+
+    workspace = (tmp_path / "中文用户" / "文译").resolve()
+    paths.locks(workspace).mkdir(parents=True)
+    endpoint = {
+        "protocol": 1,
+        "pid": os.getppid(),
+        "port": 12345,
+        "instance": list(range(16)),
+    }
+    paths.instance_endpoint(workspace).write_text(json.dumps(endpoint), encoding="utf-8")
+    proof = {**endpoint, "workspace": str(workspace), "token": secrets.token_hex(32)}
+    wire = (json.dumps(proof, ensure_ascii=False) + '\n{"command":"shutdown"}\n').encode("utf-8")
+    connection = MagicMock()
+    connection.__enter__.return_value.recv.return_value = b"\x01"
+    monkeypatch.setattr(
+        "wenyi_desktop.ownership.socket.create_connection", lambda *args, **kwargs: connection
+    )
+    served = []
+
+    async def serve(root, stream, lifecycle, **_roots):
+        assert json.loads(sys.stdin.readline()) == {"command": "shutdown"}
+        served.append(root)
+        lifecycle.ready = True
+
+    monkeypatch.setattr(desktop, "serve", serve)
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(
+        sys, "argv", ["wenyi-engine", "--native-startup", "--data-dir", str(workspace)]
+    )
+    monkeypatch.setenv("WENYI_API_TOKEN", secrets.token_hex(32))
+    monkeypatch.delenv("WENYI_DIAGNOSTICS_PROTOCOL", raising=False)
+    with io.TextIOWrapper(io.BytesIO(wire), encoding=encoding) as stream:
+        monkeypatch.setattr(sys, "stdin", stream)
+        desktop.main()
+    assert served == [workspace]
+    connection.__enter__.return_value.sendall.assert_called_with(
+        MAGIC + bytes.fromhex(proof["token"])
+    )
 
 
 @pytest.mark.parametrize("stage", ["application", "runtime"])
