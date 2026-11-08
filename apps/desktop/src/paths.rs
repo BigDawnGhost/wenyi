@@ -42,20 +42,12 @@ pub fn locks(root: &Path) -> PathBuf {
     root.join("locks")
 }
 
-pub fn catalog(root: &Path) -> PathBuf {
-    root.join("catalog.sqlite3")
-}
-
 pub fn runtime_root(root: &Path) -> PathBuf {
     root.join("runtime")
 }
 
 pub fn webview(root: &Path) -> PathBuf {
     runtime_root(root).join("webview")
-}
-
-pub fn library_root(root: &Path) -> PathBuf {
-    root.join("projects")
 }
 
 pub fn backups(root: &Path) -> PathBuf {
@@ -127,42 +119,6 @@ pub fn check_disjoint(roots: &[(&str, &Path)]) -> Result<(), Error> {
         }
     }
     Ok(())
-}
-
-pub fn admit_library_root(candidate: &Path, install: &Path, workspace: &Path) -> Result<(), Error> {
-    if !candidate.is_absolute() || candidate.parent().is_none() {
-        return Err(Error::LibraryRootInvalid);
-    }
-    if home_dir().is_ok_and(|home| same_directory(candidate, &home))
-        || overlaps(candidate, install)
-        || overlaps(candidate, workspace)
-        || system_directories()
-            .iter()
-            .any(|root| overlaps(candidate, root))
-    {
-        return Err(Error::LibraryRootInvalid);
-    }
-    Ok(())
-}
-
-fn system_directories() -> Vec<PathBuf> {
-    if cfg!(windows) {
-        [
-            "SystemRoot",
-            "windir",
-            "ProgramFiles",
-            "ProgramFiles(x86)",
-            "ProgramData",
-        ]
-        .into_iter()
-        .filter_map(env_path)
-        .collect()
-    } else {
-        ["/usr", "/bin", "/sbin", "/etc", "/boot", "/var"]
-            .into_iter()
-            .map(PathBuf::from)
-            .collect()
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -260,11 +216,9 @@ mod tests {
     #[test]
     fn every_data_path_follows_one_explicit_root() {
         let root = Path::new("/chosen/data");
-        assert_eq!(catalog(root), root.join("catalog.sqlite3"));
         assert_eq!(locks(root), root.join("locks"));
         assert_eq!(runtime_root(root), root.join("runtime"));
         assert_eq!(webview(root), root.join("runtime/webview"));
-        assert_eq!(library_root(root), root.join("projects"));
         assert_eq!(backups(root), root.join("backups"));
         assert_eq!(log_roots(root), vec![root.join("logs")]);
     }
@@ -316,45 +270,5 @@ mod tests {
             normalized(&canonical.join(missing.file_name().unwrap()))
         );
         assert!(!missing.exists());
-    }
-
-    #[test]
-    fn project_locations_cannot_overlap_program_or_data() {
-        // No files are created. Keep the synthetic paths outside system folders:
-        // macOS puts its temporary directory under the protected /var tree.
-        let base = std::path::absolute("/wenyi-library-path-test").unwrap();
-        let install = base.join("program");
-        let root = base.join("data");
-        for unsafe_path in [
-            &install,
-            &root,
-            &root.join("runtime"),
-            &root.join("projects"),
-        ] {
-            assert!(admit_library_root(unsafe_path, &install, &root).is_err());
-        }
-        assert!(admit_library_root(&base.join("chosen-books"), &install, &root).is_ok());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn project_locations_cannot_use_system_temporary_directories() {
-        let base = Path::new("/wenyi-library-path-test");
-        for directory in [
-            PathBuf::from("/var/tmp"),
-            PathBuf::from("/var/folders"),
-            Path::new("/var").canonicalize().unwrap().join("folders"),
-        ] {
-            assert_eq!(
-                admit_library_root(
-                    &directory.join("chosen-books"),
-                    &base.join("program"),
-                    &base.join("data"),
-                ),
-                Err(Error::LibraryRootInvalid),
-                "{}",
-                directory.display()
-            );
-        }
     }
 }

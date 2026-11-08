@@ -1067,7 +1067,7 @@ mod tests {
     fn backups_and_projects_are_disjoint_children_of_the_actual_data_root() {
         let workspace = Path::new("C:/Users/example/AppData/Local/Wenyi/Desktop");
         let backup = paths::backups(workspace);
-        let projects = paths::library_root(workspace);
+        let projects = workspace.join("projects");
         paths::check_disjoint(&[("projects", &projects), ("backup", &backup)]).unwrap();
         assert_eq!(backup, workspace.join(BACKUP));
     }

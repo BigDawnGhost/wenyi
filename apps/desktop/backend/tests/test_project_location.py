@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -173,6 +175,40 @@ def test_a_location_the_layout_owns_is_refused(backend, roots, tmp_path, monkeyp
 def test_a_location_elsewhere_is_admitted(backend, tmp_path):
     chosen = tmp_path / "Books" / "Wenyi"
     assert admit(chosen, backend) == chosen
+
+
+@pytest.mark.parametrize(
+    ("relative", "reason"),
+    [
+        ("program", "project_location_install"),
+        ("program/projects", "project_location_install"),
+        ("data", "project_location_workspace"),
+        ("data/runtime", "project_location_workspace"),
+        ("data/projects", "project_location_workspace"),
+        ("chosen-books", None),
+    ],
+)
+def test_project_locations_respect_the_actual_program_and_data_roots(relative, reason):
+    # Use synthetic paths, not macOS's system-owned temporary directory.
+    base = Path(Path.cwd().anchor) / "wenyi-library-path-test"
+    backend = SimpleNamespace(
+        workspace=base / "data", library_root=None, install_root=base / "program"
+    )
+    candidate = base / relative
+    if reason is None:
+        assert admit(candidate, backend) == candidate
+    else:
+        with pytest.raises(LibraryLocationRefused) as error:
+            admit(candidate, backend)
+        assert error.value.reason == reason
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX system directories")
+@pytest.mark.parametrize("directory", ["/var/tmp", "/var/folders"])
+def test_project_locations_cannot_use_system_temporary_directories(backend, directory):
+    with pytest.raises(LibraryLocationRefused) as error:
+        admit(Path(directory) / "chosen-books", backend)
+    assert error.value.reason == "project_location_system"
 
 
 def test_a_relative_or_empty_location_is_refused(backend):

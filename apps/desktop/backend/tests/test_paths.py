@@ -63,7 +63,8 @@ def test_marker_format_is_explicit_and_does_not_adopt_old_versions(tmp_path):
     assert paths.project_id_in(directory) == PROJECT
 
 
-def test_native_names_match_the_engine():
+def test_shared_native_names_match_the_engine():
     native = (DESKTOP / "src/paths.rs").read_text()
-    for relative in ("catalog.sqlite3", "logs", "locks", "runtime", "projects", "backups"):
+    # Catalog and project paths belong exclusively to the Python backend.
+    for relative in ("logs", "locks", "runtime", "backups"):
         assert f'"{relative}"' in native
