@@ -6,9 +6,11 @@ Chapters are split by the PDF outline (TOC bookmarks) via pypdf.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -247,23 +249,30 @@ def _chapters_from_paragraphs(
 
 
 def _segment_from_para(index: int, para: dict) -> Segment | None:
-    source = str(para.get("source") or "").strip()
+    source = str(para.get("source") or "")
     pid = str(para.get("id") or "").strip()
-    if not source or not pid:
+    if not source.strip() or not pid:
         return None
     layout = para.get("layout_label")
     kind = KIND_HEADING if layout == "title" else KIND_TEXT
+    annotations = para.get("annotations")
+    metadata: dict[str, Any] = {
+        BABELDOC_ID_META: pid,
+        "layout_label": layout,
+        "debug_id": para.get("debug_id"),
+        "page": para.get("page"),
+        "para_index": para.get("index"),
+    }
+    if isinstance(annotations, list) and annotations:
+        metadata["pdf_annotations"] = {
+            "source_length": len(source),
+            "items": deepcopy(annotations),
+        }
     return Segment(
         index=index,
         source=source,
         kind=kind,
-        meta={
-            BABELDOC_ID_META: pid,
-            "layout_label": layout,
-            "debug_id": para.get("debug_id"),
-            "page": para.get("page"),
-            "para_index": para.get("index"),
-        },
+        meta=metadata,
     )
 
 
@@ -366,3 +375,38 @@ def translations_from_store(store) -> tuple[str, str, dict[str, str]]:
             "No translated paragraphs with babeldoc_id are available for backfill"
         )
     return str(session_id), str(bridge_url), mapping
+
+
+def annotations_from_store(store, translations: dict[str, str]) -> dict[str, Any]:
+    """Forward cached positions for per-item validation, without model calls or state changes."""
+    result: dict[str, Any] = {}
+    for info in store.load_manifest().get("chapters") or []:
+        for segment in store.load_chapter(info["index"]).segments:
+            pid = str(segment.meta.get(BABELDOC_ID_META) or "")
+            metadata = segment.meta.get("pdf_annotations")
+            if pid not in translations or not isinstance(metadata, dict):
+                continue
+            items = metadata.get("items")
+            if not isinstance(items, list) or not items:
+                continue
+            text = translations[pid]
+            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            if text == segment.source:
+                placements = [
+                    {
+                        "id": item["id"],
+                        "mode": item["mode"],
+                        "target_start": item["source_start"],
+                        "target_end": item["source_end"],
+                        "status": "aligned",
+                        "method": "source_identity",
+                    }
+                    for item in items
+                ]
+            else:
+                # The bridge validates each placement independently. Preserve the cached
+                # digest so stale positions cannot be mistaken for positions in new text.
+                digest = metadata.get("target_digest")
+                placements = metadata.get("placements", [])
+            result[pid] = {"target_digest": digest, "placements": deepcopy(placements)}
+    return result

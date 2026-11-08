@@ -53,7 +53,7 @@ pipeline:
   terminology_context: false # CLI-only experimental whole-book terminology evidence
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
-  annotation_alignment: true # Align links after each annotated logical paragraph; if disabled, target links fall back to paragraph ends
+  annotation_alignment: true # Align translated annotations; EPUB uses fallback markers, PDF omits failed items
   annotation_alignment_concurrency: 4 # Maximum concurrent per-annotation requests for a logical paragraph with multiple annotations
   review_concurrency: 4 # Concurrent review blocks over a read-only translation/glossary snapshot; 1 runs serially
   review_output_retries: 2 # Additional retries for malformed single-paragraph review output; 2 allows 3 attempts total
@@ -125,7 +125,7 @@ class PipelineConfig(BaseModel):
         4  # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
     )
     annotation_alignment: bool = (
-        True  # Align links after each annotated logical paragraph is finalized
+        True  # Align annotations after each logical paragraph; PDF omits failed items
     )
     # For multiple annotations in a logical paragraph, align each with a concurrent request.
     # This limit bounds concurrency and avoids all markers falling back after one bad response.

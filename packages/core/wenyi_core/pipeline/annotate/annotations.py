@@ -1,4 +1,4 @@
-"""EPUB annotation context, continuation reconstruction, alignment and safe fallback.
+"""Annotation context, continuation reconstruction, alignment and safe fallback.
 Map source point/range offsets to translation slices, reconstruct logical paragraphs only
 after the final continuation is translated, and cache placements by target_digest. Process
 logical paragraphs serially and persist each immediately. Record alignment failures as
@@ -23,6 +23,15 @@ class AnnotationService:
 
     def __init__(self, runtime: PipelineRuntime):
         self._runtime = runtime
+
+    @staticmethod
+    def annotation_metadata(segment: Segment) -> dict[str, Any] | None:
+        """Select the format-owned metadata consumed by the shared point/range aligner."""
+        for key in ("epub_annotations", "pdf_annotations"):
+            metadata = segment.meta.get(key)
+            if isinstance(metadata, dict):
+                return metadata
+        return None
 
     @staticmethod
     def completed_logical_starts_in_range(
@@ -172,7 +181,7 @@ class AnnotationService:
         *,
         retry_fallbacks: bool = False,
     ) -> None:
-        """Align EPUB links for one fully translated logical paragraph.
+        """Align format-owned annotations for one fully translated logical paragraph.
         Only the first slice has an anchor and parsing metadata, so wait for all
         continuations before merging source/target. Align against formal target text; export
         punctuation normalization remaps placements only on a copy.
@@ -186,7 +195,7 @@ class AnnotationService:
         while start_position > 0 and segments[start_position].cont:
             start_position -= 1
         segment = segments[start_position]
-        metadata = segment.meta.get("epub_annotations")
+        metadata = self.annotation_metadata(segment)
         if not isinstance(metadata, dict):
             return
         raw_items = metadata.get("items")
@@ -307,8 +316,17 @@ class AnnotationService:
         for done, ci in enumerate(chapter_indices, 1):
             chapter = store.load_chapter(ci)
             for position, segment in enumerate(chapter.text_segments):
-                metadata = segment.meta.get("epub_annotations")
+                metadata = self.annotation_metadata(segment)
                 if segment.cont or not isinstance(metadata, dict):
+                    continue
+                if "pdf_annotations" in segment.meta:
+                    # PDF export cannot invent formula geometry or use stale positions.
+                    # Refresh missing/stale placements on resume, never during read-only export.
+                    target = segment.target or ""
+                    if target and metadata.get("target_digest") != target_digest(target):
+                        self.align_segment_annotation(ci, chapter, position, store)
+                    # Unchanged PDF failures are best-effort omissions, not another paid
+                    # repair pass. Other annotations in the same paragraph remain usable.
                     continue
                 placements = metadata.get("placements")
                 if not isinstance(placements, list) or not any(

@@ -222,12 +222,14 @@ def test_cli_ping_reports_results_and_exit_code(tmp_path, sdk):
     raw = {"llm": _config().model_dump(mode="json", exclude_none=True)}
     passed = _invoke(tmp_path, raw, "--for", "review", "--json")
     assert passed.exit_code == 0, passed.output
-    assert [item["profile"] for item in json.loads(passed.output)] == ["small", "strong"]
+    assert [item["profile"] for item in json.loads(passed.stdout)] == ["small", "strong"]
+    assert passed.stderr == ""
 
     sdk.behaviors["big"] = _status_error(401)
     failed = _invoke(tmp_path, raw, "--for", "review", "--json")
     assert failed.exit_code == 1
-    assert json.loads(failed.output)[1]["category"] == "authentication_failed"
+    assert json.loads(failed.stdout)[1]["category"] == "authentication_failed"
+    assert "Diagnostic log:" in failed.stderr
     table = _invoke(tmp_path, raw, "--for", "review")
     assert table.exit_code == 1
     assert "1 of 2 model profiles unreachable" in table.output

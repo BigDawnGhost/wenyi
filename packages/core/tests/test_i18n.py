@@ -315,7 +315,10 @@ def test_cli_invalid_yaml_is_a_concise_error(command):
         assert "Error: 1" not in result.output
         assert "Traceback" not in result.output
         assert path.read_text(encoding="utf-8") == invalid
-        assert list(Path(directory).iterdir()) == [path]
+        logs = Path(directory) / "logs"
+        assert set(Path(directory).iterdir()) == {path, logs}
+        [diagnostic] = logs.glob("wenyi-cli-*.log")
+        assert str(diagnostic) in result.stderr
 
 
 def test_partial_non_chinese_run_resumes_without_retranslating_saved_batch():

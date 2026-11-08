@@ -358,7 +358,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | `pipeline.book_understanding` | `true` | 生成覆盖完整原文的章节梗概和全书概览。 |
 | `pipeline.prescan_concurrency` | `4` | 章节梗概并发；`1` 为顺序执行。 |
 | `pipeline.terminology_context` | `false` | 仅 CLI 可用的实验性全书人物证据。 |
-| `pipeline.annotation_alignment` | `true` | 定位译文链接／注释；关闭时使用段末链接标记。 |
+| `pipeline.annotation_alignment` | `true` | 定位译文链接／注释。EPUB 使用段末回退标记；PDF 忽略失败项，见 [PDF 格式说明](formats.md#babeldoc)。 |
 | `pipeline.annotation_alignment_concurrency` | `4` | 单个逻辑段内逐注释请求的并发数。 |
 
 `three_draft_synthesis` 是**三份独立初稿加一次对照原文的综合润色**，不是选一份胜出稿。
@@ -383,7 +383,7 @@ Web/API 不会仅因该 YAML 开关启用而生产证据。
 Review 可以使用已有备注，不生成新证据。
 
 正文翻译和新的 Reviewer 请求总是使用全量术语，没有范围选择器。
-注释定位可能增加模型请求，定位失败仍保留可点击回退。
+注释定位可能增加模型请求，定位失败的处理取决于[格式](formats.md)。
 完整流程、成本和续跑语义见[流程指南](../guide/pipeline.md)，
 标记／排版限制见[格式参考](formats.md)。
 
