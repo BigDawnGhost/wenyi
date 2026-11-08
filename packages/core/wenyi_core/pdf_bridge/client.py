@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +12,8 @@ import httpx
 from ..atomicio import publish_bytes
 from ..models.errors import IngestError
 from .connection import resolve_connection
+
+logger = logging.getLogger(__name__)
 
 
 class BabeldocBridgeError(IngestError):
@@ -76,17 +80,26 @@ class BabeldocBridgeClient:
         translations: dict[str, str],
         *,
         out_path: str | Path,
+        annotations: dict[str, Any] | None = None,
     ) -> str:
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        self.health()
+        health = self.health()
+        if annotations and "annotation-best-effort-v1" not in health.get("capabilities", []):
+            raise BabeldocBridgeError(
+                "This PDF requires best-effort annotation support. Update and restart "
+                "wenyi-babeldoc-bridge before exporting."
+            )
         connection = resolve_connection(self.base_url)
+        payload: dict[str, Any] = {"session_id": session_id, "translations": translations}
+        if annotations:
+            payload["annotations"] = annotations
         try:
             response = httpx.post(
                 f"{connection.url}/fillback",
                 headers=connection.headers,
                 trust_env=connection.trust_env,
-                json={"session_id": session_id, "translations": translations},
+                json=payload,
                 timeout=self.timeout,
             )
             if response.status_code >= 400:
@@ -95,6 +108,18 @@ class BabeldocBridgeClient:
                 )
             # Publish atomically: a crash must not leave a truncated PDF at the target.
             publish_bytes(out_path, response.content)
+            raw_statistics = getattr(response, "headers", {}).get("X-Wenyi-PDF-Annotation-Stats")
+            if raw_statistics:
+                try:
+                    statistics = json.loads(raw_statistics)
+                except (TypeError, ValueError):
+                    logger.warning("BabelDOC bridge returned invalid annotation statistics")
+                else:
+                    if isinstance(statistics, dict):
+                        logger.info(
+                            "PDF annotation statistics: %s",
+                            json.dumps(statistics, sort_keys=True),
+                        )
             return str(out_path)
         except BabeldocBridgeError:
             raise
