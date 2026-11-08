@@ -320,8 +320,11 @@ mod tests {
 
     #[test]
     fn project_locations_cannot_overlap_program_or_data() {
-        let install = std::env::temp_dir().join("wenyi-program-path-test");
-        let root = std::env::temp_dir().join("wenyi-data-path-test");
+        // No files are created. Keep the synthetic paths outside system folders:
+        // macOS puts its temporary directory under the protected /var tree.
+        let base = std::path::absolute("/wenyi-library-path-test").unwrap();
+        let install = base.join("program");
+        let root = base.join("data");
         for unsafe_path in [
             &install,
             &root,
@@ -330,8 +333,28 @@ mod tests {
         ] {
             assert!(admit_library_root(unsafe_path, &install, &root).is_err());
         }
-        assert!(
-            admit_library_root(&std::env::temp_dir().join("chosen-books"), &install, &root).is_ok()
-        );
+        assert!(admit_library_root(&base.join("chosen-books"), &install, &root).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_locations_cannot_use_system_temporary_directories() {
+        let base = Path::new("/wenyi-library-path-test");
+        for directory in [
+            PathBuf::from("/var/tmp"),
+            PathBuf::from("/var/folders"),
+            Path::new("/var").canonicalize().unwrap().join("folders"),
+        ] {
+            assert_eq!(
+                admit_library_root(
+                    &directory.join("chosen-books"),
+                    &base.join("program"),
+                    &base.join("data"),
+                ),
+                Err(Error::LibraryRootInvalid),
+                "{}",
+                directory.display()
+            );
+        }
     }
 }

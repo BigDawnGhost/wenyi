@@ -341,7 +341,64 @@ def test_workflows_separate_components():
         assert "--clobber" not in text
         assert "tag_name" in text
         assert "tar.gz" not in text
-        assert document["jobs"]["release"]["if"] == "github.event_name == 'release'"
+        expected = "github.event_name == 'release'"
+        if component == "desktop":
+            expected += " || (github.event_name == 'workflow_dispatch' && inputs.publish)"
+        assert document["jobs"]["release"]["if"] == expected
+
+
+@pytest.mark.parametrize(
+    ("tag", "published_stable", "gh_exit_code", "accepted"),
+    [
+        ("v1.5.0", "true", 0, True),
+        ("1.5.0", "true", 0, True),
+        ("", "true", 0, False),
+        ("main", "true", 0, False),
+        ("v1.5.0rc1", "true", 0, False),
+        ("v01.5.0", "true", 0, False),
+        ("v1.5.0", "false", 0, False),
+        ("v1.5.0", "true", 1, False),
+    ],
+)
+def test_desktop_rebuild_preflight_requires_an_existing_stable_release(
+    tag, published_stable, gh_exit_code, accepted
+):
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/desktop.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    preflight = next(
+        step
+        for step in document["jobs"]["plan"]["steps"]
+        if step.get("name") == "Validate published release rebuild"
+    )
+    assert preflight["shell"] == "bash"
+    assert "--json isDraft,isPrerelease" in preflight["run"]
+    bash = "bash"
+    if os.name == "nt":
+        # PATH may resolve bash to the WSL launcher rather than Git for Windows.
+        git_root = Path(git(ROOT, "--exec-path")).parents[2]
+        git_bash = git_root / "bin" / "bash.exe"
+        assert git_bash.is_file(), "Git for Windows Bash is required for workflow checks"
+        bash = str(git_bash)
+    # Override gh in this shell so the actual workflow guard runs entirely offline.
+    fake_gh = 'gh() { printf "%s\\n" "$PUBLISHED_STABLE"; return "$GH_EXIT_CODE"; }\n'
+    shell_script = "printf '%s\\n' workflow-guard-started\n" + fake_gh + preflight["run"]
+    result = subprocess.run(
+        [bash, "-eu", "-c", shell_script],
+        env={
+            **os.environ,
+            "TAG": tag,
+            "PUBLISHED_STABLE": published_stable,
+            "GH_EXIT_CODE": str(gh_exit_code),
+        },
+        text=True,
+        capture_output=True,
+    )
+    # A shell-launch failure must not pass as an expected admission rejection.
+    assert "workflow-guard-started\n" in result.stdout, result.stdout + result.stderr
+    assert (result.returncode == 0) is accepted, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("file", ["tests.yml", "build.yml", "desktop.yml"])
