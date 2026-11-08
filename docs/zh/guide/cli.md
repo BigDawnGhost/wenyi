@@ -149,7 +149,7 @@ BabelDOC 配置、PDF 导出条件及其他格式要求见[格式参考](../refe
 |---|---|
 | `--chapter N` | 翻译并保存一个从零开始编号的章节，跳过全书 Review 和导出。 |
 | `--polish` / `--no-polish` | 覆盖待译任务的 `pipeline.polish`。 |
-| `--translation-mode standard\|best_of_three` | 覆盖翻译方式；精翻要求开启润色。 |
+| `--translation-mode standard\|three_draft_synthesis` | 覆盖翻译方式；精翻要求开启润色。 |
 | `--review` / `--no-review` | 覆盖自动最终全书 Review。 |
 | `--format epub\|txt\|html\|markdown\|pdf\|docx` | 选择导出格式；PDF 仅适用于已保存的 BabelDOC 项目。 |
 | `--out PATH` | 指定单语输出路径；双语命名从此派生。 |
@@ -174,10 +174,10 @@ wenyi translate book.epub --no-mono --bilingual
 ### 三译合润精翻
 
 ```bash
-wenyi translate book.epub --translation-mode best_of_three --polish
+wenyi translate book.epub --translation-mode three_draft_synthesis --polish
 ```
 
-虽然配置值叫 `best_of_three`，实际是**三份独立初稿加一次对照原文的综合润色**，
+该模式生成**三份独立初稿，再做一次对照原文的综合润色**，
 不是从三份中选一份。该模式要求润色，不能与 `--no-polish` 合用。
 正常批次调用模型四次，标准翻译加润色为两次；不保证质量提升。
 

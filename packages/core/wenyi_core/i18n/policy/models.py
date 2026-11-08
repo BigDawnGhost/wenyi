@@ -111,7 +111,6 @@ class PolicyContext:
     format: str = ""
     backend: str = "native"
     punctuation_normalize: bool = True
-    honorific_strategy: str = "keep_style"
     source_identity: str = ""
     task_groups: tuple[str, ...] = ()
     bilingual: bool = False

@@ -10,6 +10,8 @@ import yaml
 from rich.console import Console
 from typer.main import get_current_context
 from wenyi_core.config import Config
+from wenyi_core.config_rebuild import load_rebuilt_config
+from wenyi_core.errors import WenyiError
 from wenyi_core.i18n.genres import DEFAULT_GENRE
 
 
@@ -23,10 +25,10 @@ class CommandContext:
     def load_config(self) -> Config:
         """Load this invocation's config and apply its non-persisted translation style."""
         try:
-            config = Config.load(self.config_path)
+            config = load_rebuilt_config(self.config_path)
             config.set_prompt_genre(self.prompt_genre)
             return config
-        except (OSError, ValueError, yaml.YAMLError) as error:
+        except (OSError, ValueError, yaml.YAMLError, WenyiError) as error:
             self.console.print(f"[red]Configuration error: {error}[/]")
             raise typer.Exit(1) from None
 

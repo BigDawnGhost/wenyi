@@ -1,4 +1,4 @@
--- Fresh-deployment PostgreSQL schema. No legacy-state migrations are provided.
+-- Current PostgreSQL schema. Settings reconstruction does not migrate domain state.
 CREATE TABLE IF NOT EXISTS application_settings (
     id INTEGER PRIMARY KEY CHECK (id=1),
     document JSONB NOT NULL,
@@ -32,6 +32,13 @@ CREATE TABLE IF NOT EXISTS projects (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (source_sha256 IS NULL OR source_sha256 ~ '^[0-9a-f]{64}$'),
     CHECK (initialization_sha256 IS NULL OR initialization_sha256 ~ '^[0-9a-f]{64}$')
+);
+CREATE TABLE IF NOT EXISTS configuration_backups (
+    id BIGSERIAL PRIMARY KEY,
+    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+    document JSONB NOT NULL,
+    removed JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS chapters (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,

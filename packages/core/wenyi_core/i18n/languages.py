@@ -70,13 +70,14 @@ def label(code: str) -> str:
     return profile(code)["label"] if normalize_language(code) else "the source language"
 
 
-def honorific_rule(strategy: str, src: str = "ja", tgt: str = "zh") -> str:
-    rules = read_json("shared/honorific.json")
+def honorific_rule(src: str, tgt: str) -> str:
+    """Select forms-of-address guidance from the language pair, not user configuration."""
+    rule = read_json("shared/honorific.json")["rule"]
     pair = f"{normalize_language(src)}__{require_language(tgt)}"
     pairs = read_json("pairs/registry.json")
     if pair in pairs:
-        rules.update(read_json(f"pairs/{pair}.json").get("honorific", {}))
-    return rules.get(strategy, rules["keep_style"])
+        rule = read_json(f"pairs/{pair}.json").get("honorific", rule)
+    return rule
 
 
 def validate_run_languages(manifest: dict, source: str, target: str) -> None:

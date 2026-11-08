@@ -34,8 +34,7 @@ def validate_settings(value: str, default_template: str) -> Config:
     pipeline = document.get("pipeline", {})
     if isinstance(pipeline, dict) and PROJECT_PIPELINE_FIELDS.intersection(pipeline):
         raise ValueError(
-            "translation_mode and prompt_genre are project settings; choose them at creation. "
-            "Initial-draft concurrency is built in, not configurable."
+            "translation_mode and prompt_genre are project settings; choose them at creation."
         )
     config = Config.from_dict(document)
     if config.source_lang == config.target_lang:

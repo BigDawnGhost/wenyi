@@ -34,7 +34,7 @@ export function WorkflowSettings({
   const { t: tr } = useI18n();
   const precision =
     scope === "project" &&
-    section(config, "pipeline").translation_mode === "best_of_three";
+    section(config, "pipeline").translation_mode === "three_draft_synthesis";
   const PIPELINE: [string, string][] = [
     ["book_understanding", tr("settings.bookUnderstanding")],
     ["polish", tr("settings.polishing")],

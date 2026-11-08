@@ -65,6 +65,13 @@ class PostgresRepository:
 
     def start(self):
         self._pool = init_pool(self.settings.psycopg_dsn)
+        try:
+            from .config_rebuild import rebuild_saved_settings
+
+            rebuild_saved_settings(self._pool, self.settings.config_path)
+        except BaseException:
+            self.close()
+            raise
 
     def close(self):
         if self._pool is not None:

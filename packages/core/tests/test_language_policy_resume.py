@@ -3,6 +3,7 @@
 import pytest
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryTerm
+from wenyi_core.i18n.languages import honorific_rule
 from wenyi_core.i18n.resources import read_json, read_text
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
@@ -34,7 +35,7 @@ def book(tmp_path):
 
 @pytest.mark.parametrize("fresh_process", [False, True])
 def test_changed_semantic_revision_refreshes_pending_work_and_keeps_completed_targets(
-    tmp_path, fresh_process
+    tmp_path, monkeypatch, fresh_process
 ):
     source, config, store = book(tmp_path)
     initial_client = FakeClient(handler=routing_handler)
@@ -42,7 +43,10 @@ def test_changed_semantic_revision_refreshes_pending_work_and_keeps_completed_ta
     initial.run(str(source), only_chapter=0)
     saved = store.load_chapter(0).model_dump()
     initial_manifest = store.load_manifest()
-    config.honorific_strategy = "normalize"
+    monkeypatch.setattr(
+        "wenyi_core.i18n.policy.resolver.honorific_rule",
+        lambda src, tgt: honorific_rule(src, tgt) + "\nKeep forms of address grounded in context.",
+    )
     client = FakeClient(handler=routing_handler) if fresh_process else initial_client
     previous_calls = len(client.calls)
     resumed = Orchestrator(config, client=client, storage=store) if fresh_process else initial
@@ -51,6 +55,10 @@ def test_changed_semantic_revision_refreshes_pending_work_and_keeps_completed_ta
     assert all(segment.target is not None for segment in store.load_chapter(1).text_segments)
     assert "analysis.style" not in [call["operation"] for call in client.calls[previous_calls:]]
     assert store.load_manifest()["language_policies"] == initial_manifest["language_policies"]
+    translation = next(
+        call for call in client.calls[previous_calls:] if call["operation"] == "translation.body"
+    )
+    assert "Keep forms of address grounded in context." in translation["messages"][0]["content"]
 
 
 @pytest.mark.parametrize("initial_genre", ["literary", "academic"])

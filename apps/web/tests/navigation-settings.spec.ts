@@ -7,7 +7,7 @@ test("project settings retain creation-time precision without a mode selector", 
       ...configuration,
       effective: {
         ...effective,
-        pipeline: { ...effective.pipeline, translation_mode: "best_of_three", polish: true },
+        pipeline: { ...effective.pipeline, translation_mode: "three_draft_synthesis", polish: true },
       },
     },
   });
@@ -27,7 +27,7 @@ test("project settings retain creation-time precision without a mode selector", 
   await page.getByLabel("Whole-book review", { exact: true }).uncheck();
   await page.getByRole("button", { name: "Save configuration", exact: true }).click();
   await expect(page.getByText("Project settings saved", { exact: true })).toBeVisible();
-  expect(submitted?.pipeline.translation_mode).toBe("best_of_three");
+  expect(submitted?.pipeline.translation_mode).toBe("three_draft_synthesis");
   expect(submitted?.pipeline.polish).toBe(true);
   expect(submitted?.pipeline.review).toBe(false);
   expect(submitted?.pipeline.precision_concurrency).toBeUndefined();

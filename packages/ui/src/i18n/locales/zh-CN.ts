@@ -154,6 +154,7 @@ const zhCN = {
   "export.edition": "版本",
   "export.monolingual": "单语版",
   "export.bilingual": "双语版",
+  "export.pdfBilingualLayout": "每张 PDF 页面将左侧原文页与右侧对应译文页并排拼接，两侧保持原始尺寸。",
   "export.bilingualOrder": "双语顺序",
   "export.translationFirst": "译文在上",
   "export.sourceFirst": "原文在上",

@@ -115,7 +115,7 @@ matching successful stages can be reused on retry.
 
 ## Three-draft precision
 
-`pipeline.translation_mode: best_of_three` means **three independent drafts followed
+`pipeline.translation_mode: three_draft_synthesis` means **three independent drafts followed
 by one source-aware synthesis**, not choosing a winning draft.
 Polishing must be enabled.
 

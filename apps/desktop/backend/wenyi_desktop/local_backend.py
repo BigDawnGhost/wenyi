@@ -120,10 +120,18 @@ class LocalBackend:
                     document TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS application_settings (
                     id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS configuration_backups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+                    document TEXT NOT NULL, removed TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
                 CREATE TABLE IF NOT EXISTS progress (
                     id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
                     document TEXT NOT NULL);
             """)
+        from .config_rebuild import rebuild_saved_settings
+
+        rebuild_saved_settings(self)
 
     @contextmanager
     def transaction(

@@ -67,7 +67,7 @@ def _config():
 def _record_plans(orchestrator, monkeypatch):
     executor = (
         orchestrator._translation._precision
-        if orchestrator.config.pipeline.translation_mode == "best_of_three"
+        if orchestrator.config.pipeline.translation_mode == "three_draft_synthesis"
         else orchestrator._translation._batches
     )
     plans = []
@@ -82,7 +82,7 @@ def _record_plans(orchestrator, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "mode,polish", [("standard", False), ("standard", True), ("best_of_three", True)]
+    "mode,polish", [("standard", False), ("standard", True), ("three_draft_synthesis", True)]
 )
 def test_body_context_skips_layout_units_without_dropping_them(store, monkeypatch, mode, polish):
     segments = [
@@ -99,7 +99,7 @@ def test_body_context_skips_layout_units_without_dropping_them(store, monkeypatc
     config = _config()
     config.pipeline.translation_mode = mode
     config.pipeline.polish = polish
-    handler = PrecisionHandler() if mode == "best_of_three" else routing_handler
+    handler = PrecisionHandler() if mode == "three_draft_synthesis" else routing_handler
     orchestrator = Orchestrator(config, client=FakeClient(handler=handler))
     plans = _record_plans(orchestrator, monkeypatch)
     orchestrator._translation.run(store, book_synopsis="Book guidance")
@@ -288,7 +288,7 @@ def test_completed_previous_chapter_supplies_pdf_context(store, monkeypatch, onl
 
 
 @pytest.mark.parametrize(
-    "mode,polish", [("standard", False), ("standard", True), ("best_of_three", True)]
+    "mode,polish", [("standard", False), ("standard", True), ("three_draft_synthesis", True)]
 )
 def test_cross_chapter_pdf_context_skips_layout_only_chapters(store, monkeypatch, mode, polish):
     chapters = [
@@ -331,7 +331,7 @@ def test_cross_chapter_pdf_context_skips_layout_only_chapters(store, monkeypatch
     config = _config()
     config.pipeline.translation_mode = mode
     config.pipeline.polish = polish
-    handler = PrecisionHandler() if mode == "best_of_three" else routing_handler
+    handler = PrecisionHandler() if mode == "three_draft_synthesis" else routing_handler
     orchestrator = Orchestrator(config, client=FakeClient(handler=handler))
     plans = _record_plans(orchestrator, monkeypatch)
 

@@ -21,7 +21,7 @@ class ProjectCreate(RequestModel):
     strategy: dict[str, Any] = Field(default_factory=dict)
     prepare: bool = False
     pdf_backend: Literal["mineru", "babeldoc"] | None = None
-    translation_mode: Literal["standard", "best_of_three"] = "standard"
+    translation_mode: Literal["standard", "three_draft_synthesis"] = "standard"
     prompt_genre: Genre = DEFAULT_GENRE
     #: Where the project directory is created, when the host lets a person choose.
     #:

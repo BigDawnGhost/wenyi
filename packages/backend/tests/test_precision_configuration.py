@@ -18,7 +18,7 @@ def test_global_configuration_does_not_expose_project_precision_choices():
 
 
 @pytest.mark.parametrize(
-    "field,value", [("translation_mode", "best_of_three"), ("precision_concurrency", 1)]
+    "field,value", [("translation_mode", "three_draft_synthesis"), ("prompt_genre", "academic")]
 )
 def test_global_yaml_rejects_project_precision_choices(field, value):
     with pytest.raises(ValueError, match="project"):
@@ -34,13 +34,13 @@ def test_saved_project_precision_survives_standard_defaults(tmp_path):
     precision = Config.from_dict(
         {
             "llm": {"preset": "fake"},
-            "pipeline": {"translation_mode": "best_of_three", "precision_concurrency": 1},
+            "pipeline": {"translation_mode": "three_draft_synthesis"},
         }
     )
     project = {"id": "saved-precision", "config": project_document(precision)}
     defaults = Config.from_dict({"llm": {"preset": "fake"}})
     restored = effective_config(project, defaults=defaults, state_dir=str(tmp_path / project["id"]))
-    assert restored.pipeline.translation_mode == "best_of_three"
+    assert restored.pipeline.translation_mode == "three_draft_synthesis"
     assert "precision_concurrency" not in restored.pipeline.model_dump()
-    assert project["config"]["pipeline"]["translation_mode"] == "best_of_three"
+    assert project["config"]["pipeline"]["translation_mode"] == "three_draft_synthesis"
     assert defaults.pipeline.translation_mode == "standard"

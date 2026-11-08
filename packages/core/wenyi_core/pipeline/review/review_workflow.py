@@ -56,7 +56,6 @@ class ReviewService:
         return {
             "source_lang": self._runtime.config.source_lang,
             "target_lang": self._runtime.config.target_lang,
-            "honorific_strategy": self._runtime.config.honorific_strategy,
             "language_policy": self._runtime.config.language_policy("review").fingerprint,
             "review_glossary_policy": "full",
             "review_glossary_reading_source": "ja",

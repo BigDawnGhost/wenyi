@@ -96,7 +96,7 @@ def _rules(context: PolicyContext) -> dict[str, str]:
             source_guidance,
             target_guidance,
             common["evidence"],
-            honorific_rule("keep_style", context.source, context.target),
+            honorific_rule(context.source, context.target),
         )
     )
     return {
@@ -105,14 +105,7 @@ def _rules(context: PolicyContext) -> dict[str, str]:
         "tgt_label": target["label"],
         "target_language": target["english_name"],
         "lang_guidance": default_guidance,
-        "configured_lang_guidance": "\n".join(
-            (
-                source_guidance,
-                target_guidance,
-                common["evidence"],
-                honorific_rule(context.honorific_strategy, context.source, context.target),
-            )
-        ),
+        "configured_lang_guidance": default_guidance,
         "target_guidance": target_guidance,
         "term_guidance": source.get("term_guidance", "") + common["evidence"],
         "reading_field": source.get("reading_field", ""),

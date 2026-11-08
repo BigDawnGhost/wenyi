@@ -156,6 +156,7 @@ const en = {
   "export.edition": "Edition",
   "export.monolingual": "Monolingual",
   "export.bilingual": "Bilingual",
+  "export.pdfBilingualLayout": "Each PDF page pairs the original page on the left with its translation on the right, keeping both at their original size.",
   "export.bilingualOrder": "Bilingual order",
   "export.translationFirst": "Translation first",
   "export.sourceFirst": "Source first",

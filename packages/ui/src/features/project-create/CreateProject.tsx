@@ -46,7 +46,7 @@ export default function CreateProjectDialog() {
   }, [file]);
   const [prepare, setPrepare] = useState(false);
   const [translationMode, setTranslationMode] = useState<
-    "standard" | "best_of_three"
+    NonNullable<ProjectInput["translation_mode"]>
   >("standard");
   const [promptGenre, setPromptGenre] = useState<
     NonNullable<ProjectInput["prompt_genre"]>
@@ -352,10 +352,10 @@ export default function CreateProjectDialog() {
             <div className="flex items-center gap-2">
               <Switch
                 id="precision-translation"
-                checked={displayedMode === "best_of_three"}
+                checked={displayedMode === "three_draft_synthesis"}
                 disabled={locked}
                 onCheckedChange={(checked) =>
-                  setTranslationMode(checked ? "best_of_three" : "standard")
+                  setTranslationMode(checked ? "three_draft_synthesis" : "standard")
                 }
                 className="peer"
               />

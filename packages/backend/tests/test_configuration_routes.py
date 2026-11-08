@@ -35,17 +35,17 @@ def test_precision_project_yaml_validates_mode_and_required_polish():
         "id": "precision-test",
         "source_lang": "en",
         "target_lang": "zh",
-        "config": {"pipeline": {"translation_mode": "best_of_three", "polish": True}},
+        "config": {"pipeline": {"translation_mode": "three_draft_synthesis", "polish": True}},
     }
     valid = effective_config(
         project,
         defaults=defaults,
         state_dir="unused",
-        document={"pipeline": {"translation_mode": "best_of_three", "polish": True}},
+        document={"pipeline": {"translation_mode": "three_draft_synthesis", "polish": True}},
     )
-    assert valid.pipeline.translation_mode == "best_of_three"
+    assert valid.pipeline.translation_mode == "three_draft_synthesis"
     for pipeline in (
-        {"translation_mode": "best_of_three", "polish": False},
+        {"translation_mode": "three_draft_synthesis", "polish": False},
         {"translation_mode": "invalid"},
         {"translation_mode": "standard"},
     ):
@@ -58,7 +58,7 @@ def test_precision_project_yaml_validates_mode_and_required_polish():
         restored = effective_config(
             project, defaults=defaults, state_dir="unused", document=document
         )
-        assert restored.pipeline.translation_mode == "best_of_three"
+        assert restored.pipeline.translation_mode == "three_draft_synthesis"
         assert restored.pipeline.polish is True
 
 
