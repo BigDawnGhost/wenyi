@@ -249,6 +249,18 @@ for (const locale of ["en", "zh-CN"] as const) {
         name: chinese ? "生成导出文件" : "Generate export",
       }),
     ).toBeVisible();
+    await page.getByRole("radio", {
+      name: chinese ? "双语版" : "Bilingual",
+      exact: true,
+    }).check();
+    await page.getByText(
+      chinese ? "排版与高级选项" : "Layout and advanced options",
+      { exact: true },
+    ).click();
+    const bilingualOrder = page.getByLabel(chinese ? "双语顺序" : "Bilingual order");
+    await expect(bilingualOrder).toHaveText(chinese ? "译文在前" : "Translation first");
+    await chooseOption(bilingualOrder, chinese ? "原文在前" : "Source first");
+    await expect(bilingualOrder).toHaveText(chinese ? "原文在前" : "Source first");
   });
 }
 

@@ -471,7 +471,7 @@ for choosing the backend.
 |---|---|---|
 | `output.mono` | `true` | Produce a monolingual edition. |
 | `output.bilingual` | `false` | Also produce a source-and-translation edition. |
-| `output.bilingual_order` | `target_first` | `target_first` or `source_first`; PDF always places the original page on the left. |
+| `output.bilingual_order` | `target_first` | `target_first` or `source_first`; selects the first version in paragraph-paired formats and the left-hand version in PDF spreads. |
 | `output.bilingual_preserve_source_style` | `false` | Preserve recorded source styles rather than the format's default source presentation. |
 | `output.about_page` | `true` | Add the project “About this translation” page to EPUB output. |
 | `output.punctuation_normalize` | `true` | Normalize Simplified Chinese punctuation on the export copy only. |

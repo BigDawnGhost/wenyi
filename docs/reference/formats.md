@@ -44,11 +44,11 @@ requested. Choose a suffix consistent with the selected format.
 Only monolingual output is enabled by default. `--bilingual` enables the bilingual
 edition; `--no-mono --bilingual` requests only that edition.
 EPUB, HTML, TXT, Markdown and DOCX can pair source and translation.
-PDF pairs each original page on the left with its translated page on the right
-within one wider page; see [BabelDOC](#babeldoc).
+PDF pairs each original page with its translated page side by side within one
+wider page; see [BabelDOC](#babeldoc).
 
-- `output.bilingual_order` selects target-first (default) or source-first for
-  paragraph-paired formats; it does not change PDF's left-original/right-translation layout.
+- `output.bilingual_order` selects target-first (default) or source-first.
+  Paragraph-paired formats place that version first; PDF places it on the left.
 - EPUB/HTML source text is subdued by default.
   `output.bilingual_preserve_source_style: true` inherits normal book styling.
 - DOCX source text defaults to normal body styling, without forced gray text,
@@ -232,11 +232,12 @@ be restored after restart only while the session directory and the same
 Python/BabelDOC versions remain available. A temporary directory can disappear after
 reboot; Wenyi's translated chapters alone cannot recreate that PDF layout session.
 
-For a bilingual PDF, Wenyi combines each original page on the **left** with the
-corresponding bridge-produced translated page on the **right**, forming one wider
-PDF page per pair. Both retain their original physical size, visible crop and
+For a bilingual PDF, Wenyi combines each original page with the corresponding
+bridge-produced translated page, forming one wider PDF page per pair. The
+[bilingual order](#naming-and-bilingual-output) places the first version on the
+**left** and the other on the **right**. Both retain their original physical size, visible crop and
 orientation; unequal heights align at the top. Text and vector content are not
-rasterized. Paragraph order and source-style options do not affect this layout.
+rasterized. Source-style options do not affect this layout.
 
 Keep the original PDF as well as the bridge session. Pairing uses the page
 selection saved at import, not current settings. A changed source, unreadable PDF

@@ -120,6 +120,7 @@ def test_machine_receipts_cover_real_pdf_workflow_and_resume(pdf_project, tmp_pa
 
 
 @pytest.mark.parametrize("command", ["translate", "assemble"])
+@pytest.mark.parametrize("order", ["target_first", "source_first"])
 @pytest.mark.parametrize(
     "mono,bilingual,explicit_out",
     [
@@ -131,11 +132,12 @@ def test_machine_receipts_cover_real_pdf_workflow_and_resume(pdf_project, tmp_pa
     ],
 )
 def test_cli_defaults_to_pdf_for_mono_and_bilingual_outputs(
-    pdf_project, tmp_path, command, mono, bilingual, explicit_out
+    pdf_project, tmp_path, command, order, mono, bilingual, explicit_out
 ):
     config, source, requests = pdf_project
     config.output.mono = mono
     config.output.bilingual = bilingual
+    config.output.bilingual_order = order
     if command == "assemble":
         Orchestrator(config).run(str(source))
     arguments = [command, str(source)]
@@ -162,8 +164,12 @@ def test_cli_defaults_to_pdf_for_mono_and_bilingual_outputs(
         page = PdfReader(path).pages[0]
         paired = path.stem.endswith("-bi")
         assert page.mediabox.width == (400 if paired else 200)
-        assert ("Original page" in page.extract_text()) is paired
-        assert "Translated page" in page.extract_text()
+        text = page.extract_text()
+        assert ("Original page" in text) is paired
+        assert "Translated page" in text
+        if paired:
+            source_first = text.index("Original page") < text.index("Translated page")
+            assert source_first is (order == "source_first")
     assert all(request[:2] == ("offline-session", {"0:0": "译0"}) for request in requests)
 
 

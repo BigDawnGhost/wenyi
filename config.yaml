@@ -56,6 +56,7 @@ output:
   mono: true # Monolingual output (<title>.<target-language>.epub; default target is zh)
   bilingual: false # Bilingual output (<title>.<target-language>-bi.epub)
   bilingual_order: target_first # target_first=translation first; source_first=source first
+  # PDF places the first version on the left; other formats use paragraph order.
   # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
   bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page

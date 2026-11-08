@@ -1,10 +1,15 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi, pid, project } from "../../../../packages/ui/sandbox/fixtures";
+import { chooseOption } from "../../../../packages/ui/tests/e2e/select-helper";
 
 const origin = "http://127.0.0.1:19481";
 
-for (const babeldoc of [false, true]) {
-  test(`native PDF export is ${babeldoc ? "available for BabelDOC" : "hidden for MinerU"}`, async ({ page }) => {
+for (const [babeldoc, order] of [
+  [false, "target_first"],
+  [true, "target_first"],
+  [true, "source_first"],
+] as const) {
+  test(`native PDF export is ${babeldoc ? "available for BabelDOC" : "hidden for MinerU"} (${order})`, async ({ page }) => {
     await page.addInitScript(() => {
       window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
       window.__TAURI_INTERNALS__ = {
@@ -30,10 +35,12 @@ for (const babeldoc of [false, true]) {
     }
     await pdf.click();
     await page.getByRole("radio", { name: "Bilingual", exact: true }).check();
-    await expect(page.getByText(/Each PDF page pairs the original page on the left/)).toBeVisible();
+    await expect(page.getByText(/Each PDF page pairs the original and translated pages side by side/)).toBeVisible();
     await page.getByText("Layout and advanced options", { exact: true }).click();
     await expect(page.getByLabel("PDF export engine")).toHaveCount(0);
-    await expect(page.getByLabel("Bilingual order", { exact: true })).toHaveCount(0);
+    const bilingualOrder = page.getByLabel("Bilingual order", { exact: true });
+    await expect(bilingualOrder).toHaveText("Translation first");
+    await chooseOption(bilingualOrder, order === "target_first" ? "Translation first" : "Source first");
     await page.getByRole("button", { name: "Generate export", exact: true }).click();
     await expect(page.getByText("Saved to /fixture/book.pdf", { exact: true })).toBeVisible();
     const options = await page.evaluate(() =>
@@ -41,7 +48,7 @@ for (const babeldoc of [false, true]) {
     );
     expect(options.format).toBe("pdf");
     expect(options.bilingual).toBe(true);
-    expect(options.order).toBe("source_first");
+    expect(options.order).toBe(order);
     expect(options).not.toHaveProperty("pdf_engine");
   });
 }

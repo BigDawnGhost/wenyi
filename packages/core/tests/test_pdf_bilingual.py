@@ -63,12 +63,26 @@ def pdf_project(tmp_path, monkeypatch, request):
         store.close()
 
 
-@pytest.mark.parametrize("order", ["target_first", "source_first"])
-def test_pdf_bilingual_places_original_left_and_translation_right(pdf_project, order):
+def _text_positions(page):
+    positions = {}
+
+    def locate(operator, operands, cm, tm):
+        if operator == b"Tj":
+            text = operands[0]
+            label = text.decode("ascii") if isinstance(text, bytes) else str(text)
+            positions[label] = tm[4] * cm[0] + tm[5] * cm[2] + cm[4]
+
+    page.extract_text(visitor_operand_before=locate)
+    return positions
+
+
+@pytest.mark.parametrize("order", [None, "target_first", "source_first"])
+def test_pdf_bilingual_places_the_first_version_on_the_left(pdf_project, order):
     store, source, _, calls = pdf_project
     before = store.load_chapter(0).model_dump()
 
-    output = assemble(store, str(source), bilingual=True, order=order)
+    options = {"order": order} if order is not None else {}
+    output = assemble(store, str(source), bilingual=True, **options)
 
     assert Path(output).name == "source.zh-bi.pdf"
     reader = PdfReader(output)
@@ -77,17 +91,10 @@ def test_pdf_bilingual_places_original_left_and_translation_right(pdf_project, o
         assert tuple(page.mediabox) == (0, 0, 400, 300)
         assert f"Source {number}" in page.extract_text()
         assert f"Target {number}" in page.extract_text()
-        positions = {}
-
-        def locate(operator, operands, cm, tm):
-            if operator == b"Tj":
-                text = operands[0]
-                label = text.decode("ascii") if isinstance(text, bytes) else str(text)
-                positions[label] = tm[4] * cm[0] + tm[5] * cm[2] + cm[4]
-
-        page.extract_text(visitor_operand_before=locate)
-        assert positions[f"Source {number}"] == pytest.approx(60)
-        assert positions[f"Target {number}"] == pytest.approx(260)
+        positions = _text_positions(page)
+        source_x, target_x = (60, 260) if order == "source_first" else (260, 60)
+        assert positions[f"Source {number}"] == pytest.approx(source_x)
+        assert positions[f"Target {number}"] == pytest.approx(target_x)
     assert calls[0][:2] == ("offline-session", {"0:0": "Target one"})
     assert store.load_chapter(0).model_dump() == before
 
@@ -118,20 +125,28 @@ def test_pdf_pairs_the_saved_noncontiguous_page_selection(pdf_project):
         assert f"Target {index}" in page.extract_text()
 
 
+@pytest.mark.parametrize("order", ["target_first", "source_first"])
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
-def test_pdf_respects_visible_crop_rotation_units_and_unequal_sizes(pdf_project, rotation):
+def test_pdf_respects_visible_crop_rotation_units_and_unequal_sizes(pdf_project, rotation, order):
     store, source, response, _ = pdf_project
     original = pdf_bytes(["Original"], rotation=rotation, cropbox=(20, 30, 180, 250), user_unit=2)
     _replace_source(store, source, original)
     response["content"] = pdf_bytes(["Translated"], width=240, height=400)
-    output = assemble(store, str(source), bilingual=True)
+    output = assemble(store, str(source), bilingual=True, order=order)
     page = PdfReader(output).pages[0]
-    left_width, left_height = (320, 440) if rotation in (0, 180) else (440, 320)
-    assert float(page.mediabox.width) == pytest.approx(left_width + 240)
-    assert float(page.mediabox.height) == pytest.approx(max(left_height, 400))
+    source_width, source_height = (320, 440) if rotation in (0, 180) else (440, 320)
+    assert float(page.mediabox.width) == pytest.approx(source_width + 240)
+    assert float(page.mediabox.height) == pytest.approx(max(source_height, 400))
     assert page.rotation == 0
     assert "Original" in page.extract_text()
     assert "Translated" in page.extract_text()
+    positions = _text_positions(page)
+    source_x = {0: 80, 90: 100, 180: 240, 270: 340}[rotation]
+    if order == "target_first":
+        source_x += 240
+    target_x = source_width + 60 if order == "source_first" else 60
+    assert positions["Original"] == pytest.approx(source_x)
+    assert positions["Translated"] == pytest.approx(target_x)
     assert source.read_bytes() == original
 
 
