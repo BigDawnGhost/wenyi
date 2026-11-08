@@ -41,13 +41,14 @@ class BabeldocBridgeClientTests(unittest.TestCase):
     def test_fillback_uses_configured_timeout(self):
         with (
             patch(
-                "wenyi_core.ingest.pdf_babeldoc.translations_from_store",
+                "wenyi_core.assemble.pdf_writer.translations_from_store",
                 return_value=("session", "http://bridge.test", {"0:0": "译文"}),
             ),
-            patch("wenyi_core.pdf_bridge.BabeldocBridgeClient") as client_class,
+            patch("wenyi_core.assemble.pdf_writer.BabeldocBridgeClient") as client_class,
         ):
             result = _assemble_pdf(
                 MagicMock(),
+                "source.pdf",
                 "output.pdf",
                 timeout=3600,
             )

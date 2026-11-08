@@ -66,14 +66,15 @@ export default function ExportPage() {
   }, [config, defaultsLoaded]);
   const formats = (project?.output_formats || []) as ExportFormat[];
   const fmt = formats.includes(format as ExportFormat) ? format : "";
+  const pdf = fmt === "pdf" || (!fmt && project?.fmt === "pdf" && formats.includes("pdf"));
   const create = useMutation({
     mutationFn: async () => {
       const options = {
         format: fmt || undefined,
         bilingual,
-        order,
+        order: pdf ? "source_first" as const : order,
         about_page: about,
-        preserve_source_style: preserveStyle,
+        preserve_source_style: !pdf && preserveStyle,
         punctuation_normalize: punctuation,
       };
       if (saveExport) {
@@ -163,6 +164,9 @@ export default function ExportPage() {
                 {tr("export.bilingual")}
               </label>
             </fieldset>
+            {bilingual && pdf && (
+              <p className="text-sm text-muted-foreground">{tr("export.pdfBilingualLayout")}</p>
+            )}
             <Disclosure title={tr("export.advanced")} error={create.error}>
               <label className="flex gap-2 items-center text-sm">
                 <input
@@ -172,7 +176,7 @@ export default function ExportPage() {
                 />
                 {tr("settings.normalizePunctuationOnExport")}
               </label>
-              {bilingual && (
+              {bilingual && !pdf && (
                 <Select
                   aria-label={tr("export.bilingualOrder")}
                   value={order}
@@ -199,7 +203,7 @@ export default function ExportPage() {
                 />
                 {tr("export.includeAnAboutThisTranslationPage")}
               </label>
-              {bilingual && (
+              {bilingual && !pdf && (
                 <label className="flex gap-2 items-center text-sm">
                   <input
                     type="checkbox"

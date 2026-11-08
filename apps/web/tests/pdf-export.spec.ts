@@ -31,3 +31,32 @@ test("BabelDOC PDF export submits without a local rendering engine", async ({ pa
   expect(submitted?.format).toBe("pdf");
   expect(submitted).not.toHaveProperty("pdf_engine");
 });
+
+test("bilingual PDF uses fixed page spreads for automatic and explicit format selection", async ({ page }) => {
+  await fakeApi(page, {
+    [`/projects/${pid}`]: {
+      ...project, fmt: "pdf", output_formats: [...project.output_formats, "pdf"],
+    },
+  });
+  let submitted: Record<string, unknown> | undefined;
+  await page.route(`**/api/projects/${pid}/exports`, async route => {
+    if (route.request().method() === "GET") return route.fulfill({ json: [] });
+    submitted = route.request().postDataJSON();
+    return route.fulfill({ json: { id: 1 } });
+  });
+  await page.goto(`/projects/${pid}/export`);
+  await page.getByRole("radio", { name: "Bilingual", exact: true }).check();
+  await expect(page.getByText(/Each PDF page pairs the original page on the left/)).toBeVisible();
+  await page.getByText("Layout and advanced options", { exact: true }).click();
+  await expect(page.getByLabel("Bilingual order", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Preserve source formatting in bilingual output")).toHaveCount(0);
+  await page.getByRole("button", { name: "EPUB", exact: true }).click();
+  await expect(page.getByLabel("Bilingual order", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "PDF", exact: true }).click();
+  await expect(page.getByLabel("Bilingual order", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Generate export", exact: true }).click();
+  await expect(page.getByText("Export task submitted", { exact: true })).toBeVisible();
+  expect(submitted).toMatchObject({
+    format: "pdf", bilingual: true, order: "source_first", preserve_source_style: false,
+  });
+});

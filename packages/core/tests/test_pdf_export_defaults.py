@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from pypdf import PdfReader
 from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_core.assemble.writer import assemble
@@ -15,12 +16,13 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.run_store import RunStore
 
 from tests.fake_llm import routing_handler
+from tests.pdf_fixtures import pdf_bytes
 
 
 @pytest.fixture
 def pdf_project(tmp_path, monkeypatch):
     source = tmp_path / "book.PDF"
-    source.write_bytes(b"%PDF-1.4 offline fixture")
+    source.write_bytes(pdf_bytes(["Original page"]))
     config = Config.from_dict(
         {
             "language": {"source": "en", "target": "zh"},
@@ -79,7 +81,7 @@ def pdf_project(tmp_path, monkeypatch):
 
     def fillback(self, session_id, translations, *, out_path):
         requests.append((session_id, dict(translations), out_path))
-        Path(out_path).write_bytes(b"%PDF-1.4 offline fillback")
+        Path(out_path).write_bytes(pdf_bytes(["Translated page"]))
         return str(out_path)
 
     monkeypatch.setattr("wenyi_core.pdf_bridge.BabeldocBridgeClient.fillback", fillback)
@@ -109,7 +111,7 @@ def test_machine_receipts_cover_real_pdf_workflow_and_resume(pdf_project, tmp_pa
         assert result["run_id"] == snapshot["run_id"] != previous_id
         assert result["source_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
         output = Path(result["outputs"][0]["path"])
-        assert output.read_bytes() == b"%PDF-1.4 offline fillback"
+        assert output.read_bytes() == pdf_bytes(["Translated page"])
         assert result["outputs"][0]["sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()
         assert Path(result["state_dir"]).is_dir()
         previous_id = result["run_id"]
@@ -120,7 +122,13 @@ def test_machine_receipts_cover_real_pdf_workflow_and_resume(pdf_project, tmp_pa
 @pytest.mark.parametrize("command", ["translate", "assemble"])
 @pytest.mark.parametrize(
     "mono,bilingual,explicit_out",
-    [(True, False, False), (False, True, False), (True, True, False), (True, True, True)],
+    [
+        (True, False, False),
+        (False, True, False),
+        (True, True, False),
+        (True, True, True),
+        (False, True, True),
+    ],
 )
 def test_cli_defaults_to_pdf_for_mono_and_bilingual_outputs(
     pdf_project, tmp_path, command, mono, bilingual, explicit_out
@@ -137,16 +145,25 @@ def test_cli_defaults_to_pdf_for_mono_and_bilingual_outputs(
     result = CliRunner().invoke(app, arguments)
 
     assert result.exit_code == 0, result.output
+    expected = []
     if explicit_out:
-        expected = [tmp_path / "custom" / "result.pdf", tmp_path / "custom" / "result-bi.pdf"]
+        if mono:
+            expected.append(tmp_path / "custom" / "result.pdf")
+        if bilingual:
+            expected.append(tmp_path / "custom" / "result-bi.pdf")
     else:
-        expected = []
         if mono:
             expected.append(tmp_path / "output" / "book.zh.pdf")
         if bilingual:
             expected.append(tmp_path / "output" / "book.zh-bi.pdf")
-    assert [Path(request[2]) for request in requests] == expected
-    assert all(path.read_bytes().startswith(b"%PDF-") for path in expected)
+    assert len(requests) == len(expected)
+    assert set(expected[0].parent.iterdir()) == set(expected)
+    for path in expected:
+        page = PdfReader(path).pages[0]
+        paired = path.stem.endswith("-bi")
+        assert page.mediabox.width == (400 if paired else 200)
+        assert ("Original page" in page.extract_text()) is paired
+        assert "Translated page" in page.extract_text()
     assert all(request[:2] == ("offline-session", {"0:0": "译0"}) for request in requests)
 
 

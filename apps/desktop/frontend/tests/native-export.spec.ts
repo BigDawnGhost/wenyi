@@ -29,14 +29,19 @@ for (const babeldoc of [false, true]) {
       return;
     }
     await pdf.click();
+    await page.getByRole("radio", { name: "Bilingual", exact: true }).check();
+    await expect(page.getByText(/Each PDF page pairs the original page on the left/)).toBeVisible();
     await page.getByText("Layout and advanced options", { exact: true }).click();
     await expect(page.getByLabel("PDF export engine")).toHaveCount(0);
+    await expect(page.getByLabel("Bilingual order", { exact: true })).toHaveCount(0);
     await page.getByRole("button", { name: "Generate export", exact: true }).click();
     await expect(page.getByText("Saved to /fixture/book.pdf", { exact: true })).toBeVisible();
     const options = await page.evaluate(() =>
       (window as unknown as { savedOptions: Record<string, unknown> }).savedOptions,
     );
     expect(options.format).toBe("pdf");
+    expect(options.bilingual).toBe(true);
+    expect(options.order).toBe("source_first");
     expect(options).not.toHaveProperty("pdf_engine");
   });
 }

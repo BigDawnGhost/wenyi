@@ -44,9 +44,10 @@ CLI 默认在原文件旁的 `output/` 目录输出：
 默认只启用单语版。`--bilingual` 开启双语输出；
 `--no-mono --bilingual` 只请求双语版。
 EPUB、HTML、TXT、Markdown 和 DOCX 可按段配对原文与译文。
-不能仅凭 `-bi.pdf` 文件名认定 PDF 有原译对照，见 [PDF 限制](#babeldoc)。
+PDF 将左侧原文页与右侧对应译文页拼成一张更宽的页面，见 [BabelDOC](#babeldoc)。
 
-- `output.bilingual_order` 选择译文在前（默认）或原文在前。
+- `output.bilingual_order` 为按段配对的格式选择译文在前（默认）或原文在前，
+  不改变 PDF 固定的左原文、右译文布局。
 - EPUB/HTML 原文默认淡化；设置
   `output.bilingual_preserve_source_style: true` 后继承正常书籍样式。
 - DOCX 原文默认使用正常正文样式，不强制灰字、高亮或缩小字号。
@@ -198,9 +199,14 @@ PDF 重新导出将保存文本发送到 bridge。
 冻结的提取会话才能在重启后恢复。
 系统临时目录可能在重启后消失；仅凭文译章节译文无法重建该 PDF 版面会话。
 
-当前 PDF 回填只发送一份译文映射，不向 bridge 传递双语顺序或原文样式选项。
-因此，生成 `-bi.pdf` 文件名**并不意味着输出原译对照 PDF**。
-需要双语阅读时，请导出 EPUB、HTML、DOCX、TXT 或 Markdown。
+双语 PDF 将**左侧原文页**与 **右侧 bridge 生成的对应译文页**横向拼接，
+每对页面形成一张更宽的 PDF 页面。两侧保留原始物理尺寸、可见裁切范围与方向，
+高度不同时顶部对齐；文字和矢量内容不转成图片。按段排列的双语顺序与原文样式选项
+不影响此布局。
+
+除 bridge 会话外，还需保留原始 PDF。配对使用导入时保存的页码选择，而不是当前配置。
+原文已变、PDF 无法读取或两侧页数不匹配时会报错，不猜测配对，也不以不完整文件覆盖
+已有导出。单语 PDF 导出保持不变。
 
 <a id="source-snapshots"></a>
 
