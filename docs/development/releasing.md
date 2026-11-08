@@ -137,18 +137,27 @@ source runs and unsigned builds do not require signing secrets.
 
 The [Desktop packages workflow](../../.github/workflows/desktop.yml#L1) and
 [CLI packages workflow](../../.github/workflows/build.yml#L1) build the selected
-checkout or optional `workflow_dispatch` tag. Manual runs produce workflow artifacts,
-not published releases. A published GitHub Release builds its tag and each workflow
+checkout or optional `workflow_dispatch` tag. Manual runs produce workflow artifacts
+without publishing by default. A published GitHub Release builds its tag and each workflow
 uploads only its component's assets. PyPI publication has its own workflow and
 [publishing contract](publishing.md).
+
+To rebuild Desktop assets for an existing stable release, select the workflow
+branch containing the required build-environment fixes, set `tag` to that release
+and explicitly enable `publish`. Admission rejects missing tags, drafts and
+prereleases before the packaging jobs start. Application sources still come from
+the clean original tag, not the workflow branch; this does not move a tag or include
+new runtime fixes. All four platforms must pass before assets are uploaded.
+Existing asset names are not overwritten, and CLI/PyPI publication is not rerun.
 
 Desktop PR checks use reduced platform/build tiers; a passing PR is not the full
 release packaging matrix. Published releases and manual Desktop builds exercise the
 full Linux x64, Windows x64 and two native macOS targets. Push-to-main Desktop work
 warms build caches rather than publishing installers.
 
-Signing secrets are supplied only to stable release builds. PRs, manual workflow
-runs and development/prerelease builds remain unsigned. With no signing configuration,
+Signing secrets are supplied only to stable release builds and explicitly published
+stable-release rebuilds. PRs, ordinary manual runs and development/prerelease builds
+remain unsigned. With no signing configuration,
 a stable release still produces manual installers and explicitly publishes **no
 `latest.json`**. Partial signing configuration fails rather than advertising updates
 that clients cannot install.

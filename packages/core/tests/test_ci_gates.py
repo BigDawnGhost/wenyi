@@ -170,6 +170,60 @@ def test_the_bundle_assertion_reads_a_real_configuration():
     assert any("sidecar" in value for _, value in entries)
 
 
+@pytest.mark.parametrize(
+    ("event", "publish", "prerelease", "signs", "uploads"),
+    [
+        ("release", False, False, True, True),
+        ("release", False, True, False, True),
+        ("release", True, True, False, True),
+        ("workflow_dispatch", False, False, False, False),
+        ("workflow_dispatch", True, False, True, True),
+        ("pull_request", True, False, False, False),
+        ("push", True, False, False, False),
+    ],
+)
+def test_desktop_publication_requires_a_release_or_explicit_rebuild(
+    event, publish, prerelease, signs, uploads
+):
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/desktop.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    option = workflow["on"]["workflow_dispatch"]["inputs"]["publish"]
+    assert option["type"] == "boolean" and option["default"] == "false"
+    jobs = workflow["jobs"]
+    package = jobs["local-package"]
+    assert package["needs"] == "plan"
+    assert jobs["release"]["needs"] == "local-package"
+    signing = next(step for step in package["steps"] if step.get("id") == "updater")
+    preflight = next(
+        step
+        for step in jobs["plan"]["steps"]
+        if step.get("name") == "Validate published release rebuild"
+    )
+
+    def admits(expression):
+        expression = expression.replace("&&", "and").replace("||", "or").replace("!", "not ")
+        return eval(
+            expression,
+            {"__builtins__": {}},
+            {
+                "github": SimpleNamespace(
+                    event_name=event,
+                    event=SimpleNamespace(release=SimpleNamespace(prerelease=prerelease)),
+                ),
+                "inputs": SimpleNamespace(publish=publish),
+            },
+        )
+
+    assert admits(preflight["if"]) is (event == "workflow_dispatch" and publish)
+    assert admits(signing["if"]) is signs
+    assert admits(jobs["release"]["if"]) is uploads
+    native_tests = next(
+        step for step in package["steps"] if step.get("run", "").startswith("cargo nextest run ")
+    )
+    assert native_tests["env"]["TMPDIR"] == "${{ runner.temp }}"
+
+
 def test_windows_full_tier_uses_bash_for_the_tls_graph_check():
     jobs = yaml.safe_load((ROOT / ".github/workflows/desktop.yml").read_text())["jobs"]
     steps = jobs["local-package"]["steps"]

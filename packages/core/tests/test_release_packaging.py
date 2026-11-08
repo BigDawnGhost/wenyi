@@ -341,7 +341,54 @@ def test_workflows_separate_components():
         assert "--clobber" not in text
         assert "tag_name" in text
         assert "tar.gz" not in text
-        assert document["jobs"]["release"]["if"] == "github.event_name == 'release'"
+        expected = "github.event_name == 'release'"
+        if component == "desktop":
+            expected += " || (github.event_name == 'workflow_dispatch' && inputs.publish)"
+        assert document["jobs"]["release"]["if"] == expected
+
+
+@pytest.mark.parametrize(
+    ("tag", "published_stable", "gh_exit_code", "accepted"),
+    [
+        ("v1.5.0", "true", 0, True),
+        ("1.5.0", "true", 0, True),
+        ("", "true", 0, False),
+        ("main", "true", 0, False),
+        ("v1.5.0rc1", "true", 0, False),
+        ("v01.5.0", "true", 0, False),
+        ("v1.5.0", "false", 0, False),
+        ("v1.5.0", "true", 1, False),
+    ],
+)
+def test_desktop_rebuild_preflight_requires_an_existing_stable_release(
+    tag, published_stable, gh_exit_code, accepted
+):
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/desktop.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    preflight = next(
+        step
+        for step in document["jobs"]["plan"]["steps"]
+        if step.get("name") == "Validate published release rebuild"
+    )
+    assert preflight["shell"] == "bash"
+    assert "--json isDraft,isPrerelease" in preflight["run"]
+    # Override gh in this shell so the actual workflow guard runs entirely offline.
+    fake_gh = 'gh() { printf "%s\\n" "$PUBLISHED_STABLE"; return "$GH_EXIT_CODE"; }\n'
+    result = subprocess.run(
+        ["bash", "-eu", "-c", fake_gh + preflight["run"]],
+        env={
+            **os.environ,
+            "TAG": tag,
+            "PUBLISHED_STABLE": published_stable,
+            "GH_EXIT_CODE": str(gh_exit_code),
+        },
+        text=True,
+        capture_output=True,
+    )
+    assert (result.returncode == 0) is accepted, result.stdout + result.stderr
 
 
 @pytest.mark.parametrize("file", ["tests.yml", "build.yml", "desktop.yml"])

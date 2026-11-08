@@ -124,15 +124,22 @@ tag。本地密码变量必须定义，即使为空。macOS 使用
 
 [Desktop packages workflow](../../../.github/workflows/desktop.yml#L1)与
 [CLI packages workflow](../../../.github/workflows/build.yml#L1)构建选中的 checkout
-或可选 `workflow_dispatch` tag。手动运行仅生成 workflow artifact，不发布 release。
+或可选 `workflow_dispatch` tag。手动运行默认仅生成 workflow artifact，不发布。
 GitHub Release 发布后构建其 tag，各 workflow 仅上传自己的组件附件。PyPI 使用独立
 workflow 和[发布契约](publishing.md)。
+
+要为已有稳定版重新构建 Desktop 附件，选择包含所需构建环境修复的 workflow 分支，
+将 `tag` 设为该发行版，并显式开启 `publish`。准入检查会在打包前拒绝缺失的 tag、
+草稿及预发行版。应用源码仍来自原始干净 tag，而非 workflow 分支；不会移动 tag，
+也不会纳入新的运行时代码修复。四个平台全部通过后才上传附件，不覆盖已有同名文件，
+也不重新触发 CLI/PyPI 发布。
 
 Desktop PR 检查使用缩减的平台/构建层级；PR 通过不等于完整发行打包矩阵通过。
 已发布 Release 和手动 Desktop 构建覆盖完整的 Linux x64、Windows x64 及两种原生
 macOS 目标。Desktop 的 main push 工作用于预热构建缓存，不发布安装包。
 
-签名秘密仅提供给稳定 Release 构建。PR、手动 workflow、开发/预发行构建保持未签名。
+签名秘密仅提供给稳定 Release 构建及显式发布的稳定版重建。
+PR、普通手动运行及开发/预发行构建保持未签名。
 没有签名配置时，稳定版仍生成手动安装包，并明确**不发布 `latest.json`**。
 部分签名配置会失败，不公告客户端无法安装的更新。
 
