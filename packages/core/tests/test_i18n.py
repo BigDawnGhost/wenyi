@@ -303,17 +303,19 @@ def test_language_list_needs_no_api_and_reads_packaged_templates():
 
 
 @pytest.mark.parametrize("command", ["translate", "status", "assemble"])
-@pytest.mark.parametrize("invalid", ["language: {target: typo}\n", "language: [\n"])
-def test_cli_invalid_language_or_yaml_is_a_concise_error(command, invalid):
+def test_cli_invalid_yaml_is_a_concise_error(command):
     runner = CliRunner()
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "config.yaml"
+        invalid = "language: [\n"
         path.write_text(invalid, encoding="utf-8")
         result = runner.invoke(app, ["--config", str(path), command, "missing.txt"])
         assert result.exit_code == 1, result.output
         assert "Configuration error" in result.output
         assert "Error: 1" not in result.output
         assert "Traceback" not in result.output
+        assert path.read_text(encoding="utf-8") == invalid
+        assert list(Path(directory).iterdir()) == [path]
 
 
 def test_partial_non_chinese_run_resumes_without_retranslating_saved_batch():

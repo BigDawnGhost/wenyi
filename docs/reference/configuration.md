@@ -14,7 +14,9 @@ protocols. For tasks, use the [CLI](../guide/cli.md),
 The CLI reads `config.yaml` from the current working directory. Pass
 `wenyi --config PATH ...` to choose another file. A missing file is created with
 documented defaults, including on help/version invocations. Omitted settings use
-built-in defaults; unknown top-level sections are rejected.
+built-in defaults. Saved settings are [backed up and rebuilt](#retired-settings)
+when they contain incompatible fields; new API/YAML submissions to Web/Desktop
+and direct Core configuration validation reject unknown fields.
 
 | Section | Controls |
 |---|---|
@@ -23,7 +25,6 @@ built-in defaults; unknown top-level sections are rejected.
 | `segment` | Source batching and long-paragraph splitting. |
 | `pipeline` | Preparation, translation, polishing, Review, and PDF backend. |
 | `output` | Editions, bilingual styling, about page, and punctuation. |
-| `honorific` | Language-specific honorific handling. |
 | `paths` | CLI state location. |
 
 **Platform boundaries**
@@ -41,7 +42,7 @@ built-in defaults; unknown top-level sections are rejected.
   existing project choices. Registry edits affect newly started/resumed tasks;
   queued/running tasks retain their configuration snapshots.
 - Web/Desktop translation mode and prompt genre are creation-time choices.
-  They remain fixed when other settings or defaults change. The saved project
+  Valid choices remain fixed when other settings or defaults change. The saved project
   field `pipeline.prompt_genre` is **not** accepted in Core/CLI YAML or global
   settings. CLI uses [`--prompt-genre literary|academic`](../guide/cli.md#prompt-genres)
   for invocation-local selection, defaulting to `literary`.
@@ -369,7 +370,7 @@ described under [scope](#scope).
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `pipeline.translation_mode` | `standard` | `standard` or `best_of_three`; the latter requires `polish: true`. |
+| `pipeline.translation_mode` | `standard` | `standard` or `three_draft_synthesis`; the latter requires `polish: true`. |
 | `pipeline.polish` | `true` | Polish translated batches; adds substantial model work. |
 | `pipeline.align_retry_limit` | `2` | Additional structural-output attempts; `0` disables them. |
 | `pipeline.rolling_context_tokens` | `512` | Preceding translation budget, integer ≥ 0, counted with `cl100k_base`. |
@@ -379,7 +380,7 @@ described under [scope](#scope).
 | `pipeline.annotation_alignment` | `true` | Align translated links/annotations; disabling uses paragraph-end link markers. |
 | `pipeline.annotation_alignment_concurrency` | `4` | Concurrent per-annotation requests within one logical paragraph. |
 
-`best_of_three` produces **three independent drafts plus one source-aware
+`three_draft_synthesis` produces **three independent drafts plus one source-aware
 synthesis**, not a winner-selection contest. It uses `translation.body` and
 `polish.body`; a normal batch makes four calls versus two for standard translation
 with polishing. Three-draft concurrency is built in, not a user setting.
@@ -470,7 +471,7 @@ for choosing the backend.
 |---|---|---|
 | `output.mono` | `true` | Produce a monolingual edition. |
 | `output.bilingual` | `false` | Also produce a source-and-translation edition. |
-| `output.bilingual_order` | `target_first` | `target_first` or `source_first`. |
+| `output.bilingual_order` | `target_first` | `target_first` or `source_first`; PDF always places the original page on the left. |
 | `output.bilingual_preserve_source_style` | `false` | Preserve recorded source styles rather than the format's default source presentation. |
 | `output.about_page` | `true` | Add the project “About this translation” page to EPUB output. |
 | `output.punctuation_normalize` | `true` | Normalize Simplified Chinese punctuation on the export copy only. |
@@ -504,14 +505,11 @@ provider's tokenizer. They are source-packing budgets, not output-token caps.
 
 ## Honorifics
 
-`honorific.strategy` defaults to `keep_style`. Supported choices for
-Japanese-source honorific handling:
-
-| Value | Intent |
-|---|---|
-| `keep_style` | Preserve relationship and tone. |
-| `normalize` | Apply consistent conventions. |
-| `drop` | Omit honorifics where meaning permits. |
+Honorific handling follows the source/target language policy automatically; it
+is not a separate configuration choice. Language-pair rules take precedence
+over the shared guidance, preserving relationships and tone using natural target
+language conventions. For example, Japanese-to-Chinese guidance covers forms
+such as `先輩 → 前辈`. There is no `honorific` configuration section.
 
 <a id="paths"></a>
 
@@ -532,7 +530,36 @@ languages and a source-content hash. See [CLI resume](../guide/cli.md#resume).
 
 ## Retired settings and migration
 
-Removed settings are not generally translated by the loader:
+When the CLI loads a saved YAML file, or Web/Desktop starts with saved global
+and project settings, incompatible configuration is rebuilt from the current
+schema:
+
+1. Preserve the original settings before replacing anything.
+2. Keep valid fields and values. Discard removed fields, invalid values, and
+   dependent selections that can no longer be validated. Missing fields use
+   current defaults; project model selections are checked against the global registry.
+3. Do not translate obsolete names into aliases. For example, `best_of_three`
+   is discarded and the mode defaults to `standard`, **not**
+   `three_draft_synthesis`. Select the new mode explicitly when creating a project
+   or configuring a CLI run.
+
+CLI backups are exact copies beside the selected file, named
+`<filename>.backup-<sha256>.yaml`; comments remain in the backup, while rebuilt
+YAML contains supported settings only. Web backups live in PostgreSQL and
+Desktop backups in the selected data root's catalog, alongside the settings
+they protect. Web also backs up incompatible bootstrap YAML in PostgreSQL
+without rewriting the mounted file. Unchanged settings are not rewritten, and
+repeated startup does not duplicate backups.
+
+If a backup or replacement cannot be saved, the original settings stay intact
+and loading/startup fails. Malformed YAML must be corrected rather than guessed.
+Reconstruction does not change source books, chapter translations, usage, or
+frozen job snapshots. A queued job with an incompatible old snapshot must be
+started again under the rebuilt settings, not silently run with a different mode.
+New Web/Desktop setting submissions and direct Core validation remain strict.
+
+Use the backup to recover valid custom choices or run an explicit converter
+where one exists:
 
 | Retired setting / behavior | Action |
 |---|---|
@@ -541,7 +568,9 @@ Removed settings are not generally translated by the loader:
 | `pipeline.rolling_context_segments` | Replace with `rolling_context_tokens`; there is no automatic segment-to-token conversion. |
 | `pipeline.glossary_scope` | Remove it, including `full`; full-glossary behavior is fixed. |
 | Top-level `punctuation.normalize` | Replace with `output.punctuation_normalize`. |
-| `pipeline.precision_concurrency` | Remove it. Existing Core configs/frozen jobs can read and ignore it; new Web YAML writes reject it. |
+| `pipeline.translation_mode: best_of_three` | Removed without an alias; the current three-draft mode is `three_draft_synthesis`. |
+| `pipeline.precision_concurrency` | Discarded; initial-draft concurrency is built in. |
+| `honorific.strategy` | Discarded with the `honorific` section; handling follows the language pair. |
 | `translation.select`, `translation.verify`, `translation.refine` route IDs | Remove them; precision uses `translation.body` and `polish.body`. |
 | Web/Desktop Quick draft workflow | Not available for new requests; historical projects/jobs retain their saved workflow. |
 

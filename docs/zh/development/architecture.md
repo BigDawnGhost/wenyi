@@ -39,6 +39,7 @@ Core 路径相对于 `packages/core/wenyi_core/`；应用与包路径相对于�
 | EPUB / HTML | `markup/` 负责共享的确定性锚点、注释、ruby 与段落标记处理；Reader 和 Writer 保留在 `ingest/` 与 `assemble/`。`assemble/epub_package.py` 使用本地 XML 序列化和 `zipfile` 打包新生成的 EPUB 3，不依赖 EbookLib。 |
 | DOCX | `document_styles/docx.py` 负责纯样式策略；DOCX Reader 和 Writer 负责解析与文档生成。 |
 | 持久化 | 领域服务使用 `storage/protocol.py`；CLI 使用 `storage/file.py`，Desktop 为目录库中已登记项目库位置解析出的各项目目录注入 `storage/sqlite.py`，Web 注入 `apps/api/wenyi_api/storage_pg.py` 保存 PostgreSQL 状态。 |
+| 设置重建 | `config_rebuild.py` 按当前 Core schema 校验已保存字段；`packages/backend/wenyi_backend/config_rebuild.py` 应用全局／项目作用域，各平台拥有备份与替换。 |
 | CLI 文件迁移 | `storage/file_migrations.py` 拥有显式本地账本枚举、校验、原始字节备份、运行锁与原子发布；CLI 处理参数和展示，不发现 Web/Desktop 状态。 |
 
 ## 平台端口
@@ -76,6 +77,24 @@ schema 生成与传输契约见 [Web 开发](web.md)。
 
 每次操作的 Storage 由创建方在成功和失败路径中关闭。读取路由使用显式关闭作用域；
 runner 每取得一个资源就登记清理，包括启动遥测时失败的情况。
+
+### 已保存设置重建
+
+重建与书籍状态、账本迁移分离，在 CLI 加载配置，以及 Web repository、
+Desktop 目录库启动时运行。纯函数保留有效输入字段、丢弃无效项并校验合并后的
+有效配置，不把旧名称转换成别名。新设置写入仍使用严格校验。
+
+CLI 获取按文件隔离的升级锁，重新核对原始字节，先原子发布按内容哈希命名的
+完整备份，再原子替换 YAML。Web/Desktop 在同一个事务内向
+`configuration_backups` 写入原文档和丢弃路径，再替换设置。
+`project_id` 为空表示含 revision、默认模板元数据的全局设置，
+非空则标识对应项目配置。有效文档不产生写入。
+备份或替换失败会保留原文档；各项目事务独立，后续失败不回滚之前完成的重建。
+
+Web 使用设置 advisory lock 与项目行锁；Desktop 使用短目录库写事务，
+事务内不访问凭据、不请求模型、不执行文件系统操作。
+两者均不修改项目状态、用量与冻结任务。
+备份位置及用户可见的回退规则见[配置参考](../reference/configuration.md#retired-settings)。
 
 ## 执行与发布
 

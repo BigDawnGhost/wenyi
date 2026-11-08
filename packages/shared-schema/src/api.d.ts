@@ -1414,7 +1414,7 @@ export interface components {
              * @default standard
              * @enum {string}
              */
-            translation_mode: "standard" | "best_of_three";
+            translation_mode: "standard" | "three_draft_synthesis";
             /**
              * Prompt Genre
              * @default literary

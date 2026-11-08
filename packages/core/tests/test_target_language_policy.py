@@ -30,7 +30,7 @@ def test_generated_text_keeps_complete_output_rules_in_every_stage(
             "pipeline": {
                 "terminology_context": True,
                 "translation_mode": (
-                    "best_of_three" if task == "precision_generation_system" else "standard"
+                    "three_draft_synthesis" if task == "precision_generation_system" else "standard"
                 ),
             },
         }
@@ -81,7 +81,7 @@ def test_source_identity_references_remain_original_not_target_renderings():
     assert "Keep quoted original source spellings" in synopsis
 
 
-@pytest.mark.parametrize("mode", ["standard", "best_of_three"])
+@pytest.mark.parametrize("mode", ["standard", "three_draft_synthesis"])
 def test_shared_rule_revision_is_frozen_and_only_invalidates_consuming_tasks(monkeypatch, mode):
     values = {
         "language": {"source": "fr", "target": "zh"},
@@ -101,7 +101,9 @@ def test_shared_rule_revision_is_frozen_and_only_invalidates_consuming_tasks(mon
     tasks = {
         "analysis": "analyzer_system",
         "translation": (
-            "precision_generation_system" if mode == "best_of_three" else "translator_system"
+            "precision_generation_system"
+            if mode == "three_draft_synthesis"
+            else "translator_system"
         ),
         "review": "review_fixer_system",
     }

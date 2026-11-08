@@ -234,17 +234,17 @@ test("Desktop bridge selects without upload, highlights/leaves and preserves sel
   expect((await calls(page)).some(call => call.command === "native_drop_upload")).toBe(false);
 });
 
-for (const mode of ["standard", "best_of_three"] as const) {
+for (const mode of ["standard", "three_draft_synthesis"] as const) {
   test(`Desktop bridge uploads academic ${mode} on Create, refuses pending replacement and opens overview`, async ({ page }) => {
     await setup(page);
     const style = page.getByLabel("Translation style", { exact: true });
     await chooseOption(style, "Academic");
     const precisionSwitch = page.getByRole("switch", { name: "Three drafts + synthesis", exact: true });
     await expect(precisionSwitch).not.toBeChecked();
-    await precisionSwitch.setChecked(mode === "best_of_three");
+    await precisionSwitch.setChecked(mode === "three_draft_synthesis");
     const prepareSwitch = page.getByRole("switch", { name: "Prepare before translating", exact: true });
     await expect(prepareSwitch).not.toBeChecked();
-    await prepareSwitch.setChecked(mode === "best_of_three");
+    await prepareSwitch.setChecked(mode === "three_draft_synthesis");
     const zone = page.getByRole("group", { name: "Source file selection" });
     await nativeEvent(page, { kind: "drop", source: source("original") });
     await page.getByRole("button", { name: "Create project", exact: true }).click();
@@ -265,7 +265,7 @@ for (const mode of ["standard", "best_of_three"] as const) {
         handle: "original",
         project: {
           name: "Native book", source_lang: "auto", target_lang: "zh",
-          prepare: mode === "best_of_three", translation_mode: mode, prompt_genre: "academic", pdf_backend: null,
+          prepare: mode === "three_draft_synthesis", translation_mode: mode, prompt_genre: "academic", pdf_backend: null,
         },
       },
     });

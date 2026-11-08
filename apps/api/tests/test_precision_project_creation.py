@@ -90,7 +90,7 @@ def test_creation_does_not_mutate_application_defaults(creation_api):
     defaults.pipeline.polish = False
     response = client.post(
         "/projects",
-        data={"project": '{"name":"Book","translation_mode":"best_of_three"}'},
+        data={"project": '{"name":"Book","translation_mode":"three_draft_synthesis"}'},
         files={"file": ("book.txt", b"A fictional traveler crossed a bridge.")},
     )
     assert response.status_code == 201, response.text
@@ -102,7 +102,7 @@ def test_creation_does_not_mutate_application_defaults(creation_api):
 
 def test_creation_defaults_to_standard_even_with_legacy_global_precision(creation_api):
     client, defaults, saved, _, _ = creation_api
-    defaults.pipeline.translation_mode = "best_of_three"
+    defaults.pipeline.translation_mode = "three_draft_synthesis"
     response = client.post(
         "/projects",
         data={"project": '{"name":"Book"}'},
@@ -118,6 +118,7 @@ def test_creation_defaults_to_standard_even_with_legacy_global_precision(creatio
     "choice,filename",
     [
         ('"translation_mode":"unknown"', "book.txt"),
+        ('"translation_mode":"best_of_three"', "book.txt"),
         ('"prompt_genre":"unknown"', "book.txt"),
         ('"prompt_genre":null', "book.txt"),
         ('"prompt_genre":"Academic"', "book.txt"),
@@ -154,7 +155,7 @@ def test_project_yaml_cannot_configure_initial_draft_concurrency(creation_api, m
         f"/projects/{pid}/config{suffix}", json={"yaml": "pipeline: {precision_concurrency: 1}"}
     )
     assert response.status_code == 422, response.text
-    assert "built in" in response.text
+    assert "precision_concurrency" in response.text
     assert saved[pid] == before
 
 
@@ -182,7 +183,7 @@ def test_postgres_settings_normalize_legacy_global_precision():
     precision = Config.from_dict(
         {
             "llm": {"preset": "fake"},
-            "pipeline": {"translation_mode": "best_of_three", "precision_concurrency": 1},
+            "pipeline": {"translation_mode": "three_draft_synthesis"},
         }
     )
     row = (config_document(precision), "标准翻译", 7)
@@ -222,7 +223,7 @@ def test_precision_mode_is_immutable_but_partial_config_remains_editable(
     client, defaults, saved, _, _ = creation_api
     created = client.post(
         "/projects",
-        data={"project": '{"name":"Book","translation_mode":"best_of_three"}'},
+        data={"project": '{"name":"Book","translation_mode":"three_draft_synthesis"}'},
         files={"file": ("book.txt", b"A fictional traveler crossed a bridge.")},
     )
     pid = created.json()["id"]
@@ -236,12 +237,12 @@ def test_precision_mode_is_immutable_but_partial_config_remains_editable(
     )
     assert accepted.status_code == 200, accepted.text
     pipeline = accepted.json()["effective"]["pipeline"]
-    assert pipeline["translation_mode"] == "best_of_three"
+    assert pipeline["translation_mode"] == "three_draft_synthesis"
     assert pipeline["polish"] is True and pipeline["review"] is False
     defaults.pipeline.polish = False
     restored = client.get(f"/projects/{pid}/config/defaults")
     assert restored.status_code == 200, restored.text
-    assert restored.json()["effective"]["pipeline"]["translation_mode"] == "best_of_three"
+    assert restored.json()["effective"]["pipeline"]["translation_mode"] == "three_draft_synthesis"
     assert restored.json()["effective"]["pipeline"]["polish"] is True
 
 
@@ -261,7 +262,7 @@ def test_start_body_cannot_select_retired_template(creation_api):
     assert (saved[pid], queued) == before
 
 
-@pytest.mark.parametrize("mode", ["standard", "best_of_three"])
+@pytest.mark.parametrize("mode", ["standard", "three_draft_synthesis"])
 @pytest.mark.parametrize("genre", [None, "literary", "academic"])
 def test_creation_persists_prompt_genre_independently_of_mode_and_defaults(
     creation_api, mode, genre

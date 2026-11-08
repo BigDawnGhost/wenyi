@@ -41,7 +41,7 @@ def test_precision_structural_retry_finishes_without_manual_resume(desktop, stag
                     "name": "Structural retry",
                     "source_lang": "en",
                     "target_lang": "zh",
-                    "translation_mode": "best_of_three",
+                    "translation_mode": "three_draft_synthesis",
                 }
             )
         },
@@ -113,7 +113,7 @@ def test_precision_creation_translation_drafts_edit_and_export(desktop):
                     "name": "Precision",
                     "source_lang": "en",
                     "target_lang": "zh",
-                    "translation_mode": "best_of_three",
+                    "translation_mode": "three_draft_synthesis",
                 }
             )
         },
@@ -129,7 +129,7 @@ def test_precision_creation_translation_drafts_edit_and_export(desktop):
     )
     assert configured.status_code == 200, configured.text
     pipeline = configured.json()["effective"]["pipeline"]
-    assert pipeline["translation_mode"] == "best_of_three"
+    assert pipeline["translation_mode"] == "three_draft_synthesis"
     assert pipeline["polish"] is True
     translated = client.post(root + "/translate")
     assert translated.status_code == 200, translated.text
@@ -217,7 +217,7 @@ def test_precision_keeps_protected_source_when_model_changes_spacing(desktop):
                     "name": "Protected spacing",
                     "source_lang": "en",
                     "target_lang": "zh",
-                    "translation_mode": "best_of_three",
+                    "translation_mode": "three_draft_synthesis",
                 }
             )
         },
@@ -256,7 +256,7 @@ def test_precision_keeps_protected_source_when_model_changes_spacing(desktop):
 def test_desktop_defaults_strip_legacy_precision_and_reject_policy_overrides(desktop):
     client, backend, _ = desktop
     legacy = Config.from_dict(
-        {"llm": {"preset": "fake"}, "pipeline": {"translation_mode": "best_of_three"}}
+        {"llm": {"preset": "fake"}, "pipeline": {"translation_mode": "three_draft_synthesis"}}
     )
     saved = {"config": config_document(legacy), "template": "快速出稿", "revision": 8}
     with backend.transaction() as connection:
@@ -271,7 +271,7 @@ def test_desktop_defaults_strip_legacy_precision_and_reject_policy_overrides(des
     assert set(defaults["effective"]["language"]) == {"source", "target"}
     assert backend.load_settings() == saved
     for yaml in (
-        "pipeline: {translation_mode: best_of_three}",
+        "pipeline: {translation_mode: three_draft_synthesis}",
         "pipeline: {precision_concurrency: 1}",
         "language: {operations: {}}",
         "language: {accepted_policy_fingerprint: {}}",

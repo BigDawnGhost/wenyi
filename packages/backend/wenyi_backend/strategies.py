@@ -115,7 +115,7 @@ def strategy_to_config(
     *,
     source_lang: str = "auto",
     target_lang: str = "zh",
-    translation_mode: Literal["standard", "best_of_three"] | None = None,
+    translation_mode: Literal["standard", "three_draft_synthesis"] | None = None,
 ) -> Config:
     unknown = set(strategy) - {"template", "steps", "description", "time_factor"}
     if unknown:
@@ -144,7 +144,7 @@ def strategy_to_config(
             raise ValueError(f"Required workflow step cannot be disabled: {key}")
     if translation_mode is not None:
         cfg.pipeline.translation_mode = translation_mode
-        if translation_mode == "best_of_three":
+        if translation_mode == "three_draft_synthesis":
             cfg.pipeline.polish = True
     if not cfg.pipeline.review:
         cfg.pipeline.review_autofix = False

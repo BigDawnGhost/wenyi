@@ -367,7 +367,7 @@ class TranslationService:
                 next_source,
                 allow_empty_translations=allow_empty_translations,
             )
-            if self._runtime.config.pipeline.translation_mode == "best_of_three":
+            if self._runtime.config.pipeline.translation_mode == "three_draft_synthesis":
 
                 def checkpoint_precision_usage() -> None:
                     self._runtime.usage.flush(store, scope="precision")

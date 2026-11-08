@@ -19,7 +19,7 @@ test("global workflow has no project precision controls or polishing constraint"
       ...globalConfiguration,
       effective: {
         ...globalConfiguration.effective,
-        pipeline: { ...globalConfiguration.effective.pipeline, translation_mode: "best_of_three", polish: true },
+        pipeline: { ...globalConfiguration.effective.pipeline, translation_mode: "three_draft_synthesis", polish: true },
       },
     },
   });

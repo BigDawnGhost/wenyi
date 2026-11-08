@@ -6,9 +6,30 @@ import re
 from typing import Any
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic_core import InitErrorDetails
 
 from .operation_names import TIERS, require_operation_name
+
+
+def _located_error(error: ValueError, location: tuple[str, ...]) -> ValidationError:
+    """Keep nested validation locations so saved-setting reconstruction can prune one field."""
+    details: list[InitErrorDetails] = []
+    if isinstance(error, ValidationError):
+        for detail in error.errors(include_url=False):
+            details.append(
+                InitErrorDetails(
+                    type=detail["type"],
+                    loc=(*location, *detail["loc"]),
+                    input=detail.get("input"),
+                    ctx=detail.get("ctx", {}),
+                )
+            )
+    else:
+        details.append(
+            InitErrorDetails(type="value_error", loc=location, input=None, ctx={"error": error})
+        )
+    return ValidationError.from_exception_data("LLMConfig", details, hide_input=True)
 
 
 class ProviderConfig(BaseModel):
@@ -117,13 +138,18 @@ class LLMConfig(BaseModel):
             raw["preset"] = "deepseek"
         preset = raw.get("preset")
         if preset is not None:
+            if not isinstance(preset, str):
+                raise _located_error(ValueError("llm.preset must be a string or null"), ("preset",))
             from .registry import provider_spec
 
-            defaults = provider_spec(preset).preset()
+            try:
+                defaults = provider_spec(preset).preset()
+            except ValueError as error:
+                raise _located_error(error, ("preset",)) from error
             for section in ("providers", "models", "tiers"):
                 supplied = raw.get(section, {})
                 if not isinstance(supplied, dict):
-                    raise ValueError(f"llm.{section} must be a mapping")
+                    raise _located_error(ValueError(f"llm.{section} must be a mapping"), (section,))
                 raw[section] = {**defaults[section], **supplied}
         return raw
 
@@ -134,37 +160,70 @@ class LLMConfig(BaseModel):
         for section in ("providers", "models", "quotas"):
             for name in getattr(self, section):
                 if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*", name):
-                    raise ValueError(f"Invalid llm.{section} ID: {name}")
+                    raise _located_error(
+                        ValueError(f"Invalid llm.{section} ID: {name}"), (section, name)
+                    )
         if set(self.tiers) != set(TIERS):
-            raise ValueError("llm.tiers must define exactly strong, cheap and fast")
+            raise _located_error(
+                ValueError("llm.tiers must define exactly strong, cheap and fast"), ("tiers",)
+            )
         for name, connection in self.providers.items():
-            provider_spec(connection.kind).validate_connection(connection)
+            try:
+                provider = provider_spec(connection.kind)
+            except ValueError as error:
+                raise _located_error(error, ("providers", name, "kind")) from error
+            try:
+                provider.validate_connection(connection)
+            except ValueError as error:
+                raise _located_error(error, ("providers", name)) from error
             if connection.quota_group and connection.quota_group not in self.quotas:
-                raise ValueError(f"llm.providers.{name}.quota_group: unknown quota group")
+                raise _located_error(
+                    ValueError(f"llm.providers.{name}.quota_group: unknown quota group"),
+                    ("providers", name, "quota_group"),
+                )
         for name, model in self.models.items():
             if model.provider not in self.providers:
-                raise ValueError(
-                    f"llm.models.{name}.provider: unknown connection {model.provider!r}"
+                raise _located_error(
+                    ValueError(
+                        f"llm.models.{name}.provider: unknown connection {model.provider!r}"
+                    ),
+                    ("models", name, "provider"),
                 )
             try:
                 provider = provider_spec(self.providers[model.provider].kind)
                 options = provider.validate_model(model)
                 provider.adapter_type().output_limit(options, None, model.max_output_tokens)
+            except ValidationError as error:
+                raise _located_error(error, ("models", name, "options")) from error
             except ValueError as error:
-                raise ValueError(f"llm.models.{name}: {error}") from error
+                raise _located_error(
+                    ValueError(f"llm.models.{name}: {error}"), ("models", name)
+                ) from error
         for name, reference in self.tiers.items():
             if reference not in self.models:
-                raise ValueError(f"llm.tiers.{name}: unknown model profile {reference!r}")
+                raise _located_error(
+                    ValueError(f"llm.tiers.{name}: unknown model profile {reference!r}"),
+                    ("tiers", name),
+                )
         for operation, route in self.routes.items():
-            require_operation_name(operation)
+            try:
+                require_operation_name(operation)
+            except ValueError as error:
+                raise _located_error(error, ("routes", operation)) from error
             for reference in ([route.model] if route.model is not None else []) + route.fallbacks:
                 if reference not in self.models:
-                    raise ValueError(
-                        f"llm.routes.{operation}.model: unknown model profile {reference!r}"
+                    raise _located_error(
+                        ValueError(
+                            f"llm.routes.{operation}.model: unknown model profile {reference!r}"
+                        ),
+                        ("routes", operation),
                     )
             primary = route.model or self.tiers[route.tier or "strong"]
             if len(set([primary, *route.fallbacks])) != 1 + len(route.fallbacks):
-                raise ValueError(f"llm.routes.{operation}: duplicate fallback model")
+                raise _located_error(
+                    ValueError(f"llm.routes.{operation}: duplicate fallback model"),
+                    ("routes", operation, "fallbacks"),
+                )
         from .routing import resolve_routes
 
         resolve_routes(self)

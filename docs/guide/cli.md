@@ -166,7 +166,7 @@ Options not supplied on the command line retain their YAML values.
 |---|---|
 | `--chapter N` | Translate and save one zero-based chapter; skip whole-book Review and export. |
 | `--polish` / `--no-polish` | Override `pipeline.polish` for pending translation work. |
-| `--translation-mode standard\|best_of_three` | Override the translation method; precision requires polishing. |
+| `--translation-mode standard\|three_draft_synthesis` | Override the translation method; precision requires polishing. |
 | `--review` / `--no-review` | Override automatic final whole-book Review. |
 | `--format epub\|txt\|html\|markdown\|pdf\|docx` | Choose an export format; PDF is only available for saved BabelDOC projects. |
 | `--out PATH` | Set the monolingual output path; bilingual naming is derived from it. |
@@ -192,10 +192,10 @@ once in the [format reference](../reference/formats.md).
 ### Three-draft precision
 
 ```bash
-wenyi translate book.epub --translation-mode best_of_three --polish
+wenyi translate book.epub --translation-mode three_draft_synthesis --polish
 ```
 
-Despite the configuration value's name, this is **three independent drafts
+This produces **three independent drafts
 followed by one source-aware synthesis**, not selection of one winner.
 It requires polishing; `--no-polish` is invalid in this mode.
 A normal batch uses four model calls rather than the two used by standard

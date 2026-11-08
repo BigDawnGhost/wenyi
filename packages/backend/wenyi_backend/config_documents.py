@@ -5,10 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 from wenyi_core.config import Config, parse_config_yaml
+from wenyi_core.config_rebuild import merge_section
 from wenyi_core.i18n.genres import DEFAULT_GENRE
 
 PROJECT_LLM_FIELDS = frozenset({"tiers", "routes", "budget"})
-PROJECT_PIPELINE_FIELDS = frozenset({"translation_mode", "precision_concurrency", "prompt_genre"})
+PROJECT_PIPELINE_FIELDS = frozenset({"translation_mode", "prompt_genre"})
 
 
 def config_document(config: Config) -> dict[str, Any]:
@@ -19,7 +20,6 @@ def config_document(config: Config) -> dict[str, Any]:
         "segment": config.segment.model_dump(mode="json"),
         "pipeline": config.pipeline.model_dump(mode="json"),
         "output": config.output.model_dump(mode="json"),
-        "honorific": {"strategy": config.honorific_strategy},
     }
 
 
@@ -89,7 +89,5 @@ def merge_project(base: dict, override: dict) -> dict:
             for key, item in value.items():
                 if not isinstance(item, dict):
                     raise ValueError(f"llm.{key} must be a mapping")
-        result[section] = {**base.get(section, {}), **value}
-        if section == "llm" and "tiers" in value:
-            result[section]["tiers"] = {**base[section]["tiers"], **value["tiers"]}
+        result[section] = merge_section(section, base.get(section, {}), value)
     return result

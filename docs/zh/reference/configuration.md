@@ -12,7 +12,8 @@
 
 CLI 读取当前工作目录的 `config.yaml`；使用 `wenyi --config PATH ...` 选择其他文件。
 缺少文件时会创建带注释的默认配置，帮助／版本命令也会如此。
-省略的设置使用内置默认值，未知顶层配置项会被拒绝。
+省略的设置使用内置默认值。已保存设置含有不兼容字段时会[先备份再重建](#retired-settings)；
+新提交到 Web/Desktop 的 API/YAML 设置，以及直接调用 Core 的配置校验，仍拒绝未知字段。
 
 | 配置节 | 控制内容 |
 |---|---|
@@ -21,7 +22,6 @@ CLI 读取当前工作目录的 `config.yaml`；使用 `wenyi --config PATH ...`
 | `segment` | 源文分批与超长段落切分。 |
 | `pipeline` | 准备、翻译、润色、Review 和 PDF 后端。 |
 | `output` | 单／双语版本、双语样式、说明页和标点。 |
-| `honorific` | 语言相关的敬称处理。 |
 | `paths` | CLI 状态位置。 |
 
 **平台边界**
@@ -36,7 +36,7 @@ CLI 读取当前工作目录的 `config.yaml`；使用 `wenyi --config PATH ...`
   可以设置 `llm.budget`，但不能定义私有模型注册库。自定义 ID 应先在总设置注册。
 - 项目创建时复制默认值；之后修改全局默认值不会重置已有项目选择。
   模型库编辑影响新启动／恢复的任务；排队和运行中的任务保留其配置快照。
-- Web/Desktop 的翻译方式与提示词题材在创建时确定，其他设置或默认值变化不改变它们。
+- Web/Desktop 的翻译方式与提示词题材在创建时确定；只要选择仍有效，其他设置或默认值变化不改变它们。
   项目保存的 `pipeline.prompt_genre` **不属于** Core/CLI YAML 或总设置字段；
   CLI 使用 [`--prompt-genre literary|academic`](../guide/cli.md#prompt-genres)
   选择本次调用的风格，默认 `literary`。
@@ -351,7 +351,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 
 | 设置 | 默认值 | 含义 |
 |---|---|---|
-| `pipeline.translation_mode` | `standard` | `standard` 或 `best_of_three`，后者要求 `polish: true`。 |
+| `pipeline.translation_mode` | `standard` | `standard` 或 `three_draft_synthesis`，后者要求 `polish: true`。 |
 | `pipeline.polish` | `true` | 润色已译批次，增加较多模型工作。 |
 | `pipeline.align_retry_limit` | `2` | 额外结构输出尝试次数；`0` 关闭。 |
 | `pipeline.rolling_context_tokens` | `512` | 前文译文预算，整数 ≥ 0，按 `cl100k_base` 计数。 |
@@ -361,7 +361,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | `pipeline.annotation_alignment` | `true` | 定位译文链接／注释；关闭时使用段末链接标记。 |
 | `pipeline.annotation_alignment_concurrency` | `4` | 单个逻辑段内逐注释请求的并发数。 |
 
-`best_of_three` 是**三份独立初稿加一次对照原文的综合润色**，不是选一份胜出稿。
+`three_draft_synthesis` 是**三份独立初稿加一次对照原文的综合润色**，不是选一份胜出稿。
 它使用 `translation.body` 和 `polish.body`；
 正常批次四次调用，标准翻译加润色为两次。三稿并发是内置行为，不是用户设置。
 保留相同模式／配置才能复用检查点。结构重试耗尽时精翻暂停，不自动拆段；
@@ -446,7 +446,7 @@ BabelDOC 是可选的独立 AGPL 服务，用于尽量保留 PDF 版式。
 |---|---|---|
 | `output.mono` | `true` | 生成单语版。 |
 | `output.bilingual` | `false` | 另生成原文／译文对照版。 |
-| `output.bilingual_order` | `target_first` | `target_first` 或 `source_first`。 |
+| `output.bilingual_order` | `target_first` | `target_first` 或 `source_first`；PDF 固定左侧原文页。 |
 | `output.bilingual_preserve_source_style` | `false` | 保留已记录的原文样式，替代该格式的默认原文显示方式。 |
 | `output.about_page` | `true` | 为 EPUB 添加“关于此翻译”项目说明页。 |
 | `output.punctuation_normalize` | `true` | 只在导出副本上规范简体中文标点。 |
@@ -482,13 +482,9 @@ CLI 的 `translate` 和 `assemble` 可用 `--mono/--no-mono`、
 
 ## 敬称
 
-`honorific.strategy` 默认为 `keep_style`。日语源文敬称处理支持：
-
-| 值 | 意图 |
-|---|---|
-| `keep_style` | 保留关系与语气。 |
-| `normalize` | 采用一致惯例。 |
-| `drop` | 含义允许时省略敬称。 |
+敬称处理自动跟随源语言／目标语言策略，不提供独立配置项。
+语言对专属规则优先于共享规则，以目标语言自然的表达保留人物关系与语气。
+例如日译中规则包含 `先輩 → 前辈` 等处理。配置中不再有 `honorific` 节。
 
 <a id="paths"></a>
 
@@ -507,7 +503,29 @@ CLI 的 `translate` 和 `assemble` 可用 `--mono/--no-mono`、
 
 ## 废弃设置与迁移
 
-加载器通常不会自动翻译已移除设置：
+CLI 加载已保存的 YAML，或 Web/Desktop 启动并读取全局、项目设置时，
+会按当前 schema 重建不兼容配置：
+
+1. 替换前先保存原设置备份。
+2. 保留有效字段和值；丢弃已移除字段、无效值及无法继续校验的依赖选择。
+   缺失字段使用当前默认值，项目模型选择按全局模型库校验。
+3. 不将旧名称转换为兼容别名。例如 `best_of_three` 会被丢弃，翻译方式回到
+   `standard`，**不会**转换成 `three_draft_synthesis`。
+   需要三稿综合模式时，在创建项目或配置 CLI 运行时显式选择新值。
+
+CLI 在所选文件旁保存原始字节备份，名称为 `<文件名>.backup-<sha256>.yaml`；
+注释保留在备份里，重建后的 YAML 只保存支持的设置。
+Web 备份保存在 PostgreSQL，Desktop 备份保存在所选数据根目录的目录库，
+与各自设置一起保存。Web 遇到不兼容的初始 YAML 时也在 PostgreSQL 备份，
+不改写挂载文件。有效设置不重写，重复启动不重复生成备份。
+
+备份或替换保存失败时，原设置保持不变，加载／启动报错。
+语法损坏的 YAML 需要修正，不猜测其含义。
+重建不修改原书、章节译文、用量或冻结任务快照。
+若排队任务仍带有不兼容的旧快照，需要按重建后的设置重新启动任务，
+不会静默换一种模式执行。Web/Desktop 新设置提交与 Core 直接校验仍然严格。
+
+可从备份取回仍有效的自定义选择，或在存在专用转换器时显式转换：
 
 | 废弃设置／行为 | 处理方式 |
 |---|---|
@@ -516,7 +534,9 @@ CLI 的 `translate` 和 `assemble` 可用 `--mono/--no-mono`、
 | `pipeline.rolling_context_segments` | 改为 `rolling_context_tokens`，不自动换算段数和 token。 |
 | `pipeline.glossary_scope` | 删除，即使值为 `full`；固定使用全量术语。 |
 | 顶层 `punctuation.normalize` | 改为 `output.punctuation_normalize`。 |
-| `pipeline.precision_concurrency` | 删除。已有 Core 配置／冻结任务可读取并忽略，新 Web YAML 写入会拒绝。 |
+| `pipeline.translation_mode: best_of_three` | 已移除，不提供别名；当前三稿模式为 `three_draft_synthesis`。 |
+| `pipeline.precision_concurrency` | 丢弃，初稿并发是内置行为。 |
+| `honorific.strategy` | 与 `honorific` 节一起丢弃，敬称跟随语言对规则。 |
 | `translation.select`、`translation.verify`、`translation.refine` 路由 ID | 删除；精翻使用 `translation.body` 和 `polish.body`。 |
 | Web/Desktop 快速出稿流程 | 新请求不可用，历史项目／任务保留已存流程。 |
 

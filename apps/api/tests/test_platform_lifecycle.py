@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 from contextlib import contextmanager
 
+import pytest
 from fastapi.testclient import TestClient
-from wenyi_api import adapters, main, workers
+from wenyi_api import adapters, config_rebuild, main, workers
 from wenyi_api.config import Settings
 from wenyi_backend.context import BackendContext, current_context
 
@@ -32,6 +33,7 @@ class FakePool:
 
 def test_web_lifespans_start_and_close_only_their_own_pool(monkeypatch):
     pools = []
+    rebuilt = []
 
     def initialize(dsn):
         pool = FakePool(dsn)
@@ -39,6 +41,9 @@ def test_web_lifespans_start_and_close_only_their_own_pool(monkeypatch):
         return pool
 
     monkeypatch.setattr(adapters, "init_pool", initialize)
+    monkeypatch.setattr(
+        config_rebuild, "rebuild_saved_settings", lambda pool, _: rebuilt.append(pool)
+    )
     a = main.create_app(Settings(database_url="postgresql://fixture/a", api_token=None))
     b = main.create_app(Settings(database_url="postgresql://fixture/b", api_token=None))
     with TestClient(b) as client_b:
@@ -53,13 +58,32 @@ def test_web_lifespans_start_and_close_only_their_own_pool(monkeypatch):
         assert pool_b.close_calls == 0
         assert client_b.get("/health").json()["db"] == "ok"
     assert len(pools) == 2
+    assert rebuilt == pools
     assert all(pool.close_calls == 1 for pool in pools)
     assert pool_a.queries == ["SELECT 1"]
     assert pool_b.queries == ["SELECT 1", "SELECT 1"]
 
 
+def test_reconstruction_failure_closes_the_starting_repository(monkeypatch):
+    pool = FakePool("postgresql://fixture/failed")
+    monkeypatch.setattr(adapters, "init_pool", lambda _: pool)
+
+    def fail(current_pool, _):
+        assert current_pool is pool
+        raise RuntimeError("synthetic backup failure")
+
+    monkeypatch.setattr(config_rebuild, "rebuild_saved_settings", fail)
+    repository = adapters.PostgresRepository(Settings())
+    with pytest.raises(RuntimeError, match="backup failure"):
+        repository.start()
+    assert pool.close_calls == 1
+    with pytest.raises(RuntimeError, match="has not started"):
+        _ = repository.pool
+
+
 def test_worker_shutdown_stops_recovery_before_closing_its_pool(monkeypatch):
     pools, stopped = [], []
+    rebuilt = []
 
     def initialize(dsn):
         pool = FakePool(dsn)
@@ -77,6 +101,9 @@ def test_worker_shutdown_stops_recovery_before_closing_its_pool(monkeypatch):
             stopped.append(pool)
 
     monkeypatch.setattr(adapters, "init_pool", initialize)
+    monkeypatch.setattr(
+        config_rebuild, "rebuild_saved_settings", lambda pool, _: rebuilt.append(pool)
+    )
     monkeypatch.setattr(workers, "recover_jobs", recover)
 
     async def exercise():
@@ -111,4 +138,5 @@ def test_worker_shutdown_stops_recovery_before_closing_its_pool(monkeypatch):
 
     asyncio.run(exercise())
     assert len(pools) == 2
+    assert rebuilt == pools
     assert all(pool.close_calls == 1 for pool in pools)

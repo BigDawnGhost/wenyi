@@ -181,17 +181,17 @@ def test_creation_freezes_project_precision_before_queueing(api):
     client, queue = api
     response = client.post(
         "/projects",
-        data={"project": json.dumps({"name": "Book", "translation_mode": "best_of_three"})},
+        data={"project": json.dumps({"name": "Book", "translation_mode": "three_draft_synthesis"})},
         files={"file": ("book.txt", b"A fictional traveler crossed a bridge.")},
     )
     assert response.status_code == 201, response.text
     pid = response.json()["id"]
     pipeline = must(dal.get_project(pid))["config"]["pipeline"]
-    assert pipeline["translation_mode"] == "best_of_three"
+    assert pipeline["translation_mode"] == "three_draft_synthesis"
     assert "precision_concurrency" not in pipeline
     assert pipeline["polish"] is True
     snapshot = build_config_for(current_context(), pid, queue[0][1]["run_id"]).pipeline
-    assert snapshot.translation_mode == "best_of_three"
+    assert snapshot.translation_mode == "three_draft_synthesis"
     assert "precision_concurrency" not in snapshot.model_dump()
     assert snapshot.polish is True
     globals = client.get("/settings").json()["effective"]["pipeline"]

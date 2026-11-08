@@ -37,7 +37,7 @@ def test_precision_candidates_and_guarded_publication_use_backend_storage(storag
         {
             "language": {"source": "en", "target": "zh"},
             "llm": {"preset": "fake"},
-            "pipeline": {"translation_mode": "best_of_three", "precision_concurrency": 1},
+            "pipeline": {"translation_mode": "three_draft_synthesis"},
         }
     )
     plan = BatchPlan.capture(0, 0, chapter.text_segments, [], "", "", "", "", [[]], "")

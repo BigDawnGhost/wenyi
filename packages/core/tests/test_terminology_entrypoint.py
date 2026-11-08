@@ -39,7 +39,6 @@ def config(tmp_path, *, enabled=True):
             },
             "paths": {
                 "state_dir": str(tmp_path / "state"),
-                "output_dir": str(tmp_path / "output"),
             },
         }
     )

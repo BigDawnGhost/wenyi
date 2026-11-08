@@ -159,7 +159,7 @@ test("precision creation saves multipart options and enters the overview after r
       ...configuration,
       effective: {
         ...configuration.effective,
-        pipeline: { ...configuration.effective.pipeline, translation_mode: "best_of_three", polish: true },
+        pipeline: { ...configuration.effective.pipeline, translation_mode: "three_draft_synthesis", polish: true },
       },
     },
   });
@@ -186,7 +186,7 @@ test("precision creation saves multipart options and enters the overview after r
   await create.click();
   await expect(page).toHaveURL(`/projects/${pid}`);
   await expect(page.getByRole("heading", { name: "Translation overview", exact: true, level: 2 })).toBeVisible();
-  expect(submitted?.translation_mode).toBe("best_of_three");
+  expect(submitted?.translation_mode).toBe("three_draft_synthesis");
   expect(submitted).not.toHaveProperty("precision_concurrency");
   await page.reload();
   await expect(page).toHaveURL(`/projects/${pid}`);

@@ -83,7 +83,7 @@ def effective_config(
             if requested_value != saved_value:
                 raise ValueError(f"Create a new project to change the {label}")
         raw["pipeline"][field] = saved_value
-    if saved_mode == "best_of_three" and (
+    if saved_mode == "three_draft_synthesis" and (
         document is not None and "polish" not in document.get("pipeline", {})
     ):
         raw["pipeline"]["polish"] = True
@@ -110,11 +110,6 @@ def effective_config(
 
 def parse_project_yaml(value: str) -> dict:
     raw = parse_yaml(value)
-    pipeline = raw.get("pipeline")
-    if isinstance(pipeline, dict) and "precision_concurrency" in pipeline:
-        raise ValueError(
-            "Initial-draft concurrency is built in; remove pipeline.precision_concurrency"
-        )
     if "llm" in raw:
         project_llm(raw["llm"], strict=True)
     return raw

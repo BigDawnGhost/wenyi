@@ -23,7 +23,7 @@ TASK_NAMES = tuple(sorted(path.stem for path in (DATA / "tasks").glob("*.txt")))
 TASK_GROUPS = tuple(sorted({name.split("_")[0] for name in TASK_NAMES}))
 PLAN_CASES = {
     "standard": ("ja", "zh", "standard", False),
-    "best_of_three": ("ja", "zh", "best_of_three", False),
+    "three_draft_synthesis": ("ja", "zh", "three_draft_synthesis", False),
     "terminology": ("ja", "zh", "standard", True),
     "traditional": ("en", "zh-Hant", "standard", False),
     "regional": ("fr", "en-GB", "standard", False),
@@ -32,33 +32,31 @@ PLAN_CASES = {
 
 
 def rendered_digest(target: str) -> str:
-    """Cover every language direction, honorific strategy and terminology template variant."""
+    """Cover every language direction and terminology variant with language-owned honorifics."""
     digest = hashlib.sha256()
     for source in (*supported_languages(), "auto"):
-        for strategy in ("keep_style", "normalize", "drop"):
-            for terminology in (False, True):
-                plan = resolve_policy(
-                    PolicyContext(
-                        source,
-                        target,
-                        honorific_strategy=strategy,
-                        terminology_context=terminology,
-                        task_groups=TASK_GROUPS,
-                    )
+        for terminology in (False, True):
+            plan = resolve_policy(
+                PolicyContext(
+                    source,
+                    target,
+                    terminology_context=terminology,
+                    task_groups=TASK_GROUPS,
                 )
-                frozen = dict(plan.templates)
-                rules = dict(plan.prompt_values)
-                for name in TASK_NAMES:
-                    text = frozen.get(name, template(name).template)
-                    variables = {}
-                    for match in Template.pattern.finditer(text):
-                        key = match.group("named") or match.group("braced")
-                        if key and key not in rules:
-                            # Source data must survive the final substitution literally.
-                            variables[key] = 'fixture $tgt_label ${genre_literal} {"value": 1}'
-                    prompt = render(name, src=source, tgt=target, plan=plan, **variables)
-                    record = [source, strategy, terminology, name, prompt]
-                    digest.update(json.dumps(record, ensure_ascii=False).encode() + b"\n")
+            )
+            frozen = dict(plan.templates)
+            rules = dict(plan.prompt_values)
+            for name in TASK_NAMES:
+                text = frozen.get(name, template(name).template)
+                variables = {}
+                for match in Template.pattern.finditer(text):
+                    key = match.group("named") or match.group("braced")
+                    if key and key not in rules:
+                        # Source data must survive the final substitution literally.
+                        variables[key] = 'fixture $tgt_label ${genre_literal} {"value": 1}'
+                prompt = render(name, src=source, tgt=target, plan=plan, **variables)
+                record = [source, terminology, name, prompt]
+                digest.update(json.dumps(record, ensure_ascii=False).encode() + b"\n")
     return digest.hexdigest()
 
 
@@ -80,7 +78,7 @@ def plan_digests(case: str) -> dict[str, str]:
 
 
 def baseline() -> dict:
-    """Read the pre-split snapshot; do not derive expected values from the new fragments."""
+    """Read the pinned default-prompt snapshot, including current policy context fields."""
     return json.loads(BASELINE.read_text(encoding="utf-8"))
 
 

@@ -27,7 +27,7 @@ export function registerTests() {
             pipeline: {
               ...configuration.effective.pipeline,
               prompt_genre: "academic",
-              translation_mode: precision ? "best_of_three" : "standard",
+              translation_mode: precision ? "three_draft_synthesis" : "standard",
             },
           },
         };
@@ -72,7 +72,7 @@ export function registerTests() {
         }).click();
         await expect(page).toHaveURL(`/projects/${pid}`);
         expect(submitted?.prompt_genre).toBe("academic");
-        expect(submitted?.translation_mode).toBe(precision ? "best_of_three" : "standard");
+        expect(submitted?.translation_mode).toBe(precision ? "three_draft_synthesis" : "standard");
         await page.goto(`/projects/${pid}/settings`);
         const savedStyle = page.getByRole("textbox", {
           name: chinese ? "翻译风格" : "Translation style", exact: true,
@@ -121,7 +121,7 @@ export function registerTests() {
             pipeline: {
               ...configuration.effective.pipeline,
               prompt_genre: genre,
-              translation_mode: genre ? "best_of_three" : "standard",
+              translation_mode: genre ? "three_draft_synthesis" : "standard",
             },
           },
         },

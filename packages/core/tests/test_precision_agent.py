@@ -29,7 +29,10 @@ def agent(response=None, handler=None, retry_limit=2):
         {
             "language": {"source": "en", "target": "zh"},
             "llm": {"preset": "fake"},
-            "pipeline": {"translation_mode": "best_of_three", "align_retry_limit": retry_limit},
+            "pipeline": {
+                "translation_mode": "three_draft_synthesis",
+                "align_retry_limit": retry_limit,
+            },
         }
     )
     client = FakeClient(handler=handler or (lambda *_: json.dumps(response)))

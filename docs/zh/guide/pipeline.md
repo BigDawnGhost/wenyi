@@ -99,7 +99,7 @@ BabelDOC 另有[按版面角色约束的上下文边界](../reference/formats.md
 
 ## 三稿精翻
 
-`pipeline.translation_mode: best_of_three` 表示**三份独立初稿后，再做一次对照原文的综合润色**，
+`pipeline.translation_mode: three_draft_synthesis` 表示**三份独立初稿后，再做一次对照原文的综合润色**，
 不是从三稿中选出胜者。该模式必须开启润色。
 
 ```text
