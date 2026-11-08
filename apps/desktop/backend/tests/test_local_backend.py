@@ -905,18 +905,27 @@ def test_windows_workspace_spelling_preserves_directory_identity(raw, expected):
     assert _plain_windows_path(raw) == expected
 
 
-@pytest.mark.skipif(sys.platform != "win32", reason="Requires Windows paths")
-def test_verbatim_workspace_reopens_existing_catalog(tmp_path):
+@pytest.mark.parametrize(
+    "verbatim",
+    [
+        False,
+        pytest.param(
+            True, marks=pytest.mark.skipif(sys.platform != "win32", reason="Requires Windows paths")
+        ),
+    ],
+)
+def test_workspace_reopens_existing_catalog(tmp_path, verbatim):
     workspace = tmp_path / "Wenyi 工作区 # 100%"
     backend = LocalBackend(workspace)
-    pid = backend.create_project("Existing project", "en", "zh", {}, config={"keep": True})
+    config = {"output": {"bilingual": True}}
+    pid = backend.create_project("Existing project", "en", "zh", {}, config=config)
     backend.close()
 
-    reopened = LocalBackend("\\\\?\\" + str(workspace))
+    reopened = LocalBackend("\\\\?\\" + str(workspace) if verbatim else str(workspace))
     try:
         assert reopened.workspace == workspace
         assert reopened.get_project(pid)["name"] == "Existing project"
-        assert reopened.get_project_config(pid) == {"keep": True}
+        assert reopened.get_project_config(pid) == config
         from wenyi_desktop import paths as desktop_paths
 
         assert reopened.database == desktop_paths.catalog(workspace)
