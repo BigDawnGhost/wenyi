@@ -239,6 +239,9 @@ def main() -> None:
     lifecycle = EngineDiagnostics(reporter)
     try:
         with lifecycle.observe("bootstrap"):
+            if args.native_startup:
+                # The native pipe uses UTF-8 regardless of the Windows locale.
+                sys.stdin.reconfigure(encoding="utf-8")
             # An injected directory is authoritative; the fallback is CLI-only.
             workspace = (args.data_dir or default_workspace()).expanduser().resolve()
             owner = NativeOwner.read(sys.stdin, workspace) if args.native_startup else None
