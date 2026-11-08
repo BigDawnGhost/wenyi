@@ -226,6 +226,30 @@ or whitespace-only targets fall back to original paragraph text for that export,
 without changing saved targets. Layout boxes and role labels are omitted by default.
 Fonts, text expansion and the external engine still limit layout fidelity.
 
+With an annotation-capable bridge, Wenyi uses its shared annotation aligner to
+locate PDF formulas, superscript/citation markers, mixed styles and linked text in
+the completed translation. The bridge restores original formula/marker objects
+and styles, and rebuilds URI and internal page links against the typeset glyphs.
+Resolved named destinations, commonly used by citation links, are supported.
+Internal links to pages excluded from the export are omitted; other PDF action
+types are not reconstructed. Formula recognition still depends on BabelDOC.
+
+Keep `pipeline.annotation_alignment` enabled to locate translated PDF annotations.
+Export applies valid items independently: successful links, styles, formulas and
+markers remain even when another item in the same paragraph fails. Missing,
+invalid, stale or fallback positions are omitted without guessing locations,
+blocking export or replacing the translated body with source text. Conflicting
+formulas or incompatible styles omit only the conflicting items.
+
+Export itself makes no model calls. Resume translation refreshes missing/stale
+alignment after editing saved targets, but does not automatically retry unchanged
+PDF fallback items in a repair pass. CLI logs contain per-kind placement-validation
+and application rates, skipped counts and reasons; the bridge session's
+`annotation_stats.json` includes per-item IDs. These rates measure validation and
+application, not proven semantic accuracy, and separate translated text from
+source-identity placements. Update and restart the bridge for best-effort export.
+Import the PDF again to add annotation metadata to older text-only projects.
+
 **Keep both Wenyi state and the bridge session.** Set `WENYI_BABELDOC_STATE_DIR` on
 the bridge to persistent storage for long jobs. Its frozen extraction session can
 be restored after restart only while the session directory and the same
@@ -237,6 +261,8 @@ corresponding bridge-produced translated page on the **right**, forming one wide
 PDF page per pair. Both retain their original physical size, visible crop and
 orientation; unequal heights align at the top. Text and vector content are not
 rasterized. Paragraph order and source-style options do not affect this layout.
+Internal link destinations are remapped to the corresponding half of the output
+spread, including noncontiguous page selections.
 
 Keep the original PDF as well as the bridge session. Pairing uses the page
 selection saved at import, not current settings. A changed source, unreadable PDF

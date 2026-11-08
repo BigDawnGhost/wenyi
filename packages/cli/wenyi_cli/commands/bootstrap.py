@@ -15,6 +15,7 @@ from typer.core import TyperGroup
 from wenyi_core.config import Config
 from wenyi_core.i18n.genres import DEFAULT_GENRE
 
+from ..logging_config import CliLoggingError, invocation_logging
 from .context import CommandContext, current_context
 
 
@@ -74,13 +75,22 @@ def initializing_group(console: Console) -> type[TyperGroup]:
             main_kwargs["obj"] = CommandContext(
                 config_path, any(arg in {"--help", "-h"} for arg in cli_args), console
             )
-            Config.create_default_file(config_path)
             from wenyi_core.llm.limits import RequestStopped
 
             try:
-                return super().main(*main_args, args=args, **main_kwargs)
-            except RequestStopped as error:
-                typer.echo(f"Stopped: {error}", err=True)
+                with invocation_logging(config_path):
+                    try:
+                        Config.create_default_file(config_path)
+                    except OSError as error:
+                        typer.echo(f"Configuration error: {error}", err=True)
+                        raise SystemExit(1) from None
+                    try:
+                        return super().main(*main_args, args=args, **main_kwargs)
+                    except RequestStopped as error:
+                        typer.echo(f"Stopped: {error}", err=True)
+                        raise SystemExit(1) from None
+            except CliLoggingError as error:
+                typer.echo(f"Error: {error}", err=True)
                 raise SystemExit(1) from None
 
     return ConfigInitializingGroup

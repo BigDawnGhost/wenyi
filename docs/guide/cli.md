@@ -297,6 +297,24 @@ zero. Counters are not currency estimates. Workflow timing excludes downtime
 between invocations; forced termination or failure before initialization may
 prevent the current duration from being saved.
 
+### Diagnostic logs
+
+The CLI keeps routine application and HTTP-client logs out of terminal progress
+output. Each invocation saves INFO-and-higher diagnostics to a separate
+`logs/wenyi-cli-<UTC timestamp>-<pid>-<unique suffix>.log` beside the selected
+configuration file. This location does not depend on `paths.state_dir`; for
+`--config /work/settings.yaml`, look under `/work/logs/`.
+
+Progress, results, and actionable error messages remain visible. On failure the
+CLI prints the diagnostic log's absolute path. If the log cannot be initialized,
+the command stops with a concise error instead of silently discarding diagnostics.
+`WENYI_LOG_FORMAT=json` selects JSON records in the file, not additional terminal
+output. Web and Desktop logging are unchanged.
+
+Each file rotates at 5 MiB with up to two `.1` / `.2` backups. Separate invocations
+do not share a file or delete older invocation logs. Review logs for private text
+and paths before sharing, and remove unneeded logs explicitly.
+
 <a id="proofreading"></a>
 
 ## Check terminology and proofread

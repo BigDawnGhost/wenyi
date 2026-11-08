@@ -9,9 +9,14 @@ from pypdf import PageObject, PdfReader, PdfWriter, Transformation
 from pypdf.errors import PdfReadError
 
 from ..atomicio import publish_target
-from ..ingest.pdf_babeldoc import _selected_page_indices, translations_from_store
+from ..ingest.pdf_babeldoc import (
+    _selected_page_indices,
+    annotations_from_store,
+    translations_from_store,
+)
 from ..pdf_bridge import BabeldocBridgeClient, BabeldocBridgeError
 from .export_view import AssembleStore
+from .pdf_links import merge_page_with_links
 
 
 def _page_layout(page: PageObject) -> tuple[float, float, Transformation]:
@@ -42,17 +47,28 @@ def _write_spreads(
             "Check the original PDF and BabelDOC session before exporting again."
         )
     with PdfWriter() as writer:
-        for index, target in zip(indices, translated.pages, strict=True):
+        pairs = []
+        source_destinations = {}
+        target_destinations = {}
+        for target_index, (index, target) in enumerate(zip(indices, translated.pages, strict=True)):
             original = source.pages[index]
             source_width, source_height, source_transform = _page_layout(original)
             target_width, target_height, target_transform = _page_layout(target)
             height = max(source_height, target_height)
             spread = writer.add_blank_page(width=source_width + target_width, height=height)
-            spread.merge_transformed_page(
-                original, source_transform.translate(ty=height - source_height)
+            source_transform = source_transform.translate(ty=height - source_height)
+            target_transform = target_transform.translate(
+                tx=source_width, ty=height - target_height
             )
-            spread.merge_transformed_page(
-                target, target_transform.translate(tx=source_width, ty=height - target_height)
+            source_destinations[index] = (spread, source_transform, original)
+            target_destinations[target_index] = (spread, target_transform, target)
+            pairs.append((spread, original, target, source_transform, target_transform))
+        for spread, original, target, source_transform, target_transform in pairs:
+            merge_page_with_links(
+                writer, spread, original, source_transform, source, source_destinations
+            )
+            merge_page_with_links(
+                writer, spread, target, target_transform, translated, target_destinations
             )
         writer.write(path)
 
@@ -67,9 +83,11 @@ def _assemble_pdf(
 ) -> str:
     """Fill back translations; bilingual output places the original page on the left."""
     session_id, bridge_url, mapping = translations_from_store(store)
+    annotations = annotations_from_store(store, mapping)
+    annotation_options = {"annotations": annotations} if annotations else {}
     client = BabeldocBridgeClient(bridge_url, timeout=timeout)
     if not bilingual:
-        return client.fillback(session_id, mapping, out_path=out_path)
+        return client.fillback(session_id, mapping, out_path=out_path, **annotation_options)
 
     try:
         manifest = store.load_manifest()
@@ -86,7 +104,7 @@ def _assemble_pdf(
             raise BabeldocBridgeError("The saved BabelDOC page selection contains no PDF pages")
         # Keep both the bridge result and any failed composition private until the spread is complete.
         with publish_target(out_path) as temp:
-            client.fillback(session_id, mapping, out_path=temp)
+            client.fillback(session_id, mapping, out_path=temp, **annotation_options)
             _write_spreads(source, PdfReader(temp), indices, temp)
     except (OSError, PdfReadError, ValueError) as error:
         raise BabeldocBridgeError(f"Cannot assemble bilingual PDF: {error}") from error

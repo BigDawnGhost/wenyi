@@ -3,8 +3,11 @@
 import io
 import json
 import logging
+import os
+import stat
 import subprocess
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import pytest
@@ -20,6 +23,7 @@ def restore_logging():
     for handler in list(root.handlers):
         if handler not in before:
             root.removeHandler(handler)
+            handler.close()
     for handler in before:
         if handler not in root.handlers:
             root.addHandler(handler)
@@ -60,6 +64,41 @@ def test_json_format_includes_the_bound_request_id():
     payload = json.loads(stream.getvalue().strip())
     assert payload["request_id"] == "abc123"
     assert observability.current_request_id() is None
+
+
+def test_file_logging_rotates_privately_and_releases_the_replaced_sink(tmp_path, capsys):
+    path = tmp_path / "diagnostic.log"
+    observability.configure_logging(service="tests", json=False, file_path=path)
+    [handler] = [h for h in logging.getLogger().handlers if getattr(h, "_wenyi_handler", False)]
+    assert isinstance(handler, RotatingFileHandler)
+    assert handler.maxBytes == 5 * 1024 * 1024
+    assert handler.backupCount == 2
+    handler.maxBytes = 200
+    for index in range(12):
+        logging.getLogger("wenyi.test").warning("diagnostic %s: 你好 %s", index, "x" * 80)
+    files = sorted(tmp_path.glob("diagnostic.log*"))
+    assert [file.name for file in files] == [
+        "diagnostic.log",
+        "diagnostic.log.1",
+        "diagnostic.log.2",
+    ]
+    assert all("你好" in file.read_text(encoding="utf-8") for file in files)
+    if os.name == "posix":
+        assert all(stat.S_IMODE(file.stat().st_mode) == 0o600 for file in files)
+    assert capsys.readouterr().err == ""
+    observability.configure_logging(stream=io.StringIO())
+    assert handler.stream is None
+
+
+def test_unopenable_file_does_not_displace_existing_logging(tmp_path):
+    stream = io.StringIO()
+    observability.configure_logging(stream=stream)
+    before = list(logging.getLogger().handlers)
+    with pytest.raises(OSError):
+        observability.configure_logging(file_path=tmp_path / "missing" / "diagnostic.log")
+    assert logging.getLogger().handlers == before
+    logging.getLogger("wenyi.test").warning("still configured")
+    assert "still configured" in stream.getvalue()
 
 
 def test_reconfiguring_keeps_handlers_installed_by_others():

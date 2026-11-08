@@ -377,7 +377,7 @@ described under [scope](#scope).
 | `pipeline.book_understanding` | `true` | Generate full-source chapter digests and a book synopsis. |
 | `pipeline.prescan_concurrency` | `4` | Chapter-digest concurrency; use `1` for sequential work. |
 | `pipeline.terminology_context` | `false` | CLI-only experimental whole-book evidence for person entries. |
-| `pipeline.annotation_alignment` | `true` | Align translated links/annotations; disabling uses paragraph-end link markers. |
+| `pipeline.annotation_alignment` | `true` | Align translated links/annotations. EPUB uses paragraph-end fallbacks; PDF omits failed items. See [PDF formats](formats.md#babeldoc). |
 | `pipeline.annotation_alignment_concurrency` | `4` | Concurrent per-annotation requests within one logical paragraph. |
 
 `three_draft_synthesis` produces **three independent drafts plus one source-aware
@@ -406,8 +406,8 @@ Web/API do not produce this evidence merely because the YAML flag is set.
 Review can consume existing notes without producing new evidence.
 
 Body translation and fresh Reviewer requests always receive the full glossary;
-there is no scope selector. Annotation alignment may add model requests and
-retains clickable fallbacks if placement fails. Full workflow, cost, and resume
+there is no scope selector. Annotation alignment may add model requests;
+placement-failure behavior depends on the [format](formats.md). Full workflow, cost, and resume
 semantics belong in the [workflow guide](../guide/pipeline.md); markup/layout
 limitations belong in [formats](formats.md).
 

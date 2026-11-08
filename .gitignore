@@ -8,6 +8,8 @@ dist/
 *.spec
 state/
 *.db
+# CLI diagnostics and rotated backups beside selected configuration files.
+**/logs/wenyi-cli-*.log*
 .DS_Store
 *.zh.epub
 *.zh.txt
