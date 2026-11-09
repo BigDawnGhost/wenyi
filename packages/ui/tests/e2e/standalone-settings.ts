@@ -233,6 +233,42 @@ for (const scope of ["global", "project"] as const) {
   });
 }
 
+test("idle project settings remain editable after returning from the event log", async ({ page }) => {
+  let saved = configuration;
+  let writes = 0;
+  await page.route(`**/api/projects/${pid}/config`, async route => {
+    if (route.request().method() === "PUT") {
+      writes++;
+      const { yaml } = route.request().postDataJSON();
+      saved = { ...saved, yaml, effective: JSON.parse(yaml) };
+    }
+    await route.fulfill({ json: saved });
+  });
+  await page.goto(`/projects/${pid}/settings`);
+  const polish = page.getByLabel("Polishing", { exact: true });
+  const yaml = page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true });
+  const save = page.getByRole("button", { name: "Save configuration", exact: true });
+  await expect(save).toBeEnabled();
+  for (let visit = 0; visit < 2; visit++) {
+    await page.getByRole("link", { name: "Event log", exact: true }).click();
+    await expect(page).toHaveURL(`/projects/${pid}/events`);
+    await page.getByRole("link", { name: "Project settings", exact: true }).click();
+    await expect(page).toHaveURL(`/projects/${pid}/settings`);
+    await expect(polish).toBeEnabled();
+    await expect(polish).toBeChecked();
+    await expect(yaml).toBeEnabled();
+    await expect(yaml).toHaveValue(configuration.yaml);
+    for (const name of ["Save configuration", "Restore defaults", "Validate configuration"]) {
+      await expect(page.getByRole("button", { name, exact: true })).toBeEnabled();
+    }
+  }
+  await polish.uncheck();
+  await save.click();
+  await expect(page.getByText("Project settings saved", { exact: true })).toBeVisible();
+  expect(writes).toBe(1);
+  expect(saved.effective.pipeline.polish).toBe(false);
+});
+
 test("running projects keep both basic and advanced settings read-only", async ({ page }) => {
   await fakeApi(page, { [`/projects/${pid}`]: { ...project, status: "translating" } });
   await page.goto(`/projects/${pid}/settings`);
