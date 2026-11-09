@@ -73,7 +73,7 @@ def test_rebuild_is_transactional_idempotent_and_safe_across_starting_workers(
     )
     assert backups == [
         (None, {"config": global_config, "default_template": "标准翻译", "revision": 5}),
-        (pid, project_config),
+        (pid, {"config": project_config, "strategy": None}),
     ]
     assert list(tmp_path.iterdir()) == []
 
@@ -149,3 +149,44 @@ def test_read_only_bootstrap_yaml_is_backed_up_in_database(pg_pool, tmp_path):
         with pg_pool.connection() as connection:
             connection.execute("DELETE FROM application_settings")
             connection.execute("DELETE FROM configuration_backups WHERE project_id IS NULL")
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        {"template": "快速出稿"},
+        {"template": "标准翻译", "steps": {"report": True}},
+        {"template": "removed-template"},
+    ],
+)
+def test_removed_workflow_settings_are_backed_up_and_reset(
+    pg_pool, saved_settings, tmp_path, strategy
+):
+    pid, _, _ = saved_settings
+    config = {"llm": {"preset": "fake"}}
+    project_config = {"pipeline": {"review": False}}
+    with pg_pool.connection() as connection:
+        connection.execute(
+            "UPDATE application_settings SET document=%s,default_template=%s WHERE id=1",
+            (Jsonb(config), "快速出稿"),
+        )
+        connection.execute(
+            "UPDATE projects SET config=%s,strategy=%s WHERE id=%s",
+            (Jsonb(project_config), Jsonb(strategy), pid),
+        )
+
+    rebuild_saved_settings(pg_pool, str(tmp_path / "unused.yaml"))
+    rebuild_saved_settings(pg_pool, str(tmp_path / "unused.yaml"))
+    with pg_pool.connection() as connection:
+        assert connection.execute(
+            "SELECT document,default_template,revision FROM application_settings WHERE id=1"
+        ).fetchone() == (config, "标准翻译", 6)
+        assert connection.execute(
+            "SELECT config,strategy,usage FROM projects WHERE id=%s", (pid,)
+        ).fetchone() == (project_config, {}, {"tokens": 123})
+        assert connection.execute(
+            "SELECT project_id,document FROM configuration_backups ORDER BY id"
+        ).fetchall() == [
+            (None, {"config": config, "default_template": "快速出稿", "revision": 5}),
+            (pid, {"config": project_config, "strategy": strategy}),
+        ]

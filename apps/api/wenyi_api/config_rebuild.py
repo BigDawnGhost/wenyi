@@ -4,7 +4,11 @@ import logging
 from pathlib import Path
 
 from psycopg.types.json import Jsonb
-from wenyi_backend.config_rebuild import rebuild_settings
+from wenyi_backend.config_rebuild import (
+    rebuild_default_template,
+    rebuild_settings,
+    rebuild_strategy,
+)
 from wenyi_core.config import Config, parse_config_yaml
 
 logger = logging.getLogger(__name__)
@@ -27,21 +31,27 @@ def rebuild_saved_settings(pool, config_path: str) -> None:
         ).fetchone()
         original = row[0] if row else seed
         rebuilt = rebuild_settings(original)
-        if rebuilt.changed:
+        original_template = row[1] if row else "标准翻译"
+        template = rebuild_default_template(original_template)
+        removed = list(rebuilt.removed)
+        if template != original_template:
+            removed.append("default_template")
+        if removed:
             backup = {
                 "config": original,
-                "default_template": row[1] if row else "标准翻译",
+                "default_template": original_template,
                 "revision": row[2] if row else 0,
             }
             connection.execute(
                 "INSERT INTO configuration_backups(project_id,document,removed) VALUES(NULL,%s,%s)",
-                (Jsonb(backup), Jsonb(rebuilt.removed)),
+                (Jsonb(backup), Jsonb(removed)),
             )
             connection.execute(
                 """INSERT INTO application_settings(id,document,default_template,revision)
                    VALUES(1,%s,%s,%s) ON CONFLICT(id) DO UPDATE SET
-                   document=EXCLUDED.document, revision=EXCLUDED.revision, updated_at=now()""",
-                (Jsonb(rebuilt.document), backup["default_template"], backup["revision"] + 1),
+                   document=EXCLUDED.document, default_template=EXCLUDED.default_template,
+                   revision=EXCLUDED.revision, updated_at=now()""",
+                (Jsonb(rebuilt.document), template, backup["revision"] + 1),
             )
             logger.warning("Backed up and rebuilt Web global settings")
         defaults = Config.from_dict(rebuilt.document)
@@ -61,19 +71,29 @@ def rebuild_saved_settings(pool, config_path: str) -> None:
             ).fetchone()
             current_defaults = Config.from_dict(global_row[0]) if global_row else defaults
             row = connection.execute(
-                "SELECT config FROM projects WHERE id=%s FOR UPDATE", (pid,)
+                "SELECT config,strategy FROM projects WHERE id=%s FOR UPDATE", (pid,)
             ).fetchone()
             if row is None:
                 continue
             rebuilt = rebuild_settings(row[0], defaults=current_defaults, project=True)
-            if not rebuilt.changed:
+            strategy = rebuild_strategy(row[1])
+            if not rebuilt.changed and not strategy.changed:
                 continue
             connection.execute(
                 "INSERT INTO configuration_backups(project_id,document,removed) VALUES(%s,%s,%s)",
-                (pid, Jsonb(row[0]), Jsonb(rebuilt.removed)),
+                (
+                    pid,
+                    Jsonb({"config": row[0], "strategy": row[1]}),
+                    Jsonb((*rebuilt.removed, *strategy.removed)),
+                ),
             )
+            replacement_strategy = strategy.document if strategy.changed else row[1]
             connection.execute(
-                "UPDATE projects SET config=%s,updated_at=now() WHERE id=%s",
-                (Jsonb(rebuilt.document), pid),
+                "UPDATE projects SET config=%s,strategy=%s,updated_at=now() WHERE id=%s",
+                (
+                    Jsonb(rebuilt.document),
+                    Jsonb(replacement_strategy) if replacement_strategy is not None else None,
+                    pid,
+                ),
             )
             logger.warning("Backed up and rebuilt Web project settings: %s", pid)

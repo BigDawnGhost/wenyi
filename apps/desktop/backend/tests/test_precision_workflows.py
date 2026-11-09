@@ -10,6 +10,7 @@ from wenyi_backend.context import current_context
 from wenyi_core.config import Config
 from wenyi_core.pipeline.run.language_policies import CHECKPOINT
 from wenyi_core.pipeline.translate.precision_records import load_precision_call
+from wenyi_desktop.local_backend import LocalBackend
 
 
 @pytest.mark.parametrize("stage", ["translate", "synthesis"])
@@ -253,6 +254,19 @@ def test_precision_keeps_protected_source_when_model_changes_spacing(desktop):
         reopened.close()
 
 
+def test_missing_default_template_uses_current_default_without_rewriting(desktop):
+    client, backend, _ = desktop
+    saved = {"config": {"llm": {"preset": "fake"}}, "revision": 2}
+    with backend.transaction() as connection:
+        backend.save_settings(saved, connection)
+    LocalBackend(backend.workspace)
+    response = client.get("/settings")
+    assert response.status_code == 200
+    assert response.json()["default_template"] == "标准翻译"
+    assert response.json()["revision"] == 2
+    assert backend.load_settings() == saved
+
+
 def test_desktop_defaults_strip_legacy_precision_and_reject_policy_overrides(desktop):
     client, backend, _ = desktop
     legacy = Config.from_dict(
@@ -261,15 +275,19 @@ def test_desktop_defaults_strip_legacy_precision_and_reject_policy_overrides(des
     saved = {"config": config_document(legacy), "template": "快速出稿", "revision": 8}
     with backend.transaction() as connection:
         backend.save_settings(saved, connection)
+    LocalBackend(backend.workspace)
+    rebuilt = backend.load_settings()
+    assert rebuilt["template"] == "标准翻译"
+    assert rebuilt["revision"] == 9
     response = client.get("/settings")
     assert response.status_code == 200
     defaults = response.json()
     assert defaults["default_template"] == "标准翻译"
-    assert defaults["revision"] == 8
+    assert defaults["revision"] == 9
     assert "translation_mode" not in defaults["effective"]["pipeline"]
     assert "precision_concurrency" not in defaults["effective"]["pipeline"]
     assert set(defaults["effective"]["language"]) == {"source", "target"}
-    assert backend.load_settings() == saved
+    assert backend.load_settings() == rebuilt
     for yaml in (
         "pipeline: {translation_mode: three_draft_synthesis}",
         "pipeline: {precision_concurrency: 1}",
@@ -279,7 +297,7 @@ def test_desktop_defaults_strip_legacy_precision_and_reject_policy_overrides(des
         for method, suffix in (("post", "/validate"), ("put", "")):
             rejected = getattr(client, method)(
                 "/settings" + suffix,
-                json={"yaml": yaml, "default_template": "标准翻译", "revision": 8},
+                json={"yaml": yaml, "default_template": "标准翻译", "revision": 9},
             )
             assert rejected.status_code == 422, rejected.text
-            assert backend.load_settings() == saved
+            assert backend.load_settings() == rebuilt

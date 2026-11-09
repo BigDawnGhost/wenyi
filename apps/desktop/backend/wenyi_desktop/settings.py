@@ -24,8 +24,8 @@ class DesktopSettings:
         saved = self.backend.load_settings(connection)
         return (
             GlobalSettings(
-                Config.from_dict(global_document(Config.from_dict(saved["config"]))),
-                "标准翻译",
+                Config.from_dict(saved["config"]),
+                saved.get("template", "标准翻译"),
                 saved["revision"],
             )
             if saved

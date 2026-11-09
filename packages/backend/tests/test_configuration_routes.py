@@ -62,23 +62,23 @@ def test_precision_project_yaml_validates_mode_and_required_polish():
         assert restored.pipeline.polish is True
 
 
-def test_legacy_quick_project_read_preserves_saved_configuration():
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        {"template": "快速出稿"},
+        {"template": "标准翻译", "steps": {"report": True}},
+    ],
+)
+def test_project_read_does_not_alias_removed_workflow_settings(strategy):
     from copy import deepcopy
 
-    project = {"id": "legacy", "strategy": {"template": "快速出稿"}}
+    project = {"id": "legacy", "strategy": strategy}
     before = deepcopy(project)
-    config = effective_config(
-        project, defaults=Config.from_dict({"llm": {"preset": "fake"}}), state_dir="unused"
-    )
-    assert not any(
-        getattr(config.pipeline, key)
-        for key in ("book_understanding", "polish", "review", "review_autofix")
-    )
+    with pytest.raises(ValueError):
+        effective_config(
+            project, defaults=Config.from_dict({"llm": {"preset": "fake"}}), state_dir="unused"
+        )
     assert project == before
-    project["config"] = {"pipeline": {"polish": True}}
-    assert effective_config(
-        project, defaults=Config.from_dict({"llm": {"preset": "fake"}}), state_dir="unused"
-    ).pipeline.polish
 
 
 def test_workflow_keeps_frozen_quick_snapshot_independent(monkeypatch):

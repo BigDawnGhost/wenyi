@@ -425,7 +425,7 @@ for the installed version's syntax.
 | `glossary conflicts` | `INPUT` | Unresolved terminology conflicts. |
 | `glossary resolve` | `INPUT SOURCE TARGET` | Resolve an existing term. |
 | `languages` | No options | List built-in language codes without credentials. |
-| `models` | [Subcommands below](#model-commands) | Routing, checks, live probes, and migrations. |
+| `models` | [Subcommands below](#model-commands) | Routing, checks, live probes, and usage-ledger conversion. |
 | `language-policy` | Developer diagnostic | See [language-policy diagnostics](../development/pipeline.md#language-policies), not translation settings. |
 
 Root options are `--config/-c PATH` (default `config.yaml`),
@@ -442,7 +442,6 @@ commands, and Review results instead.
 | `models explain` | Required `--operation ID` | JSON description of one route; no credentials or requests. |
 | `models check` | `--for prepare\|translate\|review` (default `translate`) | Validate reachable credentials locally; no requests. |
 | `models ping` | `--for prepare\|translate\|review`, `--timeout SECONDS` (default `30`, minimum `0.1`), `--json` | Live request per reachable profile, including fallbacks. |
-| `models migrate-config` | `SOURCE --out NEW_FILE` | Offline conversion into a new file. |
 | `models migrate-usage` | `RUN_DIR` | Offline conversion of selected CLI usage ledgers. |
 
 `list --json`, `explain`, and `ping --json` print structured JSON to standard
@@ -457,21 +456,21 @@ An empty or truncated response still proves reachability, not task quality.
 Any failed profile makes the command exit with status 1; failures are categorized
 without echoing raw provider responses.
 
-<a id="migrations"></a>
+<a id="usage-ledgers"></a>
 
-### Explicit migrations
+### Usage ledgers
 
 ```bash
-wenyi models migrate-config old-config.yaml --out routed-config.yaml
 wenyi models migrate-usage state/BOOK/targets/zh
 ```
 
-The configuration destination must not exist. Review the converted file before
-using it; the normal loader does not silently translate retired settings.
-The converter handles the old model-routing schema, not every removed option.
-See [retired settings](../reference/configuration.md#retired-settings).
+Usage ledgers are run data and are not rebuilt with settings. Nonempty
+pre-routing ledgers need this explicit conversion; unknown provider/model history
+is marked `unknown`. Schema-2 cache accounting can be read and is persisted in
+the current schema on the next normal save, without inventing missing historical
+cache classifications.
 
-Stop workflows for the selected target before migrating usage. The command
+Stop workflows for the selected target before converting usage. The command
 processes that CLI target's ledger and its Review ledgers, preserves totals,
 and keeps exact-byte `usage.before-routing-<timestamp>.json` backups beside
 changed files. It validates before writing and publishes each converted file

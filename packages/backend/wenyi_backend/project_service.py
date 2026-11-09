@@ -22,7 +22,7 @@ from .context import BackendStorage
 from .errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from .global_settings import registered_models
 from .ports.projects import RUNNING_PROJECT_STATUSES, ProjectReader
-from .strategies import _saved_strategy_to_config
+from .strategies import strategy_to_config
 
 
 def require_project(pid: str, projects: ProjectReader) -> dict:
@@ -61,7 +61,7 @@ def effective_config(
     state_dir: str,
 ) -> Config:
     base = defaults
-    base = _saved_strategy_to_config(
+    base = strategy_to_config(
         project.get("strategy") or {"template": "标准翻译"},
         base,
         source_lang=project.get("source_lang") or "auto",

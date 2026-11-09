@@ -13,7 +13,7 @@ from psycopg import Connection
 from wenyi_api import main
 from wenyi_api.adapters import create_context
 from wenyi_api.global_settings import PostgresSettings
-from wenyi_backend.config_documents import config_document
+from wenyi_backend.config_documents import global_document
 from wenyi_backend.context import use_context
 from wenyi_backend.global_settings import GlobalSettings
 from wenyi_backend.routers import projects
@@ -179,31 +179,19 @@ def test_project_yaml_rejects_malformed_pipeline_sections(creation_api, method, 
     assert saved[pid] == before
 
 
-def test_postgres_settings_normalize_legacy_global_precision():
+def test_postgres_settings_load_current_global_configuration():
     precision = Config.from_dict(
         {
             "llm": {"preset": "fake"},
             "pipeline": {"translation_mode": "three_draft_synthesis"},
         }
     )
-    row = (config_document(precision), "标准翻译", 7)
+    row = (global_document(precision), "标准翻译", 7)
     connection = SimpleNamespace(execute=lambda _: SimpleNamespace(fetchone=lambda: row))
     defaults = PostgresSettings(None, "").load(connection=cast(Connection[Any], connection))
     assert defaults.revision == 7
     assert defaults.config.pipeline.translation_mode == "standard"
     assert "precision_concurrency" not in defaults.config.pipeline.model_dump()
-
-
-def test_retired_global_template_is_read_as_standard_without_rewriting():
-    document = config_document(Config.from_dict({"llm": {"preset": "fake"}}))
-    row = (document, "快速出稿", 8)
-    before = deepcopy(row)
-    connection = SimpleNamespace(execute=lambda _: SimpleNamespace(fetchone=lambda: row))
-    defaults = PostgresSettings(None, "").load(connection=cast(Connection[Any], connection))
-    assert defaults.default_template == "标准翻译"
-    assert defaults.revision == 8
-    assert defaults.config.pipeline.polish is True
-    assert row == before
 
 
 @pytest.mark.parametrize("method,suffix", [("post", "/validate"), ("put", "")])

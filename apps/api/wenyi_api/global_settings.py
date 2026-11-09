@@ -28,9 +28,7 @@ class PostgresSettings:
                 "SELECT document, default_template, revision FROM application_settings WHERE id=1"
             ).fetchone()
         return (
-            GlobalSettings(
-                Config.from_dict(global_document(Config.from_dict(row[0]))), "标准翻译", row[2]
-            )
+            GlobalSettings(Config.from_dict(row[0]), row[1], row[2])
             if row
             else GlobalSettings(Config.from_dict(global_document(self.defaults())))
         )

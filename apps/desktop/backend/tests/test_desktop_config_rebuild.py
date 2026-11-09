@@ -67,7 +67,7 @@ def test_startup_backs_up_global_and_project_settings_once(saved_catalog):
     assert job == original_job
     assert [(pid, json.loads(document)) for pid, document in backups] == [
         (None, original_settings),
-        ("synthetic", original_project["config"]),
+        ("synthetic", {"config": original_project["config"], "strategy": None}),
     ]
     LocalBackend(backend.workspace)
     with backend.transaction(write=False) as connection:
@@ -100,3 +100,50 @@ def test_backup_and_replacement_roll_back_together(saved_catalog, failure, scope
         assert json.loads(connection.execute("SELECT document FROM projects").fetchone()[0]) == (
             original_project
         )
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        {"template": "快速出稿"},
+        {"template": "标准翻译", "steps": {"report": True}},
+        {"template": "removed-template"},
+    ],
+)
+def test_removed_workflow_settings_are_backed_up_and_reset(tmp_path, strategy):
+    from wenyi_backend.project_service import effective_config
+    from wenyi_core.config import Config
+
+    backend = LocalBackend(tmp_path / "workspace")
+    settings = {"config": {"llm": {"preset": "fake"}}, "template": "快速出稿", "revision": 3}
+    project = {
+        "id": "synthetic",
+        "source_lang": "en",
+        "target_lang": "zh",
+        "strategy": strategy,
+        "config": {"pipeline": {"review": False}},
+    }
+    with backend.transaction() as connection:
+        backend.save_settings(settings, connection)
+        connection.execute("INSERT INTO projects VALUES(?,?)", (project["id"], json.dumps(project)))
+
+    LocalBackend(backend.workspace)
+    assert backend.load_settings() == {**settings, "template": "标准翻译", "revision": 4}
+    with backend.transaction(write=False) as connection:
+        restored = json.loads(connection.execute("SELECT document FROM projects").fetchone()[0])
+        backups = connection.execute(
+            "SELECT project_id,document FROM configuration_backups ORDER BY id"
+        ).fetchall()
+    assert restored == {**project, "strategy": {}}
+    assert [(pid, json.loads(document)) for pid, document in backups] == [
+        (None, settings),
+        (project["id"], {"config": project["config"], "strategy": strategy}),
+    ]
+    config = effective_config(
+        restored, defaults=Config.from_dict({"llm": {"preset": "fake"}}), state_dir="unused"
+    )
+    assert config.pipeline.book_understanding and config.pipeline.polish
+    assert not config.pipeline.review
+    LocalBackend(backend.workspace)
+    with backend.transaction(write=False) as connection:
+        assert connection.execute("SELECT count(*) FROM configuration_backups").fetchone()[0] == 2

@@ -65,6 +65,23 @@ def test_rebuild_prunes_nested_invalid_fields_without_losing_model_registry():
     assert config.llm.preset == "fake"
 
 
+def test_single_provider_configuration_is_discarded_not_converted():
+    original = {
+        "llm": {"provider": "deepseek", "tiers": {"fast": {"options": {"thinking": False}}}},
+        "pipeline": {"review_agent_tier": "cheap", "review": False},
+    }
+    before = deepcopy(original)
+    with pytest.raises(ValueError):
+        Config.from_dict(original)
+    result = rebuild_config(original)
+    config = Config.from_dict(result.document)
+    assert config.llm == Config().llm
+    assert config.llm.routes == {}
+    assert config.pipeline.review is False
+    assert original == before
+    assert not rebuild_config(result.document).changed
+
+
 @pytest.mark.parametrize("preset", ["removed-provider", [], {}, False])
 def test_rebuild_invalid_preset_preserves_independent_valid_budget(preset):
     result = rebuild_config({"llm": {"preset": preset, "budget": {"max_requests": 17}}})

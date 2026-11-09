@@ -371,7 +371,7 @@ BabelDOC PDF 导出仍需请求外部 bridge。
 | `glossary conflicts` | `INPUT` | 未解决术语冲突。 |
 | `glossary resolve` | `INPUT SOURCE TARGET` | 裁定已有词条。 |
 | `languages` | 无选项 | 无需凭据，列出内置语言代码。 |
-| `models` | [下方子命令](#model-commands) | 路由、检查、真实探测和迁移。 |
+| `models` | [下方子命令](#model-commands) | 路由、检查、真实探测和用量账本转换。 |
 | `language-policy` | 开发诊断 | 见[语言策略诊断](../development/pipeline.md#language-policies)，不是翻译设置。 |
 
 根选项为 `--config/-c PATH`（默认 `config.yaml`）、
@@ -389,7 +389,6 @@ BabelDOC PDF 导出仍需请求外部 bridge。
 | `models explain` | 必填 `--operation ID` | 输出一个路由的 JSON 说明，无需凭据、不发送请求。 |
 | `models check` | `--for prepare\|translate\|review`（默认 `translate`） | 本地检查可达凭据，不发送请求。 |
 | `models ping` | `--for prepare\|translate\|review`、`--timeout SECONDS`（默认 `30`，最小 `0.1`）、`--json` | 对每个可达模型配置发送真实请求，包括备用模型。 |
-| `models migrate-config` | `SOURCE --out NEW_FILE` | 离线转换为新文件。 |
 | `models migrate-usage` | `RUN_DIR` | 离线转换所选 CLI 用量账本。 |
 
 `list --json`、`explain` 和 `ping --json` 向标准输出打印结构化 JSON。
@@ -401,19 +400,19 @@ BabelDOC PDF 导出仍需请求外部 bridge。
 空或截断回复也算可连通，但不代表任务质量。任一配置失败则退出码为 1，
 失败按类别报告，不回显原始提供商响应。
 
-<a id="migrations"></a>
+<a id="usage-ledgers"></a>
 
-### 显式迁移
+### 用量账本
 
 ```bash
-wenyi models migrate-config old-config.yaml --out routed-config.yaml
 wenyi models migrate-usage state/BOOK/targets/zh
 ```
 
-配置目标文件必须不存在，转换后应先检查再使用；正常加载器不会暗中翻译已废弃设置。
-转换器只处理旧模型路由格式，不负责所有移除选项，见[废弃设置](../reference/configuration.md#retired-settings)。
+用量账本属于运行数据，不随设置重建。非空的路由升级前账本需要此显式转换，
+未知提供商／模型历史标为 `unknown`。Schema-2 缓存用量可读取，
+在下次正常保存时持久化为当前格式，不会猜测缺失的历史缓存分类。
 
-迁移用量前先停止所选目标的工作流。命令处理该 CLI 目标及其 Review 账本，保留总量，
+转换用量前先停止所选目标的工作流。命令处理该 CLI 目标及其 Review 账本，保留总量，
 并在变更文件旁保存原始字节备份 `usage.before-routing-<timestamp>.json`。
 先校验后写入，逐文件原子发布。中断后重复同一命令，已转换账本会跳过。
 它不迁移源书或 Web/Desktop 工作区。
