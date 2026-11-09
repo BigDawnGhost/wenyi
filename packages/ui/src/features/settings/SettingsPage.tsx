@@ -25,7 +25,8 @@ export default function SettingsPage() {
   const qc = useQueryClient();
   const [draft, setDraft] = useState("");
   const [effective, setEffective] = useState<Record<string, unknown>>({});
-  const [loaded, setLoaded] = useState(false);
+  const [loadedPid, setLoadedPid] = useState<string | null>(null);
+  const loaded = loadedPid === pid;
   const [yamlDirty, setYamlDirty] = useState(false);
   const config = useQuery({
     queryKey: ["config", pid],
@@ -39,7 +40,7 @@ export default function SettingsPage() {
     setDraft(value.yaml);
     setEffective(value.effective);
     setYamlDirty(false);
-    setLoaded(true);
+    setLoadedPid(forPid);
   };
   useEffect(() => {
     if (config.data && !loaded) apply(config.data, pid);
@@ -47,7 +48,6 @@ export default function SettingsPage() {
   const pidRef = useRef(pid);
   pidRef.current = pid;
   useEffect(() => {
-    setLoaded(false);
     validate.reset();
   }, [pid]);
   const save = useMutation({
