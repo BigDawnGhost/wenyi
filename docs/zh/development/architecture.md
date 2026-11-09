@@ -112,6 +112,23 @@ claim、render、publish 和终态写入；渲染自身不发布文件。
 一致导出快照与用量只合并一次等约束适用于所有存储后端。
 检查点、语言策略和提示词资源的详细规则见[流程开发文档](pipeline.md)。
 
+### EPUB CPU worker
+
+EPUB reader 和模板导出通过 `resource_pool.py` 按物理 XHTML 分配 CPU 工作：
+至少 12 个资源且 XHTML 解压后总大小至少 2 MiB 时，启用最多 6 个 spawn worker，
+并受可用 CPU 数量和亲和性限制。较小输入、daemon 进程和无法重新导入的交互入口
+使用同一套函数串行执行。这些内部阈值独立于 LLM 并发，适用于 CLI、Web 和 Desktop。
+
+每个父进程共用一个准入槽，避免多个 EPUB 操作叠加进程池；不同应用/worker 进程
+仍拥有独立预算。每个池最多保留每个 worker 两个在途资源，按源文顺序产出结果，
+退出前等待运行中的工作并取消剩余任务，再释放准入槽。worker 只接收显式数据，
+不传递 Storage、数据库连接、凭据或平台上下文。
+
+解析先标注资源，再按目标 XHTML 提取注释上下文，最后构建逻辑章节。
+双语导出先汇总全书原文链接目标，再开始回填，每个资源只接收它实际引用的链接映射。
+EPUB 语言和布局改写在资源任务内执行；ZIP 读写、包级协调与原子发布仍由父进程负责。
+冻结打包的 CLI/Desktop 入口在导入应用前先分流 multiprocessing worker。
+
 ## 边界验证
 
 - 依赖变更运行 `packages/core/tests/test_architecture_boundaries.py`；

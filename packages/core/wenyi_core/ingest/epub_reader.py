@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import zipfile
+from dataclasses import dataclass
 
 from wenyi_core.ingest.epub_layout import _build_epub_annotation_contexts, _logical_chapters
 from wenyi_core.ingest.epub_package import (
@@ -17,6 +18,37 @@ from wenyi_core.markup.anchors import fragment_anchor_map
 from wenyi_core.markup.contracts import INLINE_META_KEY
 from wenyi_core.markup.segments import annotate_epub_resource
 from wenyi_core.models.document import Document
+from wenyi_core.resource_pool import ResourcePool
+
+
+@dataclass(frozen=True)
+class _ResourceTask:
+    index: int
+    href: str
+    data: bytes
+    book_title: str
+    skip_navigation: bool
+    auxiliary: bool
+
+
+def _read_resource(task: _ResourceTask) -> dict[str, object]:
+    title, segments, template = annotate_epub_resource(
+        _decode_markup(task.data),
+        task.index,
+        task.href,
+        book_title=task.book_title,
+        skip_navigation=task.skip_navigation,
+    )
+    resource: dict[str, object] = {
+        "index": task.index,
+        "href": task.href,
+        "title": title,
+        "segments": segments,
+        "template": template,
+    }
+    if not task.auxiliary:
+        resource["fragment_anchors"] = fragment_anchor_map(template)
+    return resource
 
 
 def peek_epub_title(path: str) -> str:
@@ -40,56 +72,28 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
         manifest_xhtml_hrefs = _manifest_xhtml_hrefs(zf, opf_path)
         toc_entries = parse_toc_entries(zf, toc_paths)
 
-        resources: list[dict[str, object]] = []
-        for resource_index, href in enumerate(hrefs):
-            if href not in names:
-                continue
-            html = _decode_markup(zf.read(href))
-            title, segments, template = annotate_epub_resource(
-                html,
-                resource_index,
-                href,
-                book_title=book_title,
-                skip_navigation=href in toc_paths,
-            )
-            resources.append(
-                {
-                    "index": resource_index,
-                    "href": href,
-                    "title": title,
-                    "segments": segments,
-                    "template": template,
-                    "fragment_anchors": fragment_anchor_map(template),
-                }
-            )
-
+        specs = [(index, href, False) for index, href in enumerate(hrefs) if href in names]
+        spine_count = len(specs)
         # Annotation bodies may appear in the manifest without a spine reference. They do not become
         # formal chapters or backfill resources, but can supply immutable context to referring paragraphs.
-        auxiliary_resources: list[dict[str, object]] = []
-        spine_hrefs = {str(resource["href"]) for resource in resources}
+        spine_hrefs = {href for _index, href, _auxiliary in specs}
         for auxiliary_ordinal, href in enumerate(manifest_xhtml_hrefs):
             if href in spine_hrefs or href not in names or href in toc_paths:
                 continue
-            html = _decode_markup(zf.read(href))
-            title, segments, template = annotate_epub_resource(
-                html,
-                len(hrefs) + auxiliary_ordinal,
-                href,
-                book_title=book_title,
+            specs.append((len(hrefs) + auxiliary_ordinal, href, True))
+        source_bytes = sum(zf.getinfo(href).file_size for _index, href, _auxiliary in specs)
+        with ResourcePool(len(specs), source_bytes) as pool:
+            tasks = (
+                _ResourceTask(index, href, zf.read(href), book_title, href in toc_paths, auxiliary)
+                for index, href, auxiliary in specs
             )
-            auxiliary_resources.append(
-                {
-                    "index": len(hrefs) + auxiliary_ordinal,
-                    "href": href,
-                    "title": title,
-                    "segments": segments,
-                    "template": template,
-                }
+            annotated = list(pool.map(_read_resource, tasks))
+            resources, auxiliary_resources = annotated[:spine_count], annotated[spine_count:]
+            annotation_contexts = _build_epub_annotation_contexts(
+                resources,
+                [*resources, *auxiliary_resources],
+                pool=pool,
             )
-        annotation_contexts = _build_epub_annotation_contexts(
-            resources,
-            [*resources, *auxiliary_resources],
-        )
         chapters, split_strategy, split_toc_path = _logical_chapters(resources, toc_entries)
         # Rebuild XHTML templates and inline layout deterministically from the original EPUB, not state.
         # Preserve other format metadata and fields added by later stages unchanged.
