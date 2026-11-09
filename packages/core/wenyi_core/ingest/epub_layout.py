@@ -2,109 +2,11 @@
 
 from __future__ import annotations
 
-from bs4 import BeautifulSoup
-
 from wenyi_core.ingest.epub_chapters import get_chapter_split_strategy
-from wenyi_core.markup.anchors import fragment_nodes, resolve_epub_href, scope_segment_anchors
-from wenyi_core.markup.annotations import _note_context_scope
-from wenyi_core.markup.contracts import ANNOTATION_META_KEY
+from wenyi_core.ingest.epub_contexts import (
+    _build_epub_annotation_contexts as _build_epub_annotation_contexts,
+)
 from wenyi_core.models.document import KIND_HEADING, Chapter, Segment
-
-
-def _build_epub_annotation_contexts(
-    reference_resources: list[dict[str, object]],
-    lookup_resources: list[dict[str, object]],
-) -> dict[str, object]:
-    """Resolve forward annotation references into a deduplicated immutable source-context
-    index.
-    """
-    lookup_by_href = {
-        str(resource.get("href")): resource
-        for resource in lookup_resources
-        if isinstance(resource.get("href"), str) and resource.get("href")
-    }
-    soups: dict[str, BeautifulSoup] = {}
-    sources_by_href: dict[str, dict[str, str]] = {}
-    for href, resource in lookup_by_href.items():
-        template = resource.get("template")
-        if isinstance(template, str):
-            soups[href] = BeautifulSoup(template, "html.parser")
-        raw_segments = resource.get("segments")
-        segments = raw_segments if isinstance(raw_segments, list) else []
-        sources_by_href[href] = {
-            segment.anchor: segment.source
-            for segment in segments
-            if isinstance(segment, Segment) and isinstance(segment.anchor, str) and segment.anchor
-        }
-
-    contexts: dict[str, dict[str, object]] = {}
-    for resource in reference_resources:
-        raw_segments = resource.get("segments")
-        segments = raw_segments if isinstance(raw_segments, list) else []
-        for segment in segments:
-            if not isinstance(segment, Segment):
-                continue
-            raw_annotations = segment.meta.get(ANNOTATION_META_KEY)
-            annotations = raw_annotations if isinstance(raw_annotations, dict) else {}
-            raw_items = annotations.get("items")
-            items = raw_items if isinstance(raw_items, list) else []
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-                raw_href = item.get("raw_href")
-                if not isinstance(raw_href, str):
-                    continue
-                resolved = resolve_epub_href(segment.resource_href or "", raw_href)
-                if (
-                    resolved.external
-                    or not resolved.resource_href
-                    or not resolved.fragment
-                    or resolved.target_key != item.get("target_key")
-                ):
-                    continue
-                target_soup = soups.get(resolved.resource_href)
-                if target_soup is None:
-                    continue
-                target_nodes = fragment_nodes(target_soup, resolved.fragment)
-                if len(target_nodes) != 1:
-                    # Duplicate id/name values make reference ownership ambiguous; omit that context.
-                    continue
-                scope, semantic_note = _note_context_scope(target_nodes[0], resolved.fragment)
-                relation = item.get("relation")
-                if relation == "internal_link" and semantic_note:
-                    relation = "noteref"
-                    item["relation"] = relation
-                if relation != "noteref":
-                    continue
-
-                anchors = scope_segment_anchors(scope)
-                source_map = sources_by_href.get(resolved.resource_href, {})
-                anchors = [anchor for anchor in anchors if anchor in source_map]
-                if not anchors:
-                    continue
-                # Self-links provide no new information and cannot define their own annotations.
-                if (
-                    resolved.resource_href == segment.resource_href
-                    and isinstance(segment.anchor, str)
-                    and anchors == [segment.anchor]
-                ):
-                    continue
-                source_blocks = [
-                    source_map[anchor] for anchor in anchors if source_map[anchor].strip()
-                ]
-                if not source_blocks:
-                    continue
-                contexts.setdefault(
-                    resolved.target_key,
-                    {
-                        "target_key": resolved.target_key,
-                        "resource_href": resolved.resource_href,
-                        "fragment": resolved.fragment,
-                        "source_blocks": source_blocks,
-                        "segment_anchors": anchors,
-                    },
-                )
-    return {"version": 1, "contexts": contexts}
 
 
 def _toc_collapsed_to_single_boundary(

@@ -132,6 +132,27 @@ changing formal targets. Stable segment identities, consistent export snapshots,
 once-only usage accounting apply across storage backends. Detailed checkpoint, language
 policy and prompt-resource rules live in [pipeline development](pipeline.md).
 
+### EPUB CPU workers
+
+EPUB readers and template exporters use `resource_pool.py` for physical-XHTML work:
+at least 12 resources and 2 MiB of uncompressed XHTML enable up to six spawned workers,
+capped by available CPU count and affinity. Smaller inputs, daemon processes and
+non-importable interactive entry points run the same functions serially. These internal
+thresholds are independent of LLM concurrency and apply to CLI, Web and Desktop.
+
+One admission slot per parent process prevents concurrent EPUB operations from multiplying
+their pools; separate application/worker processes retain independent budgets. Each pool
+admits at most two pending resources per worker, yields in source order and drains/cancels
+its work before releasing admission. Workers receive explicit data, never Storage,
+database connections, credentials or platform context.
+
+Parsing annotates resources, then resolves note contexts by target XHTML before constructing
+logical chapters. Bilingual export prepares all source-link destinations before rendering,
+sending each resource only its outgoing link mapping. EPUB presentation rewrites run in the
+resource task; ZIP reading/writing, package coordination and atomic publication stay in the
+parent. Frozen CLI/Desktop entry points dispatch multiprocessing workers before importing
+their applications.
+
 ## Boundary verification
 
 - Run `packages/core/tests/test_architecture_boundaries.py` for dependency changes and
