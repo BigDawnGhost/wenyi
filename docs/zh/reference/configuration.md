@@ -12,7 +12,7 @@
 
 CLI 读取当前工作目录的 `config.yaml`；使用 `wenyi --config PATH ...` 选择其他文件。
 缺少文件时会创建带注释的默认配置，帮助／版本命令也会如此。
-省略的设置使用内置默认值。已保存设置含有不兼容字段时会[先备份再重建](#retired-settings)；
+省略的设置使用内置默认值。已保存设置含有不兼容字段时会[先备份再重建](#saved-settings-reconstruction)；
 新提交到 Web/Desktop 的 API/YAML 设置，以及直接调用 Core 的配置校验，仍拒绝未知字段。
 
 | 配置节 | 控制内容 |
@@ -499,9 +499,9 @@ CLI 的 `translate` 和 `assemble` 可用 `--mono/--no-mono`、
 旧版书名根目录状态不会自动查找或迁移。
 状态需要有效的源／目标语言和原文内容哈希，见 [CLI 续跑](../guide/cli.md#resume)。
 
-<a id="retired-settings"></a>
+<a id="saved-settings-reconstruction"></a>
 
-## 废弃设置与迁移
+## 已保存设置重建
 
 CLI 加载已保存的 YAML，或 Web/Desktop 启动并读取全局、项目设置时，
 会按当前 schema 重建不兼容配置：
@@ -509,9 +509,11 @@ CLI 加载已保存的 YAML，或 Web/Desktop 启动并读取全局、项目设�
 1. 替换前先保存原设置备份。
 2. 保留有效字段和值；丢弃已移除字段、无效值及无法继续校验的依赖选择。
    缺失字段使用当前默认值，项目模型选择按全局模型库校验。
-3. 不将旧名称转换为兼容别名。例如 `best_of_three` 会被丢弃，翻译方式回到
-   `standard`，**不会**转换成 `three_draft_synthesis`。
-   需要三稿综合模式时，在创建项目或配置 CLI 运行时显式选择新值。
+3. 不将旧名称转换为兼容别名。不支持的值回到当前默认值；
+   在创建项目或配置 CLI 运行时显式选择支持的选项。
+
+Web/Desktop 也会先备份再重置不支持的默认流程模板和无效的已存项目流程选择。
+有效的项目显式设置继续保留；重置不会复现已废弃流程的行为。
 
 CLI 在所选文件旁保存原始字节备份，名称为 `<文件名>.backup-<sha256>.yaml`；
 注释保留在备份里，重建后的 YAML 只保存支持的设置。
@@ -525,24 +527,7 @@ Web 备份保存在 PostgreSQL，Desktop 备份保存在所选数据根目录的
 若排队任务仍带有不兼容的旧快照，需要按重建后的设置重新启动任务，
 不会静默换一种模式执行。Web/Desktop 新设置提交与 Core 直接校验仍然严格。
 
-可从备份取回仍有效的自定义选择，或在存在专用转换器时显式转换：
+可从备份取回当前 schema 仍支持的自定义选择，不再提供单独的配置转换命令。
 
-| 废弃设置／行为 | 处理方式 |
-|---|---|
-| 旧单提供商 `llm.provider`／连接字段及内联档位定义 | 执行 `models migrate-config SOURCE --out NEW_FILE`，检查独立结果。 |
-| `pipeline.review_agent_tier` | 改用 `review.verify`、`review.arbitrate`、`review.fix` 路由；旧配置转换器会映射该字段。 |
-| `pipeline.rolling_context_segments` | 改为 `rolling_context_tokens`，不自动换算段数和 token。 |
-| `pipeline.glossary_scope` | 删除，即使值为 `full`；固定使用全量术语。 |
-| 顶层 `punctuation.normalize` | 改为 `output.punctuation_normalize`。 |
-| `pipeline.translation_mode: best_of_three` | 已移除，不提供别名；当前三稿模式为 `three_draft_synthesis`。 |
-| `pipeline.precision_concurrency` | 丢弃，初稿并发是内置行为。 |
-| `honorific.strategy` | 与 `honorific` 节一起丢弃，敬称跟随语言对规则。 |
-| `translation.select`、`translation.verify`、`translation.refine` 路由 ID | 删除；精翻使用 `translation.body` 和 `polish.body`。 |
-| Web/Desktop 快速出稿流程 | 新请求不可用，历史项目／任务保留已存流程。 |
-
-转换器处理旧模型格式，不涵盖上表全部项目，也不改写源书。
-非空的路由升级前用量账本需执行 `models migrate-usage RUN_DIR`：
-备份所选 CLI 账本、保留总量、将未知提供商／模型历史标为 `unknown`。
-Schema-2 缓存用量可兼容读取，在下次正常保存时持久化，
-不会重建缺失的历史缓存分类。
-具体命令与注意事项见[迁移](../guide/cli.md#migrations)。
+用量账本属于运行数据，不属于设置；其转换和缓存计量规则见
+[CLI 用量账本](../guide/cli.md#usage-ledgers)。

@@ -14,7 +14,7 @@ protocols. For tasks, use the [CLI](../guide/cli.md),
 The CLI reads `config.yaml` from the current working directory. Pass
 `wenyi --config PATH ...` to choose another file. A missing file is created with
 documented defaults, including on help/version invocations. Omitted settings use
-built-in defaults. Saved settings are [backed up and rebuilt](#retired-settings)
+built-in defaults. Saved settings are [backed up and rebuilt](#saved-settings-reconstruction)
 when they contain incompatible fields; new API/YAML submissions to Web/Desktop
 and direct Core configuration validation reject unknown fields.
 
@@ -526,9 +526,9 @@ than overwriting existing work. Historical state at the book root is not
 automatically discovered or migrated. Saved state needs valid source/target
 languages and a source-content hash. See [CLI resume](../guide/cli.md#resume).
 
-<a id="retired-settings"></a>
+<a id="saved-settings-reconstruction"></a>
 
-## Retired settings and migration
+## Saved settings reconstruction
 
 When the CLI loads a saved YAML file, or Web/Desktop starts with saved global
 and project settings, incompatible configuration is rebuilt from the current
@@ -538,10 +538,13 @@ schema:
 2. Keep valid fields and values. Discard removed fields, invalid values, and
    dependent selections that can no longer be validated. Missing fields use
    current defaults; project model selections are checked against the global registry.
-3. Do not translate obsolete names into aliases. For example, `best_of_three`
-   is discarded and the mode defaults to `standard`, **not**
-   `three_draft_synthesis`. Select the new mode explicitly when creating a project
+3. Do not translate obsolete names into aliases. Unsupported values fall back to
+   current defaults; select supported options explicitly when creating a project
    or configuring a CLI run.
+
+Web/Desktop also back up and reset unsupported default workflow templates and
+invalid saved project workflow selections. Valid explicit project settings are
+kept; the reset does not recreate an obsolete workflow's behavior.
 
 CLI backups are exact copies beside the selected file, named
 `<filename>.backup-<sha256>.yaml`; comments remain in the backup, while rebuilt
@@ -557,27 +560,8 @@ Reconstruction does not change source books, chapter translations, usage, or
 frozen job snapshots. A queued job with an incompatible old snapshot must be
 started again under the rebuilt settings, not silently run with a different mode.
 New Web/Desktop setting submissions and direct Core validation remain strict.
+Use the backup to recover custom choices that are still supported by the current
+schema; there is no separate configuration conversion command.
 
-Use the backup to recover valid custom choices or run an explicit converter
-where one exists:
-
-| Retired setting / behavior | Action |
-|---|---|
-| Old single-provider `llm.provider` / connection fields and inline tier definitions | Run `models migrate-config SOURCE --out NEW_FILE`; inspect the separate result. |
-| `pipeline.review_agent_tier` | Use `review.verify`, `review.arbitrate`, and `review.fix` routes; the legacy config converter maps this field. |
-| `pipeline.rolling_context_segments` | Replace with `rolling_context_tokens`; there is no automatic segment-to-token conversion. |
-| `pipeline.glossary_scope` | Remove it, including `full`; full-glossary behavior is fixed. |
-| Top-level `punctuation.normalize` | Replace with `output.punctuation_normalize`. |
-| `pipeline.translation_mode: best_of_three` | Removed without an alias; the current three-draft mode is `three_draft_synthesis`. |
-| `pipeline.precision_concurrency` | Discarded; initial-draft concurrency is built in. |
-| `honorific.strategy` | Discarded with the `honorific` section; handling follows the language pair. |
-| `translation.select`, `translation.verify`, `translation.refine` route IDs | Remove them; precision uses `translation.body` and `polish.body`. |
-| Web/Desktop Quick draft workflow | Not available for new requests; historical projects/jobs retain their saved workflow. |
-
-The converter handles the retired model schema, not every row above, and never
-rewrites source books. Nonempty pre-routing usage ledgers require
-`models migrate-usage RUN_DIR`; it backs up the selected CLI ledgers, retains
-totals, and marks unknown provider/model history as `unknown`.
-Schema-2 cache accounting is read compatibly and saved on the next normal write;
-it does not reconstruct missing historic cache classifications.
-See [migration commands and precautions](../guide/cli.md#migrations).
+Usage ledgers are run data, not settings. Their conversion and cache-accounting
+rules are documented under [CLI usage ledgers](../guide/cli.md#usage-ledgers).

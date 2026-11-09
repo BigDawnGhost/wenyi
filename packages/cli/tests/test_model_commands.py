@@ -1,4 +1,4 @@
-"""Offline model previews and explicit configuration and usage conversions."""
+"""Offline model previews and explicit usage conversions."""
 
 from __future__ import annotations
 
@@ -9,8 +9,6 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 from wenyi_cli.cli import app
-from wenyi_core.config import Config
-from wenyi_core.llm.migration import convert_config
 from wenyi_core.llm.operations import OPERATIONS
 from wenyi_core.llm.usage import UsageSample, UsageTracker, convert_usage_ledger, validate_usage
 
@@ -69,35 +67,6 @@ def test_check_respects_disabled_stages(tmp_path, monkeypatch):
     assert "Traceback" not in failed.output
 
 
-def test_config_conversion_is_explicit_and_writes_separate_file(tmp_path):
-    old = {
-        "llm": {"provider": "deepseek", "tiers": {"fast": {"options": {"thinking": False}}}},
-        "pipeline": {"review_agent_tier": "cheap"},
-    }
-    with pytest.raises(ValueError):
-        Config.from_dict(old)
-    converted = convert_config(old)
-    config = Config.from_dict(converted)
-    assert config.llm.routes["review.verify"].tier == "cheap"
-    assert config.llm.models["fast"].options["thinking"] is False
-    assert "review_agent_tier" in old["pipeline"]
-    source = tmp_path / "old.yaml"
-    source.write_text(yaml.safe_dump(old))
-    out = tmp_path / "new.yaml"
-    result = _invoke(tmp_path, {}, "migrate-config", str(source), "--out", str(out))
-    assert result.exit_code == 0, result.output
-    assert Config.load(str(out)).llm == config.llm
-    assert yaml.safe_load(source.read_text()) == old
-    again = _invoke(tmp_path, {}, "migrate-config", str(source), "--out", str(out))
-    assert again.exit_code == 1
-
-
-@pytest.mark.parametrize("provider", [None, 1, [], {}])
-def test_config_conversion_rejects_invalid_provider_types(provider):
-    with pytest.raises(ValueError, match="provider must be a non-empty string"):
-        convert_config({"llm": {"provider": provider}})
-
-
 def test_usage_conversion_preserves_totals_and_unknown_identities(tmp_path):
     tracker = UsageTracker()
     tracker.record(
@@ -126,7 +95,8 @@ def test_usage_conversion_preserves_totals_and_unknown_identities(tmp_path):
     assert "Converted 0" in plain_text(again.output)
 
 
-def test_model_comparison_command_is_not_available(tmp_path):
-    result = _invoke(tmp_path, {}, "compare")
+@pytest.mark.parametrize("command", ["compare", "migrate-config"])
+def test_removed_model_commands_are_not_available(tmp_path, command):
+    result = _invoke(tmp_path, {}, command)
     assert result.exit_code == 2
-    assert "No such command 'compare'" in plain_text(result.output)
+    assert f"No such command '{command}'" in plain_text(result.output)

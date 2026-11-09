@@ -2,13 +2,18 @@
 
 from copy import deepcopy
 
+import pytest
 from wenyi_backend.config_documents import (
     config_document,
     config_from_document,
     global_document,
     merge_project,
 )
-from wenyi_backend.config_rebuild import rebuild_settings
+from wenyi_backend.config_rebuild import (
+    rebuild_default_template,
+    rebuild_settings,
+    rebuild_strategy,
+)
 from wenyi_core.config import Config
 
 
@@ -69,3 +74,43 @@ def test_project_rebuild_keeps_valid_custom_model_selections_and_genre():
     assert "precision_concurrency" not in result.document["pipeline"]
     assert original == before
     assert not rebuild_settings(result.document, defaults=defaults, project=True).changed
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        {},
+        {"template": "标准翻译", "steps": {"polish": False}},
+        {"steps": {"review": False, "book_understanding": True}},
+    ],
+)
+def test_valid_saved_workflow_selections_are_not_rewritten(strategy):
+    before = deepcopy(strategy)
+    result = rebuild_strategy(strategy)
+    assert result.document == before
+    assert not result.changed
+    assert strategy == before
+
+
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        {"template": "快速出稿"},
+        {"steps": {"report": True}},
+        {"steps": {"polish": "false"}},
+        {"removed_field": True},
+        [],
+    ],
+)
+def test_invalid_saved_workflows_reset_without_compatibility_aliases(strategy):
+    before = deepcopy(strategy)
+    result = rebuild_strategy(strategy)
+    assert result.document == {}
+    assert result.removed == ("strategy",)
+    assert strategy == before
+    assert not rebuild_strategy(result.document).changed
+
+
+@pytest.mark.parametrize("template", ["快速出稿", "missing", None, {}])
+def test_unknown_default_templates_use_current_default(template):
+    assert rebuild_default_template(template) == "标准翻译"

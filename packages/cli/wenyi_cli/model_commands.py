@@ -1,4 +1,4 @@
-"""Model configuration previews and explicit migration commands."""
+"""Model configuration previews and explicit usage conversion."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 import typer
-import yaml
 from rich.console import Console
 from rich.table import Table
 from wenyi_core.config import Config
@@ -128,27 +127,6 @@ def register_model_commands(
             raise typer.Exit(1)
         if not as_json:
             console.print(f"All {len(results)} model profiles reachable for {workflow}.")
-
-    @models.command("migrate-config")
-    def migrate_config(
-        source: Path = typer.Argument(..., exists=True, dir_okay=False),
-        out: Path = typer.Option(..., "--out", help="New YAML file; must not exist"),
-    ):
-        """Convert a retired configuration into a separate, reviewable YAML file."""
-        from wenyi_core.llm.migration import convert_config
-
-        try:
-            raw = yaml.safe_load(source.read_text(encoding="utf-8"))
-            if not isinstance(raw, dict):
-                raise ValueError("Configuration must be a mapping")
-            converted = convert_config(raw)
-            Config.from_dict(converted)
-            with out.open("x", encoding="utf-8") as file:
-                yaml.safe_dump(converted, file, allow_unicode=True, sort_keys=False)
-            console.print(f"Converted configuration: {out}")
-        except (OSError, ValueError, yaml.YAMLError) as error:
-            console.print(f"[red]Error: {error}[/]")
-            raise typer.Exit(1) from None
 
     @models.command("migrate-usage")
     def migrate_usage(run_dir: Path = typer.Argument(..., exists=True, file_okay=False)):

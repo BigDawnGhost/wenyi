@@ -8,6 +8,26 @@ from wenyi_core.config_rebuild import RebuiltConfig, rebuild_config
 from wenyi_core.i18n.genres import require_genre
 
 from .config_documents import PROJECT_LLM_FIELDS, PROJECT_PIPELINE_FIELDS, config_document
+from .strategies import PRESET_TEMPLATES, builtin_template_definition, strategy_to_config
+
+
+def rebuild_default_template(value: Any) -> str:
+    """Use a current template or the default without interpreting historical names."""
+    return value if builtin_template_definition(value) is not None else PRESET_TEMPLATES[0]["name"]
+
+
+def rebuild_strategy(raw: Any) -> RebuiltConfig:
+    """Reset invalid saved workflow selections; explicit project configuration stays separate."""
+    if raw is None:
+        return RebuiltConfig({}, ())
+    if isinstance(raw, dict):
+        try:
+            strategy_to_config(raw, Config())
+        except (ValueError, TypeError):
+            pass
+        else:
+            return RebuiltConfig(deepcopy(raw), ())
+    return RebuiltConfig({}, ("strategy",))
 
 
 def rebuild_settings(
