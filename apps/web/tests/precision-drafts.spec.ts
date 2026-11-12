@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { fakeApi, pid, project } from "../../../packages/ui/sandbox/fixtures";
 
 const endpoint = `/projects/${pid}/chapters/0/segments/42/precision-drafts`;
 const archive = {
@@ -39,9 +39,9 @@ async function open(page: Page) {
   await page.getByRole("menuitem", { name: "精翻初稿", exact: true }).click();
 }
 
-for (const mobile of [false, true]) {
-  test(`three read-only precision drafts in Chinese: ${mobile ? "mobile" : "desktop"}`, async ({ page }, info) => {
-    await page.setViewportSize(mobile ? { width: 390, height: 844 } : { width: 1440, height: 1200 });
+for (const width of [1024, 1440]) {
+  test(`three read-only precision drafts in Chinese at ${width}px`, async ({ page }, info) => {
+    await page.setViewportSize({ width, height: 900 });
     await setup(page, true);
     let requests = 0;
     await page.route(`**/api${endpoint}`, async route => {
@@ -58,14 +58,14 @@ for (const mobile of [false, true]) {
     await expect(dialog.getByText(/最终译文是三稿综合润色，不是选择某一稿/)).toBeVisible();
     for (const candidate of archive.candidates)
       await expect(dialog.getByText(candidate.target, { exact: true })).toBeAttached();
-    await expect(dialog.getByText(/当前正式译文与归档综合结果不同/)).toBeAttached();
+    await expect(dialog.getByText("与存档的综合译文不同", { exact: true })).toBeAttached();
     await expect(dialog.getByRole("textbox")).toHaveCount(0);
     await expect(dialog.getByRole("button", { name: /发布|保存/ })).toHaveCount(0);
     expect(requests).toBe(1);
     expect(await dialog.evaluate(e => e.scrollWidth <= e.clientWidth)).toBe(true);
-    await page.screenshot({ path: info.outputPath(`precision-${mobile ? "mobile" : "desktop"}.png`) });
+    await page.screenshot({ path: info.outputPath(`precision-${width}.png`) });
     await dialog.getByText("归档综合润色结果", { exact: true }).scrollIntoViewIfNeeded();
-    await page.screenshot({ path: info.outputPath(`precision-${mobile ? "mobile" : "desktop"}-synthesis.png`) });
+    await page.screenshot({ path: info.outputPath(`precision-${width}-synthesis.png`) });
   });
 }
 
@@ -119,7 +119,7 @@ test("loading and failed request are visible and retryable", async ({ page }) =>
   await open(page);
   await expect(page.getByRole("dialog").getByRole("status")).toBeVisible();
   release();
-  await expect(page.getByRole("dialog").getByText(/503: Archive unavailable/)).toBeVisible();
+  await expect(page.getByRole("dialog").getByText(/Archive unavailable/)).toBeVisible();
   await page.route(`**/api${endpoint}`, route => route.fulfill({ json: archive }));
   await page.getByRole("button", { name: "重新加载初稿" }).click();
   await expect(page.getByText("润色前对照稿")).toBeVisible();

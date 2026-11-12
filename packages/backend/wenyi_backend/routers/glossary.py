@@ -4,16 +4,27 @@ from __future__ import annotations
 
 import csv
 import io
-from typing import Literal
+from contextlib import closing
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse, Response
-from wenyi_core.glossary.store import GlossaryTerm
+from wenyi_core.glossary.anki import export_anki_glossary
 from wenyi_core.i18n.metadata import normalize_term_type
+from wenyi_core.models.glossary import GlossaryTerm
 
 from ..context import current_context
-from ..project_service import project_write, require_book, require_project, storage_for
-from ..schemas import ConflictOut, GlossaryImport, Message, ResolveConflict, TermIn, TermOut
+from ..schemas import (
+    ConflictOut,
+    GlossaryExportFormat,
+    GlossaryImport,
+    Message,
+    ResolveConflict,
+    TermIn,
+    TermLookup,
+    TermOut,
+    TermPage,
+)
+from .dependencies import project_write, read_storage_for, require_project, storage_for
 
 router = APIRouter(prefix="/projects/{pid}/glossary", tags=["glossary"])
 
@@ -26,8 +37,9 @@ def _term(body: TermIn) -> GlossaryTerm:
 
 @router.get("/terms", response_model=list[TermOut])
 def list_terms(pid: str, q: str | None = Query(None), type: str | None = Query(None)) -> list[dict]:
-    require_book(require_project(pid))
-    terms = storage_for(pid).all_terms()
+    require_project(pid)
+    with closing(storage_for(pid)) as storage:
+        terms = storage.all_terms()
     if type:
         term_type = normalize_term_type(type)
         terms = [term for term in terms if term.type == term_type]
@@ -44,11 +56,41 @@ def list_terms(pid: str, q: str | None = Query(None), type: str | None = Query(N
     return [vars(term) for term in terms]
 
 
+@router.get("/terms/page", response_model=TermPage)
+def list_terms_page(
+    pid: str,
+    q: str = "",
+    type: str = "",
+    offset: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=200),
+) -> dict:
+    """Browse by source codepoint order without changing model-context order."""
+    require_project(pid)
+    storage = read_storage_for(pid)
+    try:
+        items, total = storage.list_terms_page(
+            q=q, term_type=normalize_term_type(type) if type else "", offset=offset, limit=limit
+        )
+        return {"items": [vars(term) for term in items], "total": total}
+    finally:
+        storage.close()
+
+
+@router.post("/terms/lookup", response_model=list[TermOut])
+def lookup_terms(pid: str, body: TermLookup) -> list[dict]:
+    """Check imported sources against the whole glossary, not just the displayed page."""
+    require_project(pid)
+    storage = read_storage_for(pid)
+    try:
+        return [vars(term) for term in storage.get_terms(body.sources)]
+    finally:
+        storage.close()
+
+
 @router.post("/terms", response_model=TermOut, status_code=201)
 def add_term(pid: str, body: TermIn) -> dict:
     term = _term(body)
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         if storage.get_term(term.source) is not None:
             raise HTTPException(409, "Term already exists; edit it or resolve its conflicts")
         storage.upsert_term(term)
@@ -59,8 +101,7 @@ def add_term(pid: str, body: TermIn) -> dict:
 @router.put("/terms/{source}", response_model=TermOut)
 def update_term(pid: str, source: str, body: TermIn) -> dict:
     term = _term(body)
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         existing = storage.get_term(source)
         if existing is None:
             raise HTTPException(404, "term not found")
@@ -73,8 +114,7 @@ def update_term(pid: str, source: str, body: TermIn) -> dict:
 
 @router.delete("/terms/{source}", response_model=Message)
 def delete_term(pid: str, source: str) -> dict:
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         if not storage.delete_term(source):
             raise HTTPException(404, "term not found")
         storage.mark_conflicts_resolved(source)
@@ -84,14 +124,14 @@ def delete_term(pid: str, source: str) -> dict:
 
 @router.get("/conflicts", response_model=list[ConflictOut])
 def list_conflicts(pid: str) -> list[dict]:
-    require_book(require_project(pid))
-    return storage_for(pid).open_conflicts()
+    require_project(pid)
+    with closing(storage_for(pid)) as storage:
+        return storage.open_conflicts()
 
 
 @router.post("/conflicts/{cid}/resolve", response_model=Message)
 def resolve_conflict(pid: str, cid: int, body: ResolveConflict) -> dict:
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         conflict = next((row for row in storage.open_conflicts() if row["id"] == cid), None)
         if conflict is None:
             raise HTTPException(404, "conflict not found")
@@ -114,9 +154,22 @@ def resolve_conflict(pid: str, cid: int, body: ResolveConflict) -> dict:
 
 
 @router.get("/export")
-def export_glossary(pid: str, format: Literal["json", "csv"] = "json"):
-    require_book(require_project(pid))
-    terms = storage_for(pid).all_terms()
+def export_glossary(pid: str, format: GlossaryExportFormat = "json"):
+    project = require_project(pid)
+    with closing(storage_for(pid)) as storage:
+        terms = storage.all_terms()
+    if format == "apkg":
+        return Response(
+            export_anki_glossary(
+                terms,
+                project_id=pid,
+                title=project.get("book_title") or project["name"],
+                source_lang=project.get("source_lang") or "auto",
+                target_lang=project.get("target_lang") or "zh",
+            ),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f"attachment; filename=glossary-{pid}.apkg"},
+        )
     if format == "csv":
         buffer = io.StringIO()
         writer = csv.writer(buffer)
@@ -150,8 +203,7 @@ def export_glossary(pid: str, format: Literal["json", "csv"] = "json"):
 @router.post("/import")
 def import_glossary(pid: str, body: GlossaryImport) -> dict:
     terms = [_term(item) for item in body.terms]
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         conflicts = 0
         with storage.state_lock():
             for term in terms:

@@ -16,7 +16,6 @@ from wenyi_core.ingest.epub_package import _decode_markup, _find_opf_path, _pars
 from wenyi_core.ingest.epub_reader import peek_epub_title
 from wenyi_core.ingest.epub_toc import parse_toc_entries
 from wenyi_core.ingest.fb2_reader import read_fb2_binaries
-from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
 from wenyi_core.ingest.segmenter import (
     _split_text,
     batch_segments,
@@ -27,14 +26,17 @@ from wenyi_core.ingest.tokens import count_tokens
 from wenyi_core.markup.anchors import resolve_epub_href
 from wenyi_core.markup.ruby import strip_ruby_markers
 from wenyi_core.markup.segments import annotate_epub_resource
+from wenyi_core.models.document import KIND_HEADING, KIND_TEXT, Chapter, Segment
 
 from tests.sample_data import (
     write_cross_resource_toc_epub,
+    write_dangling_fragment_epub,
     write_degenerate_toc_epub,
     write_grouped_nav_epub,
     write_nested_toc_epub,
     write_sample_epub,
     write_sample_txt,
+    write_valid_and_dangling_toc_epub,
 )
 
 
@@ -80,6 +82,32 @@ class TestTextIngest(unittest.TestCase):
         # One heading and three body paragraphs.
         self.assertEqual(ch1.segments[0].kind, KIND_HEADING)
         self.assertEqual(len(ch1.text_segments), 4)
+
+    def test_markdown_heading_levels(self):
+        content = "\n\n".join(
+            f"{'#' * level} Level {level}\n\nBody {level}." for level in range(1, 7)
+        )
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "headings.md")
+            with open(path, "w", encoding="utf-8") as file:
+                file.write(content)
+
+            document = load_document(path, "en", "zh")
+
+        self.assertEqual(
+            [(chapter.title, chapter.meta["heading_level"]) for chapter in document.chapters],
+            [(f"Level {level}", level) for level in range(1, 7)],
+        )
+        self.assertEqual(
+            [
+                [(segment.kind, segment.source) for segment in chapter.segments]
+                for chapter in document.chapters
+            ],
+            [
+                [(KIND_HEADING, f"Level {level}"), (KIND_TEXT, f"Body {level}.")]
+                for level in range(1, 7)
+            ],
+        )
 
     def test_preamble_before_first_heading_does_not_gain_book_title(self):
         content = "这是前言。\n\n# 第一章\n\n这是正文。\n"
@@ -976,6 +1004,62 @@ class TestEpubIngest(unittest.TestCase):
         broken = next(entry for entry in doc.meta["toc_entries"] if entry["title"] == "PART II")
         self.assertNotIn("segment_anchor", broken)
         self.assertNotIn("boundary_position", broken)
+
+    def test_unresolved_fragment_falls_back_to_unique_resource_start(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "dangling-fragment.epub")
+            write_dangling_fragment_epub(path)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual([chapter.title for chapter in doc.chapters], ["One", "Two"])
+        self.assertEqual(doc.meta["epub_split_strategy"], "top-level-toc")
+        self.assertEqual(
+            [[segment.source for segment in chapter.segments] for chapter in doc.chapters],
+            [["One", "First body."], ["Two", "Second body."]],
+        )
+        for entry in doc.meta["toc_entries"]:
+            self.assertIsInstance(entry["boundary_position"], int)
+            self.assertNotIn("segment_anchor", entry)
+
+    def test_unresolved_fragment_fallback_counts_references_per_toc_path(self):
+        # NAV and NCX each reference every resource once, so no single TOC has a competing
+        # destination and the resource-start fallback must still apply.
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "dangling-dual-toc.epub")
+            write_dangling_fragment_epub(path, include_nav=True)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual(doc.meta["epub_split_strategy"], "top-level-toc")
+        self.assertEqual(doc.meta["epub_split_toc_path"], "OEBPS/nav.xhtml")
+        self.assertEqual(
+            [[segment.source for segment in chapter.segments] for chapter in doc.chapters],
+            [["One", "First body."], ["Two", "Second body."]],
+        )
+
+    def test_surviving_valid_boundary_keeps_dangling_siblings_separate(self):
+        # One resolvable boundary prevents the spine fallback, so before the fix the dangling
+        # entries were swallowed by the cover chapter instead of starting their own files.
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "valid-and-dangling.epub")
+            write_valid_and_dangling_toc_epub(path)
+
+            doc = load_document(path, "en", "zh")
+
+        self.assertEqual(
+            [chapter.title for chapter in doc.chapters],
+            ["Cover Page", "Chapter One", "Chapter Two"],
+        )
+        self.assertEqual(doc.meta["epub_split_strategy"], "top-level-toc")
+        self.assertEqual(
+            [[segment.source for segment in chapter.segments] for chapter in doc.chapters],
+            [["Cover", "Cover text."], ["One", "First body."], ["Two", "Second body."]],
+        )
+        for title in ("Chapter One", "Chapter Two"):
+            entry = next(entry for entry in doc.meta["toc_entries"] if entry["title"] == title)
+            self.assertIsInstance(entry["boundary_position"], int)
+            self.assertNotIn("segment_anchor", entry)
 
     def test_degenerate_toc_falls_back_to_spine_chapters(self):
         with tempfile.TemporaryDirectory() as d:

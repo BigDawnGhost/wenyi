@@ -5,16 +5,15 @@
 import json
 
 import pytest
-from test_project_routes import api, new_project  # noqa: F401
-from test_storage_pg_integration import pg_pool, pg_storage, storage  # noqa: F401
+from api_test_support import new_project
 from tests.fake_llm import routing_handler
 from wenyi_api import dal
-from wenyi_backend.project_service import storage_for
+from wenyi_backend.routers.dependencies import storage_for
 from wenyi_core.config import Config
 from wenyi_core.i18n.resources import read_text
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.language_policies import CHECKPOINT
 from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.run.language_policies import CHECKPOINT
 
 
 def test_policy_artifacts_resume_and_export_are_backend_neutral(storage, tmp_path, monkeypatch):

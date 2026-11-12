@@ -26,19 +26,10 @@ from wenyi_core.i18n.prompts import render, template
 from wenyi_core.i18n.resources import read_text
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import translation_run_dir
-from wenyi_core.srt.translate import translate_srt
-from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
+from wenyi_core.storage.run_store import translation_run_dir
 
 from tests.fake_llm import routing_handler
-
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
+from tests.pipeline_fixtures import require_file_storage
 
 
 def test_non_chinese_translation_has_no_chinese_target_instruction():
@@ -129,10 +120,10 @@ def test_direct_translation_polishing_review_and_resume(source, target):
         if "language detector" in system:
             return json.dumps({"language": "vi-VN"})
         if "pre-translation analyst" in system:
-            assert f"Suggested name in {target_label}" in system
-            return json.dumps(
-                {"style_guide": "Keep the narrator's voice.", "characters": [], "terms": []}
-            )
+            assert f"Write all human-readable metadata in {target_label}" in system
+            assert '"target":' not in system
+            assert '"terms":' not in system
+            return json.dumps({"style_guide": "Keep the narrator's voice.", "characters": []})
         if "literary translator" in system:
             assert f"into {target_label}" in system
             assert profile(source)["label"] in system
@@ -296,44 +287,6 @@ def test_state_rejects_invalid_language_fields(key, value):
         validate_run_languages(manifest, "auto", "zh")
 
 
-def test_srt_target_isolation_traditional_script_and_resume():
-    with tempfile.TemporaryDirectory() as directory:
-        root = Path(directory)
-        source = root / "captions.srt"
-        source.write_text("7\n00:00:01,000 --> 00:00:02,000\nThe door opened.\n", encoding="utf-8")
-        results = []
-        for target, text in (
-            ("zh", "门打开了。"),
-            ("zh-Hant", "「門打開了！」"),
-            ("ja", "扉が開いた。"),
-        ):
-
-            def handler(messages, tier, json_mode):
-                assert profile(target)["english_name"] in messages[0]["content"]
-                if target == "zh-Hant":
-                    assert "Use Traditional Chinese" in messages[0]["content"]
-                return json.dumps({"7": text})
-
-            config = Config.from_dict(
-                {
-                    "language": {"source": "en", "target": target},
-                    "paths": {"state_dir": str(root / "state")},
-                    "output": {"bilingual": True},
-                }
-            )
-            client = FakeClient(handler=handler)
-            result = translate_srt(str(source), config, client=client)
-            for output in result["outputs"]:
-                assert text in Path(output).read_text(encoding="utf-8")
-                assert "00:00:01,000 --> 00:00:02,000" in Path(output).read_text(encoding="utf-8")
-                assert f".{target}" in Path(output).name
-            calls_before = len(client.calls)
-            translate_srt(str(source), config, client=client)
-            assert len(client.calls) == calls_before
-            results.append(result["run_dir"])
-        assert len(set(results)) == 3
-
-
 def test_language_list_needs_no_api_and_reads_packaged_templates():
     runner = CliRunner()
     with (
@@ -349,18 +302,23 @@ def test_language_list_needs_no_api_and_reads_packaged_templates():
         validate.assert_not_called()
 
 
-@pytest.mark.parametrize("command", ["translate", "status", "report", "assemble"])
-@pytest.mark.parametrize("invalid", ["language: {target: typo}\n", "language: [\n"])
-def test_cli_invalid_language_or_yaml_is_a_concise_error(command, invalid):
+@pytest.mark.parametrize("command", ["translate", "status", "assemble"])
+def test_cli_invalid_yaml_is_a_concise_error(command):
     runner = CliRunner()
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "config.yaml"
+        invalid = "language: [\n"
         path.write_text(invalid, encoding="utf-8")
         result = runner.invoke(app, ["--config", str(path), command, "missing.txt"])
         assert result.exit_code == 1, result.output
         assert "Configuration error" in result.output
         assert "Error: 1" not in result.output
         assert "Traceback" not in result.output
+        assert path.read_text(encoding="utf-8") == invalid
+        logs = Path(directory) / "logs"
+        assert set(Path(directory).iterdir()) == {path, logs}
+        [diagnostic] = logs.glob("wenyi-cli-*.log")
+        assert str(diagnostic) in result.stderr
 
 
 def test_partial_non_chinese_run_resumes_without_retranslating_saved_batch():

@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 import zipfile
+from contextlib import nullcontext
 from unittest.mock import patch
 
 import pytest
@@ -17,9 +18,9 @@ from wenyi_core.assemble.html_renderer import _render_chapter_html
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.assemble.writer_common import _default_out
 from wenyi_core.config import Config
-from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT, Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.markup.segments import annotate_epub_resource
+from wenyi_core.models.document import KIND_HEADING, KIND_TEXT, Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 
 from tests.fake_llm import routing_handler
@@ -505,18 +506,29 @@ class TestCliBilingualFlags(unittest.TestCase):
         class FakeStore:
             run_dir = "state/book"
 
+            def lock(self):
+                return nullcontext()
+
+            def state_lock(self):
+                return nullcontext()
+
+            def load_manifest(self):
+                return {"chapters": [{"status": "done"}]}
+
+            def stats(self):
+                return {"terms": 0}
+
             def load_usage(self):
                 return None
 
         class FakeOrchestrator:
-            def __init__(self, config):
+            def __init__(self, config, *, allow_terminology_context=False):
                 self.client = FakeClient()
                 captured["mono"] = config.output.mono
                 captured["bilingual"] = config.output.bilingual
 
             def run_all(self, input_path, **kwargs):
                 return {
-                    "report": {"summary": {"chapters_done": 1, "chapters_total": 1, "terms": 0}},
                     "output": "novel.zh.epub",
                     "outputs": ["novel.zh.epub", "novel.zh-bi.epub"],
                     "store": FakeStore(),

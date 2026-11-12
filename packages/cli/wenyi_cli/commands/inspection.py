@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import typer
 from rich.table import Table
-from wenyi_core.ingest.errors import IngestError
-from wenyi_core.pipeline.runstore import STATUS_DONE
 from wenyi_core.timing import load_timing
 
 from wenyi_cli.commands import presentation
 
 from .context import ContextAccessor
+from .run_report import build_report
 from .validation import (
     require_input_file,
     resolve_output_format,
     runstore_for_cli,
-    validate_pdf_engine,
 )
 
 
@@ -26,12 +24,7 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
             None, "--source", help="Resolved source language for preview"
         ),
         fmt: str | None = typer.Option(None, "--format", help="Actual export format"),
-        backend: str = typer.Option(
-            "native", "--backend", help="native / weasyprint / fpdf2 / babeldoc"
-        ),
-        subtitles: bool = typer.Option(
-            False, "--subtitles", help="Preview the independent SRT path"
-        ),
+        backend: str = typer.Option("native", "--backend", help="native / babeldoc"),
     ) -> None:
         """Preview built-in language operations and phase fingerprints without model calls."""
         from wenyi_core.i18n.languages import require_language
@@ -41,9 +34,8 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
             if source is not None:
                 config.source_lang = require_language(source, allow_auto=True)
             preview = config.language_policy_preview(
-                format=fmt or ("srt" if subtitles else "epub"),
+                format=fmt or "epub",
                 backend=backend,
-                path="srt" if subtitles else "book",
             )
         except ValueError as error:
             context().console.print(f"[red]Error: {error}[/]")
@@ -82,7 +74,7 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         console.print(f"“{m['title']}”({m['fmt']})  {m['source_lang']}→{m['target_lang']}")
         table = Table("", "#", "Chapter", "Translation")
         for c in m["chapters"]:
-            mark = "✓" if c["status"] == STATUS_DONE else "·"
+            mark = "✓" if c["status"] == "done" else "·"
             table.add_row(
                 mark,
                 str(c["index"]),
@@ -96,6 +88,45 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         presentation.print_timing(console, load_timing(store.run_dir))
 
     @app.command(rich_help_panel="State and output")
+    def inspect_run(
+        input: str = typer.Argument(..., help="Source file with existing translation state"),
+        verbose: bool = typer.Option(False, "--verbose", help="Include the last failure traceback"),
+    ) -> None:
+        """Summarize one run: failures, retries, timing and token usage, read-only."""
+        console = context().console
+        config = context().load_config()
+        store = runstore_for_cli(config, input, console=console)
+        if not store.exists():
+            console.print("[yellow]No progress found. Run prepare or translate first.[/]")
+            raise typer.Exit(1)
+
+        report = build_report(store)
+        console.print(f"Run: [bold]{report['run_dir']}[/]")
+        console.print(
+            f"  Events {report['events']}  Failures {report['failures']}  "
+            f"Retries {report['retries']}  Pauses {report['pauses']}"
+        )
+        failure = report["last_failure"]
+        if failure:
+            # The type is what makes a failure diagnosable; the text alone is not.
+            console.print(
+                f"  Last failure: [red]{failure['error_type'] or 'unknown'}[/] {failure['error'] or ''}"
+            )
+            if verbose and failure.get("traceback"):
+                console.print(failure["traceback"])
+        else:
+            console.print("  Last failure: none")
+
+        usage = report["usage"]
+        if usage:
+            console.print(
+                "  Tokens: "
+                f"in {usage.get('prompt_tokens', 0)}  out {usage.get('completion_tokens', 0)}  "
+                f"cache read {usage.get('cache_hit_tokens', 0)}"
+            )
+        presentation.print_timing(console, report["timing"])
+
+    @app.command(rich_help_panel="State and output")
     def assemble(
         input: str = typer.Argument(..., help="Source file with a complete or partial translation"),
         out: str | None = typer.Option(
@@ -106,12 +137,7 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         fmt: str | None = typer.Option(
             None,
             "--format",
-            help="Output format: epub / txt / html / markdown / pdf / docx; default: pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
-        ),
-        pdf_engine: str = typer.Option(
-            "weasyprint",
-            "--pdf-engine",
-            help="PDF renderer: weasyprint (default) / fpdf2",
+            help="Output format: epub / txt / html / markdown / docx / pdf (BabelDOC only); default: html for HTML input, pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
         ),
         mono: bool | None = typer.Option(
             None,
@@ -125,6 +151,8 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         ),
     ):
         """Export translations from existing state without calling a model."""
+        from wenyi_core.models.errors import IngestError
+
         console = context().console
         from wenyi_core.llm.providers.fake import FakeClient
         from wenyi_core.pipeline.orchestrator import Orchestrator
@@ -132,7 +160,6 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         config = context().load_config()
         require_input_file(input, console=console)
         fmt = resolve_output_format(input, fmt, console=console)
-        pdf_engine = validate_pdf_engine(pdf_engine, console=console)
         if mono is not None:
             config.output.mono = mono
         if bilingual is not None:
@@ -142,7 +169,6 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
                 input,
                 out_format=fmt,
                 out_path=out,
-                pdf_engine=pdf_engine,
             )
         except (IngestError, OSError, ValueError) as error:
             console.print(f"[red]Error: {error}[/]")
@@ -151,28 +177,3 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         presentation.print_timing(console, load_timing(result["store"].run_dir))
         for path in paths:
             console.print(f"Translation written: [bold]{path}[/]")
-
-    @app.command(rich_help_panel="State and output")
-    def report(
-        input: str = typer.Argument(..., help="Source file with existing translation state"),
-    ) -> None:
-        """Regenerate report.json from chapter and glossary state without calling a model."""
-        console = context().console
-        from wenyi_core.llm.providers.fake import FakeClient
-        from wenyi_core.pipeline.orchestrator import Orchestrator
-
-        config = context().load_config()
-        require_input_file(input, console=console)
-        try:
-            result = Orchestrator(config, client=FakeClient()).run_report(input)
-        except (IngestError, OSError, ValueError) as error:
-            console.print(f"[red]Error: {error}[/]")
-            raise typer.Exit(1) from None
-        store = result["store"]
-        rep = result["report"]
-        s = rep["summary"]
-        console.print(f"Report written to {store.report_path}")
-        console.print(
-            f"  Chapter {s['chapters_done']}/{s['chapters_total']}  Terms {s['terms']}  "
-            f"Unresolved conflicts {s['open_conflicts']}  Empty translations {s['empty_targets']}"
-        )

@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { useI18n, type MessageKey } from "@/i18n";
-import { operationLabel } from "@/i18n/labels";
-import { cn } from "@/lib/utils";
+import { useI18n, type MessageKey } from "../../i18n";
+import { operationLabel } from "../../i18n/labels";
+import { cn } from "../../lib/utils";
 import {
   amount,
   cacheRate,
   record,
+  reportedAmount,
   tokenParts,
   usageRows,
   type UsageGroup,
@@ -30,6 +31,15 @@ function tokenBreakdown(slot: Record<string, unknown>): TokenPart[] {
       value: parts.cachedInput,
       color: "bg-sky-300",
     },
+    ...(parts.writtenInput !== 0
+      ? [
+          {
+            label: "accounting.writtenInput" as const,
+            value: parts.writtenInput,
+            color: "bg-amber-500",
+          },
+        ]
+      : []),
     {
       label: "accounting.uncachedInput",
       value: parts.uncachedInput,
@@ -179,6 +189,14 @@ export default function UsageChart({
                     {t("data.cacheHitRate")}:{" "}
                     {rate === undefined ? "—" : percent.format(rate)}
                   </span>
+                  {["5m", "1h"].map((ttl) => {
+                    const value = reportedAmount(slot, `cache_write_${ttl}_tokens`);
+                    return value === undefined ? null : (
+                      <span key={ttl}>
+                        {t("accounting.writeTtl", { ttl, count: number(value) })}
+                      </span>
+                    );
+                  })}
                 </div>
               </li>
             );

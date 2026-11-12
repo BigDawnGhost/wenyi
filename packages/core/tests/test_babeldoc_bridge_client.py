@@ -1,4 +1,4 @@
-"""Tests for MIT-side BabelDOC bridge HTTP client (no babeldoc import)."""
+"""Tests for Wenyi's BabelDOC bridge HTTP client (no babeldoc import)."""
 
 from __future__ import annotations
 
@@ -7,22 +7,48 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from wenyi_core.assemble.pdf_writer import _assemble_pdf_babeldoc
+from wenyi_core.assemble.pdf_writer import _assemble_pdf
 from wenyi_core.ingest.pdf_babeldoc import _is_image_only_pdf, read_pdf_babeldoc
 from wenyi_core.pdf_bridge.client import BabeldocBridgeClient, BabeldocBridgeError
 
 
 class BabeldocBridgeClientTests(unittest.TestCase):
+    def test_scoped_connection_keeps_saved_url_and_credentials_separate(self):
+        from wenyi_core.pdf_bridge.connection import (
+            BridgeConnection,
+            resolve_connection,
+            use_bridge_connection,
+        )
+
+        logical = "http://127.0.0.1:8765"
+        local = BridgeConnection(
+            "http://127.0.0.1:12345", {"Authorization": "Bearer synthetic"}, trust_env=False
+        )
+        client = BabeldocBridgeClient(logical)
+        with use_bridge_connection(lambda url: local):
+            with patch("wenyi_core.pdf_bridge.client.httpx.get") as get:
+                client.health()
+                self.assertEqual(get.call_args.args[0], local.url + "/health")
+                self.assertEqual(get.call_args.kwargs["headers"], local.headers)
+                self.assertFalse(get.call_args.kwargs["trust_env"])
+            with use_bridge_connection(None):
+                self.assertEqual(resolve_connection(logical).url, logical)
+            self.assertEqual(resolve_connection(logical), local)
+        self.assertEqual(client.base_url, logical)
+        self.assertEqual(resolve_connection(logical).headers, {})
+        self.assertNotIn("synthetic", repr(local))
+
     def test_fillback_uses_configured_timeout(self):
         with (
             patch(
-                "wenyi_core.ingest.pdf_babeldoc.translations_from_store",
+                "wenyi_core.assemble.pdf_writer.translations_from_store",
                 return_value=("session", "http://bridge.test", {"0:0": "译文"}),
             ),
-            patch("wenyi_core.pdf_bridge.BabeldocBridgeClient") as client_class,
+            patch("wenyi_core.assemble.pdf_writer.BabeldocBridgeClient") as client_class,
         ):
-            result = _assemble_pdf_babeldoc(
+            result = _assemble_pdf(
                 MagicMock(),
+                "source.pdf",
                 "output.pdf",
                 timeout=3600,
             )

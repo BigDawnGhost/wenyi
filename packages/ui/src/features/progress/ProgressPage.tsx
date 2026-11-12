@@ -1,69 +1,44 @@
-import { StatusBadge } from "@/components/StatusBadge";
-import { useI18n } from "@/i18n";
+import { StatusBadge } from "../../components/StatusBadge";
+import { useI18n } from "../../i18n";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, isProjectBusy, type ChapterSummary } from "@/lib/api";
-import { useProjectProgress } from "@/lib/ws";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { ErrorNotice, StructuredData } from "@/components/ui/data";
-import { Disclosure } from "@/components/ui/disclosure";
+import { api, isProjectBusy } from "../../api/client";
+import type { ChapterSummary } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { useProjectProgress } from "../../lib/ws";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent } from "../../components/ui/card";
+import { Badge } from "../../components/ui/badge";
+import { Progress } from "../../components/ui/progress";
+import { ErrorNotice } from "../../components/ui/data";
 import { WorkflowPanel } from "./WorkflowPanel";
 import { Accounting } from "./Accounting";
-import { toast } from "sonner";
-import { useEffect } from "react";
-import { progressInterval } from "@/lib/runtime";
+import { toast } from "../../lib/toast";
+import { progressInterval } from "../../lib/runtime";
 
 export default function ProgressPage() {
   const { t: tr } = useI18n();
   const { pid = "" } = useParams();
   const qc = useQueryClient();
-  const { msg, connected } = useProjectProgress(pid);
-  const projectQuery = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-    refetchInterval: progressInterval(connected, 2500),
-  });
+  const { msg, failure, connected } = useProjectProgress(pid);
+  const projectQuery = useProjectQuery(pid, progressInterval(connected, 2500));
   const project = projectQuery.data;
-  const subtitle = project?.fmt === "srt";
+  const busy = isProjectBusy(project?.status);
   const chapterQuery = useQuery({
     queryKey: ["chapters", pid],
     queryFn: () => api.listChapters(pid),
-    enabled: !!project && !subtitle,
-    refetchInterval: progressInterval(connected, 3000),
-  });
-  const { data: cues } = useQuery({
-    queryKey: ["subtitles", pid],
-    queryFn: () => api.getSubtitles(pid),
-    enabled: subtitle,
-    refetchInterval: progressInterval(connected, 3000),
-  });
-  const report = useQuery({
-    queryKey: ["report", pid],
-    queryFn: () => api.getReport(pid),
-    enabled: !!project && !subtitle,
+    enabled: !!project,
+    refetchInterval: busy ? progressInterval(connected, 3000) : false,
   });
   const stats = useQuery({
     queryKey: ["stats", pid],
     queryFn: () => api.getStats(pid),
     enabled: !!project,
-    refetchInterval: isProjectBusy(project?.status)
+    refetchInterval: busy
       ? progressInterval(connected, 5000)
       : false,
   });
-  useEffect(() => {
-    // Fetch the terminal totals even when the busy-only polling interval has just stopped.
-    if (project?.status) {
-      qc.invalidateQueries({ queryKey: ["stats", pid] });
-      qc.invalidateQueries({ queryKey: ["workflow", pid] });
-      qc.invalidateQueries({ queryKey: ["chapters", pid] });
-      qc.invalidateQueries({ queryKey: ["subtitles", pid] });
-      qc.invalidateQueries({ queryKey: ["report", pid] });
-    }
-  }, [pid, project?.status, qc]);
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["project", pid] });
     qc.invalidateQueries({ queryKey: ["chapters", pid] });
@@ -81,24 +56,13 @@ export default function ProgressPage() {
       );
     },
   });
-  const regenerate = useMutation({
-    mutationFn: () => api.regenerateReport(pid),
-    onSuccess: (result) => {
-      qc.setQueryData(["report", pid], result);
-      toast.success(tr("progress.reportUpdated"));
-    },
-  });
   const chapters = chapterQuery.data || [];
   // Match CLI translation progress: segment counts, not finished chapters.
-  const done = subtitle
-    ? cues?.completed || 0
-    : chapters.reduce((sum, c) => sum + (c.target_word_count || 0), 0);
-  const total = subtitle
-    ? cues?.total || 0
-    : chapters.reduce((sum, c) => sum + (c.word_count || 0), 0) ||
-      project?.total_word_count ||
-      0;
-  const busy = isProjectBusy(project?.status);
+  const done = chapters.reduce((sum, c) => sum + (c.target_word_count || 0), 0);
+  const total =
+    chapters.reduce((sum, c) => sum + (c.word_count || 0), 0) ||
+    project?.total_word_count ||
+    0;
   const paused = project?.status === "paused";
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
@@ -157,9 +121,7 @@ export default function ProgressPage() {
           <CardContent className="p-5 space-y-4">
             <div className="flex flex-wrap justify-between items-center gap-3">
               <h2 className="font-medium">
-                {subtitle
-                  ? tr("progress.subtitleTranslationOverview")
-                  : tr("common.translationOverview")}
+                {tr("common.translationOverview")}
               </h2>
               {project && <StatusBadge status={project.status} />}
             </div>
@@ -176,47 +138,32 @@ export default function ProgressPage() {
             </div>
           </CardContent>
         </Card>
-        <WorkflowPanel pid={pid} msg={msg} connected={connected} />
+        <WorkflowPanel
+          pid={pid}
+          msg={msg}
+          failure={failure}
+          connected={connected}
+          busy={busy}
+        />
         <p className="text-xs text-muted-foreground">
           {tr("progress.progressConnection")}:{" "}
           {connected ? tr("progress.live") : tr("progress.polling")}
         </p>
-        {!project?.initialized && (
-          <Link
-            className="inline-block text-sm text-primary underline"
-            to={`/projects/new?project=${pid}`}
-          >
-            {tr("progress.uploadPreviewSource")}
-          </Link>
-        )}
-        {!subtitle && (
-          <>
-            <Disclosure
-              title={tr("progress.projectReport")}
-              error={report.error || regenerate.error}
+        {chapters.length > 0 && (
+          <div className="space-y-2">
+            <Link
+              className="text-sm text-primary underline"
+              to={`/projects/${pid}/contents`}
             >
-              <Button
-                variant="outline"
-                disabled={regenerate.isPending || busy}
-                onClick={() => regenerate.mutate()}
-              >
-                {tr("progress.updateReport")}
-              </Button>
-              <ErrorNotice error={report.error || regenerate.error} />
-              <StructuredData
-                value={
-                  report.data?.summary &&
-                  Object.fromEntries(
-                    Object.entries(report.data.summary).filter(
-                      ([key]) => !["usage", "timing"].includes(key),
-                    ),
-                  )
-                }
-              />
-            </Disclosure>
-            <ChapterTable pid={pid} chapters={chapters} busy={busy} />
-          </>
+              {tr("contents.readContentsSource")}
+            </Link>
+          </div>
         )}
+        <ChapterTable
+          pid={pid}
+          chapters={chapters}
+          busy={busy || !project?.initialized}
+        />
       </PageContainer>
     </>
   );
@@ -245,7 +192,7 @@ function ChapterTable({
     <Card>
       <CardContent className="p-0 overflow-x-auto">
         <ErrorNotice error={translate.error} />
-        <table className="w-full min-w-[44rem] text-sm">
+        <table className="w-full min-w-[704px] text-sm">
           <thead className="border-b text-xs text-muted-foreground">
             <tr>
               {[
@@ -294,24 +241,16 @@ function ChapterTable({
                   )}
                 </td>
                 <td className="p-3">
-                  <div className="flex flex-col items-start gap-2">
-                    <Link
-                      className="whitespace-nowrap text-primary underline"
-                      to={`/projects/${pid}/proofreading/${c.index}`}
+                  {c.status !== "done" && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || translate.isPending}
+                      onClick={() => translate.mutate(c.index)}
                     >
-                      {tr("progress.manualProofreading")}
-                    </Link>
-                    {c.status !== "done" && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busy || translate.isPending}
-                        onClick={() => translate.mutate(c.index)}
-                      >
-                        {tr("progress.translateChapter")}
-                      </Button>
-                    )}
-                  </div>
+                      {tr("progress.translateChapter")}
+                    </Button>
+                  )}
                 </td>
               </tr>
             ))}

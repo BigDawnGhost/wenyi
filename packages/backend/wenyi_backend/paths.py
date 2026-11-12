@@ -15,17 +15,6 @@ def project_dir(project_id: str) -> str:
     return str(current_context().project_dir(project_id))
 
 
-def source_path(project_id: str, fmt: str) -> str:
-    ext = {
-        "epub": "epub",
-        "text": "txt",
-        "fb2": "fb2",
-        "html": "html",
-        "pdf": "pdf",
-    }.get(fmt, fmt or "bin")
-    return os.path.join(project_dir(project_id), f"source.{ext}")
-
-
 def exports_dir(project_id: str) -> str:
     d = os.path.join(project_dir(project_id), "exports")
     os.makedirs(d, exist_ok=True)

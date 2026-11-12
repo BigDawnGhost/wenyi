@@ -1,30 +1,31 @@
-import { useI18n } from "@/i18n";
-import { useState } from "react";
-import { Link, Outlet, useParams } from "react-router-dom";
-import {
-  FolderPlus,
-  LayoutDashboard,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Settings2,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { NavigationLink, ProjectNavigation } from "./Navigation";
+import { useI18n } from "../../i18n";
+import { useEffect, useRef, useState } from "react";
+import { Link, Outlet, useLocation, useMatch, useParams } from "react-router-dom";
+import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { cn } from "../../lib/utils";
+import { Button } from "../ui/button";
+import { SelectDismissScope } from "../ui/select";
+import { NavigationLink, ProjectNavigation, SettingsNavigation } from "./Navigation";
+import { navEntries } from "../../routes/manifest";
+import { RouteGate } from "../../routes/RouteGate";
+import { NotificationToaster } from "../NotificationToaster";
 import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import { platform } from "@/platform";
+import { api } from "../../api/client";
+import { platform } from "../../platform";
 
 const emblemUrl = new URL("../../assets/wenyi-emblem.png", import.meta.url)
   .href;
 const sidebarStorageKey = "wenyi.sidebarCollapsed";
+// Remembers the last opened project so the project stratum stays visible on
+// global routes; falls back to the first project when nothing is remembered.
+const lastProjectKey = "wenyi.lastProject";
 
-function Brand() {
+export function Brand() {
   const { t } = useI18n();
   return (
     <Link
       to="/"
-      className="inline-flex items-center gap-1.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <img
         src={emblemUrl}
@@ -33,13 +34,7 @@ function Brand() {
         height={36}
         className="h-9 w-9 shrink-0 object-contain grayscale dark:invert"
       />
-      <span
-        className="translate-y-0.5 text-[22px] font-normal leading-none tracking-wide"
-        style={{
-          fontFamily:
-            "Georgia, 'Times New Roman', 'Noto Serif CJK SC', 'Songti SC', SimSun, serif",
-        }}
-      >
+      <span className="brand-wordmark translate-y-0.5 text-[20px] font-normal leading-none tracking-wide">
         {t("appLayout.wenyi")}
       </span>
     </Link>
@@ -49,6 +44,12 @@ function Brand() {
 export function AppLayout() {
   const { t: tr } = useI18n();
   const { pid } = useParams();
+  const location = useLocation();
+  const settings = !!useMatch("/settings/:section?");
+  const content = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (settings) content.current?.scrollTo(0, 0);
+  }, [settings, location.pathname]);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return platform().preferences.get(sidebarStorageKey) === "true";
@@ -68,100 +69,207 @@ export function AppLayout() {
   const toggleLabel = tr(
     collapsed ? "navigation.expandSidebar" : "navigation.collapseSidebar",
   );
-  const { data: project } = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid!),
-    enabled: !!pid,
+  const [storedPid, setStoredPid] = useState<string | null>(() => {
+    try {
+      return platform().preferences.get(lastProjectKey) || null;
+    } catch {
+      return null;
+    }
   });
+  useEffect(() => {
+    if (!pid) return;
+    setStoredPid(pid);
+    try {
+      platform().preferences.set(lastProjectKey, pid);
+    } catch {
+      // Keep recall session-only when storage is unavailable.
+    }
+  }, [pid]);
+  // On global routes the list validates the remembered project and provides
+  // the "first project" default; project routes never pay for the extra fetch.
+  const projects = useQuery({
+    queryKey: ["projects"],
+    queryFn: api.listProjects,
+    enabled: !pid && !settings,
+  });
+  const recalledPid =
+    pid ??
+    (projects.data
+      ? storedPid && projects.data.some((p) => p.id === storedPid)
+        ? storedPid
+        : projects.data[0]?.id ?? null
+      : storedPid);
+  const { data: projectDetails } = useQuery({
+    queryKey: ["project", recalledPid],
+    queryFn: () => api.getProject(recalledPid!),
+    enabled: !!recalledPid && !settings,
+  });
+  // Only use metadata for this identity; retaining the previous project's
+  // format would build the wrong menu for the newly selected project.
+  const project = projectDetails ?? projects.data?.find((item) => item.id === recalledPid);
+
+  // One layered column: logo row → primary action → global panels → scrollable
+  // project region → footer, instead of three bordered blocks.
+  const globalNav = navEntries
+    .filter((entry) => entry.group === "global")
+    .sort((a, b) => a.order - b.order);
+  const renderGlobal = (slot: "action" | "panel" | "foot") =>
+    globalNav
+      .filter((entry) =>
+        slot === "panel" ? !entry.slot || entry.slot === "panel" : entry.slot === slot,
+      )
+      .map((entry) => (
+        <NavigationLink
+          key={entry.to}
+          to={entry.to}
+          icon={entry.icon}
+          label={tr(entry.label)}
+          collapsed={collapsed}
+          end={entry.end}
+          prefetch={entry.loader}
+          id={slot === "action" ? "create-project-trigger" : undefined}
+          state={slot === "action"
+            ? { fromAppNavigation: true }
+            : entry.to === "/settings"
+              ? { settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }
+              : undefined}
+          className={slot === "action" ? "w-full" : undefined}
+        />
+      ));
 
   return (
-    <div className="flex h-screen w-full flex-col overflow-hidden md:flex-row">
+    <div className="flex h-dvh w-full overflow-hidden">
       <aside
+        data-slot="sidebar"
+        data-collapsed={collapsed}
         className={cn(
-          "flex min-h-0 shrink-0 flex-col border-b bg-card md:border-b-0 md:border-r",
-          collapsed ? "md:w-16" : "md:w-60",
+          "flex min-h-0 shrink-0 flex-col border-r bg-card transition-[width] duration-sidebar ease-sidebar",
+          collapsed ? "w-16" : "w-60",
         )}
       >
-        <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b px-3">
-          <div className={cn("min-w-0", collapsed && "md:hidden")}>
-            <Brand />
+        <div
+          data-slot="sidebar.logo-row"
+          className={cn(
+            "flex min-h-14 shrink-0 items-center justify-between gap-2 pl-5 pr-3 pt-[10px] transition-[padding,gap] duration-sidebar ease-sidebar",
+            collapsed && "gap-0 pl-4 pr-[15px]",
+          )}
+        >
+          <div
+            className={cn(
+              "min-w-0 max-w-40 overflow-hidden transition-[max-width,opacity,transform,visibility] duration-sidebar ease-sidebar",
+              collapsed && "invisible max-w-0 -translate-x-2 opacity-0",
+            )}
+          >
+            {settings
+              ? <span className="text-lg font-semibold">{tr("settings.title")}</span>
+              : <Brand />}
           </div>
           <Button
             type="button"
             size="icon"
             variant="ghost"
-            className={cn(
-              "h-8 w-8 shrink-0 text-muted-foreground",
-              collapsed && "md:mx-auto",
-            )}
+            className="relative h-8 w-8 shrink-0 text-muted-foreground"
             aria-label={toggleLabel}
             title={toggleLabel}
             aria-expanded={!collapsed}
             aria-controls="sidebar-navigation"
             onClick={toggleSidebar}
           >
-            {collapsed ? (
-              <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
-            ) : (
-              <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
-            )}
+            <PanelLeftClose
+              className={cn(
+                "absolute h-4 w-4 transition-[opacity,transform] duration-sidebar ease-sidebar",
+                collapsed && "rotate-180 opacity-0",
+              )}
+              aria-hidden="true"
+            />
+            <PanelLeftOpen
+              className={cn(
+                "absolute h-4 w-4 transition-[opacity,transform] duration-sidebar ease-sidebar",
+                !collapsed && "-rotate-180 opacity-0",
+              )}
+              aria-hidden="true"
+            />
           </Button>
         </div>
         <div
           id="sidebar-navigation"
-          className={cn(
-            "min-h-0 md:flex md:flex-1 md:flex-col",
-            collapsed && "hidden",
-          )}
+          data-slot="sidebar.strata"
+          className="flex min-h-0 flex-1 flex-col"
         >
-          <div
-            className={cn(
-              "min-h-0 overflow-y-auto md:max-h-none md:flex-1",
-              pid && "max-h-[35vh]",
-              pid && (collapsed ? "p-2" : "p-3"),
-            )}
-          >
-            {pid && (
-              <ProjectNavigation
-                key={pid}
-                pid={pid}
-                format={project?.fmt}
-                name={project?.name}
-                collapsed={collapsed}
-              />
-            )}
-          </div>
-          <nav
-            aria-label={tr("navigation.global")}
-            className={cn(
-              "flex shrink-0 flex-wrap gap-1 border-t md:block md:space-y-1",
-              collapsed ? "p-2" : "p-3",
-            )}
-          >
-            <NavigationLink
-              to="/"
-              icon={LayoutDashboard}
-              label="appLayout.projects"
-              collapsed={collapsed}
-              end
-            />
-            <NavigationLink
-              to="/projects/new"
-              icon={FolderPlus}
-              label="common.createProject"
-              collapsed={collapsed}
-            />
-            <NavigationLink
-              to="/settings"
-              icon={Settings2}
-              label="settings.title"
-              collapsed={collapsed}
-            />
-          </nav>
+          {settings ? (
+            <SettingsNavigation collapsed={collapsed} />
+          ) : (
+            <>
+              <div
+                data-slot="sidebar.action"
+                className={cn(
+                  "shrink-0 px-3 pt-3 pb-1 transition-[padding] duration-sidebar ease-sidebar",
+                  collapsed && "p-2",
+                )}
+              >
+                {renderGlobal("action")}
+              </div>
+              <nav
+                data-slot="sidebar.panels"
+                aria-label={tr("navigation.global")}
+                className={cn(
+                  "shrink-0 space-y-1 px-3 py-1 transition-[padding] duration-sidebar ease-sidebar",
+                  collapsed && "p-2",
+                )}
+              >
+                {renderGlobal("panel")}
+              </nav>
+              <div
+                data-slot="sidebar.region"
+                className="relative flex min-h-0 flex-1 flex-col"
+              >
+                <div
+                  className={cn(
+                    "min-h-0 flex-1 overflow-y-auto transition-[padding] duration-sidebar ease-sidebar",
+                    recalledPid && "p-3",
+                    recalledPid && collapsed && "p-2",
+                  )}
+                >
+                  {recalledPid && (
+                    <ProjectNavigation
+                      key={recalledPid}
+                      pid={recalledPid}
+                      format={project?.fmt}
+                      name={project?.name}
+                      collapsed={collapsed}
+                    />
+                  )}
+                </div>
+              </div>
+              <div
+                data-slot="sidebar.footer"
+                className={cn(
+                  "shrink-0 px-3 pt-1 pb-3 transition-[padding] duration-sidebar ease-sidebar",
+                  collapsed && "p-2",
+                )}
+              >
+                {renderGlobal("foot")}
+              </div>
+            </>
+          )}
         </div>
       </aside>
-      <main className="flex-1 min-h-0 min-w-0 overflow-y-auto">
-        <Outlet />
+      <NotificationToaster />
+      <main
+        ref={content}
+        data-slot="content"
+        className="relative flex-1 min-h-0 min-w-0 overflow-auto"
+      >
+        {/* The route gate keeps the shell mounted while a lazy chunk loads and
+            confines route failures to the content area. Preserve desktop columns
+            in narrow windows and scroll only this pane (704px content + 48px padding). */}
+        <div className="min-h-full min-w-[752px]">
+          <RouteGate>
+            <SelectDismissScope dismissKey={`${location.key}:${location.hash}`}>
+              <Outlet />
+            </SelectDismissScope>
+          </RouteGate>
+        </div>
       </main>
     </div>
   );
@@ -177,15 +285,20 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <div className="flex flex-wrap items-start justify-between gap-4 border-b px-4 sm:px-6 py-4">
-      <div className="min-w-0 flex-1 basis-64 [overflow-wrap:anywhere]">
+    <div
+      data-slot="page.header"
+      className="relative flex flex-wrap items-center justify-between gap-4 border-b px-6 py-4"
+    >
+      <div className="flex min-w-0 flex-1 basis-64 flex-wrap items-center gap-x-3 gap-y-1 [overflow-wrap:anywhere]">
         <h1 className="text-lg font-semibold">{title}</h1>
         {subtitle && (
-          <p className="text-sm text-muted-foreground mt-0.5">{subtitle}</p>
+          <p className="text-sm text-muted-foreground">{subtitle}</p>
         )}
       </div>
       {actions && (
-        <div className="flex flex-wrap items-center gap-2">{actions}</div>
+        <div className="flex max-w-full flex-wrap items-center gap-2">
+          {actions}
+        </div>
       )}
     </div>
   );
@@ -198,5 +311,9 @@ export function PageContainer({
   children: React.ReactNode;
   className?: string;
 }) {
-  return <div className={cn("p-6", className)}>{children}</div>;
+  return (
+    <div data-slot="page.container" className={cn("p-6", className)}>
+      {children}
+    </div>
+  );
 }

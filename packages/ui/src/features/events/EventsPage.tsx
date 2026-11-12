@@ -1,11 +1,13 @@
-import { useI18n, translate as tr } from "@/i18n";
+import { useI18n, translate as tr } from "../../i18n";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { api, type EventOut } from "@/lib/api";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Card, CardContent } from "@/components/ui/card";
-import { ErrorNotice, StructuredData } from "@/components/ui/data";
-import { Badge } from "@/components/ui/badge";
+import { api, isProjectBusy } from "../../api/client";
+import type { EventOut } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Card, CardContent } from "../../components/ui/card";
+import { ErrorNotice, StructuredData } from "../../components/ui/data";
+import { Badge } from "../../components/ui/badge";
 
 function badgeFor(type: string) {
   const BADGE: Record<
@@ -44,6 +46,12 @@ function badgeFor(type: string) {
 
 function describe(e: EventOut): string {
   const p = e.payload;
+  // `Number(x) ?? 0` never falls back: Number(undefined) is NaN and ?? only catches
+  // null/undefined. Normalize explicitly (audit Y-4/F-4).
+  const chapterNumber = (value: unknown) => {
+    const parsed = Number(value);
+    return (Number.isFinite(parsed) ? parsed : 0) + 1;
+  };
   switch (e.type) {
     case "language_detected":
       return tr("events.sourceLanguageDetected", { language: p.source_lang });
@@ -53,21 +61,21 @@ function describe(e: EventOut): string {
       return tr("events.bookSynopsisGenerated");
     case "batch_translated":
       return tr("events.chapterBatchCompletedParagraphs", {
-        chapter: (Number(p.chapter) ?? 0) + 1,
+        chapter: chapterNumber(p.chapter),
         count: p.count,
       });
     case "batch_skipped":
       return tr("events.chapterTranslatedBatchSkipped", {
-        chapter: (Number(p.chapter) ?? 0) + 1,
+        chapter: chapterNumber(p.chapter),
       });
     case "chapter_done":
       return tr("events.chapterTranslated", {
-        chapter: (Number(p.chapter) ?? 0) + 1,
+        chapter: chapterNumber(p.chapter),
         title: p.title,
       });
     case "chapter_reviewed":
       return tr("events.chapterReviewIssues", {
-        chapter: (Number(p.chapter) ?? 0) + 1,
+        chapter: chapterNumber(p.chapter),
         count: p.issue_count,
       });
     case "assembled":
@@ -84,22 +92,20 @@ function describe(e: EventOut): string {
 export default function EventsPage() {
   const { t: tr, locale } = useI18n();
   const { pid = "" } = useParams();
+  const project = useProjectQuery(pid);
   const { data: events, error } = useQuery({
     queryKey: ["events", pid],
     queryFn: () => api.listEvents(pid),
     select: (items) => [...items].sort((a, b) => b.id - a.id),
     enabled: !!pid,
-    refetchInterval: 5000,
+    refetchInterval: isProjectBusy(project.data?.status) ? 5000 : false,
   });
 
   return (
     <>
-      <PageHeader
-        title={tr("common.eventLog")}
-        subtitle={tr("events.keyProjectEventsRefreshedEvery5Seconds")}
-      />
+      <PageHeader title={tr("common.eventLog")} />
       <PageContainer>
-        <ErrorNotice error={error} />
+        <ErrorNotice error={project.error || error} />
         <Card>
           <CardContent className="p-4">
             {!events?.length ? (

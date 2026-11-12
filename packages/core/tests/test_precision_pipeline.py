@@ -2,113 +2,24 @@
 
 import json
 import signal
-from collections import Counter
 from dataclasses import replace
 from threading import Event, Lock
 
 import pytest
 from wenyi_core.agents.precision import PrecisionError
-from wenyi_core.config import Config
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.pipeline import precision as precision_module
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.precision import PrecisionBatchExecutor
-from wenyi_core.pipeline.runstore import STATUS_PENDING
-from wenyi_core.pipeline.translation import TranslationService
-from wenyi_core.pipeline.translation_batch import BatchPlan
-from wenyi_core.storage.file import FileStorage
+from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor
+from wenyi_core.pipeline.translate.precision_records import load_precision_call
+from wenyi_core.pipeline.translate.translation import TranslationService
 from wenyi_core.storage.precision_archive import PrecisionArchive
 
-from tests.fake_llm import MeteredFakeClient, routing_handler
-
-
-def _config(tmp_path):
-    return Config.from_dict(
-        {
-            "language": {"source": "en", "target": "zh"},
-            "llm": {"preset": "fake"},
-            "pipeline": {
-                "translation_mode": "best_of_three",
-                "review": False,
-                "book_understanding": False,
-                "annotation_alignment": False,
-            },
-            "paths": {"state_dir": str(tmp_path)},
-        }
-    )
-
-
-def _store(tmp_path, sources=("one", "two")):
-    store = FileStorage(str(tmp_path / "book"))
-    store.save_chapter(
-        Chapter(
-            index=0,
-            segments=[Segment(index=i + 10, source=source) for i, source in enumerate(sources)],
-        )
-    )
-    store.save_manifest(
-        {
-            "title": "book",
-            "source_lang": "en",
-            "target_lang": "zh",
-            "source_sha256": "0" * 64,
-            "chapters": [{"index": 0, "status": STATUS_PENDING}],
-        }
-    )
-    return store
-
-
-def _artifact(store: FileStorage, key: str) -> dict:
-    value = store.read_artifact(key)
-    assert isinstance(value, dict), f"Expected a JSON object at {key}"
-    return value
-
-
-def _plan(store, allow_empty=False):
-    segments = store.load_chapter(0).text_segments
-    return BatchPlan.capture(
-        0,
-        0,
-        segments,
-        [],
-        "prior",
-        "style",
-        "synopsis",
-        "digest",
-        [[] for _ in segments],
-        "following",
-        allow_empty_translations=allow_empty,
-    )
-
-
-class Handler:
-    def __init__(self, invalid=False, blank=False):
-        self.counts, self.lock = Counter(), Lock()
-        self.invalid, self.blank = invalid, blank
-
-    def __call__(self, messages, tier, json_mode):
-        if "Task (JSON):\n" not in messages[-1]["content"]:
-            return routing_handler(messages, tier, json_mode)
-        sources = json.loads(messages[1]["content"].split("\n", 1)[1])["sources"]
-        task = json.loads(messages[-1]["content"].split("Task (JSON):\n")[1])
-        kind = "synthesis" if "drafts" in task else "translate"
-        with self.lock:
-            self.counts[kind] += 1
-            sample = self.counts[kind]
-        if kind == "synthesis" and self.invalid:
-            return '{"translations":[]}'
-        return json.dumps(
-            {
-                "translations": [
-                    source
-                    if not any(character.isalpha() for character in source)
-                    else ""
-                    if self.blank
-                    else f"{'润' if kind == 'synthesis' else '译'}{sample}:{i}"
-                    for i, source in enumerate(sources)
-                ]
-            }
-        )
+from tests.fake_llm import MeteredFakeClient
+from tests.precision_fixtures import PrecisionHandler as Handler
+from tests.precision_fixtures import artifact as _artifact
+from tests.precision_fixtures import precision_config as _config
+from tests.precision_fixtures import precision_plan as _plan
+from tests.precision_fixtures import precision_store as _store
 
 
 def test_four_calls_produce_synthesis_directly_and_keep_first_draft_for_comparison(tmp_path):
@@ -153,13 +64,67 @@ def test_invalid_synthesis_is_not_published_and_drafts_are_not_regenerated(tmp_p
     executor = PrecisionBatchExecutor(client, config)
     with pytest.raises(PrecisionError):
         executor.execute(_plan(store), store)
-    assert len(client.calls) == 4
+    attempts = 1 + config.pipeline.align_retry_limit
+    assert len(client.calls) == 3 + attempts
     handler.invalid = False
     result = executor.execute(_plan(store), store)
-    assert len(client.calls) == 5
+    assert len(client.calls) == 4 + attempts
     assert handler.counts["translate"] == 3
-    assert result.targets == ("润2:0", "润2:1")
+    assert result.targets == (f"润{attempts + 1}:0", f"润{attempts + 1}:1")
     assert all(segment.target is None for segment in store.load_chapter(0).text_segments)
+
+
+@pytest.mark.parametrize("stage", ["translate", "synthesis"])
+def test_structural_retry_repeats_only_failed_request_and_reuses_success(tmp_path, stage):
+    store, config, handler = _store(tmp_path), _config(tmp_path), Handler()
+    lock = Lock()
+    failed_messages = []
+
+    def fail_once(messages, tier, json_mode):
+        task_message = next(m for m in messages if "Task (JSON):\n" in m["content"])
+        task = json.loads(task_message["content"].split("Task (JSON):\n")[1])
+        kind = "synthesis" if "drafts" in task else "translate"
+        response = handler(messages, tier, json_mode)
+        with lock:
+            if kind == stage and not failed_messages:
+                failed_messages.append(messages)
+                return '{"translations":[]}'
+        return response
+
+    client = MeteredFakeClient(handler=fail_once)
+    executor = PrecisionBatchExecutor(client, config)
+    result = executor.execute(_plan(store), store)
+    assert len(client.calls) == 5
+    assert handler.counts == {
+        "translate": 3 + (stage == "translate"),
+        "synthesis": 1 + (stage == "synthesis"),
+    }
+    operation = "translation.body" if stage == "translate" else "polish.body"
+    requests = [call for call in client.calls if call["operation"] == operation]
+    assert all(call["max_tokens"] is None for call in requests)
+    # The failed stage alone retries, quoting the rejection instead of repeating it.
+    extended = [call for call in requests if len(call["messages"]) > len(failed_messages[0])]
+    assert len(extended) == 1
+    assert extended[0]["messages"][: len(failed_messages[0])] == failed_messages[0]
+    assert extended[0]["messages"][-2]["role"] == "assistant"
+    assert "failed local validation" in extended[0]["messages"][-1]["content"]
+    records = [
+        load_precision_call(store, key)
+        for key in store.list_artifacts(f"{result.precision_key}/calls/")
+        if key.endswith(".json")
+    ]
+    assert len(records) == 5
+    failed = [record for record in records if record["status"] == "failed"]
+    assert len(failed) == 1
+    assert failed[0]["error_category"] == "invalid_output"
+    assert json.loads(failed[0]["raw_response"]) == {"translations": []}
+    assert sum(record["status"] == "completed" for record in records) == 4
+    assert executor.execute(_plan(store), store) == result
+    assert len(client.calls) == 5
+    usage = client.usage_summary()
+    assert usage["totals"]["calls"] == 5
+    assert usage["totals"]["total_tokens"] == 40
+    assert usage["by_stage"][operation]["calls"] == len(requests)
 
 
 @pytest.mark.parametrize("change", ["source", "context", "route"])
@@ -183,11 +148,8 @@ def test_incompatible_pending_checkpoints_are_not_reused(tmp_path, change):
     assert len(client.calls) == 8
 
 
-def test_builtin_concurrency_ignores_legacy_values_and_preserves_saved_work(tmp_path, monkeypatch):
+def test_builtin_concurrency_preserves_saved_work(tmp_path, monkeypatch):
     store, config = _store(tmp_path), _config(tmp_path)
-    document = config.model_dump()
-    document["pipeline"]["precision_concurrency"] = 1
-    config = Config.model_validate(document)
     workers = []
     original_pool = precision_module.ThreadPoolExecutor
 
@@ -258,6 +220,65 @@ def test_intentional_blanks_and_numeric_only_batches(tmp_path):
     assert not client.calls
 
 
+@pytest.mark.parametrize("boundary", [1, 4])
+def test_protected_sources_survive_generation_archive_and_resume(tmp_path, boundary):
+    source = "10\u2005\u20059\u2005\u20058"
+    store, config, handler = _store(tmp_path, ("one", source)), _config(tmp_path), Handler()
+
+    def normalize_spaces(messages, tier, json_mode):
+        response = json.loads(handler(messages, tier, json_mode))
+        response["translations"][1] = source.replace("\u2005", " ")
+        return json.dumps(response)
+
+    client = MeteredFakeClient(handler=normalize_spaces)
+    executor, plan = PrecisionBatchExecutor(client, config), _plan(store)
+    writes = 0
+
+    def interrupt():
+        nonlocal writes
+        writes += 1
+        if writes == boundary:
+            raise RuntimeError("interrupted")
+
+    with pytest.raises(RuntimeError, match="interrupted"):
+        executor.execute(plan, store, checkpoint=interrupt)
+    result = executor.execute(plan, store)
+    assert result.targets == ("润1:0", source)
+    assert result.before_polish[1] == source
+    assert len(client.calls) == 4
+    keys = [
+        key
+        for key in store.list_artifacts(f"{result.precision_key}/calls/")
+        if key.endswith(".json")
+    ]
+    assert len(keys) == 4
+    for key in keys:
+        record = load_precision_call(store, key)
+        assert record["status"] == "completed"
+        assert record["targets"][1] == source
+        assert json.loads(record["raw_response"])["translations"][1] == source.replace(
+            "\u2005", " "
+        )
+    assert all(segment.target is None for segment in store.load_chapter(0).text_segments)
+
+
+def test_cached_targets_restore_protected_sources(tmp_path):
+    source = "10\u2005\u20059\u2005\u20058"
+    store, config = _store(tmp_path, ("one", source)), _config(tmp_path)
+    run = precision_module._PrecisionRun(
+        MeteredFakeClient(handler=Handler()),
+        config,
+        _plan(store),
+        store,
+        checkpoint=None,
+        progress=None,
+    )
+    assert run.targets(["译文", ""]) == ["译文", source]
+    assert run.targets(["译文", "10 9 8"]) == ["译文", source]
+    with pytest.raises(PrecisionError):
+        run.targets(["", source])
+
+
 def test_guarded_publication_keeps_manual_edits_and_recovers_marker(tmp_path, monkeypatch):
     store, config = _store(tmp_path), _config(tmp_path)
     client = MeteredFakeClient(handler=Handler())
@@ -310,12 +331,12 @@ def test_cli_exports_and_resumes_with_four_body_calls(tmp_path, monkeypatch):
     config, handler = _config(tmp_path / "state"), Handler()
     client = MeteredFakeClient(handler=handler)
     monkeypatch.setattr("wenyi_cli.commands.context.CommandContext.load_config", lambda *_: config)
-    monkeypatch.setattr("wenyi_core.pipeline.runtime.build_client", lambda *_: client)
+    monkeypatch.setattr("wenyi_core.pipeline.run.runtime.build_client", lambda *_: client)
     arguments = [
         "translate",
         str(source),
         "--translation-mode",
-        "best_of_three",
+        "three_draft_synthesis",
         "--polish",
         "--no-review",
         "--format",

@@ -1,4 +1,4 @@
-"""Offline analyzer, glossary-extraction and rolling-context tests."""
+"""Offline analyzer and glossary-extraction tests."""
 
 from __future__ import annotations
 
@@ -9,34 +9,29 @@ import unittest
 
 from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.agents.base import Agent
-from wenyi_core.config import Config
-from wenyi_core.glossary.extractor import (
+from wenyi_core.agents.glossary_extractor import (
     GlossaryExtractor,
     TranslatedSegmentEvidence,
 )
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.context import RollingContext
 
-
-def _cfg():
-    return Config.from_dict(
-        {
-            "language": {"source": "ja", "target": "zh"},
-            "llm": {
-                "preset": "fake",
-                "models": {
-                    "default_strong": {"provider": "default", "model": "p"},
-                    "default_cheap": {"provider": "default", "model": "f"},
-                },
-            },
-        }
-    )
+from tests.pipeline_fixtures import fake_agent_config as _cfg
 
 
 class TestAgentCollectionNormalization(unittest.TestCase):
     def test_invalid_collection_logs_context_without_response_content(self):
-        for value in (0, 1.5, True, False, "private model text", {"private model text": 1}):
+        for value in (
+            0,
+            1,
+            0.0,
+            1.5,
+            True,
+            False,
+            "private model text",
+            {},
+            {"private model text": 1},
+        ):
             with self.subTest(value=value):
                 with self.assertLogs("wenyi_core.agents.base", level="WARNING") as logs:
                     result = Agent.dict_items(value, operation="glossary.extract", field="terms")
@@ -69,16 +64,9 @@ class TestAgentCollectionNormalization(unittest.TestCase):
         self.assertIn("2 non-object items", message)
         self.assertNotIn("private", message)
 
-    def test_non_list_model_collections_are_rejected(self):
-        for value in (None, 0, 1, 0.0, 1.5, "invalid", {}):
-            with self.subTest(value=value):
-                self.assertEqual(Agent.dict_items(value), [])
-
     def test_json_arrays_keep_only_dictionary_members(self):
         valid = {"source": "a", "target": "b"}
 
-        self.assertEqual(Agent.dict_items([]), [])
-        self.assertEqual(Agent.dict_items([valid]), [valid])
         self.assertEqual(
             Agent.dict_items([None, 1, 1.5, "invalid", {}, valid]),
             [{}, valid],
@@ -106,7 +94,7 @@ class TestAnalyzer(unittest.TestCase):
         self.assertIn("male", brief)
         self.assertIn("Speaks in restrained, formal sentences.", brief)
 
-    def test_analyze_and_seed(self):
+    def test_analyze_preserves_style_and_voice_without_glossary_candidates(self):
         analysis = {
             "genre": "校园",
             "tone": "冷峻第三人称",
@@ -126,20 +114,12 @@ class TestAnalyzer(unittest.TestCase):
         a = Analyzer(client, _cfg())
         result = a.analyze("……样章……")
         self.assertEqual(result["genre"], "校园")
-
-        with tempfile.TemporaryDirectory() as d:
-            store = GlossaryStore(os.path.join(d, "g.db"))
-            n = a.seed_glossary(store, result)
-            self.assertEqual(n, 2)
-            character = store.get_term("綾小路")
-            organization = store.get_term("高度育成高校")
-            self.assertIsNotNone(character)
-            self.assertIsNotNone(organization)
-            assert character is not None
-            assert organization is not None
-            self.assertEqual(character.gender, "male")
-            self.assertEqual(organization.type, "organization")
-            store.close()
+        self.assertEqual(result["style_guide"], "保持克制")
+        self.assertEqual(
+            result["characters"],
+            [{"source": "綾小路", "gender": "male", "note": "第一人称用俺"}],
+        )
+        self.assertNotIn("terms", result)
 
         brief = a.style_brief(result)
         self.assertIn("綾小路", brief)
@@ -157,17 +137,11 @@ class TestAnalyzer(unittest.TestCase):
 
         self.assertEqual(result["genre"], "")
         self.assertEqual(len(result["characters"]), 1)
-        self.assertEqual(len(result["terms"]), 1)
-        with tempfile.TemporaryDirectory() as d:
-            store = GlossaryStore(os.path.join(d, "g.db"))
-            self.assertEqual(analyzer.seed_glossary(store, result), 2)
-            school = store.get_term("学校")
-            self.assertIsNotNone(school)
-            assert school is not None
-            self.assertEqual(school.type, "term")
-            store.close()
+        self.assertEqual(result["characters"][0]["source"], "綾小路")
+        self.assertNotIn("target", result["characters"][0])
+        self.assertNotIn("terms", result)
 
-    def test_numeric_collections_are_normalized_to_empty_lists(self):
+    def test_numeric_character_collection_is_normalized_to_empty_list(self):
         analysis = {
             "genre": "novel",
             "characters": 3,
@@ -179,14 +153,12 @@ class TestAnalyzer(unittest.TestCase):
             result = Analyzer(client, _cfg()).analyze("sample")
 
         self.assertEqual(result["characters"], [])
-        self.assertEqual(result["terms"], [])
-        self.assertEqual(len(logs.records), 2)
-        for record, field, actual_type in zip(
-            logs.records, ("characters", "terms"), ("int", "float")
-        ):
-            self.assertIn("operation=analysis.style", record.getMessage())
-            self.assertIn(f"field={field}", record.getMessage())
-            self.assertIn(f"got {actual_type}", record.getMessage())
+        self.assertNotIn("terms", result)
+        self.assertEqual(len(logs.records), 1)
+        message = logs.records[0].getMessage()
+        self.assertIn("operation=analysis.style", message)
+        self.assertIn("field=characters", message)
+        self.assertIn("got int", message)
 
 
 class TestExtractor(unittest.TestCase):
@@ -435,30 +407,6 @@ class TestExtractor(unittest.TestCase):
             self.assertIsNone(store.get_term("綾小路"))
             self.assertEqual(summary["history_unresolved"], 1)
             store.close()
-
-
-class TestRollingContext(unittest.TestCase):
-    def test_render_and_bound(self):
-        ctx = RollingContext(max_recent_keep=3)
-        ctx.add_targets(["a", "b", "c", "d", "e"])
-        self.assertEqual(ctx.recent_targets, ["c", "d", "e"])  # Bound retained context length.
-        rendered = ctx.render(n_recent=2)  # Use only the two most recent paragraphs.
-        self.assertIn("d", rendered)
-        self.assertIn("e", rendered)
-        self.assertNotIn("c", rendered)
-
-    def test_roundtrip(self):
-        ctx = RollingContext(recent_targets=["x", "y"], max_recent_keep=75)
-        ctx2 = RollingContext.from_dict(ctx.to_dict())
-        self.assertEqual(ctx2.recent_targets, ["x", "y"])
-        self.assertEqual(ctx2.max_recent_keep, 75)
-
-    def test_configured_minimum_expands_saved_context_limit(self):
-        ctx = RollingContext.from_dict(
-            {"recent_targets": [str(i) for i in range(40)]},
-            min_recent_keep=100,
-        )
-        self.assertEqual(ctx.max_recent_keep, 100)
 
 
 if __name__ == "__main__":

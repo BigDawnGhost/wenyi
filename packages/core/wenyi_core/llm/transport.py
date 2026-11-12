@@ -90,6 +90,14 @@ class ProviderAdapter(ABC):
     def generate(
         self, messages: Messages, model: ResolvedModel, *, json_mode: bool, context: RequestContext
     ) -> str:
+        def request() -> str:
+            with context.attempt_scope():
+                return self._request(messages, model, json_mode=json_mode, context=context)
+
+        return self._generate_with_retry(request, context=context)
+
+    def _generate_with_retry(self, request: Callable[[], str], *, context: RequestContext) -> str:
+        """Keep one transient retry budget when an adapter negotiates a wire format."""
         reporter = RetryReporter(
             provider=self.cfg.kind,
             tier=context.tier,
@@ -99,18 +107,17 @@ class ProviderAdapter(ABC):
             redact=context.redact_diagnostic,
         )
 
-        @provider_retry(self.cfg.max_retries, reporter, sleep=context.sleep)
-        def request() -> str:
-            with context.attempt_scope():
-                return self._request(messages, model, json_mode=json_mode, context=context)
-
-        return request()
+        return provider_retry(self.cfg.max_retries, reporter, sleep=context.sleep)(request)()
 
     @abstractmethod
     def _request(
         self, messages: Messages, model: ResolvedModel, *, json_mode: bool, context: RequestContext
     ) -> str:
         raise NotImplementedError
+
+    def list_models(self) -> list[str]:
+        """Return model names the endpoint offers; adapters without a listing API return none."""
+        raise NotImplementedError(f"Provider {self.cfg.kind} cannot list models")
 
     @classmethod
     def output_limit(cls, options: BaseModel, hint: int | None, explicit: int | None) -> int | None:

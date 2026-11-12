@@ -1,0 +1,3 @@
+import { registerTests } from "../../../packages/ui/tests/e2e/desktop-only";
+
+registerTests();

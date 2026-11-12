@@ -1,26 +1,41 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { api, type GlobalConfig } from "@/lib/api";
-import { platform } from "@/platform";
-import { useI18n } from "@/i18n";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { ErrorNotice } from "@/components/ui/data";
-import { Disclosure } from "@/components/ui/disclosure";
-import { Textarea } from "@/components/ui/form";
+import { Link, useLocation } from "react-router-dom";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "../../lib/toast";
+import { api } from "../../api/client";
+import type { GlobalConfig } from "../../api/types";
+import { platform } from "../../platform";
+import { LazyBoundary } from "../../routes/LazyBoundary";
+import type { SettingsSectionId } from "../../routes/manifest";
+import { useI18n } from "../../i18n";
+import { Button } from "../../components/ui/button";
+import { ErrorNotice } from "../../components/ui/data";
+import { Textarea } from "../../components/ui/form";
+import { LanguageSettings } from "./LanguageSettings";
 import { ModelSelection } from "./ModelSelection";
 import { ProviderSettings } from "./ProviderSettings";
+import { MinerUSettings } from "./MinerUSettings";
+import { SettingsActionBar, SettingsGroup, SettingsSection } from "./SettingsSection";
 import { WorkflowSettings, workflowField } from "./WorkflowSettings";
 import { renameRegistryId, type RegistryGroup } from "./registryEdits";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
+const noPendingCredentials = () => false;
 
-export function GlobalConfiguration() {
+export function GlobalConfiguration({ section }: { section: SettingsSectionId }) {
   const { t } = useI18n();
+  const location = useLocation();
   const qc = useQueryClient();
   const credentials = platform().capabilities.credentials;
+  // The platform is fixed before React mounts, so the hook identity is stable.
+  const useCredentialsPending = credentials?.usePending ?? noPendingCredentials;
+  const credentialsPending = useCredentialsPending();
+  const Updates = platform().capabilities.updates?.Section;
+  const Plugins = platform().capabilities.plugins?.Section;
+  const Diagnostics = platform().capabilities.diagnostics?.Section;
+  const mutations = useIsMutating();
+  const [installing, setInstalling] = useState(false);
   const query = useQuery({
     queryKey: ["globalConfig"],
     queryFn: api.getGlobalConfig,
@@ -31,6 +46,10 @@ export function GlobalConfiguration() {
   });
   const [draft, setDraft] = useState<GlobalConfig | null>(null);
   const [yamlDirty, setYamlDirty] = useState(false);
+  // A toast disappears; a key that failed to reach the credential store stays
+  // unsaved until the user acts, so the reason has to stay on the page.
+  const [credentialsFailed, setCredentialsFailed] = useState(false);
+  const [uncommitted, setUncommitted] = useState(false);
   const [registryKey, setRegistryKey] = useState(0);
   const [editingIds, setEditingIds] = useState(false);
   const [renames, setRenames] = useState<Record<string, string>>({});
@@ -38,6 +57,7 @@ export function GlobalConfiguration() {
   useEffect(() => {
     if (query.data && !draft) setDraft(query.data);
   }, [query.data, draft]);
+  useEffect(() => () => credentials?.retain([]), [credentials]);
   const input = () => ({
     yaml: draft!.yaml,
     revision: draft!.revision,
@@ -50,21 +70,39 @@ export function GlobalConfiguration() {
     setYamlDirty(false);
   };
   const save = useMutation({
-    mutationFn: () => api.saveGlobalConfig(input()),
-    onSuccess: (value) => {
+    mutationFn: async () => {
+      // Keep submitted keys outside the mutation cache and independent of the page draft.
+      const commitCredentials = credentials?.prepareCommit();
+      const value = await api.saveGlobalConfig(input());
+      // Keys are written only after their connections exist in the saved configuration.
+      let keysFailed = false;
+      if (commitCredentials) {
+        try {
+          await commitCredentials(Object.keys(object(object(value.effective.llm).providers)));
+        } catch {
+          keysFailed = true;
+        }
+      }
+      return { value, keysFailed };
+    },
+    onSuccess: ({ value, keysFailed }) => {
       apply(value);
+      setUncommitted(false);
       setRenames({});
       setProviderRenames({});
       if (credentials) void credentials.refresh();
       qc.setQueryData(["globalConfig"], value);
       for (const key of ["config", "models", "templates"])
         void qc.invalidateQueries({ queryKey: [key] });
-      toast.success(t("settings.globalSaved"));
+      setCredentialsFailed(keysFailed);
+      if (keysFailed) toast.error(t("settings.credentialsFailed"));
+      else toast.success(t("settings.globalSaved"));
     },
   });
   const validate = useMutation({
     mutationFn: () => api.validateGlobalConfig(input()),
     onSuccess: (value) => {
+      setUncommitted((current) => current || draft?.yaml !== query.data?.yaml);
       apply(value);
       toast.success(t("settings.configurationIsValidButNotSavedYet"));
     },
@@ -72,18 +110,22 @@ export function GlobalConfiguration() {
   const restore = useMutation({
     mutationFn: api.getGlobalDefaults,
     onSuccess: (value) => {
+      setUncommitted(true);
       apply({ ...value, revision: draft!.revision });
       setRenames({});
       setProviderRenames({});
       setRegistryKey((value) => value + 1);
+      credentials?.retain(Object.keys(object(object(value.effective.llm).providers)));
       toast.success(t("settings.defaultsLoaded"));
     },
   });
   const error = save.error || validate.error || restore.error;
-  const pending = save.isPending || validate.isPending || restore.isPending;
+  const pending = save.isPending || validate.isPending || restore.isPending || installing;
   const disabled = !draft || yamlDirty || pending;
   const effective = draft?.effective || {};
   const llm = object(effective.llm);
+  const configSaved = !!draft && draft.yaml === query.data?.yaml;
+  const dirty = !configSaved || uncommitted || yamlDirty || credentialsPending;
   const change = (next: Document) => {
     if (draft)
       setDraft({
@@ -94,6 +136,7 @@ export function GlobalConfiguration() {
   };
   const changeLlm = (value: Document) => {
     change({ ...effective, llm: { ...value, preset: null } });
+    credentials?.retain(Object.keys(object(value.providers)));
     setProviderRenames((current) =>
       Object.fromEntries(
         Object.entries(current).filter(([, id]) => id in object(value.providers)),
@@ -107,6 +150,7 @@ export function GlobalConfiguration() {
   };
   const rename = (group: RegistryGroup, oldId: string, newId: string) => {
     if (group === "providers" && credentials) {
+      credentials.rename(oldId, newId);
       const next = { ...providerRenames };
       const original = Object.keys(next).find((id) => next[id] === oldId);
       if (original) {
@@ -135,112 +179,133 @@ export function GlobalConfiguration() {
   return (
     <>
       <ErrorNotice error={query.error || error} />
-      <Card>
-        <CardContent className="p-5 space-y-4">
-          <ProviderSettings
-            key={registryKey}
-            config={effective}
-            kinds={caps?.providers || []}
-            disabled={disabled}
-            error={error}
-            onChange={changeLlm}
-            onRename={rename}
-            onEditingChange={setEditingIds}
-            credentialsSaved={draft?.yaml === query.data?.yaml}
-          />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-5 space-y-4">
-          <h2 className="font-medium">{t("settings.newProjectDefaults")}</h2>
-          <p className="text-sm text-muted-foreground">
-            {t("settings.defaultScopeHelp")}
-          </p>
-          <ModelSelection
-            llm={llm}
-            models={object(llm.models)}
-            operations={caps?.operations}
-            disabled={disabled}
-            onChange={changeLlm}
-          />
-          <h3 className="text-sm font-medium">
-            {t("settings.workflowDefaults")}
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            {t("settings.workflowDefaultsHelp")}
-          </p>
-          <WorkflowSettings
-            scope="global"
-            config={effective}
-            disabled={disabled}
-            pdf
-            error={error}
-            onField={(group, key, value) =>
-              change(workflowField(effective, group, key, value))
-            }
-          />
-        </CardContent>
-      </Card>
-      <Card>
-        <CardContent className="p-5 space-y-4">
-          {yamlDirty && (
-            <p className="text-sm text-muted-foreground">
-              {t("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
-            </p>
-          )}
-          <Disclosure
-            title={t("settings.advancedYamlConfiguration")}
-            summary={t(
-              yamlDirty ? "settings.unsavedSummary" : "settings.yamlSummary",
-            )}
-            error={error}
-          >
-            <p className="text-sm text-muted-foreground">
-              {t("settings.useServerEnvironmentVariableNamesForApi")}
-            </p>
-            <Textarea
-              aria-label={t("settings.advancedYamlConfiguration")}
-              spellCheck={false}
-              className="min-h-[420px] font-mono text-xs"
-              value={draft?.yaml || ""}
-              disabled={!draft || pending}
-              onChange={(event) => {
-                if (draft) {
-                  setDraft({ ...draft, yaml: event.target.value });
-                  setYamlDirty(true);
-                }
-              }}
+      {/* Distinct from the toast that announces the failure: this one stays, so
+          it describes the state the keys are in rather than repeating the event. */}
+      {credentialsFailed && (
+        <ErrorNotice error={t("settings.credentialsFailedNotice")} />
+      )}
+      {/* Keep controls mounted so category navigation preserves local ID/key drafts. */}
+      <div className="flex-1">
+        <div hidden={section !== "general"}>
+          <LanguageSettings />
+        </div>
+        <div hidden={section !== "providers"}>
+          <SettingsSection id="provider-models" title={t("settings.sectionProviders")}>
+            <ProviderSettings
+              key={registryKey}
+              config={effective}
+              kinds={caps?.providers || []}
+              disabled={disabled}
+              onChange={changeLlm}
+              onRename={rename}
+              onEditingChange={setEditingIds}
+              saved={configSaved && !credentialsPending}
             />
-          </Disclosure>
-          {editingIds && (
-            <p className="text-sm text-muted-foreground">
-              {t("registry.finishRenaming")}
-            </p>
-          )}
-          <div className="flex flex-wrap gap-3">
-            <Button
-              variant="outline"
-              disabled={!draft || pending}
-              onClick={() => restore.mutate()}
-            >
-              {t("settings.restoreDefaults")}
-            </Button>
-            <Button
-              variant="outline"
-              disabled={!draft || pending || editingIds}
-              onClick={() => validate.mutate()}
-            >
-              {t("settings.validateConfiguration")}
-            </Button>
-            <Button
-              disabled={!draft || pending || editingIds}
-              onClick={() => save.mutate()}
-            >
-              {pending ? t("common.saving") : t("settings.saveConfiguration")}
-            </Button>
+          </SettingsSection>
+        </div>
+        <div hidden={section !== "defaults"}>
+          <SettingsSection title={t("settings.sectionDefaultModels")}>
+            <ModelSelection
+              llm={llm}
+              models={object(llm.models)}
+              disabled={disabled}
+              onChange={changeLlm}
+            />
+          </SettingsSection>
+        </div>
+        <div hidden={section !== "workflow"}>
+          <SettingsSection title={t("settings.sectionWorkflow")}>
+            <WorkflowSettings
+              scope="global"
+              config={effective}
+              disabled={disabled}
+              onField={(group, key, value) => change(workflowField(effective, group, key, value))}
+            />
+          </SettingsSection>
+        </div>
+        <div hidden={section !== "mineru"}>
+          <MinerUSettings />
+        </div>
+        {Plugins && (
+          <div hidden={section !== "plugins"}>
+            <LazyBoundary>
+              <Plugins disabled={installing} />
+            </LazyBoundary>
           </div>
-        </CardContent>
-      </Card>
+        )}
+        <div hidden={section !== "advanced"}>
+          <SettingsSection id="advanced-yaml" title={t("settings.sectionAdvanced")}>
+            <SettingsGroup
+              title={t("settings.advancedYamlConfiguration")}
+              summary={yamlDirty ? t("settings.unsavedSummary") : undefined}
+            >
+              <Textarea
+                aria-label={t("settings.advancedYamlConfiguration")}
+                spellCheck={false}
+                className="min-h-[420px] font-mono text-xs"
+                value={draft?.yaml || ""}
+                disabled={!draft || pending}
+                onChange={(event) => {
+                  if (draft) {
+                    setDraft({ ...draft, yaml: event.target.value });
+                    setYamlDirty(true);
+                  }
+                }}
+              />
+            </SettingsGroup>
+          </SettingsSection>
+        </div>
+        {Diagnostics && (
+          <div hidden={section !== "diagnostics"}><Diagnostics /></div>
+        )}
+        {Updates && (
+          <div hidden={section !== "updates"}>
+            <LazyBoundary>
+              <Updates
+                blocked={!draft || !query.data || draft.yaml !== query.data.yaml ||
+                  uncommitted || yamlDirty || editingIds || pending || mutations > 0 ||
+                  Object.keys(renames).length > 0 || Object.keys(providerRenames).length > 0}
+                onInstalling={setInstalling}
+              />
+            </LazyBoundary>
+          </div>
+        )}
+      </div>
+      <SettingsActionBar
+        notices={
+          <>
+            {yamlDirty && (
+              <Link to="/settings/advanced" state={location.state} className="block text-amber-700 underline underline-offset-4 dark:text-amber-300">
+                {t("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
+              </Link>
+            )}
+            {editingIds && (
+              <Link to="/settings/providers" state={location.state} className="block text-amber-700 underline underline-offset-4 dark:text-amber-300">
+                {t("registry.finishRenaming")}
+              </Link>
+            )}
+            {!yamlDirty && !editingIds && dirty && (
+              <span className="text-muted-foreground">{t("settings.unsavedSummary")}</span>
+            )}
+          </>
+        }
+      >
+        <Button variant="ghost" disabled={!draft || pending} onClick={() => restore.mutate()}>
+          {t("settings.restoreDefaults")}
+        </Button>
+        {section === "advanced" && (
+          <Button
+            variant="outline"
+            disabled={!draft || pending || editingIds}
+            onClick={() => validate.mutate()}
+          >
+            {t("settings.validateConfiguration")}
+          </Button>
+        )}
+        <Button disabled={!draft || pending || editingIds} onClick={() => save.mutate()}>
+          {pending ? t("common.saving") : t("settings.saveConfiguration")}
+        </Button>
+      </SettingsActionBar>
     </>
   );
 }

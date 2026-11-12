@@ -28,8 +28,7 @@ def routing_handler(messages, tier, json_mode):
                 "genre": "校园",
                 "tone": "冷峻",
                 "style_guide": "克制",
-                "characters": [{"source": "綾小路", "target": "绫小路", "gender": "male"}],
-                "terms": [],
+                "characters": [{"source": "綾小路", "gender": "male"}],
             },
             ensure_ascii=False,
         )
@@ -38,7 +37,7 @@ def routing_handler(messages, tier, json_mode):
         n = _count_numbered(user)
         return json.dumps({"titles": [f"标题{i}" for i in range(n)]}, ensure_ascii=False)
 
-    if "literary translator" in system:
+    if "literary translator" in system or "academic translator" in system:
         # Polish may append a user turn to the same translation conversation.
         if "Polish the translations from your previous JSON response" in user:
             n = None

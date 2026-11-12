@@ -1,5 +1,5 @@
-import { useI18n } from "@/i18n";
-import { statusLabel, statusTone, type StatusContext } from "@/i18n/status";
+import { useI18n } from "../i18n";
+import { statusLabel, statusTone, type StatusContext } from "../i18n/status";
 import { Badge } from "./ui/badge";
 
 export function StatusBadge({

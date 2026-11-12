@@ -7,6 +7,7 @@ from functools import lru_cache
 from string import Template
 
 from . import languages
+from .genres import DEFAULT_GENRE, Genre, compose
 from .policy.models import PolicyContext, PolicyPlan
 from .policy.resolver import resolve_policy
 from .resources import read_text
@@ -15,10 +16,10 @@ PROMPT_OPERATIONS = ("prompt.language_rules",)
 
 
 @lru_cache(maxsize=None)
-def template(name: str) -> Template:
+def template(name: str, *, genre: Genre = DEFAULT_GENRE) -> Template:
     if not re.fullmatch(r"[a-z_]+", name):
         raise ValueError(f"Invalid prompt name: {name}")
-    return Template(read_text(f"tasks/{name}.txt"))
+    return Template(compose(read_text(f"tasks/{name}.txt"), genre=genre))
 
 
 def render(
@@ -38,8 +39,13 @@ def render(
         values["lang_guidance"] = values.pop("configured_lang_guidance")
     for key, value in values.items():
         kwargs.setdefault(key, value)
+    kwargs.setdefault("source_context", "")
     frozen_templates = dict(plan.templates)
-    selected = Template(frozen_templates[name]) if name in frozen_templates else template(name)
+    selected = (
+        Template(frozen_templates[name])
+        if name in frozen_templates
+        else template(name, genre=plan.context.genre)
+    )
     # Substitute once: literal $ and braces in content stay intact; missing arguments fail.
     try:
         return selected.substitute(**kwargs)

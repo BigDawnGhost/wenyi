@@ -142,7 +142,7 @@ def provider():
 
 
 @pytest.mark.parametrize("failure", ["absent", "partial"])
-def test_default_storage_falls_back_without_persisting_secret(tmp_path, failure):
+def test_default_storage_falls_back_without_persisting_secret(private_profile, tmp_path, failure):
     vault = FakeVault()
     if failure == "partial":
 
@@ -157,10 +157,16 @@ def test_default_storage_falls_back_without_persisting_secret(tmp_path, failure)
     assert store.snapshot({"one": provider()})["one"] == "fake-auto-secret"
     assert not vault.values
     assert not CredentialStore(tmp_path).status("one", provider())["available"]
-    assert all(b"fake-auto-secret" not in path.read_bytes() for path in tmp_path.iterdir())
+    assert all(
+        b"fake-auto-secret" not in path.read_bytes()
+        for path in private_profile.rglob("*")
+        if path.is_file()
+    )
 
 
-def test_modes_clear_restart_and_no_plaintext(tmp_path, monkeypatch, isolated_vault):
+def test_modes_clear_restart_and_no_plaintext(
+    private_profile, tmp_path, monkeypatch, isolated_vault
+):
     monkeypatch.setenv("WENYI_TEST_FAKE_KEY", "fake-env-key")
     store = CredentialStore(tmp_path, vault=isolated_vault)
     cfg = provider()
@@ -171,7 +177,11 @@ def test_modes_clear_restart_and_no_plaintext(tmp_path, monkeypatch, isolated_va
         "two": "fake-env-key",
     }
     assert "fake-" not in json.dumps(store.status("one", cfg))
-    assert all(b"fake-manual-key" not in path.read_bytes() for path in tmp_path.iterdir())
+    assert all(
+        b"fake-manual-key" not in path.read_bytes()
+        for path in private_profile.rglob("*")
+        if path.is_file()
+    )
     reopened = CredentialStore(tmp_path, vault=isolated_vault)
     assert reopened.snapshot({"one": cfg})["one"] == "fake-manual-key"
     store.update("one", mode="environment")
@@ -229,7 +239,7 @@ def test_fallback_commit_failure_releases_session_and_keeps_old_key(
     assert list(isolated_vault.values.values()) == ["fake-old"]
 
 
-def test_no_vault_requires_explicit_session_and_session_expires(tmp_path):
+def test_no_vault_requires_explicit_session_and_session_expires(private_profile, tmp_path):
     store = CredentialStore(tmp_path)
     with pytest.raises(CredentialUnavailable, match="session-only"):
         store.update("one", mode="manual", secret="fake-secret", storage="system")
@@ -237,7 +247,11 @@ def test_no_vault_requires_explicit_session_and_session_expires(tmp_path):
     store.update("one", mode="manual", secret="fake-session-secret", storage="session")
     assert store.snapshot({"one": provider()})["one"] == "fake-session-secret"
     assert not CredentialStore(tmp_path).status("one", provider())["available"]
-    assert all(b"fake-session-secret" not in path.read_bytes() for path in tmp_path.iterdir())
+    assert all(
+        b"fake-session-secret" not in path.read_bytes()
+        for path in private_profile.rglob("*")
+        if path.is_file()
+    )
 
 
 def test_failed_writes_keep_old_selection(tmp_path, monkeypatch, isolated_vault):
@@ -339,7 +353,7 @@ def test_sdk_creation_receives_snapshot_not_environment(kind, monkeypatch):
 
 
 def test_router_is_local_authenticated_origin_restricted_and_never_echoes(
-    tmp_path, desktop_context
+    private_profile, desktop_context
 ):
     client = TestClient(create_app(context=desktop_context))
     assert client.get("/desktop/credentials").status_code == 401
@@ -365,7 +379,11 @@ def test_router_is_local_authenticated_origin_restricted_and_never_echoes(
     )
     assert response.status_code == 422
     assert "fake-router-secret" not in response.text
-    assert all(b"fake-router-secret" not in path.read_bytes() for path in tmp_path.iterdir())
+    assert all(
+        b"fake-router-secret" not in path.read_bytes()
+        for path in private_profile.rglob("*")
+        if path.is_file()
+    )
 
 
 def test_non_system_keyring_is_rejected(monkeypatch):
@@ -577,3 +595,89 @@ def test_transaction_exit_failure_cleans_new_key_only(desktop_context, isolated_
     assert caught.value.status_code == 503
     assert store._records() == previous
     assert list(isolated_vault.values.values()) == ["fake-old"]
+
+
+def test_global_connectivity_test_uses_saved_manual_key_without_echo(desktop_context, monkeypatch):
+    from wenyi_core.llm.providers._openai_compatible import OpenAICompatibleBaseClient
+
+    secret = "fake-ping-manual-secret"
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    connection = next(iter(desktop_context.settings_store.load().config.llm.providers))
+    desktop_context.settings_store.credentials.update(
+        connection, mode="manual", secret=secret, storage="session"
+    )
+    used = []
+
+    def ensure(self):
+        used.append(self.api_key())
+        reply = SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content="OK"))
+        create = lambda **kwargs: SimpleNamespace(usage=None, choices=[reply])  # noqa: E731
+        return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+    monkeypatch.setattr(OpenAICompatibleBaseClient, "_ensure_client", ensure)
+    client = TestClient(create_app(context=desktop_context))
+    headers = {"Authorization": "Bearer fake-local-token", "Origin": "tauri://localhost"}
+    assert client.post("/settings/models/ping", json={}).status_code == 401
+    response = client.post("/settings/models/ping", headers=headers, json={"timeout": 5})
+    assert response.status_code == 200, response.text
+    assert response.json() and all(result["ok"] for result in response.json())
+    assert used and set(used) == {secret}
+    assert secret not in response.text
+
+
+def test_saved_key_is_revealed_only_to_the_authenticated_local_ui(
+    tmp_path, desktop_context, isolated_vault
+):
+    client = TestClient(create_app(context=desktop_context))
+    headers = {"Authorization": "Bearer fake-local-token", "Origin": "tauri://localhost"}
+    connection = next(iter(client.get("/desktop/credentials", headers=headers).json()))
+    route = f"/desktop/credentials/{connection}"
+    assert client.get(f"{route}/secret").status_code == 401
+    assert (
+        client.get(
+            f"{route}/secret", headers={**headers, "Origin": "https://evil.invalid"}
+        ).status_code
+        == 403
+    )
+    client.put(route, headers=headers, json={"mode": "manual", "secret": "fake-reveal-key"})
+    response = client.get(f"{route}/secret", headers=headers)
+    assert response.status_code == 200
+    assert response.json() == {"secret": "fake-reveal-key"}
+    assert response.headers["cache-control"] == "no-store"
+    assert client.get("/desktop/credentials/missing/secret", headers=headers).status_code == 404
+    client.put(route, headers=headers, json={"mode": "manual", "clear": True})
+    assert client.get(f"{route}/secret", headers=headers).json() == {"secret": None}
+    assert all(
+        b"fake-reveal-key" not in path.read_bytes()
+        for path in tmp_path.rglob("*")
+        if path.is_file()
+    )
+
+
+def test_draft_model_listing_uses_the_stored_key(desktop_context, isolated_vault, monkeypatch):
+    import wenyi_backend.routers.settings as settings_router
+    from wenyi_core.llm.models import ModelListing
+
+    seen = []
+
+    def fake_list(provider, *, credential=None, use_credential=False, timeout=20):
+        seen.append((credential, use_credential))
+        return ModelListing(True, ("listed",))
+
+    monkeypatch.setattr(settings_router, "list_connection_models", fake_list)
+    client = TestClient(create_app(context=desktop_context))
+    headers = {"Authorization": "Bearer fake-local-token", "Origin": "tauri://localhost"}
+    connection = next(iter(client.get("/desktop/credentials", headers=headers).json()))
+    client.put(
+        f"/desktop/credentials/{connection}",
+        headers=headers,
+        json={"mode": "manual", "secret": "fake-stored-list-key"},
+    )
+    response = client.post(
+        "/settings/models/list",
+        headers=headers,
+        json={"connection": connection, "provider": {"kind": "deepseek"}},
+    )
+    assert response.json()["models"] == ["listed"]
+    assert seen == [("fake-stored-list-key", True)]
+    assert "fake-stored-list-key" not in response.text

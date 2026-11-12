@@ -2,17 +2,109 @@
 
 import json
 
-from test_local_workflows import desktop, wait_job  # noqa: F401
-from tests.test_precision_pipeline import Handler
-from wenyi_backend import dal
+import pytest
+from desktop_test_support import wait_job
+from tests.precision_fixtures import PrecisionHandler
 from wenyi_backend.config_documents import config_document
+from wenyi_backend.context import current_context
 from wenyi_core.config import Config
-from wenyi_core.pipeline.language_policies import CHECKPOINT
+from wenyi_core.pipeline.run.language_policies import CHECKPOINT
+from wenyi_core.pipeline.translate.precision_records import load_precision_call
+from wenyi_desktop.local_backend import LocalBackend
 
 
-def test_precision_creation_translation_drafts_edit_and_export(desktop):  # noqa: F811
+@pytest.mark.parametrize("stage", ["translate", "synthesis"])
+def test_precision_structural_retry_finishes_without_manual_resume(desktop, stage):
     client, backend, fake = desktop
-    handler = Handler()
+    handler = PrecisionHandler()
+    failed = False
+
+    def fail_once(messages, tier, json_mode):
+        nonlocal failed
+        response = handler(messages, tier, json_mode)
+        if "Task (JSON):\n" not in messages[-1]["content"]:
+            return response
+        task = json.loads(messages[-1]["content"].split("Task (JSON):\n")[1])
+        kind = "synthesis" if "drafts" in task else "translate"
+        # The handler's lock also serializes selection of the single failing draft.
+        with handler.lock:
+            if kind == stage and not failed:
+                failed = True
+                return '{"translations":[]}'
+        return response
+
+    fake.handler = fail_once
+    created = client.post(
+        "/projects",
+        data={
+            "project": json.dumps(
+                {
+                    "name": "Structural retry",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "translation_mode": "three_draft_synthesis",
+                }
+            )
+        },
+        files={"file": ("book.txt", b"The traveler crossed the bridge.\n")},
+    )
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+    root = f"/projects/{pid}"
+    assert wait_job(current_context().repository.list_jobs(pid)[0]["run_id"])["status"] == "done"
+    configured = client.put(
+        root + "/config",
+        json={"yaml": "pipeline: {review: false, book_understanding: false, align_retry_limit: 2}"},
+    )
+    assert configured.status_code == 200, configured.text
+    translated = client.post(root + "/translate")
+    assert translated.status_code == 200, translated.text
+    job = wait_job(translated.json()["job_id"])
+    assert job["status"] == "done", job
+    assert handler.counts == {
+        "translate": 3 + (stage == "translate"),
+        "synthesis": 1 + (stage == "synthesis"),
+    }
+    segment = client.get(root + "/chapters/0").json()["segments"][0]
+    assert segment["target"].startswith("润")
+    response = client.get(root + f"/chapters/0/segments/{segment['index']}/precision-drafts")
+    assert response.status_code == 200, response.text
+    drafts = response.json()
+    assert [candidate["id"] for candidate in drafts["candidates"]] == ["T1", "T2", "T3"]
+    assert drafts["synthesized_target"] == segment["target"]
+    assert drafts["candidates"][0]["target"] == segment["target_before_polish"]
+    store = backend.storage_for(pid)
+    try:
+        archived = {key: store.read_artifact(key) for key in store.list_artifacts("precision/")}
+        records = [
+            load_precision_call(store, key)
+            for key in archived
+            if "/calls/" in key and key.endswith(".json")
+        ]
+        assert len(records) == 5
+        failures = [record for record in records if record["status"] == "failed"]
+        assert len(failures) == 1
+        assert json.loads(failures[0]["raw_response"]) == {"translations": []}
+        assert sum(record["status"] == "completed" for record in records) == 4
+    finally:
+        store.close()
+    calls = len(fake.calls)
+    resumed = client.post(root + "/translate")
+    assert resumed.status_code == 200, resumed.text
+    assert wait_job(resumed.json()["job_id"])["status"] == "done"
+    assert len(fake.calls) == calls
+    reopened = backend.storage_for(pid)
+    try:
+        assert {
+            key: reopened.read_artifact(key) for key in reopened.list_artifacts("precision/")
+        } == archived
+    finally:
+        reopened.close()
+
+
+def test_precision_creation_translation_drafts_edit_and_export(desktop):
+    client, backend, fake = desktop
+    handler = PrecisionHandler()
     fake.handler = handler
     created = client.post(
         "/projects",
@@ -22,7 +114,7 @@ def test_precision_creation_translation_drafts_edit_and_export(desktop):  # noqa
                     "name": "Precision",
                     "source_lang": "en",
                     "target_lang": "zh",
-                    "translation_mode": "best_of_three",
+                    "translation_mode": "three_draft_synthesis",
                 }
             )
         },
@@ -31,14 +123,14 @@ def test_precision_creation_translation_drafts_edit_and_export(desktop):  # noqa
     assert created.status_code == 201, created.text
     pid = created.json()["id"]
     root = f"/projects/{pid}"
-    assert wait_job(dal.list_jobs(pid)[0]["run_id"])["status"] == "done"
+    assert wait_job(current_context().repository.list_jobs(pid)[0]["run_id"])["status"] == "done"
     configured = client.put(
         root + "/config",
         json={"yaml": "pipeline: {review: false, book_understanding: false}"},
     )
     assert configured.status_code == 200, configured.text
     pipeline = configured.json()["effective"]["pipeline"]
-    assert pipeline["translation_mode"] == "best_of_three"
+    assert pipeline["translation_mode"] == "three_draft_synthesis"
     assert pipeline["polish"] is True
     translated = client.post(root + "/translate")
     assert translated.status_code == 200, translated.text
@@ -104,25 +196,100 @@ def test_precision_creation_translation_drafts_edit_and_export(desktop):  # noqa
         reopened.close()
 
 
-def test_desktop_defaults_strip_legacy_precision_and_reject_policy_overrides(desktop):  # noqa: F811
+def test_precision_keeps_protected_source_when_model_changes_spacing(desktop):
+    client, backend, fake = desktop
+    source = "10\u2005\u20059\u2005\u20058"
+    handler = PrecisionHandler()
+
+    def normalize_spaces(messages, tier, json_mode):
+        response = handler(messages, tier, json_mode)
+        if "Task (JSON):\n" not in messages[-1]["content"]:
+            return response
+        data = json.loads(response)
+        data["translations"][1] = "10 9 8"
+        return json.dumps(data)
+
+    fake.handler = normalize_spaces
+    created = client.post(
+        "/projects",
+        data={
+            "project": json.dumps(
+                {
+                    "name": "Protected spacing",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "translation_mode": "three_draft_synthesis",
+                }
+            )
+        },
+        files={"file": ("book.txt", f"The traveler crossed the bridge.\n\n{source}\n".encode())},
+    )
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+    root = f"/projects/{pid}"
+    assert wait_job(current_context().repository.list_jobs(pid)[0]["run_id"])["status"] == "done"
+    configured = client.put(
+        root + "/config",
+        json={"yaml": "pipeline: {review: false, book_understanding: false}"},
+    )
+    assert configured.status_code == 200, configured.text
+    translated = client.post(root + "/translate")
+    assert translated.status_code == 200, translated.text
+    job = wait_job(translated.json()["job_id"])
+    assert job["status"] == "done", job
+    assert handler.counts == {"translate": 3, "synthesis": 1}
+    segments = client.get(root + "/chapters/0").json()["segments"]
+    assert segments[1]["source"] == source
+    assert segments[1]["target"] == source
+    assert segments[1]["target_before_polish"] == source
+    calls = len(fake.calls)
+    resumed = client.post(root + "/translate")
+    assert resumed.status_code == 200, resumed.text
+    assert wait_job(resumed.json()["job_id"])["status"] == "done"
+    assert len(fake.calls) == calls
+    reopened = backend.storage_for(pid)
+    try:
+        assert reopened.load_chapter(0).text_segments[1].target == source
+    finally:
+        reopened.close()
+
+
+def test_missing_default_template_uses_current_default_without_rewriting(desktop):
+    client, backend, _ = desktop
+    saved = {"config": {"llm": {"preset": "fake"}}, "revision": 2}
+    with backend.transaction() as connection:
+        backend.save_settings(saved, connection)
+    LocalBackend(backend.workspace)
+    response = client.get("/settings")
+    assert response.status_code == 200
+    assert response.json()["default_template"] == "标准翻译"
+    assert response.json()["revision"] == 2
+    assert backend.load_settings() == saved
+
+
+def test_desktop_defaults_strip_legacy_precision_and_reject_policy_overrides(desktop):
     client, backend, _ = desktop
     legacy = Config.from_dict(
-        {"llm": {"preset": "fake"}, "pipeline": {"translation_mode": "best_of_three"}}
+        {"llm": {"preset": "fake"}, "pipeline": {"translation_mode": "three_draft_synthesis"}}
     )
     saved = {"config": config_document(legacy), "template": "快速出稿", "revision": 8}
     with backend.transaction() as connection:
         backend.save_settings(saved, connection)
+    LocalBackend(backend.workspace)
+    rebuilt = backend.load_settings()
+    assert rebuilt["template"] == "标准翻译"
+    assert rebuilt["revision"] == 9
     response = client.get("/settings")
     assert response.status_code == 200
     defaults = response.json()
     assert defaults["default_template"] == "标准翻译"
-    assert defaults["revision"] == 8
+    assert defaults["revision"] == 9
     assert "translation_mode" not in defaults["effective"]["pipeline"]
     assert "precision_concurrency" not in defaults["effective"]["pipeline"]
     assert set(defaults["effective"]["language"]) == {"source", "target"}
-    assert backend.load_settings() == saved
+    assert backend.load_settings() == rebuilt
     for yaml in (
-        "pipeline: {translation_mode: best_of_three}",
+        "pipeline: {translation_mode: three_draft_synthesis}",
         "pipeline: {precision_concurrency: 1}",
         "language: {operations: {}}",
         "language: {accepted_policy_fingerprint: {}}",
@@ -130,7 +297,7 @@ def test_desktop_defaults_strip_legacy_precision_and_reject_policy_overrides(des
         for method, suffix in (("post", "/validate"), ("put", "")):
             rejected = getattr(client, method)(
                 "/settings" + suffix,
-                json={"yaml": yaml, "default_template": "标准翻译", "revision": 8},
+                json={"yaml": yaml, "default_template": "标准翻译", "revision": 9},
             )
             assert rejected.status_code == 422, rejected.text
-            assert backend.load_settings() == saved
+            assert backend.load_settings() == rebuilt

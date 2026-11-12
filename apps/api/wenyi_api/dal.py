@@ -9,6 +9,7 @@ from typing import Any, Optional
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 from wenyi_backend.chapter_state import chapter_review_state
+from wenyi_backend.ports.projects import RUNNING_PROJECT_STATUSES
 
 from .db import get_pool
 
@@ -27,7 +28,15 @@ def create_project(
     source: dict | None = None,
     config: dict | None = None,
     connection: Connection[Any] | None = None,
+    library_root: str | None = None,
 ) -> str:
+    """Insert a project row.
+
+    `library_root` is accepted for signature parity with the platform repositories
+    and ignored: a Postgres deployment has no host that owns directories, so
+    `new_project_dir` resolves to None and the upload already landed under DATA_DIR.
+    """
+    del library_root
     pid = project_id or uuid.uuid4().hex[:16]
     source = source or {}
     with _conn(connection) as c:
@@ -111,6 +120,27 @@ def set_project_status(pid: str, status: str, *, error: str | None = None) -> No
             "UPDATE projects SET status=%s, error=%s, updated_at=now() WHERE id=%s",
             (status, error, pid),
         )
+
+
+def request_pause(pid: str, run_id: str) -> bool:
+    """Lock only the catalog row, never wait for the long-running domain lock."""
+    with _conn() as connection:
+        project = connection.execute(
+            "SELECT status FROM projects WHERE id=%s FOR UPDATE", (pid,)
+        ).fetchone()
+        if project is None or project[0] not in RUNNING_PROJECT_STATUSES:
+            return False
+        job = connection.execute(
+            """SELECT run_id,status FROM jobs
+               WHERE project_id=%s AND kind<>'export' ORDER BY id DESC LIMIT 1""",
+            (pid,),
+        ).fetchone()
+        if job is None or job[0] != run_id or job[1] not in {"queued", "running"}:
+            return False
+        connection.execute(
+            "UPDATE projects SET status='pausing',error=NULL,updated_at=now() WHERE id=%s", (pid,)
+        )
+        return True
 
 
 def set_project_strategy(
@@ -221,11 +251,12 @@ def create_job(
     config_snapshot: dict[str, Any] | None = None,
     run_id: str | None = None,
     status: str = "queued",
+    connection: Connection[Any] | None = None,
 ) -> int:
     saved_params = dict(params or {})
     if config_snapshot is not None:
         saved_params["config_snapshot"] = config_snapshot
-    with _conn() as c:
+    with _conn(connection) as c:
         r = c.execute(
             """INSERT INTO jobs (project_id, kind, status, arq_job_id, params, run_id)
                VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
@@ -314,8 +345,10 @@ def job_review_id(job_id: int) -> str | None:
     return row[0] if row else None
 
 
-def create_export(pid: str, fmt: str, options: dict[str, Any]) -> int:
-    with _conn() as c:
+def create_export(
+    pid: str, fmt: str, options: dict[str, Any], *, connection: Connection[Any] | None = None
+) -> int:
+    with _conn(connection) as c:
         row = c.execute(
             """INSERT INTO exports (project_id, format, options, status)
                VALUES (%s,%s,%s,'pending') RETURNING id""",
@@ -347,8 +380,8 @@ def is_paused(pid: str) -> bool:
     return bool(r and r[0] in {"paused", "pausing"})
 
 
-def delete_project(pid: str) -> None:
-    with _conn() as conn:
+def delete_project(pid: str, *, connection: Connection[Any] | None = None) -> None:
+    with _conn(connection) as conn:
         conn.execute("DELETE FROM projects WHERE id=%s", (pid,))
 
 

@@ -7,13 +7,20 @@ import json
 from fastapi import WebSocketDisconnect
 from redis import Redis
 from redis.asyncio import Redis as AsyncRedis
-from wenyi_backend import dal
 from wenyi_backend.live_statistics import read_live_statistics
+from wenyi_backend.ports.projects import ProjectQueries
+
+# A run can legitimately publish nothing for minutes (one long model call), and
+# an idle socket is indistinguishable from a dead one from the client's side.
+# The frame is the only thing that proves the link is still carrying data.
+HEARTBEAT_SECONDS = 30.0
+HEARTBEAT_FRAME = json.dumps({"kind": "heartbeat"})
 
 
 class RedisTelemetry:
-    def __init__(self, url: str):
+    def __init__(self, url: str, projects: ProjectQueries):
         self.url = url
+        self.projects = projects
 
     def connect(self):
         return Redis.from_url(self.url, socket_timeout=1, socket_connect_timeout=1)
@@ -39,12 +46,14 @@ class RedisTelemetry:
         disconnected = None
         try:
             await pubsub.subscribe(f"project:{pid}")
-            project = await asyncio.to_thread(dal.get_project, pid)
-            chapters = await asyncio.to_thread(dal.chapter_summaries, pid)
+            project = await asyncio.to_thread(self.projects.get_project, pid)
+            chapters = await asyncio.to_thread(self.projects.chapter_summaries, pid)
             await websocket.send_json(
                 {"kind": "snapshot", "project": project or {}, "chapters": chapters}
             )
             disconnected = asyncio.create_task(websocket.receive())
+            loop = asyncio.get_running_loop()
+            last_sent = loop.time()
             while not disconnected.done():
                 message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if message and message.get("type") == "message":
@@ -52,7 +61,11 @@ class RedisTelemetry:
                     if isinstance(data, bytes):
                         data = data.decode("utf-8")
                     await websocket.send_text(data if isinstance(data, str) else json.dumps(data))
+                    last_sent = loop.time()
                 else:
+                    if loop.time() - last_sent >= HEARTBEAT_SECONDS:
+                        await websocket.send_text(HEARTBEAT_FRAME)
+                        last_sent = loop.time()
                     await asyncio.sleep(0.1)
         except WebSocketDisconnect:
             pass

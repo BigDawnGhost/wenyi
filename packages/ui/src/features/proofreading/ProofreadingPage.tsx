@@ -1,31 +1,28 @@
 import { useState } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useI18n } from "@/i18n";
-import { statusLabel } from "@/i18n/status";
-import { api, isProjectBusy } from "@/lib/api";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Card, CardContent } from "@/components/ui/card";
-import { StatusBadge } from "@/components/StatusBadge";
-import { Input, Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
-import { ErrorNotice } from "@/components/ui/data";
+import { useI18n } from "../../i18n";
+import { statusLabel } from "../../i18n/status";
+import { api, isProjectBusy } from "../../api/client";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Card, CardContent } from "../../components/ui/card";
+import { StatusBadge } from "../../components/StatusBadge";
+import { Input, Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
+import { ErrorNotice } from "../../components/ui/data";
 import { ChapterProofreading } from "./ChapterProofreading";
 
 export default function ProofreadingPage() {
   const { t } = useI18n();
   const { pid = "", ci } = useParams();
-  const project = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-    refetchInterval: 3000,
-  });
-  const subtitle = project.data?.fmt === "srt";
+  const project = useProjectQuery(pid);
+  const busy = isProjectBusy(project.data?.status);
   const chapters = useQuery({
     queryKey: ["chapters", pid],
     queryFn: () => api.listChapters(pid),
-    enabled: !!project.data && !subtitle,
-    refetchInterval: 3000,
+    enabled: !!project.data,
+    refetchInterval: busy ? 3000 : false,
   });
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("");
@@ -39,8 +36,6 @@ export default function ProofreadingPage() {
   const statuses = [
     ...new Set(chapters.data?.map((chapter) => chapter.status)),
   ];
-  const busy = isProjectBusy(project.data?.status);
-  if (subtitle) return <Navigate to={`/projects/${pid}/subtitles`} replace />;
   if (ci !== undefined) {
     return (
       <ChapterProofreading
@@ -49,7 +44,10 @@ export default function ProofreadingPage() {
         index={Number(ci)}
         chapters={chapters.data || []}
         busy={busy}
-        readOnly={busy || !project.data || project.isError || chapters.isError}
+        sourceOnly={project.data?.initialized !== true}
+        readOnly={
+          busy || !project.data?.initialized || project.isError || chapters.isError
+        }
         error={project.error || chapters.error}
         targetLanguage={project.data?.target_lang ?? undefined}
       />
@@ -57,10 +55,7 @@ export default function ProofreadingPage() {
   }
   return (
     <>
-      <PageHeader
-        title={t("progress.manualProofreading")}
-        subtitle={t("proofreading.savedBatchesRefresh")}
-      />
+      <PageHeader title={t("progress.manualProofreading")} />
       <PageContainer className="space-y-4">
         <ErrorNotice error={project.error || chapters.error} />
         <Card>
@@ -131,7 +126,7 @@ export default function ProofreadingPage() {
               <p className="text-sm text-muted-foreground">
                 {project.isPending || chapters.isFetching
                   ? t("progress.loading")
-                  : t("proofreading.chaptersAppearAfterPreparation")}
+                  : t("progress.chaptersWillAppearAfterParsing")}
               </p>
             )}
           </CardContent>

@@ -10,10 +10,11 @@ from __future__ import annotations
 import os
 import re
 
+from .encoding import decode_source
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
 # Markdown headings.
-_MD_HEADING = re.compile(r"^(#{1,3})\s+(.*\S)\s*$")
+_MD_HEADING = re.compile(r"^(#{1,6})\s+(.*\S)\s*$")
 # Japanese chapter labels at the start of a line.
 _JA_CHAPTER = re.compile(
     r"^\s*(?:"
@@ -40,9 +41,9 @@ def _split_paragraphs(block: str) -> list[str]:
 
 
 def read_text(path: str, source_lang: str, target_lang: str) -> Document:
-    """Read UTF-8 text or Markdown, identify headings and construct a Document."""
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
+    """Read text or Markdown in UTF-8 or a detected legacy encoding, then build a Document."""
+    with open(path, "rb") as handle:
+        content, _encoding = decode_source(handle.read())
 
     lines = content.splitlines()
     book_title = os.path.splitext(os.path.basename(path))[0]

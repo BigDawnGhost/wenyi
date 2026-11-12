@@ -2,8 +2,8 @@
 
 from contextlib import contextmanager
 
-from fastapi import HTTPException
 from wenyi_backend.config_documents import global_document
+from wenyi_backend.errors import SETTINGS_CONFLICT, ApiError
 from wenyi_backend.global_settings import GlobalSettings, validate_settings
 from wenyi_backend.model_registry import project_registry_updates
 from wenyi_core.config import Config
@@ -24,8 +24,8 @@ class DesktopSettings:
         saved = self.backend.load_settings(connection)
         return (
             GlobalSettings(
-                Config.from_dict(global_document(Config.from_dict(saved["config"]))),
-                "标准翻译",
+                Config.from_dict(saved["config"]),
+                saved.get("template", "标准翻译"),
                 saved["revision"],
             )
             if saved
@@ -49,7 +49,9 @@ class DesktopSettings:
         with self.guard(exclusive=True) as conn:
             current = self.load(connection=conn)
             if revision != current.revision:
-                raise HTTPException(409, "Global settings changed; reload before saving again")
+                raise ApiError(
+                    SETTINGS_CONFLICT, 409, "Global settings changed; reload before saving again"
+                )
             renames = provider_renames or {}
             old_providers = current.config.llm.providers
             new_providers = config.llm.providers

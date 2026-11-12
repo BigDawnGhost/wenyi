@@ -5,7 +5,9 @@ from copy import deepcopy
 from datetime import datetime, timezone
 
 import pytest
+from wenyi_backend.context import current_context
 from wenyi_backend.live_statistics import LiveStatistics, read_live_statistics
+from wenyi_core.events import TranslationEvent
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, empty_usage
 from wenyi_core.timing import RunTimer, observe_timers
@@ -38,6 +40,9 @@ class MemoryStore:
 
     def load_usage(self):
         return deepcopy(self.usage)
+
+    def close(self):
+        pass
 
     def read_artifact(self, key):
         assert key == "timing.json"
@@ -144,6 +149,33 @@ def test_redis_failure_does_not_interrupt_the_workflow():
     live.publish()
 
 
+def test_redis_failure_is_logged_instead_of_swallowed(caplog):
+    from wenyi_backend.emitters import RedisEmitter
+
+    class OfflineRedis(MemoryRedis):
+        def set(self, key, value, ex):
+            raise OSError("offline")
+
+    with caplog.at_level("WARNING"):
+        LiveStatistics(OfflineRedis(), "book", "run", MemoryStore()).publish()
+
+    records = [
+        record for record in caplog.records if record.name == "wenyi_backend.live_statistics"
+    ]
+    assert [record.levelname for record in records] == ["WARNING"]
+    assert "book" in records[0].getMessage()
+    assert "offline" in records[0].getMessage()
+
+    caplog.clear()
+    with caplog.at_level("WARNING"):
+        RedisEmitter(OfflineRedis(), "book", "run").emit(TranslationEvent(kind="progress"))
+
+    records = [record for record in caplog.records if record.name == "wenyi_backend.emitters"]
+    assert [record.levelname for record in records] == ["WARNING"]
+    assert "book" in records[0].getMessage()
+    assert "offline" in records[0].getMessage()
+
+
 def test_observer_scope_does_not_escape_to_unrelated_invocations():
     seen = []
     with observe_timers(seen.append):
@@ -170,7 +202,7 @@ def test_stats_endpoint_uses_current_job_and_falls_back_to_durable_totals(
         configuration, "require_project", lambda _: {"id": "book", "status": "translating"}
     )
     monkeypatch.setattr(
-        configuration.dal,
+        current_context().repository,
         "list_jobs",
         lambda _: [
             {"kind": "export", "run_id": "export", "status": "running"},

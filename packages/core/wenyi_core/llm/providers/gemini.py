@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..retrying import EmptyResponseError, TruncatedResponseError
 from ..transport import Messages, ProviderAdapter, RequestContext, ResolvedModel
-from ..usage import UsageSample, make_usage_sample, read_usage_int
+from ..usage import UsageSample, make_usage_sample, read_usage_counter, read_usage_int
 
 DEFAULT_API_KEY_ENV = "GEMINI_API_KEY"
 FALLBACK_API_KEY_ENV = "GOOGLE_API_KEY"
@@ -103,8 +103,8 @@ def extract_gemini_usage(usage_metadata: Any) -> UsageSample | None:
         prompt_tokens + completion_tokens
     )
 
-    cache_hit_tokens = read_usage_int(usage_metadata, "cached_content_token_count")
-    cache_miss_tokens = max(0, prompt_tokens - cache_hit_tokens)
+    cache_hit_tokens = read_usage_counter(usage_metadata, "cached_content_token_count")
+    ordinary = max(0, prompt_tokens - cache_hit_tokens) if cache_hit_tokens is not None else None
 
     return make_usage_sample(
         {
@@ -113,7 +113,9 @@ def extract_gemini_usage(usage_metadata: Any) -> UsageSample | None:
             "total_tokens": total_tokens,
         },
         cache_hit_tokens=cache_hit_tokens,
-        cache_miss_tokens=cache_miss_tokens,
+        cache_miss_tokens=ordinary or 0,
+        cache_write_tokens=0,
+        uncached_tokens=ordinary,
     )
 
 
@@ -189,6 +191,16 @@ class GeminiClient(ProviderAdapter):
 
                 self._client = genai.Client(**kwargs)
         return self._client
+
+    def list_models(self) -> list[str]:
+        """List models that support text generation, without the ``models/`` prefix."""
+        names = []
+        for item in self._ensure_client().models.list():
+            actions = getattr(item, "supported_actions", None) or []
+            name = str(getattr(item, "name", "") or "")
+            if name and (not actions or "generateContent" in actions):
+                names.append(name.removeprefix("models/"))
+        return names
 
     def _request(
         self,

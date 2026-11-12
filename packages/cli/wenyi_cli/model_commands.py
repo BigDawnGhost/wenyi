@@ -1,19 +1,16 @@
-"""Model configuration previews and explicit migration commands."""
+"""Model configuration previews and explicit usage conversion."""
 
 from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from datetime import datetime, timezone
 from pathlib import Path
 
 import typer
-import yaml
 from rich.console import Console
 from rich.table import Table
 from wenyi_core.config import Config
 from wenyi_core.llm.operations import configured_operations, require_operation
-from wenyi_core.llm.router import RoutedLLMClient
 from wenyi_core.llm.routing import resolve_routes
 
 
@@ -74,14 +71,15 @@ def register_model_commands(
 
     @models.command("check")
     def check(
-        workflow: str = typer.Option(
-            "translate", "--for", help="prepare, translate, review or srt"
-        ),
+        workflow: str = typer.Option("translate", "--for", help="prepare, translate or review"),
     ):
         """Validate reachable credentials locally; never send a test request."""
         try:
             config = load_config()
             operations = configured_operations(config, workflow)
+            # Imported here so ``--help`` never pays for the provider SDK.
+            from wenyi_core.llm.router import RoutedLLMClient
+
             RoutedLLMClient(config.llm).validate_credentials(operations)
             console.print(
                 f"Model configuration valid for {workflow}: {len(operations)} operations."
@@ -90,56 +88,55 @@ def register_model_commands(
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
 
-    @models.command("migrate-config")
-    def migrate_config(
-        source: Path = typer.Argument(..., exists=True, dir_okay=False),
-        out: Path = typer.Option(..., "--out", help="New YAML file; must not exist"),
+    @models.command("ping")
+    def ping(
+        workflow: str = typer.Option("translate", "--for", help="prepare, translate or review"),
+        timeout: float = typer.Option(
+            30.0, "--timeout", min=0.1, help="Seconds to wait for each provider"
+        ),
+        as_json: bool = typer.Option(False, "--json", help="Print structured probe results"),
     ):
-        """Convert a retired configuration into a separate, reviewable YAML file."""
-        from wenyi_core.llm.migration import convert_config
+        """Send one short live request per reachable model profile; uses a few tokens."""
+        from wenyi_core.llm.connectivity import probe_connections
 
         try:
-            raw = yaml.safe_load(source.read_text(encoding="utf-8"))
-            if not isinstance(raw, dict):
-                raise ValueError("Configuration must be a mapping")
-            converted = convert_config(raw)
-            Config.from_dict(converted)
-            with out.open("x", encoding="utf-8") as file:
-                yaml.safe_dump(converted, file, allow_unicode=True, sort_keys=False)
-            console.print(f"Converted configuration: {out}")
-        except (OSError, ValueError, yaml.YAMLError) as error:
+            config = load_config()
+            operations = configured_operations(config, workflow)
+            results = probe_connections(config.llm, operations, timeout=timeout)
+        except (ValueError, RuntimeError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
+        if as_json:
+            typer.echo(json.dumps([result.describe() for result in results], indent=2))
+        else:
+            table = Table("Profile", "Connection / adapter", "Model", "Status", "Latency", "Detail")
+            for result in results:
+                table.add_row(
+                    result.profile,
+                    f"{result.connection} / {result.provider}",
+                    result.model,
+                    "[green]ok[/]" if result.ok else f"[red]{result.category}[/]",
+                    "-" if result.latency_ms is None else f"{result.latency_ms} ms",
+                    result.message,
+                )
+            console.print(table)
+        failed = sum(not result.ok for result in results)
+        if failed:
+            if not as_json:
+                console.print(f"[red]{failed} of {len(results)} model profiles unreachable.[/]")
+            raise typer.Exit(1)
+        if not as_json:
+            console.print(f"All {len(results)} model profiles reachable for {workflow}.")
 
     @models.command("migrate-usage")
     def migrate_usage(run_dir: Path = typer.Argument(..., exists=True, file_okay=False)):
         """Back up and convert usage ledgers in one selected target run directory."""
-        from wenyi_core.llm.usage import convert_usage_ledger
-        from wenyi_core.pipeline.runstore import RunStore
+        from wenyi_core.storage.file_migrations import migrate_usage_ledgers
 
         try:
-            store = RunStore(str(run_dir), create=False)
-            if not store.exists():
-                raise ValueError("Select a target run directory containing manifest.json")
-            with store.lock():
-                paths = [
-                    run_dir / "usage.json",
-                    *sorted((run_dir / "reviews").glob("review-*/usage.json")),
-                ]
-                changes = []
-                for path in paths:
-                    if path.is_file():
-                        original = path.read_bytes()
-                        converted = convert_usage_ledger(json.loads(original))
-                        if json.loads(original) != converted:
-                            changes.append((path, original, converted))
-                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-                for path, original, converted in changes:
-                    with path.with_name(f"usage.before-routing-{stamp}.json").open("xb") as backup:
-                        backup.write(original)
-                    store._write_json(str(path), converted)
+            count = migrate_usage_ledgers(run_dir)
             console.print(
-                f"Converted {len(changes)} usage ledgers; original files backed up alongside them."
+                f"Converted {count} usage ledgers; original files backed up alongside them."
             )
         except (OSError, ValueError) as error:
             console.print(f"[red]Error: {error}[/]")

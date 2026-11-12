@@ -1,15 +1,17 @@
-import { useI18n } from "@/i18n";
+import { useI18n } from "../../i18n";
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { skipToken, useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { api, isProjectBusy, type AnalysisPayload } from "@/lib/api";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Label, Textarea } from "@/components/ui/form";
-import { ErrorNotice } from "@/components/ui/data";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/misc";
+import { toast } from "../../lib/toast";
+import { api, isProjectBusy } from "../../api/client";
+import type { AnalysisPayload } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
+import { Label, Textarea } from "../../components/ui/form";
+import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/misc";
 
 const styleFields = [
   ["genre", "style.genre"],
@@ -36,11 +38,7 @@ export default function StylePage() {
   });
   const setDraft = (update: (current: Record<string, string>) => Record<string, string>) =>
     qc.setQueryData<Record<string, string>>(["analysis-draft", pid], (current) => update(current || {}));
-  const { data: project } = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-    refetchInterval: 3000,
-  });
+  const { data: project } = useProjectQuery(pid);
   const busy = isProjectBusy(project?.status);
   const { data, error } = useQuery({
     queryKey: ["analysis", pid],
@@ -82,6 +80,8 @@ export default function StylePage() {
       return next;
     });
   const saveFields = (keys: string[]) => {
+    // A second click can arrive before the re-render that disables the button,
+    // so the guard is what keeps one edit from becoming two submissions.
     if (qc.isMutating({ mutationKey: saveKey, exact: true })) return;
     save.mutate({
       projectId: pid,
@@ -94,17 +94,10 @@ export default function StylePage() {
 
   return (
     <>
-      <PageHeader
-        title={tr("common.styleSynopsis")}
-        subtitle={tr("style.preparationResultsCanBeEditedToGuide")}
-      />
+      <PageHeader title={tr("common.styleSynopsis")} />
       <PageContainer>
         <ErrorNotice error={error || save.error} />
-        {busy && (
-          <p className="text-sm text-muted-foreground mb-4">
-            {tr("style.styleAndSynopsisAreReadOnlyWhile")}
-          </p>
-        )}
+        {busy && <ReadOnlyNotice className="mb-4" />}
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList className="flex w-fit max-w-full flex-wrap [&_button]:whitespace-nowrap">
             <TabsTrigger value="style">{tr("style.styleAnalysis")}</TabsTrigger>
@@ -120,16 +113,23 @@ export default function StylePage() {
             <Card>
               <CardHeader className="flex-row items-center justify-between">
                 <CardTitle>{tr("style.styleOverview")}</CardTitle>
-                <Button
-                  size="sm"
-                  onClick={() => saveFields(styleKeys)}
-                  disabled={readOnly || !styleKeys.some((key) => key in draft)}
-                >
-                  {tr("common.save")}
-                </Button>
+                <div className="flex items-center gap-3">
+                  {saving && (
+                    <span role="status" className="text-sm text-muted-foreground">
+                      {tr("common.saving")}
+                    </span>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={() => saveFields(styleKeys)}
+                    disabled={readOnly || !styleKeys.some((key) => key in draft)}
+                  >
+                    {tr("common.save")}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
-                <div className="grid md:grid-cols-3 gap-4">
+                <div className="grid grid-cols-3 gap-4">
                   {styleFields.map(([key, label]) => (
                     <div key={key} className="min-w-0 space-y-2">
                       <Label htmlFor={`style-${key}`}>{tr(label)}</Label>
@@ -164,13 +164,20 @@ export default function StylePage() {
             <Card>
               <CardHeader className="flex-row items-center justify-between">
                 <CardTitle>{tr("style.wholeBookSynopsis")}</CardTitle>
-                <Button
-                  size="sm"
-                  onClick={() => saveFields(["book_synopsis"])}
-                  disabled={readOnly || !("book_synopsis" in draft)}
-                >
-                  {tr("common.save")}
-                </Button>
+                <div className="flex items-center gap-3">
+                  {saving && (
+                    <span role="status" className="text-sm text-muted-foreground">
+                      {tr("common.saving")}
+                    </span>
+                  )}
+                  <Button
+                    size="sm"
+                    onClick={() => saveFields(["book_synopsis"])}
+                    disabled={readOnly || !("book_synopsis" in draft)}
+                  >
+                    {tr("common.save")}
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 <Textarea
@@ -189,7 +196,7 @@ export default function StylePage() {
               <CardContent className="p-0">
                 <div
                   aria-hidden="true"
-                  className="hidden grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 border-b p-4 text-xs font-medium text-muted-foreground lg:grid"
+                  className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 border-b p-4 text-xs font-medium text-muted-foreground"
                 >
                   <span>{tr("common.chapter")}</span>
                   <span>{tr("common.summary")}</span>
@@ -201,7 +208,7 @@ export default function StylePage() {
                   {digests.map((d) => (
                     <div
                       key={d.index}
-                      className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] lg:gap-4"
+                      className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 p-4"
                     >
                       <dt className="min-w-0 font-medium [overflow-wrap:anywhere]">
                         {d.title?.trim() || tr("common.untitledChapter")}

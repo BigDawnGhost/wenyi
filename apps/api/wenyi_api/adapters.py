@@ -1,48 +1,57 @@
 """PostgreSQL repository and export ports, owned by one Web application."""
 
+import re
+import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from psycopg.types.json import Jsonb
 from wenyi_backend.context import BackendContext
+from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_backend.export_paths import EXPORT_LIMIT
+from wenyi_backend.metrics import Metrics
 from wenyi_core.llm.factory import build_client
 
 from . import dal
 from .config import Settings
 from .db import init_pool
-from .export_retention import open_export, publish_export
+from .export_retention import (
+    export_history_lock,
+    export_history_session_lock,
+    open_export,
+    publish_export,
+)
 from .global_settings import PostgresSettings
+from .metrics import RedisCounters
 from .storage_pg import PostgresStorage
 from .telemetry import RedisTelemetry
 
 
 class PostgresRepository:
-    # __getattr__ returns these module functions without binding a repository argument.
-    # Keep lookup dynamic so DAL replacements remain visible to an existing context.
-    if TYPE_CHECKING:
-        create_project = staticmethod(dal.create_project)
-        get_project = staticmethod(dal.get_project)
-        list_projects = staticmethod(dal.list_projects)
-        delete_project = staticmethod(dal.delete_project)
-        set_project_status = staticmethod(dal.set_project_status)
-        set_project_strategy = staticmethod(dal.set_project_strategy)
-        set_project_config = staticmethod(dal.set_project_config)
-        set_project_languages = staticmethod(dal.set_project_languages)
-        set_project_source = staticmethod(dal.set_project_source)
-        chapter_summaries = staticmethod(dal.chapter_summaries)
-        total_word_count = staticmethod(dal.total_word_count)
-        create_job = staticmethod(dal.create_job)
-        get_job = staticmethod(dal.get_job)
-        get_job_by_arq_id = staticmethod(dal.get_job_by_arq_id)
-        set_job_status = staticmethod(dal.set_job_status)
-        list_jobs = staticmethod(dal.list_jobs)
-        latest_resumable_job = staticmethod(dal.latest_resumable_job)
-        job_review_id = staticmethod(dal.job_review_id)
-        is_paused = staticmethod(dal.is_paused)
-        create_export = staticmethod(dal.create_export)
-        set_export_status = staticmethod(dal.set_export_status)
+    """Explicit adapter surface; SQL helpers retain their typed call signatures."""
+
+    create_project = staticmethod(dal.create_project)
+    get_project = staticmethod(dal.get_project)
+    list_projects = staticmethod(dal.list_projects)
+    delete_project = staticmethod(dal.delete_project)
+    set_project_status = staticmethod(dal.set_project_status)
+    request_pause = staticmethod(dal.request_pause)
+    set_project_strategy = staticmethod(dal.set_project_strategy)
+    set_project_config = staticmethod(dal.set_project_config)
+    set_project_languages = staticmethod(dal.set_project_languages)
+    set_project_source = staticmethod(dal.set_project_source)
+    chapter_summaries = staticmethod(dal.chapter_summaries)
+    total_word_count = staticmethod(dal.total_word_count)
+    create_job = staticmethod(dal.create_job)
+    get_job = staticmethod(dal.get_job)
+    get_job_by_arq_id = staticmethod(dal.get_job_by_arq_id)
+    set_job_status = staticmethod(dal.set_job_status)
+    list_jobs = staticmethod(dal.list_jobs)
+    latest_resumable_job = staticmethod(dal.latest_resumable_job)
+    job_review_id = staticmethod(dal.job_review_id)
+    is_paused = staticmethod(dal.is_paused)
+    create_export = staticmethod(dal.create_export)
+    set_export_status = staticmethod(dal.set_export_status)
 
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -56,24 +65,70 @@ class PostgresRepository:
 
     def start(self):
         self._pool = init_pool(self.settings.psycopg_dsn)
+        try:
+            from .config_rebuild import rebuild_saved_settings
+
+            rebuild_saved_settings(self._pool, self.settings.config_path)
+        except BaseException:
+            self.close()
+            raise
 
     def close(self):
         if self._pool is not None:
             self._pool.close()
             self._pool = None
 
-    def __getattr__(self, name):
-        return getattr(dal, name)
-
     def project_dir(self, pid):
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", pid):
+            raise ValueError("Invalid project ID")
         return str(Path(self.settings.data_dir) / pid)
 
     def storage_for(self, pid):
         return PostgresStorage(pid, self.pool, run_dir=self.project_dir(pid))
 
+    def remove_project(self, pid: str) -> None:
+        """Delete owned files before committing the cascading catalog deletion."""
+        from wenyi_backend.project_service import project_write
+
+        directory = Path(self.project_dir(pid))
+        root = Path(self.settings.data_dir).resolve()
+        if directory.is_symlink() or directory.resolve().parent != root:
+            raise ApiError(PROJECT_BUSY, 409, "Project directory is outside DATA_DIR")
+        with (
+            project_write(pid, self, self.storage_for),
+            export_history_session_lock(self.pool, pid) as connection,
+        ):
+            row = connection.execute(
+                """SELECT EXISTS (
+                    SELECT 1 FROM jobs WHERE project_id=%s AND status IN ('queued','running')
+                    UNION ALL
+                    SELECT 1 FROM exports WHERE project_id=%s AND status IN ('pending','running')
+                )""",
+                (pid, pid),
+            ).fetchone()
+            connection.commit()
+            if row and row[0]:
+                raise ApiError(PROJECT_BUSY, 409, "A task is active; wait for it before deleting")
+            try:
+                if directory.exists():
+                    shutil.rmtree(directory)
+            except OSError as error:
+                raise ApiError(
+                    PROJECT_BUSY,
+                    409,
+                    "Could not remove project files; close files using this project and retry",
+                ) from error
+            dal.delete_project(pid, connection=connection)
+            connection.commit()
+
     def health(self):
         with self.pool.connection() as conn:
             conn.execute("SELECT 1")
+
+    def queued_job_count(self) -> int:
+        with self.pool.connection() as connection:
+            row = connection.execute("SELECT count(*) FROM jobs WHERE status='queued'").fetchone()
+            return row[0]
 
     def admit_job(self, pid, kind, job_id, *, project_status, **kwargs):
         result = dal.create_job(pid, kind, job_id, status="queued", **kwargs)
@@ -145,8 +200,11 @@ class PostgresExports:
         return result
 
     def admit_export(self, pid, fmt, options, run_id, snapshot):
-        export_id = dal.create_export(pid, fmt, options)
-        try:
+        with self.repository.pool.connection() as connection:
+            export_history_lock(connection, pid)
+            if connection.execute("SELECT 1 FROM projects WHERE id=%s", (pid,)).fetchone() is None:
+                raise ApiError(PROJECT_NOT_FOUND, 404, "project not found")
+            export_id = dal.create_export(pid, fmt, options, connection=connection)
             job_id = dal.create_job(
                 pid,
                 "export",
@@ -154,10 +212,8 @@ class PostgresExports:
                 run_id=run_id,
                 params={"export_id": export_id},
                 config_snapshot=snapshot,
+                connection=connection,
             )
-        except Exception as error:
-            dal.set_export_status(export_id, "error", error=str(error))
-            raise
         return export_id, job_id
 
     def fail_export_admission(self, job_id, error):
@@ -196,8 +252,9 @@ def create_context(settings: Settings) -> BackendContext:
         repository=repository,
         settings_store=PostgresSettings(repository, settings.config_path),
         exports=PostgresExports(repository),
-        telemetry=RedisTelemetry(settings.redis_url),
+        telemetry=RedisTelemetry(settings.redis_url, repository),
         storage_for=repository.storage_for,
+        read_storage_for=repository.storage_for,
         build_client=build_client,
         enqueue=submit,
         data_dir=settings.data_dir,
@@ -205,4 +262,6 @@ def create_context(settings: Settings) -> BackendContext:
         health=repository.health,
         update_term=repository.update_term,
         api_token=settings.api_token,
+        remove_project=repository.remove_project,
+        metrics=Metrics(RedisCounters(settings.redis_url)),
     )

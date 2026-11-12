@@ -23,12 +23,14 @@ def backend_context(tmp_path):
             release=lambda cache: None,
         ),
         storage_for=Mock(),
+        read_storage_for=Mock(),
         build_client=lambda config: FakeClient(),
         enqueue=Mock(),
         data_dir=str(tmp_path),
         project_dir=lambda pid: str(tmp_path / pid),
         health=lambda: None,
         update_term=Mock(),
+        remove_project=Mock(),
     )
     with use_context(context):
         yield context

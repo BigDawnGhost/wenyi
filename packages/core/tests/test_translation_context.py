@@ -4,13 +4,18 @@ import json
 import re
 
 import pytest
+from wenyi_core.agents.glossary_extractor import TranslatedSegmentEvidence
 from wenyi_core.agents.polisher import Polisher
 from wenyi_core.agents.translator import Translator
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.ingest.tokens import count_tokens
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.document import Chapter, Document, Segment
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.translate.translation import TranslationService
+from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.sqlite import SqliteStorage
 
 from tests.fake_llm import routing_handler
 
@@ -42,6 +47,202 @@ def _next_source(user: str) -> str:
 
 def _numbered_sources(user: str) -> list[str]:
     return re.findall(r"^\[\d+\] (.*)$", user, flags=re.MULTILINE)
+
+
+@pytest.mark.parametrize("storage_type", [FileStorage, SqliteStorage])
+@pytest.mark.parametrize("budget", [0, 32, 512])
+def test_context_is_rebuilt_from_chapters_without_reading_or_updating_legacy_cache(
+    tmp_path, config, monkeypatch, storage_type, budget
+):
+    config.pipeline.rolling_context_tokens = budget
+    store = storage_type(str(tmp_path / "run"))
+    previous = Chapter(index=0, segments=[Segment(index=0, source="previous", target="previous")])
+    saved_targets = [f"saved {i}" for i in range(60)]
+    saved = [
+        Segment(index=i, source=f"source {i}", target=target)
+        for i, target in enumerate(saved_targets)
+    ]
+    current = Chapter(index=1, segments=[*saved, Segment(index=60, source="Pending source.")])
+    future = Chapter(index=2, segments=[Segment(index=0, source="future", target="FUTURE")])
+    document = Document(
+        title="Book",
+        source_lang="en",
+        target_lang="zh",
+        fmt="text",
+        chapters=[previous, current, future],
+    )
+    manifest = store.stage_document(document, source_hash="a" * 64)
+    manifest["initialized"] = True
+    store.save_manifest(manifest)
+    store.set_chapter_status(0, "done")
+    store.set_chapter_status(2, "done")
+    legacy = {"recent_targets": ["STALE", "FUTURE"], "max_recent_keep": 40}
+    store.write_artifact("context.json", legacy)
+    read = store.read_artifact
+    write = store.write_artifact
+
+    def read_without_cache(key):
+        assert key != "context.json"
+        return read(key)
+
+    def write_without_cache(key, value):
+        assert key != "context.json"
+        return write(key, value)
+
+    monkeypatch.setattr(store, "read_artifact", read_without_cache)
+    monkeypatch.setattr(store, "write_artifact", write_without_cache)
+    orchestrator = Orchestrator(config, client=FakeClient(handler=routing_handler))
+    plans = []
+    execute = orchestrator._translation._batches.execute
+
+    def record(plan, **kwargs):
+        plans.append(plan)
+        return execute(plan, **kwargs)
+
+    monkeypatch.setattr(orchestrator._translation._batches, "execute", record)
+    try:
+        orchestrator._translation.run(store, book_synopsis="", only_chapter=1)
+        assert len(plans) == 1
+        rendered = plans[0].context
+        assert count_tokens(rendered) <= budget
+        assert "FUTURE" not in rendered and "STALE" not in rendered
+        if budget == 0:
+            assert rendered == ""
+        elif budget == 512:
+            assert rendered == "\n".join(["previous", *saved_targets])
+        else:
+            assert rendered.endswith("saved 59")
+            assert "saved 0\n" not in rendered
+        assert store.load_chapter(1).segments[:60] == saved
+        assert store.load_chapter(0) == previous
+        assert store.load_chapter(2) == future
+        assert read("context.json") == legacy
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("target", [None, "", " \n ", " translated "])
+def test_translation_history_rebuild_matches_incremental_updates(tmp_path, target):
+    store = FileStorage(str(tmp_path / "state"))
+    chapter = Chapter(
+        index=4,
+        title="Chapter",
+        segments=[
+            Segment(index=2, source=" \n ", target="not text"),
+            Segment(index=7, source="source", target=target),
+        ],
+    )
+    store.save_chapter(chapter)
+    store.save_manifest({"chapters": [{"index": 4}]})
+    history, corpus = TranslationService.load_translation_inputs(store)
+    incremental = {}
+    TranslationService.update_translation_history(incremental, 4, 0, chapter.text_segments)
+
+    expected = (
+        {
+            (4, 0): TranslatedSegmentEvidence(
+                chapter=4, segment=0, source="source", target="translated"
+            )
+        }
+        if target and target.strip()
+        else {}
+    )
+    assert history == incremental == expected
+    assert corpus == "source"
+    assert store.load_chapter(4).text_segments[0].target == target
+
+
+def test_translation_inputs_follow_chapter_order_and_text_positions(tmp_path):
+    store = FileStorage(str(tmp_path / "state"))
+    for index in (3, 1):
+        store.save_chapter(
+            Chapter(
+                index=index,
+                title=f"Chapter {index}",
+                segments=[
+                    Segment(index=5, source=f"source {index}", target=f"target {index}"),
+                    Segment(index=8, source=f"pending {index}"),
+                ],
+            )
+        )
+    store.save_manifest({"chapters": [{"index": 3}, {"index": "invalid"}, {"index": 1}]})
+
+    history, corpus = TranslationService.load_translation_inputs(store)
+
+    assert list(history) == [(1, 0), (3, 0)]
+    assert corpus == "source 1\npending 1\nsource 3\npending 3"
+
+
+@pytest.mark.parametrize("saved_target", [None, "saved", ""])
+def test_new_and_resumed_batches_align_before_updating_context(
+    tmp_path, config, monkeypatch, saved_target
+):
+    source = tmp_path / "book.txt"
+    source.write_text("First source paragraph.\n\nSecond source paragraph.", encoding="utf-8")
+    client = FakeClient(handler=routing_handler)
+    orch = Orchestrator(config, client=client)
+    store = orch.prepare(str(source))
+    chapter = store.load_chapter(0)
+    chapter.text_segments[0].target = saved_target
+    store.save_chapter(chapter)
+    stages = []
+
+    def align_annotations(ci, chapter, start, count, storage):
+        assert count == 1
+        assert storage.load_chapter(ci).text_segments[start].target is not None
+        stages.append(("annotations", start))
+        chapter.text_segments[start].target = f"annotated {start}"
+        storage.save_chapter(chapter)
+
+    def align_styles(ci, chapter, start, count, storage):
+        assert chapter.text_segments[start].target == f"annotated {start}"
+        stages.append(("styles", start))
+        chapter.text_segments[start].target = f"styled {start}"
+        if start == 1:
+            # Completing a logical paragraph can also change an earlier batch's target.
+            chapter.text_segments[0].target = "realigned prefix"
+        storage.save_chapter(chapter)
+
+    monkeypatch.setattr(orch._annotations, "align_annotations_after_batch", align_annotations)
+    monkeypatch.setattr(orch._translation._docx_styles, "align_styles_after_batch", align_styles)
+    orch.run(str(source))
+
+    calls = [call for call in client.calls if call["operation"] == "translation.body"]
+    assert len(calls) == (2 if saved_target is None else 1)
+    assert "[Recent translations]\nstyled 0" in calls[-1]["messages"][-1]["content"]
+    assert stages == [("annotations", 0), ("styles", 0), ("annotations", 1), ("styles", 1)]
+    assert [segment.target for segment in store.load_chapter(0).text_segments] == [
+        "realigned prefix",
+        "styled 1",
+    ]
+    assert store.read_artifact("context.json") is None
+
+
+def test_context_uses_realigned_targets_instead_of_a_cached_previous_window(
+    tmp_path, config, monkeypatch
+):
+    source = tmp_path / "book.txt"
+    source.write_text("First source.\n\nSecond source.\n\nThird source.", encoding="utf-8")
+    client = FakeClient(handler=routing_handler)
+    orchestrator = Orchestrator(config, client=client)
+    store = orchestrator.prepare(str(source))
+
+    def align(ci, chapter, start, count, storage):
+        chapter.text_segments[start].target = f"aligned {start}"
+        if start == 1:
+            chapter.text_segments[0].target = "updated earlier target"
+        storage.save_chapter(chapter)
+
+    monkeypatch.setattr(orchestrator._translation._docx_styles, "align_styles_after_batch", align)
+    orchestrator.run(str(source))
+
+    calls = [call for call in client.calls if call["operation"] == "translation.body"]
+    assert len(calls) == 3
+    assert (
+        "[Recent translations]\nupdated earlier target\naligned 1"
+        in (calls[-1]["messages"][-1]["content"])
+    )
+    assert store.read_artifact("context.json") is None
 
 
 @pytest.mark.parametrize("source_lang,target_lang", [("en", "zh"), ("zh", "en"), ("ja", "fr")])
@@ -141,12 +342,12 @@ def test_polish_continue_reuses_translation_transcript(config):
     assert _next_source(client.calls[1]["messages"][-1]["content"]) == "continuation source"
 
 
-@pytest.mark.parametrize("recent_count", [0, 2])
+@pytest.mark.parametrize("recent_tokens", [0, 512])
 def test_split_fragments_and_chapter_ends_supply_one_reference_to_both_stages(
-    tmp_path, config, recent_count
+    tmp_path, config, recent_tokens
 ):
     config.pipeline.polish = True
-    config.pipeline.rolling_context_segments = recent_count
+    config.pipeline.rolling_context_tokens = recent_tokens
     # 14 tokens under cl100k_base; a 10-token segment budget forces a continuation split.
     config.segment.max_tokens_per_segment = 10
     source = tmp_path / "book.md"
@@ -160,11 +361,8 @@ def test_split_fragments_and_chapter_ends_supply_one_reference_to_both_stages(
     store = orch.prepare(str(source))
     before = [store.load_chapter(index) for index in (0, 1)]
     assert any(segment.cont for chapter in before for segment in chapter.text_segments)
-    expected = [
-        chapter.text_segments[index + 1].source if index + 1 < len(chapter.text_segments) else ""
-        for chapter in before
-        for index in range(len(chapter.text_segments))
-    ]
+    ordered_sources = [segment.source for chapter in before for segment in chapter.text_segments]
+    expected = [*ordered_sources[1:], ""]
 
     orch.run(str(source))
 
@@ -188,9 +386,39 @@ def test_split_fragments_and_chapter_ends_supply_one_reference_to_both_stages(
             (s.index, s.source, s.cont) for s in chapter.segments
         ]
         assert all(s.target == "润0" for s in after.text_segments)
-    context = store.load_context()
-    assert context is not None
-    assert set(context["recent_targets"]) == {"润0"}
+    assert store.read_artifact("context.json") is None
+
+
+@pytest.mark.parametrize("storage_type", [FileStorage, SqliteStorage])
+def test_following_source_crosses_empty_chapters_without_translating_them_early(
+    tmp_path, config, storage_type
+):
+    config.pipeline.rolling_context_tokens = 0
+    chapters = [
+        Chapter(index=0, segments=[Segment(index=0, source="Current paragraph.")]),
+        Chapter(index=1, segments=[Segment(index=0, source=" \n ")]),
+        Chapter(index=2, segments=[Segment(index=0, source="Next chapter paragraph.")]),
+    ]
+    document = Document(
+        title="Book", source_lang="en", target_lang="zh", fmt="text", chapters=chapters
+    )
+    store = storage_type(str(tmp_path / "run"))
+    manifest = store.stage_document(document, source_hash="b" * 64)
+    manifest["initialized"] = True
+    store.save_manifest(manifest)
+    client = FakeClient(handler=routing_handler)
+    try:
+        Orchestrator(config, client=client)._translation.run(
+            store, book_synopsis="", only_chapter=0
+        )
+        calls = [call for call in client.calls if call["operation"] == "translation.body"]
+        assert len(calls) == 1
+        assert _numbered_sources(calls[0]["messages"][-1]["content"]) == ["Current paragraph."]
+        assert _next_source(calls[0]["messages"][-1]["content"]) == "Next chapter paragraph."
+        assert store.load_chapter(1) == chapters[1]
+        assert store.load_chapter(2) == chapters[2]
+    finally:
+        store.close()
 
 
 def test_resume_rebuilds_reference_after_batch_budget_change_without_saving_it_early(

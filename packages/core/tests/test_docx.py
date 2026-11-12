@@ -6,7 +6,7 @@ import os
 import tempfile
 import unittest
 import zipfile
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from xml.etree import ElementTree
 
 from docx import Document as DocxDocument
@@ -19,11 +19,11 @@ from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
 from wenyi_core.document_styles.docx import merge_align_results, proportional_range_placements
 from wenyi_core.ingest.docx_reader import read_docx
-from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.runstore import STATUS_DONE
+from wenyi_core.models.document import KIND_HEADING, KIND_TEXT
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.run_store import STATUS_DONE
 
 
 def _write_sample_docx(path: str) -> None:
@@ -90,6 +90,59 @@ class TestDocxReader(unittest.TestCase):
             book = read_docx(path, "en", "zh")
         self.assertEqual(book.chapters[0].segments[0].source, "Hello without lists.")
         self.assertNotIn("list_num_id", book.chapters[0].segments[0].meta)
+
+    def test_merged_gridspan_cells_keep_text_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "merged.docx")
+            doc = DocxDocument()
+            table = doc.add_table(rows=1, cols=2)
+            merged = table.cell(0, 0).merge(table.cell(0, 1))
+            merged.text = "Spanned"
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+        table_segs = [s for s in book.chapters[0].segments if s.meta.get("table_id") == 0]
+        self.assertEqual(len(table_segs), 2)
+        by_pos = {(s.meta["row"], s.meta["col"]): s.source for s in table_segs}
+        self.assertEqual(by_pos[(0, 0)], "Spanned")
+        self.assertEqual(by_pos[(0, 1)], "")
+
+    def test_multi_paragraph_cell_styles_shift_to_joined_offsets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "cell.docx")
+            doc = DocxDocument()
+            table = doc.add_table(rows=1, cols=1)
+            cell = table.cell(0, 0)
+            first = cell.paragraphs[0]
+            first.add_run("Bold title.")
+            first.runs[0].bold = True
+            cell.add_paragraph("Plain body text.")
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+        segment = next(s for s in book.chapters[0].segments if s.meta.get("table_id") == 0)
+        joined = segment.source
+        self.assertEqual(joined, "Bold title.\nPlain body text.")
+        items = segment.meta["docx_styles"]["items"]
+        self.assertEqual(len(items), 1)
+        bold = items[0]
+        self.assertTrue(bold.get("bold"))
+        self.assertEqual(joined[bold["source_start"] : bold["source_end"]], "Bold title.")
+
+    def test_uniform_multi_paragraph_cell_keeps_compact_style(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "uniform.docx")
+            doc = DocxDocument()
+            table = doc.add_table(rows=1, cols=1)
+            cell = table.cell(0, 0)
+            cell.paragraphs[0].add_run("Bold one.")
+            cell.paragraphs[0].runs[0].bold = True
+            second = cell.add_paragraph("")
+            second.add_run("Bold two.").bold = True
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+        segment = next(s for s in book.chapters[0].segments if s.meta.get("table_id") == 0)
+        self.assertEqual(segment.source, "Bold one.\nBold two.")
+        self.assertTrue(segment.meta.get("docx_style", {}).get("bold"))
+        self.assertNotIn("docx_styles", segment.meta)
 
     def test_load_document_routes_docx(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -189,6 +242,54 @@ class TestDocxReader(unittest.TestCase):
             self.assertTrue(style_name.startswith("List Number"))
             num_pr = first._p.pPr.find(qn("w:numPr")) if first._p.pPr is not None else None
             self.assertIsNotNone(num_pr)
+
+    def test_bilingual_export_keeps_list_numbering_on_target_only(self):
+        from docx.oxml.ns import qn
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "list.docx")
+            doc = DocxDocument()
+            doc.add_paragraph("One", style="List Number")
+            doc.add_paragraph("Two", style="List Number")
+            doc.save(path)
+            book = read_docx(path, "en", "zh")
+            store = FileStorage(os.path.join(directory, "state", "list"))
+            store.save_manifest(
+                {
+                    "title": "list",
+                    "fmt": "docx",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "source_path": path,
+                    "source_sha256": "x",
+                    "chapters": [
+                        {
+                            "index": 0,
+                            "title": book.chapters[0].title,
+                            "status": STATUS_DONE,
+                        }
+                    ],
+                }
+            )
+            for item in book.chapters[0].segments:
+                item.target = "译" + item.source
+            store.save_chapter(book.chapters[0])
+            out_path = os.path.join(directory, "out.docx")
+            _assemble_docx(store, out_path, bilingual=True)
+            result = DocxDocument(out_path)
+            paragraphs = [p for p in result.paragraphs if p.text]
+            self.assertEqual([p.text for p in paragraphs], ["译One", "One", "译Two", "Two"])
+            for paragraph in paragraphs:
+                target_side = paragraph.text.startswith("译")
+                style_name = paragraph.style.name if paragraph.style is not None else ""
+                assert isinstance(style_name, str)
+                self.assertEqual(
+                    style_name.startswith("List Number"),
+                    target_side,
+                    paragraph.text,
+                )
+                num_pr = paragraph._p.pPr.find(qn("w:numPr")) if paragraph._p.pPr else None
+                self.assertEqual(num_pr is not None, paragraph.text == "译One")
 
 
 class TestDocxStyles(unittest.TestCase):
@@ -381,6 +482,60 @@ class TestDocxStyles(unittest.TestCase):
 
 
 class TestDocxAssemble(unittest.TestCase):
+    def test_markdown_heading_levels_survive_chapter_only_metadata(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "headings.md")
+            with open(path, "w", encoding="utf-8") as source:
+                source.write(
+                    "\n\n".join(
+                        f"{'#' * level} Title {level}\n\nBody {level}." for level in range(1, 7)
+                    )
+                )
+            book = load_document(path, "en", "zh")
+            store = FileStorage(os.path.join(directory, "state", "headings"))
+            store.save_manifest(
+                {
+                    "title": "headings",
+                    "fmt": book.fmt,
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "source_path": path,
+                    "source_sha256": "x",
+                    "chapters": [
+                        {"index": chapter.index, "title": chapter.title, "status": STATUS_DONE}
+                        for chapter in book.chapters
+                    ],
+                }
+            )
+            for level, chapter in enumerate(book.chapters, start=1):
+                self.assertEqual(chapter.meta["heading_level"], level)
+                for segment in chapter.segments:
+                    self.assertIsNone(segment.target)
+                    if segment.kind == KIND_HEADING:
+                        segment.meta.pop("heading_level", None)
+                store.save_chapter(chapter)
+
+            written = assemble(
+                store, path, out_format="docx", out_path=os.path.join(directory, "out.docx")
+            )
+            paragraphs = [p for p in DocxDocument(written).paragraphs if p.text.strip()]
+            actual = []
+            for paragraph in paragraphs:
+                style = paragraph.style
+                assert style is not None
+                actual.append((paragraph.text, style.name))
+            self.assertEqual(
+                actual,
+                [
+                    item
+                    for level in range(1, 7)
+                    for item in [
+                        (f"Title {level}", f"Heading {level}"),
+                        (f"Body {level}.", "Normal"),
+                    ]
+                ],
+            )
+
     def test_assemble_rebuilds_headings_and_table(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "sample.docx")
@@ -428,6 +583,8 @@ class TestDocxAssemble(unittest.TestCase):
 class TestDocxCliDefaults(unittest.TestCase):
     def testresolve_output_format_defaults(self):
         self.assertEqual(resolve_output_format("a.docx", None), "docx")
+        for extension in ("html", "htm", "xhtml", "HTML"):
+            self.assertEqual(resolve_output_format(f"a.{extension}", None), "html")
         self.assertEqual(resolve_output_format("a.epub", None), "epub")
         self.assertEqual(resolve_output_format("a.docx", "epub"), "epub")
         self.assertEqual(resolve_output_format("a.txt", "docx"), "docx")
@@ -436,7 +593,7 @@ class TestDocxCliDefaults(unittest.TestCase):
         captured: dict = {}
 
         class FakeOrchestrator:
-            def __init__(self, config, client=None):
+            def __init__(self, config, client=None, *, allow_terminology_context=False):
                 self.client = FakeClient()
                 del client
                 captured["config"] = config
@@ -444,22 +601,14 @@ class TestDocxCliDefaults(unittest.TestCase):
             def run_all(self, input_path, **kwargs):
                 captured["input"] = input_path
                 captured["kwargs"] = kwargs
-                store = type(
-                    "S",
-                    (),
-                    {"run_dir": "state/sample", "load_usage": staticmethod(lambda: {})},
-                )()
+                store = MagicMock(run_dir="state/sample")
+                store.load_manifest.return_value = {"chapters": [{"status": "done"}]}
+                store.stats.return_value = {"terms": 0}
+                store.load_usage.return_value = {}
                 return {
                     "store": store,
                     "outputs": ["output/sample.zh.docx"],
                     "output": "output/sample.zh.docx",
-                    "report": {
-                        "summary": {
-                            "chapters_done": 1,
-                            "chapters_total": 1,
-                            "terms": 0,
-                        }
-                    },
                 }
 
         with tempfile.TemporaryDirectory() as directory:
@@ -481,28 +630,20 @@ class TestDocxCliDefaults(unittest.TestCase):
         captured: dict = {}
 
         class FakeOrchestrator:
-            def __init__(self, config, client=None):
+            def __init__(self, config, client=None, *, allow_terminology_context=False):
                 self.client = FakeClient()
                 del client
 
             def run_all(self, input_path, **kwargs):
                 captured["kwargs"] = kwargs
-                store = type(
-                    "S",
-                    (),
-                    {"run_dir": "state/sample", "load_usage": staticmethod(lambda: {})},
-                )()
+                store = MagicMock(run_dir="state/sample")
+                store.load_manifest.return_value = {"chapters": [{"status": "done"}]}
+                store.stats.return_value = {"terms": 0}
+                store.load_usage.return_value = {}
                 return {
                     "store": store,
                     "outputs": ["output/book.zh.docx"],
                     "output": "output/book.zh.docx",
-                    "report": {
-                        "summary": {
-                            "chapters_done": 1,
-                            "chapters_total": 1,
-                            "terms": 0,
-                        }
-                    },
                 }
 
         with tempfile.TemporaryDirectory() as directory:

@@ -2,9 +2,9 @@
 
 from contextlib import contextmanager, nullcontext
 
-from fastapi import HTTPException
 from psycopg.types.json import Jsonb
 from wenyi_backend.config_documents import global_document
+from wenyi_backend.errors import SETTINGS_CONFLICT, ApiError
 from wenyi_backend.global_settings import GlobalSettings, validate_settings
 from wenyi_backend.model_registry import project_registry_updates
 from wenyi_core.config import Config
@@ -28,9 +28,7 @@ class PostgresSettings:
                 "SELECT document, default_template, revision FROM application_settings WHERE id=1"
             ).fetchone()
         return (
-            GlobalSettings(
-                Config.from_dict(global_document(Config.from_dict(row[0]))), "标准翻译", row[2]
-            )
+            GlobalSettings(Config.from_dict(row[0]), row[1], row[2])
             if row
             else GlobalSettings(Config.from_dict(global_document(self.defaults())))
         )
@@ -55,7 +53,11 @@ class PostgresSettings:
         with self.guard(exclusive=True) as conn:
             current = self.load(connection=conn)
             if revision != current.revision:
-                raise HTTPException(409, "Global settings changed; reload before saving again")
+                raise ApiError(
+                    SETTINGS_CONFLICT,
+                    409,
+                    "Global settings changed; reload before saving again",
+                )
             updates = project_registry_updates(conn, current.config, config, model_renames or {})
             for pid, project_config in updates:
                 conn.execute(

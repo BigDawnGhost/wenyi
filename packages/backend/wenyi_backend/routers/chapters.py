@@ -7,10 +7,9 @@ from dataclasses import asdict
 from fastapi import APIRouter, HTTPException
 from wenyi_core.storage.precision_drafts import read_precision_drafts
 
-from .. import dal
 from ..chapter_state import chapter_review_state
-from ..job_service import start_job
-from ..project_service import project_write, require_book, require_project, storage_for
+from ..context import current_context
+from ..errors import CHAPTER_NOT_FOUND, ApiError
 from ..schemas import (
     ChapterSegments,
     ChapterSummary,
@@ -19,16 +18,35 @@ from ..schemas import (
     JobEnqueued,
     PrecisionDraftsOut,
 )
+from .dependencies import (
+    chapter_summaries,
+    parsed_source,
+    project_write,
+    read_storage_for,
+    require_project,
+    start_job,
+)
 
 router = APIRouter(prefix="/projects/{pid}/chapters", tags=["chapters"])
 
 
-def chapter_payload(storage, ci: int) -> dict:
-    try:
-        chapter = storage.load_chapter(ci)
-    except KeyError:
-        raise HTTPException(404, "chapter not found") from None
-    review = storage.load_latest_review_result() or {}
+def chapter_payload(storage, ci: int, *, project: dict) -> dict:
+    if project.get("initialized"):
+        try:
+            chapter = storage.load_chapter(ci)
+        except (KeyError, FileNotFoundError):
+            raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found") from None
+        review = storage.load_latest_review_result() or {}
+    else:
+        document = parsed_source(project, storage)
+        chapter = (
+            next((chapter for chapter in document.chapters if chapter.index == ci), None)
+            if document is not None
+            else None
+        )
+        if chapter is None:
+            raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found")
+        review = {}
     text_segments = chapter.text_segments
     issues = []
     current_review = chapter_review_state(review, chapter.meta)[1]
@@ -66,24 +84,33 @@ def chapter_payload(storage, ci: int) -> dict:
 
 @router.get("", response_model=list[ChapterSummary])
 def list_chapters(pid: str) -> list[dict]:
-    require_book(require_project(pid))
-    return dal.chapter_summaries(pid)
+    project = require_project(pid)
+    return chapter_summaries(project)
 
 
 @router.get("/{ci}", response_model=ChapterSegments)
 def get_chapter(pid: str, ci: int) -> dict:
-    require_book(require_project(pid))
-    return chapter_payload(storage_for(pid), ci)
+    project = require_project(pid)
+    storage = read_storage_for(pid)
+    try:
+        return chapter_payload(storage, ci, project=project)
+    finally:
+        storage.close()
 
 
 @router.get("/{ci}/segments/{si}/precision-drafts", response_model=PrecisionDraftsOut)
 def get_precision_drafts(pid: str, ci: int, si: int) -> dict:
     """Inspect archived drafts without editing or regenerating the formal translation."""
-    require_book(require_project(pid))
+    project = require_project(pid)
+    if not project.get("initialized"):
+        raise HTTPException(409, "Prepare the book before inspecting translation drafts")
+    storage = read_storage_for(pid)
     try:
-        return asdict(read_precision_drafts(storage_for(pid), ci, si))
+        return asdict(read_precision_drafts(storage, ci, si))
     except (KeyError, FileNotFoundError):
         raise HTTPException(404, "chapter or text segment not found") from None
+    finally:
+        storage.close()
 
 
 def _linked_toc_entries(manifest: dict, chapter: dict) -> list[dict]:
@@ -116,8 +143,7 @@ def _linked_toc_entries(manifest: dict, chapter: dict) -> list[dict]:
 
 @router.put("/{ci}/title", response_model=ChapterTitleOut)
 def update_chapter_title(pid: str, ci: int, body: ChapterTitleUpdate) -> dict:
-    with project_write(pid) as (project, storage):
-        require_book(project)
+    with project_write(pid) as (_project, storage):
         if not storage.exists():
             raise HTTPException(409, "Prepare the book before editing chapter titles")
         with storage.state_lock():
@@ -126,7 +152,7 @@ def update_chapter_title(pid: str, ci: int, body: ChapterTitleUpdate) -> dict:
                 (row for row in manifest.get("chapters", []) if row["index"] == ci), None
             )
             if chapter is None:
-                raise HTTPException(404, "chapter not found")
+                raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found")
             before = chapter.get("title_translated")
             if before != body.expected_title_translated:
                 raise HTTPException(
@@ -155,10 +181,13 @@ def update_chapter_title(pid: str, ci: int, body: ChapterTitleUpdate) -> dict:
 
 @router.post("/{ci}/translate", response_model=JobEnqueued)
 async def translate_chapter(pid: str, ci: int) -> dict:
-    require_book(require_project(pid))
-    chapter = next((row for row in dal.chapter_summaries(pid) if row["index"] == ci), None)
+    require_project(pid)
+    chapter = next(
+        (row for row in current_context().repository.chapter_summaries(pid) if row["index"] == ci),
+        None,
+    )
     if chapter is None:
-        raise HTTPException(404, "chapter not found")
+        raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found")
     if chapter["status"] == "done":
         raise HTTPException(409, "chapter is already translated")
     return await start_job(pid, "chapter_translation", params={"chapter_index": ci})

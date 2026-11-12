@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { fakeApi, pid, project } from "../../../packages/ui/sandbox/fixtures";
 
 async function fileTransfer(
   page: Page,
@@ -33,6 +33,8 @@ for (const chinese of [false, true]) {
       project: Record<string, unknown>;
     }[] = [];
     await page.route("**/api/projects", async (route) => {
+      // The sidebar also reads the project list from this path.
+      if (route.request().method() !== "POST") return route.fallback();
       const form = await new Response(
         new Uint8Array(route.request().postDataBuffer()!),
         {
@@ -66,7 +68,7 @@ for (const chinese of [false, true]) {
       { name: "bản thảo.docx", content: "The selected source" },
     ]);
     const release = zone.getByText(
-      chinese ? "松开以选择原文文件。" : "Release to select the source file.",
+      chinese ? "松开以添加文件" : "Release to add the file",
     );
     await zone.dispatchEvent("dragenter", { dataTransfer: file });
     await zone.dispatchEvent("dragover", { dataTransfer: file });
@@ -87,7 +89,7 @@ for (const chinese of [false, true]) {
     await page.setViewportSize({ width: 390, height: 844 });
     expect(
       await page
-        .getByRole("main")
+        .getByRole("dialog", { name: chinese ? "创建项目" : "Create project", exact: true })
         .evaluate((element) => element.scrollWidth <= element.clientWidth),
     ).toBe(true);
     await zone.screenshot({
@@ -99,7 +101,7 @@ for (const chinese of [false, true]) {
         exact: true,
       })
       .click();
-    await expect(page.getByText("503: Upload unavailable")).toBeVisible();
+    await expect(page.getByText("Upload unavailable")).toBeVisible();
     expect(uploads).toEqual([
       {
         name: "bản thảo.docx",
@@ -110,9 +112,61 @@ for (const chinese of [false, true]) {
     const retry = await fileTransfer(page, [{ name: "next.docx" }]);
     await zone.dispatchEvent("drop", { dataTransfer: retry });
     await retry.dispose();
-    await expect(page.getByText("503: Upload unavailable")).toHaveCount(0);
+    await expect(page.getByText("Upload unavailable")).toHaveCount(0);
     await expect(zone.getByText("next.docx", { exact: true })).toBeVisible();
   });
+}
+
+for (const selection of ["drop", "browse"] as const) {
+  for (const [filename, expectedName] of [
+    ["bản thảo.第二版.DOCX", "bản thảo.第二版"],
+    [".docx", ".docx"],
+  ]) {
+    test(`${selection} defaults an unspecified project name from ${filename}`, async ({ page }) => {
+      await fakeApi(page);
+      let uploadedProject: Record<string, unknown> | undefined;
+      await page.route("**/api/projects", async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        const form = await new Response(
+          new Uint8Array(route.request().postDataBuffer()!),
+          { headers: { "content-type": route.request().headers()["content-type"] } },
+        ).formData();
+        uploadedProject = JSON.parse(String(form.get("project")));
+        await route.fulfill({ json: { ...project, name: uploadedProject!.name, status: "parsing" } });
+      });
+      await page.goto("/projects/new");
+      const name = page.getByLabel("Project name", { exact: true });
+      const create = page.getByRole("button", { name: "Create project", exact: true });
+      const select = async (filename: string) => {
+        if (selection === "drop") {
+          const dataTransfer = await fileTransfer(page, [{ name: filename }]);
+          await page.getByRole("group", { name: "Source file selection" })
+            .dispatchEvent("drop", { dataTransfer });
+          await dataTransfer.dispose();
+        } else {
+          await page.getByLabel("Upload source", { exact: true }).setInputFiles({
+            name: filename,
+            mimeType: "application/octet-stream",
+            buffer: Buffer.from("source fixture"),
+          });
+        }
+      };
+      await expect(create).toBeDisabled();
+      if (selection === "browse") await name.fill("   ");
+      await select(filename);
+      await expect(name).toHaveValue(expectedName);
+      await expect(create).toBeEnabled();
+      await name.fill("  My project  ");
+      await select("replacement.docx");
+      await expect(name).toHaveValue("  My project  ");
+      await name.fill("   ");
+      await select(filename);
+      await expect(name).toHaveValue(expectedName);
+      await create.click();
+      await expect(page).toHaveURL(`/projects/${pid}`);
+      expect(uploadedProject).toEqual(expect.objectContaining({ name: expectedName }));
+    });
+  }
 }
 
 test("drops validate files and reject multiple files without replacing the selection", async ({
@@ -120,7 +174,7 @@ test("drops validate files and reject multiple files without replacing the selec
 }) => {
   await fakeApi(page);
   await page.goto("/projects/new");
-  await page.getByLabel("Project name", { exact: true }).fill("Dropped book");
+  const name = page.getByLabel("Project name", { exact: true });
   const zone = page.getByRole("group", { name: "Source file selection" });
   const create = page.getByRole("button", {
     name: "Create project",
@@ -135,13 +189,19 @@ test("drops validate files and reject multiple files without replacing the selec
   await expect(
     page.getByText("The source file is empty. Choose a file with content."),
   ).toBeVisible();
+  await expect(name).toHaveValue("");
   await expect(create).toBeDisabled();
   await drop([{ name: "archive.zip" }]);
   await expect(
     page.getByText("This file format is not supported."),
   ).toBeVisible();
+  await expect(name).toHaveValue("");
+  await expect(create).toBeDisabled();
+  await drop([{ name: "one.docx" }, { name: "two.docx" }]);
+  await expect(name).toHaveValue("");
   await expect(create).toBeDisabled();
   await drop([{ name: "book.PDF" }]);
+  await expect(name).toHaveValue("book");
   await expect(page.getByLabel("PDF parser", { exact: true })).toBeVisible();
   await expect(create).toBeEnabled();
   await drop([{ name: "one.docx" }, { name: "two.docx" }]);
@@ -149,6 +209,7 @@ test("drops validate files and reject multiple files without replacing the selec
     "Choose one source file at a time.",
   );
   await expect(zone.getByText("book.PDF", { exact: true })).toBeVisible();
+  await expect(name).toHaveValue("book");
   const text = await page.evaluateHandle(() => {
     const data = new DataTransfer();
     data.setData("text/plain", "not a source file");
@@ -156,17 +217,11 @@ test("drops validate files and reject multiple files without replacing the selec
   });
   await zone.dispatchEvent("dragenter", { dataTransfer: text });
   await expect(
-    zone.getByText("Release to select the source file."),
+    zone.getByText("Release to add the file"),
   ).toHaveCount(0);
   await zone.dispatchEvent("drop", { dataTransfer: text });
   await text.dispose();
   await expect(zone.getByText("book.PDF", { exact: true })).toBeVisible();
-  await drop([{ name: "movie.srt" }]);
-  await expect(zone.getByRole("alert")).toHaveCount(0);
-  await expect(page.getByLabel("PDF parser", { exact: true })).toHaveCount(0);
-  await expect(
-    page.getByRole("checkbox", { name: "Prepare before translating" }),
-  ).toHaveCount(0);
   await expect(create).toBeEnabled();
 });
 
@@ -197,12 +252,16 @@ test("uploading rejects replacement drops and creation enters the overview", asy
   const replacement = await fileTransfer(page, [{ name: "replacement.docx" }]);
   try {
     await expect(zone).toHaveAttribute("aria-disabled", "true");
+    const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
+    // The upload itself cannot be recalled, so the dismiss control is relabelled
+    // and stays available instead of being disabled with the rest of the form.
     await expect(
-      zone.getByRole("button", { name: "Browse files" }),
-    ).toBeDisabled();
+      dialog.getByRole("button", { name: "Close", exact: true }).first(),
+    ).toBeEnabled();
+    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
     await zone.dispatchEvent("dragenter", { dataTransfer: replacement });
     await expect(
-      zone.getByText("Release to select the source file."),
+      zone.getByText("Release to add the file"),
     ).toHaveCount(0);
     await zone.dispatchEvent("drop", { dataTransfer: replacement });
     await expect(
@@ -236,6 +295,9 @@ test("a legacy creation link keeps the saved source locked against drops", async
     await route.fallback();
   });
   await page.goto(`/projects/new?project=${pid}`);
+  const dialog = page.getByRole("dialog", { name: "Create project", exact: true });
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
   const zone = page.getByRole("group", { name: "Source file selection" });
   await expect(zone).toHaveAttribute("aria-disabled", "true");
   await expect(zone.getByRole("button", { name: "Browse files" })).toBeDisabled();

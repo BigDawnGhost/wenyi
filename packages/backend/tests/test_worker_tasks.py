@@ -3,21 +3,45 @@
 import asyncio
 import threading
 from contextlib import nullcontext
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from zipfile import ZipFile
+from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 import pytest
 from bs4 import BeautifulSoup
 from bs4.element import Tag
-from ebooklib import epub
 from fastapi import HTTPException
 from wenyi_backend.context import current_context
-from wenyi_backend.job_service import start_job
+from wenyi_backend.execution import bindings, exporting, runner
+from wenyi_backend.execution.contracts import ExportRequest
+from wenyi_backend.routers.dependencies import start_job
 from wenyi_backend.workers import tasks
 from wenyi_core.config import Config
 from wenyi_core.ingest.segmenter import load_document
-from wenyi_core.pipeline.runstore import ExportSnapshotStore, source_sha256
+from wenyi_core.storage.run_store import ExportSnapshotStore, source_sha256
+
+
+@pytest.mark.parametrize("fmt", ["epub", "pdf"])
+def test_previously_queued_exports_drop_retired_renderer_option(monkeypatch, fmt):
+    closed = []
+    context = replace(
+        current_context(),
+        storage_for=lambda pid: SimpleNamespace(
+            export_lock=lambda eid: nullcontext(), close=lambda: closed.append(pid)
+        ),
+    )
+    rendered = []
+
+    def render(pid, *, export_id, run_id, fmt, services, storage_for):
+        rendered.append((pid, export_id, run_id, fmt))
+        return "complete-output"
+
+    monkeypatch.setattr(bindings, "render_export", render)
+    request = ExportRequest("p", 7, options={"fmt": fmt, "pdf_engine": "retired-engine"})
+    assert exporting.execute(request, bindings.export_dependencies(context)) == 7
+    assert rendered == [("p", 7, None, fmt)]
+    assert closed == ["p"]
 
 
 @pytest.mark.parametrize("order", ["target_first", "source_first"])
@@ -27,12 +51,7 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
     monkeypatch, tmp_path, order, preserve_source_style, source_changes
 ):
     source = tmp_path / "source.epub"
-    book = epub.EpubBook()
-    book.set_identifier("partial-translation")
-    book.set_title("Sample")
-    book.set_language("ja")
-    pages = []
-    for name, body in [
+    pages = [
         (
             "first.xhtml",
             '<p id="translated"><ruby>翻訳<rt>ほんやく</rt></ruby>済み</p>'
@@ -40,16 +59,45 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
             '<p><a href="last.xhtml#last">次へ</a></p>',
         ),
         ("last.xhtml", '<p id="last"><ruby>未訳<rt>みやく</rt></ruby>の章</p>'),
-    ]:
-        page = epub.EpubHtml(title=name, file_name=name, lang="ja")
-        page.content = f"<html><body>{body}</body></html>"
-        book.add_item(page)
-        pages.append(page)
-    book.toc = pages
-    book.spine = pages
-    book.add_item(epub.EpubNcx())
-    book.add_item(epub.EpubNav())
-    epub.write_epub(str(source), book)
+    ]
+    # Keep the source fixture independent of the EPUB writer under test.
+    with ZipFile(source, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("mimetype", "application/epub+zip", compress_type=ZIP_STORED)
+        archive.writestr(
+            "META-INF/container.xml",
+            '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">'
+            '<rootfiles><rootfile full-path="EPUB/content.opf" '
+            'media-type="application/oebps-package+xml"/></rootfiles></container>',
+        )
+        archive.writestr(
+            "EPUB/content.opf",
+            '<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">'
+            '<metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+            '<dc:identifier id="id">partial-translation</dc:identifier>'
+            "<dc:title>Sample</dc:title><dc:language>ja</dc:language></metadata><manifest>"
+            '<item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
+            + "".join(
+                f'<item id="page-{index}" href="{name}" media-type="application/xhtml+xml"/>'
+                for index, (name, _) in enumerate(pages)
+            )
+            + "</manifest><spine>"
+            + "".join(f'<itemref idref="page-{index}"/>' for index in range(len(pages)))
+            + "</spine></package>",
+        )
+        archive.writestr(
+            "EPUB/nav.xhtml",
+            '<html xmlns="http://www.w3.org/1999/xhtml" '
+            'xmlns:epub="http://www.idpf.org/2007/ops"><head><title>Contents</title></head>'
+            '<body><nav epub:type="toc"><ol>'
+            + "".join(f'<li><a href="{name}">{name}</a></li>' for name, _ in pages)
+            + "</ol></nav></body></html>",
+        )
+        for name, body in pages:
+            archive.writestr(
+                f"EPUB/{name}",
+                '<html xmlns="http://www.w3.org/1999/xhtml">'
+                f"<head><title>{name}</title></head><body>{body}</body></html>",
+            )
 
     document = load_document(str(source), "ja", "en")
     assert len(document.chapters) == 2
@@ -85,17 +133,17 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
         write_artifact=lambda key, value: artifacts.update({key: value}),
         log_event=lambda event, **payload: events.append((event, payload)),
     )
-    monkeypatch.setattr(tasks, "_pipeline_storage", lambda pid: storage)
-    monkeypatch.setattr(tasks, "_resolve_source", lambda pid: str(source))
     monkeypatch.setattr(
-        tasks,
-        "_build_config_for",
-        lambda pid, run_id: Config.from_dict({"language": {"target": "en"}}),
+        current_context().repository,
+        "get_project",
+        lambda pid: {"source_meta": {"original_filename": "source.epub"}},
     )
-    monkeypatch.setattr(
-        tasks.dal, "get_project", lambda pid: {"source_meta": {"original_filename": "source.epub"}}
+    services = replace(
+        bindings.operation_services(current_context()),
+        source_for=lambda pid: str(source),
+        config_for=lambda pid, run_id: Config.from_dict({"language": {"target": "en"}}),
+        exports_dir=lambda pid: str(tmp_path / "exports"),
     )
-    monkeypatch.setattr(tasks.paths, "exports_dir", lambda pid: str(tmp_path / "exports"))
     published = []
     monkeypatch.setattr(
         current_context().exports, "publish_export", lambda pid, eid, path: published.append(path)
@@ -112,10 +160,12 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
 
         monkeypatch.setattr(writer, "assemble", replace_source_after_render)
         with pytest.raises(ValueError, match="Source changed during export"):
-            tasks._render_export_sync(
+            exporting.render_export(
                 "p",
                 export_id=1,
                 fmt="epub",
+                services=services,
+                storage_for=lambda pid: storage,
                 bilingual=True,
                 order=order,
                 preserve_source_style=preserve_source_style,
@@ -125,25 +175,24 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
         assert [chapter.model_dump() for chapter in document.chapters] == before
         return
 
-    assert (
-        tasks._render_export_sync(
-            "p",
-            export_id=1,
-            fmt="epub",
-            bilingual=True,
-            order=order,
-            preserve_source_style=preserve_source_style,
-            about_page=False,
-        )
-        == 1
+    output = exporting.render_export(
+        "p",
+        export_id=1,
+        fmt="epub",
+        services=services,
+        storage_for=lambda pid: storage,
+        bilingual=True,
+        order=order,
+        preserve_source_style=preserve_source_style,
+        about_page=False,
     )
     assert closed == [True]
-    assert len(published) == 1
+    assert published == [], "Rendering must not publish or update catalog state"
     assert len(artifacts) == 1
     assert next(iter(artifacts)).startswith("language-policies/")
     assert events[0][0] == "language_policy_resolved"
-    assert Path(published[0]).name == "source.en-bi.epub"
-    with ZipFile(published[0]) as archive:
+    assert Path(output).name == "source.en-bi.epub"
+    with ZipFile(output) as archive:
         first = BeautifulSoup(archive.read("EPUB/first.xhtml"), "html.parser")
         last = BeautifulSoup(archive.read("EPUB/last.xhtml"), "html.parser")
     translated = first.find(id="translated")
@@ -170,18 +219,20 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
 
 @pytest.mark.parametrize(
     "kind",
-    ["parse", "prepare", "translation", "chapter_translation", "review", "srt"],
+    ["parse", "prepare", "translation", "chapter_translation", "review"],
 )
 def test_startup_failure_is_persisted(monkeypatch, kind):
     statuses = []
     monkeypatch.setattr(
-        tasks.dal, "set_project_status", lambda pid, state, **kw: statuses.append((state, kw))
+        current_context().repository,
+        "set_project_status",
+        lambda pid, state, **kw: statuses.append((state, kw)),
     )
 
     def fail(*args):
         raise RuntimeError("config missing")
 
-    monkeypatch.setattr(tasks, "_execute", fail)
+    monkeypatch.setattr(runner, "execute", fail)
     with pytest.raises(RuntimeError, match="config missing"):
         asyncio.run(tasks._run(kind, "p", None, {}))
     assert statuses == [("error", {"error": "config missing"})]
@@ -189,13 +240,14 @@ def test_startup_failure_is_persisted(monkeypatch, kind):
 
 def test_arq_cancellation_waits_for_state_to_be_flushed(monkeypatch):
     started, flushed = threading.Event(), threading.Event()
+    assert current_context().run_workflow_sync is asyncio.to_thread
 
-    def execute(kind, pid, run_id, params, stop):
+    def execute(request, dependencies, stop):
         started.set()
         assert stop.wait(3)
         flushed.set()
 
-    monkeypatch.setattr(tasks, "_execute", execute)
+    monkeypatch.setattr(runner, "execute", execute)
 
     async def run():
         job = asyncio.create_task(tasks._run("translation", "p", None, {}))
@@ -218,10 +270,12 @@ def test_resolve_source_never_guesses_using_title(monkeypatch, tmp_path):
     source = tmp_path / "source.html"
     source.write_text("<p>Text</p>", encoding="utf-8")
     monkeypatch.setattr(
-        tasks.dal, "get_project", lambda pid: {"title": None, "source_path": "source.html"}
+        current_context().repository,
+        "get_project",
+        lambda pid: {"title": None, "source_path": "source.html"},
     )
-    monkeypatch.setattr(tasks.paths, "data_dir", lambda: str(tmp_path))
-    assert tasks._resolve_source("p") == str(source)
+    context = replace(current_context(), data_dir=str(tmp_path))
+    assert bindings.resolve_source(context, "p") == str(source)
 
 
 def test_export_cancellation_waits_for_render_to_finish(monkeypatch):
@@ -233,7 +287,7 @@ def test_export_cancellation_waits_for_render_to_finish(monkeypatch):
         finished.set()
         return 1
 
-    monkeypatch.setattr(tasks, "_export_sync", render)
+    monkeypatch.setattr(exporting, "execute", render)
 
     async def run():
         task = asyncio.create_task(

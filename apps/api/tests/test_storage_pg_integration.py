@@ -7,123 +7,24 @@ creates and drops its own schema; no existing project rows are touched.
 from __future__ import annotations
 
 import json
-import os
 import threading
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, cast
 
-import psycopg
 import pytest
-from psycopg import sql
-from psycopg_pool import ConnectionPool
+from api_test_support import document, initialize
 from type_helpers import must
 from wenyi_api.storage_pg import PostgresStorage, ProjectBusyError
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.llm.usage import empty_usage
-from wenyi_core.pipeline.precision import PrecisionBatchExecutor
-from wenyi_core.pipeline.runstore import source_sha256
-from wenyi_core.pipeline.translation import TranslationService
-from wenyi_core.pipeline.translation_batch import BatchPlan
-from wenyi_core.storage.file import FileStorage
-
-
-@pytest.fixture(scope="module")
-def pg_pool():
-    dsn = os.environ.get("WENYI_TEST_DATABASE_URL")
-    if not dsn:
-        pytest.skip("Set WENYI_TEST_DATABASE_URL for real PostgreSQL storage tests")
-    schema = "test_wenyi_" + uuid.uuid4().hex
-    with psycopg.connect(dsn, autocommit=True) as admin:
-        admin.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public")
-        admin.execute(sql.SQL("CREATE SCHEMA {}").format(sql.Identifier(schema)))
-    pool = ConnectionPool(
-        dsn,
-        min_size=1,
-        max_size=8,
-        open=True,
-        kwargs={"options": f"-c search_path={schema},public", "client_encoding": "UTF8"},
-    )
-    pool.wait()
-    try:
-        schema_sql = Path(__file__).parents[1] / "wenyi_api" / "db" / "schema.sql"
-        with pool.connection() as conn:
-            conn.execute(cast(Any, schema_sql.read_text(encoding="utf-8")))
-        yield pool
-    finally:
-        pool.close()
-        with psycopg.connect(dsn, autocommit=True) as admin:
-            admin.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
-
-
-@pytest.fixture
-def pg_storage(pg_pool, tmp_path):
-    pid = uuid.uuid4().hex
-    with pg_pool.connection() as conn:
-        conn.execute(
-            "INSERT INTO projects(id,name,source_lang,target_lang) VALUES(%s,'test','en','zh')",
-            (pid,),
-        )
-    return PostgresStorage(pid, pg_pool, run_dir=str(tmp_path / "resources"))
-
-
-@pytest.fixture(params=["file", "postgres"])
-def storage(request, tmp_path):
-    if request.param == "postgres":
-        result = request.getfixturevalue("pg_storage")
-    else:
-        result = FileStorage(str(tmp_path / "file-state"))
-    yield result
-    result.close()
-
-
-def document(tmp_path):
-    source = tmp_path / "source.txt"
-    source.write_text("Book\nOriginal paragraph", encoding="utf-8")
-    return Document(
-        title="Book",
-        fmt="text",
-        source_lang="en",
-        target_lang="zh",
-        source_path=str(source),
-        meta={
-            "format_metadata": {"nested": [1, 2]},
-            "epub_annotation_contexts": {"note": {"source": "Original note"}},
-        },
-        chapters=[
-            Chapter(
-                index=0,
-                title="Chapter",
-                href="chapter.xhtml",
-                template="<p id='a'></p>",
-                meta={"toc_entry_id": "toc-a"},
-                segments=[
-                    Segment(
-                        index=0,
-                        source="Original paragraph",
-                        target="润色译文",
-                        target_before_polish="原始译文",
-                        anchor="a",
-                        resource_href="chapter.xhtml",
-                        meta={"style": {"bold": True}},
-                    )
-                ],
-            )
-        ],
-    )
-
-
-def initialize(storage, tmp_path):
-    doc = document(tmp_path)
-    digest = source_sha256(doc.source_path)
-    storage.begin_initialization(digest)
-    manifest = storage.stage_document(doc, source_hash=digest)
-    storage.save_manifest(manifest)
-    storage.finish_initialization()
-    return doc, digest
+from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
+from wenyi_core.models.glossary import GlossaryTerm
+from wenyi_core.pipeline.run.runtime_usage import UsageCoordinator
+from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor
+from wenyi_core.pipeline.translate.translation import TranslationService
+from wenyi_core.pipeline.translate.translation_batch import BatchPlan
+from wenyi_core.storage.run_store import source_sha256
 
 
 def test_precision_candidates_and_guarded_publication_use_backend_storage(storage, tmp_path):
@@ -136,7 +37,7 @@ def test_precision_candidates_and_guarded_publication_use_backend_storage(storag
         {
             "language": {"source": "en", "target": "zh"},
             "llm": {"preset": "fake"},
-            "pipeline": {"translation_mode": "best_of_three", "precision_concurrency": 1},
+            "pipeline": {"translation_mode": "three_draft_synthesis"},
         }
     )
     plan = BatchPlan.capture(0, 0, chapter.text_segments, [], "", "", "", "", [[]], "")
@@ -219,6 +120,23 @@ def test_glossary_order_conflict_and_batch_checkpoint(storage, tmp_path):
     assert storage.completed_batch_glossary_keys(0) == {"2:4"}
 
 
+def test_glossary_display_pages_do_not_reorder_prompt_terms(storage):
+    sources = ["𐀀", "中", "a", "Z", "\ue000", "Å"]
+    for source in sources:
+        storage.upsert_term(
+            GlossaryTerm(source=source, target="Straße", aliases=["Alias"], type="person")
+        )
+    for query in ("", "STRASSE", "alias"):
+        items, total = storage.list_terms_page(q=query, offset=1, limit=2, term_type="person")
+        assert total == len(sources)
+        assert [term.source for term in items] == sorted(sources)[1:3]
+    assert storage.list_terms_page(offset=100) == ([], len(sources))
+    assert storage.list_terms_page(term_type="term") == ([], 0)
+    assert storage.list_terms_page(q="not present") == ([], 0)
+    assert {term.source for term in storage.get_terms(["Z", "a", "absent"])} == {"Z", "a"}
+    assert [term.source for term in storage.all_terms()] == sources
+
+
 def test_review_artifacts_and_timing_are_durable_and_idempotent(storage, tmp_path):
     initialize(storage, tmp_path)
     key = "reviews/review-2026/result.json"
@@ -247,6 +165,76 @@ def test_usage_commit_recovery_does_not_double_charge(storage, tmp_path):
     assert storage.load_usage() == ledger
     assert storage.read_artifact(key) == ledger
     assert storage.read_artifact("usage-pending.json") is None
+
+
+@pytest.mark.parametrize("failure", ["commit", "recover", "event"])
+def test_usage_coordinator_retries_postgres_failures_without_losing_calls(
+    pg_storage, monkeypatch, failure
+):
+    tracker = UsageTracker()
+
+    class Source:
+        def usage_summary(self) -> dict:
+            return tracker.summary()
+
+    coordinator = UsageCoordinator(Source())
+    tracker.record("fast", UsageSample(10, 5, 15))
+    recover = pg_storage.recover_usage
+    state_lock = pg_storage.state_lock
+    recoveries = 0
+
+    def fail_publication():
+        nonlocal recoveries
+        recoveries += 1
+        if recoveries == 2:
+            raise OSError("interrupted")
+        recover()
+
+    def fail_event(*args, **kwargs):
+        raise OSError("interrupted")
+
+    @contextmanager
+    def fail_commit():
+        outer = getattr(pg_storage._local, "state_conn", None) is None
+        with state_lock():
+            yield
+            if outer:
+                raise OSError("interrupted")
+
+    with monkeypatch.context() as patch:
+        method, replacement = {
+            "commit": ("state_lock", fail_commit),
+            "recover": ("recover_usage", fail_publication),
+            "event": ("log_event", fail_event),
+        }[failure]
+        patch.setattr(pg_storage, method, replacement)
+        with pytest.raises(OSError, match="interrupted"):
+            coordinator.flush(pg_storage, scope="test")
+    assert (pg_storage.read_artifact("usage-pending.json") is not None) == (failure != "commit")
+    tracker.record("fast", UsageSample(10, 5, 15))
+    assert coordinator.flush(pg_storage, scope="retry")["totals"]["calls"] == 2
+    assert coordinator.flush(pg_storage, scope="retry")["totals"]["calls"] == 2
+
+
+@pytest.mark.parametrize("published", [False, True])
+def test_initialization_retry_preserves_preparation_and_recovers_usage(pg_storage, published):
+    tracker = UsageTracker()
+    tracker.record("fast", UsageSample(10, 5, 15), stage="analysis")
+    ledger = tracker.summary()
+    key = "preparation/analysis/source-bound.json"
+    pg_storage.begin_initialization("a" * 64)
+    pg_storage.write_artifact(key, {"style": "restrained"})
+    pg_storage.prepare_usage_commit({"usage.json": ledger})
+    if published:
+        pg_storage.save_usage(ledger)
+    for _ in range(2):
+        pg_storage.begin_initialization("a" * 64)
+        assert pg_storage.load_usage() == ledger
+        assert pg_storage.read_artifact("usage-pending.json") is None
+        assert pg_storage.read_artifact(key) == {"style": "restrained"}
+    pg_storage.begin_initialization("b" * 64)
+    assert pg_storage.load_usage() is None
+    assert pg_storage.read_artifact(key) is None
 
 
 def test_postgres_initialization_rollback_and_project_isolation(pg_storage, pg_pool, tmp_path):
@@ -381,68 +369,15 @@ def test_postgres_complete_workflow_review_reuse_and_export(pg_storage, tmp_path
     assert pg_storage.load_usage()["totals"]["calls"] > 0
     outcome = orch.run_steps(
         doc.source_path,
-        {"report", "assemble"},
+        {"assemble"},
         out_format="txt",
         out_path=str(tmp_path / "translated.txt"),
     )
-    assert outcome["report"] is not None
+    assert "report" not in outcome
     assert all(Path(path).is_file() for path in outcome["outputs"])
     assert pg_storage.read_artifact("timing.json")["total_seconds"] > 0
     assert not list((tmp_path / "resources").rglob("*.json"))
     assert not list((tmp_path / "resources").rglob("*.db"))
-
-
-def test_postgres_subtitle_translation_resume_and_dual_output(pg_storage, tmp_path):
-    import json
-
-    from wenyi_core.config import Config
-    from wenyi_core.llm.providers.fake import FakeClient
-    from wenyi_core.srt.store import SrtRunStore
-    from wenyi_core.srt.translate import translate_srt
-
-    source = tmp_path / "clip.srt"
-    source.write_text(
-        "1\n00:00:00,100 --> 00:00:01,200\nHello\n\n2\n00:00:01,300 --> 00:00:02,400\nGoodbye\n",
-        encoding="utf-8",
-    )
-    config = Config.from_dict(
-        {"language": {"source": "en", "target": "zh"}, "llm": {"preset": "fake"}}
-    )
-    client = FakeClient(
-        handler=lambda *_: json.dumps({"1": "你好", "2": "再见"}, ensure_ascii=False)
-    )
-    first = translate_srt(
-        str(source),
-        config,
-        client=client,
-        storage=pg_storage,
-        out=str(tmp_path / "translated.srt"),
-        mono=True,
-        bilingual=True,
-    )
-    call_count = len(client.calls)
-    second = translate_srt(
-        str(source),
-        config,
-        client=client,
-        storage=pg_storage,
-        out=str(tmp_path / "translated-again.srt"),
-        mono=True,
-        bilingual=True,
-    )
-    assert len(client.calls) == call_count
-    assert first["cue_count"] == second["translated"] == 2
-    cues = SrtRunStore(pg_storage.run_dir, storage=pg_storage).load_cues()
-    assert cues["1"]["timestamp"] == "00:00:00,100 --> 00:00:01,200"
-    assert cues["2"]["target"] == "再见"
-    assert pg_storage.load_manifest()["fmt"] == "srt"
-    assert pg_storage.exists()
-    for path in first["outputs"]:
-        content = Path(path).read_text(encoding="utf-8")
-        assert "00:00:01,300 --> 00:00:02,400" in content
-        assert "再见" in content
-    assert not list((tmp_path / "resources").rglob("*.json"))
-    assert not list((tmp_path / "resources").rglob("*.jsonl"))
 
 
 def test_postgres_review_interrupt_restores_same_run(pg_storage, tmp_path, monkeypatch):
@@ -542,58 +477,6 @@ def test_postgres_autofix_publication_resume_protects_manual_edit(
     assert resumed.resume_pending(pg_storage) is None
     assert client.calls == []
     assert not list((tmp_path / "resources").rglob("*.json"))
-
-
-def test_postgres_subtitle_pause_persists_usage_and_manual_edit(pg_storage, tmp_path):
-    import json
-
-    from tests.fake_llm import MeteredFakeClient
-    from wenyi_core.config import Config
-    from wenyi_core.srt.store import SrtRunStore
-    from wenyi_core.srt.translate import translate_srt
-
-    source = tmp_path / "pause.srt"
-    source.write_text(
-        "1\n00:00:00,100 --> 00:00:01,200\nHello\n\n2\n00:00:01,300 --> 00:00:02,400\nGoodbye\n",
-        encoding="utf-8",
-    )
-    config = Config.from_dict(
-        {"language": {"source": "en", "target": "zh"}, "llm": {"preset": "fake"}}
-    )
-    client = MeteredFakeClient(
-        handler=lambda *_: json.dumps({"1": "你好", "2": "再见"}, ensure_ascii=False)
-    )
-
-    def pause(current, *_):
-        if current > 0:
-            raise KeyboardInterrupt("safe pause")
-
-    with pytest.raises(KeyboardInterrupt):
-        translate_srt(
-            str(source),
-            config,
-            client=client,
-            storage=pg_storage,
-            progress=pause,
-            out=str(tmp_path / "pause-output.srt"),
-        )
-    store = SrtRunStore(pg_storage.run_dir, storage=pg_storage)
-    assert store.load_manifest()["status"] == "interrupted"
-    usage = pg_storage.load_usage()
-    assert usage["totals"]["calls"] > 0
-    cues = store.load_cues()
-    assert cues["1"]["target"]
-    cues["1"]["target"] = "用户调整"
-    store.save_cues(cues)
-    translate_srt(
-        str(source),
-        config,
-        client=client,
-        storage=pg_storage,
-        out=str(tmp_path / "resume-output.srt"),
-    )
-    assert pg_storage.load_usage() == usage
-    assert store.load_cues()["1"]["target"] == "用户调整"
 
 
 def test_postgres_dal_config_job_identity_errors_and_review_summary(

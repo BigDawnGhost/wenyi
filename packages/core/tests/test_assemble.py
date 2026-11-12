@@ -1,33 +1,34 @@
-"""Offline tests for TXT/EPUB assembly, reports and consistency."""
+"""Offline tests for TXT/EPUB assembly and consistency."""
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from bs4.element import Tag
-from wenyi_core.assemble.about import append_about_page
-from wenyi_core.assemble.epub_presentation import _inject_bilingual_style, _rewrite_html_document
+from wenyi_core.assemble.about import about_xhtml, append_about_page
+from wenyi_core.assemble.epub_presentation import _rewrite_html_document
 from wenyi_core.assemble.html_renderer import _render_chapter_html, _render_segments_html
-from wenyi_core.assemble.report import build_report
 from wenyi_core.assemble.writer import assemble
+from wenyi_core.assemble.writer_common import bilingual_out_path
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.markup.segments import annotate_epub_resource
+from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import routing_handler
+from tests.pipeline_fixtures import require_file_storage
 from tests.sample_data import (
     write_inline_sample_epub,
     write_nested_toc_epub,
@@ -50,13 +51,6 @@ _FB2_WITH_IMAGES = """\
 <binary id="inside.png" content-type="image/png">aW5zaWRlLWJ5dGVz</binary>
 </FictionBook>
 """
-
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
 
 
 def _write_vertical_epub(path: str) -> None:
@@ -155,7 +149,155 @@ def _run(input_path, state_dir):
     return require_file_storage(orch.run(input_path)), cfg
 
 
+class TestBilingualOutPath(unittest.TestCase):
+    """Lock the explicit --out contract (docs/reference/formats.md): the bilingual
+    derivative appends -bi to the stem of whatever path the user gave."""
+
+    def test_appends_bi_to_stem(self):
+        self.assertEqual(bilingual_out_path("custom.epub"), "custom-bi.epub")
+        self.assertEqual(
+            bilingual_out_path(os.path.join("out", "my.book.epub")),
+            os.path.join("out", "my.book-bi.epub"),
+        )
+
+    def test_no_extension_still_appends_suffix(self):
+        self.assertEqual(bilingual_out_path("book"), "book-bi")
+
+
 class TestAssembleText(unittest.TestCase):
+    def test_template_free_bilingual_html_keeps_both_languages_and_document_shell(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "plain.txt"
+            source.write_text("First.\n\nSecond.", encoding="utf-8")
+            store = FileStorage(os.path.join(directory, "state"))
+            store.init_from_document(load_document(str(source), "en", "zh"))
+            for row in store.load_manifest()["chapters"]:
+                chapter = store.load_chapter(row["index"])
+                for segment in chapter.segments:
+                    segment.target = f"译{segment.source}"
+                store.save_chapter(chapter)
+            for order in ("target_first", "source_first"):
+                with self.subTest(order=order):
+                    output = assemble(
+                        store,
+                        str(source),
+                        out_path=str(Path(directory) / f"{order}.html"),
+                        out_format="html",
+                        bilingual=True,
+                        order=order,
+                    )
+                    soup = BeautifulSoup(Path(output).read_text(encoding="utf-8"), "html.parser")
+                    self.assertIsNotNone(soup.html)
+                    self.assertIsNotNone(soup.head)
+                    self.assertIsNotNone(soup.body)
+                    expected = [
+                        value
+                        for text in ("First.", "Second.")
+                        for value in (
+                            (text, f"译{text}") if order == "source_first" else (f"译{text}", text)
+                        )
+                    ]
+                    self.assertEqual([node.get_text() for node in soup.find_all("p")], expected)
+
+    def test_generated_epub_does_not_require_ebooklib(self):
+        import builtins
+
+        original_import = builtins.__import__
+
+        def without_ebooklib(name, *args, **kwargs):
+            if name == "ebooklib" or name.startswith("ebooklib."):
+                raise ModuleNotFoundError("EbookLib must not be required for EPUB export")
+            return original_import(name, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "sample.txt")
+            write_sample_txt(source)
+            store = FileStorage(os.path.join(directory, "state"))
+            store.init_from_document(load_document(source, "ja", "zh"))
+            with patch("builtins.__import__", side_effect=without_ebooklib):
+                output = assemble(store, source, out_format="epub", about_page=False)
+            with zipfile.ZipFile(output) as archive:
+                self.assertEqual(archive.read("mimetype"), b"application/epub+zip")
+            self.assertTrue(load_document(output, "zh", "en").chapters)
+
+    def test_markdown_heading_levels_and_epub_toc_hierarchy(self):
+        levels = [5, 6, 5, 3, 6, 6, 2, 4, 1, 2]
+        parents = [None, None, 1, None, None, 4, 4, None, 7, None, 9]
+
+        def linked_parents(tree, node_tag, link_tag, attribute):
+            result = []
+            for node in tree.find_all(node_tag):
+                link = node.find(link_tag, recursive=False)
+                parent = node.find_parent(node_tag)
+                parent_link = parent.find(link_tag, recursive=False) if parent else None
+                result.append((link[attribute], parent_link[attribute] if parent_link else None))
+            return result
+
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "headings.md")
+            with open(source_path, "w", encoding="utf-8") as source:
+                source.write(
+                    "Preface.\n\n"
+                    + "\n\n".join(
+                        f"{'#' * level} Title {index}\n\nBody {index}."
+                        for index, level in enumerate(levels, start=1)
+                    )
+                )
+            document = load_document(source_path, "en", "en")
+            # Segment metadata must win over chapter defaults and continuation metadata.
+            chapter = document.chapters[2]
+            chapter.meta["heading_level"] = 1
+            heading, body = chapter.segments
+            heading.source = "Title "
+            heading.meta["heading_level"] = 6
+            body.index = 2
+            chapter.segments.insert(
+                1,
+                Segment(index=1, source="2", kind="heading", cont=True, meta={"heading_level": 1}),
+            )
+            store = FileStorage(os.path.join(directory, "state"))
+            store.init_from_document(document)
+            manifest = store.load_manifest()
+            output_path = assemble(store, source_path, out_format="epub", about_page=False)
+
+            with zipfile.ZipFile(output_path) as archive:
+                paths = {os.path.basename(name): name for name in archive.namelist()}
+                for index, level in enumerate([None, *levels]):
+                    body = BeautifulSoup(
+                        archive.read(paths[f"ch{index}.xhtml"]), "html.parser"
+                    ).body
+                    assert isinstance(body, Tag)
+                    self.assertEqual(
+                        [
+                            (heading.name, heading.get_text())
+                            for heading in body.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
+                        ],
+                        [(f"h{level}", f"Title {index}")] if level is not None else [],
+                    )
+                    self.assertEqual(
+                        [paragraph.get_text() for paragraph in body.find_all("p")],
+                        [f"Body {index}."] if index else ["Preface."],
+                    )
+                nav = BeautifulSoup(archive.read(paths["nav.xhtml"]), "html.parser").find("nav")
+                ncx = BeautifulSoup(archive.read(paths["toc.ncx"]), "xml").find("navMap")
+                assert isinstance(nav, Tag)
+                assert isinstance(ncx, Tag)
+
+            expected = [
+                (f"ch{index}.xhtml", f"ch{parent}.xhtml" if parent is not None else None)
+                for index, parent in enumerate(parents)
+            ]
+            self.assertEqual(linked_parents(nav, "li", "a", "href"), expected)
+            self.assertEqual(linked_parents(ncx, "navPoint", "content", "src"), expected)
+            self.assertTrue(
+                all(ordered_list.find("li", recursive=False) for ordered_list in nav.find_all("ol"))
+            )
+            self.assertEqual(store.load_manifest(), manifest)
+            self.assertEqual(
+                [store.load_chapter(chapter.index).model_dump() for chapter in document.chapters],
+                [chapter.model_dump() for chapter in document.chapters],
+            )
+
     def test_fb2_images_and_cover_are_preserved_in_generated_epub(self):
         with tempfile.TemporaryDirectory() as d:
             fb2 = os.path.join(d, "illustrated.fb2")
@@ -212,25 +354,46 @@ class TestAssembleText(unittest.TestCase):
             with zipfile.ZipFile(path) as archive:
                 self.assertFalse(any("trans-novel-about" in name for name in archive.namelist()))
 
-    def test_bilingual_rewrite_removes_temporary_file_on_failure(self):
+    def test_about_page_streams_entries_and_keeps_zip_invariants(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "book.epub")
+            payload = b"x" * (5 * 1024 * 1024)
             with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
                 archive.writestr(
-                    "ch0.xhtml",
-                    "<html><head></head><body><p>text</p></body></html>",
+                    "META-INF/container.xml",
+                    """<container><rootfiles>
+                    <rootfile full-path="content.opf"/>
+                    </rootfiles></container>""",
                 )
+                archive.writestr("content.opf", "<package><manifest/><spine/></package>")
+                archive.writestr("images/cover.bin", payload)
 
-            with (
-                patch(
-                    "wenyi_core.assemble.epub_presentation.os.replace",
-                    side_effect=OSError("replace failed"),
-                ),
-                self.assertRaisesRegex(OSError, "replace failed"),
-            ):
-                _inject_bilingual_style(path, {"ch0.xhtml"}, "zh-Hans")
+            self.assertTrue(append_about_page(path, "zh-Hans"))
 
-            self.assertFalse(os.path.exists(path + ".tmp"))
+            with zipfile.ZipFile(path) as archive:
+                names = archive.namelist()
+                self.assertEqual(names[0], "mimetype")
+                self.assertEqual(archive.getinfo("mimetype").compress_type, zipfile.ZIP_STORED)
+                self.assertEqual(archive.read("mimetype"), b"application/epub+zip")
+                self.assertEqual(archive.read("images/cover.bin"), payload)
+                self.assertTrue(any("trans-novel-about" in name for name in names))
+                self.assertIn("trans-novel-about", archive.read("content.opf").decode())
+                self.assertFalse(any(name.endswith(".tmp") for name in names))
+
+    def test_about_template_tolerates_literal_dollar(self):
+        with patch("wenyi_core.assemble.about.read_text", return_value="Cost: $5 $unknown."):
+            data = about_xhtml("zh-Hans", locale="en")
+        self.assertIn(b"Cost: $5 $unknown.", data)
+
+    def test_about_page_uses_markup_for_text_direction(self):
+        soup = BeautifulSoup(about_xhtml("zh-Hans", locale="zh"), "xml")
+        html = soup.find("html")
+        style = soup.find("style")
+        assert isinstance(html, Tag)
+        assert isinstance(style, Tag)
+        self.assertEqual(html.get("dir"), "ltr")
+        self.assertNotIn("direction:", style.get_text())
 
     def test_pipeline_passes_about_page_config_to_writer(self):
         with tempfile.TemporaryDirectory() as d:
@@ -271,6 +434,69 @@ class TestAssembleText(unittest.TestCase):
 
 
 class TestAssembleEpub(unittest.TestCase):
+    def test_hybrid_range_alignment_survives_real_epub_ingest_and_both_exports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "linked-notes.epub")
+            _write_linked_notes_epub(source_path)
+            document = load_document(source_path, "en", "zh")
+            store = FileStorage(os.path.join(directory, "state"))
+            manifest = store.stage_document(document)
+            config = _config(os.path.join(directory, "state"))
+            config.source_lang = "en"
+
+            def handler(messages, tier, json_mode):
+                payload = json.loads(messages[-1]["content"].split("INPUT JSON:\n", 1)[1])
+                self.assertEqual(set(payload), {"source_with_focus", "immutable_target"})
+                self.assertIn("<focus>border tunnel", payload["source_with_focus"])
+                return json.dumps({"target_quote": "边境隧道", "context": "边境隧道通了。"})
+
+            client = FakeClient(handler=handler)
+            orchestrator = Orchestrator(config, client=client)
+            for chapter_meta in manifest["chapters"]:
+                chapter = store.load_chapter(chapter_meta["index"])
+                assert chapter.href is not None
+                is_body = chapter.href.endswith("text/body.xhtml")
+                for segment in chapter.segments:
+                    segment.target = "边境隧道通了。" if is_body else "注释译文。"
+                store.save_chapter(chapter)
+                if is_body:
+                    orchestrator._annotations.align_annotations_after_batch(
+                        chapter.index, chapter, 0, len(chapter.text_segments), store
+                    )
+                    placement = (
+                        store.load_chapter(chapter.index)
+                        .segments[0]
+                        .meta["epub_annotations"]["placements"][0]
+                    )
+                    self.assertEqual(placement["method"], "llm_source_focus")
+                    self.assertEqual((placement["target_start"], placement["target_end"]), (0, 4))
+            manifest["initialized"] = True
+            store.save_manifest(manifest)
+            self.assertEqual(len(client.calls), 1)
+
+            for bilingual in (False, True):
+                output_path = os.path.join(directory, f"output-{bilingual}.epub")
+                assemble(
+                    store,
+                    source_path,
+                    out_path=output_path,
+                    out_format="epub",
+                    bilingual=bilingual,
+                    about_page=False,
+                )
+                with zipfile.ZipFile(output_path) as archive:
+                    body = BeautifulSoup(archive.read("OEBPS/text/body.xhtml"), "html.parser")
+                paragraph = body.select_one("p:not(.tn-source)")
+                self.assertIsNotNone(paragraph)
+                assert isinstance(paragraph, Tag)
+                link = paragraph.find("a", href="../notes/notes.xhtml#note-1")
+                self.assertIsNotNone(link)
+                assert isinstance(link, Tag)
+                self.assertEqual(link.get_text().replace("1", ""), "边境隧道")
+                self.assertIsNotNone(link.find("sup", id="key-1"))
+                self.assertEqual(paragraph.get_text().replace("1", ""), "边境隧道通了。")
+            self.assertEqual(len(client.calls), 1)
+
     def test_nested_fragment_id_survives_textual_markup_flattening(self):
         html = '<html><body><h2><span id="inside">Section</span></h2></body></html>'
         title, segments, template = annotate_epub_resource(html, 0, "chapter.xhtml")
@@ -939,6 +1165,60 @@ data-tn-annotation-id="ann-0" href="chapter.xhtml#part">Chapter
         self.assertIsNotNone(rendered.find(id="kobo.1.1"))
         self.assertIsNone(rendered.select_one("[data-tn-inline-id]"))
 
+    def test_epub_html_export_packages_media_and_keeps_image_pages(self):
+        container = (
+            '<?xml version="1.0"?>'
+            '<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+            '<rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>'
+            "</rootfiles></container>"
+        )
+        opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bookid">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Plates</dc:title><dc:language>fr</dc:language>
+  </metadata>
+  <manifest>
+    <item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>
+    <item id="plate" href="plate.xhtml" media-type="application/xhtml+xml"/>
+    <item id="img1" href="image.jpg" media-type="image/jpeg"/>
+    <item id="img2" href="plate.png" media-type="image/png"/>
+  </manifest>
+  <spine><itemref idref="ch1"/><itemref idref="plate"/></spine>
+</package>
+"""
+        ch1 = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>I</title></head>'
+            '<body><p><img src="image.jpg"/><span id="kobo.1.1">Je suis là.</span></p></body></html>'
+        )
+        plate = (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            '<html xmlns="http://www.w3.org/1999/xhtml"><head><title>plate</title></head>'
+            '<body><img src="plate.png"/></body></html>'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            epub = os.path.join(directory, "plates.epub")
+            with zipfile.ZipFile(epub, "w") as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr("META-INF/container.xml", container)
+                archive.writestr("OEBPS/content.opf", opf)
+                archive.writestr("OEBPS/ch1.xhtml", ch1)
+                archive.writestr("OEBPS/plate.xhtml", plate)
+                archive.writestr("OEBPS/image.jpg", b"chapter-image")
+                archive.writestr("OEBPS/plate.png", b"plate-image")
+            store, _ = _run(epub, os.path.join(directory, "state"))
+
+            output = assemble(store, epub, out_format="html", about_page=False)
+            self.assertTrue(output.endswith(".html"))
+            with open(output, encoding="utf-8") as handle:
+                html = handle.read()
+            self.assertNotIn('src="image.jpg"', html)
+            self.assertNotIn('src="plate.png"', html)
+            self.assertIn("data:image/jpeg;base64,Y2hhcHRlci1pbWFnZQ==", html)
+            self.assertIn("data:image/png;base64,cGxhdGUtaW1hZ2U=", html)
+            assets_dir = os.path.join(os.path.dirname(output), f"{Path(output).stem}.assets")
+            self.assertFalse(os.path.exists(assets_dir))
+
     def test_epub_export_rejects_source_state_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:
             epub = os.path.join(directory, "inline.epub")
@@ -1584,63 +1864,6 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
         self.assertNotIn("↩", heading.get_text())
         self.assertNotIn("目录", heading.get_text())
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
-
-
-class TestReport(unittest.TestCase):
-    def test_report_summary(self):
-        with tempfile.TemporaryDirectory() as d:
-            txt = os.path.join(d, "novel.txt")
-            write_sample_txt(txt)
-            store, _ = _run(txt, os.path.join(d, "state"))
-            g = GlossaryStore(store.glossary_path)
-            report = build_report(store, g)
-            g.close()
-            s = report["summary"]
-            self.assertEqual(s["chapters_done"], s["chapters_total"])
-            self.assertEqual(s["empty_targets"], 0)  # Every paragraph has a translation.
-            self.assertGreaterEqual(s["terms"], 1)
-            self.assertNotIn("low_confidence_terms", report)
-            self.assertNotIn("chapters_reviewed", s)
-            self.assertNotIn("review_issues", report)
-
-    def test_report_marks_review_autofix_as_published(self):
-        with tempfile.TemporaryDirectory() as d:
-            txt = os.path.join(d, "novel.txt")
-            write_sample_txt(txt)
-            store, _ = _run(txt, os.path.join(d, "state"))
-            review = ReviewRunStore(store.run_dir)
-            review.start(
-                reviewed_content_digest="digest",
-                metadata={"config": {}, "glossary_fingerprint": "g"},
-            )
-            result = review.finish(
-                status="completed",
-                termination="max_rounds",
-                summary={"issue_count": 2, "change_count": 1},
-                issues=[],
-                changes=[],
-            )
-            review.write_json(
-                "result.json",
-                {
-                    **result,
-                    "autofix": {
-                        "enabled": True,
-                        "status": "partial",
-                        "applied_segment_count": 1,
-                        "failed_issue_count": 1,
-                    },
-                },
-            )
-            glossary = GlossaryStore(store.glossary_path)
-
-            report = build_report(store, glossary)
-            glossary.close()
-
-            self.assertFalse(report["review"]["read_only"])
-            self.assertEqual(report["review"]["autofix_status"], "partial")
-            self.assertEqual(report["review"]["autofix_applied_segment_count"], 1)
-            self.assertEqual(report["review"]["autofix_failed_issue_count"], 1)
 
 
 if __name__ == "__main__":

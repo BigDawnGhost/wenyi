@@ -7,7 +7,6 @@ import posixpath
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString, Tag
 
-from wenyi_core.ingest.models import KIND_HEADING, KIND_TEXT, Segment
 from wenyi_core.markup.annotations import (
     _ANNOTATION_MARKER_ONLY,
     _annotation_roots,
@@ -21,11 +20,13 @@ from wenyi_core.markup.contracts import (
     _HEADING_TAGS,
     ANNOTATION_ID_ATTR,
     ANNOTATION_META_KEY,
+    HTML_MARKUP_META_KEY,
     INLINE_ID_ATTR,
     INLINE_META_KEY,
     LINE_WRAPPER_ATTR,
 )
 from wenyi_core.markup.ruby import RUBY_MARK_LEFT, RUBY_MARK_RIGHT
+from wenyi_core.models.document import KIND_HEADING, KIND_TEXT, Segment
 
 
 def _preserved_inline_roots(block: Tag) -> list[Tag]:
@@ -244,6 +245,9 @@ def _segment_content(
                 "relation": annotation["relation"],
             }
         )
+        for key in ("html_tag", "html_parent"):
+            if key in annotation:
+                annotation_items[-1][key] = annotation[key]
     if annotation_items:
         meta[ANNOTATION_META_KEY] = {
             "version": 1,
@@ -366,6 +370,7 @@ def annotate_epub_resource(
     *,
     book_title: str = "",
     skip_navigation: bool = False,
+    html_mode: bool = False,
 ) -> tuple[str, list[Segment], str]:
     """Annotate one physical XHTML and return its title, segments and backfill template.
     Use the physical resource index in anchors rather than the final Chapter index, so
@@ -376,9 +381,23 @@ def annotate_epub_resource(
     first_heading: Tag | None = None
     heading_title_parts: list[str] = []
     idx = 0
-    for el in _translation_targets(soup, skip_navigation=skip_navigation):
+    if html_mode:
+        from wenyi_core.markup.html import (
+            html_attribute_segments,
+            html_inline_roots,
+            html_translation_targets,
+        )
+
+        targets = html_translation_targets(soup)
+    else:
+        targets = _translation_targets(soup, skip_navigation=skip_navigation)
+    for el in targets:
         anchor = f"tn{resource_index}_{idx}"
-        annotations = _annotation_roots(el, anchor, href)
+        annotations = (
+            html_inline_roots(el, anchor, href)
+            if html_mode
+            else _annotation_roots(el, anchor, href)
+        )
         protected_annotation_nodes: set[int] = set()
         range_annotation_roots: set[int] = set()
         for annotation in annotations.values():
@@ -429,6 +448,8 @@ def annotate_epub_resource(
             continue
         if not text:
             continue
+        if html_mode:
+            meta[HTML_MARKUP_META_KEY] = {"version": 1}
         el["data-tn-id"] = anchor
         # Move page-number processing instructions before blocks so backfill clear() preserves them.
         _hoist_processing_instructions(el)
@@ -455,6 +476,9 @@ def annotate_epub_resource(
             )
         )
         idx += 1
+
+    if html_mode:
+        segments.extend(html_attribute_segments(soup, resource_index, idx))
 
     # Physical-resource title fallback: first heading, then a title that is neither an internal filename
     # nor the book title, then empty. Logical chapter titles later come from complete TOC nodes.

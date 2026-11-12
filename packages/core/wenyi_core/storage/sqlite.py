@@ -7,7 +7,6 @@ Long workflow locks are OS locks, never open database transactions.
 
 from __future__ import annotations
 
-import errno
 import hashlib
 import json
 import os
@@ -21,22 +20,43 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+from ..errors import ArtifactCorrupt, SchemaTooNew
 from ..glossary.store import GlossaryStore, GlossaryTerm
-from ..ingest.models import Chapter, Document
-from ..pipeline.runstore import ExportSnapshotStore, RunStore, source_sha256
+from ..models.document import Chapter, Document
+from .io_path import require_sqlite_path
+from .locks import (
+    ASSEMBLE_LOCK,
+    EXPORT_HISTORY_LOCK,
+    RUN_LOCK,
+    StorageBusyError,
+    exclusive_file_lock,
+)
 from .protocol import STATUS_DONE, STATUS_PENDING
+from .run_store import ExportSnapshotStore, RunStore, source_sha256
 
+#: Schema version this build writes, stored in SQLite's own `user_version`.
+#:
+#: A database carrying a higher number was created by a newer build, so opening
+#: it is refused rather than attempted. The schema is declared with "if not
+#: exists" and rows are JSON documents, so an older build sharing a newer file
+#: leaves the newer tables untouched while writing rows the newer build reads as
+#: complete. Refusing is the only outcome that keeps both versions honest.
+#:
+#: A database carrying 0 predates this guard. It is stamped with the current
+#: number and otherwise left alone, which is what makes the upgrade free;
+#: refusing 0 instead would declare every existing project unsupported.
+SCHEMA_VERSION = 1
 
-class StorageBusyError(BlockingIOError):
-    """Another local process owns the requested workflow lock."""
+# Re-exported: the class moved to locks.py, but callers still import it from here.
+__all__ = ["SCHEMA_VERSION", "SqliteStorage", "StorageBusyError"]
 
 
 class SqliteStorage:
     """One target-isolated local database, safe across threads and processes.
 
-    A reentrant mutex serializes this instance's connection. Independent instances use
-    SQLite's WAL and busy timeout. Nested state locks use savepoints in the same outer
-    transaction, including borrowed glossary operations.
+    A reentrant mutex serializes writers; readers use per-thread WAL snapshots.
+    Nested state locks use savepoints in the same outer transaction, including
+    borrowed glossary operations. Closing all connections drains active snapshots.
     """
 
     def __init__(self, run_dir: str, *, create: bool = True):
@@ -45,18 +65,31 @@ class SqliteStorage:
         self.source_dir = os.path.join(self.run_dir, "source")
         self.reviews_dir = os.path.join(self.run_dir, "reviews")
         self._create = create
+        # The mutex serializes writers across threads; reads use per-thread
+        # connections and a WAL snapshot instead of queueing behind it.
         self._mutex = threading.RLock()
         self._lock_local = threading.local()
-        self._conn: sqlite3.Connection | None = None
-        self._depth = 0
+        self._conn_local = threading.local()
+        self._connections: set[sqlite3.Connection] = set()
+        self._connections_guard = threading.Condition()
+        self._readers = 0
+        self._closing = False
+        # Fail on an unopenable path before any directory is created, so a
+        # rejected project leaves nothing behind to clean up.
+        require_sqlite_path(self.database_path)
         if create:
             with self._mutex:
                 self._connection()
 
     def _connection(self) -> sqlite3.Connection:
-        """Open lazily so read-only discovery of missing projects creates nothing."""
-        if self._conn is not None:
-            return self._conn
+        """Return this thread's lazily opened connection.
+
+        Reads take their own connection so they do not queue behind another
+        thread's write transaction; WAL still gives them a consistent snapshot.
+        """
+        conn = getattr(self._conn_local, "conn", None)
+        if conn is not None:
+            return conn
         if self._create:
             os.makedirs(self.run_dir, exist_ok=True)
         elif not os.path.isfile(self.database_path):
@@ -65,11 +98,29 @@ class SqliteStorage:
         # Serialize first opens across instances/processes, including discovery;
         # ordinary reads/writes keep using WAL without holding this OS lock.
         with self._file_lock(".schema.lock"):
-            return self._open_connection()
+            conn = self._open_connection()
+        # Readers must not take the writer mutex: close_all holds it while
+        # draining snapshots, and a first read may still be opening its connection.
+        with self._connections_guard:
+            self._connections.add(conn)
+        self._conn_local.conn = conn
+        self._conn_local.depth = 0
+        return conn
+
+    def _database_present(self) -> bool:
+        """Report whether this store already has a database to read from."""
+        if getattr(self._conn_local, "conn", None) is not None:
+            return True
+        return os.path.isfile(self.database_path)
 
     def _open_connection(self) -> sqlite3.Connection:
-        """Called under the instance mutex and the short schema initialization lock."""
-        uri = Path(self.database_path).as_uri() + ("?mode=rwc" if self._create else "?mode=rw")
+        """Called under the short schema initialization lock."""
+        # SQLite rejects the extended-length prefix, so a long database path
+        # cannot be rescued the way an ordinary file path can. Checking first
+        # replaces "unable to open database file" with a message naming the limit.
+        uri = Path(require_sqlite_path(self.database_path)).as_uri() + (
+            "?mode=rwc" if self._create else "?mode=rw"
+        )
         conn = sqlite3.connect(uri, uri=True, isolation_level=None, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         try:
@@ -77,6 +128,9 @@ class SqliteStorage:
             conn.execute("PRAGMA foreign_keys = ON")
             if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
                 conn.execute("PRAGMA journal_mode = WAL")
+            # Every connection passes here, including the readers that drain on
+            # close, so the guard is stated once rather than at each open site.
+            self._check_schema_version(conn)
             if not conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifacts'"
             ).fetchone():
@@ -121,27 +175,83 @@ class SqliteStorage:
         except BaseException:
             conn.close()
             raise
-        self._conn = conn
         return conn
 
+    def _check_schema_version(self, conn: sqlite3.Connection) -> None:
+        """Refuse a database a newer build created, and stamp an older one.
+
+        The stamp is written here rather than beside schema creation because the
+        number has to be set for a database whose tables already exist as well:
+        the upgrade path is a file this build did not create, and leaving it at 0
+        would make every later open repeat the same upgrade.
+
+        Reading and writing are decided by how this store was constructed. A
+        read-only store is how a caller inspects or recovers a project without
+        writing to it, so the refusal still applies there while the stamp is
+        skipped: the writable path the caller eventually takes records it.
+        """
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if not isinstance(version, int) or isinstance(version, bool) or version < 0:
+            raise ValueError(f"Invalid local state database: {self.database_path}")
+        if version > SCHEMA_VERSION:
+            raise SchemaTooNew(
+                "This project was created by a newer version of Wenyi "
+                f"(database schema {version}, this version supports {SCHEMA_VERSION}). "
+                "Update Wenyi to open it: an older version would read the project "
+                "incompletely.",
+                code="database_schema_too_new",
+            )
+        if version == 0 and self._create:
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
     def close(self) -> None:
-        """Release the owned connection after active operations have finished."""
+        """Release this thread's connection; other threads release their own.
+
+        Callers borrow a storage for one operation and close it in a finally
+        block, so closing every thread's connection would break a concurrent
+        caller still holding its own.
+        """
+        self._check_close()
         with self._mutex:
-            if self._depth:
-                raise RuntimeError("Cannot close storage inside a state transaction")
-            if self._conn is not None:
-                self._conn.close()
-                self._conn = None
+            conn = getattr(self._conn_local, "conn", None)
+            self._conn_local.conn = None
+            self._conn_local.depth = 0
+            if conn is not None:
+                with self._connections_guard:
+                    self._connections.discard(conn)
+                conn.close()
+
+    def _check_close(self) -> None:
+        if getattr(self._conn_local, "depth", 0) or getattr(self._conn_local, "read_depth", 0):
+            raise RuntimeError("Cannot close storage inside a state transaction or read snapshot")
+
+    def close_all(self) -> None:
+        """Drain operations and invalidate every thread's cached connection."""
+        self._check_close()
+        with self._mutex:
+            with self._connections_guard:
+                self._closing = True
+                try:
+                    self._connections_guard.wait_for(lambda: self._readers == 0)
+                    connections, self._connections = self._connections, set()
+                    # Replacing the TLS object invalidates caches in surviving worker
+                    # threads too, not only in the thread releasing the run lock.
+                    self._conn_local = threading.local()
+                    for conn in connections:
+                        conn.close()
+                finally:
+                    self._closing = False
+                    self._connections_guard.notify_all()
 
     @contextmanager
     def state_lock(self) -> Iterator[None]:
         """Commit a short atomic state change; nested failures roll back their savepoint."""
         with self._mutex:
             conn = self._connection()
-            depth = self._depth
+            depth = self._conn_local.depth
             savepoint = f"state_{depth}"
             conn.execute("BEGIN IMMEDIATE" if depth == 0 else f"SAVEPOINT {savepoint}")
-            self._depth += 1
+            self._conn_local.depth += 1
             try:
                 yield
             except BaseException:
@@ -162,12 +272,22 @@ class SqliteStorage:
                         conn.rollback()
                     raise
             finally:
-                self._depth -= 1
+                self._conn_local.depth -= 1
 
     @contextmanager
     def _read_lock(self) -> Iterator[None]:
-        """Capture a WAL read snapshot without competing for SQLite's writer lock."""
-        with self._mutex:
+        """Take a WAL snapshot on this thread's own connection.
+
+        Register the outer snapshot before opening its connection. Shutdown waits
+        for existing readers, including nested reads, without admitting new ones.
+        """
+        with self._connections_guard:
+            depth = getattr(self._conn_local, "read_depth", 0)
+            if not depth:
+                self._connections_guard.wait_for(lambda: not self._closing)
+                self._readers += 1
+            self._conn_local.read_depth = depth + 1
+        try:
             conn = self._connection()
             if conn.in_transaction:
                 yield
@@ -177,6 +297,12 @@ class SqliteStorage:
                 yield
             finally:
                 conn.rollback()
+        finally:
+            with self._connections_guard:
+                self._conn_local.read_depth = depth
+                if not depth:
+                    self._readers -= 1
+                    self._connections_guard.notify_all()
 
     @contextmanager
     def _file_lock(self, filename: str, *, blocking: bool = True) -> Iterator[None]:
@@ -200,60 +326,30 @@ class SqliteStorage:
 
     @contextmanager
     def _process_file_lock(self, filename: str, *, blocking: bool) -> Iterator[None]:
+        """Delegate to the shared primitive so every store locks the same way."""
         if self._create:
             os.makedirs(self.run_dir, exist_ok=True)
-        with open(os.path.join(self.run_dir, filename), "a+b") as handle:
-            if os.name == "nt":  # pragma: no cover - Windows-specific
-                import msvcrt
-
-                handle.seek(0, os.SEEK_END)
-                if handle.tell() == 0:
-                    handle.write(b"\0")
-                    handle.flush()
-                while True:
-                    handle.seek(0)
-                    try:
-                        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-                        break
-                    except OSError as error:
-                        if error.errno not in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
-                            raise
-                        if not blocking:
-                            raise StorageBusyError("Local workflow is already running") from error
-                        time.sleep(0.05)
-                try:
-                    yield
-                finally:
-                    handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                try:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
-                except BlockingIOError as error:
-                    raise StorageBusyError("Local workflow is already running") from error
-                try:
-                    yield
-                finally:
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        with exclusive_file_lock(os.path.join(self.run_dir, filename), blocking=blocking):
+            yield
 
     @contextmanager
     def lock(self, blocking: bool = True) -> Iterator[None]:
-        with self._file_lock(".run.lock", blocking=blocking):
+        with self._file_lock(RUN_LOCK, blocking=blocking):
             try:
                 yield
             finally:
-                if self._lock_local.depths[".run.lock"] == 1:
-                    self.close()
+                if self._lock_local.depths[RUN_LOCK] == 1:
+                    # The run lock owns the whole store: every thread's
+                    # connection is released when it finally exits.
+                    self.close_all()
 
     def assemble_lock(self):
-        return self._file_lock(".assemble.lock")
+        return self._file_lock(ASSEMBLE_LOCK)
 
     @contextmanager
     def export_history_lock(self, blocking: bool = True) -> Iterator[None]:
         """Serialize publication, download opening and retention, not rendering."""
-        with self._file_lock(".export-history.lock", blocking=blocking):
+        with self._file_lock(EXPORT_HISTORY_LOCK, blocking=blocking):
             yield
 
     def export_lock(self, export_id: int, blocking: bool = True):
@@ -276,15 +372,20 @@ class SqliteStorage:
 
     def read_artifact(self, key: str) -> Any | None:
         key = self._key(key)
-        with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
-                return None
+        if not self._database_present():
+            return None
+        with self._read_lock():
             row = (
                 self._connection()
                 .execute("SELECT value FROM artifacts WHERE key=?", (key,))
                 .fetchone()
             )
-            return json.loads(row[0]) if row else None
+        if row is None:
+            return None
+        try:
+            return json.loads(row[0])
+        except json.JSONDecodeError as error:
+            raise ArtifactCorrupt(f"Artifact {key} is corrupt at byte {error.pos}") from error
 
     def write_artifact(self, key: str, value: Any) -> None:
         key = self._key(key)
@@ -305,9 +406,9 @@ class SqliteStorage:
 
     def list_artifacts(self, prefix: str = "") -> list[str]:
         prefix = self._key(prefix, prefix=True)
-        with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
-                return []
+        if not self._database_present():
+            return []
+        with self._read_lock():
             # A binary range uses the primary-key index, including literal '%' and '_'.
             rows = self._connection().execute(
                 "SELECT key FROM artifacts WHERE key>=? AND key<? ORDER BY key",
@@ -330,9 +431,9 @@ class SqliteStorage:
 
     def read_artifact_records(self, key: str) -> list[dict]:
         key = self._key(key)
-        with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
-                return []
+        if not self._database_present():
+            return []
+        with self._read_lock():
             return [
                 json.loads(row[0])
                 for row in self._connection().execute(
@@ -351,8 +452,17 @@ class SqliteStorage:
                 raise ValueError("Translation state is already initialized")
             previous = self.read_artifact("initializing.json") or {}
             same_source = previous.get("source_sha256") == source_hash
+            if same_source:
+                self.recover_usage()
+            parsed = self.read_artifact("parsed_document.json")
+            keep_source = isinstance(parsed, dict) and parsed.get("source_sha256") == source_hash
             for key in self.list_artifacts():
-                if same_source and (key == "events.jsonl" or key.startswith("reviews/")):
+                if keep_source and key in {"parsed_document.json", "preview.json"}:
+                    continue
+                if same_source and (
+                    key in {"events.jsonl", "usage.json"}
+                    or key.startswith(("reviews/", "preparation/"))
+                ):
                     continue
                 self.delete_artifact(key)
             conn = self._connection()
@@ -424,7 +534,8 @@ class SqliteStorage:
                     raise ValueError("Invalid chapter index in translation state")
                 if index in chapters:
                     raise ValueError(f"Duplicate chapter index in translation state: {index}")
-                chapter = self.load_chapter(index)
+                # Reuse this manifest: per-chapter reloads make large exports quadratic.
+                chapter = self._load_chapter(index, entry)
                 if chapter.index != index:
                     raise ValueError(f"Chapter index mismatch: {index}")
                 chapters[index] = chapter
@@ -681,29 +792,46 @@ class SqliteStorage:
         return meta.get("title_translated") or None
 
     def load_chapter(self, ci: int) -> Chapter:
-        if self._conn is None and not os.path.isfile(self.database_path):
+        if not self._database_present():
             raise FileNotFoundError(f"Chapter not found: {ci}")
         with self._read_lock():
-            value = self.read_artifact(f"chapters/ch{ci}.json")
-            if value is None:
-                raise FileNotFoundError(f"Chapter not found: {ci}")
-            chapter = Chapter.model_validate(value)
             manifest = self.read_artifact("manifest.json") or {}
             entry = next(
                 (entry for entry in manifest.get("chapters", []) if entry["index"] == ci), {}
             )
-            translated = self._translated_title(entry, chapter.meta)
-            if translated is not None:
-                chapter.meta["title_translated"] = translated
-            elif "title_translated" in entry:
-                chapter.meta.pop("title_translated", None)
-            return chapter
+            return self._load_chapter(ci, entry)
 
-    def save_context(self, data: dict) -> None:
-        self.write_artifact("context.json", data)
+    @contextmanager
+    def read_chapters_snapshot(self) -> Iterator[Iterator[tuple[dict, Chapter]]]:
+        """Yield manifest entries and chapter bodies lazily from one read snapshot.
 
-    def load_context(self) -> dict | None:
-        return self.read_artifact("context.json")
+        Parse the manifest once, preserving its chapter order and translated titles.
+        Close the iterator before releasing the snapshot, including on early exits,
+        so it cannot read chapters outside this context.
+        """
+        with self._read_lock():
+            manifest = self.load_manifest()
+            chapters = (
+                (entry, self._load_chapter(entry["index"], entry))
+                for entry in manifest.get("chapters", [])
+            )
+            try:
+                yield chapters
+            finally:
+                chapters.close()
+
+    def _load_chapter(self, ci: int, entry: dict) -> Chapter:
+        """Load one chapter body, applying its already-read manifest entry's title."""
+        value = self.read_artifact(f"chapters/ch{ci}.json")
+        if value is None:
+            raise FileNotFoundError(f"Chapter not found: {ci}")
+        chapter = Chapter.model_validate(value)
+        translated = self._translated_title(entry, chapter.meta)
+        if translated is not None:
+            chapter.meta["title_translated"] = translated
+        elif "title_translated" in entry:
+            chapter.meta.pop("title_translated", None)
+        return chapter
 
     def save_annotation_contexts(self, data: dict) -> None:
         self.write_artifact("annotation_contexts.json", data)
@@ -716,12 +844,6 @@ class SqliteStorage:
 
     def load_analysis(self) -> dict | None:
         return self.read_artifact("analysis.json")
-
-    def save_report(self, data: dict) -> None:
-        self.write_artifact("report.json", data)
-
-    def load_report(self) -> dict | None:
-        return self.read_artifact("report.json")
 
     def save_usage(self, data: dict) -> None:
         self.write_artifact("usage.json", data)
@@ -816,7 +938,7 @@ class SqliteStorage:
 
     def list_events(self, *, event_type: str | None = None, limit: int = 200) -> list[dict]:
         with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
+            if not self._database_present():
                 return []
             rows = (
                 self._connection()
@@ -842,9 +964,25 @@ class SqliteStorage:
 
     def get_term(self, source: str) -> GlossaryTerm | None:
         with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
+            if not self._database_present():
                 return None
             return self._glossary().get_term(source)
+
+    def get_terms(self, sources: list[str]) -> list[GlossaryTerm]:
+        with self._mutex:
+            if not self._database_present():
+                return []
+            return self._glossary().get_terms(sources)
+
+    def list_terms_page(
+        self, *, q: str = "", term_type: str = "", offset: int = 0, limit: int = 100
+    ) -> tuple[list[GlossaryTerm], int]:
+        if not self._database_present():
+            return [], 0
+        with self._read_lock():
+            return self._glossary().list_terms_page(
+                q=q, term_type=term_type, offset=offset, limit=limit
+            )
 
     def upsert_term(self, term: GlossaryTerm, chapter: int | None = None) -> str:
         with self.state_lock():
@@ -852,7 +990,7 @@ class SqliteStorage:
 
     def all_terms(self) -> list[GlossaryTerm]:
         with self._mutex:
-            if self._conn is not None:
+            if getattr(self._conn_local, "conn", None) is not None:
                 return self._glossary().all_terms()
             if not os.path.isfile(self.database_path):
                 return []
@@ -910,12 +1048,12 @@ class SqliteStorage:
 
     def open_conflicts(self) -> list[dict]:
         with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
+            if not self._database_present():
                 return []
             return self._glossary().open_conflicts()
 
     def stats(self) -> dict[str, int]:
         with self._mutex:
-            if self._conn is None and not os.path.isfile(self.database_path):
+            if not self._database_present():
                 return {"terms": 0, "open_conflicts": 0}
             return self._glossary().stats()

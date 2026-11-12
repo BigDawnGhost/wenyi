@@ -1,5 +1,5 @@
-import { useI18n } from "@/i18n";
-import type { UploadPreview } from "@/lib/api";
+import { useI18n } from "../../i18n";
+import type { UploadPreview } from "../../api/types";
 
 export function SourcePreview({ preview }: { preview: UploadPreview }) {
   const { t: tr } = useI18n();
@@ -8,14 +8,10 @@ export function SourcePreview({ preview }: { preview: UploadPreview }) {
       <h3 className="font-medium">{preview.title}</h3>
       <p className="text-sm">
         {preview.fmt.toUpperCase()} ·{" "}
-        {preview.fmt === "srt"
-          ? tr("createProject.subtitleCues", {
-              count: preview.total_word_count,
-            })
-          : tr("createProject.chaptersParagraphs", {
-              chapters: preview.chapter_count,
-              count: preview.total_word_count,
-            })}
+        {tr("createProject.chaptersParagraphs", {
+          chapters: preview.chapter_count,
+          count: preview.total_word_count,
+        })}
       </p>
       <details>
         <summary className="cursor-pointer text-sm">

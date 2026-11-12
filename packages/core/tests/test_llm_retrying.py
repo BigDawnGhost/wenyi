@@ -25,16 +25,8 @@ from wenyi_core.llm.retrying import (
 from wenyi_core.llm.router import RoutedLLMClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
 
 from tests.model_fixtures import model_config
-
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
 
 
 class _HttpError(Exception):
@@ -217,6 +209,31 @@ def test_openai_sdk_retry_is_disabled():
         timeout=1,
         max_retries=0,
     )
+
+
+@pytest.mark.parametrize("timeout", [600, 45])
+def test_configured_timeout_reaches_every_http_client(timeout: float):
+    """The connection deadline is what bounds a stalled provider, so it must
+    survive the route to the SDK constructor for both the default value and a
+    configured one, including a fallback connection reached after failover."""
+    client = RoutedLLMClient(
+        model_config(
+            kind="deepseek",
+            base_url="https://example.invalid/v1",
+            api_key_env="TEST_LLM_KEY",
+            timeout=timeout,
+            max_retries=0,
+        )
+    )
+    with (
+        patch.dict(os.environ, {"TEST_LLM_KEY": "secret"}),
+        patch("openai.OpenAI") as openai_type,
+    ):
+        adapter = client.adapter("default")
+        assert isinstance(adapter, DeepSeekClient)
+        adapter._ensure_client()
+
+    assert openai_type.call_args.kwargs["timeout"] == timeout
 
 
 def test_transient_error_retries_once_and_records_wait_event():

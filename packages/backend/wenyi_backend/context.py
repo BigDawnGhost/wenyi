@@ -7,93 +7,40 @@ AnyIO and asyncio.to_thread copy this scope; raw threads must copy it explicitly
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO, ContextManager, Protocol
+from typing import TYPE_CHECKING, Any, BinaryIO, ContextManager, Protocol, runtime_checkable
 
 from fastapi import WebSocket
 from wenyi_core.config import Config
 from wenyi_core.llm.base import LLMClient
+from wenyi_core.pdf_bridge.connection import BridgeResolver
 from wenyi_core.storage.protocol import Storage
 
 from .live_statistics import StatisticsCache
+from .metrics import Metrics
+from .ports.jobs import JobCatalog
+from .ports.projects import ProjectCatalog
 
 if TYPE_CHECKING:
     from .global_settings import GlobalSettings
 
 
-class Repository(Protocol):
-    """Catalog operations; connection tokens are opaque to shared services."""
+@runtime_checkable
+class BackendStorage(Storage, Protocol):
+    """Project state with the session and per-export locks required by backend workers."""
 
-    def create_project(
-        self,
-        name: str,
-        source_lang: str,
-        target_lang: str,
-        strategy: dict,
-        *,
-        project_id: str | None = None,
-        source: dict | None = None,
-        config: dict | None = None,
-        connection: Any = None,
-    ) -> str: ...
-    def get_project(self, pid: str) -> dict | None: ...
-    def list_projects(self) -> list[dict]: ...
-    def delete_project(self, pid: str) -> None: ...
-    def set_project_status(self, pid: str, status: str, *, error: str | None = None) -> None: ...
-    def set_project_strategy(self, pid: str, strategy: dict, *, connection: Any = None) -> None: ...
-    def set_project_config(self, pid: str, config: dict, *, connection: Any = None) -> None: ...
-    def set_project_languages(
-        self, pid: str, source_lang: str, target_lang: str, *, connection: Any = None
-    ) -> None: ...
-    def set_project_source(
-        self,
-        pid: str,
-        source_path: str,
-        book_title: str | None,
-        *,
-        source_sha256: str | None = None,
-        fmt: str | None = None,
-        source_meta: dict | None = None,
-    ) -> None: ...
-    def chapter_summaries(self, pid: str) -> list[dict]: ...
-    def total_word_count(self, pid: str) -> int: ...
-    def create_job(
-        self,
-        pid: str,
-        kind: str,
-        arq_job_id: str,
-        *,
-        params: dict | None = None,
-        config_snapshot: dict | None = None,
-        run_id: str | None = None,
-        status: str = "queued",
-    ) -> int: ...
-    def admit_job(
-        self,
-        pid: str,
-        kind: str,
-        job_id: str,
-        /,
-        *,
-        project_status: str,
-        params: dict | None = None,
-        config_snapshot: dict | None = None,
-        run_id: str | None = None,
-    ) -> int: ...
-    def fail_admission(self, job_id: int, previous_status: str, error: str, /) -> Any: ...
-    def get_job(self, job_id: int) -> dict | None: ...
-    def get_job_by_arq_id(self, arq_job_id: str) -> dict | None: ...
-    def set_job_status(
-        self, job_id: int, status: str, error: str | None = None, *, result: dict | None = None
-    ) -> Any: ...
-    def list_jobs(self, pid: str) -> list[dict]: ...
-    def latest_resumable_job(self, pid: str) -> dict | None: ...
-    def job_review_id(self, job_id: int) -> str | None: ...
-    def is_paused(self, pid: str) -> bool: ...
+    def lock(self, *, blocking: bool = True) -> ContextManager[None]: ...
+    def export_lock(self, export_id: int, *, blocking: bool = True) -> ContextManager[None]: ...
+
+
+class Repository(ProjectCatalog, JobCatalog, Protocol):
+    """Composition aggregate, not an implicit service locator; consumers use narrower ports."""
+
     def create_export(self, pid: str, fmt: str, options: dict) -> int: ...
     def set_export_status(
         self,
@@ -132,12 +79,25 @@ class ExportStore(Protocol):
     def publish_export(self, pid: str, export_id: int, output: str) -> None: ...
 
 
+class SourcePaths(Protocol):
+    """Host-owned source identities, independent of the Web data-volume layout."""
+
+    def source_reference(self, source: Path) -> str: ...
+    def source_path(self, pid: str, reference: str) -> Path: ...
+
+
 class Telemetry(Protocol):
     def connect(self) -> StatisticsCache: ...
     def release(self, cache: StatisticsCache) -> None: ...
     def progress_snapshot(self, pid: str) -> dict | None: ...
     def statistics_snapshot(self, pid: str, job: dict) -> dict | None: ...
     async def relay(self, websocket: WebSocket, pid: str) -> None: ...
+
+
+class WorkflowDispatcher(Protocol):
+    """Run a synchronous workflow with its context, retaining ownership until it exits."""
+
+    async def __call__(self, operation: Callable[[], None], /) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -148,14 +108,37 @@ class BackendContext:
     settings_store: SettingsStore
     exports: ExportStore
     telemetry: Telemetry
-    storage_for: Callable[[str], Storage]
+    storage_for: Callable[[str], BackendStorage]
+    read_storage_for: Callable[[str], Storage]
     build_client: Callable[[Config], LLMClient]
     enqueue: Callable[..., Awaitable[Any]]
     data_dir: str
     project_dir: Callable[[str], str]
     health: Callable[[], None]
     update_term: Callable[..., None]
+    remove_project: Callable[[str], None]
     api_token: str | None = None
+    #: Where a project that does not exist yet will be created, or `ValueError`
+    #: carrying the sentence a person reads.
+    #:
+    #: The shared application has no filesystem of its own: which folders exist and
+    #: which are safe to write to are facts only the host knows. `location` is the
+    #: folder a person chose, or None for this installation's default. `name` is the
+    #: project's, because a library directory carries a readable half.
+    #:
+    #: A host with no library concept leaves this unset. A request that names a
+    #: location then fails instead of quietly creating the project somewhere else:
+    #: a client must never be told the project went where it asked when it did not.
+    new_project_dir: Callable[[str, str, str | None], Path] | None = None
+    # None retains DATA_DIR-relative Web originals. Desktop keeps movable project-local names.
+    source_paths: SourcePaths | None = None
+    mineru_token_resolver: Callable[[], str | None] | None = None
+    # Desktop resolves a saved connection's stored key; None keeps environment lookup (Web).
+    connection_credential: Callable[[str, Any], str | None] | None = None
+    babeldoc_connection: BridgeResolver | None = None
+    # Web retains its executor; Desktop owns a dedicated thread per workflow.
+    run_workflow_sync: WorkflowDispatcher = asyncio.to_thread
+    metrics: Metrics = field(default_factory=Metrics)
 
 
 _context: ContextVar[BackendContext] = ContextVar("wenyi_backend_context")

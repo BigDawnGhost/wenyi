@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, ClassVar, Literal
 
 from json_repair import repair_json
 
+from ..errors import WenyiError
 
-class JsonParseError(ValueError):
+
+class JsonParseError(WenyiError, ValueError):
     """Model output remains unusable JSON after local repair."""
+
+    code: ClassVar[str] = "llm_invalid_json"
+    # The same prompt against the same model produces the same unusable text,
+    # so a retry is only worth it once the prompt or the model changes.
+    retryable: ClassVar[bool] = False
 
 
 @dataclass(frozen=True)

@@ -13,8 +13,7 @@
     "build",
     "dist",
     "output",
-    "state",
-    "packages/core/tests/test_pdf_real_fonts.py"
+    "state"
   ],
   "venvPath": ".",
   "venv": ".venv",

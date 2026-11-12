@@ -9,12 +9,15 @@ use std::{
 
 use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt};
 use cap_std::{ambient_authority, fs::Dir};
-use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::Manager;
 
-type Result<T> = std::result::Result<T, String>;
+use crate::local_connection::Connection;
+use crate::mutex::lock;
+use crate::publish::Temporary;
+
+type Result<T> = std::result::Result<T, crate::ipc_error::IpcError>;
 const CHUNK: usize = 64 * 1024;
 pub(crate) const MAX_SOURCE_IDENTITIES: usize = 1024;
 pub(crate) const MAX_SOURCE_ALIASES: usize = 4096;
@@ -55,7 +58,10 @@ impl SourceIdentity {
                 )
             } == 0
             {
-                return Err("Cannot identify source file.".into());
+                return Err(crate::ipc_error::IpcError::new(
+                    "export_source_unavailable",
+                    "Cannot identify source file.",
+                ));
             }
             let info = unsafe { info.assume_init() };
             Ok(Self {
@@ -104,6 +110,7 @@ fn same_alias(left: &Path, right: &Path) -> bool {
 struct Activity {
     closing: bool,
     active: usize,
+    pending: usize,
     sources: Vec<SourceIdentity>,
     aliases: Vec<PathBuf>,
 }
@@ -114,7 +121,7 @@ pub struct Saves(Arc<(Mutex<Activity>, Condvar)>);
 impl Saves {
     #[cfg(test)]
     pub fn source_count(&self) -> usize {
-        self.0 .0.lock().unwrap().sources.len()
+        lock(&self.0 .0).sources.len()
     }
 
     /// Reserve protection before POST, including failed or uncertain uploads.
@@ -126,16 +133,19 @@ impl Saves {
             .canonicalize()
             .map_err(|_| "Cannot identify source path.")?
             .join(path.file_name().ok_or("Cannot identify source path.")?);
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0 .0);
         let new_identity = !state.sources.contains(&identity);
         let new_alias = !state.aliases.iter().any(|alias| same_alias(alias, &path));
         if (new_identity && state.sources.len() >= MAX_SOURCE_IDENTITIES)
             || (new_alias && state.aliases.len() >= MAX_SOURCE_ALIASES)
         {
-            return Err("Source protection limit reached. No upload was started. Restart Wenyi before uploading more files.".into());
+            return Err(crate::ipc_error::IpcError::new("export_protection_limit", "Source protection limit reached. No upload was started. Restart Wenyi before uploading more files."));
         }
         if state.closing {
-            return Err("Wenyi is closing. No upload was started.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_closing",
+                "Wenyi is closing. No upload was started.",
+            ));
         }
         if new_identity {
             state.sources.push(identity);
@@ -146,36 +156,106 @@ impl Saves {
         Ok(())
     }
 
+    /// Fill one channel of the ledger to its cap without touching the filesystem.
+    ///
+    /// Reaching the caps for real costs thousands of file operations and a linear
+    /// scan per insert, which made the cap test the slowest case in the suite.
+    /// The entries only need to be distinct, so push synthetic values straight
+    /// into the ledger. `aliases` selects the channel: the alias cap is exercised
+    /// with one real identity, the identity cap with no extra aliases.
+    #[cfg(test)]
+    pub fn prefill_identities(&self, cap: usize) {
+        let mut state = lock(&self.0 .0);
+        // Start well above the real volume and file numbers so a synthetic entry
+        // cannot collide with the file the test registers for real.
+        let base: u64 = 1 << 40;
+        while state.sources.len() < cap {
+            let index = state.sources.len() as u64;
+            state.sources.push(SourceIdentity {
+                volume: base + index,
+                file: u128::from(base) + u128::from(index),
+            });
+        }
+    }
+
+    /// Fill the alias channel to its cap; see `prefill_identities`.
+    #[cfg(test)]
+    pub fn prefill_aliases(&self, cap: usize) {
+        let mut state = lock(&self.0 .0);
+        while state.aliases.len() < cap {
+            let index = state.aliases.len();
+            // A relative name keeps `same_alias` off the filesystem: it only
+            // compares the string, and no such file is ever opened.
+            state
+                .aliases
+                .push(std::path::PathBuf::from(format!("prefill-alias-{index}")));
+        }
+    }
+
     pub fn close(&self) {
-        self.0 .0.lock().unwrap().closing = true;
+        lock(&self.0 .0).closing = true;
+    }
+
+    /// Updating must not interrupt a native dialog, transfer or atomic publish.
+    pub fn close_if_idle(&self) -> bool {
+        let mut state = lock(&self.0 .0);
+        if state.closing || state.active != 0 || state.pending != 0 {
+            return false;
+        }
+        state.closing = true;
+        true
+    }
+
+    pub fn reopen(&self) {
+        lock(&self.0 .0).closing = false;
     }
 
     pub fn wait(&self) {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0 .0);
         while state.active != 0 {
             state = self.0 .1.wait(state).unwrap();
         }
     }
 
     fn check(&self) -> Result<()> {
-        if self.0 .0.lock().unwrap().closing {
-            Err("Saving stopped because Wenyi is closing.".into())
+        if lock(&self.0 .0).closing {
+            Err(crate::ipc_error::IpcError::new(
+                "export_closing",
+                "Saving stopped because Wenyi is closing.",
+            ))
         } else {
             Ok(())
         }
     }
 
     fn begin(&self) -> Result<Active> {
-        let mut state = self.0 .0.lock().unwrap();
+        let mut state = lock(&self.0 .0);
         if state.closing {
-            return Err("Wenyi is closing.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_closing",
+                "Wenyi is closing.",
+            ));
         }
         state.active += 1;
         Ok(Active(self.clone()))
     }
 
+    /// Dialogs/planning block installation, but normal quit may cancel them.
+    /// Only transfers/publishes need to be drained by `wait`.
+    fn reserve(&self) -> Result<Pending> {
+        let mut state = lock(&self.0 .0);
+        if state.closing {
+            return Err(crate::ipc_error::IpcError::new(
+                "export_closing",
+                "Wenyi is closing.",
+            ));
+        }
+        state.pending += 1;
+        Ok(Pending(self.clone()))
+    }
+
     fn protect(&self, path: &Path, roots: &[PathBuf]) -> Result<()> {
-        Self::protect_locked(&self.0 .0.lock().unwrap(), path, roots)
+        Self::protect_locked(&lock(&self.0 .0), path, roots)
     }
 
     fn protect_locked(state: &Activity, path: &Path, roots: &[PathBuf]) -> Result<()> {
@@ -184,13 +264,21 @@ impl Saves {
                 .canonicalize()
                 .map_err(|_| "Internal workspace is unavailable.")?;
             if path.starts_with(root) {
-                return Err("Choose a destination outside Wenyi's internal workspace.".into());
+                return Err(crate::ipc_error::IpcError::new(
+                    "export_destination_invalid",
+                    "Choose a destination outside Wenyi's internal workspace.",
+                ));
             }
         }
         let identity = match File::open(path) {
             Ok(file) => Some(SourceIdentity::read(&file)?),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(_) => return Err("Cannot inspect destination source protection.".into()),
+            Err(_) => {
+                return Err(crate::ipc_error::IpcError::new(
+                    "export_destination_invalid",
+                    "Cannot inspect destination source protection.",
+                ))
+            }
         };
         // Resolve existing aliases as well as the canonical parent spelling.
         // On Windows this also normalizes DOS/extended and short-name paths.
@@ -202,7 +290,10 @@ impl Saves {
                     .is_some_and(|canonical| same_alias(alias, canonical))
         }) || identity.is_some_and(|identity| state.sources.contains(&identity))
         {
-            return Err("The original source cannot be overwritten.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_destination_invalid",
+                "The original source cannot be overwritten.",
+            ));
         }
         Ok(())
     }
@@ -211,8 +302,15 @@ impl Saves {
 struct Active(Saves);
 impl Drop for Active {
     fn drop(&mut self) {
-        self.0 .0 .0.lock().unwrap().active -= 1;
+        lock(&self.0 .0 .0).active -= 1;
         self.0 .0 .1.notify_all();
+    }
+}
+
+struct Pending(Saves);
+impl Drop for Pending {
+    fn drop(&mut self) {
+        lock(&self.0 .0 .0).pending -= 1;
     }
 }
 
@@ -227,11 +325,7 @@ struct Plan {
 
 impl Plan {
     fn destination(&self, mut path: PathBuf) -> PathBuf {
-        let suffix = if self.filename.ends_with(".html.zip") {
-            ".html.zip".to_string()
-        } else {
-            format!(".{}", self.extension)
-        };
+        let suffix = format!(".{}", self.extension);
         if !path
             .file_name()
             .unwrap_or_default()
@@ -252,48 +346,77 @@ pub struct Saved {
     path: String,
 }
 
-#[derive(Clone)]
-struct Connection {
-    client: Client,
-    base: String,
-    token: String,
+/// Save a Desktop diagnostic archive without contacting the engine or creating a book job.
+/// Destination admission, source protection and publication are shared with native exports.
+pub(crate) fn save_diagnostics(
+    saves: &Saves,
+    roots: &[PathBuf],
+    build: impl FnOnce() -> Result<Vec<u8>>,
+    cancelled: impl Fn() -> bool,
+) -> Result<Option<Saved>> {
+    run_diagnostic_save(saves, roots, build, cancelled, &NativeDialog)
+}
+
+fn run_diagnostic_save(
+    saves: &Saves,
+    roots: &[PathBuf],
+    build: impl FnOnce() -> Result<Vec<u8>>,
+    cancelled: impl Fn() -> bool,
+    dialog: &impl Dialog,
+) -> Result<Option<Saved>> {
+    let _pending = saves.reserve()?;
+    let plan = Plan {
+        filename: format!(
+            "wenyi-diagnostics-{}.zip",
+            chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+        ),
+        extension: "zip".into(),
+        label: "Wenyi diagnostic report".into(),
+        request: None,
+        protected_roots: roots.to_vec(),
+    };
+    let Some(path) = dialog.choose(&plan) else {
+        return Ok(None);
+    };
+    if cancelled() {
+        return Ok(None);
+    }
+    let target = Target::new(plan.destination(path), saves, roots)?;
+    if target.existing.is_some() && !dialog.replace(&target.path) {
+        return Ok(None);
+    }
+    let _active = saves.begin()?;
+    struct CancelReader<R, F>(R, F);
+    impl<R: Read, F: Fn() -> bool> Read for CancelReader<R, F> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            if (self.1)() {
+                return Err(std::io::Error::other("Diagnostic export canceled"));
+            }
+            self.0.read(buffer)
+        }
+    }
+    let result = (|| {
+        let bytes = build()?;
+        let length = bytes.len() as u64;
+        target.copy(
+            &mut CancelReader(std::io::Cursor::new(bytes), &cancelled),
+            length,
+            saves,
+            roots,
+        )?;
+        Ok(Some(Saved {
+            path: target.path.to_string_lossy().into_owned(),
+        }))
+    })();
+    // Picker, collection and copy cancellation have the same neutral UI outcome.
+    // A successful publication stays successful even if cancellation arrives too late.
+    match result {
+        Err(_) if cancelled() => Ok(None),
+        result => result,
+    }
 }
 
 impl Connection {
-    fn new(raw: &str) -> Result<Self> {
-        let value: Value = serde_json::from_str(raw).map_err(|_| "Local engine unavailable.")?;
-        let base = value["apiBase"]
-            .as_str()
-            .ok_or("Local engine unavailable.")?;
-        let url = reqwest::Url::parse(base).map_err(|_| "Invalid local engine address.")?;
-        if url.scheme() != "http"
-            || url.host_str() != Some("127.0.0.1")
-            || url.port().is_none()
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || url.path() != "/"
-            || url.query().is_some()
-            || url.fragment().is_some()
-        {
-            return Err("Invalid local engine address.".into());
-        }
-        let client = Client::builder()
-            .no_proxy()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(Duration::from_secs(3))
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|_| "Cannot start native save transport.")?;
-        Ok(Self {
-            client,
-            base: base.trim_end_matches('/').into(),
-            token: value["token"]
-                .as_str()
-                .ok_or("Local engine unavailable.")?
-                .into(),
-        })
-    }
-
     fn request(&self, path: &str, body: Option<&Value>) -> Result<reqwest::blocking::Response> {
         let url = format!("{}{path}", self.base);
         let request = match body {
@@ -305,9 +428,10 @@ impl Connection {
             .send()
             .map_err(|_| "Local export connection failed. Retry saving.")?;
         if !response.status().is_success() {
-            return Err(
-                "The local engine could not complete this export. Check export history.".into(),
-            );
+            return Err(crate::ipc_error::IpcError::new(
+                "export_engine_unavailable",
+                "The local engine could not prepare this save. Retry saving.",
+            ));
         }
         Ok(response)
     }
@@ -319,7 +443,10 @@ impl Connection {
             .read_to_end(&mut bytes)
             .map_err(|_| "Invalid export response.")?;
         if bytes.len() > 1024 * 1024 {
-            return Err("Export response is too large.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_response_invalid",
+                "Export response is too large.",
+            ));
         }
         serde_json::from_slice(&bytes).map_err(|_| "Invalid export response.".into())
     }
@@ -340,7 +467,10 @@ impl Connection {
                     .send()
                     .map_err(|_| "Export transfer failed.")?;
                 if !response.status().is_success() {
-                    return Err("The local engine could not provide this export.".into());
+                    return Err(crate::ipc_error::IpcError::new(
+                        "export_engine_unavailable",
+                        "The local engine could not provide this export.",
+                    ));
                 }
                 let length = response
                     .content_length()
@@ -378,7 +508,10 @@ impl Connection {
         };
         match download.next()? {
             DownloadPart::Length(length) => Ok((length, download)),
-            _ => Err("Invalid export response.".into()),
+            _ => Err(crate::ipc_error::IpcError::new(
+                "export_response_invalid",
+                "Invalid export response.",
+            )),
         }
     }
 }
@@ -401,7 +534,12 @@ impl Download {
             match self.receiver.recv_timeout(Duration::from_millis(200)) {
                 Ok(part) => return part,
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(_) => return Err("Export transfer interrupted.".into()),
+                Err(_) => {
+                    return Err(crate::ipc_error::IpcError::new(
+                        "export_transfer_interrupted",
+                        "Export transfer interrupted.",
+                    ))
+                }
             }
         }
     }
@@ -459,13 +597,19 @@ fn no_symlinks(path: &Path) -> Result<()> {
             .components()
             .any(|c| matches!(c, std::path::Component::ParentDir))
     {
-        return Err("Choose an absolute destination without parent traversal.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "export_destination_invalid",
+            "Choose an absolute destination without parent traversal.",
+        ));
     }
     for ancestor in path.ancestors() {
         let meta = std::fs::symlink_metadata(ancestor)
             .map_err(|_| "Destination folder is unavailable.")?;
         if meta.is_symlink() {
-            return Err("Choose a destination without symbolic links.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_destination_invalid",
+                "Choose a destination without symbolic links.",
+            ));
         }
     }
     Ok(())
@@ -522,7 +666,10 @@ impl Target {
         match dir.symlink_metadata(name) {
             Ok(meta) => {
                 if !meta.is_file() || meta.is_symlink() {
-                    return Err("The destination must be a regular file, not a link.".into());
+                    return Err(crate::ipc_error::IpcError::new(
+                        "export_destination_invalid",
+                        "The destination must be a regular file, not a link.",
+                    ));
                 }
                 let mut options = cap_std::fs::OpenOptions::new();
                 options.read(true).follow(FollowSymlinks::No);
@@ -537,7 +684,10 @@ impl Target {
                         .map_err(|_| "The destination changed.")?
                         .is_symlink()
                 {
-                    return Err("The destination changed.".into());
+                    return Err(crate::ipc_error::IpcError::new(
+                        "export_destination_changed",
+                        "The destination changed.",
+                    ));
                 }
                 Ok(Some((
                     same_file::Handle::from_file(file)
@@ -549,12 +699,28 @@ impl Target {
                 )))
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(_) => Err("Cannot inspect destination.".into()),
+            Err(_) => Err(crate::ipc_error::IpcError::new(
+                "export_destination_invalid",
+                "Cannot inspect destination.",
+            )),
         }
     }
 
+    /// Publish a staged sibling, refusing to replace an unconfirmed file.
+    fn publish(&self, temporary: &str) -> std::io::Result<()> {
+        crate::publish::publish_new(
+            #[cfg(not(windows))]
+            &self.dir,
+            #[cfg(not(windows))]
+            &self.name,
+            #[cfg(windows)]
+            &self.path,
+            temporary,
+        )
+    }
+
     fn validate(&self, saves: &Saves, roots: &[PathBuf]) -> Result<()> {
-        self.validate_locked(&saves.0 .0.lock().unwrap(), roots)
+        self.validate_locked(&lock(&saves.0 .0), roots)
     }
 
     fn validate_locked(&self, state: &Activity, roots: &[PathBuf]) -> Result<()> {
@@ -563,7 +729,10 @@ impl Target {
         if same_file::Handle::from_path(parent).ok().as_ref() != Some(&self.parent_identity)
             || Self::inspect(&self.dir, &self.name)? != self.existing
         {
-            return Err("The destination changed. Choose it again.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_destination_changed",
+                "The destination changed. Choose it again.",
+            ));
         }
         Saves::protect_locked(state, &self.path, roots)
     }
@@ -608,13 +777,19 @@ impl Target {
             }
             copied += count as u64;
             if copied > length {
-                return Err("Export length does not match.".into());
+                return Err(crate::ipc_error::IpcError::new(
+                    "export_transfer_interrupted",
+                    "Export length does not match.",
+                ));
             }
             file.write_all(&buffer[..count])
                 .map_err(|_| "Cannot write export; the destination was not changed.")?;
         }
         if copied != length {
-            return Err("Export transfer was truncated; the destination was not changed.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_transfer_interrupted",
+                "Export transfer was truncated; the destination was not changed.",
+            ));
         }
         file.sync_all().map_err(|_| "Cannot flush export.")?;
         let identity = same_file::Handle::from_file(
@@ -626,9 +801,12 @@ impl Target {
         drop(file);
         // Serialize all final checks and publication with other saves, source
         // reservations and shutdown. Never reacquire this mutex in validation.
-        let state = saves.0 .0.lock().unwrap();
+        let state = lock(&saves.0 .0);
         if state.closing {
-            return Err("Saving stopped because Wenyi is closing.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_closing",
+                "Saving stopped because Wenyi is closing.",
+            ));
         }
         self.validate_locked(&state, roots)?;
         if Self::inspect(&self.dir, Path::new(&temporary.name))?
@@ -636,86 +814,26 @@ impl Target {
             .map(|(handle, size, _)| (handle, *size))
             != Some((&identity, length))
         {
-            return Err("The temporary export changed; the destination was not changed.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_transfer_interrupted",
+                "The temporary export changed; the destination was not changed.",
+            ));
         }
         // External namespace mutations are not serialized by this mutex.
         // An existing-file rename is not an atomic compare-and-swap: a hostile
         // process can still replace an entry after inspection. New destinations
         // use no-replace publication; no exchange-and-rollback is attempted.
         if self.existing.is_none() {
-            self.publish_new(&temporary.name)
-                .map_err(|_| "Cannot publish without replacing another file. Choose a different destination or filesystem.")?;
+            self.publish(&temporary.name).map_err(|_| {
+                "Cannot publish without replacing another file. \
+                 Choose a different destination or filesystem."
+            })?;
         } else {
             self.dir
                 .rename(&temporary.name, &self.dir, &self.name)
                 .map_err(|_| "Cannot publish export; the destination was not changed.")?;
         }
         Ok(())
-    }
-
-    fn publish_new(&self, temporary: &str) -> std::io::Result<()> {
-        // No check-then-overwriting-rename fallback: a file appearing after the
-        // confirmation/validation must remain untouched, including on FAT/exFAT.
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        {
-            use std::{
-                ffi::CString,
-                os::unix::{ffi::OsStrExt, io::AsRawFd},
-            };
-            let from = CString::new(temporary)?;
-            let to = CString::new(self.name.as_os_str().as_bytes())?;
-            let directory = self.dir.as_raw_fd();
-            #[cfg(target_os = "linux")]
-            let result = unsafe {
-                libc::renameat2(
-                    directory,
-                    from.as_ptr(),
-                    directory,
-                    to.as_ptr(),
-                    libc::RENAME_NOREPLACE,
-                )
-            };
-            #[cfg(target_os = "macos")]
-            let result = unsafe {
-                libc::renameatx_np(
-                    directory,
-                    from.as_ptr(),
-                    directory,
-                    to.as_ptr(),
-                    libc::RENAME_EXCL,
-                )
-            };
-            if result != 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::ffi::OsStrExt;
-            use windows_sys::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_WRITE_THROUGH};
-            let from: Vec<u16> = self
-                .path
-                .parent()
-                .unwrap()
-                .join(temporary)
-                .as_os_str()
-                .encode_wide()
-                .chain(Some(0))
-                .collect();
-            let to: Vec<u16> = self.path.as_os_str().encode_wide().chain(Some(0)).collect();
-            // Deliberately omit MOVEFILE_REPLACE_EXISTING and COPY_ALLOWED.
-            let result = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) };
-            if result == 0 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-        {
-            // Safe fallback on other targets, without overwriting an unconfirmed file.
-            self.dir.hard_link(temporary, &self.dir, &self.name)
-        }
     }
 }
 
@@ -743,52 +861,116 @@ fn pin_windows_parents(parent: &Path) -> Result<Vec<File>> {
                 .file_type()
                 .is_symlink()
             {
-                return Err("Choose a destination without symbolic links.".into());
+                return Err(crate::ipc_error::IpcError::new(
+                    "export_destination_invalid",
+                    "Choose a destination without symbolic links.",
+                ));
             }
             Ok(file)
         })
         .collect()
 }
 
-struct Temporary<'a> {
-    dir: &'a Dir,
-    name: String,
+#[derive(Clone, Copy, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GlossaryFormat {
+    Json,
+    Csv,
+    Apkg,
 }
-impl Drop for Temporary<'_> {
-    fn drop(&mut self) {
-        let _ = self.dir.remove_file(&self.name);
+
+impl GlossaryFormat {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Json => "json",
+            Self::Csv => "csv",
+            Self::Apkg => "apkg",
+        }
     }
 }
 
-fn run(
+enum SaveRequest {
+    Book {
+        options: Value,
+        export_id: Option<u64>,
+    },
+    Glossary(GlossaryFormat),
+}
+
+/// Whether Windows refuses or rewrites this file name.
+///
+/// The engine already repairs the name it plans, so a rejected name means the
+/// two sides disagree about the rules. Refusing here keeps the native layer from
+/// silently writing to a different file than the one the plan named: the
+/// filesystem discards a trailing dot or space, and a reserved device name is
+/// never a file at all.
+fn name_is_unwritable(name: &str) -> bool {
+    if name.ends_with('.') || name.ends_with(' ') {
+        return true;
+    }
+    // A reserved name is resolved from the part before the first dot, so
+    // "CON.txt" names the device just as "CON" does.
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+    let reserved = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"];
+    if reserved.contains(&stem.as_str()) {
+        return true;
+    }
+    // COM1..COM9 and LPT1..LPT9 are reserved; COM0 is not, and neither is COM10.
+    ["COM", "LPT"].iter().any(|prefix| {
+        stem.strip_prefix(prefix).is_some_and(|suffix| {
+            matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+        })
+    })
+}
+
+fn run_save(
     connection: Connection,
     saves: Saves,
     pid: String,
-    options: Value,
-    export_id: Option<u64>,
+    request: SaveRequest,
     dialog: &impl Dialog,
 ) -> Result<Option<Saved>> {
-    saves.check()?;
+    let _pending = saves.reserve()?;
     if pid.is_empty()
         || !pid
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
     {
-        return Err("Invalid project identity.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "export_request_invalid",
+            "Invalid project identity.",
+        ));
     }
     let desktop = format!("/desktop/projects/{pid}/exports");
-    let value = match export_id {
-        Some(id) => connection.json(&format!("{desktop}/{id}/plan"), None)?,
-        None => connection.json(&format!("{desktop}/plan"), Some(&options))?,
+    let value = match &request {
+        SaveRequest::Book { options, export_id } => match export_id {
+            Some(id) => connection.json(&format!("{desktop}/{id}/plan"), None)?,
+            None => connection.json(&format!("{desktop}/plan"), Some(options))?,
+        },
+        SaveRequest::Glossary(format) => connection.json(
+            &format!(
+                "/desktop/projects/{pid}/glossary/plan?format={}",
+                format.as_str()
+            ),
+            None,
+        )?,
     };
     let plan: Plan = serde_json::from_value(value).map_err(|_| "Invalid export plan.")?;
     if plan.filename.is_empty()
         || plan.filename.contains(['/', '\\', '\0'])
+        || name_is_unwritable(&plan.filename)
         || plan.extension.is_empty()
         || !plan.extension.bytes().all(|b| b.is_ascii_alphanumeric())
         || plan.protected_roots.is_empty()
     {
-        return Err("Invalid export plan.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "export_request_invalid",
+            "Invalid export plan.",
+        ));
     }
     let Some(path) = dialog.choose(&plan) else {
         return Ok(None);
@@ -800,28 +982,39 @@ fn run(
     }
     let _active = saves.begin()?;
     target.validate(&saves, &plan.protected_roots)?;
-    let id = match export_id {
-        Some(id) => id,
-        None => {
-            let request = plan.request.as_ref().ok_or("Invalid export plan.")?;
-            // This POST is not retried or deduplicated. Generate requests a new
-            // snapshot; uncertain responses must be reconciled through history.
-            let uncertain = |error| {
-                format!("{error} Export creation may have succeeded. Check export history before generating again.")
-            };
-            let created = connection
-                .json(&format!("/projects/{pid}/exports"), Some(request))
-                .map_err(uncertain)?;
-            created["export_id"]
-                .as_u64()
-                .ok_or_else(|| uncertain("Invalid export job.".into()))?
+    match request {
+        SaveRequest::Glossary(format) => {
+            let (length, mut response) = connection.content(
+                format!("/projects/{pid}/glossary/export?format={}", format.as_str()),
+                &saves,
+            )?;
+            target.copy(&mut response, length, &saves, &plan.protected_roots)?;
         }
-    };
-    save_created_export(&connection, &saves, &pid, &desktop, id, &target, &plan).map_err(
-        |error| {
-            format!("{error} Export ID {id}: check export history and use Save as to recover this export; Generate creates a new snapshot.")
-        },
-    )?;
+        SaveRequest::Book { export_id, .. } => {
+            let id = match export_id {
+                Some(id) => id,
+                None => {
+                    let request = plan.request.as_ref().ok_or("Invalid export plan.")?;
+                    // This POST is not retried or deduplicated. Generate requests a new
+                    // snapshot; uncertain responses must be reconciled through history.
+                    let uncertain = |error| {
+                        format!("{error} Export creation may have succeeded. Check export history before generating again.")
+                    };
+                    let created = connection
+                        .json(&format!("/projects/{pid}/exports"), Some(request))
+                        .map_err(uncertain)?;
+                    created["export_id"]
+                        .as_u64()
+                        .ok_or_else(|| uncertain("Invalid export job.".into()))?
+                }
+            };
+            save_created_export(&connection, &saves, &pid, &desktop, id, &target, &plan).map_err(
+                |error| {
+                    format!("{error} Export ID {id}: check export history and use Save as to recover this export; Generate creates a new snapshot.")
+                },
+            )?;
+        }
+    }
     Ok(Some(Saved {
         path: target.path.to_string_lossy().into_owned(),
     }))
@@ -848,7 +1041,12 @@ fn save_created_export(
             Some("pending" | "queued" | "running") => {
                 std::thread::sleep(Duration::from_millis(500))
             }
-            _ => return Err("Export generation failed. Check export history.".into()),
+            _ => {
+                return Err(crate::ipc_error::IpcError::new(
+                    "export_failed",
+                    "Export generation failed. Check export history.",
+                ))
+            }
         }
     }
     let (length, mut response) = connection.content(format!("{desktop}/{id}/content"), saves)?;
@@ -862,14 +1060,37 @@ pub async fn native_export_save(
     options: Value,
     export_id: Option<u64>,
 ) -> Result<Option<Saved>> {
+    save_native(window, project_id, SaveRequest::Book { options, export_id }).await
+}
+
+#[tauri::command]
+pub async fn native_glossary_save(
+    window: tauri::WebviewWindow,
+    project_id: String,
+    format: GlossaryFormat,
+) -> Result<Option<Saved>> {
+    save_native(window, project_id, SaveRequest::Glossary(format)).await
+}
+
+async fn save_native(
+    window: tauri::WebviewWindow,
+    project_id: String,
+    request: SaveRequest,
+) -> Result<Option<Saved>> {
     if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
-        return Err("Native saving is unavailable.".into());
+        return Err(crate::ipc_error::IpcError::new(
+            "export_unavailable",
+            "Native saving is unavailable.",
+        ));
     }
     let raw = {
         let state = window.state::<Arc<Mutex<crate::State>>>();
-        let state = state.lock().unwrap();
+        let state = lock(&state);
         if state.closing || state.error.is_some() {
-            return Err("Local engine unavailable.".into());
+            return Err(crate::ipc_error::IpcError::new(
+                "export_engine_unavailable",
+                "Local engine unavailable.",
+            ));
         }
         state
             .connection
@@ -877,15 +1098,36 @@ pub async fn native_export_save(
             .ok_or("Local engine unavailable.")?
     };
     let saves = window.state::<Saves>().inner().clone();
+    let diagnostics = window
+        .state::<crate::diagnostics::Diagnostics>()
+        .inner()
+        .clone();
     tauri::async_runtime::spawn_blocking(move || {
-        run(
+        let result = run_save(
             Connection::new(&raw)?,
             saves,
             project_id,
-            options,
-            export_id,
+            request,
             &NativeDialog,
-        )
+        );
+        match &result {
+            Ok(Some(_)) => {
+                diagnostics.record(
+                    crate::diagnostics::Source::Native,
+                    crate::diagnostics::Event::ExportCompleted,
+                    serde_json::json!({}),
+                );
+            }
+            Err(_) => {
+                diagnostics.record(
+                    crate::diagnostics::Source::Native,
+                    crate::diagnostics::Event::ExportFailed,
+                    serde_json::json!({}),
+                );
+            }
+            _ => {}
+        }
+        result
     })
     .await
     .map_err(|_| "Native saving stopped unexpectedly.".to_string())?
@@ -895,6 +1137,48 @@ pub async fn native_export_save(
 mod tests {
     use super::*;
     use std::{io, net::TcpListener, thread};
+
+    fn run(
+        connection: Connection,
+        saves: Saves,
+        pid: String,
+        options: Value,
+        export_id: Option<u64>,
+        dialog: &impl Dialog,
+    ) -> Result<Option<Saved>> {
+        run_save(
+            connection,
+            saves,
+            pid,
+            SaveRequest::Book { options, export_id },
+            dialog,
+        )
+    }
+
+    #[test]
+    fn updates_reserve_idle_saves_without_interrupting_active_operations() {
+        let saves = Saves::default();
+        let active = saves.begin().unwrap();
+        assert!(!saves.close_if_idle());
+        assert!(saves.check().is_ok());
+        drop(active);
+        assert!(saves.close_if_idle());
+        assert!(saves.begin().is_err());
+        assert!(saves.check().is_err());
+        saves.reopen();
+        assert!(saves.begin().is_ok());
+    }
+
+    #[test]
+    fn quit_can_cancel_planning_without_waiting_for_a_dialog() {
+        let saves = Saves::default();
+        let pending = saves.reserve().unwrap();
+        assert!(!saves.close_if_idle());
+        saves.close();
+        saves.wait();
+        assert!(saves.begin().is_err());
+        drop(pending);
+    }
 
     struct Fixture(PathBuf);
     impl Fixture {
@@ -935,6 +1219,131 @@ mod tests {
         fn replace(&self, _: &Path) -> bool {
             self.replace
         }
+    }
+
+    #[test]
+    fn diagnostics_choose_before_collection_and_preserve_existing_files_on_failure() {
+        let fixture = Fixture::new();
+        let saves = Saves::default();
+        let cancel = FakeDialog {
+            path: None,
+            replace: false,
+        };
+        assert!(run_diagnostic_save(
+            &saves,
+            &[],
+            || panic!("must not collect"),
+            || false,
+            &cancel
+        )
+        .unwrap()
+        .is_none());
+        let path = fixture.file("report.zip", b"existing");
+        let refuse = FakeDialog {
+            path: Some(path.clone()),
+            replace: false,
+        };
+        assert!(run_diagnostic_save(
+            &saves,
+            &[],
+            || panic!("must not collect"),
+            || false,
+            &refuse
+        )
+        .unwrap()
+        .is_none());
+        let replace = FakeDialog {
+            path: Some(path.clone()),
+            replace: true,
+        };
+        assert!(run_diagnostic_save(
+            &saves,
+            &[],
+            || Err("collection failed".into()),
+            || false,
+            &replace
+        )
+        .is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"existing");
+        fixture.clean();
+        let result = run_diagnostic_save(
+            &saves,
+            &[],
+            || Ok(b"new archive".to_vec()),
+            || false,
+            &replace,
+        )
+        .unwrap();
+        assert!(result.is_some());
+        assert_eq!(std::fs::read(&path).unwrap(), b"new archive");
+        fixture.clean();
+    }
+
+    #[test]
+    fn diagnostic_cancellation_during_collection_or_copy_is_not_a_failure() {
+        let fixture = Fixture::new();
+        let saves = Saves::default();
+        let path = fixture.file("report.zip", b"existing");
+        let dialog = FakeDialog {
+            path: Some(path.clone()),
+            replace: true,
+        };
+        for fail_collection in [true, false] {
+            let cancelled = std::cell::Cell::new(false);
+            let result = run_diagnostic_save(
+                &saves,
+                &[],
+                || {
+                    cancelled.set(true);
+                    if fail_collection {
+                        Err("Diagnostic export canceled.".into())
+                    } else {
+                        Ok(b"new archive".to_vec())
+                    }
+                },
+                || cancelled.get(),
+                &dialog,
+            );
+            assert!(result.unwrap().is_none());
+            assert_eq!(std::fs::read(&path).unwrap(), b"existing");
+            fixture.clean();
+        }
+    }
+
+    #[test]
+    fn diagnostic_destinations_obey_workspace_and_source_protection() {
+        let fixture = Fixture::new();
+        let saves = Saves::default();
+        let path = fixture.file("source.zip", b"private source");
+        saves
+            .protect_source(path.clone(), File::open(&path).unwrap())
+            .unwrap();
+        let dialog = FakeDialog {
+            path: Some(path.clone()),
+            replace: true,
+        };
+        assert!(run_diagnostic_save(
+            &saves,
+            &[],
+            || panic!("must not collect"),
+            || false,
+            &dialog
+        )
+        .is_err());
+        let dialog = FakeDialog {
+            path: Some(fixture.0.join("new.zip")),
+            replace: true,
+        };
+        assert!(run_diagnostic_save(
+            &saves,
+            &[fixture.0.clone()],
+            || panic!("must not collect"),
+            || false,
+            &dialog
+        )
+        .is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"private source");
+        fixture.clean();
     }
 
     fn response(status: &str, body: &str, extra: &str) -> String {
@@ -1000,19 +1409,189 @@ mod tests {
 
     fn plan(root: &Path) -> String {
         serde_json::json!({
-            "filename": "book.zh-bi.html.zip", "extension": "zip",
-            "label": "HTML + assets (ZIP)",
+            "filename": "book.zh-bi.html", "extension": "html",
+            "label": "HTML",
             "protected_roots": [root],
             "request": {"format": "html", "bilingual": true}
         })
         .to_string()
     }
 
+    fn glossary_plan(root: &Path, format: GlossaryFormat) -> String {
+        let format = format.as_str();
+        serde_json::json!({
+            "filename": format!("glossary-project-1.{format}"), "extension": format,
+            "label": format.to_ascii_uppercase(), "protected_roots": [root],
+            "request": null,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn glossary_saves_use_authenticated_scoped_routes_without_creating_jobs() {
+        for format in [
+            GlossaryFormat::Json,
+            GlossaryFormat::Csv,
+            GlossaryFormat::Apkg,
+        ] {
+            let fixture = Fixture::new();
+            let protected = Fixture::new();
+            let (connection, task) = server(vec![
+                response("200 OK", &glossary_plan(&protected.0, format), ""),
+                response("200 OK", "文译,Wenyi\n", ""),
+            ]);
+            let saved = run_save(
+                connection,
+                Saves::default(),
+                "project-1".into(),
+                SaveRequest::Glossary(format),
+                &FakeDialog {
+                    path: Some(fixture.0.join("术语")),
+                    replace: false,
+                },
+            )
+            .unwrap()
+            .unwrap();
+            let path = fixture.0.join(format!("术语.{}", format.as_str()));
+            assert_eq!(PathBuf::from(saved.path), path);
+            assert_eq!(std::fs::read(&path).unwrap(), "文译,Wenyi\n".as_bytes());
+            let requests = task.join().unwrap();
+            assert_eq!(requests.len(), 2);
+            assert!(requests[0].starts_with(&format!(
+                "GET /desktop/projects/project-1/glossary/plan?format={} ",
+                format.as_str()
+            )));
+            assert!(requests[1].starts_with(&format!(
+                "GET /projects/project-1/glossary/export?format={} ",
+                format.as_str()
+            )));
+            assert!(requests.iter().all(|r| r
+                .to_ascii_lowercase()
+                .contains("authorization: bearer fixture-only")));
+            fixture.clean();
+        }
+    }
+
+    #[test]
+    fn name_is_unwritable_rejects_device_names_and_trailing_separators() {
+        // The filesystem discards a trailing dot or space, so the file that
+        // appears is not the one the plan named.
+        for rejected in [
+            "CON", "con", "Con.txt", "PRN.md", "AUX", "NUL", "COM1.pdf", "COM9", "LPT1", "LPT9",
+            "CONIN$", "CONOUT$", "book.", "book ", "术语.",
+        ] {
+            assert!(name_is_unwritable(rejected), "{rejected} must be rejected");
+        }
+        // Ordinary names, including ones that merely start like a device.
+        for accepted in [
+            "book.md",
+            "术语.zh.docx",
+            "CONSOLE.md",
+            "COM10.md",
+            "COM0.md",
+            "LPT10.md",
+            "my-book.zh-bi.html",
+        ] {
+            assert!(!name_is_unwritable(accepted), "{accepted} must be accepted");
+        }
+    }
+
+    #[test]
+    fn plans_naming_an_unwritable_file_are_refused_before_the_dialog() {
+        let fixture = Fixture::new();
+        for filename in ["CON.txt", "book.", "book "] {
+            let mut plan: Value = serde_json::from_str(&plan(&fixture.0)).unwrap();
+            plan["filename"] = filename.into();
+            let (connection, task) = server(vec![response("200 OK", &plan.to_string(), "")]);
+            let error = run_save(
+                connection,
+                Saves::default(),
+                "project-1".into(),
+                SaveRequest::Book {
+                    options: serde_json::json!({"format": "html", "bilingual": true}),
+                    export_id: None,
+                },
+                &FakeDialog {
+                    path: Some(fixture.0.join("out.zip")),
+                    replace: false,
+                },
+            )
+            .unwrap_err();
+            assert_eq!(error.code, "export_request_invalid");
+            // Only the plan request reached the engine: nothing was created.
+            assert_eq!(task.join().unwrap().len(), 1);
+        }
+        fixture.clean();
+    }
+
+    #[test]
+    fn glossary_cancel_and_declined_overwrite_never_request_content() {
+        let fixture = Fixture::new();
+        let protected = Fixture::new();
+        let old = fixture.file("existing.json", b"old");
+        for path in [None, Some(old.clone())] {
+            let (connection, task) = server(vec![response(
+                "200 OK",
+                &glossary_plan(&protected.0, GlossaryFormat::Json),
+                "",
+            )]);
+            assert!(run_save(
+                connection,
+                Saves::default(),
+                "project-1".into(),
+                SaveRequest::Glossary(GlossaryFormat::Json),
+                &FakeDialog {
+                    path,
+                    replace: false
+                },
+            )
+            .unwrap()
+            .is_none());
+            assert_eq!(task.join().unwrap().len(), 1);
+            assert_eq!(std::fs::read(&old).unwrap(), b"old");
+            fixture.clean();
+        }
+    }
+
+    #[test]
+    fn glossary_transfer_failures_preserve_the_existing_destination() {
+        let fixture = Fixture::new();
+        let protected = Fixture::new();
+        let old = fixture.file("existing.json", b"old");
+        for content in [
+            response("500 Internal Server Error", "unavailable", ""),
+            "HTTP/1.1 200 OK\r\nContent-Length: 20\r\nConnection: close\r\n\r\npartial".into(),
+        ] {
+            let (connection, task) = server(vec![
+                response(
+                    "200 OK",
+                    &glossary_plan(&protected.0, GlossaryFormat::Json),
+                    "",
+                ),
+                content,
+            ]);
+            assert!(run_save(
+                connection,
+                Saves::default(),
+                "project-1".into(),
+                SaveRequest::Glossary(GlossaryFormat::Json),
+                &FakeDialog {
+                    path: Some(old.clone()),
+                    replace: true
+                },
+            )
+            .is_err());
+            assert_eq!(task.join().unwrap().len(), 2);
+            assert_eq!(std::fs::read(&old).unwrap(), b"old");
+            fixture.clean();
+        }
+    }
+
     #[test]
     fn cancel_and_declined_overwrite_do_not_create_jobs_or_files() {
         let fixture = Fixture::new();
         let protected = Fixture::new();
-        let old = fixture.file("existing.html.zip", b"old");
+        let old = fixture.file("existing.html", b"old");
         for path in [None, Some(old.clone())] {
             let (connection, task) = server(vec![response("200 OK", &plan(&protected.0), "")]);
             let result = run(
@@ -1037,6 +1616,53 @@ mod tests {
     }
 
     #[test]
+    fn open_native_dialog_prevents_update_installation() {
+        struct HeldDialog {
+            opened: mpsc::Sender<()>,
+            release: mpsc::Receiver<()>,
+        }
+        impl Dialog for HeldDialog {
+            fn choose(&self, _: &Plan) -> Option<PathBuf> {
+                self.opened.send(()).unwrap();
+                self.release.recv_timeout(Duration::from_secs(5)).unwrap();
+                None
+            }
+            fn replace(&self, _: &Path) -> bool {
+                unreachable!()
+            }
+        }
+        let protected = Fixture::new();
+        let (connection, server) = server(vec![response("200 OK", &plan(&protected.0), "")]);
+        let saves = Saves::default();
+        let worker_saves = saves.clone();
+        let (opened, visible) = mpsc::channel();
+        let (release, dismissed) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            run(
+                connection,
+                worker_saves,
+                "project-1".into(),
+                serde_json::json!({}),
+                None,
+                &HeldDialog {
+                    opened,
+                    release: dismissed,
+                },
+            )
+        });
+        visible.recv_timeout(Duration::from_secs(5)).unwrap();
+        let install_allowed = saves.close_if_idle();
+        release.send(()).unwrap();
+        assert!(worker.join().unwrap().unwrap().is_none());
+        assert_eq!(server.join().unwrap().len(), 1);
+        assert!(
+            !install_allowed,
+            "An open native save dialog must block updates"
+        );
+        assert!(saves.close_if_idle());
+    }
+
+    #[test]
     fn uncertain_creation_is_not_retried_and_points_to_history() {
         for creation in [
             String::new(),
@@ -1045,7 +1671,7 @@ mod tests {
         ] {
             let fixture = Fixture::new();
             let protected = Fixture::new();
-            let path = fixture.file("saved.html.zip", b"old");
+            let path = fixture.file("saved.html", b"old");
             let (connection, task) =
                 server(vec![response("200 OK", &plan(&protected.0), ""), creation]);
             let error = run(
@@ -1061,8 +1687,8 @@ mod tests {
             )
             .err()
             .unwrap();
-            assert!(error.contains("may have succeeded"));
-            assert!(error.contains("Check export history"));
+            assert!(error.message.contains("may have succeeded"));
+            assert!(error.message.contains("Check export history"));
             assert_eq!(task.join().unwrap().len(), 2);
             assert_eq!(std::fs::read(path).unwrap(), b"old");
         }
@@ -1073,7 +1699,7 @@ mod tests {
         for failure in ["poll", "download", "local"] {
             let fixture = Fixture::new();
             let protected = Fixture::new();
-            let path = fixture.file("saved.html.zip", b"old");
+            let path = fixture.file("saved.html", b"old");
             let mut responses = vec![
                 response("200 OK", &plan(&protected.0), ""),
                 response("200 OK", r#"{"export_id":7}"#, ""),
@@ -1109,9 +1735,9 @@ mod tests {
             )
             .err()
             .unwrap();
-            assert!(error.contains("Export ID 7"));
-            assert!(error.contains("Save as"));
-            assert!(error.contains("Generate creates a new snapshot"));
+            assert!(error.message.contains("Export ID 7"));
+            assert!(error.message.contains("Save as"));
+            assert!(error.message.contains("Generate creates a new snapshot"));
             let requests = task.join().unwrap();
             assert_eq!(
                 requests
@@ -1137,7 +1763,7 @@ mod tests {
         for history in [false, true] {
             let fixture = Fixture::new();
             let protected = Fixture::new();
-            let path = fixture.file("saved.html.zip", b"old");
+            let path = fixture.file("saved.html", b"old");
             let mut responses = vec![response("200 OK", &plan(&protected.0), "")];
             if !history {
                 responses.push(response("200 OK", r#"{"export_id":7}"#, ""));
@@ -1231,7 +1857,7 @@ mod tests {
             .protect_source(path.clone(), retained.try_clone().unwrap())
             .unwrap();
         saves.protect_source(path.clone(), retained).unwrap();
-        assert_eq!(saves.0 .0.lock().unwrap().sources.len(), 1);
+        assert_eq!(lock(&saves.0 .0).sources.len(), 1);
         assert!(Target::new(path.clone(), &saves, &[]).is_err());
         let alias = fixture.0.join("alias.txt");
         std::fs::hard_link(&path, &alias).unwrap();
@@ -1343,8 +1969,8 @@ mod tests {
             ("md", "book.en.md"),
             ("pdf", "book.zh-bi.pdf"),
             ("txt", "book.en.txt"),
-            ("srt", "book.zh.srt"),
-            ("zip", "book.zh-bi.html.zip"),
+            ("html", "book.zh-bi.html"),
+            ("zip", "workspace-backup.zip"),
         ] {
             let plan = Plan {
                 filename: filename.into(),
@@ -1357,14 +1983,9 @@ mod tests {
                 plan.destination(PathBuf::from(filename)),
                 PathBuf::from(filename)
             );
-            let suffix = if extension == "zip" {
-                "html.zip"
-            } else {
-                extension
-            };
             assert_eq!(
                 plan.destination(PathBuf::from("chosen")),
-                PathBuf::from(format!("chosen.{suffix}"))
+                PathBuf::from(format!("chosen.{extension}"))
             );
         }
     }
@@ -1377,7 +1998,7 @@ mod tests {
         let target = Target::new(path.clone(), &saves, &[]).unwrap();
         fixture.file("temporary", b"complete");
         std::fs::write(&path, b"arrived later").unwrap();
-        assert!(target.publish_new("temporary").is_err());
+        assert!(target.publish("temporary").is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"arrived later");
         assert_eq!(
             std::fs::read(fixture.0.join("temporary")).unwrap(),
@@ -1385,7 +2006,7 @@ mod tests {
         );
         let new = fixture.0.join("other.txt");
         let target = Target::new(new.clone(), &saves, &[]).unwrap();
-        target.publish_new("temporary").unwrap();
+        target.publish("temporary").unwrap();
         assert_eq!(std::fs::read(new).unwrap(), b"complete");
     }
 
@@ -1551,7 +2172,7 @@ mod tests {
             } else {
                 b.unwrap_err()
             };
-            assert!(error.contains("destination changed"));
+            assert!(error.message.contains("destination changed"));
             fixture.clean();
         }
     }
@@ -1569,7 +2190,7 @@ mod tests {
                 .unwrap();
         }
         assert_eq!(saves.source_count(), 1);
-        assert_eq!(saves.0 .0.lock().unwrap().aliases.len(), 2);
+        assert_eq!(lock(&saves.0 .0).aliases.len(), 2);
         std::fs::remove_file(&second).unwrap();
         std::fs::write(&second, b"replacement").unwrap();
         assert!(Target::new(second, &saves, &[]).is_err());

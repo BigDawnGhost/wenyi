@@ -3,9 +3,8 @@
 # ruff: noqa: F811
 
 import pytest
-from test_domain_routes_integration import domain_client, initialize  # noqa: F401
-from test_storage_pg_integration import pg_pool, pg_storage  # noqa: F401
-from wenyi_core.ingest.models import Chapter, Segment
+from api_test_support import initialize
+from wenyi_core.models.document import Chapter, Segment
 
 
 def test_batch_translation_polishing_and_manual_changes_share_history(domain_client, tmp_path):

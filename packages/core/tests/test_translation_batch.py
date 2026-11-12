@@ -1,35 +1,31 @@
 """Integration of token budgets and translation conversations across batch boundaries."""
 
 import json
+import os
+import tempfile
+import unittest
+from unittest.mock import patch
 
 import pytest
 from wenyi_core.agents.polisher import Polisher
 from wenyi_core.agents.translator import Translator
 from wenyi_core.config import Config
-from wenyi_core.ingest.models import Segment
+from wenyi_core.glossary.store import GlossaryStore
+from wenyi_core.i18n.resources import read_text
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.review_chunks import ReviewChunkService
-from wenyi_core.pipeline.translation_batch import (
-    BatchPlan,
+from wenyi_core.models.document import Chapter, Segment
+from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.review.review_chunks import ReviewChunkService
+from wenyi_core.pipeline.translate.translation import TranslationService
+from wenyi_core.pipeline.translate.translation_batch import (
     TranslationBatchExecutor,
     resume_batches,
 )
+from wenyi_core.storage.file import FileStorage
 
-
-def _plan(sources, *, allow_empty=False):
-    return BatchPlan.capture(
-        3,
-        5,
-        [Segment(index=10 + i, source=s) for i, s in enumerate(sources)],
-        [],
-        "previous translation",
-        "style",
-        "synopsis",
-        "digest",
-        [[] for _ in sources],
-        "next source",
-        allow_empty_translations=allow_empty,
-    )
+from tests.fake_llm import routing_handler
+from tests.pipeline_fixtures import batch_plan as _plan
+from tests.pipeline_fixtures import fake_pipeline_config as _config
 
 
 def test_resume_and_review_pack_by_tokens_and_preserve_completed_blank():
@@ -45,18 +41,20 @@ def test_resume_and_review_pack_by_tokens_and_preserve_completed_blank():
     ]
 
 
+@pytest.mark.parametrize("genre", ["literary", "academic"])
 @pytest.mark.parametrize("invalid_continuation", [False, True])
-def test_batch_polish_preserves_filtered_positions_and_fallback(invalid_continuation):
+def test_batch_polish_preserves_filtered_positions_and_fallback(invalid_continuation, genre):
     def handler(messages, tier, json_mode):
         if len(messages) == 4:
             return json.dumps(
                 {"polished": ["wrong count"] if invalid_continuation else ["ONE", "TWO"]}
             )
-        if "literary translator" in messages[0]["content"]:
+        if f"{genre} translator" in messages[0]["content"]:
             return json.dumps({"translations": ["one", "two"]})
         return json.dumps({"polished": ["ONE", "123", "TWO"]})
 
     config = Config.from_dict({"llm": {"preset": "fake"}})
+    config.set_prompt_genre(genre)
     client = FakeClient(handler=handler)
     executor = TranslationBatchExecutor(Translator(client, config), Polisher(client, config))
     plan = _plan(["alpha", "123", "beta"])
@@ -70,6 +68,13 @@ def test_batch_polish_preserves_filtered_positions_and_fallback(invalid_continua
     )
     assert client.calls[1]["messages"][:2] == client.calls[0]["messages"]
     assert client.calls[1]["messages"][2]["role"] == "assistant"
+    rules = dict(config.language_policy().prompt_values)
+    for call in client.calls:
+        # Continuation repeats the complete rules in its own user turn.
+        instruction = call["messages"][-1 if len(call["messages"]) == 4 else 0]["content"]
+        assert rules["target_guidance"] in instruction
+        assert read_text("shared/target_language.txt").strip() in instruction
+        assert rules["punct_rule"] in instruction
 
 
 def test_batch_passes_mineru_blank_allowance_to_translator():
@@ -88,10 +93,11 @@ def test_chapter_service_limits_blank_allowance_and_resumes_without_retranslatio
 ):
     from wenyi_core.agents.translator import AlignmentError
     from wenyi_core.pipeline.orchestrator import Orchestrator
-    from wenyi_core.pipeline.runstore import STATUS_PENDING
+    from wenyi_core.storage.run_store import STATUS_PENDING
 
     from tests.fake_llm import routing_handler
-    from tests.test_review_autofix import _config, _store
+    from tests.review_fixtures import autofix_config as _config
+    from tests.review_fixtures import autofix_store as _store
 
     store = _store(str(tmp_path))
     manifest = store.load_manifest()
@@ -129,3 +135,129 @@ def test_chapter_service_limits_blank_allowance_and_resumes_without_retranslatio
     assert store.load_chapter(0).text_segments[0].target == ""
     assert store.pending_chapters() == []
     assert not [c for c in resumed_client.calls if c["operation"] == "translation.body"]
+
+
+class TestTranslationService(unittest.TestCase):
+    def test_progress_label_prefers_real_title(self):
+        self.assertEqual(TranslationService.chapter_progress_label("引言", 0), "引言")
+        self.assertEqual(TranslationService.chapter_progress_label("第一章", 1), "第一章")
+        self.assertEqual(TranslationService.chapter_progress_label("", 1), "Chapter 2")
+
+    def test_resume_batch_from_continuation_receives_absolute_annotation_slice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cfg = _config(os.path.join(directory, "state"))
+            cfg.pipeline.polish = False
+            cfg.pipeline.annotation_alignment = False
+            cfg.segment.max_tokens_per_batch = 6
+            chapter = Chapter(
+                index=0,
+                segments=[
+                    Segment(
+                        index=0,
+                        source="aa",
+                        target="既译",
+                        anchor="tn0_0",
+                        meta={
+                            "epub_annotations": {
+                                "version": 1,
+                                "source_length": 6,
+                                "items": [
+                                    {
+                                        "id": "second-piece",
+                                        "mode": "point",
+                                        "source_start": 3,
+                                        "source_end": 3,
+                                        "target_key": "notes.xhtml#n2",
+                                        "relation": "noteref",
+                                    },
+                                    {
+                                        "id": "third-piece",
+                                        "mode": "point",
+                                        "source_start": 5,
+                                        "source_end": 5,
+                                        "target_key": "notes.xhtml#n3",
+                                        "relation": "noteref",
+                                    },
+                                ],
+                            }
+                        },
+                    ),
+                    Segment(index=1, source="bb", cont=True),
+                    Segment(index=2, source="cc", cont=True),
+                ],
+            )
+            registry = {
+                "version": 1,
+                "contexts": {
+                    "notes.xhtml#n2": {"source_blocks": ["Note two"]},
+                    "notes.xhtml#n3": {"source_blocks": ["Note three"]},
+                },
+            }
+            store = FileStorage(os.path.join(directory, "state", "book"))
+            store.save_chapter(chapter)
+            store.save_manifest(
+                {
+                    "title": "Book",
+                    "fmt": "epub",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "chapters": [{"index": 0, "title": "", "status": "pending"}],
+                }
+            )
+            glossary = GlossaryStore(store.glossary_path)
+            orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+            captured: list[list[list[dict[str, str]]]] = []
+
+            def process(plan, **kwargs):
+                from wenyi_core.pipeline.translate.translation_batch import BatchResult
+
+                captured.append(plan.annotation_contexts)
+                return BatchResult(
+                    tuple(f"译{source}" for source in plan.sources), (None,) * len(plan.sources)
+                )
+
+            try:
+                with (
+                    patch.object(orch._translation._batches, "execute", side_effect=process),
+                    patch.object(
+                        orch._translation,
+                        "extract_batch_glossary",
+                        return_value={
+                            "inserted": 0,
+                            "conflict": 0,
+                            "unchanged": 0,
+                            "updated": 0,
+                        },
+                    ),
+                    patch.object(
+                        orch._runtime.extractor,
+                        "extract_and_store",
+                        return_value={
+                            "inserted": 0,
+                            "conflict": 0,
+                            "unchanged": 0,
+                            "updated": 0,
+                        },
+                    ),
+                ):
+                    orch._translation.translate_chapter(
+                        0,
+                        store,
+                        glossary,
+                        "",
+                        translation_history={},
+                        source_corpus="aabbcc",
+                        annotation_context_registry=registry,
+                    )
+            finally:
+                glossary.close()
+
+            self.assertEqual(
+                captured,
+                [
+                    [
+                        [{"target_key": "notes.xhtml#n2", "source": "Note two"}],
+                        [{"target_key": "notes.xhtml#n3", "source": "Note three"}],
+                    ]
+                ],
+            )

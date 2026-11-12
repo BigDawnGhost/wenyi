@@ -25,7 +25,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ..agents import prompts
-from ..glossary.store import GlossaryTerm
+from ..models.glossary import GlossaryTerm
 from .protocol import ArtifactStorage
 
 _ROOT = "precision/shared/"
@@ -49,8 +49,11 @@ def _copy(value: Any) -> Any:
 
 
 class PrecisionArchive:
-    def __init__(self, store: ArtifactStorage):
+    """Capture source-filtered prompt lines while replaying historical records verbatim."""
+
+    def __init__(self, store: ArtifactStorage, *, source_lang: str = "auto"):
         self.store = store
+        self.source_lang = source_lang
         self._capture_depth = 0
         self._terms: dict[str, dict] = {}
         self._revisions: dict[str, tuple[list[str], int]] = {}
@@ -206,7 +209,7 @@ class PrecisionArchive:
             value = {
                 "kind": "term",
                 "raw": asdict(term),
-                "prompt_line": prompts.render_glossary([term]),
+                "prompt_line": prompts.render_glossary([term], source_lang=self.source_lang),
             }
             ref = self.put(value)
             self._terms[ref] = _copy(value)
@@ -297,6 +300,12 @@ class PrecisionArchive:
             return self._glossary_text(ref)
 
     def _glossary_text(self, ref: str) -> str:
+        """Rejoin the glossary exactly as it read when the run was recorded.
+
+        Every line comes from `prompt_line`, never from a fresh render. A replay has
+        to reproduce the request the model actually saw, so it must not pick up a
+        prompt template that changed after capture.
+        """
         if self._capture_depth and ref in self._texts:
             return self._texts[ref]
         refs, _ = self._revision(ref)

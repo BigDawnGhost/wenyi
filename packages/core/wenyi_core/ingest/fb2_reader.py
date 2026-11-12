@@ -16,6 +16,7 @@ import os
 import re
 import xml.etree.ElementTree as ET
 
+from .encoding import decode_source
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
 
@@ -166,22 +167,50 @@ def _body_title_chapter(body: ET.Element) -> Chapter | None:
     return Chapter(index=0, title=lines[-1], segments=segments)
 
 
-def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
-    """Read an FB2 file into a Document."""
+def _read_xml(path: str) -> ET.Element:
+    """Read FB2 XML via the declared encoding, falling back to the shared decode ladder.
+
+    The historical ``errors="replace"`` silent mojibake is gone: a declared encoding is
+    honored strictly, and anything it cannot decode goes through
+    :func:`ingest.encoding.decode_source`, which either finds a legacy match explicitly
+    or raises an actionable error (audit X-4).
+    """
     with open(path, "rb") as f:
         raw = f.read()
 
-    # Remove encoding from the XML declaration; FB2 often declares windows-1251.
-    enc = "utf-8"
     m = re.search(rb"<\?xml.*?encoding\s*=\s*['\"]([^'\"]+)['\"]", raw)
     if m:
         enc = m.group(1).decode("ascii", errors="replace")
-    try:
-        text = raw.decode(enc)
-    except (UnicodeDecodeError, LookupError):
-        text = raw.decode("utf-8", errors="replace")
+        try:
+            return ET.fromstring(raw.decode(enc))
+        except (UnicodeDecodeError, LookupError):
+            pass  # Unusable declaration: let the shared ladder decide explicitly.
+    text, _encoding = decode_source(raw)
+    return ET.fromstring(text)
 
-    root = ET.fromstring(text)
+
+def _book_title(root: ET.Element, path: str) -> str:
+    """Resolve title-info/book-title, falling back to the filename."""
+    title = os.path.splitext(os.path.basename(path))[0]
+    for desc in root.iter():
+        if _local(desc) != "title-info":
+            continue
+        for child in desc:
+            if _local(child) == "book-title":
+                if child.text:
+                    title = child.text.strip()
+                break
+    return title
+
+
+def peek_fb2_title(path: str) -> str:
+    """Read the book title without constructing chapters, segments or resources."""
+    return _book_title(_read_xml(path), path)
+
+
+def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
+    """Read an FB2 file into a Document."""
+    root = _read_xml(path)
 
     resources: list[dict[str, str]] = []
     for binary in root.iter():
@@ -209,15 +238,7 @@ def read_fb2(path: str, source_lang: str, target_lang: str) -> Document:
         break
 
     # Book title.
-    title = os.path.splitext(os.path.basename(path))[0]
-    for desc in root.iter():
-        if _local(desc) != "title-info":
-            continue
-        for child in desc:
-            if _local(child) == "book-title":
-                if child.text:
-                    title = child.text.strip()
-                break
+    title = _book_title(root, path)
 
     # Chapters.
     chapters: list[Chapter] = []

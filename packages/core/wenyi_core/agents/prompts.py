@@ -4,23 +4,51 @@ from __future__ import annotations
 
 import json
 
-from ..glossary.store import GlossaryTerm
+from ..glossary.store import GlossaryStore, GlossaryTerm
+from ..i18n.genres import DEFAULT_GENRE, Genre, compose
+from ..i18n.resources import read_text
 
 
-def render_glossary(terms: list[GlossaryTerm]) -> str:
-    """Render glossary objects as a line-by-line reference for prompts."""
+def render_glossary(
+    terms: list[GlossaryTerm],
+    *,
+    source_lang: str,
+    note_source: str | None = None,
+    genre: Genre = DEFAULT_GENRE,
+) -> str:
+    """Render mappings, optional source-scoped notes, and Japanese-source readings."""
     if not terms:
         return "(none)"
+    relevant = (
+        {id(term) for term in GlossaryStore.terms_in(terms, note_source)}
+        if note_source is not None
+        else set()
+    )
+    note_budget = 4096
+    notes = []
+    omitted = False
     lines = []
     for t in terms:
         extra = []
         if t.gender:
             extra.append(t.gender)
-        if t.reading:
+        if source_lang == "ja" and t.reading:
             extra.append(f"Pronunciation: {t.reading}")
         tag = f"({t.type}{(', ' + ', '.join(extra)) if extra else ''})"
         alias = f" [Aliases:  {', '.join(t.aliases)}]" if t.aliases else ""
         lines.append(f"- {t.source} → {t.target}{tag}{alias}")
+        if id(t) in relevant and t.note.strip():
+            note = json.dumps({"term": t.source, "note": t.note.strip()}, ensure_ascii=False)
+            if len(note) <= note_budget:
+                notes.append(note)
+                note_budget -= len(note)
+            else:
+                omitted = True
+    if notes or omitted:
+        lines.append(compose(read_text("shared/glossary_notes.txt"), genre=genre).rstrip("\n"))
+        lines.extend(notes)
+        if omitted:
+            lines.append("[Some relevant notes omitted in full to respect the evidence budget.]")
     return "\n".join(lines)
 
 

@@ -1,81 +1,73 @@
-"""Storage injection must keep review and subtitle state out of resource directories."""
+"""Storage injection must keep review state out of resource directories."""
 
 from __future__ import annotations
 
 import ast
-import json
-from contextlib import nullcontext
-from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
 from wenyi_core.config import Config
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.preparation import PreparationService
-from wenyi_core.pipeline.runstore import source_sha256
+from wenyi_core.pipeline.prepare.input_preparation import ingest_config, load_parsed_document
 from wenyi_core.review.run_store import ReviewRunStore
-from wenyi_core.srt.store import SrtRunStore
-from wenyi_core.srt.translate import translate_srt
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.protocol import Storage
+from wenyi_core.storage.run_store import source_sha256
+from wenyi_core.storage.sqlite import SqliteStorage
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
+from tests.storage_fixtures import MemoryArtifacts
 
 
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
+@lru_cache(maxsize=None)
+def parsed_source(path: Path) -> ast.Module:
+    """Parse each module once per session instead of once per boundary assertion."""
+    return ast.parse(path.read_text(encoding="utf-8"))
 
 
-class MemoryArtifacts:
-    """An independent artifact backend with no filesystem delegation."""
+@pytest.mark.parametrize("storage_type", [FileStorage, SqliteStorage])
+def test_full_workflow_preserves_review_and_legacy_reports_on_resume(tmp_path, storage_type):
+    source = tmp_path / "book.txt"
+    source.write_text("First chapter\n\nA short story.\n", encoding="utf-8")
+    config = Config.from_dict(
+        {
+            "language": {"source": "en", "target": "zh"},
+            "llm": {"preset": "fake"},
+            "pipeline": {"book_understanding": False, "review": True, "review_autofix": False},
+        }
+    )
+    store = storage_type(str(tmp_path / "state"))
+    client = MeteredFakeClient(handler=routing_handler)
+    output = str(tmp_path / "translated.txt")
+    try:
+        first = Orchestrator(config, client=client, storage=store).run_all(
+            str(source), out_format="txt", out_path=output
+        )
+        assert store.read_artifact("report.json") is None
+        assert "report" not in first
+        review = store.load_latest_review_result()
+        assert review is not None
+        usage = store.load_usage()
+        assert usage is not None and usage["totals"]["calls"] > 0
+        legacy = {"summary": {"chapters_done": 1}, "legacy": True}
+        store.write_artifact("report.json", legacy)
 
-    def __init__(self, run_dir):
-        self.run_dir = str(run_dir)
-        self.data = {}
-        self.events = []
-        self.manifest = {}
-        self.usage = None
+        resumed_client = MeteredFakeClient(handler=routing_handler)
+        resumed = Orchestrator(config, client=resumed_client, storage=store).run_all(
+            str(source), out_format="txt", out_path=output
+        )
 
-    def read_artifact(self, key):
-        return deepcopy(self.data.get(key))
-
-    def write_artifact(self, key, value):
-        self.data[key] = deepcopy(value)
-
-    def delete_artifact(self, key):
-        self.data.pop(key, None)
-
-    def list_artifacts(self, prefix=""):
-        return sorted(key for key in self.data if key.startswith(prefix))
-
-    def append_artifact_record(self, key, record):
-        self.data.setdefault(key, []).append(deepcopy(record))
-
-    def read_artifact_records(self, key):
-        return deepcopy(self.data.get(key, []))
-
-    def state_lock(self):
-        return nullcontext()
-
-    def save_manifest(self, data):
-        self.manifest = deepcopy(data)
-
-    def save_usage(self, data):
-        self.usage = deepcopy(data)
-
-    def load_usage(self):
-        return deepcopy(self.usage)
-
-    def record_timing(self, record):
-        self.data.setdefault("timing", {})[record["id"]] = record
-        return self.data["timing"]
-
-    def log_event(self, event, **data):
-        self.events.append({"event": event, **data})
+        assert store.read_artifact("report.json") == legacy
+        assert store.pending_chapters() == []
+        assert resumed["review_result"]["review_id"] == review["review_id"]
+        assert resumed_client.calls == []
+        assert store.load_usage() == usage
+        assert Path(output).is_file()
+        assert all(event["event"] != "report_saved" for event in store.list_events(limit=0))
+    finally:
+        store.close()
 
 
 def test_review_rounds_resume_and_events_use_artifacts_without_creating_files(tmp_path):
@@ -120,18 +112,20 @@ def test_preparation_reuses_matching_preview_and_invalidates_changed_settings(
         "parsed_document.json",
         {
             "source_sha256": source_sha256(str(source)),
-            "ingest_config": PreparationService.ingest_config(config),
+            "ingest_config": ingest_config(config),
             "document": document.model_dump(mode="json"),
         },
     )
     changed = config.model_copy(deep=True)
     changed.segment.max_tokens_per_segment += 1
-    assert PreparationService.load_parsed_document(store, str(source), changed) is None
+    assert load_parsed_document(store, str(source), changed) is None
 
     def unexpected_parse(*args, **kwargs):
         raise AssertionError("Preparation re-parsed a matching upload preview")
 
-    monkeypatch.setattr("wenyi_core.pipeline.preparation.load_document", unexpected_parse)
+    monkeypatch.setattr(
+        "wenyi_core.pipeline.prepare.input_preparation.load_document", unexpected_parse
+    )
     result = Orchestrator(
         config, client=MeteredFakeClient(handler=routing_handler), storage=store
     ).prepare(str(source))
@@ -141,56 +135,10 @@ def test_preparation_reuses_matching_preview_and_invalidates_changed_settings(
     store.close()
 
 
-def test_subtitle_pause_flushes_usage_and_resume_preserves_human_edits(tmp_path):
-    source = tmp_path / "captions.srt"
-    source.write_text("1\n00:00:01,000 --> 00:00:02,000\nHello.\n\n", encoding="utf-8")
-    config = Config.from_dict(
-        {
-            "language": {"source": "en", "target": "zh"},
-            "llm": {"preset": "fake"},
-            "output": {"mono": True, "bilingual": True},
-        }
-    )
-    storage = MemoryArtifacts(tmp_path / "resources")
-    client = MeteredFakeClient(handler=lambda *args: json.dumps({"1": "你好。"}))
-
-    def pause(done, total, label):
-        if done:
-            raise RuntimeError("pause requested")
-
-    with pytest.raises(RuntimeError, match="pause requested"):
-        translate_srt(str(source), config, client=client, storage=storage, progress=pause)
-    usage = storage.load_usage()
-    assert usage is not None
-    assert usage["totals"]["calls"] == 1
-    manifest = storage.read_artifact("srt/manifest.json")
-    assert isinstance(manifest, dict)
-    assert manifest["status"] == "interrupted"
-    subtitle = SrtRunStore(storage.run_dir, storage=storage)
-    cues = subtitle.load_cues()
-    cues["1"]["target"] = "人工校订。"
-    subtitle.save_cues(cues)
-    resumed = MeteredFakeClient(
-        handler=lambda *args: pytest.fail("Completed cue was retransmitted")
-    )
-    result = translate_srt(str(source), config, client=resumed, storage=storage)
-    assert not resumed.calls
-    assert result["usage"]["totals"]["calls"] == 1
-    assert storage.manifest["initialized"]
-    assert subtitle.load_cues()["1"]["target"] == "人工校订。"
-    for output in result["outputs"]:
-        text = Path(output).read_text(encoding="utf-8")
-        assert "人工校订。" in text
-        assert "00:00:01,000 --> 00:00:02,000" in text
-    assert not Path(storage.run_dir).exists()
-
-
 def test_domain_services_have_no_direct_state_files_or_sqlite():
     core = Path(__file__).resolve().parents[1] / "wenyi_core"
-    for path in (core / "pipeline").glob("*.py"):
-        if path.name == "runstore.py":
-            continue  # The explicit CLI filesystem backend.
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path in (core / "pipeline").rglob("*.py"):
+        tree = parsed_source(path)
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 assert not (
@@ -203,7 +151,7 @@ def test_domain_services_have_no_direct_state_files_or_sqlite():
     for path in core.rglob("*.py"):
         imports = [
             node
-            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+            for node in ast.walk(parsed_source(path))
             if isinstance(node, (ast.Import, ast.ImportFrom))
         ]
         for node in imports:

@@ -5,62 +5,19 @@ from __future__ import annotations
 import asyncio
 import json
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
+from api_test_support import new_project
 from fastapi.testclient import TestClient
-from test_storage_pg_integration import pg_pool  # noqa: F401
-from tests.fake_llm import MeteredFakeClient, routing_handler
 from type_helpers import must
 from wenyi_api import dal
-from wenyi_api.adapters import create_context, postgres_repository
+from wenyi_api.adapters import postgres_repository
 from wenyi_api.main import create_app
-from wenyi_backend import job_service
-from wenyi_backend.context import current_context, use_context
-from wenyi_backend.project_service import storage_for
-from wenyi_backend.routers import export
+from wenyi_backend.context import current_context
+from wenyi_backend.execution.bindings import build_config_for
+from wenyi_backend.routers import dependencies as job_service
+from wenyi_backend.routers.dependencies import storage_for
 from wenyi_backend.workers import tasks
-
-
-@pytest.fixture
-def api(monkeypatch, pg_pool, tmp_path):  # noqa: F811
-    from wenyi_api.config import settings
-    from wenyi_core.llm import factory
-
-    config = tmp_path / "config.yaml"
-    config.write_text("llm:\n  preset: fake\n", encoding="utf-8")
-    overrides = replace(
-        settings,
-        data_dir=str(tmp_path / "data"),
-        config_path=str(config),
-        api_token=None,
-        redis_url="redis://127.0.0.1:56379/0",
-    )
-    monkeypatch.setattr(
-        factory, "build_client", lambda cfg: MeteredFakeClient(handler=routing_handler)
-    )
-    context = replace(
-        create_context(overrides),
-        build_client=lambda cfg: factory.build_client(cfg),
-    )
-    postgres_repository(context)._pool = pg_pool
-    queue = []
-
-    async def enqueue(name, **kwargs):
-        queue.append((name, kwargs))
-        return SimpleNamespace(job_id=kwargs["_job_id"])
-
-    monkeypatch.setattr(job_service, "enqueue", enqueue)
-    monkeypatch.setattr(export, "enqueue", enqueue)
-    client = TestClient(create_app(context=context))
-    with use_context(context):
-        yield client, queue
-    client.close()
-
-
-def new_project(api, source="en", target="zh"):
-    # Seed existing projects for endpoint tests; public creation requires a source.
-    return dal.create_project("Book", source, target, {"template": "标准翻译"})
 
 
 def test_creation_requires_an_uploaded_source(api):
@@ -93,6 +50,23 @@ def test_creation_uploads_source_and_runs_selected_setup(api, prepare):
         "prepared" if prepare else "uploaded"
     )
     assert all(ch["status"] != "done" for ch in dal.chapter_summaries(pid))
+    detail = client.get(f"/projects/{pid}").json()
+    chapters = client.get(f"/projects/{pid}/chapters").json()
+    assert detail["chapter_count"] == len(chapters) > 0
+    assert detail["initialized"] is prepare
+    for chapter in chapters:
+        for route in ("chapters", "review"):
+            response = client.get(f"/projects/{pid}/{route}/{chapter['index']}")
+            assert response.status_code == 200, response.text
+            assert all(segment["target"] is None for segment in response.json()["segments"])
+    if not prepare:
+        assert dal.chapter_summaries(pid) == [], "Parsing must not initialize formal chapters"
+        ci = chapters[0]["index"]
+        response = client.put(
+            f"/projects/{pid}/review/{ci}/segments/0",
+            json={"target": "Must remain read-only", "expected_target": None},
+        )
+        assert response.status_code == 409
 
 
 @pytest.mark.parametrize(
@@ -103,7 +77,6 @@ def test_creation_uploads_source_and_runs_selected_setup(api, prepare):
         ({"name": "  "}, "book.txt", b"contents"),
         ({"name": "Book", "source_lang": "en", "target_lang": "en"}, "book.txt", b"text"),
         ({"name": "Book", "target_lang": "invalid"}, "book.txt", b"text"),
-        ({"name": "Book", "prepare": True}, "book.srt", b"subtitles"),
     ],
 )
 def test_invalid_creation_never_publishes_a_project(api, metadata, filename, content, tmp_path):
@@ -152,7 +125,7 @@ def test_creation_database_failure_removes_its_uploaded_file(api, monkeypatch, t
     def fail(*args, **kwargs):
         raise RuntimeError("database unavailable")
 
-    monkeypatch.setattr(dal, "create_project", fail)
+    monkeypatch.setattr(current_context().repository, "create_project", fail)
     with pytest.raises(RuntimeError, match="database unavailable"):
         client.post(
             "/projects",
@@ -198,43 +171,31 @@ def test_creation_saves_pdf_parser_before_queueing(api):
     project = must(dal.get_project(response.json()["id"]))
     assert project["config"]["pipeline"]["pdf_backend"] == "babeldoc"
     run_id = queue[0][1]["run_id"]
-    assert tasks._build_config_for(project["id"], run_id).pipeline.pdf_backend == "babeldoc"
+    assert (
+        build_config_for(current_context(), project["id"], run_id).pipeline.pdf_backend
+        == "babeldoc"
+    )
 
 
 def test_creation_freezes_project_precision_before_queueing(api):
     client, queue = api
     response = client.post(
         "/projects",
-        data={"project": json.dumps({"name": "Book", "translation_mode": "best_of_three"})},
+        data={"project": json.dumps({"name": "Book", "translation_mode": "three_draft_synthesis"})},
         files={"file": ("book.txt", b"A fictional traveler crossed a bridge.")},
     )
     assert response.status_code == 201, response.text
     pid = response.json()["id"]
     pipeline = must(dal.get_project(pid))["config"]["pipeline"]
-    assert pipeline["translation_mode"] == "best_of_three"
+    assert pipeline["translation_mode"] == "three_draft_synthesis"
     assert "precision_concurrency" not in pipeline
     assert pipeline["polish"] is True
-    snapshot = tasks._build_config_for(pid, queue[0][1]["run_id"]).pipeline
-    assert snapshot.translation_mode == "best_of_three"
+    snapshot = build_config_for(current_context(), pid, queue[0][1]["run_id"]).pipeline
+    assert snapshot.translation_mode == "three_draft_synthesis"
     assert "precision_concurrency" not in snapshot.model_dump()
     assert snapshot.polish is True
     globals = client.get("/settings").json()["effective"]["pipeline"]
     assert "translation_mode" not in globals and "precision_concurrency" not in globals
-
-
-def test_subtitle_creation_only_parses_source(api):
-    client, queue = api
-    response = client.post(
-        "/projects",
-        data={"project": json.dumps({"name": "Subtitles"})},
-        files={"file": ("video.srt", b"1\n00:00:00,100 --> 00:00:01,200\nHello\n")},
-    )
-    assert response.status_code == 201, response.text
-    assert queue[0][0] == "run_parse"
-    pid = response.json()["id"]
-    execute_next(api)
-    assert client.get(f"/projects/{pid}/preview").json()["total_word_count"] == 1
-    assert not must(dal.get_project(pid))["initialized"]
 
 
 def execute_next(api):
@@ -353,7 +314,7 @@ def test_source_identity_and_config_snapshot(api):
     response = client.post(f"/projects/{pid}/prepare")
     run_id = response.json()["job_id"]
     dal.set_project_config(pid, {"llm": {"preset": "deepseek"}})
-    assert tasks._build_config_for(pid, run_id).llm.preset == "fake"
+    assert build_config_for(current_context(), pid, run_id).llm.preset == "fake"
     execute_next(api)
     assert storage_for(pid).exists()
     assert (
@@ -362,63 +323,6 @@ def test_source_identity_and_config_snapshot(api):
         ).status_code
         == 409
     )
-
-
-def test_srt_full_workflow_manual_edit_resume_and_exports(api, monkeypatch):
-    import json
-
-    from wenyi_core.llm import factory
-
-    client, _ = api
-    pid = new_project(api)
-    source = (
-        b"1\n00:00:00,100 --> 00:00:01,200\nHello\n\n2\n00:00:01,300 --> 00:00:02,400\nGoodbye\n"
-    )
-    upload(api, pid, "video.srt", source)
-    assert (
-        client.put(
-            f"/projects/{pid}/config", json={"yaml": "output: {mono: true, bilingual: true}"}
-        ).status_code
-        == 200
-    )
-    monkeypatch.setattr(
-        factory,
-        "build_client",
-        lambda cfg: MeteredFakeClient(
-            handler=lambda *_: json.dumps({"1": "你好", "2": "再见"}, ensure_ascii=False)
-        ),
-    )
-    assert client.post(f"/projects/{pid}/translate").json()["kind"] == "srt"
-    execute_next(api)
-    assert client.get(f"/projects/{pid}").json()["initialized"]
-    subtitles = client.get(f"/projects/{pid}/subtitles").json()
-    assert subtitles["completed"] == 2
-    assert client.get(f"/projects/{pid}/stats").json()["usage"]["totals"]["calls"] > 0
-    assert len(client.get(f"/projects/{pid}/exports").json()) == 2
-    assert (
-        client.put(f"/projects/{pid}/subtitles/1", json={"target": "人工修订"}).status_code == 200
-    )
-    assert client.post(f"/projects/{pid}/translate").status_code == 200
-    execute_next(api)
-    assert client.get(f"/projects/{pid}/subtitles").json()["cues"][0]["target"] == "人工修订"
-    response = client.post(f"/projects/{pid}/exports", json={"bilingual": True})
-    assert response.status_code == 200
-    execute_next(api)
-    text = client.get(f"/projects/{pid}/exports/{response.json()['export_id']}/download").text
-    assert "人工修订" in text and "00:00:00,100 --> 00:00:01,200" in text
-    # Resuming subtitles generates new files and applies the same export retention policy.
-    assert client.post(f"/projects/{pid}/translate").status_code == 200
-    execute_next(api)
-    with dal.get_pool().connection() as conn:
-        rows = conn.execute(
-            "SELECT path FROM exports WHERE project_id=%s AND status='done'", (pid,)
-        ).fetchall()
-    assert len(rows) == 5
-    from pathlib import Path
-
-    files = list((Path(current_context().data_dir) / pid / "exports").rglob("*.srt"))
-    assert len(files) == 5
-    assert client.post(f"/projects/{pid}/review/run").status_code == 422
 
 
 def test_live_redis_queue_executes_persisted_parse_job(api, monkeypatch):

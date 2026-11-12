@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, SecretStr
 from wenyi_backend.context import current_context
@@ -61,6 +61,22 @@ def statuses() -> dict:
         name: store.status(name, provider, record=records.get(name, {}))
         for name, provider in providers.items()
     }
+
+
+class CredentialSecret(BaseModel):
+    secret: str | None
+
+
+@router.get("/{connection}/secret", response_model=CredentialSecret)
+def reveal(connection: str, response: Response) -> dict:
+    """Return the manually saved key so the local owner can view it; never environment values."""
+    store = credential_store()
+    with registry_guard() as conn:
+        provider = load_settings(connection=conn).config.llm.providers.get(connection)
+    if provider is None:
+        raise HTTPException(404, "Unknown connection")
+    response.headers["Cache-Control"] = "no-store"
+    return {"secret": store.manual_secret(connection, provider)}
 
 
 @router.put(

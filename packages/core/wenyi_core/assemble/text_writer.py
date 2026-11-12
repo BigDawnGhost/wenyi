@@ -5,7 +5,7 @@ or bilingual text according to bilingual and order.
 
 from __future__ import annotations
 
-from ..ingest.models import KIND_HEADING
+from ..models.document import KIND_HEADING
 from .export_view import AssembleStore
 from .writer_common import _bilingual_source, _merged_paragraphs, _ordered_pair
 
@@ -23,16 +23,10 @@ def _assemble_plain_text(
     chapter_blocks: list[str] = []
     for c in m["chapters"]:
         ch = store.load_chapter(c["index"])
-        if markdown:
-            level = ch.meta.get("heading_level", 1)
-            level = level if isinstance(level, int) and 1 <= level <= 6 else 1
-            heading_prefix = "#" * level + " "
-        else:
-            heading_prefix = ""
         blocks: list[str] = []
-        for kind, target, source in _merged_paragraphs(ch):
-            if kind == KIND_HEADING and heading_prefix:
-                target = heading_prefix + target
+        for kind, target, source, level in _merged_paragraphs(ch):
+            if kind == KIND_HEADING and markdown:
+                target = "#" * min(level, 6) + " " + target
             src = _bilingual_source(source, target) if (bilingual and kind != KIND_HEADING) else ""
             if not src:
                 blocks.append(target)

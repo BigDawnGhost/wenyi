@@ -1,5 +1,8 @@
 """Desktop catalog uses isolated temporary workspaces and no external services."""
 
+import inspect
+import shutil
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from contextvars import copy_context
@@ -9,9 +12,10 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from wenyi_backend import dal, paths
+from wenyi_backend import paths
 from wenyi_backend.context import current_context, use_context
 from wenyi_backend.global_settings import load_settings, save_settings
+from wenyi_desktop import paths as desktop_paths
 from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.main import create_context
 
@@ -43,25 +47,43 @@ def backend(tmp_path, monkeypatch):
 
 
 def new_project():
-    return dal.create_project("Sample", "en", "zh", {"template": "标准翻译"})
+    return current_context().repository.create_project(
+        "Sample", "en", "zh", {"template": "标准翻译"}
+    )
+
+
+def test_strategy_and_admission_calls_match_repository(backend):
+    inspect.signature(backend.set_project_strategy).bind("project", {"steps": {}}, connection=None)
+    inspect.signature(backend.admit_job).bind(
+        "project",
+        "translation",
+        "job",
+        project_status="translating",
+        params={},
+        config_snapshot={},
+        run_id="run",
+    )
 
 
 def test_catalog_durability_and_workspace_isolation(backend, tmp_path):
     pid = new_project()
     assert Path(paths.project_dir(pid)) == backend.workspace / "projects" / pid
-    dal.set_project_config(pid, {"pipeline": {"polish": False}})
-    identity = dal.create_job(pid, "translation", "task", run_id="run")
-    dal.set_job_status(identity, "error", "offline", result={"stage": "translate"})
-    saved = dal.get_job(identity)
+    current_context().repository.set_project_config(pid, {"pipeline": {"polish": False}})
+    identity = current_context().repository.create_job(pid, "translation", "task", run_id="run")
+    current_context().repository.set_job_status(
+        identity, "error", "offline", result={"stage": "translate"}
+    )
+    saved = current_context().repository.get_job(identity)
     assert saved["run_id"] == "run"
-    assert dal.latest_resumable_job(pid) == saved
+    assert current_context().repository.latest_resumable_job(pid) == saved
     workspace = backend.workspace
     backend.close()
+    # The complete data root, including the catalog, is isolated per app.
     other = create_context(tmp_path / "second")
     try:
         with use_context(other):
             assert other.repository.all_jobs() == []
-            assert dal.list_projects() == []
+            assert current_context().repository.list_projects() == []
     finally:
         other.repository.close()
     reopened = LocalBackend(workspace)
@@ -76,14 +98,14 @@ def test_run_identity_and_conditional_transitions(backend):
     import sqlite3
 
     pid = new_project()
-    identity = dal.create_job(pid, "parse", "task", run_id="unique")
+    identity = current_context().repository.create_job(pid, "parse", "task", run_id="unique")
     with pytest.raises(sqlite3.IntegrityError):
-        dal.create_job(pid, "parse", "other-task", run_id="unique")
+        current_context().repository.create_job(pid, "parse", "other-task", run_id="unique")
     assert backend.set_job_status(identity, "running", expected_status="queued")
     assert not backend.set_job_status(identity, "done", expected_status="queued")
-    assert dal.get_job(identity)["status"] == "running"
+    assert current_context().repository.get_job(identity)["status"] == "running"
     assert backend.set_job_status(identity, "interrupted", expected_status={"running"})
-    assert dal.get_job_by_arq_id("task")["status"] == "interrupted"
+    assert current_context().repository.get_job_by_arq_id("task")["status"] == "interrupted"
 
 
 def test_catalog_transaction_rolls_back_project_and_config(backend):
@@ -91,10 +113,14 @@ def test_catalog_transaction_rolls_back_project_and_config(backend):
 
     with pytest.raises(RuntimeError):
         with registry_guard() as connection:
-            pid = dal.create_project("Rollback", "en", "zh", {}, connection=connection)
-            dal.set_project_config(pid, {"test": True}, connection=connection)
+            pid = current_context().repository.create_project(
+                "Rollback", "en", "zh", {}, connection=connection
+            )
+            current_context().repository.set_project_config(
+                pid, {"test": True}, connection=connection
+            )
             raise RuntimeError("abort")
-    assert dal.list_projects() == []
+    assert current_context().repository.list_projects() == []
 
 
 def test_defaults_do_not_load_cli_config_and_revision_is_optimistic(backend, tmp_path, monkeypatch):
@@ -117,7 +143,7 @@ def test_export_retention_and_project_ownership(backend):
     pid, other = new_project(), new_project()
 
     def publish(index):
-        identity = dal.create_export(pid, "txt", {"index": index})
+        identity = current_context().repository.create_export(pid, "txt", {"index": index})
         output = Path(paths.exports_dir(pid)) / f"{identity}.txt"
         output.write_text(str(index), encoding="utf-8")
         backend.publish_export(pid, identity, str(output))
@@ -273,6 +299,18 @@ def test_catalog_reads_use_wal_snapshot_while_writer_is_active(backend):
             assert executor.submit(backend._get, "projects", pid).result(2)["name"] == "Sample"
             assert len(executor.submit(backend.list_exports, pid).result(2)) == 0
     assert backend._get("projects", pid)["name"] == "uncommitted"
+
+
+def test_job_lookup_reads_committed_snapshot_while_writer_is_active(backend):
+    pid = new_project()
+    identity = backend.create_job(pid, "translation", "task", run_id="run")
+    saved = backend.get_job(identity)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with backend.transaction() as connection:
+            backend._put("jobs", identity, {**saved, "status": "running"}, connection)
+            assert executor.submit(backend.get_job_by_arq_id, "task").result(2) == saved
+            assert executor.submit(backend.get_job_by_arq_id, "missing").result(2) is None
+    assert backend.get_job_by_arq_id("task")["status"] == "running"
 
 
 @pytest.mark.parametrize("recovery", ["explicit", "publish"])
@@ -540,15 +578,160 @@ def test_settings_projects_health_and_download_routes_without_pg(backend):
     assert client.post("/settings/validate", json=body).status_code == 200
     assert client.put("/settings", json=body).status_code == 200
     assert client.put("/settings", json=body).status_code == 409
-    eid = dal.create_export(pid, "txt", {})
+    eid = current_context().repository.create_export(pid, "txt", {})
     output = Path(paths.exports_dir(pid)) / "sample.txt"
     output.write_text("download", encoding="utf-8")
     backend.publish_export(pid, eid, str(output))
     assert client.get(f"/projects/{pid}/exports").json()[0]["id"] == eid
     assert client.get(f"/projects/{pid}/exports/{eid}/download").text == "download"
     assert client.delete(f"/projects/{pid}").status_code == 200
-    assert output.exists()
+    assert not output.exists()
+    assert not backend.project_dir(pid).exists()
     assert client.get(f"/projects/{pid}").status_code == 404
+
+
+def test_deletion_refuses_a_registry_record_outside_every_project_root(backend, tmp_path):
+    # Deletion is recursive and the catalog is editable data, so a record that
+    # points anywhere else is refused rather than repaired. Without this the
+    # record alone decides which directory is removed.
+    pid = new_project()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    anchor = Path(tmp_path.anchor)
+    # A record pointing at another directory, at the profile directory, and at a
+    # filesystem root. None of these is created or read: the refusal happens
+    # before anything touches the path, which is the whole point.
+    victims = [elsewhere, anchor / "Users", anchor, elsewhere / ".."]
+    for victim in victims:
+        backend.update_project(pid, location=str(victim))
+        with pytest.raises(HTTPException) as error:
+            backend.remove_project(pid)
+        assert error.value.status_code == 409
+        assert backend.get_project(pid) is not None
+    assert elsewhere.is_dir()
+
+
+def test_deletion_refuses_a_project_directory_that_is_a_link(backend, tmp_path):
+    # The gate compares resolved paths, so a project entry that is a link is
+    # refused for where it points. The entry itself is still refused on its own
+    # account: a link to another project's directory resolves inside the root,
+    # and rmtree would follow it into a project that is not being deleted.
+    pid = new_project()
+    neighbour = new_project()
+    target = backend.project_dir(neighbour)
+    target.mkdir(parents=True)
+    (target / "keep.txt").write_text("not this project", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    directory = backend.project_dir(pid)
+    for destination, survivor in ((target, target), (outside, outside)):
+        if directory.exists() or directory.is_symlink():
+            directory.unlink()
+        try:
+            directory.symlink_to(destination, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            pytest.skip("Creating links requires a privilege this session does not have")
+        with pytest.raises(HTTPException) as error:
+            backend.remove_project(pid)
+        assert error.value.status_code == 409
+        assert survivor.is_dir()
+    assert (target / "keep.txt").is_file()
+
+
+def test_deletion_refuses_a_directory_whose_marker_names_another_project(backend):
+    # The marker is what survives a rename, so it is the authority the record is
+    # checked against. A directory carrying another project's identifier is not
+    # this project's directory, whatever the record says.
+    pid = new_project()
+    directory = backend.project_dir(pid)
+    directory.mkdir(parents=True)
+    (directory / "project.json").write_text(
+        '{"pid": "ffffffffffffffff", "schema_version": 1}', encoding="utf-8"
+    )
+    with pytest.raises(HTTPException) as error:
+        backend.remove_project(pid)
+    assert error.value.status_code == 409
+    assert directory.is_dir()
+
+
+def test_deletion_removes_the_directory_its_identifier_names(backend):
+    # The allowed case: the directory the backend derives, agreeing with its own
+    # marker and with the record. Deriving the path is what makes a tampered
+    # record a refused deletion instead of a chosen one.
+    pid = new_project()
+    directory = backend.project_dir(pid)
+    directory.mkdir(parents=True)
+    (directory / "project.json").write_text(
+        '{"pid": "%s", "schema_version": 2}' % pid, encoding="utf-8"
+    )
+    backend.update_project(pid, location=str(directory))
+    backend.remove_project(pid)
+    assert not directory.exists()
+    assert backend.get_project(pid) is None
+
+
+def test_deletion_ignores_a_record_that_names_another_projects_directory(backend):
+    # Two projects on one machine: the record of the deleted one names the other
+    # one's directory. Deriving the path means the neighbour is untouched, and the
+    # disagreement is refused rather than acted on.
+    pid = new_project()
+    neighbour = new_project()
+    other = backend.project_dir(neighbour)
+    other.mkdir(parents=True)
+    backend.update_project(pid, location=str(other))
+    with pytest.raises(HTTPException) as error:
+        backend.remove_project(pid)
+    assert error.value.status_code == 409
+    assert other.is_dir()
+    assert backend.get_project(pid) is not None
+
+
+def test_deletion_of_an_unknown_project_is_a_refusal_not_a_no_op(backend):
+    with pytest.raises(HTTPException) as error:
+        backend.remove_project("f" * 16)
+    assert error.value.status_code == 404
+
+
+def test_a_deletion_interrupted_after_the_files_are_gone_can_be_retried(backend):
+    # The failure this guards against: the files are removed, and the process
+    # dies before the catalog row is. The next start would find a listed project
+    # whose directory is missing, indistinguishable from a project on a drive
+    # that was unplugged unless deletion intent was recorded first.
+    pid = new_project()
+    directory = backend.project_dir(pid)
+    directory.mkdir(parents=True)
+    (directory / desktop_paths.PROJECT_MARKER).write_text(
+        '{"pid": "%s", "schema_version": 1}' % pid, encoding="utf-8"
+    )
+    (directory / "source-book.txt").write_text("text", encoding="utf-8")
+    backend.update_project(pid, location=str(directory))
+    backend._write_deleting_sentinel(directory)
+    backend.update_project(pid, deleting=True)
+    # The interruption: files removed, row kept.
+    shutil.rmtree(directory)
+    assert not directory.exists()
+    assert backend._get("projects", pid)["deleting"] is True
+    # The retry finishes the row deletion instead of refusing a directory that
+    # is already gone or, worse, recreating it.
+    backend.remove_project(pid)
+    assert backend._get("projects", pid) is None
+    assert not directory.exists()
+
+
+def test_a_marked_project_is_still_refused_while_a_task_is_active(backend):
+    # The retry path skips the book and export locks, so it has to keep the
+    # catalog checks those locks exist to protect.
+    pid = new_project()
+    directory = backend.project_dir(pid)
+    directory.mkdir(parents=True)
+    backend.update_project(pid, location=str(directory), deleting=True)
+    identity = backend.create_export(pid, "txt", {})
+    backend.set_export_status(identity, "pending")
+    with pytest.raises(HTTPException) as error:
+        backend.remove_project(pid)
+    assert error.value.status_code == 409
+    assert directory.is_dir()
+    assert backend._get("projects", pid) is not None
 
 
 def test_backend_cannot_be_replaced_implicitly(backend, tmp_path):
@@ -566,18 +749,18 @@ def test_backend_cannot_be_replaced_implicitly(backend, tmp_path):
 def test_atomic_admission_and_late_compensation(backend):
     pid = new_project()
     identity = backend.admit_job(pid, "parse", "first", project_status="parsing")
-    assert dal.get_project(pid)["status"] == "parsing"
+    assert current_context().repository.get_project(pid)["status"] == "parsing"
     with pytest.raises(HTTPException) as error:
         backend.admit_job(pid, "parse", "second", project_status="parsing")
     assert error.value.status_code == 409
-    assert len(dal.list_jobs(pid)) == 1
+    assert len(current_context().repository.list_jobs(pid)) == 1
     assert backend.fail_admission(identity, "uploaded", "queue rejected")
-    assert dal.get_project(pid)["status"] == "uploaded"
+    assert current_context().repository.get_project(pid)["status"] == "uploaded"
     second = backend.admit_job(pid, "parse", "second", project_status="parsing")
     backend.set_job_status(second, "running", expected_status="queued")
     assert not backend.fail_admission(second, "uploaded", "late rejection")
-    assert dal.get_project(pid)["status"] == "parsing"
-    assert dal.get_job(second)["status"] == "running"
+    assert current_context().repository.get_project(pid)["status"] == "parsing"
+    assert current_context().repository.get_job(second)["status"] == "running"
 
 
 def test_export_admission_is_atomic_and_late_compensation_is_ignored(backend):
@@ -612,8 +795,10 @@ def test_model_rename_updates_projects_not_frozen_jobs(backend):
         json={"yaml": json.dumps({"llm": {"tiers": {"strong": old}}})},
     )
     assert response.status_code == 200, response.text
-    job_id = dal.create_job(pid, "translation", "frozen", config_snapshot=document)
-    frozen = dal.get_job(job_id)["params"]
+    job_id = current_context().repository.create_job(
+        pid, "translation", "frozen", config_snapshot=document
+    )
+    frozen = current_context().repository.get_job(job_id)["params"]
     llm = document["llm"]
     llm["preset"] = None
     llm["models"]["renamed"] = llm["models"].pop(old)
@@ -625,11 +810,13 @@ def test_model_rename_updates_projects_not_frozen_jobs(backend):
         "model_renames": {old: "renamed"},
     }
     assert client.post("/settings/validate", json=body).status_code == 200
-    assert dal.get_project_config(pid)["llm"]["tiers"]["strong"] == old
+    assert current_context().repository.get_project_config(pid)["llm"]["tiers"]["strong"] == old
     response = client.put("/settings", json=body)
     assert response.status_code == 200, response.text
-    assert dal.get_project_config(pid)["llm"]["tiers"]["strong"] == "renamed"
-    assert dal.get_job(job_id)["params"] == frozen
+    assert (
+        current_context().repository.get_project_config(pid)["llm"]["tiers"]["strong"] == "renamed"
+    )
+    assert current_context().repository.get_job(job_id)["params"] == frozen
 
 
 def test_local_lifespan_starts_runner_without_pg_and_closes_backend(backend, monkeypatch):
@@ -653,7 +840,7 @@ def test_local_lifespan_starts_runner_without_pg_and_closes_backend(backend, mon
         close()
 
     monkeypatch.setattr(backend, "close", close_backend)
-    monkeypatch.setattr(main, "LocalRuntime", lambda catalog, owner: runtime)
+    monkeypatch.setattr(main, "LocalRuntime", lambda catalog, owner, *, diagnostics=None: runtime)
     with TestClient(main.create_app(context=context)) as client:
         assert client.get("/health").status_code == 200
         assert calls == ["start"]
@@ -668,7 +855,7 @@ def test_progress_is_latest_only_and_cascades_with_project(backend):
     backend.save_progress(pid, {"run_id": "run", "percent": 10})
     backend.save_progress(pid, {"run_id": "run", "percent": 100})
     assert backend.load_progress(pid) == {"run_id": "run", "percent": 100}
-    dal.delete_project(pid)
+    current_context().repository.delete_project(pid)
     assert backend.load_progress(pid) is None
 
 
@@ -697,3 +884,56 @@ def test_project_read_opens_existing_storage_only_and_always_closes(backend, mon
     else:
         assert backend.get_project(pid)["title"] == "Stored title"
     assert calls == [(pid, False), "closed"]
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        (r"\\?\C:\Users\Reader\Wenyi Desktop", r"C:\Users\Reader\Wenyi Desktop"),
+        (r"\\?\D:\工作区 # 100%\Wenyi", r"D:\工作区 # 100%\Wenyi"),
+        (r"\\?\UNC\server\share\Wenyi Desktop", r"\\server\share\Wenyi Desktop"),
+        (r"C:\Users\Reader\Wenyi Desktop", r"C:\Users\Reader\Wenyi Desktop"),
+        (r"\\server\share\Wenyi Desktop", r"\\server\share\Wenyi Desktop"),
+        (r"\\.\C:\Wenyi", r"\\.\C:\Wenyi"),
+        (r"\\?\Volume{example}\Wenyi", r"\\?\Volume{example}\Wenyi"),
+        ("/tmp/Wenyi Desktop", "/tmp/Wenyi Desktop"),
+    ],
+)
+def test_windows_workspace_spelling_preserves_directory_identity(raw, expected):
+    from wenyi_desktop.local_backend import _plain_windows_path
+
+    assert _plain_windows_path(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "verbatim",
+    [
+        False,
+        pytest.param(
+            True, marks=pytest.mark.skipif(sys.platform != "win32", reason="Requires Windows paths")
+        ),
+    ],
+)
+def test_workspace_reopens_existing_catalog(tmp_path, verbatim):
+    workspace = tmp_path / "Wenyi 工作区 # 100%"
+    backend = LocalBackend(workspace)
+    config = {"output": {"bilingual": True}}
+    pid = backend.create_project("Existing project", "en", "zh", {}, config=config)
+    backend.close()
+
+    reopened = LocalBackend("\\\\?\\" + str(workspace) if verbatim else str(workspace))
+    try:
+        assert reopened.workspace == workspace
+        assert reopened.get_project(pid)["name"] == "Existing project"
+        assert reopened.get_project_config(pid) == config
+        from wenyi_desktop import paths as desktop_paths
+
+        assert reopened.database == desktop_paths.catalog(workspace)
+        storage = reopened.storage_for(pid)
+        try:
+            storage.write_artifact("preview.json", {"title": "Still writable"})
+            assert storage.read_artifact("preview.json") == {"title": "Still writable"}
+        finally:
+            storage.close()
+    finally:
+        reopened.close()

@@ -3,51 +3,24 @@
 from __future__ import annotations
 
 import json
-import time
+import threading
+from contextlib import contextmanager
 from dataclasses import replace
+from io import BytesIO
 from pathlib import Path
+from zipfile import ZipFile
 
 import pytest
+from bs4 import BeautifulSoup
+from desktop_test_support import initialize, wait_job
 from fastapi.testclient import TestClient
-from tests.fake_llm import MeteredFakeClient, routing_handler
-from wenyi_backend import dal
-from wenyi_backend.context import use_context
-from wenyi_core.ingest.models import Chapter, Document, Segment
+from wenyi_backend.context import current_context, use_context
+from wenyi_backend.execution import operations, runner
+from wenyi_backend.execution.bindings import workflow_dependencies
+from wenyi_backend.execution.contracts import ExecutionRequest
+from wenyi_core.models.document import Document
 from wenyi_core.storage.sqlite import SqliteStorage
 from wenyi_desktop.main import create_context
-
-
-@pytest.fixture
-def desktop(tmp_path, monkeypatch):
-    from wenyi_desktop import main
-
-    fake = MeteredFakeClient(routing_handler)
-    context = replace(
-        create_context(tmp_path / "desktop", api_token="offline-test-token"),
-        build_client=lambda config: fake,
-    )
-    backend = context.repository
-    try:
-        with (
-            use_context(context),
-            TestClient(
-                main.create_app(context=context),
-                headers={"Authorization": "Bearer offline-test-token"},
-            ) as client,
-        ):
-            yield client, backend, fake
-    finally:
-        backend.close()
-
-
-def wait_job(run_id, *, timeout=10):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        job = dal.get_job_by_arq_id(run_id)
-        if job and job["status"] not in {"queued", "running"}:
-            return job
-        time.sleep(0.01)
-    pytest.fail(f"Local task did not finish within {timeout}s: {job}")
 
 
 def upload(client, *, name="book.txt", content=b"A short paragraph.\n"):
@@ -58,41 +31,9 @@ def upload(client, *, name="book.txt", content=b"A short paragraph.\n"):
     )
     assert response.status_code == 201, response.text
     pid = response.json()["id"]
-    job = wait_job(dal.list_jobs(pid)[0]["run_id"])
+    job = wait_job(current_context().repository.list_jobs(pid)[0]["run_id"])
     assert job["status"] == "done", job
     return pid
-
-
-def initialize(backend):
-    pid = dal.create_project("Offline", "en", "zh", {"template": "标准翻译"})
-    source = backend.project_dir(pid) / "source.txt"
-    source.parent.mkdir(parents=True, exist_ok=True)
-    source.write_text("A short paragraph.\n", encoding="utf-8")
-    store = backend.storage_for(pid)
-    assert isinstance(store, SqliteStorage)
-    doc = Document(
-        title="Offline",
-        source_path=str(source),
-        fmt="txt",
-        source_lang="en",
-        target_lang="zh",
-        chapters=[
-            Chapter(index=0, title="Chapter", segments=[Segment(index=0, source="A paragraph.")])
-        ],
-    )
-    store.init_from_document(doc)
-    chapter = store.load_chapter(0)
-    chapter.segments[0].target = "译文"
-    store.save_chapter_with_status(chapter, "done")
-    dal.set_project_source(
-        pid,
-        source_path=str(source),
-        book_title="Offline",
-        source_sha256=store.load_manifest()["source_sha256"],
-        fmt="txt",
-    )
-    dal.set_project_status(pid, "done")
-    return pid, store
 
 
 def test_events_http_and_review_job_identity(desktop, monkeypatch):
@@ -180,6 +121,261 @@ def test_upload_parse_preview_and_workflow_use_sqlite(desktop):
     assert not list(backend.workspace.rglob("preview.json"))
     assert not list(backend.workspace.rglob("manifest.json"))
     store.close()
+
+
+def test_parse_completion_waits_for_run_lock_release(desktop, monkeypatch):
+    client, backend, _ = desktop
+    releasing, release = threading.Event(), threading.Event()
+    worker_storage = []
+    parse_source = operations.parse_source
+    storage_lock = SqliteStorage.lock
+
+    def capture_storage(pid, storage, config, progress, services):
+        worker_storage.append(storage)
+        return parse_source(pid, storage, config, progress, services)
+
+    @contextmanager
+    def hold_lock_exit(storage, blocking=True):
+        with storage_lock(storage, blocking=blocking):
+            try:
+                yield
+            finally:
+                if worker_storage and storage is worker_storage[0]:
+                    releasing.set()
+                    assert release.wait(10), "The test did not release the worker's run lock"
+
+    monkeypatch.setattr(operations, "parse_source", capture_storage)
+    monkeypatch.setattr(SqliteStorage, "lock", hold_lock_exit)
+    try:
+        created = client.post(
+            "/projects",
+            data={
+                "project": json.dumps(
+                    {"name": "Completion", "source_lang": "en", "target_lang": "zh"}
+                )
+            },
+            files={"file": ("book.txt", b"A short paragraph.\n")},
+        )
+        assert created.status_code == 201, created.text
+        pid = created.json()["id"]
+        assert releasing.wait(5), "The parse worker did not reach its run-lock exit"
+        job = current_context().repository.list_jobs(pid)[0]
+        assert job["status"] == "running"
+        assert current_context().repository.get_project(pid)["status"] == "parsing"
+        configuration = {"yaml": "pipeline: {review: false}"}
+        assert client.put(f"/projects/{pid}/config", json=configuration).status_code == 409
+    finally:
+        release.set()
+
+    assert wait_job(job["run_id"])["status"] == "done"
+    assert current_context().repository.get_project(pid)["status"] == "uploaded"
+    configured = client.put(f"/projects/{pid}/config", json=configuration)
+    assert configured.status_code == 200, configured.text
+    assert backend.get_job(job["id"])["status"] == "done"
+
+
+@pytest.mark.parametrize("status", ["error", "paused"])
+def test_terminal_failure_status_waits_for_run_lock_release(desktop_context, monkeypatch, status):
+    pid = current_context().repository.create_project("Completion", "en", "zh", {})
+    job = current_context().repository.create_job(
+        pid, "translation", "terminal-run", run_id="terminal-run", status="running"
+    )
+    current_context().repository.set_project_status(pid, "translating")
+    storage_lock = SqliteStorage.lock
+    statuses_at_release = []
+
+    @contextmanager
+    def observe_lock_exit(storage, blocking=True):
+        with storage_lock(storage, blocking=blocking):
+            try:
+                yield
+            finally:
+                statuses_at_release.append(current_context().repository.get_job(job)["status"])
+
+    monkeypatch.setattr(SqliteStorage, "lock", observe_lock_exit)
+    request = ExecutionRequest("translation", pid, "terminal-run")
+    dependencies = workflow_dependencies(desktop_context)
+    runner.record_terminal_status(request, dependencies, RuntimeError("Stopped"), status=status)
+
+    assert statuses_at_release == ["running"]
+    assert current_context().repository.get_job(job)["status"] == status
+    assert current_context().repository.get_job(job)["error"] == "Stopped"
+    assert current_context().repository.get_project(pid)["status"] == status
+
+    runner.record_terminal_status(request, dependencies, RuntimeError("Stopped"), status=status)
+    assert statuses_at_release == ["running"]
+
+
+def test_late_terminal_status_updates_only_its_own_job(desktop_context):
+    pid = current_context().repository.create_project("Completion", "en", "zh", {})
+    old = current_context().repository.create_job(
+        pid, "translation", "old-run", run_id="old-run", status="running"
+    )
+    latest = current_context().repository.create_job(
+        pid, "translation", "new-run", run_id="new-run"
+    )
+    current_context().repository.set_project_status(pid, "translating")
+
+    runner.record_terminal_status(
+        ExecutionRequest("translation", pid, "old-run"),
+        workflow_dependencies(desktop_context),
+        RuntimeError("Old failure"),
+    )
+
+    assert current_context().repository.get_job(old)["status"] == "error"
+    assert current_context().repository.get_job(latest)["status"] == "queued"
+    assert current_context().repository.get_project(pid)["status"] == "translating"
+
+
+def test_terminal_status_survives_unavailable_storage(desktop_context, monkeypatch):
+    pid = current_context().repository.create_project("Completion", "en", "zh", {})
+    job = current_context().repository.create_job(
+        pid, "translation", "failed-run", run_id="failed-run", status="running"
+    )
+    current_context().repository.set_project_status(pid, "translating")
+
+    def unavailable(_pid):
+        raise OSError("Storage unavailable")
+
+    dependencies = replace(workflow_dependencies(desktop_context), storage_for=unavailable)
+    with pytest.raises(OSError, match="Storage unavailable"):
+        runner.record_terminal_status(
+            ExecutionRequest("translation", pid, "failed-run"),
+            dependencies,
+            RuntimeError("Worker failed"),
+        )
+
+    assert current_context().repository.get_job(job)["status"] == "error"
+    assert current_context().repository.get_job(job)["error"] == "Worker failed"
+
+
+@pytest.mark.parametrize("name,fmt", [("book.txt", "text"), ("book.md", "markdown")])
+def test_parsed_book_exposes_read_only_chapters_before_preparation(desktop, name, fmt):
+    client, backend, fake = desktop
+    pid = upload(client, name=name, content=b"# First\n\nSource one.\n\n# Second\n\nSource two.\n")
+    root = f"/projects/{pid}"
+    store = backend.storage_for(pid)
+    parsed = store.read_artifact("parsed_document.json")
+    assert not store.exists()
+    assert fake.calls == []
+    assert client.get(root + "/preview").json()["fmt"] == fmt
+    detail = client.get(root).json()
+    assert detail["initialized"] is False
+    assert detail["chapter_count"] == 2
+    assert detail["done_chapters"] == 0
+    chapters = client.get(root + "/chapters").json()
+    assert [chapter["title"] for chapter in chapters] == ["First", "Second"]
+    assert all(chapter["target_word_count"] == 0 for chapter in chapters)
+    for route in ("chapters/0", "review/0"):
+        response = client.get(f"{root}/{route}")
+        assert response.status_code == 200, response.text
+        assert any("Source one." in segment["source"] for segment in response.json()["segments"])
+        assert all(segment["target"] is None for segment in response.json()["segments"])
+    assert client.get(root + "/chapters/99").status_code == 404
+    response = client.put(
+        root + "/review/0/segments/0", json={"target": "译文", "expected_target": None}
+    )
+    assert response.status_code == 409
+    assert client.post(root + "/review/0/complete").status_code == 409
+    response = client.put(
+        root + "/chapters/0/title",
+        json={"title_translated": "标题", "expected_title_translated": None},
+    )
+    assert response.status_code == 409
+    assert store.read_artifact("parsed_document.json") == parsed
+    assert not store.exists()
+    store.close()
+
+
+def test_initialization_keeps_parsed_source_visible_without_exposing_staged_targets(desktop):
+    client, backend, _ = desktop
+    pid = upload(client)
+    root = f"/projects/{pid}"
+    store = backend.storage_for(pid)
+    parsed = store.read_artifact("parsed_document.json")
+    preview = store.read_artifact("preview.json")
+    store.begin_initialization(parsed["source_sha256"])
+    document = Document.model_validate(parsed["document"])
+    document.chapters[0].segments[0].target = "Uncommitted derived state"
+    store.stage_document(document, source_hash=parsed["source_sha256"])
+    for status in ("preparing", "error"):
+        backend.set_project_status(pid, status)
+        assert client.get(root).json()["initialized"] is False
+        response = client.get(root + "/chapters/0")
+        assert response.status_code == 200, response.text
+        assert all(segment["target"] is None for segment in response.json()["segments"])
+        assert client.get(root + "/preview").json() == preview
+    response = client.put(
+        root + "/review/0/segments/0",
+        json={"target": "Do not edit staged state", "expected_target": "Uncommitted derived state"},
+    )
+    assert response.status_code == 409
+    assert store.read_artifact("parsed_document.json") == parsed
+    store.close()
+
+
+def test_create_and_prepare_parses_before_model_credentials_fail(desktop, monkeypatch):
+    client, backend, fake = desktop
+
+    def reject_credentials(*args, **kwargs):
+        raise ValueError("No model credentials")
+
+    monkeypatch.setattr(fake, "validate_credentials", reject_credentials)
+    response = client.post(
+        "/projects",
+        data={"project": json.dumps({"name": "Offline", "source_lang": "en", "prepare": True})},
+        files={"file": ("book.txt", b"A readable source paragraph.\n")},
+    )
+    assert response.status_code == 201, response.text
+    pid = response.json()["id"]
+    assert wait_job(current_context().repository.list_jobs(pid)[0]["run_id"])["status"] == "error"
+    assert fake.calls == []
+    detail = client.get(f"/projects/{pid}").json()
+    assert detail["initialized"] is False
+    assert detail["chapter_count"] == 1
+    response = client.get(f"/projects/{pid}/chapters/0")
+    assert response.status_code == 200, response.text
+    assert response.json()["segments"][0]["source"] == "A readable source paragraph."
+
+
+@pytest.mark.parametrize("mismatch", ["source", "config"])
+def test_source_view_rejects_stale_parse_identity(desktop, mismatch):
+    client, backend, _ = desktop
+    pid = upload(client)
+    store = backend.storage_for(pid)
+    parsed = store.read_artifact("parsed_document.json")
+    if mismatch == "source":
+        parsed["source_sha256"] = "0" * 64
+    else:
+        parsed["ingest_config"]["max_tokens_per_segment"] += 1
+    store.write_artifact("parsed_document.json", parsed)
+    root = f"/projects/{pid}"
+    assert client.get(root + "/chapters").json() == []
+    assert client.get(root).json()["chapter_count"] == 0
+    assert client.get(root + "/chapters/0").status_code == 404
+    assert client.get(root + "/preview").status_code == 409
+    store.close()
+
+
+def test_parse_then_prepare_keeps_source_identity_and_enables_formal_edits(desktop):
+    client, backend, _ = desktop
+    pid = upload(client)
+    root = f"/projects/{pid}"
+    before = client.get(root + "/chapters/0")
+    assert before.status_code == 200, before.text
+    response = client.post(root + "/prepare")
+    assert response.status_code == 200, response.text
+    job = wait_job(response.json()["job_id"])
+    assert job["status"] == "done", job
+    assert client.get(root).json()["initialized"] is True
+    after = client.get(root + "/chapters/0").json()
+    assert after["segments"] == before.json()["segments"]
+    response = client.put(
+        root + "/review/0/segments/0", json={"target": "人工译文", "expected_target": None}
+    )
+    assert response.status_code == 200
+    assert client.get(root + "/chapters/0").json()["segments"][0]["target"] == "人工译文"
+    assert backend.storage_for(pid).read_artifact("parsed_document.json") is not None
 
 
 def test_desktop_does_not_use_or_modify_cli_state(desktop, tmp_path, monkeypatch):
@@ -277,6 +473,48 @@ def test_snapshot_export_download_and_ownership(desktop):
     other_store.close()
 
 
+@pytest.mark.parametrize("bilingual", [False, True])
+@pytest.mark.parametrize("punctuation_normalize", [False, True])
+def test_repeated_epub_export_with_leading_punctuation(desktop, bilingual, punctuation_normalize):
+    client, backend, fake = desktop
+    pid, store = initialize(backend)
+    chapter = store.load_chapter(0)
+    chapter.text_segments[0].target = "—你好。…再见。"
+    store.save_chapter(chapter)
+    response = client.put(
+        f"/projects/{pid}/config",
+        json={"yaml": json.dumps({"output": {"punctuation_normalize": punctuation_normalize}})},
+    )
+    assert response.status_code == 200, response.text
+    export_ids = []
+    for _ in range(2):
+        response = client.post(
+            f"/projects/{pid}/exports",
+            json={"format": "epub", "bilingual": bilingual, "about_page": False},
+        )
+        assert response.status_code == 200, response.text
+        job = wait_job(response.json()["job_id"])
+        assert job["status"] == "done", job
+        eid = response.json()["export_id"]
+        export_ids.append(eid)
+        download = client.get(f"/projects/{pid}/exports/{eid}/download")
+        assert download.status_code == 200, download.text
+        with ZipFile(BytesIO(download.content)) as archive:
+            paragraphs = [
+                paragraph.get_text()
+                for name in archive.namelist()
+                if name.endswith(".xhtml")
+                for paragraph in BeautifulSoup(archive.read(name), "html.parser").find_all("p")
+            ]
+        expected = "——你好。……再见。" if punctuation_normalize else "—你好。…再见。"
+        assert expected in paragraphs
+        assert ("A paragraph." in paragraphs) == bilingual
+        assert store.load_chapter(0) == chapter
+    assert len(set(export_ids)) == 2
+    assert fake.calls == []
+    store.close()
+
+
 def test_fake_book_translation_commits_domain_state(desktop):
     client, backend, fake = desktop
     pid = upload(client)
@@ -302,30 +540,133 @@ def test_fake_book_translation_commits_domain_state(desktop):
     store.close()
 
 
-def test_fake_srt_translation_edit_and_export(desktop):
-    client, backend, fake = desktop
+@pytest.mark.parametrize("outcome", ["paused", "error"])
+def test_parallel_translation_isolates_pause_failure_resume_and_usage(
+    tmp_path, monkeypatch, outcome
+):
+    from dataclasses import replace
 
-    def subtitles(messages, tier, json_mode):
-        return json.dumps({"1": "字幕"}, ensure_ascii=False) if json_mode else "字幕"
+    from tests.fake_llm import MeteredFakeClient, routing_handler
+    from wenyi_desktop.main import create_app
 
-    fake.handler = subtitles
-    pid = upload(client, name="clip.srt", content=b"1\n00:00:00,100 --> 00:00:01,200\nHello\n")
-    response = client.post(f"/projects/{pid}/translate")
-    assert response.status_code == 200, response.text
-    job = wait_job(response.json()["job_id"])
-    assert job["status"] == "done", job
-    root = f"/projects/{pid}"
-    cues = client.get(root + "/subtitles").json()
-    assert cues["completed"] == 1
-    assert client.put(root + "/subtitles/1", json={"target": "人工字幕"}).status_code == 200
-    response = client.post(root + "/exports", json={"format": "srt"})
-    assert response.status_code == 200, response.text
-    assert wait_job(response.json()["job_id"])["status"] == "done"
-    text = client.get(root + f"/exports/{response.json()['export_id']}/download").text
-    assert "00:00:00,100 --> 00:00:01,200" in text
-    assert "人工字幕" in text
-    assert all(call["operation"] == "srt.translate" for call in fake.calls)
-    assert not list(backend.workspace.rglob("manifest.json"))
+    clients, saved, release, cancelled = {}, {}, {}, {}
+    fail_once = set()
+
+    def build_client(config):
+        pid = Path(config.state_dir).name
+
+        class ProjectClient(MeteredFakeClient):
+            def cancel(self):
+                super().cancel()
+                cancelled[pid].set()
+
+        fake = ProjectClient(routing_handler)
+        clients.setdefault(pid, []).append(fake)
+        return fake
+
+    save_chapter = SqliteStorage.save_chapter
+
+    def checkpoint(store, chapter):
+        save_chapter(store, chapter)
+        pid = Path(store.run_dir).name
+        if pid in saved and any(segment.target is not None for segment in chapter.text_segments):
+            saved[pid].set()
+            assert release[pid].wait(15), "The test did not release the saved batch"
+            if pid in fail_once:
+                fail_once.remove(pid)
+                raise RuntimeError("Offline project failure after checkpoint")
+
+    monkeypatch.setattr(SqliteStorage, "save_chapter", checkpoint)
+    context = replace(
+        create_context(tmp_path / "parallel", api_token="offline-test-token"),
+        build_client=build_client,
+    )
+    with (
+        use_context(context),
+        TestClient(
+            create_app(context=context),
+            headers={"Authorization": "Bearer offline-test-token"},
+        ) as client,
+    ):
+        pids = [upload(client, name=f"book-{index}.txt") for index in range(3)]
+        for pid in pids:
+            response = client.put(
+                f"/projects/{pid}/config",
+                json={
+                    "yaml": json.dumps(
+                        {
+                            "pipeline": {
+                                "polish": False,
+                                "review": False,
+                                "book_understanding": False,
+                            }
+                        }
+                    )
+                },
+            )
+            assert response.status_code == 200, response.text
+            saved[pid], release[pid], cancelled[pid] = (
+                threading.Event(),
+                threading.Event(),
+                threading.Event(),
+            )
+        first = pids[0]
+        if outcome == "error":
+            fail_once.add(first)
+        runs = {}
+        try:
+            for pid in pids:
+                response = client.post(f"/projects/{pid}/translate")
+                assert response.status_code == 200, response.text
+                runs[pid] = response.json()["job_id"]
+            assert all(event.wait(5) for event in saved.values())
+            for pid in pids:
+                assert context.repository.get_job_by_arq_id(runs[pid])["status"] == "running"
+                assert client.get(f"/projects/{pid}/workflow").json()["run_id"] == runs[pid]
+            assert len({id(clients[pid][0]) for pid in pids}) == 3
+            assert client.get("/settings").status_code == 200
+            assert client.post(f"/projects/{pids[1]}/translate").status_code == 409
+            assert client.post("/desktop/updates/prepare").status_code == 409
+            if outcome == "paused":
+                assert client.post(f"/projects/{first}/pause").status_code == 200
+                assert cancelled[first].wait(3)
+            release[first].set()
+            assert wait_job(runs[first])["status"] == outcome
+            for pid in pids[1:]:
+                assert not cancelled[pid].is_set()
+                assert context.repository.get_job_by_arq_id(runs[pid])["status"] == "running"
+
+            response = client.post(f"/projects/{first}/resume")
+            assert response.status_code == 200, response.text
+            resumed = response.json()["job_id"]
+            assert resumed != runs[first]
+            assert wait_job(resumed)["status"] == "done"
+            for pid in pids[1:]:
+                assert context.repository.get_job_by_arq_id(runs[pid])["status"] == "running"
+        finally:
+            for event in release.values():
+                event.set()
+
+        for pid in pids[1:]:
+            assert wait_job(runs[pid])["status"] == "done"
+        for pid in pids:
+            store = context.repository.storage_for(pid)
+            try:
+                assert store.load_chapter(0).text_segments[0].target == "译0"
+                assert (
+                    sum(
+                        call["operation"] == "translation.body"
+                        for fake in clients[pid]
+                        for call in fake.calls
+                    )
+                    == 1
+                )
+                expected = sum(
+                    fake.usage.summary()["totals"]["total_tokens"] for fake in clients[pid]
+                )
+                assert store.load_usage()["totals"]["total_tokens"] == expected > 0
+            finally:
+                store.close()
 
 
 def test_shutdown_waits_for_saved_translation_checkpoint(desktop, monkeypatch):
@@ -374,7 +715,7 @@ def test_shutdown_waits_for_saved_translation_checkpoint(desktop, monkeypatch):
     stopped.result(timeout=5)
     job = wait_job(response.json()["job_id"])
     assert job["status"] == "paused", job
-    assert dal.get_project(pid)["status"] == "paused"
+    assert current_context().repository.get_project(pid)["status"] == "paused"
     store = backend.storage_for(pid)
     assert store.load_chapter(0).text_segments[0].target == "译0"
     assert store.list_events(event_type="task_paused")
@@ -395,11 +736,13 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
     from wenyi_desktop.main import create_app
 
     contexts, clients, lifespans = [], [], []
-    pid, run_id = "same-project", "same-run"
+    # A project identifier is always the first 16 characters of a version 4 UUID,
+    # and the workspace no longer accepts one that could not have been generated.
+    pid, run_id = "0123456789abcdef", "same-run"
     entered = Barrier(2)
-    parse = tasks._parse_source
+    parse = operations.parse_source
 
-    def parse_with_owner_check(project_id, storage, config, progress):
+    def parse_with_owner_check(project_id, storage, config, progress, services):
         context = current_context()
         owner = contexts.index(context)
         assert context.repository.get_project(project_id)["name"] == f"Owner {owner}"
@@ -409,9 +752,9 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
         assert credential_store().snapshot(providers)[name] == f"fake-owner-{owner}"
         assert Path(storage.run_dir).is_relative_to(context.repository.workspace)
         entered.wait(timeout=5)
-        return parse(project_id, storage, config, progress)
+        return parse(project_id, storage, config, progress, services)
 
-    monkeypatch.setattr(tasks, "_parse_source", parse_with_owner_check)
+    monkeypatch.setattr(operations, "parse_source", parse_with_owner_check)
     with ExitStack() as stack:
         for owner in range(2):
             workspace = tmp_path / str(owner)

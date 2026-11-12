@@ -8,10 +8,9 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
-from openai import APIConnectionError, APITimeoutError
 from tenacity import (
     RetryCallState,
     retry,
@@ -19,6 +18,8 @@ from tenacity import (
     stop_after_attempt,
     wait_random_exponential,
 )
+
+from ..errors import WenyiError
 
 _LOGGER = logging.getLogger(__name__)
 _RETRYABLE_STATUS_CODES = {408, 409, 429}
@@ -28,16 +29,26 @@ _MAX_WAIT_SECONDS = 30.0
 _FALLBACK_WAIT = wait_random_exponential(multiplier=1, max=_MAX_WAIT_SECONDS)
 
 
-class EmptyResponseError(RuntimeError):
+class EmptyResponseError(WenyiError, RuntimeError):
     """The model returned no usable text in standard response fields."""
 
+    code: ClassVar[str] = "llm_empty_response"
+    retryable: ClassVar[bool] = True
 
-class TruncatedResponseError(RuntimeError):
+
+class TruncatedResponseError(WenyiError, RuntimeError):
     """The provider stopped generation at its output token limit."""
 
+    code: ClassVar[str] = "llm_truncated_response"
+    # A truncated answer is not fixed by asking again; the caller has to
+    # change how it splits the work.
+    retryable: ClassVar[bool] = False
 
-class ProviderRequestError(RuntimeError):
+
+class ProviderRequestError(WenyiError, RuntimeError):
     """A credential-scoped failure containing only stable, safe classifications."""
+
+    code: ClassVar[str] = "llm_provider_request"
 
     def __init__(
         self,
@@ -136,6 +147,21 @@ def error_status_code(error: Any) -> int | None:
     return None
 
 
+def _matches_type_name(error: Any, name: str) -> bool:
+    """Detect an SDK exception class by name, avoiding an eager SDK import."""
+    return any(type(item).__name__ == name for item in _exception_chain(error))
+
+
+def is_connection_error(error: Any) -> bool:
+    """Return True for provider connection failures without importing the SDK."""
+    return _matches_type_name(error, "APIConnectionError")
+
+
+def is_sdk_timeout_error(error: Any) -> bool:
+    """Return True for provider timeout failures without importing the SDK."""
+    return _matches_type_name(error, "APITimeoutError")
+
+
 def _retry_override(error: Any) -> bool | None:
     """Read the explicit x-should-retry instruction from compatible endpoints."""
     value = (_header(error, "x-should-retry") or "").lower()
@@ -186,13 +212,12 @@ def retry_reason(error: Any, *, operation: str | None = None) -> str | None:
         return None
 
     for item in chain:
-        if isinstance(item, (TimeoutError, httpx.TimeoutException, APITimeoutError)):
+        if isinstance(item, (TimeoutError, httpx.TimeoutException)) or is_sdk_timeout_error(item):
             return "timeout"
-        if isinstance(
+        if is_connection_error(item) or isinstance(
             item,
             (
                 ConnectionError,
-                APIConnectionError,
                 httpx.NetworkError,
                 httpx.ProxyError,
                 httpx.RemoteProtocolError,

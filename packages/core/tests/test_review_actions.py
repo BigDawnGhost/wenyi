@@ -10,6 +10,7 @@ import pytest
 from wenyi_core.agents.review_actions import ReviewActionLoop
 from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.llm.retrying import ProviderRequestError
 from wenyi_core.review.evidence import BookEvidenceIndex
 
 
@@ -69,7 +70,14 @@ def _client() -> FakeClient:
     )
 
 
-def _run(client: FakeClient, trace: MemoryTrace, evidence: MemoryEvidence, *, max_rounds: int = 1):
+def _run(
+    client: FakeClient,
+    trace: MemoryTrace,
+    evidence: MemoryEvidence,
+    *,
+    max_rounds: int = 1,
+    stage: str = "review.verify",
+):
     config = Config.from_dict(
         {"llm": {"preset": "fake"}, "pipeline": {"review_agent_max_evidence_rounds": max_rounds}}
     )
@@ -77,7 +85,7 @@ def _run(client: FakeClient, trace: MemoryTrace, evidence: MemoryEvidence, *, ma
         agent_id="replay-test",
         system="System instruction",
         user="Review 安",
-        stage="review.verify",
+        stage=stage,
         allowed_refs={"ch0:text0:seg0"},
         validate_final=lambda data, refs: {"decision": data["decision"], "refs": sorted(refs)},
     )
@@ -149,6 +157,48 @@ def test_resume_from_every_durable_boundary_matches_uninterrupted_output(boundar
         call["messages"] for call in baseline_client.calls
     ]
     assert evidence.calls == REQUEST["requests"]
+
+
+@pytest.mark.parametrize("stage", ["review.verify", "review.arbitrate", "autofix.verify"])
+@pytest.mark.parametrize("failure", [402, 429, 503, "timeout", "connection"])
+def test_provider_interrupt_preserves_evidence_and_retries_only_failed_turn(stage, failure):
+    trace, evidence = MemoryTrace(), MemoryEvidence()
+    if isinstance(failure, int):
+        error = ProviderRequestError(
+            provider="default",
+            operation=stage,
+            error_type=f"http_{failure}",
+            status_code=failure,
+            reason=f"http_{failure}",
+            resumable=True,
+        )
+    else:
+        error = TimeoutError("timed out") if failure == "timeout" else ConnectionError("offline")
+
+    def handler(messages, tier, json_mode):
+        if len(messages) == 2:
+            return json.dumps(REQUEST)
+        raise error
+
+    client = FakeClient(handler=handler)
+    with pytest.raises(type(error)) as raised:
+        _run(client, trace, evidence, stage=stage)
+    assert raised.value is error
+    saved = trace.data["replay-test"]
+    assert saved["status"] == "running"
+    assert saved["turns"][-1]["status"] == "failed"
+    assert saved["turns"][-1]["error"]["type"] == type(error).__name__
+    assert not any(event["event"] == "review_agent_fallback" for event in trace.events)
+
+    resumed = _client()
+    result, reason = _run(resumed, trace, evidence, stage=stage)
+    assert reason == ""
+    assert result == {"decision": "Keep 安", "refs": ["book:style_guide", "ch0:text0:seg0"]}
+    assert len(client.calls) == 2
+    assert len(resumed.calls) == 1
+    assert resumed.calls[0]["messages"] == client.calls[-1]["messages"]
+    assert evidence.calls == REQUEST["requests"]
+    assert trace.data["replay-test"]["status"] == "finished"
 
 
 def test_protocol_fallback_is_saved_and_reused_without_repeating_requests():

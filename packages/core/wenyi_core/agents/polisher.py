@@ -7,7 +7,7 @@ polishing cannot drop paragraphs.
 
 from __future__ import annotations
 
-from ..glossary.store import GlossaryTerm
+from ..models.glossary import GlossaryTerm
 from . import prompts
 from .base import Agent, Messages
 
@@ -20,6 +20,7 @@ class Polisher(Agent):
         glossary_terms: list[GlossaryTerm] | None = None,
         style: str = "",
         next_source: str = "",
+        sources: list[str] | None = None,
     ) -> list[str]:
         """Polish an aligned list in a fresh conversation; return input unchanged on failure."""
         if not targets:
@@ -30,15 +31,35 @@ class Polisher(Agent):
             "polisher_user",
             src=self.src,
             tgt=self.tgt,
-            glossary=prompts.render_glossary(glossary_terms or []),
+            glossary=prompts.render_glossary(
+                glossary_terms or [],
+                source_lang=self.src,
+                genre=self.language_policy.context.genre,
+                note_source=(
+                    "\n".join(sources or []) if self.config.pipeline.terminology_context else None
+                ),
+            ),
+            source_context=(
+                "[Current source paragraphs: reference only, not additional output items]\n"
+                + prompts.numbered(sources)
+                if sources and self.config.pipeline.terminology_context
+                else ""
+            ),
             style=style or "(none)",
             n=n,
             numbered_target=prompts.numbered(targets),
             next_source=prompts.render_source_reference(next_source),
         )
-        items = self._ask_json(system, user, operation="polish.body", key="polished", default=None)
+        items = self._ask_json(
+            system,
+            user,
+            operation="polish.body",
+            key="polished",
+            default=None,
+            item_type=str,
+        )
         if isinstance(items, list) and len(items) == n:
-            return [str(x) for x in items]
+            return items
         return list(targets)
 
     def polish_continue(
@@ -71,7 +92,8 @@ class Polisher(Agent):
             operation="polish.body",
             key="polished",
             default=None,
+            item_type=str,
         )
         if isinstance(items, list) and len(items) == n:
-            return [str(x) for x in items]
+            return items
         return None

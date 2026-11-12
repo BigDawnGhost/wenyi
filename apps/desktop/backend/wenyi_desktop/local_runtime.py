@@ -1,4 +1,4 @@
-"""Bounded local workers and progress delivery, without Redis or a second server.
+"""Independent local workflows and bounded exports/progress, without Redis.
 
 The catalog records intent before admission. A workspace process lock prevents
 two Desktop services from recovering each other's jobs. Domain services retain
@@ -10,11 +10,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import threading
 import time
 from collections import OrderedDict
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from contextvars import copy_context
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -22,7 +24,10 @@ from typing import Any, Iterator
 
 from wenyi_backend.context import BackendContext
 from wenyi_backend.live_statistics import read_live_statistics
+from wenyi_core.storage.locks import FileLockHandle, StorageBusyError
 
+from . import paths
+from .diagnostics import Reporter, emit, failure_attributes, scope
 from .local_backend import LocalBackend
 
 log = logging.getLogger(__name__)
@@ -33,7 +38,6 @@ TASK_NAMES = frozenset(
         "run_translation",
         "run_chapter_translation",
         "run_review",
-        "run_srt",
         "run_export",
     }
 )
@@ -43,47 +47,24 @@ class WorkspaceLock:
     """Keep one task-owning Desktop process per workspace, including after crashes."""
 
     def __init__(self, workspace: Path):
-        self.path = workspace / ".desktop.lock"
-        self._handle = None
+        self.path = paths.instance_lock(workspace)
+        self._lock: FileLockHandle | None = None
 
     def acquire(self) -> None:
-        handle = self.path.open("a+b")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock = FileLockHandle(str(self.path))
         try:
-            if os.name == "nt":  # pragma: no cover - Windows-specific
-                import msvcrt
-
-                if handle.seek(0, os.SEEK_END) == 0:
-                    handle.write(b"\0")
-                    handle.flush()
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError as error:
-            handle.close()
+            lock.acquire(blocking=False)
+        except (StorageBusyError, OSError) as error:
             raise RuntimeError(
                 "This Desktop workspace is already open or cannot be locked."
             ) from error
-        self._handle = handle
+        self._lock = lock
 
     def close(self) -> None:
-        handle, self._handle = self._handle, None
-        if handle is None:
-            return
-        try:
-            if os.name == "nt":  # pragma: no cover - Windows-specific
-                import msvcrt
-
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        finally:
-            handle.close()
+        lock, self._lock = self._lock, None
+        if lock is not None:
+            lock.release()
 
 
 class ProgressHub:
@@ -93,6 +74,7 @@ class ProgressHub:
         self.backend = backend
         self.loop = loop
         self._lock = threading.Lock()
+        self._flush_lock = asyncio.Lock()
         self._cache: OrderedDict[str, tuple[float, str]] = OrderedDict()
         self._dirty: dict[str, dict] = {}
         self._subscribers: dict[str, set[asyncio.Queue[str | None]]] = {}
@@ -155,14 +137,16 @@ class ProgressHub:
                 self._subscribers.pop(channel, None)
 
     async def flush(self) -> None:
-        with self._lock:
-            pending, self._dirty = self._dirty, {}
-        for pid, payload in pending.items():
-            try:
-                await asyncio.to_thread(self.backend.save_progress, pid, payload)
-            except Exception:
-                # Advisory progress is not a replacement for committed checkpoints.
-                log.warning("Could not persist Desktop progress", exc_info=True)
+        """Wait for earlier saves before draining pending progress in order."""
+        async with self._flush_lock:
+            with self._lock:
+                pending, self._dirty = self._dirty, {}
+            for pid, payload in pending.items():
+                try:
+                    await asyncio.to_thread(self.backend.save_progress, pid, payload)
+                except Exception:
+                    # Advisory progress is not a replacement for committed checkpoints.
+                    log.warning("Could not persist Desktop progress", exc_info=True)
 
     async def _persist(self) -> None:
         while True:
@@ -190,24 +174,46 @@ class LocalJob:
     job_id: str
 
 
-class LocalRuntime:
-    """Own bounded task slots; cancellation waits for the synchronous checkpoint boundary."""
+async def run_workflow_sync(operation: Callable[[], None]) -> None:
+    """Own one thread per run, leaving the default executor free for control requests."""
+    loop = asyncio.get_running_loop()
+    # This executor belongs to one invocation, not to a fixed set of workflow slots.
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="desktop-workflow") as executor:
+        future = loop.run_in_executor(executor, copy_context().run, operation)
+        try:
+            await asyncio.shield(future)
+        except asyncio.CancelledError:
+            # The task adapter signals cooperative stop before waiting for this dispatcher.
+            await asyncio.shield(future)
+            raise
 
-    def __init__(self, backend: LocalBackend, context: BackendContext):
+
+class LocalRuntime:
+    """Supervise independent workflows and bounded exports until their writers exit."""
+
+    def __init__(
+        self, backend: LocalBackend, context: BackendContext, *, diagnostics: Reporter | None = None
+    ):
         self.backend = backend
         self.context = context
+        self.diagnostics = diagnostics
         self.lock = WorkspaceLock(backend.workspace)
         self.hub = ProgressHub(backend, asyncio.get_running_loop())
-        self.workflow_queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         self.export_queue: asyncio.Queue = asyncio.Queue(maxsize=128)
         self._submitted: set[str] = set()
         self._active: dict[str, asyncio.Task] = {}
         self._cancelling: set[asyncio.Task] = set()
+        self._workflows: set[asyncio.Task] = set()
         self._consumers: list[asyncio.Task] = []
         self._maintenance: asyncio.Task | None = None
         self._stopping = asyncio.Event()
         self._stopped = asyncio.Event()
         self.accepting = False
+
+    @property
+    def idle(self) -> bool:
+        """Inspect actual task ownership, not just possibly terminal catalog status."""
+        return not (self._submitted or self._active or self._cancelling or self._workflows)
 
     async def start(self) -> None:
         self.lock.acquire()
@@ -216,7 +222,6 @@ class LocalRuntime:
             self.hub.start()
             self.accepting = True
             self._consumers = [
-                asyncio.create_task(self._consume(self.workflow_queue, 86400)),
                 asyncio.create_task(self._consume(self.export_queue, 3600)),
                 asyncio.create_task(self._consume(self.export_queue, 3600)),
             ]
@@ -239,10 +244,28 @@ class LocalRuntime:
             raise ValueError("The local task has no matching durable record.")
         if run_id in self._submitted or job["status"] != "queued":
             return LocalJob(run_id)
-        queue = self.export_queue if name == "run_export" else self.workflow_queue
-        queue.put_nowait((name, values, run_id))
         self._submitted.add(run_id)
+        try:
+            if name == "run_export":
+                self.export_queue.put_nowait((name, values, run_id))
+            else:
+                pending = self._run_job(name, values, run_id, 86400)
+                try:
+                    task = asyncio.create_task(pending, name=f"desktop-workflow:{run_id}")
+                except BaseException:
+                    pending.close()
+                    raise
+                self._workflows.add(task)
+                task.add_done_callback(self._workflow_finished)
+        except BaseException:
+            self._submitted.discard(run_id)
+            raise
         return LocalJob(run_id)
+
+    def _workflow_finished(self, task: asyncio.Task) -> None:
+        self._workflows.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            log.error("Desktop workflow supervision failed", exc_info=error)
 
     def _cancel(self, task: asyncio.Task) -> None:
         # Repeated cancellation could interrupt the worker's checkpoint-flush wait.
@@ -250,40 +273,69 @@ class LocalRuntime:
             self._cancelling.add(task)
             task.cancel()
 
-    async def _consume(self, queue: asyncio.Queue, timeout: float) -> None:
+    async def _run_observed(self, name: str, values: dict, run_id: str) -> None:
         from wenyi_backend.workers import tasks
 
+        with scope(self.diagnostics, project_ref=values.get("project_id", ""), run_ref=run_id):
+            started = time.monotonic()
+            kind = name.removeprefix("run_")
+            emit("task_started", kind=kind)
+            try:
+                await getattr(tasks, name)({"backend": self.context}, **values)
+            except asyncio.CancelledError:
+                emit("task_cancelled", kind=kind)
+                raise
+            except Exception as error:
+                emit("task_failed", kind=kind, **failure_attributes(error))
+                raise
+            else:
+                # Return can mean completed or paused; the durable job remains authoritative.
+                emit(
+                    "task_finished", kind=kind, duration_ms=int((time.monotonic() - started) * 1000)
+                )
+
+    async def _consume(self, queue: asyncio.Queue, timeout: float) -> None:
         while True:
             item = await queue.get()
-            if item is None:
-                queue.task_done()
-                return
-            name, values, run_id = item
             try:
-                if not self.accepting:
-                    await asyncio.to_thread(self._interrupt, run_id, "Desktop is shutting down.")
-                    continue
-                task = asyncio.create_task(
-                    getattr(tasks, name)({"backend": self.context}, **values)
-                )
-                self._active[run_id] = task
-                try:
-                    await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
-                except asyncio.TimeoutError:
-                    self._cancel(task)
-                    await asyncio.gather(task, return_exceptions=True)
-                except asyncio.CancelledError:
-                    if not self._stopping.is_set():
-                        raise
-                except Exception:
-                    # Task adapters already persist a user-visible failure and its event.
-                    log.exception("Desktop task failed")
+                if item is None:
+                    return
+                await self._run_job(*item, timeout)
             finally:
-                finished = self._active.pop(run_id, None)
-                if finished is not None:
-                    self._cancelling.discard(finished)
-                self._submitted.discard(run_id)
                 queue.task_done()
+
+    async def _run_job(self, name: str, values: dict, run_id: str, timeout: float) -> None:
+        try:
+            if not self.accepting:
+                await asyncio.to_thread(self._interrupt, run_id, "Desktop is shutting down.")
+                return
+            task = asyncio.create_task(self._run_observed(name, values, run_id))
+            self._active[run_id] = task
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
+            except asyncio.TimeoutError:
+                with scope(
+                    self.diagnostics, project_ref=values.get("project_id", ""), run_ref=run_id
+                ):
+                    emit("task_timeout", kind=name.removeprefix("run_"), category="timeout")
+                self._cancel(task)
+                await asyncio.gather(task, return_exceptions=True)
+                await asyncio.to_thread(self._interrupt, run_id, "Desktop task timed out.")
+            except asyncio.CancelledError:
+                self._cancel(task)
+                await asyncio.gather(task, return_exceptions=True)
+                # Cancellation may precede the task adapter's first instruction.
+                await asyncio.to_thread(self._interrupt, run_id, "Desktop task stopped.")
+                if not self._stopping.is_set():
+                    raise
+            except Exception:
+                # Task adapters already persist a user-visible failure and its event.
+                log.exception("Desktop task failed")
+        finally:
+            finished = self._active.pop(run_id, None)
+            if finished is not None:
+                self._cancelling.discard(finished)
+            self._submitted.discard(run_id)
 
     def _interrupt(self, run_id: str, reason: str) -> None:
         job = self.backend.get_job_by_arq_id(run_id)
@@ -352,19 +404,16 @@ class LocalRuntime:
         self.accepting = False
         self._stopping.set()
         try:
-            for queue in (self.workflow_queue, self.export_queue):
-                while not queue.empty():
-                    item = queue.get_nowait()
-                    if item is not None:
-                        await asyncio.to_thread(
-                            self._interrupt, item[2], "Desktop is shutting down."
-                        )
-                        self._submitted.discard(item[2])
-                    queue.task_done()
+            while not self.export_queue.empty():
+                item = self.export_queue.get_nowait()
+                if item is not None:
+                    await asyncio.to_thread(self._interrupt, item[2], "Desktop is shutting down.")
+                    self._submitted.discard(item[2])
+                self.export_queue.task_done()
             for task in tuple(self._active.values()):
                 self._cancel(task)
             await asyncio.gather(*tuple(self._active.values()), return_exceptions=True)
-            self.workflow_queue.put_nowait(None)
+            await asyncio.gather(*tuple(self._workflows), return_exceptions=True)
             self.export_queue.put_nowait(None)
             self.export_queue.put_nowait(None)
             await asyncio.gather(*self._consumers, return_exceptions=True)

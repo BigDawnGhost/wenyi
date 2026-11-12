@@ -9,11 +9,14 @@ on:
         type: string
         default: ""
   pull_request:
-    branches: [dev]
+    branches: [main]
     paths:
       - .github/workflows/build.yml
-      - scripts/release_version.py
-      - scripts/package_release.py
+      - scripts/release/release_version.py
+      - scripts/release/package_release.py
+      - scripts/release/check_backend_packages.py
+      - scripts/release/check_wheel_resources.py
+      - scripts/dev/cli_entry.py
       - packages/core/tests/test_release_packaging.py
   release:
     types: [published]
@@ -22,51 +25,42 @@ permissions:
   contents: read
 
 jobs:
+  # A pull request only needs one packaging signal; a release or a manual
+  # dispatch still builds every platform, so a per-platform break is caught
+  # before publishing rather than on every pull request.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - id: set
+        # The value must be a single line: a multi-line $GITHUB_OUTPUT entry is
+        # rejected by the runner as an invalid output format.
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            matrix='[{"name":"Linux x64","runner":"ubuntu-latest","python_arch":"x64","platform":"linux-x64","binary":"./dist/wenyi","expected_arch":"x86-64"}]'
+          else
+            matrix='[{"name":"Windows x64","runner":"windows-latest","python_arch":"x64","platform":"windows-x64","binary":"./dist/wenyi.exe","expected_machine":"8664"},{"name":"Linux x64","runner":"ubuntu-latest","python_arch":"x64","platform":"linux-x64","binary":"./dist/wenyi","expected_arch":"x86-64"},{"name":"Linux ARM64","runner":"ubuntu-24.04-arm","python_arch":"arm64","platform":"linux-arm64","binary":"./dist/wenyi","expected_arch":"aarch64"},{"name":"macOS Apple Silicon","runner":"macos-15","python_arch":"arm64","platform":"macos-arm64","binary":"./dist/wenyi","expected_arch":"arm64"},{"name":"macOS Intel","runner":"macos-15-intel","python_arch":"x64","platform":"macos-x64","binary":"./dist/wenyi","expected_arch":"x86_64"}]'
+          fi
+          echo "matrix={\"include\":${matrix}}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: plan
     name: CLI · ${{ matrix.name }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - name: Windows x64
-            runner: windows-latest
-            python_arch: x64
-            platform: windows-x64
-            binary: ./dist/wenyi.exe
-            expected_machine: "8664"
-          - name: Linux x64
-            runner: ubuntu-latest
-            python_arch: x64
-            platform: linux-x64
-            binary: ./dist/wenyi
-            expected_arch: x86-64
-          - name: Linux ARM64
-            runner: ubuntu-24.04-arm
-            python_arch: arm64
-            platform: linux-arm64
-            binary: ./dist/wenyi
-            expected_arch: aarch64
-          - name: macOS Apple Silicon
-            runner: macos-15
-            python_arch: arm64
-            platform: macos-arm64
-            binary: ./dist/wenyi
-            expected_arch: arm64
-          - name: macOS Intel
-            runner: macos-15-intel
-            python_arch: x64
-            platform: macos-x64
-            binary: ./dist/wenyi
-            expected_arch: x86_64
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           architecture: ${{ matrix.python_arch }}
@@ -78,23 +72,44 @@ jobs:
           WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: |
           python -m pip install hatch-vcs
-          python scripts/release_version.py --github-output "$GITHUB_OUTPUT"
+          python scripts/release/release_version.py --github-output "$GITHUB_OUTPUT"
 
       - name: Install build dependencies
         run: python -m pip install ./packages/core ./packages/cli pyinstaller
 
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the wenyi-locks native library
+        shell: bash
+        run: |
+          cargo build --release -p wenyi-locks
+          python - <<'PY'
+          import os
+          import sys
+          name = {
+              "win32": "wenyi_locks.dll",
+              "darwin": "libwenyi_locks.dylib",
+          }.get(sys.platform, "libwenyi_locks.so")
+          path = os.path.join("target", "release", name)
+          if not os.path.isfile(path):
+              raise SystemExit(f"Missing {path}; the cargo build above did not run")
+          absolute = os.path.abspath(path)
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+              handle.write(f"LOCKS_LIB={absolute}\n")
+          print(f"LOCKS_LIB={absolute}")
+          PY
       - name: Build single-file executable
         run: >
           python -m PyInstaller --name wenyi --onefile --clean --noconfirm
+          --add-binary "${{ env.LOCKS_LIB }}${{ runner.os == 'Windows' && ';' || ':' }}."
           --paths packages/core --paths packages/cli
-          --collect-all ebooklib --collect-all bs4 --collect-all lxml
+          --collect-all bs4 --collect-all lxml
           --collect-all openai --collect-all pydantic --collect-all yaml
           --collect-all wenyi_core --collect-all tiktoken --collect-all tiktoken_ext
           --collect-all docx --collect-all google.genai
           --collect-data wenyi_core.i18n
           --copy-metadata wenyi-core --copy-metadata wenyi-cli
           --workpath build/pyinstaller --specpath build/pyinstaller-spec
-          --distpath dist scripts/cli_entry.py
+          --distpath dist scripts/dev/cli_entry.py
 
       - name: Smoke test executable
         run: |
@@ -151,12 +166,12 @@ jobs:
 
       - name: Package CLI ZIP (including executable permissions)
         run: >
-          python scripts/package_release.py cli
+          python scripts/release/package_release.py cli
           --version "${{ steps.version.outputs.version }}"
           --platform "${{ matrix.platform }}" --source "${{ matrix.binary }}"
 
       - name: Upload packaged executable
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: wenyi-cli-${{ steps.version.outputs.version }}-${{ matrix.platform }}
           path: release-assets/*.zip
@@ -168,12 +183,13 @@ jobs:
     if: github.event_name == 'release'
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
 
     steps:
       - name: Download packaged executables
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: wenyi-cli-*
           path: release-assets

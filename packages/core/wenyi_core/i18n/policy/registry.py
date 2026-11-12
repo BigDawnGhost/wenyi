@@ -24,8 +24,19 @@ OPERATIONS = MappingProxyType(
         for spec in (
             OperationSpec("prompt.language_rules", "prompt.compose", writes=("language_rules",)),
             OperationSpec(
+                "terminology.context",
+                "evidence.prepare",
+                paths=("book",),
+                llm_operations=(
+                    "terminology.discover",
+                    "terminology.evidence",
+                    "terminology.merge",
+                ),
+            ),
+            OperationSpec(
                 "punctuation.zh_cn",
                 "export.text",
+                implementation_version="2",
                 roles=("target", "pair"),
                 languages=("zh",),
                 paths=("book",),
@@ -47,8 +58,8 @@ OPERATIONS = MappingProxyType(
                 roles=("source", "pair"),
                 languages=("ja",),
                 paths=("book",),
-                formats=("epub", "html", "pdf"),
-                backends=("native", "weasyprint", "fpdf2"),
+                formats=("epub", "html"),
+                backends=("native",),
                 writes=("preserve_source_ruby",),
             ),
             OperationSpec(

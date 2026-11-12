@@ -50,6 +50,44 @@ def test_authenticated_api_accepts_preflight_without_exposing_protected_routes(m
     assert "access-control-allow-origin" not in response.headers
 
 
+def test_default_wildcard_origins_do_not_allow_credentials(monkeypatch):
+    monkeypatch.delenv("WENYI_CORS_ORIGINS", raising=False)
+    application = main.create_app()
+    client = TestClient(application)
+    try:
+        response = client.options(
+            "/health",
+            headers={
+                "Origin": "https://anything.example",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == "*"
+        # Audit C-1: wildcard origins are untrusted, so credentials must stay disabled.
+        assert response.headers.get("access-control-allow-credentials") != "true"
+    finally:
+        client.close()
+
+
+def test_explicit_origins_allow_credentials(monkeypatch):
+    monkeypatch.setenv("WENYI_CORS_ORIGINS", "https://web.example")
+    application = main.create_app()
+    client = TestClient(application)
+    try:
+        response = client.options(
+            "/health",
+            headers={
+                "Origin": "https://web.example",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-credentials"] == "true"
+    finally:
+        client.close()
+
+
 def test_chapter_title_edit_uses_api_authentication(monkeypatch):
     monkeypatch.setattr(main, "settings", replace(main.settings, api_token="test-token"))
     client = TestClient(main.create_app())

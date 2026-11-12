@@ -70,7 +70,7 @@ def test_insufficient_balance_cli_message_is_actionable_and_has_no_traceback(tmp
 
     client = FakeClient(handler=handler)
     monkeypatch.setattr("wenyi_cli.commands.context.CommandContext.load_config", lambda *_: config)
-    monkeypatch.setattr("wenyi_core.pipeline.runtime.build_client", lambda *_: client)
+    monkeypatch.setattr("wenyi_core.pipeline.run.runtime.build_client", lambda *_: client)
     result = CliRunner().invoke(app, ["prepare", str(source)])
     assert result.exit_code == 1
     assert "HTTP 402" in result.output

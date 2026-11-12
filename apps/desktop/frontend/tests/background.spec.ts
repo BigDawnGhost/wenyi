@@ -1,5 +1,5 @@
 import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
-import { fakeApi, pid, project, workflow } from "./fixtures";
+import { fakeApi, pid, project, workflow } from "../../../../packages/ui/sandbox/fixtures";
 import type {} from "../src/runtime";
 
 const origin = "http://127.0.0.1:19481";
@@ -24,7 +24,11 @@ async function setBackground(page: Page, background: boolean) {
 test("native background suspends polling and socket refetch, then reconciles saved completion", async ({ page }) => {
   await bootstrap(page);
   const savedProject = { ...project, status: "translating" };
-  await fakeApi(page, { [`/projects/${pid}`]: savedProject }, origin);
+  const savedWorkflow = { ...workflow, status: "running" };
+  await fakeApi(page, {
+    [`/projects/${pid}`]: savedProject,
+    [`/projects/${pid}/workflow`]: savedWorkflow,
+  }, origin);
   let socket: WebSocketRoute;
   let connections = 0;
   await page.routeWebSocket("**/ws/**", ws => {
@@ -46,7 +50,7 @@ test("native background suspends polling and socket refetch, then reconciles sav
   await page.goto(`/projects/${pid}`);
   await expect.poll(async () => {
     await page.clock.runFor(100);
-    return ["", "/chapters", "/report", "/stats", "/workflow"]
+    return ["", "/chapters", "/stats", "/workflow"]
       .every(path => responses.has(`/projects/${pid}${path}`));
   }).toBe(true);
   await page.clock.runFor(1000);
@@ -88,6 +92,7 @@ test("native background suspends polling and socket refetch, then reconciles sav
 
   savedProject.name = "Finished in background";
   savedProject.status = "done";
+  savedWorkflow.status = "done";
   await setBackground(page, false);
   await expect.poll(async () => {
     await page.clock.runFor(100);
@@ -154,12 +159,13 @@ for (const initiallyBackground of [false, true]) {
     let reads = 0;
     await page.route(`${origin}/projects`, route => {
       reads++;
-      return route.fulfill({ json: [project] });
+      return route.fulfill({ json: [{ ...project, status: "translating" }] });
     });
     await page.goto("/");
     await expect.poll(async () => {
       await page.clock.runFor(100);
-      return page.getByText("Test Book", { exact: true }).count();
+      // Scope to main: the sidebar also recalls the first project by name.
+      return page.getByRole("main").getByText("Test Book", { exact: true }).count();
     }).toBe(1);
     await page.clock.runFor(1000);
     if (!initiallyBackground) {
@@ -199,6 +205,45 @@ test("hiding and restoring preserves an unsaved paragraph draft", async ({ page 
   await setBackground(page, false);
   await page.clock.runFor(1000);
   await expect(draft).toHaveValue("Unsaved local draft");
+});
+
+test("a terminal response arriving while hidden defers final reads until restore", async ({ page }) => {
+  await bootstrap(page);
+  await fakeApi(page, {}, origin);
+  let hold = false;
+  let held = false;
+  let release!: () => void;
+  const delayed = new Promise<void>(resolve => { release = resolve; });
+  await page.route(`${origin}/projects/${pid}`, async route => {
+    if (hold) {
+      held = true;
+      await delayed;
+    }
+    await route.fulfill({ json: { ...project, status: hold ? "done" : "translating" } });
+  });
+  const reads: string[] = [];
+  page.on("request", request => {
+    if (request.url().startsWith(origin)) reads.push(request.url());
+  });
+  await page.goto(`/projects/${pid}/proofreading/0`);
+  await expect.poll(async () => {
+    await page.clock.runFor(100);
+    return page.getByTestId("translation-text").count();
+  }).toBe(1);
+  hold = true;
+  await page.clock.runFor(3000);
+  await expect.poll(() => held).toBe(true);
+  await setBackground(page, true);
+  const before = [...reads];
+  release();
+  await expect.poll(async () => {
+    await page.clock.runFor(100);
+    return page.getByText("Read-only while a task runs", { exact: true }).count();
+  }).toBe(0);
+  await page.clock.runFor(60_000);
+  expect(reads).toEqual(before);
+  await setBackground(page, false);
+  await expect.poll(() => reads.length).toBeGreaterThan(before.length);
 });
 
 for (const kind of ["translation", "review"] as const) {

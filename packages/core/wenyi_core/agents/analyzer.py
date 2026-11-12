@@ -1,16 +1,14 @@
 """Global analysis agent using the strong tier.
-Read sample chapters to produce a style guide, character reference with gender and voice,
-and initial term candidates. Seed characters and terms into the glossary as a consistent
-reference for the book.
+Read sample chapters to produce a style guide and character references with gender and
+voice. Name mappings and terminology extraction belong to the translation glossary workflow.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from ..glossary.store import TYPE_PERSON, GlossaryStore, GlossaryTerm
-from ..i18n.metadata import normalize_gender, normalize_term_type
-from ..storage.protocol import Storage
+from ..i18n.metadata import normalize_gender
+from ..models.glossary import TYPE_PERSON, GlossaryTerm
 from .base import Agent
 
 
@@ -26,10 +24,13 @@ def _text(value: Any, default: str = "") -> str:
 class Analyzer(Agent):
     policy_phase = "analysis"
 
-    def analyze(self, sample_text: str) -> dict[str, Any]:
-        """Analyze samples and return type-checked style, character and terminology data."""
+    def analyze(self, sample_text: str, chapter_digests: list[str] | None = None) -> dict[str, Any]:
+        """Analyze samples and return type-checked style and character guidance."""
         system = self.render("analyzer_system", src=self.src, tgt=self.tgt)
         user = self.render("analyzer_user", src=self.src, tgt=self.tgt, sample=sample_text)
+        if chapter_digests:
+            user += "\n\n[Draft chapter digests: factual context, not naming authority]\n"
+            user += "\n".join(f"[{i}] {digest}" for i, digest in enumerate(chapter_digests))
         # No default: propagate analysis failures for the caller to handle, including preparation failures.
         data = self._ask_json(system, user, operation="analysis.style")
         if not isinstance(data, dict):
@@ -55,58 +56,15 @@ class Analyzer(Agent):
         data["characters"] = self.dict_items(
             data.get("characters"), operation="analysis.style", field="characters"
         )
-        data["terms"] = self.dict_items(
-            data.get("terms"), operation="analysis.style", field="terms"
-        )
+        # Ignore unsolicited glossary candidates, including fields from the former schema.
+        data.pop("terms", None)
         for character in data["characters"]:
             character["gender"] = normalize_gender(_text(character.get("gender")))
-        for term in data["terms"]:
-            term["type"] = normalize_term_type(_text(term.get("type")))
+            character.pop("target", None)
+            character.pop("reading", None)
         return data
 
-    def seed_glossary(self, store: Storage | GlossaryStore, analysis: dict[str, Any]) -> int:
-        """Seed analyzed characters and terms into the glossary; return the entry count."""
-        count = 0
-        for ch in self.dict_items(
-            analysis.get("characters"), operation="analysis.style", field="characters"
-        ):
-            source = _text(ch.get("source"))
-            target = _text(ch.get("target"))
-            if not source or not target:
-                continue
-            store.upsert_term(
-                GlossaryTerm(
-                    source=source,
-                    target=target,
-                    reading=_text(ch.get("reading")),
-                    type=TYPE_PERSON,
-                    gender=_text(ch.get("gender")),
-                    note=_text(ch.get("note")),
-                    first_chapter=0,
-                ),
-                chapter=0,
-            )
-            count += 1
-        for tm in self.dict_items(analysis.get("terms"), operation="analysis.style", field="terms"):
-            source = _text(tm.get("source"))
-            target = _text(tm.get("target"))
-            if not source or not target:
-                continue
-            store.upsert_term(
-                GlossaryTerm(
-                    source=source,
-                    target=target,
-                    reading=_text(tm.get("reading")),
-                    type=normalize_term_type(_text(tm.get("type"))),
-                    note=_text(tm.get("note")),
-                    first_chapter=0,
-                ),
-                chapter=0,
-            )
-            count += 1
-        return count
-
-    def style_brief(self, analysis: dict[str, Any]) -> str:
+    def style_brief(self, analysis: dict[str, Any], terms: list[GlossaryTerm] | None = None) -> str:
         """Condense style and character guidance; name mappings belong to the glossary."""
         lines = []
         if analysis.get("genre"):
@@ -125,8 +83,21 @@ class Analyzer(Agent):
         ):
             if analysis.get(key):
                 lines.append(f"{tag}: {analysis[key]}")
-        chars = self.dict_items(
-            analysis.get("characters"), operation="analysis.style", field="characters"
+        chars = (
+            [
+                {
+                    "source": term.source,
+                    "gender": term.gender,
+                    # Notes belong in the bounded, source-scoped glossary evidence,
+                    # never in the global style prefix.
+                }
+                for term in terms
+                if term.type == TYPE_PERSON
+            ]
+            if terms is not None
+            else self.dict_items(
+                analysis.get("characters"), operation="analysis.style", field="characters"
+            )
         )
         if chars:
             lines.append("Characters: ")

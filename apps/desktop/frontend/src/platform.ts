@@ -5,21 +5,41 @@ import { apiBase, authToken, progressInterval, progressUrl } from "./runtime";
 import { request, download } from "./transport";
 import { bindSourceDrop } from "./nativeDrop";
 import { saveNativeExport } from "./nativeExport";
-import { credentialQuery } from "./credentials";
+import {
+  credentialDrafts,
+  credentialForListing,
+  credentialQuery,
+  useCredentialDraftsPending,
+} from "./credentials";
 import { activity } from "./activity";
+import { library } from "./library";
+import { DesktopDiagnostics, DiagnosticExportButton } from "./DesktopDiagnostics";
+import { reportDiagnostic } from "./diagnostics";
+import { translateDesktop } from "./i18n";
 
+const loadDesktopCredential = () => import("./DesktopCredential");
 const DesktopCredential = lazy(() =>
-  import("./DesktopCredential").then((module) => ({ default: module.DesktopCredential })),
+  loadDesktopCredential().then((module) => ({ default: module.DesktopCredential })),
 );
+const DesktopUpdates = lazy(() =>
+  import("./DesktopUpdates").then((module) => ({ default: module.DesktopUpdates })),
+);
+const BabeldocPlugin = lazy(() =>
+  import("./BabeldocPlugin").then((module) => ({ default: module.BabeldocPlugin })),
+);
+// Warm the credential chunk at startup so the settings page never waits on it.
+const MinerUCredential = lazy(() =>
+  import("./MinerUCredential").then((module) => ({ default: module.MinerUCredential })),
+);
+void loadDesktopCredential().catch(() => { /* The route retries when opened. */ });
 
 const progressKeys: Record<string, string[]> = {
   progress: ["workflow"],
   pipeline: ["workflow"],
-  batch: ["chapters", "subtitles", "stats"],
+  batch: ["chapters", "stats"],
   chapter: ["project", "chapters", "stats"],
   translation: ["chapters", "workflow"],
   chapter_translation: ["chapters", "workflow"],
-  srt: ["subtitles", "workflow"],
   parse: ["project", "chapters", "workflow"],
   prepare: ["project", "chapters", "workflow"],
   review: ["workflow", "review-runs", "review-run"],
@@ -52,10 +72,32 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
     progressKeys: (kind) => progressKeys[kind] || ["workflow"],
     bindSourceDrop,
     capabilities: {
+      diagnostics: {
+        label: (locale) => translateDesktop(locale, "diagnostics.title"),
+        Section: DesktopDiagnostics,
+        ExportButton: DiagnosticExportButton,
+        reportRenderFailure: () => reportDiagnostic("frontend_render_failed"),
+        reportDiagnostic: () => reportDiagnostic("frontend_message_failed"),
+      },
+      externalCredentials: { MinerU: MinerUCredential },
+      updates: {
+        label: (locale) => translateDesktop(locale, "about.title"),
+        Section: DesktopUpdates,
+      },
+      plugins: {
+        label: (locale) => translateDesktop(locale, "babeldoc.title"),
+        Section: BabeldocPlugin,
+      },
       saveExport: saveNativeExport,
+      library,
       credentials: {
         Field: DesktopCredential,
         refresh: () => queryClient.refetchQueries({ queryKey: credentialQuery.queryKey }),
+        prepareCommit: () => credentialDrafts.prepareCommit(queryClient),
+        retain: credentialDrafts.retain,
+        rename: credentialDrafts.rename,
+        usePending: useCredentialDraftsPending,
+        forListing: credentialForListing,
       },
     },
   };

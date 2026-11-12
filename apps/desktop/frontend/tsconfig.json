@@ -15,8 +15,7 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["../../../packages/ui/src/*"],
-      "@wenyi/ui/*": ["../../../packages/ui/src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["src"]

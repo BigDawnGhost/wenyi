@@ -2,24 +2,24 @@
 
 from __future__ import annotations
 
+import csv
 import io
 import os
 import zipfile
 from pathlib import Path
 
 import pytest
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from wenyi_backend import dal
-from wenyi_backend.schemas import ExportRequest
-from wenyi_core.ingest.models import Chapter, Document, Segment
+from wenyi_backend.context import current_context
+from wenyi_core.models.document import Chapter, Document, Segment
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_desktop import main
 
 
 @pytest.fixture
 def desktop_exports(desktop_context):
     backend = desktop_context.repository
-    pid = dal.create_project("Example", "en", "zh", {})
+    pid = current_context().repository.create_project("Example", "en", "zh", {})
     source = backend.project_dir(pid) / "source.txt"
     source.parent.mkdir(parents=True, exist_ok=True)
     source.write_text("A paragraph.", encoding="utf-8")
@@ -34,7 +34,7 @@ def desktop_exports(desktop_context):
             chapters=[Chapter(index=0, title="One", segments=[Segment(index=0, source="Text")])],
         )
     )
-    dal.set_project_source(
+    current_context().repository.set_project_source(
         pid,
         source_path=str(source),
         book_title="Example",
@@ -60,11 +60,88 @@ def test_plan_is_side_effect_free_and_matches_export_filename(desktop_exports, f
     )
     assert response.status_code == 200, response.text
     plan = response.json()
-    extension = {"markdown": "md", "html": "html.zip"}.get(fmt, fmt)
+    extension = {"markdown": "md"}.get(fmt, fmt)
     assert plan["filename"] == f"Example book.zh{'-bi' if bilingual else ''}.{extension}"
     assert plan["request"]["format"] == fmt
     assert plan["request"]["bilingual"] is bilingual
     assert plan["protected_roots"] == [str(backend.workspace.resolve())]
+    assert (backend.list_exports(pid), backend.all_jobs()) == before
+
+
+@pytest.mark.parametrize("fmt", ["csv", "json", "apkg"])
+def test_glossary_plan_is_side_effect_free_and_matches_download(desktop_exports, fmt):
+    client, backend, pid = desktop_exports
+    terms = [
+        GlossaryTerm(source="文译", target="Wenyi", note='A "quoted", multiline\nnote'),
+        GlossaryTerm(source="東京", target="Tokyo", reading="とうきょう", type="place"),
+    ]
+    store = backend.storage_for(pid)
+    try:
+        for term in terms:
+            store.upsert_term(term)
+    finally:
+        store.close()
+    before = (backend.list_exports(pid), backend.all_jobs())
+    response = client.get(f"/desktop/projects/{pid}/glossary/plan?format={fmt}")
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    assert plan == {
+        "filename": f"glossary-{pid}.{fmt}",
+        "extension": fmt,
+        "label": fmt.upper(),
+        "request": None,
+        "protected_roots": [str(backend.workspace.resolve())],
+    }
+    content = client.get(f"/projects/{pid}/glossary/export?format={fmt}")
+    assert content.status_code == 200, content.text
+    assert plan["filename"] in content.headers["content-disposition"]
+    assert int(content.headers["content-length"]) == len(content.content)
+    if fmt == "apkg":
+        with zipfile.ZipFile(io.BytesIO(content.content)) as archive:
+            assert set(archive.namelist()) == {"collection.anki2", "media"}
+        assert (backend.list_exports(pid), backend.all_jobs()) == before
+        return
+    rows = content.json() if fmt == "json" else list(csv.DictReader(io.StringIO(content.text)))
+    by_source = {row["source"]: row for row in rows}
+    assert set(by_source) == {term.source for term in terms}
+    for term in terms:
+        assert by_source[term.source]["target"] == term.target
+        assert by_source[term.source]["reading"] == term.reading
+        assert by_source[term.source]["note"] == term.note
+    assert (backend.list_exports(pid), backend.all_jobs()) == before
+
+
+def test_glossary_plan_rejects_missing_project_and_unknown_format(desktop_exports):
+    client, _, pid = desktop_exports
+    assert client.get("/desktop/projects/missing/glossary/plan?format=json").status_code == 404
+    assert client.get(f"/desktop/projects/{pid}/glossary/plan?format=txt").status_code == 422
+
+
+@pytest.mark.parametrize(
+    "meta", [{}, {"mineru": True}, {"babeldoc": True}, {"pdf_export": "babeldoc"}]
+)
+def test_pdf_plan_and_format_choices_follow_saved_babeldoc_state(desktop_exports, meta):
+    client, backend, pid = desktop_exports
+    store = backend.storage_for(pid)
+    manifest = store.load_manifest()
+    manifest["meta"] = meta
+    store.save_manifest(manifest)
+    store.close()
+    before = (backend.list_exports(pid), backend.all_jobs())
+    supports_pdf = meta.get("pdf_export") == "babeldoc" or bool(meta.get("babeldoc"))
+
+    detail = client.get(f"/projects/{pid}")
+    assert detail.status_code == 200, detail.text
+    assert ("pdf" in detail.json()["output_formats"]) == supports_pdf
+    plan = client.post(f"/desktop/projects/{pid}/exports/plan", json={"format": "pdf"})
+    assert plan.status_code == (200 if supports_pdf else 422), plan.text
+    if supports_pdf:
+        assert plan.json()["request"]["format"] == "pdf"
+        assert "pdf_engine" not in plan.json()["request"]
+    else:
+        assert "PDF export is only available for BabelDOC" in plan.json()["message"]
+        request = client.post(f"/projects/{pid}/exports", json={"format": "pdf"})
+        assert request.status_code == 422, request.text
     assert (backend.list_exports(pid), backend.all_jobs()) == before
 
 
@@ -80,29 +157,32 @@ def publish(backend, pid, fmt, content):
 
 def test_html_save_contains_only_published_document_and_owned_assets(desktop_exports):
     client, backend, pid = desktop_exports
-    export_id, file = publish(backend, pid, "html", b'<img src="Example.zh.assets/image.png">')
+    export_id, file = publish(
+        backend, pid, "html", b'<img src="Example.zh.assets/icons/image.png">'
+    )
     assets = file.with_suffix(".assets")
-    assets.mkdir()
-    (assets / "image.png").write_bytes(b"image payload")
+    (assets / "icons").mkdir(parents=True)
+    (assets / "icons" / "image.png").write_bytes(b"image payload")
     (file.parent / "not-owned.txt").write_bytes(b"not exported")
     url = f"/desktop/projects/{pid}/exports/{export_id}"
     plan = client.get(url + "/plan")
     assert plan.status_code == 200
-    assert plan.json()["filename"] == "Example.zh.html.zip"
-    assert plan.json()["label"] == "HTML + assets (ZIP)"
+    assert plan.json()["filename"] == "Example.zh.html"
+    assert plan.json()["extension"] == "html"
+    assert plan.json()["label"] == "HTML"
     content = client.get(url + "/content")
     assert content.status_code == 200, content.text
     assert len(content.content) == int(content.headers["content-length"])
-    with zipfile.ZipFile(io.BytesIO(content.content)) as bundle:
-        assert bundle.namelist() == ["Example.zh.html", "Example.zh.assets/image.png"]
-        assert bundle.read("Example.zh.assets/image.png") == b"image payload"
-        assert b"Example.zh.assets/image.png" in bundle.read("Example.zh.html")
+    assert not zipfile.is_zipfile(io.BytesIO(content.content))
+    assert b"data:image/png;base64,aW1hZ2UgcGF5bG9hZA==" in content.content
+    assert b"not exported" not in content.content
+    assert b"Example.zh.assets/icons/image.png" not in content.content
     # Web downloads remain the original HTML, not a silently substituted archive.
     assert client.get(f"/projects/{pid}/exports/{export_id}/download").content == file.read_bytes()
 
 
 @pytest.mark.parametrize("linked_directory", [False, True])
-def test_html_bundle_rejects_links_outside_export(desktop_exports, tmp_path, linked_directory):
+def test_html_save_rejects_links_outside_export(desktop_exports, tmp_path, linked_directory):
     client, backend, pid = desktop_exports
     export_id, file = publish(backend, pid, "html", b"document")
     outside = tmp_path / "private"
@@ -122,7 +202,7 @@ def test_html_bundle_rejects_links_outside_export(desktop_exports, tmp_path, lin
 def test_native_content_is_project_scoped_and_requires_published_status(desktop_exports):
     client, backend, pid = desktop_exports
     export_id, _ = publish(backend, pid, "txt", b"translation")
-    other = dal.create_project("Other", "en", "zh", {})
+    other = current_context().repository.create_project("Other", "en", "zh", {})
     for suffix in ("plan", "content"):
         assert (
             client.get(f"/desktop/projects/{other}/exports/{export_id}/{suffix}").status_code == 404
@@ -134,46 +214,8 @@ def test_native_content_is_project_scoped_and_requires_published_status(desktop_
     assert response.headers["content-length"] == "11"
 
 
-@pytest.mark.parametrize(
-    "source_format,meta,expected",
-    [("srt", {}, "srt"), ("docx", {}, "docx"), ("pdf", {"pdf_export": "babeldoc"}, "pdf")],
-)
-def test_default_plan_policy_matches_source(source_format, meta, expected):
-    from wenyi_backend.export_plan import resolve_export
-
-    fmt, options = resolve_export(
-        {"initialized": True, "fmt": source_format}, {"meta": meta}, ExportRequest(bilingual=True)
-    )
-    assert fmt == expected
-    assert options["bilingual"] is True
-
-
-def test_plan_validates_subtitles_initialization_and_installed_pdf_engines(monkeypatch):
-    from wenyi_backend import export_plan
-
-    project = {"initialized": True, "fmt": "txt"}
-    for changes, request, status in [
-        ({"initialized": False}, {}, 409),
-        ({}, {"format": "srt"}, 422),
-        ({"fmt": "srt"}, {"format": "epub"}, 422),
-    ]:
-        with pytest.raises(HTTPException) as error:
-            export_plan.resolve_export({**project, **changes}, {}, ExportRequest(**request))
-        assert error.value.status_code == status
-    monkeypatch.setattr(export_plan.importlib.util, "find_spec", lambda name: name == "fpdf")
-    _, options = export_plan.resolve_export(project, {}, ExportRequest(format="pdf"))
-    assert options["pdf_engine"] == "fpdf2"
-    with pytest.raises(HTTPException, match="not installed"):
-        export_plan.resolve_export(
-            project, {}, ExportRequest(format="pdf", pdf_engine="weasyprint")
-        )
-    monkeypatch.setattr(export_plan.importlib.util, "find_spec", lambda name: None)
-    with pytest.raises(HTTPException, match="optional pdf-export"):
-        export_plan.resolve_export(project, {}, ExportRequest(format="pdf"))
-
-
-def test_bundle_rejects_hard_linked_private_file(tmp_path):
-    from wenyi_desktop.local_export_files import html_bundle
+def test_html_conversion_rejects_hard_linked_private_file(tmp_path):
+    from wenyi_desktop.local_export_files import html_document
 
     file = tmp_path / "book.html"
     file.write_bytes(b"document")
@@ -183,30 +225,31 @@ def test_bundle_rejects_hard_linked_private_file(tmp_path):
     private.write_bytes(b"private")
     os.link(private, assets / "alias.txt")
     with pytest.raises(ValueError, match="multiply linked"):
-        html_bundle(file)
+        html_document(file)
 
 
-def test_archiving_does_not_hold_catalog_transaction(desktop_exports, monkeypatch):
+def test_html_conversion_does_not_hold_catalog_transaction(desktop_exports, monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
 
     from wenyi_desktop import local_export_files
 
     client, backend, pid = desktop_exports
-    export_id, _ = publish(backend, pid, "html", b"document")
-    original = local_export_files._copy_file
+    export_id, file = publish(backend, pid, "html", b"document")
+    file.with_suffix(".assets").mkdir()
+    original = local_export_files._read_file
 
-    def copy(*args, **kwargs):
-        # A separate thread/connection must be able to commit while compression runs.
+    def read(*args, **kwargs):
+        # A separate thread/connection must be able to commit during conversion.
         with ThreadPoolExecutor(max_workers=1) as pool:
             pool.submit(backend.set_project_status, pid, "done").result(timeout=2)
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(local_export_files, "_copy_file", copy)
+    monkeypatch.setattr(local_export_files, "_read_file", read)
     assert client.get(f"/desktop/projects/{pid}/exports/{export_id}/content").status_code == 200
 
 
-def test_bundle_handles_directory_swap_without_following_link(tmp_path, monkeypatch):
-    from wenyi_desktop.local_export_files import html_bundle
+def test_html_conversion_handles_directory_swap_without_following_link(tmp_path, monkeypatch):
+    from wenyi_desktop.local_export_files import html_document
 
     root = tmp_path / "export"
     root.mkdir()
@@ -235,7 +278,7 @@ def test_bundle_handles_directory_swap_without_following_link(tmp_path, monkeypa
 
     monkeypatch.setattr(os, "open", swap)
     with pytest.raises((OSError, ValueError)):
-        html_bundle(file)
+        html_document(file)
     assert swapped
 
 
@@ -286,8 +329,8 @@ def test_disconnect_closes_export_stream(desktop_exports, monkeypatch, native, f
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Windows forbids these characters in directory names")
-def test_posix_workspace_ancestors_are_not_zip_entry_names(tmp_path):
-    from wenyi_desktop.local_export_files import html_bundle, open_regular
+def test_posix_workspace_ancestors_are_not_asset_reference_names(tmp_path):
+    from wenyi_desktop.local_export_files import html_document, open_regular
 
     root = tmp_path / "wenyi:desktop\\workspace"
     root.mkdir()
@@ -295,8 +338,8 @@ def test_posix_workspace_ancestors_are_not_zip_entry_names(tmp_path):
     file.write_bytes(b"document")
     with open_regular(file) as stream:
         assert stream.read() == b"document"
-    with html_bundle(file) as stream, zipfile.ZipFile(stream) as archive:
-        assert archive.read("book.html") == b"document"
+    with html_document(file) as stream:
+        assert stream.read() == b"document"
 
 
 @pytest.mark.parametrize("missing", ["new", "removed"])
@@ -319,6 +362,13 @@ def test_plan_and_project_reads_never_create_missing_domain_state(desktop_contex
         assert project.status_code == 200
         assert project.json()["initialized"] is False
         assert client.get("/projects").status_code == 200
+        for route, status in (
+            ("chapters", 200),
+            ("chapters/0", 404),
+            ("review/0", 404),
+            ("preview", 409),
+        ):
+            assert client.get(f"/projects/{pid}/{route}").status_code == status
         response = client.post(f"/desktop/projects/{pid}/exports/plan", json={"format": "txt"})
         assert response.status_code == 409
         assert not root.exists()

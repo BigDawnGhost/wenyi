@@ -8,13 +8,14 @@ from bs4.element import Comment, Tag
 from wenyi_core.assemble.writer_common import _bilingual_source
 from wenyi_core.i18n.policy.models import PolicyContext
 from wenyi_core.i18n.policy.resolver import resolve_policy
-from wenyi_core.ingest.models import KIND_HEADING
 from wenyi_core.markup.anchors import resolve_epub_href
 from wenyi_core.markup.contracts import (
     ANNOTATION_ID_ATTR,
+    HTML_ATTRIBUTE_ID_ATTR,
     INLINE_ID_ATTR,
     LINE_WRAPPER_ATTR,
 )
+from wenyi_core.models.document import KIND_HEADING
 
 _BILINGUAL_STYLE_ID = "tn-bilingual-style"
 
@@ -126,6 +127,7 @@ def _bilingual_source_markup(
             INLINE_ID_ATTR,
             ANNOTATION_ID_ATTR,
             LINE_WRAPPER_ATTR,
+            HTML_ATTRIBUTE_ID_ATTR,
         ):
             tag.attrs.pop(attr, None)
     for attr in (
@@ -135,6 +137,7 @@ def _bilingual_source_markup(
         INLINE_ID_ATTR,
         ANNOTATION_ID_ATTR,
         LINE_WRAPPER_ATTR,
+        HTML_ATTRIBUTE_ID_ATTR,
     ):
         root.attrs.pop(attr, None)
 

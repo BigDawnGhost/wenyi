@@ -5,26 +5,26 @@ from __future__ import annotations
 from typing import Any
 
 from docx.document import Document as DocxDocument
-from docx.shared import Pt, RGBColor
 
 from wenyi_core.assemble.docx_numbering import _list_style_name, _restart_list_numbering
 from wenyi_core.assemble.docx_styles import (
-    _apply_run_style,
+    _append_styled_text,
     _fill_paragraph,
     _font_for_text,
     _neutralize_heading_theme_color,
     _segment_style_payload,
     _set_outline_level,
-    _style_slices,
 )
 from wenyi_core.assemble.writer_common import (
     _bilingual_source,
+    _heading_level,
     _seg_text,
 )
 from wenyi_core.document_styles.docx import (
     text_has_visible_list_prefix,
 )
-from wenyi_core.ingest.models import KIND_HEADING, Chapter
+from wenyi_core.markup.contracts import HTML_ATTRIBUTE_META_KEY
+from wenyi_core.models.document import KIND_HEADING, Chapter
 
 
 def _add_heading(
@@ -71,7 +71,6 @@ def _add_normal(
     align: str | None = None,
     shade: str | None = None,
     output_font: str | None = None,
-    dim: bool = False,
     list_fmt: str | None = None,
     list_ilvl: int = 0,
     list_restart: bool = False,
@@ -91,7 +90,6 @@ def _add_normal(
             align=align,
             shade=shade,
             output_font=output_font,
-            dim=dim,
         )
         if list_restart:
             _restart_list_numbering(doc, paragraph, style_name=style_name, ilvl=list_ilvl)
@@ -106,7 +104,6 @@ def _add_normal(
         align=align,
         shade=shade,
         output_font=output_font,
-        dim=dim,
     )
 
 
@@ -118,46 +115,39 @@ def _add_bilingual_paragraphs(
     *,
     style: dict[str, Any] | None = None,
     placements: list[dict[str, Any]] | None = None,
+    source_style: dict[str, Any] | None = None,
+    source_placements: list[dict[str, Any]] | None = None,
     align: str | None = None,
     shade: str | None = None,
     output_font: str | None = None,
+    list_kwargs: dict[str, Any] | None = None,
 ) -> None:
+    """Order both sides without changing their character styles.
+
+    ``list_kwargs`` applies Word list formatting to the target block only: sharing the
+    list with the source block would consume two numbers per bilingual pair, and the
+    source side is reference material (audit G-2).
+    """
     src = _bilingual_source(source, target)
     target_font = _font_for_text(output_font, source=source, output_text=target)
-    if not src:
+    blocks = [(target, style, placements, target_font)]
+    if src:
+        source_block = (src, source_style, source_placements, None)
+        if order == "source_first":
+            blocks.insert(0, source_block)
+        else:
+            blocks.append(source_block)
+    for text, block_style, block_placements, block_font in blocks:
         _add_normal(
             doc,
-            target,
-            style=style,
-            placements=placements,
+            text,
+            style=block_style,
+            placements=block_placements,
             align=align,
             shade=shade,
-            output_font=target_font,
+            output_font=block_font,
+            **(list_kwargs if text is target and list_kwargs else {}),
         )
-        return
-    # Use SimSun on the translated side where applicable; preserve source-side font defaults.
-    if order == "source_first":
-        _add_normal(doc, src, dim=False, align=align, shade=shade, output_font=None)
-        _add_normal(
-            doc,
-            target,
-            style=style,
-            placements=placements,
-            align=align,
-            shade=shade,
-            output_font=target_font,
-        )
-    else:
-        _add_normal(
-            doc,
-            target,
-            style=style,
-            placements=placements,
-            align=align,
-            shade=shade,
-            output_font=target_font,
-        )
-        _add_normal(doc, src, dim=True, align=align, shade=shade, output_font=None)
 
 
 def _flush_table(
@@ -169,6 +159,7 @@ def _flush_table(
     bilingual: bool,
     order: str,
     output_font: str | None = None,
+    preserve_source_style: bool = False,
 ) -> None:
     table = doc.add_table(rows=rows, cols=cols)
     try:
@@ -185,55 +176,30 @@ def _flush_table(
             cell = table.cell(r, c)
             cell.text = ""
             paragraph = cell.paragraphs[0]
+            blocks = [(target, style, placements, target_font)]
             if bilingual:
                 src = _bilingual_source(source, target)
                 if src:
+                    source_style, source_placements = None, None
+                    if preserve_source_style:
+                        source_style, source_placements, _, _ = _segment_style_payload(
+                            meta, source=source, output_text=src
+                        )
+                    source_block = (src, source_style, source_placements, None)
                     if order == "source_first":
-                        _fill_paragraph(
-                            paragraph,
-                            src,
-                            align=align,
-                            shade=shade,
-                            output_font=None,
-                        )
-                        paragraph.add_run("\n")
-                        # Place the translation on a second line within the same paragraph.
-                        for fragment, frag_style in _style_slices(target, style, placements):
-                            run = paragraph.add_run(fragment)
-                            _apply_run_style(run, frag_style, output_font=target_font)
+                        blocks.insert(0, source_block)
                     else:
-                        _fill_paragraph(
-                            paragraph,
-                            target,
-                            style=style,
-                            placements=placements,
-                            align=align,
-                            shade=shade,
-                            output_font=target_font,
-                        )
-                        paragraph.add_run("\n")
-                        dim_run = paragraph.add_run(src)
-                        dim_run.font.size = Pt(9)
-                        dim_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
-                else:
-                    _fill_paragraph(
-                        paragraph,
-                        target,
-                        style=style,
-                        placements=placements,
-                        align=align,
-                        shade=shade,
-                        output_font=target_font,
-                    )
-            else:
-                _fill_paragraph(
+                        blocks.append(source_block)
+            _fill_paragraph(paragraph, "", align=align, shade=shade)
+            for index, (text, block_style, block_placements, block_font) in enumerate(blocks):
+                if index:
+                    paragraph.add_run("\n")
+                _append_styled_text(
                     paragraph,
-                    target,
-                    style=style,
-                    placements=placements,
-                    align=align,
-                    shade=shade,
-                    output_font=target_font,
+                    text,
+                    style=block_style,
+                    placements=block_placements,
+                    output_font=block_font,
                 )
 
 
@@ -244,6 +210,7 @@ def _emit_chapter_blocks(
     bilingual: bool,
     order: str,
     output_font: str | None = None,
+    preserve_source_style: bool = False,
 ) -> None:
     """Write in paragraph order, group contiguous table IDs and merge continuation segments."""
     i = 0
@@ -252,6 +219,11 @@ def _emit_chapter_blocks(
     while i < len(segs):
         seg = segs[i]
         meta = seg.meta if isinstance(seg.meta, dict) else {}
+        if HTML_ATTRIBUTE_META_KEY in meta:
+            i += 1
+            while i < len(segs) and segs[i].cont:
+                i += 1
+            continue
         table_id = meta.get("table_id")
         if isinstance(table_id, int):
             cells: dict[tuple[int, int], tuple[str, str, dict[str, Any]]] = {}
@@ -276,6 +248,7 @@ def _emit_chapter_blocks(
                 bilingual=bilingual,
                 order=order,
                 output_font=output_font,
+                preserve_source_style=preserve_source_style,
             )
             last_list_num_id = None
             continue
@@ -289,8 +262,7 @@ def _emit_chapter_blocks(
         kind = seg.kind
         heading_level = 1
         if kind == KIND_HEADING:
-            raw_level = meta.get("heading_level", 1)
-            heading_level = raw_level if isinstance(raw_level, int) else 1
+            heading_level = _heading_level(chapter, seg)
         style_meta = meta
         i += 1
         while i < len(segs):
@@ -330,6 +302,21 @@ def _emit_chapter_blocks(
             )
             last_list_num_id = None
         elif bilingual:
+            source_style, source_placements = None, None
+            if preserve_source_style:
+                source_style, source_placements, _, _ = _segment_style_payload(
+                    style_meta, source=source, output_text=_bilingual_source(source, target)
+                )
+            # Bilingual lists keep Word numbering on the target side with the same restart
+            # semantics as monolingual output; the source block stays an unnumbered
+            # reference (audit G-2).
+            list_kwargs = None
+            if is_list:
+                list_kwargs = {
+                    "list_fmt": list_fmt,
+                    "list_ilvl": int(list_ilvl) if isinstance(list_ilvl, int) else 0,
+                    "list_restart": list_num_id != last_list_num_id,
+                }
             _add_bilingual_paragraphs(
                 doc,
                 source,
@@ -337,11 +324,14 @@ def _emit_chapter_blocks(
                 order,
                 style=style,
                 placements=placements,
+                source_style=source_style,
+                source_placements=source_placements,
                 align=align,
                 shade=shade,
                 output_font=output_font,
+                list_kwargs=list_kwargs,
             )
-            last_list_num_id = None
+            last_list_num_id = list_num_id if is_list else None
         elif is_list:
             restart = list_num_id != last_list_num_id
             _add_normal(

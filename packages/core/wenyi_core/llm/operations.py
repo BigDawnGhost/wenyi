@@ -8,21 +8,20 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from .operation_names import TIERS, require_operation_name
+
 if TYPE_CHECKING:
     from ..config import Config
-
-TIERS = ("strong", "cheap", "fast")
 
 
 @dataclass(frozen=True)
 class OperationSpec:
-    """Declare routing, output hints and workflow reachability together."""
+    """Declare routing and workflow reachability together."""
 
     id: str
     description: str
     tier: str | None = None
     inherits: str | None = None
-    output_tokens: int | None = None
     workflows: tuple[str, ...] = ("translate",)
     flags: tuple[str, ...] = ()
     review: bool = False
@@ -42,8 +41,6 @@ def register_operations(specs: Iterable[OperationSpec]) -> Mapping[str, Operatio
             raise ValueError(f"Operation {spec.id} needs exactly one default selection")
         if spec.tier is not None and spec.tier not in TIERS:
             raise ValueError(f"Unknown default tier: {spec.tier}")
-        if spec.output_tokens is not None and spec.output_tokens <= 0:
-            raise ValueError(f"Invalid output hint: {spec.id}")
         if spec.protocol_version <= 0:
             raise ValueError(f"Invalid operation protocol version: {spec.id}")
         registry[spec.id] = spec
@@ -71,7 +68,7 @@ OPERATIONS = register_operations(
         ),
         OperationSpec(
             "analysis.style",
-            "Analyze style, characters and seed terms",
+            "Analyze style and character voices",
             "strong",
             workflows=("prepare", "translate"),
         ),
@@ -79,7 +76,6 @@ OPERATIONS = register_operations(
             "synopsis.chapter",
             "Summarize one chapter",
             "fast",
-            output_tokens=8192,
             workflows=("prepare", "translate"),
             flags=("book_understanding",),
         ),
@@ -87,7 +83,6 @@ OPERATIONS = register_operations(
             "synopsis.book",
             "Merge digests into a book synopsis",
             "fast",
-            output_tokens=8192,
             workflows=("prepare", "translate"),
             flags=("book_understanding",),
         ),
@@ -104,6 +99,27 @@ OPERATIONS = register_operations(
         ),
         OperationSpec("glossary.extract", "Extract glossary candidates", "fast"),
         OperationSpec("glossary.align_history", "Align terms with earlier translations", "fast"),
+        OperationSpec(
+            "terminology.discover",
+            "Discover source-grounded terminology",
+            "strong",
+            workflows=("prepare", "translate"),
+            flags=("terminology_context",),
+        ),
+        OperationSpec(
+            "terminology.evidence",
+            "Extract terminology knowledge from source evidence",
+            "strong",
+            workflows=("prepare", "translate"),
+            flags=("terminology_context",),
+        ),
+        OperationSpec(
+            "terminology.merge",
+            "Merge source-grounded terminology knowledge",
+            "strong",
+            workflows=("prepare", "translate"),
+            flags=("terminology_context",),
+        ),
         OperationSpec(
             "annotation.align",
             "Align EPUB annotation positions",
@@ -163,22 +179,19 @@ OPERATIONS = register_operations(
             review=True,
             protocol_version=2,
         ),
-        OperationSpec("srt.translate", "Translate subtitle cues", "strong", workflows=("srt",)),
     )
 )
 
 
 def require_operation(operation: str) -> OperationSpec:
     """Reject unknown operations instead of selecting an arbitrary model."""
-    try:
-        return OPERATIONS[operation]
-    except KeyError:
-        raise ValueError(f"Unknown model operation: {operation}") from None
+    require_operation_name(operation)
+    return OPERATIONS[operation]
 
 
 def workflow_operations(workflow: str, flags: Mapping[str, object]) -> tuple[str, ...]:
     """Select reachable operations, including recovery, without touching state or SDKs."""
-    if workflow not in {"prepare", "translate", "review", "srt"}:
+    if workflow not in {"prepare", "translate", "review"}:
         raise ValueError(f"Unknown model workflow: {workflow}")
     return tuple(
         spec.id

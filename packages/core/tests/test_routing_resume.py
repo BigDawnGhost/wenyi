@@ -7,27 +7,20 @@ from dataclasses import replace
 
 import pytest
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
 from wenyi_core.llm.configuration import LLMConfig
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.review_checkpoint import ReviewTraceStore
-from wenyi_core.pipeline.review_workflow import ReviewService
-from wenyi_core.pipeline.runtime import PipelineRuntime
+from wenyi_core.pipeline.review.review_checkpoint import ReviewTraceStore
+from wenyi_core.pipeline.review.review_workflow import ReviewService
+from wenyi_core.pipeline.run.runtime import PipelineRuntime
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
+from tests.pipeline_fixtures import require_file_storage
 from tests.sample_data import write_sample_txt
-
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
 
 
 def _config(tmp_path):
@@ -59,7 +52,15 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
     debug = ReviewRunStore(store.run_dir)
     client.usage.record(
         "strong",
-        UsageSample(prompt_tokens=7, completion_tokens=3, total_tokens=10),
+        UsageSample(
+            prompt_tokens=7,
+            completion_tokens=3,
+            total_tokens=10,
+            cache_hit_tokens=1,
+            cache_write_tokens=3,
+            uncached_tokens=2,
+            cache_write_1h_tokens=3,
+        ),
         "review.verify",
         provider="provider-id",
         model="model-id",
@@ -79,7 +80,7 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
 
     monkeypatch.setattr(store._run, "_write_json", write)
     with pytest.raises(OSError):
-        runtime.flush_usage(store, scope="review", review=debug)
+        runtime.usage.flush(store, scope="review", review=debug)
     book_usage = store.load_usage()
     assert book_usage is not None
     assert book_usage["totals"]["total_tokens"] == 10
@@ -88,29 +89,38 @@ def test_ledger_journal_recovers_between_book_and_review_writes(
     if fresh_process:
         runtime = PipelineRuntime(config, FakeClient())
     # Repeating the flush in the same process cannot replay the increment.
-    runtime.flush_usage(store, scope="review", review=debug)
+    runtime.usage.flush(store, scope="review", review=debug)
     review_usage = debug.load_usage()
     book_usage = store.load_usage()
     assert review_usage is not None
     assert book_usage is not None
     assert review_usage["totals"]["total_tokens"] == 10
     assert book_usage["by_model"]["model-id"]["total_tokens"] == 10
-    runtime.flush_usage(store, scope="review", review=debug)
+    runtime.usage.flush(store, scope="review", review=debug)
     review_usage = debug.load_usage()
     assert review_usage is not None
     assert review_usage["totals"]["calls"] == 1
     # A fresh invocation retains cumulative totals without attributing old calls to new models.
-    PipelineRuntime(config, FakeClient()).flush_usage(store, scope="resume", review=debug)
+    PipelineRuntime(config, FakeClient()).usage.flush(store, scope="resume", review=debug)
     book_usage = store.load_usage()
     assert book_usage is not None
     assert book_usage["totals"]["calls"] == 1
+    for usage in (book_usage, review_usage):
+        totals = usage["totals"]
+        assert totals["cache_hit_tokens"] == 1
+        assert totals["cache_write_tokens"] == 3
+        assert totals["uncached_tokens"] == 2
+        assert totals["cache_unknown_tokens"] == 1
+        assert totals["cache_write_1h_tokens"] == 3
+        assert totals["cache_write_1h_reported_calls"] == 1
+        assert totals["cache_write_5m_reported_calls"] == 0
 
 
 def test_fixer_protocol_revisions_invalidate_old_autofix_plans(tmp_path, monkeypatch):
     from wenyi_core.llm import operations, routing
     from wenyi_core.llm.operations import OPERATIONS
     from wenyi_core.llm.routing import inference_snapshot
-    from wenyi_core.pipeline.autofix_plan import prepare_identity
+    from wenyi_core.pipeline.autofix.autofix_plan import prepare_identity
 
     config = _config(tmp_path)
     assert OPERATIONS["review.fix"].protocol_version == 2
@@ -219,6 +229,7 @@ def test_full_glossary_review_reuses_completed_results_and_pending_chunks(tmp_pa
     metadata = store.read_artifact(f"reviews/{review_id}/rounds/metadata.json")
     assert isinstance(metadata, dict)
     assert metadata["config"]["review_glossary_policy"] == "full"
+    assert metadata["config"]["review_glossary_reading_source"] == "ja"
 
     client = MeteredFakeClient(handler=routing_handler)
     resumed = Orchestrator(config, client).run_review(str(source))
@@ -241,18 +252,26 @@ def test_full_glossary_review_reuses_completed_results_and_pending_chunks(tmp_pa
 
 
 @pytest.mark.parametrize("interrupted", [False, True])
-@pytest.mark.parametrize("change", ["policy", "target", "aliases", "note", "insert", "delete"])
+@pytest.mark.parametrize(
+    "change",
+    ["policy", "reading_missing", "reading_old", "target", "aliases", "note", "insert", "delete"],
+)
 def test_full_glossary_changes_invalidate_completed_and_interrupted_reviews(
     tmp_path, interrupted, change
 ):
     source, config, store, term, review_id = _review_with_absent_term(tmp_path, interrupted)
     original_chapter = store.load_chapter(0)
-    if change == "policy":
+    if change in {"policy", "reading_missing", "reading_old"}:
         key = f"reviews/{review_id}/rounds/metadata.json"
         metadata = store.read_artifact(key)
         assert isinstance(metadata, dict)
         # A pre-policy run must not reuse chunks or initial traces under the new policy.
-        metadata["config"].pop("review_glossary_policy")
+        if change == "policy":
+            metadata["config"].pop("review_glossary_policy")
+        elif change == "reading_missing":
+            metadata["config"].pop("review_glossary_reading_source", None)
+        else:
+            metadata["config"]["review_glossary_reading_source"] = "all"
         store.write_artifact(key, metadata)
     elif change == "target":
         store.resolve_term(term.source, "新译名")
@@ -270,6 +289,7 @@ def test_full_glossary_changes_invalidate_completed_and_interrupted_reviews(
     assert new["review_result"]["review_id"] != review_id
     assert len(client.calls) == 2
     assert {call["operation"] for call in client.calls} == {"review.scan"}
+    assert store.read_artifact(f"reviews/{review_id}/rounds/metadata.json") is not None
     assert store.load_chapter(0) == original_chapter
     for call in client.calls:
         prompt = call["messages"][-1]["content"]
@@ -318,7 +338,7 @@ def test_review_guidance_controls_completed_and_interrupted_reuse(tmp_path, inte
 def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):
     from wenyi_core.agents.review_actions import ReviewActionLoop
 
-    from tests.test_review_agent import TestReviewAgentLoop
+    from tests.review_fixtures import review_evidence
 
     config = _config(tmp_path)
     debug = ReviewRunStore(str(tmp_path / "run"))
@@ -332,21 +352,15 @@ def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):
         "allowed_refs": set(),
         "validate_final": lambda value, refs: value,
     }
-    ReviewActionLoop(first, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
-        **arguments
-    )
+    ReviewActionLoop(first, config, review_evidence(), ReviewTraceStore(debug)).run(**arguments)
     assert len(first.calls) == 1
-    ReviewActionLoop(first, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)).run(
-        **arguments
-    )
+    ReviewActionLoop(first, config, review_evidence(), ReviewTraceStore(debug)).run(**arguments)
     assert len(first.calls) == 1
     config.llm.models["default_strong"] = config.llm.models["default_strong"].model_copy(
         update={"model": "different-verifier"}
     )
     second = FakeClient(handler=lambda *args: response, config=config.llm)
-    ReviewActionLoop(
-        second, config, TestReviewAgentLoop()._evidence(), ReviewTraceStore(debug)
-    ).run(**arguments)
+    ReviewActionLoop(second, config, review_evidence(), ReviewTraceStore(debug)).run(**arguments)
     assert len(second.calls) == 1
     assert second.calls[0]["model"] == "different-verifier"
 

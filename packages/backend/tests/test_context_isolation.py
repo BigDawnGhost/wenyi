@@ -9,6 +9,7 @@ import pytest
 from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
 from wenyi_backend.context import ContextMiddleware, current_context, use_context
+from wenyi_backend.execution import runner
 from wenyi_backend.workers import tasks
 
 
@@ -55,10 +56,10 @@ def test_worker_owns_its_context_not_the_submitters_scope(backend_context, monke
     seen = []
     contexts = [replace(backend_context, data_dir=f"worker-{index}") for index in range(2)]
 
-    def execute(kind, pid, run, params, stop):
-        seen.append((pid, current_context().data_dir))
+    def execute(request, dependencies, stop):
+        seen.append((request.project_id, current_context().data_dir))
 
-    monkeypatch.setattr(tasks, "_execute", execute)
+    monkeypatch.setattr(runner, "execute", execute)
 
     async def run():
         await asyncio.gather(

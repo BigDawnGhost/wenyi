@@ -8,14 +8,19 @@ to any one provider's private tokenizer.
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
-import tiktoken
+if TYPE_CHECKING:
+    import tiktoken
 
 ENCODING_NAME = "cl100k_base"
 
 
 @lru_cache(maxsize=1)
-def _encoding() -> tiktoken.Encoding:
+def _encoding() -> "tiktoken.Encoding":
+    # Imported on first use: loading the vocabulary costs far more than a CLI start.
+    import tiktoken
+
     return tiktoken.get_encoding(ENCODING_NAME)
 
 

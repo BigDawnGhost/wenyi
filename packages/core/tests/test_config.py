@@ -62,6 +62,8 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertIn("  punctuation_normalize: true", generated)
             self.assertNotIn("\npunctuation:\n", generated)
             self.assertTrue(cfg.pipeline.review)
+            self.assertEqual(cfg.pipeline.align_retry_limit, 2)
+            self.assertIn("  align_retry_limit: 2", generated)
             self.assertTrue(cfg.pipeline.polish)
             self.assertTrue(cfg.pipeline.annotation_alignment)
             self.assertEqual(cfg.pipeline.review_concurrency, 4)
@@ -80,6 +82,9 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertIn("max_tokens_per_batch: 1800", generated)
             self.assertIn("max_tokens_per_segment: 1200", generated)
             self.assertNotIn("max_chars_per_batch", generated)
+            self.assertEqual(cfg.pipeline.rolling_context_tokens, 512)
+            self.assertIn("rolling_context_tokens: 512", generated)
+            self.assertNotIn("rolling_context_segments", generated)
             self.assertNotIn("glossary_scope", generated)
             self.assertNotIn("glossary_scope", cfg.pipeline.model_dump())
 
@@ -92,6 +97,29 @@ class TestConfigFileCreation(unittest.TestCase):
     def test_removed_segment_char_keys_are_rejected(self):
         with self.assertRaises(Exception):
             Config.from_dict({"segment": {"max_chars_per_batch": 99}})
+
+    def test_rolling_context_tokens_accept_zero_and_reject_negative_budgets(self):
+        cfg = Config.from_dict({"pipeline": {"rolling_context_tokens": 0}})
+        self.assertEqual(cfg.pipeline.rolling_context_tokens, 0)
+        with self.assertRaisesRegex(ValidationError, "rolling_context_tokens"):
+            Config.from_dict({"pipeline": {"rolling_context_tokens": -1}})
+
+    def test_segment_budgets_guard_batch_only(self):
+        # max_tokens_per_batch=0 would degrade packing to one request per segment
+        # (audit Y-3); max_tokens_per_segment=0 legitimately disables splitting.
+        with self.assertRaisesRegex(ValidationError, "max_tokens_per_batch"):
+            Config.from_dict({"segment": {"max_tokens_per_batch": 0}})
+        cfg = Config.from_dict({"segment": {"max_tokens_per_segment": 0}})
+        self.assertEqual(cfg.segment.max_tokens_per_segment, 0)
+
+    def test_removed_rolling_context_segments_is_rejected(self):
+        for pipeline in (
+            {"rolling_context_segments": 6},
+            {"rolling_context_segments": 0, "rolling_context_tokens": 128},
+        ):
+            with self.subTest(pipeline=pipeline):
+                with self.assertRaisesRegex(ValidationError, "rolling_context_segments"):
+                    Config.from_dict({"pipeline": pipeline})
 
     def test_load_never_overwrites_existing_config(self):
         with tempfile.TemporaryDirectory() as d:

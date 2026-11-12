@@ -73,8 +73,13 @@ def _convert_ellipsis_dash(text: str) -> str:
     text = re.sub(r"・{2,}", "……", text)
     text = re.sub(r"\.{3,}", "……", text)
     text = re.sub(r"…+", "……", text)  # Normalize one or more ellipsis symbols to the doubled form.
-    text = re.sub(r"-{2,}", "——", text)
-    text = re.sub(r"—{1,}", "——", text)  # Normalize em dashes to the doubled form.
+    # Dash runs convert only beside CJK: Latin ranges such as 2010--2015 and English em
+    # dashes stay intact, matching the module's conservatism around English and numbers
+    # (audit A-8). Ellipsis symbols remain global — they never appear in Latin prose.
+    text = re.sub(rf"(?<={_CJK_RE})-{{2,}}", "——", text)
+    text = re.sub(rf"-{{2,}}(?={_CJK_RE})", "——", text)
+    text = re.sub(rf"(?<={_CJK_RE})—{{1,}}", "——", text)
+    text = re.sub(rf"—{{1,}}(?={_CJK_RE})", "——", text)
     return text
 
 

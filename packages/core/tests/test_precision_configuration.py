@@ -15,10 +15,29 @@ from wenyi_core.llm.routing import resolve_routes
 REMOVED_OPERATIONS = {"translation.select", "translation.verify", "translation.refine"}
 
 
+def test_translation_mode_uses_synthesis_name_without_legacy_alias():
+    pipeline = PipelineConfig.model_validate({"translation_mode": "three_draft_synthesis"})
+    assert pipeline.translation_mode == "three_draft_synthesis"
+    assert pipeline.model_dump()["translation_mode"] == "three_draft_synthesis"
+    with pytest.raises(ValidationError, match="translation_mode"):
+        PipelineConfig.model_validate({"translation_mode": "best_of_three"})
+
+
+def test_cli_rejects_old_translation_mode_before_loading_config():
+    with patch("wenyi_cli.commands.context.CommandContext.load_config") as load:
+        result = CliRunner().invoke(
+            app, ["translate", "unused.txt", "--translation-mode", "best_of_three"]
+        )
+    assert result.exit_code == 2
+    assert "three_draft_synthesis" in result.output
+    assert "Traceback" not in result.output
+    load.assert_not_called()
+
+
 def test_initial_draft_concurrency_is_not_a_configurable_field():
-    legacy = {"translation_mode": "best_of_three", "precision_concurrency": 1}
-    pipeline = PipelineConfig.model_validate(legacy)
-    assert "precision_concurrency" not in pipeline.model_dump()
+    legacy = {"translation_mode": "three_draft_synthesis", "precision_concurrency": 1}
+    with pytest.raises(ValidationError, match="precision_concurrency"):
+        PipelineConfig.model_validate(legacy)
     assert "precision_concurrency" not in PipelineConfig.model_json_schema()["properties"]
     assert legacy["precision_concurrency"] == 1
 
@@ -27,24 +46,26 @@ def test_precision_defaults_and_constraints():
     assert PipelineConfig().translation_mode == "standard"
     assert "precision_concurrency" not in PipelineConfig().model_dump()
     with pytest.raises(ValidationError, match="requires pipeline.polish=true"):
-        PipelineConfig(translation_mode="best_of_three", polish=False)
+        PipelineConfig(translation_mode="three_draft_synthesis", polish=False)
 
 
 def test_precision_reuses_standard_translation_and_polish_routes_without_output_hints():
     standard = Config()
-    precision = Config(pipeline=PipelineConfig(translation_mode="best_of_three", review=False))
+    precision = Config(
+        pipeline=PipelineConfig(translation_mode="three_draft_synthesis", review=False)
+    )
     assert not REMOVED_OPERATIONS.intersection(OPERATIONS)
     assert not REMOVED_OPERATIONS.intersection(workflow_operations("translate", {}))
     body_operations = {"translation.body", "polish.body"}
     assert body_operations.issubset(configured_operations(standard, "translate"))
     assert body_operations.issubset(configured_operations(precision, "translate"))
-    for workflow in ("prepare", "review", "srt"):
+    for workflow in ("prepare", "review"):
         assert not body_operations.intersection(configured_operations(precision, workflow))
     routes = resolve_routes(precision.llm)
     for operation in body_operations:
         assert OPERATIONS[operation].tier == "strong"
         assert OPERATIONS[operation].protocol_version == 2
-        assert OPERATIONS[operation].output_tokens is None
+        assert routes[operation].max_output_tokens is None
         assert routes[operation].tier == "strong"
 
 
@@ -58,7 +79,7 @@ def test_obsolete_precision_routes_fail_explicitly_without_rewriting_settings(op
 
 def test_precision_freezes_every_consumed_prompt_and_configured_guidance():
     standard = Config()
-    precision = Config(pipeline=PipelineConfig(translation_mode="best_of_three"))
+    precision = Config(pipeline=PipelineConfig(translation_mode="three_draft_synthesis"))
     standard_plan = standard.language_policy("translation")
     plan = precision.language_policy("translation")
     expected = {
@@ -72,9 +93,6 @@ def test_precision_freezes_every_consumed_prompt_and_configured_guidance():
     assert "polisher_system" not in dict(plan.templates)
     assert not expected.intersection(dict(standard_plan.templates))
     assert plan.fingerprint != standard_plan.fingerprint
-    assert not expected.intersection(
-        dict(precision.language_policy("translation", path="srt").templates)
-    )
     text = render(
         "precision_generation_system",
         src=precision.source_lang,
@@ -85,9 +103,9 @@ def test_precision_freezes_every_consumed_prompt_and_configured_guidance():
 
 
 def test_precision_cache_binds_consumed_templates_and_effective_language_guidance_only():
-    plan = Config(pipeline=PipelineConfig(translation_mode="best_of_three")).language_policy(
-        "translation"
-    )
+    plan = Config(
+        pipeline=PipelineConfig(translation_mode="three_draft_synthesis")
+    ).language_policy("translation")
     fingerprint = plan.task_fingerprint("precision")
     unrelated = replace(
         plan,
@@ -117,20 +135,19 @@ def test_cli_precision_conflict_is_concise_and_precedes_credentials():
         patch("wenyi_cli.commands.context.CommandContext.validate_api_configuration") as validate,
     ):
         result = CliRunner().invoke(
-            app, ["translate", "unused.txt", "--translation-mode", "best_of_three", "--no-polish"]
+            app,
+            [
+                "translate",
+                "unused.txt",
+                "--translation-mode",
+                "three_draft_synthesis",
+                "--no-polish",
+            ],
         )
     assert result.exit_code == 1
     assert "requires pipeline.polish=true" in result.output
     assert "Traceback" not in result.output
     validate.assert_not_called()
-
-
-def test_srt_rejects_explicit_book_mode():
-    result = CliRunner().invoke(
-        app, ["translate", "unused.srt", "--translation-mode", "best_of_three"]
-    )
-    assert result.exit_code == 1
-    assert "SRT translation does not support: --translation-mode" in result.output
 
 
 def test_offline_model_preview_shows_shared_routes_without_removed_precision_operations():
@@ -153,10 +170,11 @@ def test_cli_combines_mode_and_polish_overrides_before_validation():
         ),
     ):
         result = CliRunner().invoke(
-            app, ["translate", "unused.txt", "--translation-mode", "best_of_three", "--polish"]
+            app,
+            ["translate", "unused.txt", "--translation-mode", "three_draft_synthesis", "--polish"],
         )
     assert result.exit_code == 1
     assert "stop here" in result.output
-    assert config.pipeline.translation_mode == "best_of_three"
+    assert config.pipeline.translation_mode == "three_draft_synthesis"
     assert config.pipeline.polish is True
     validate.assert_called_once()

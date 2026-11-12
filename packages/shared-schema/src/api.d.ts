@@ -11,7 +11,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Health */
+        /**
+         * Health
+         * @description Report liveness, and whether the database answered.
+         *
+         *     The endpoint is unauthenticated, so a driver exception must never reach the body: it
+         *     echoes hosts, ports and file paths to anyone who asks. The failure is reported as a
+         *     fixed category instead, and the status stays 200 because the documented use is a
+         *     proxy diagnostic where a non-200 means the API container itself is down.
+         */
         get: operations["health_health_get"];
         put?: never;
         post?: never;
@@ -402,42 +410,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/projects/{pid}/report": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Report */
-        get: operations["get_report_projects__pid__report_get"];
-        put?: never;
-        /** Regenerate Report */
-        post: operations["regenerate_report_projects__pid__report_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{pid}/subtitles": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Subtitles */
-        get: operations["get_subtitles_projects__pid__subtitles_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/projects/{pid}/subtitles/{cueid}": {
+    "/settings/models/ping": {
         parameters: {
             query?: never;
             header?: never;
@@ -445,9 +418,32 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Edit Subtitle */
-        put: operations["edit_subtitle_projects__pid__subtitles__cueid__put"];
-        post?: never;
+        put?: never;
+        /**
+         * Ping Models
+         * @description Send one short live request per saved model profile; this uses provider tokens.
+         */
+        post: operations["ping_models_settings_models_ping_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings/models/list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * List Models
+         * @description List a connection's model names; the connection may be an unsaved draft.
+         */
+        post: operations["list_models_settings_models_list_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -554,6 +550,46 @@ export interface paths {
         put?: never;
         /** Add Term */
         post: operations["add_term_projects__pid__glossary_terms_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{pid}/glossary/terms/page": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Terms Page
+         * @description Browse by source codepoint order without changing model-context order.
+         */
+        get: operations["list_terms_page_projects__pid__glossary_terms_page_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{pid}/glossary/terms/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Lookup Terms
+         * @description Check imported sources against the whole glossary, not just the displayed page.
+         */
+        post: operations["lookup_terms_projects__pid__glossary_terms_lookup_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -852,6 +888,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Exposition */
+        get: operations["exposition_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1061,7 +1114,7 @@ export interface components {
         /** ExportRequest */
         ExportRequest: {
             /** Format */
-            format?: ("epub" | "txt" | "html" | "markdown" | "pdf" | "docx" | "srt") | null;
+            format?: ("epub" | "txt" | "html" | "markdown" | "pdf" | "docx") | null;
             /**
              * Bilingual
              * @default false
@@ -1085,12 +1138,6 @@ export interface components {
             preserve_source_style: boolean;
             /** Punctuation Normalize */
             punctuation_normalize?: boolean | null;
-            /**
-             * Pdf Engine
-             * @default weasyprint
-             * @enum {string}
-             */
-            pdf_engine: "weasyprint" | "fpdf2";
         };
         /** GlobalConfigInput */
         GlobalConfigInput: {
@@ -1177,7 +1224,7 @@ export interface components {
              * @default translate
              * @enum {string}
              */
-            workflow: "prepare" | "translate" | "review" | "srt";
+            workflow: "prepare" | "translate" | "review";
         };
         /** ModelCheckResult */
         ModelCheckResult: {
@@ -1186,12 +1233,56 @@ export interface components {
             /** Operations */
             operations: string[];
         };
+        /** ModelListResult */
+        ModelListResult: {
+            /** Ok */
+            ok: boolean;
+            /** Models */
+            models: string[];
+            /** Category */
+            category: string;
+            /** Message */
+            message: string;
+            /** Status Code */
+            status_code?: number | null;
+        };
+        /** ModelPingRequest */
+        ModelPingRequest: {
+            /**
+             * Timeout
+             * @default 30
+             */
+            timeout: number;
+        };
+        /** ModelPingResult */
+        ModelPingResult: {
+            /** Profile */
+            profile: string;
+            /** Connection */
+            connection: string;
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /** Endpoint */
+            endpoint?: string | null;
+            /** Operations */
+            operations: string[];
+            /** Ok */
+            ok: boolean;
+            /** Category */
+            category: string;
+            /** Message */
+            message: string;
+            /** Status Code */
+            status_code?: number | null;
+            /** Latency Ms */
+            latency_ms?: number | null;
+        };
         /** PDFCapabilities */
         PDFCapabilities: {
             /** Backends */
             backends: string[];
-            /** Engines */
-            engines: string[];
             /** Export Backends */
             export_backends: string[];
         };
@@ -1263,6 +1354,16 @@ export interface components {
             } | null;
             /** Created At */
             created_at?: string | null;
+            /**
+             * Available
+             * @default true
+             */
+            available: boolean;
+            /**
+             * Source Changed
+             * @default false
+             */
+            source_changed: boolean;
         };
         /** ProjectConfigOut */
         ProjectConfigOut: {
@@ -1313,7 +1414,15 @@ export interface components {
              * @default standard
              * @enum {string}
              */
-            translation_mode: "standard" | "best_of_three";
+            translation_mode: "standard" | "three_draft_synthesis";
+            /**
+             * Prompt Genre
+             * @default literary
+             * @enum {string}
+             */
+            prompt_genre: "literary" | "academic";
+            /** Location */
+            location?: string | null;
         };
         /** ProjectDetail */
         ProjectDetail: {
@@ -1347,6 +1456,16 @@ export interface components {
             } | null;
             /** Created At */
             created_at?: string | null;
+            /**
+             * Available
+             * @default true
+             */
+            available: boolean;
+            /**
+             * Source Changed
+             * @default false
+             */
+            source_changed: boolean;
             /** Book Title */
             book_title?: string | null;
             /**
@@ -1368,6 +1487,8 @@ export interface components {
             source_meta?: {
                 [key: string]: unknown;
             };
+            /** Output Formats */
+            output_formats?: string[];
         };
         /** ProjectStats */
         ProjectStats: {
@@ -1595,42 +1716,6 @@ export interface components {
                 [key: string]: unknown;
             };
         };
-        /** SubtitleCue */
-        SubtitleCue: {
-            /** Id */
-            id: string;
-            /** Index */
-            index: number;
-            /** Timestamp */
-            timestamp: string;
-            /** Start */
-            start: string;
-            /** End */
-            end: string;
-            /** Source */
-            source: string;
-            /** Target */
-            target?: string | null;
-            /**
-             * Status
-             * @default pending
-             */
-            status: string;
-        };
-        /** SubtitleResult */
-        SubtitleResult: {
-            /** Cues */
-            cues: components["schemas"]["SubtitleCue"][];
-            /** Completed */
-            completed: number;
-            /** Total */
-            total: number;
-        };
-        /** TargetEdit */
-        TargetEdit: {
-            /** Target */
-            target: string;
-        };
         /** TermIn */
         TermIn: {
             /** Source */
@@ -1662,6 +1747,11 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** TermLookup */
+        TermLookup: {
+            /** Sources */
+            sources: string[];
         };
         /** TermOut */
         TermOut: {
@@ -1701,6 +1791,13 @@ export interface components {
              * @default ok
              */
             status: string;
+        };
+        /** TermPage */
+        TermPage: {
+            /** Items */
+            items: components["schemas"]["TermOut"][];
+            /** Total */
+            total: number;
         };
         /** UploadPreview */
         UploadPreview: {
@@ -2560,116 +2657,16 @@ export interface operations {
             };
         };
     };
-    get_report_projects__pid__report_get: {
+    ping_models_settings_models_ping_post: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                pid: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    regenerate_report_projects__pid__report_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                pid: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_subtitles_projects__pid__subtitles_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                pid: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SubtitleResult"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    edit_subtitle_projects__pid__subtitles__cueid__put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                pid: string;
-                cueid: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["TargetEdit"];
+                "application/json": components["schemas"]["ModelPingRequest"];
             };
         };
         responses: {
@@ -2679,9 +2676,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ModelPingResult"][];
                 };
             };
             /** @description Validation Error */
@@ -2691,6 +2686,44 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_models_settings_models_list_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Connection */
+                    connection?: string | null;
+                    /** Provider */
+                    provider: {
+                        [key: string]: unknown;
+                    };
+                    /** Api Key */
+                    api_key?: string | null;
+                    /**
+                     * Timeout
+                     * @default 20
+                     */
+                    timeout?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelListResult"];
                 };
             };
         };
@@ -2928,6 +2961,77 @@ export interface operations {
             };
         };
     };
+    list_terms_page_projects__pid__glossary_terms_page_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                type?: string;
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                pid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TermPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    lookup_terms_projects__pid__glossary_terms_lookup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TermLookup"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TermOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_term_projects__pid__glossary_terms__source__put: {
         parameters: {
             query?: never;
@@ -3066,7 +3170,7 @@ export interface operations {
     export_glossary_projects__pid__glossary_export_get: {
         parameters: {
             query?: {
-                format?: "json" | "csv";
+                format?: "json" | "csv" | "apkg";
             };
             header?: never;
             path: {
@@ -3604,6 +3708,24 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
+            };
+        };
+    };
+    exposition_metrics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

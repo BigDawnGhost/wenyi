@@ -3,7 +3,7 @@ Assemble runtime and preparation, translation, annotation, review, autofix and f
 services. Route steps, order stages, choose lock scopes, forward
 progress and propagate exceptions with consistent return structures.
 All parsing, model calls, state I/O, pools, glossary operations, alignment, review state
-machines, reports, exports and accounting belong to domain services. This facade must not
+machines, exports and accounting belong to domain services. This facade must not
 directly depend on agents, ingest, glossary, assemble or ThreadPoolExecutor, nor read/write
 state files.
 Dependencies flow from CLI to Orchestrator, then Runtime/domain services, then
@@ -12,39 +12,52 @@ agents/ingest/glossary/assemble/RunStore. Lower layers must never import this mo
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from ..config import Config
 from ..events import ProgressFn
 from ..storage.protocol import Storage
-from .annotations import AnnotationService
-from .finalization import AssemblyService, ReportService
-from .preparation import PreparationService
-from .review_autofix import ReviewAutofixService
-from .review_workflow import ReviewService
-from .runtime import LLMClient, PipelineRuntime
-from .translation import TranslationService
+from .annotate.annotations import AnnotationService
+from .autofix.review_autofix import ReviewAutofixService
+from .finalize.finalization import AssemblyService
+from .prepare.preparation import PreparationService
+from .review.review_workflow import ReviewService
+from .run.runtime import LLMClient, PipelineRuntime
+from .translate.translation import TranslationService
 
 
 class Orchestrator:
     """Assemble runtime/services and control only step routing and lock scopes."""
 
     # Optional stages and the complete workflow.
-    ALL_STEPS = ("translate", "review", "report", "assemble")
+    ALL_STEPS = ("translate", "review", "assemble")
 
     def __init__(
-        self, config: Config, client: LLMClient | None = None, storage: Storage | None = None
+        self,
+        config: Config,
+        client: LLMClient | None = None,
+        storage: Storage | None = None,
+        *,
+        allow_terminology_context: bool = False,
+        mineru_token_resolver: Callable[[], str | None] | None = None,
     ):
         """Assemble shared runtime and domain services without domain I/O."""
         self.config = config
-        self._runtime = PipelineRuntime(config, client=client, storage=storage)
+        self._runtime = PipelineRuntime(
+            config,
+            client=client,
+            storage=storage,
+            allow_terminology_context=allow_terminology_context,
+        )
         self.client = self._runtime.client
-        self._preparation = PreparationService(self._runtime)
+        self._preparation = PreparationService(
+            self._runtime, mineru_token_resolver=mineru_token_resolver
+        )
         self._annotations = AnnotationService(self._runtime)
         self._translation = TranslationService(self._runtime, self._annotations)
         self._review = ReviewService(self._runtime)
         self._review_autofix = ReviewAutofixService(self._runtime, self._annotations)
-        self._report = ReportService(self._runtime)
         self._assembly = AssemblyService(self._runtime)
 
     # Public entry points.
@@ -61,7 +74,7 @@ class Orchestrator:
     ) -> Storage:
         """Complete all preparation without translating body text.
         Parse the document, detect language, optionally prescan chapters, analyze style and
-        initial terms, and optionally synthesize a synopsis. Initialized runs reuse persisted
+        character voices, and optionally synthesize a synopsis. Initialized runs reuse persisted
         results; incomplete initialization is rebuilt on retry.
         """
         with self._runtime.track_workflow("prepare"):
@@ -77,7 +90,7 @@ class Orchestrator:
                         book_understanding=self.config.pipeline.book_understanding,
                     )
                 finally:
-                    self._runtime.flush_usage(store, scope="prepare")
+                    self._runtime.usage.flush(store, scope="prepare")
             return store
 
     def run(
@@ -126,7 +139,7 @@ class Orchestrator:
             )
         finally:
             # Prescan can stop before translation's own usage checkpoint is reached.
-            self._runtime.flush_usage(store, scope="translate")
+            self._runtime.usage.flush(store, scope="translate")
 
     def run_review(
         self,
@@ -171,51 +184,12 @@ class Orchestrator:
             return outcome
         return self._review_autofix.run(store, outcome, terms, progress=progress)
 
-    def _run_existing_steps(
-        self,
-        input_path: str,
-        steps: set[str],
-        *,
-        progress: ProgressFn | None,
-        out_format: str | None = None,
-        out_path: str | None = None,
-        pdf_engine: str = "weasyprint",
-    ) -> dict[str, Any]:
-        """Run local finalization from existing state without creating a translation task."""
-        store = self._preparation.locate_existing(input_path, progress=progress)
-        with store.lock():
-            self._preparation.activate(store)
-            return self._finish_steps_locked(
-                store,
-                input_path=input_path,
-                steps=steps,
-                run_steps_input=sorted(steps),
-                progress=progress,
-                out_format=out_format,
-                out_path=out_path,
-                pdf_engine=pdf_engine,
-            )
-
-    def run_report(
-        self,
-        input_path: str,
-        *,
-        progress: ProgressFn | None = None,
-    ) -> dict[str, Any]:
-        """Regenerate the report from existing state."""
-        return self._run_existing_steps(
-            input_path,
-            {"report"},
-            progress=progress,
-        )
-
     def run_assemble(
         self,
         input_path: str,
         *,
         out_format: str | None = None,
         out_path: str | None = None,
-        pdf_engine: str = "weasyprint",
         progress: ProgressFn | None = None,
     ) -> dict[str, Any]:
         """Export an existing-state snapshot without waiting for ongoing whole-book
@@ -235,7 +209,6 @@ class Orchestrator:
                 progress=progress,
                 out_format=out_format,
                 out_path=out_path,
-                pdf_engine=pdf_engine,
             )
             self._runtime.log_event(
                 store, "run_steps_finished", steps=["assemble"], outputs=outputs
@@ -244,7 +217,6 @@ class Orchestrator:
                 "store": store,
                 "output": outputs[0] if outputs else None,
                 "outputs": outputs,
-                "report": None,
                 "review_issues": [],
                 "review_changes": [],
                 "review_result": None,
@@ -259,11 +231,13 @@ class Orchestrator:
         progress: ProgressFn | None = None,
         out_format: str | None = None,
         out_path: str | None = None,
-        pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
         """Run any requested subset of ALL_STEPS."""
+        steps = set(steps)
+        unknown = steps - set(self.ALL_STEPS)
+        if unknown:
+            raise ValueError("Unknown workflow steps: " + ", ".join(sorted(unknown)))
         with self._runtime.track_workflow("workflow"):
-            steps = set(steps)
             run_steps_input = sorted(steps)
             if steps == {"review"}:
                 reviewed = self.run_review(input_path, progress=progress)
@@ -271,7 +245,6 @@ class Orchestrator:
                     "store": reviewed["store"],
                     "output": None,
                     "outputs": [],
-                    "report": None,
                     "review_issues": reviewed["review_issues"],
                     "review_changes": reviewed["review_changes"],
                     "review_result": reviewed["review_result"],
@@ -282,7 +255,6 @@ class Orchestrator:
                     input_path,
                     out_format=out_format,
                     out_path=out_path,
-                    pdf_engine=pdf_engine,
                     progress=progress,
                 )
 
@@ -300,7 +272,6 @@ class Orchestrator:
                     progress=progress,
                     out_format=out_format,
                     out_path=out_path,
-                    pdf_engine=pdf_engine,
                 )
 
     def _finish_steps_locked(
@@ -313,11 +284,8 @@ class Orchestrator:
         progress: ProgressFn | None,
         out_format: str | None,
         out_path: str | None,
-        pdf_engine: str,
     ) -> dict[str, Any]:
-        """Delegate review, reporting and assembly under the book lock and return combined
-        results.
-        """
+        """Delegate review and assembly under the book lock and return combined results."""
         self._runtime.log_event(
             store,
             "run_steps_started",
@@ -329,34 +297,22 @@ class Orchestrator:
         review_changes: list[dict] = []
         review_result: dict[str, Any] | None = None
         review_dir: str | None = None
-        report: dict[str, Any] | None = None
-        with self._report.glossary_scope(store, "report" in steps) as glossary:
-            try:
-                if "review" in steps:
-                    # Flush earlier stage deltas first so session usage.json contains only review calls.
-                    self._runtime.flush_usage(store, scope="pipeline")
-                    terms = self._review.session_terms(store, glossary)
-                    outcome = self._run_review_locked(
-                        store,
-                        terms,
-                        progress=progress,
-                    )
-                    review_issues = outcome.issues
-                    review_changes = outcome.changes
-                    review_result = outcome.result
-                    review_dir = outcome.run_dir
-
-                self._runtime.flush_usage(store, scope="pipeline")
-                if "report" in steps:
-                    if glossary is None:  # pragma: no cover - Guaranteed by the needs condition.
-                        raise RuntimeError("Report generation requires a glossary")
-                    report = self._report.build_and_save(
-                        store,
-                        glossary,
-                        progress=progress,
-                    )
-            finally:
-                self._runtime.flush_usage(store, scope="pipeline")
+        try:
+            if "review" in steps:
+                # Flush earlier stage deltas first so session usage.json contains only review calls.
+                self._runtime.usage.flush(store, scope="pipeline")
+                terms = self._review.session_terms(store)
+                outcome = self._run_review_locked(
+                    store,
+                    terms,
+                    progress=progress,
+                )
+                review_issues = outcome.issues
+                review_changes = outcome.changes
+                review_result = outcome.result
+                review_dir = outcome.run_dir
+        finally:
+            self._runtime.usage.flush(store, scope="pipeline")
 
         outputs: list[str] = []
         if "assemble" in steps:
@@ -366,7 +322,6 @@ class Orchestrator:
                 progress=progress,
                 out_format=out_format,
                 out_path=out_path,
-                pdf_engine=pdf_engine,
             )
 
         self._runtime.log_event(
@@ -379,7 +334,6 @@ class Orchestrator:
             "store": store,
             "output": outputs[0] if outputs else None,
             "outputs": outputs,
-            "report": report,
             "review_issues": review_issues,
             "review_changes": review_changes,
             "review_result": review_result,
@@ -393,10 +347,9 @@ class Orchestrator:
         progress: ProgressFn | None = None,
         out_format: str | None = None,
         out_path: str | None = None,
-        pdf_engine: str = "weasyprint",
     ) -> dict[str, Any]:
-        """Translate, review, report and assemble, returning combined results."""
-        steps = {"translate", "report", "assemble"}
+        """Translate, optionally review and assemble, returning combined results."""
+        steps = {"translate", "assemble"}
         if self.config.pipeline.review:
             steps.add("review")
         return self.run_steps(
@@ -405,5 +358,4 @@ class Orchestrator:
             progress=progress,
             out_format=out_format,
             out_path=out_path,
-            pdf_engine=pdf_engine,
         )

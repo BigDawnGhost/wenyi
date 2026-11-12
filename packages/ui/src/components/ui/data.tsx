@@ -1,14 +1,39 @@
-import { useI18n, type MessageKey } from "@/i18n";
-import { statusLabel } from "@/i18n/status";
+import { useI18n, type MessageKey } from "../../i18n";
+import { statusLabel } from "../../i18n/status";
+import { errorMessage } from "../../lib/error-codes";
+import { Lock } from "lucide-react";
 export function ErrorNotice({ error }: { error?: unknown }) {
+  // The hook runs before the early return so the call order stays stable.
+  const { t } = useI18n();
   if (!error) return null;
   return (
     <div
       role="alert"
       className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
     >
-      {error instanceof Error ? error.message : String(error)}
+      {errorMessage(error, t)}
     </div>
+  );
+}
+
+/** One consistent line for every page that becomes read-only while a project task runs. */
+export function ReadOnlyNotice({
+  className,
+  reason = "running",
+}: {
+  className?: string;
+  /** "source": the source is parsed but AI preparation has not finished yet. */
+  reason?: "running" | "source";
+}) {
+  const { t } = useI18n();
+  return (
+    <p
+      role="status"
+      className={`flex items-center gap-2 text-sm text-muted-foreground ${className ?? ""}`}
+    >
+      <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      {t(reason === "source" ? "common.readOnlyUntilPrepared" : "common.readOnlyWhileRunning")}
+    </p>
   );
 }
 
@@ -61,7 +86,7 @@ export function StructuredData({
           key={key}
           className={
             depth < 2
-              ? "grid gap-1 sm:grid-cols-[minmax(100px,180px)_1fr]"
+              ? "grid grid-cols-[minmax(100px,180px)_1fr] gap-1"
               : "space-y-1 border-l pl-3"
           }
         >
@@ -97,7 +122,10 @@ const LABELS: Record<string, MessageKey> = {
   by_tier: "data.byTier",
   cache_hit_rate: "data.cacheHitRate",
   cache_hit_tokens: "data.cachedTokens",
-  cache_miss_tokens: "data.uncachedTokens",
+  cache_miss_tokens: "accounting.legacyMiss",
+  cache_write_tokens: "accounting.writtenInput",
+  uncached_tokens: "accounting.uncachedInput",
+  cache_unknown_tokens: "accounting.unknownInput",
   total_seconds: "data.totalTimeSeconds",
   runs: "data.runs",
   schema_version: "data.schemaVersion",

@@ -16,10 +16,8 @@ const stages: Record<string, MessageKey> = {
   term_extract: "workflow.terms",
   review: "common.wholeBookReview",
   review_autofix: "data.autofix",
-  report: "workflow.report",
   assemble: "workflow.export",
   export: "workflow.export",
-  srt: "workflow.subtitles",
 };
 
 export function workflowStageLabel(
@@ -47,7 +45,6 @@ const operations: Record<string, MessageKey> = {
   "review.fix": "accounting.reviewFix",
   "autofix.verify": "accounting.autofixVerify",
   "autofix.fix": "accounting.autofixFix",
-  "srt.translate": "workflow.subtitles",
   translate: "workflowPanel.bookTranslation",
   workflow: "accounting.workflow",
   unknown: "accounting.unknownAttribution",

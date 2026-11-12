@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..transport import Messages, ResolvedModel
-from ..usage import UsageSample, make_usage_sample, read_usage_int
+from ..usage import UsageSample, make_usage_sample, read_usage_counter
 from ._openai_compatible import (
     OpenAICompatibleBaseClient,
     base_request_kwargs,
@@ -22,10 +22,13 @@ def normalize_deepseek_usage(usage: Any) -> UsageSample | None:
     """Normalize DeepSeek's top-level cache counters into shared usage accounting."""
     if usage is None:
         return None
+    miss = read_usage_counter(usage, "prompt_cache_miss_tokens")
     return make_usage_sample(
         usage,
-        cache_hit_tokens=read_usage_int(usage, "prompt_cache_hit_tokens"),
-        cache_miss_tokens=read_usage_int(usage, "prompt_cache_miss_tokens"),
+        cache_hit_tokens=read_usage_counter(usage, "prompt_cache_hit_tokens"),
+        cache_miss_tokens=miss or 0,
+        cache_write_tokens=0,
+        uncached_tokens=miss,
     )
 
 

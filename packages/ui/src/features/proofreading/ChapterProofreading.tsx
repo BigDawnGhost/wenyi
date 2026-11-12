@@ -1,53 +1,55 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { useI18n } from "@/i18n";
-import { api, type ChapterSummary } from "@/lib/api";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { ErrorNotice, StructuredData } from "@/components/ui/data";
-import { Disclosure } from "@/components/ui/disclosure";
+import { useI18n } from "../../i18n";
+import { api } from "../../api/client";
+import type { ChapterSummary } from "../../api/types";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent } from "../../components/ui/card";
+import { ErrorNotice, ReadOnlyNotice, StructuredData } from "../../components/ui/data";
+import { Disclosure } from "../../components/ui/disclosure";
 import { ParagraphActions } from "./ParagraphActions";
 import { ParagraphEditor } from "./ParagraphEditor";
+import { ParagraphMenu, type ParagraphMenuAnchor } from "./ParagraphMenu";
 
 const ParagraphRow = memo(function ParagraphRow({
   index,
   source,
   target,
-  disabled,
-  onOpen,
+  expanded,
+  sourceOnly,
+  onMenu,
 }: {
   index: number;
   source: string;
   target: string | null | undefined;
-  disabled: boolean;
-  onOpen: (index: number, view: "edit" | "history" | "precision") => void;
+  expanded: boolean;
+  sourceOnly: boolean;
+  onMenu: (anchor: ParagraphMenuAnchor) => void;
 }) {
-  const { t } = useI18n();
   return (
     <div
       id={`paragraph-${index}`}
       tabIndex={-1}
-      className="grid lg:grid-cols-2 border-b last:border-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30"
+      className={`grid ${sourceOnly ? "" : "grid-cols-2"} border-b last:border-0 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30`}
       // Keep every paragraph searchable/selectable and addressable by deep links.
       // Unlike virtualization, auto only skips offscreen layout and painting.
       style={{ contentVisibility: "auto", containIntrinsicSize: "auto 280px" }}
     >
-      <div className="min-w-0 p-4 text-sm lg:border-r">
-        <span className="mb-2 block text-xs text-muted-foreground lg:hidden">
-          {t("common.source")}
-        </span>
+      <div className="min-w-0 border-r p-4 text-sm">
         <p className="whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">
           {source}
         </p>
       </div>
-      <ParagraphActions
-        source={source}
-        target={target}
-        disabled={disabled}
-        onOpen={(view) => onOpen(index, view)}
-      />
+      {!sourceOnly && (
+        <ParagraphActions
+          index={index}
+          target={target}
+          expanded={expanded}
+          onMenu={onMenu}
+        />
+      )}
     </div>
   );
 });
@@ -58,6 +60,7 @@ export function ChapterProofreading({
   chapters,
   busy,
   readOnly,
+  sourceOnly,
   error,
   targetLanguage,
 }: {
@@ -66,6 +69,7 @@ export function ChapterProofreading({
   chapters: ChapterSummary[];
   busy: boolean;
   readOnly: boolean;
+  sourceOnly: boolean;
   error: unknown;
   targetLanguage?: string;
 }) {
@@ -73,6 +77,8 @@ export function ChapterProofreading({
   const [searchParams] = useSearchParams();
   const requested = searchParams.get("segment");
   const focused = useRef<string | undefined>(undefined);
+  const [menu, setMenu] = useState<ParagraphMenuAnchor | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
   const [editor, setEditor] = useState<{
     index: number;
     view: "edit" | "history" | "precision";
@@ -80,9 +86,9 @@ export function ChapterProofreading({
   const validIndex = Number.isSafeInteger(index) && index >= 0;
   const chapter = useQuery({
     queryKey: ["review", pid, index],
-    queryFn: () => api.getReview(pid, index),
+    queryFn: ({ signal }) => api.getReview(pid, index, signal),
     enabled: validIndex,
-    refetchInterval: 3000,
+    refetchInterval: busy ? 3000 : false,
   });
   const current = chapters.findIndex((c) => c.index === index);
   const previous = current > 0 ? chapters[current - 1] : undefined;
@@ -100,6 +106,7 @@ export function ChapterProofreading({
   const paragraphs = segments.filter((s) => s.kind === "text");
   const saved = paragraphs.filter((s) => s.target != null).length;
   const activeSegment = segments.find((s) => s.index === editor?.index);
+  const menuSegment = segments.find((s) => s.index === menu?.index);
   useEffect(() => {
     if (!requested || !/^\d+$/.test(requested)) {
       focused.current = undefined;
@@ -122,7 +129,6 @@ export function ChapterProofreading({
             chapter.data?.title.trim() ||
             t(chapter.data ? "common.untitledChapter" : "progress.loading"),
         })}
-        subtitle={t("proofreading.savedBatchesRefresh")}
         actions={
           <>
             <Link to={`/projects/${pid}/proofreading`}>
@@ -153,12 +159,8 @@ export function ChapterProofreading({
               : undefined)
           }
         />
-        {busy && (
-          <p role="status" className="rounded border p-3 text-sm">
-            {t("proofreading.pauseToEdit")}
-          </p>
-        )}
-        {chapter.data && (
+        {sourceOnly ? <ReadOnlyNotice reason="source" /> : busy && <ReadOnlyNotice />}
+        {!sourceOnly && chapter.data && (
           <p className="text-sm text-muted-foreground">
             {t("proofreading.savedParagraphs", {
               done: saved,
@@ -174,13 +176,24 @@ export function ChapterProofreading({
                 index={segment.index}
                 source={segment.source}
                 target={segment.target}
-                disabled={readOnly || chapter.isError}
-                onOpen={openEditor}
+                expanded={menu?.index === segment.index}
+                sourceOnly={sourceOnly}
+                onMenu={setMenu}
               />
             ))}
           </CardContent>
         </Card>
-        {editor && activeSegment && (
+        {!sourceOnly && menu && menuSegment && (
+          <ParagraphMenu
+            anchor={menu}
+            source={menuSegment.source}
+            target={menuSegment.target}
+            disabled={readOnly || chapter.isError}
+            onOpen={openEditor}
+            onClose={closeMenu}
+          />
+        )}
+        {!sourceOnly && editor && activeSegment && (
           <ParagraphEditor
             key={activeSegment.index}
             pid={pid}
@@ -193,12 +206,14 @@ export function ChapterProofreading({
             onClose={() => setEditor(null)}
           />
         )}
-        <Disclosure title={t("review.recordedReviewNotesForThisChapter")}>
-          <StructuredData
-            value={chapter.data?.review_issues}
-            empty={t("review.noNotesRecordedCheckTheWholeBook")}
-          />
-        </Disclosure>
+        {!sourceOnly && (
+          <Disclosure lazy title={t("review.recordedReviewNotesForThisChapter")}>
+            <StructuredData
+              value={chapter.data?.review_issues}
+              empty={t("review.noNotesRecordedCheckTheWholeBook")}
+            />
+          </Disclosure>
+        )}
       </PageContainer>
     </>
   );

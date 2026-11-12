@@ -1,4 +1,4 @@
--- Fresh-deployment PostgreSQL schema. No legacy-state migrations are provided.
+-- Current PostgreSQL schema. Settings reconstruction does not migrate domain state.
 CREATE TABLE IF NOT EXISTS application_settings (
     id INTEGER PRIMARY KEY CHECK (id=1),
     document JSONB NOT NULL,
@@ -24,16 +24,21 @@ CREATE TABLE IF NOT EXISTS projects (
     config JSONB NOT NULL DEFAULT '{}'::jsonb,
     manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
     meta JSONB NOT NULL DEFAULT '{}'::jsonb,
-    context JSONB,
     annotation_contexts JSONB,
     analysis JSONB,
     usage JSONB,
-    report JSONB,
     book_title TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CHECK (source_sha256 IS NULL OR source_sha256 ~ '^[0-9a-f]{64}$'),
     CHECK (initialization_sha256 IS NULL OR initialization_sha256 ~ '^[0-9a-f]{64}$')
+);
+CREATE TABLE IF NOT EXISTS configuration_backups (
+    id BIGSERIAL PRIMARY KEY,
+    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+    document JSONB NOT NULL,
+    removed JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS chapters (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -92,6 +97,8 @@ CREATE TABLE IF NOT EXISTS glossary (
     PRIMARY KEY (project_id, source)
 );
 CREATE INDEX IF NOT EXISTS idx_glossary_insertion ON glossary (project_id, insertion_id);
+CREATE INDEX IF NOT EXISTS idx_glossary_source_codepoint
+    ON glossary (project_id, source COLLATE "C");
 CREATE TABLE IF NOT EXISTS term_conflicts (
     id BIGSERIAL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -103,8 +110,11 @@ CREATE TABLE IF NOT EXISTS term_conflicts (
     resolved BOOLEAN NOT NULL DEFAULT FALSE,
     created_at DOUBLE PRECISION
 );
+-- Project-scoped hot paths (open conflicts, stats, re-prepare cleanup) filter by
+-- project first; without these every glossary page re-scans all projects' conflicts.
+CREATE INDEX IF NOT EXISTS idx_term_conflicts_project ON term_conflicts (project_id, resolved, id);
 -- Durable review metadata, chunks, checkpoints, evidence and publication journals;
--- subtitle manifests/cue maps/batches; usage journals and timing ledgers.
+-- usage journals and timing ledgers.
 -- Keys are normalized relative artifact names, never filesystem destinations.
 CREATE TABLE IF NOT EXISTS artifacts (
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -129,6 +139,9 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_events_project_time ON events (project_id, id DESC);
+-- list_events(type=...) is executed once per translated chapter for the glossary
+-- checkpoint scan; without a type index that scan is O(accumulated events) per chapter.
+CREATE INDEX IF NOT EXISTS idx_events_project_type ON events (project_id, type, id DESC);
 CREATE INDEX IF NOT EXISTS idx_events_manual_paragraph
     ON events (project_id, (payload->>'chapter'), (payload->>'index'), id DESC)
     WHERE type='manual_translation_edited';
@@ -145,6 +158,9 @@ CREATE TABLE IF NOT EXISTS exports (
     completed_at TIMESTAMPTZ
 );
 ALTER TABLE exports ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+-- Export listing, admission checks and per-publication retention sweeps all filter by
+-- project (audit round 4/G-1).
+CREATE INDEX IF NOT EXISTS idx_exports_project ON exports (project_id, status, id DESC);
 CREATE TABLE IF NOT EXISTS jobs (
     id BIGSERIAL PRIMARY KEY,
     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -159,6 +175,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_jobs_project_time ON jobs (project_id, id DESC);
+-- Recovery loop (every 30s) and runner completion look jobs up by arq_job_id or by
+-- status window; both degrade to full scans without these (audit round 4/G-1).
+CREATE INDEX IF NOT EXISTS idx_jobs_arq_job_id ON jobs (arq_job_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_status_updated ON jobs (status, updated_at);
 CREATE TABLE IF NOT EXISTS strategy_templates (
     id BIGSERIAL PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,

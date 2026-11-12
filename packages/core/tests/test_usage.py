@@ -13,7 +13,6 @@ from unittest.mock import patch
 
 from wenyi_core.agents.base import Agent
 from wenyi_core.config import Config, LLMConfig
-from wenyi_core.ingest.models import Chapter, Document, Segment
 from wenyi_core.llm.factory import build_client
 from wenyi_core.llm.providers._openai_compatible import (
     EmptyResponseError,
@@ -33,21 +32,14 @@ from wenyi_core.llm.usage import (
     merge_usage_summaries,
     usage_delta,
 )
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import source_sha256
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
+from wenyi_core.storage.run_store import source_sha256
 
 from tests.fake_llm import routing_handler
 from tests.model_fixtures import model_config
 from tests.sample_data import write_sample_txt
-
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
 
 
 def _make_usage(
@@ -531,10 +523,10 @@ class TestMissingUsage(unittest.TestCase):
 
 
 class TestEmptyCacheHitRate(unittest.TestCase):
-    def test_fresh_client_zero_hit_rate_and_full_keys(self):
+    def test_fresh_client_unknown_hit_rate_and_full_keys(self):
         c = FakeClient()
         totals = c.usage_summary()["totals"]
-        self.assertEqual(totals["cache_hit_rate"], 0.0)
+        self.assertIsNone(totals["cache_hit_rate"])
         self.assertEqual(totals["total_tokens"], 0)
         for key in (
             "calls",
@@ -654,11 +646,11 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
                 completion=20,
                 stage="translation.body",
             )
-            cumulative = first._runtime.flush_usage(store, scope="translate")
+            cumulative = first._runtime.usage.flush(store, scope="translate")
             self.assertEqual(cumulative["totals"]["total_tokens"], 120)
 
             # A second flush in the same process without new calls must not double-count usage.
-            unchanged = first._runtime.flush_usage(store, scope="pipeline")
+            unchanged = first._runtime.usage.flush(store, scope="pipeline")
             self.assertEqual(unchanged["totals"]["total_tokens"], 120)
 
             # Simulate resume with a new client/Orchestrator, adding deltas to the same book.
@@ -671,7 +663,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
                 completion=10,
                 stage="review.scan",
             )
-            cumulative = resumed._runtime.flush_usage(store, scope="translate")
+            cumulative = resumed._runtime.usage.flush(store, scope="translate")
 
             self.assertEqual(cumulative["totals"]["total_tokens"], 170)
             self.assertEqual(cumulative["totals"]["calls"], 2)
@@ -682,7 +674,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             self.assertEqual(store.load_usage(), cumulative)
             self.assertTrue(os.path.isfile(store.usage_path))
 
-    def test_report_omits_usage_and_usage_file_keeps_book_total(self):
+    def test_resumed_workflow_keeps_book_usage_total_without_a_report(self):
         with tempfile.TemporaryDirectory() as d:
             source = os.path.join(d, "novel.txt")
             write_sample_txt(source)
@@ -699,14 +691,14 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             initial = Orchestrator(config, client=initial_client)
             store = initial.run_steps(source, {"translate"})["store"]
             self._record(initial_client, "strong", prompt=100, completion=20)
-            initial._runtime.flush_usage(store, scope="translate")
+            initial._runtime.usage.flush(store, scope="translate")
 
             resumed_client = FakeClient(handler=routing_handler)
             resumed = Orchestrator(config, client=resumed_client)
             self._record(resumed_client, "cheap", prompt=40, completion=10)
-            result = resumed.run_steps(source, {"report"})
+            result = resumed.run_steps(source, {"translate", "assemble"}, out_format="txt")
 
-            self.assertNotIn("usage", result["report"])
+            self.assertNotIn("report", result)
             usage = result["store"].load_usage()
             self.assertIsNotNone(usage)
             assert usage is not None
@@ -734,78 +726,52 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             }
         )
 
-    def test_standalone_assemble_does_not_wait_for_active_translation_lock(self):
-        with tempfile.TemporaryDirectory() as directory:
-            source = os.path.join(directory, "novel.txt")
-            output = os.path.join(directory, "translated.txt")
-            write_sample_txt(source)
-            config = self._config(directory)
-            store = Orchestrator(
-                config,
-                client=_MeteredFakeClient(handler=routing_handler),
-            ).run_steps(source, {"translate"})["store"]
-            completed = threading.Event()
-            errors: list[BaseException] = []
+    def test_export_alone_does_not_wait_for_active_translation_lock(self):
+        """Both export entry points must bypass a running translation's lock.
 
-            def export() -> None:
-                try:
-                    Orchestrator(config, client=FakeClient()).run_assemble(
-                        source,
-                        out_format="txt",
-                        out_path=output,
-                    )
-                except BaseException as error:  # pragma: no cover - asserted below
-                    errors.append(error)
-                finally:
-                    completed.set()
+        `run_assemble` and `run_steps({"assemble"})` reach the same export path, so the
+        scenario lives in one body and each entry point reports its own subtest.
+        """
+        for entry in ("run_assemble", "run_steps"):
+            with self.subTest(entry=entry), tempfile.TemporaryDirectory() as directory:
+                source = os.path.join(directory, "novel.txt")
+                output = os.path.join(directory, "translated.txt")
+                write_sample_txt(source)
+                config = self._config(directory)
+                store = Orchestrator(
+                    config,
+                    client=_MeteredFakeClient(handler=routing_handler),
+                ).run_steps(source, {"translate"})["store"]
+                completed = threading.Event()
+                errors: list[BaseException] = []
 
-            with store.lock():
-                worker = threading.Thread(target=export)
-                worker.start()
-                completed_while_translation_locked = completed.wait(2)
+                def export() -> None:
+                    try:
+                        orchestrator = Orchestrator(config, client=FakeClient())
+                        if entry == "run_assemble":
+                            orchestrator.run_assemble(source, out_format="txt", out_path=output)
+                        else:
+                            orchestrator.run_steps(
+                                source,
+                                {"assemble"},
+                                out_format="txt",
+                                out_path=output,
+                            )
+                    except BaseException as error:  # pragma: no cover - asserted below
+                        errors.append(error)
+                    finally:
+                        completed.set()
 
-            worker.join(timeout=2)
-            self.assertTrue(completed_while_translation_locked)
-            self.assertFalse(worker.is_alive())
-            self.assertEqual(errors, [])
-            self.assertTrue(os.path.isfile(output))
+                with store.lock():
+                    worker = threading.Thread(target=export)
+                    worker.start()
+                    completed_while_translation_locked = completed.wait(2)
 
-    def test_assemble_only_run_steps_does_not_wait_for_active_translation_lock(self):
-        with tempfile.TemporaryDirectory() as directory:
-            source = os.path.join(directory, "novel.txt")
-            output = os.path.join(directory, "translated.txt")
-            write_sample_txt(source)
-            config = self._config(directory)
-            store = Orchestrator(
-                config,
-                client=_MeteredFakeClient(handler=routing_handler),
-            ).run_steps(source, {"translate"})["store"]
-            completed = threading.Event()
-            errors: list[BaseException] = []
-
-            def export() -> None:
-                try:
-                    Orchestrator(config, client=FakeClient()).run_steps(
-                        source,
-                        {"assemble"},
-                        out_format="txt",
-                        out_path=output,
-                    )
-                except BaseException as error:  # pragma: no cover - asserted below
-                    errors.append(error)
-                finally:
-                    completed.set()
-
-            with store.lock():
-                worker = threading.Thread(target=export)
-                worker.start()
-                completed_while_translation_locked = completed.wait(2)
-
-            worker.join(timeout=2)
-            self.assertTrue(completed_while_translation_locked)
-            self.assertFalse(worker.is_alive())
-            self.assertEqual(errors, [])
-            self.assertTrue(os.path.isfile(output))
+                worker.join(timeout=2)
+                self.assertTrue(completed_while_translation_locked)
+                self.assertFalse(worker.is_alive())
+                self.assertEqual(errors, [])
+                self.assertTrue(os.path.isfile(output))
 
     def test_standalone_assemble_waits_for_another_export_writer(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -858,7 +824,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             with self.assertRaisesRegex(
                 ValueError, "content does not match existing translation state"
             ):
-                Orchestrator(config, client=FakeClient()).run_report(source)
+                Orchestrator(config, client=FakeClient()).run_assemble(source, out_format="txt")
 
             self.assertNotEqual(store.load_manifest()["source_sha256"], source_sha256(source))
 
@@ -898,7 +864,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
                     ValueError, "content does not match existing translation state"
                 ),
             ):
-                resumed.run_report(source)
+                resumed.run_assemble(source, out_format="txt")
 
     def test_existing_state_restores_detected_source_for_matching_target(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -914,7 +880,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             resumed_config.target_lang = "zh"
             resumed = Orchestrator(resumed_config, client=FakeClient())
 
-            resumed.run_report(source)
+            resumed.run_assemble(source, out_format="txt")
 
             self.assertEqual(resumed.config.source_lang, "ja")
             self.assertEqual(resumed.config.target_lang, "zh")

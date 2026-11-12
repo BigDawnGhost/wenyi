@@ -13,22 +13,15 @@ from pathlib import Path
 from wenyi_core.assemble.export_view import ExportViewStore
 from wenyi_core.config import Config
 from wenyi_core.i18n.languages import honorific_rule
-from wenyi_core.ingest.models import Chapter, Segment
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.postprocess.punct import normalize_zh_segments
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.protocol import Storage
 
 from tests.fake_llm import routing_handler
+from tests.pipeline_fixtures import require_file_storage
 from tests.sample_data import write_sample_txt
-
-
-def require_file_storage(store: Storage) -> FileStorage:
-    """CLI/offline tests use the file backend; narrow Storage to FileStorage for path asserts."""
-    if not isinstance(store, FileStorage):
-        raise TypeError(f"expected FileStorage, got {type(store).__name__}")
-    return store
 
 
 class TestModelLanguageDetection(unittest.TestCase):
@@ -130,6 +123,17 @@ class TestPunct(unittest.TestCase):
 
     def test_ellipsis_and_dash(self):
         self.assertEqual(normalize_zh_segments(["等等...走了--他笑了"])[0], "等等……走了——他笑了")
+
+    def test_dash_conversion_is_cjk_scoped(self):
+        # Latin contexts keep their dash runs and single em dashes (audit A-8).
+        self.assertEqual(normalize_zh_segments(["2010--2015 interval"])[0], "2010--2015 interval")
+        self.assertEqual(
+            normalize_zh_segments(["well--known — pause"])[0],
+            "well--known — pause",
+        )
+        # CJK neighbours still convert, including single em dashes between CJK.
+        self.assertEqual(normalize_zh_segments(["前—后"])[0], "前——后")
+        self.assertEqual(normalize_zh_segments(["走出——房间"])[0], "走出——房间")
 
     def test_word_final_apostrophe_is_a_right_apostrophe(self):
         self.assertEqual(normalize_zh_segments(["James' book"])[0], "James’ book")
@@ -277,8 +281,8 @@ class TestPunct(unittest.TestCase):
 
 
 class TestLanguageProfile(unittest.TestCase):
-    def test_keep_style_requires_stable_honorific_choice(self):
-        rule = honorific_rule("keep_style")
+    def test_language_pair_requires_stable_honorific_choice(self):
+        rule = honorific_rule("ja", "zh")
 
         self.assertIn("use it consistently for that relationship throughout the book", rule)
         self.assertNotIn("可酌情保留", rule)
@@ -327,7 +331,9 @@ class TestRunAll(unittest.TestCase):
             event_names = [e["event"] for e in events]
             self.assertIn("run_initialized", event_names)
             self.assertIn("batch_translated", event_names)
-            self.assertIn("report_saved", event_names)
+            self.assertNotIn("report_saved", event_names)
+            self.assertNotIn("report", result)
+            self.assertFalse(os.path.exists(os.path.join(result["store"].run_dir, "report.json")))
             self.assertIn("assembled", event_names)
             translated = next(e for e in events if e["event"] == "batch_translated")
             self.assertTrue(translated["segments"])

@@ -4,21 +4,25 @@ from __future__ import annotations
 
 import multiprocessing
 import os
-from concurrent.futures import ThreadPoolExecutor
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from contextlib import nullcontext
 from pathlib import Path
+from threading import Event
 
 import pytest
 from wenyi_core.config import Config
-from wenyi_core.glossary.store import GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Document, Segment
+from wenyi_core.errors import SchemaTooNew
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
+from wenyi_core.models.document import Chapter, Document, Segment
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.runstore import RunStore, source_sha256
 from wenyi_core.review.models import ReviewOutcome
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.protocol import Storage
-from wenyi_core.storage.sqlite import SqliteStorage, StorageBusyError
+from wenyi_core.storage.run_store import RunStore, source_sha256
+from wenyi_core.storage.sqlite import SCHEMA_VERSION, SqliteStorage, StorageBusyError
 
 
 @pytest.fixture
@@ -51,7 +55,92 @@ def document(tmp_path):
 def store(tmp_path):
     storage = SqliteStorage(str(tmp_path / "run"))
     yield storage
-    storage.close()
+    storage.close_all()
+
+
+def test_run_exit_invalidates_connections_in_reused_threads(store):
+    store.write_artifact("probe.json", {"value": 1})
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        assert pool.submit(store.read_artifact, "probe.json").result(timeout=5) == {"value": 1}
+        with store.lock():
+            pass
+        assert not store._connections
+        assert pool.submit(store.read_artifact, "probe.json").result(timeout=5) == {"value": 1}
+        pool.submit(store.write_artifact, "probe.json", {"value": 2}).result(timeout=5)
+        pool.submit(store.close).result(timeout=5)
+    assert store.read_artifact("probe.json") == {"value": 2}
+
+
+def test_close_all_waits_for_active_read_snapshot(store):
+    store.write_artifact("probe.json", {"value": 1})
+    reading, finish_read, closing = Event(), Event(), Event()
+
+    def read():
+        with store._read_lock():
+            assert store.read_artifact("probe.json") == {"value": 1}
+            reading.set()
+            assert finish_read.wait(5)
+            # A nested read must still work while close_all waits for the outer snapshot.
+            return store.read_artifact("probe.json")
+
+    def close():
+        closing.set()
+        store.close_all()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        reader = pool.submit(read)
+        assert reading.wait(5)
+        closer = pool.submit(close)
+        try:
+            assert closing.wait(5)
+            with pytest.raises(TimeoutError):
+                closer.result(timeout=0.1)
+        finally:
+            finish_read.set()
+        assert reader.result(timeout=5) == {"value": 1}
+        closer.result(timeout=5)
+    assert not store._connections
+
+
+def test_first_reader_uses_committed_snapshot_without_waiting_for_writer(store):
+    store.write_artifact("probe.json", {"value": 1})
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with store.state_lock():
+            store.write_artifact("probe.json", {"value": 2})
+            assert pool.submit(store.read_artifact, "probe.json").result(timeout=5) == {"value": 1}
+        assert pool.submit(store.read_artifact, "probe.json").result(timeout=5) == {"value": 2}
+        # Closing this thread's connection must not close the worker's connection.
+        store.close()
+        assert pool.submit(store.read_artifact, "probe.json").result(timeout=5) == {"value": 2}
+
+
+@pytest.mark.parametrize("close_method", ["close", "close_all"])
+def test_cannot_close_inside_read_snapshot(store, close_method):
+    with store._read_lock():
+        with pytest.raises(RuntimeError, match="read snapshot"):
+            getattr(store, close_method)()
+        assert store.read_artifact("missing.json") is None
+
+
+@pytest.mark.parametrize("published", [False, True])
+def test_initialization_retry_preserves_preparation_and_recovers_usage(store, published):
+    tracker = UsageTracker()
+    tracker.record("fast", UsageSample(10, 5, 15), stage="analysis")
+    ledger = tracker.summary()
+    key = "preparation/analysis/source-bound.json"
+    store.begin_initialization("a" * 64)
+    store.write_artifact(key, {"style": "restrained"})
+    store.prepare_usage_commit({"usage.json": ledger})
+    if published:
+        store.save_usage(ledger)
+    for _ in range(2):
+        store.begin_initialization("a" * 64)
+        assert store.load_usage() == ledger
+        assert store.read_artifact("usage-pending.json") is None
+        assert store.read_artifact(key) == {"style": "restrained"}
+    store.begin_initialization("b" * 64)
+    assert store.load_usage() is None
+    assert store.read_artifact(key) is None
 
 
 def test_missing_discovery_never_creates_state(tmp_path):
@@ -59,7 +148,7 @@ def test_missing_discovery_never_creates_state(tmp_path):
     store = SqliteStorage(str(root), create=False)
     assert isinstance(store, Storage)
     assert not store.exists()
-    assert store.load_context() is None
+    assert store.read_artifact("test-state.json") is None
     assert store.all_terms() == []
     assert store.list_artifacts() == []
     assert store.read_artifact_records("events.jsonl") == []
@@ -67,7 +156,7 @@ def test_missing_discovery_never_creates_state(tmp_path):
     with pytest.raises(FileNotFoundError, match="not initialized"):
         store.load_manifest()
     with pytest.raises(FileNotFoundError):
-        store.save_context({})
+        store.write_artifact("test-state.json", {})
     store.close()
     assert not root.exists()
 
@@ -148,7 +237,7 @@ def test_stage_manifest_last_and_all_major_state(store, document):
     assert store.load_chapter(3) == document.chapters[0]
     assert store.load_annotation_contexts() == {"note": "source note"}
     assert "epub_annotation_contexts" not in manifest["meta"]
-    for name in ("context", "analysis", "report", "usage"):
+    for name in ("analysis", "usage"):
         getattr(store, f"save_{name}")({"name": name})
         assert getattr(store, f"load_{name}")() == {"name": name}
     store.upsert_term(GlossaryTerm("First", "第一"), chapter=3)
@@ -178,6 +267,26 @@ def test_stage_manifest_last_and_all_major_state(store, document):
         "state.sqlite3-wal",
         "state.sqlite3-shm",
     }
+
+
+@pytest.mark.parametrize("matching_source", [True, False])
+def test_initialization_preserves_only_matching_source_preview(store, document, matching_source):
+    digest = source_sha256(document.source_path)
+    parsed = {
+        "source_sha256": digest if matching_source else "0" * 64,
+        "document": document.model_dump(mode="json"),
+    }
+    store.write_artifact("parsed_document.json", parsed)
+    store.write_artifact("preview.json", {"title": document.title})
+    store.write_artifact("analysis.json", {"stale": True})
+    for _attempt in range(2):
+        store.begin_initialization(digest)
+        assert store.read_artifact("parsed_document.json") == (parsed if matching_source else None)
+        assert store.read_artifact("preview.json") == (
+            {"title": document.title} if matching_source else None
+        )
+        assert store.load_analysis() is None
+        assert not store.exists()
 
 
 def test_initialization_failure_retry_and_source_isolation(store, document, monkeypatch):
@@ -220,13 +329,13 @@ def test_outer_transaction_includes_glossary_and_nested_rollback(store, document
     try:
         with pytest.raises(RuntimeError):
             with store.state_lock():
-                store.save_context({"temporary": True})
+                store.write_artifact("test-state.json", {"temporary": True})
                 store.upsert_term(GlossaryTerm("First", "第一"))
                 store.upsert_term(GlossaryTerm("First", "另译"))
                 chapter = store.load_chapter(3)
                 chapter.segments[0].target = "Uncommitted"
                 store.save_chapter_with_status(chapter, "done")
-                assert reader.load_context() is None
+                assert reader.read_artifact("test-state.json") is None
                 assert reader.get_term("First") is None
                 assert reader.load_chapter(3).segments[0].target is None
                 assert reader.chapter_statistics()[0]["status"] == "pending"
@@ -235,16 +344,16 @@ def test_outer_transaction_includes_glossary_and_nested_rollback(store, document
                 )
                 assert snapshot.load_chapter(3).segments[0].target is None
                 raise RuntimeError("rollback")
-        assert store.load_context() is None
+        assert store.read_artifact("test-state.json") is None
         assert store.stats() == {"terms": 0, "open_conflicts": 0}
         with store.state_lock():
-            store.save_context({"kept": True})
+            store.write_artifact("test-state.json", {"kept": True})
             with pytest.raises(ValueError):
                 with store.state_lock():
-                    store.save_context({"discarded": True})
+                    store.write_artifact("test-state.json", {"discarded": True})
                     raise ValueError("inner")
-            assert store.load_context() == {"kept": True}
-        assert reader.load_context() == {"kept": True}
+            assert store.read_artifact("test-state.json") == {"kept": True}
+        assert reader.read_artifact("test-state.json") == {"kept": True}
     finally:
         reader.close()
 
@@ -306,7 +415,7 @@ def test_usage_commit_is_atomic_idempotent_and_detects_interference(store):
     assert store.read_artifact("reviews/review-2/usage.json") is None
     assert store.read_artifact("usage-pending.json") is not None
     with pytest.raises(ValueError, match="Invalid usage"):
-        store.prepare_usage_commit({"context.json": usage})
+        store.prepare_usage_commit({"test-state.json": usage})
 
 
 def test_glossary_rules_and_wal_readonly_snapshot(store):
@@ -324,7 +433,9 @@ def test_glossary_rules_and_wal_readonly_snapshot(store):
     before = [(path.stat().st_mtime_ns, path.read_bytes()) for path in paths]
     assert snapshot.all_terms() == store.all_terms()
     assert [(path.stat().st_mtime_ns, path.read_bytes()) for path in paths] == before
-    assert snapshot._conn is None
+    # The read-only snapshot must not have opened a writable connection; it
+    # answers from the existing file instead.
+    assert getattr(snapshot._conn_local, "conn", None) is None
     store.resolve_term("Ann", "安妮")
     store.mark_conflicts_resolved("Ann")
     assert store.open_conflicts() == []
@@ -384,7 +495,7 @@ def test_cross_process_workflow_lock_contention(store, kind):
         assert child.exitcode == 0
         # Long locks must not retain a SQLite write transaction.
         other = SqliteStorage(store.run_dir, create=False)
-        other.save_context({"independent": True})
+        other.write_artifact("test-state.json", {"independent": True})
         other.close()
     with make_lock():
         pass
@@ -397,7 +508,7 @@ def test_export_history_lock_is_independent_of_rendering_and_other_projects(stor
     try:
         with store.export_history_lock(), store.export_history_lock(False):
             with other.assemble_lock(), other.export_lock(1, False), other.lock(False):
-                other.save_context({"rendering": True})
+                other.write_artifact("test-state.json", {"rendering": True})
             with unrelated.export_history_lock(False):
                 pass
             with pytest.raises(StorageBusyError):
@@ -417,7 +528,7 @@ def test_run_lock_reenters_only_on_the_owning_thread(store):
     with store.lock():
         with store.state_lock():
             with store.lock(False):
-                store.save_context({"nested": True})
+                store.write_artifact("test-state.json", {"nested": True})
         with ThreadPoolExecutor(max_workers=1) as pool:
             pool.submit(contender).result(timeout=5)
         other = SqliteStorage(store.run_dir, create=False)
@@ -427,7 +538,7 @@ def test_run_lock_reenters_only_on_the_owning_thread(store):
                     pass
         finally:
             other.close()
-    assert store.load_context() == {"nested": True}
+    assert store.read_artifact("test-state.json") == {"nested": True}
 
 
 def test_export_lock_uses_the_api_integer_identity(store):
@@ -439,7 +550,6 @@ def test_export_lock_uses_the_api_integer_identity(store):
             store.export_lock(invalid)
 
 
-@pytest.mark.skipif(os.name == "nt", reason="Windows lock compatibility is exercised in CI")
 def test_run_lock_compatible_with_legacy_runstore(store):
     legacy = RunStore(store.run_dir)
     with legacy.lock():
@@ -458,8 +568,8 @@ def test_threads_and_instances_serialize_state_and_event_appends(store):
         try:
             for _ in range(5):
                 with other.state_lock():
-                    value = other.load_context() or {"count": 0}
-                    other.save_context({"count": value["count"] + 1})
+                    value = other.read_artifact("test-state.json") or {"count": 0}
+                    other.write_artifact("test-state.json", {"count": value["count"] + 1})
                 other.log_event("thread", worker=index)
         finally:
             if other is not store:
@@ -467,7 +577,7 @@ def test_threads_and_instances_serialize_state_and_event_appends(store):
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(work, range(8)))
-    assert store.load_context() == {"count": 40}
+    assert store.read_artifact("test-state.json") == {"count": 40}
     assert len(store.list_events(limit=0)) == 40
     assert store._connection().execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     assert store._connection().execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -604,8 +714,8 @@ def _process_writes(run_dir, worker):
     try:
         for sequence in range(10):
             with store.state_lock():
-                counter = store.load_context() or {"count": 0}
-                store.save_context({"count": counter["count"] + 1})
+                counter = store.read_artifact("test-state.json") or {"count": 0}
+                store.write_artifact("test-state.json", {"count": counter["count"] + 1})
                 store.log_event("process", worker=worker, sequence=sequence)
     finally:
         store.close()
@@ -614,7 +724,7 @@ def _process_writes(run_dir, worker):
 def _process_abandon_transaction(run_dir):
     store = SqliteStorage(run_dir, create=False)
     with store.state_lock():
-        store.save_context({"uncommitted": True})
+        store.write_artifact("test-state.json", {"uncommitted": True})
         store.upsert_term(GlossaryTerm("uncommitted", "discard"))
         os._exit(0)
 
@@ -629,7 +739,7 @@ def test_process_writers_and_crash_recovery(store):
     for child in children:
         child.join(timeout=15)
         assert child.exitcode == 0
-    assert store.load_context() == {"count": 20}
+    assert store.read_artifact("test-state.json") == {"count": 20}
     events = store.list_events(limit=0)
     for worker in range(2):
         assert [row["sequence"] for row in events if row["worker"] == worker] == list(range(10))
@@ -637,9 +747,9 @@ def test_process_writers_and_crash_recovery(store):
     child.start()
     child.join(timeout=15)
     assert child.exitcode == 0
-    assert store.load_context() == {"count": 20}
+    assert store.read_artifact("test-state.json") == {"count": 20}
     assert store.get_term("uncommitted") is None
-    store.save_context({"after_crash": True})
+    store.write_artifact("test-state.json", {"after_crash": True})
 
 
 def test_legacy_json_is_not_imported(tmp_path):
@@ -736,3 +846,210 @@ def test_manifest_title_edit_reload_and_export_snapshot(store, document, cleared
     assert "title_translated" not in cleared_snapshot.load_chapter(3).meta
     assert store.chapter_statistics()[0]["title_translated"] is None
     assert snapshot.load_chapter(3).meta["title_translated"] == "Manual title"
+
+
+def test_a_new_database_records_its_schema_version(tmp_path):
+    """The guard only works if the version is written where it is read."""
+    run_dir = tmp_path / "run"
+    SqliteStorage(str(run_dir)).close_all()
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+
+def test_an_existing_database_is_stamped_without_losing_its_rows(tmp_path):
+    """Every project written before the guard reads 0 and must upgrade in place."""
+    run_dir = tmp_path / "run"
+    storage = SqliteStorage(str(run_dir))
+    storage.write_artifact("probe.json", {"value": 1})
+    storage.close_all()
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        connection.execute("PRAGMA user_version = 0")
+        connection.commit()
+    upgraded = SqliteStorage(str(run_dir))
+    assert upgraded.read_artifact("probe.json") == {"value": 1}
+    upgraded.close_all()
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+
+def test_a_database_from_a_newer_build_is_refused_before_it_is_read(tmp_path):
+    """An older build would write rows the newer one then reads as complete."""
+    run_dir = tmp_path / "run"
+    storage = SqliteStorage(str(run_dir))
+    storage.write_artifact("probe.json", {"value": 1})
+    storage.close_all()
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+        connection.commit()
+    with pytest.raises(SchemaTooNew) as refused:
+        SqliteStorage(str(run_dir))
+    assert refused.value.code == "database_schema_too_new"
+    assert "newer version of Wenyi" in str(refused.value)
+    # The refusal must not rewrite the version, or the newer build would find
+    # its own database claiming to be older than it is.
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION + 1
+
+
+def test_a_read_only_store_refuses_a_newer_database_at_the_first_read(tmp_path):
+    """Read-only opens are lazy, so the refusal has to be re-raised there too."""
+    run_dir = tmp_path / "run"
+    SqliteStorage(str(run_dir)).close_all()
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+        connection.commit()
+    reader = SqliteStorage(str(run_dir), create=False)
+    with pytest.raises(SchemaTooNew):
+        reader.read_artifact("manifest.json")
+    reader.close()
+
+
+def test_a_refused_open_leaves_no_connection_behind(tmp_path):
+    """A refused open must not be tracked, or close_all would wait on it."""
+    run_dir = tmp_path / "run"
+    SqliteStorage(str(run_dir)).close_all()
+    with sqlite3.connect(run_dir / "state.sqlite3") as connection:
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+        connection.commit()
+    writer = SqliteStorage(str(run_dir), create=False)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with pytest.raises(SchemaTooNew):
+            pool.submit(writer.write_artifact, "probe.json", {"value": 1}).result(timeout=5)
+    assert not writer._connections
+    # Draining must still work on a store whose open was refused.
+    writer.close_all()
+
+
+def test_export_snapshot_reads_the_manifest_once_for_many_chapters(store, document):
+    template = document.chapters[0]
+    document.chapters = [
+        template.model_copy(update={"index": index, "title": f"Chapter {index}"}, deep=True)
+        for index in range(20)
+    ]
+    manifest = store.init_from_document(document)
+    manifest["chapters"][5]["title_translated"] = "Fifth"
+    store.save_manifest(manifest)
+    reads = []
+    read_artifact = store.read_artifact
+
+    def track(key):
+        reads.append(key)
+        return read_artifact(key)
+
+    store.read_artifact = track
+    snapshot = store.create_export_snapshot(actual_sha256=manifest["source_sha256"])
+    assert reads.count("manifest.json") == 1
+    assert [entry["index"] for entry in snapshot.load_manifest()["chapters"]] == list(range(20))
+    assert snapshot.load_chapter(5).meta["title_translated"] == "Fifth"
+    assert "title_translated" not in snapshot.load_chapter(6).meta
+
+
+def test_chapter_snapshot_is_lazy_and_preserves_manifest_order_and_titles(
+    store, document, monkeypatch
+):
+    template = document.chapters[0]
+    template.meta["title_translated"] = "Old title"
+    document.chapters = [
+        template.model_copy(update={"index": index}, deep=True) for index in (8, 3, 5)
+    ]
+    manifest = store.init_from_document(document)
+    manifest["chapters"][0]["title_translated"] = "New title"
+    manifest["chapters"][1]["title_translated"] = None
+    store.save_manifest(manifest)
+    reads, loaded = [], []
+    read_artifact, load_chapter = store.read_artifact, store._load_chapter
+
+    def read(key):
+        reads.append(key)
+        return read_artifact(key)
+
+    def load(ci, entry):
+        loaded.append(ci)
+        return load_chapter(ci, entry)
+
+    monkeypatch.setattr(store, "read_artifact", read)
+    monkeypatch.setattr(store, "_load_chapter", load)
+    with store.read_chapters_snapshot() as chapters:
+        assert reads == ["manifest.json"]
+        assert loaded == []
+        entry, chapter = next(chapters)
+        assert entry == manifest["chapters"][0]
+        assert chapter.index == 8
+        assert chapter.meta["title_translated"] == "New title"
+        assert loaded == [8]
+        remaining = list(chapters)
+        assert [entry["index"] for entry, _ in remaining] == [3, 5]
+        assert [chapter.index for _, chapter in remaining] == [3, 5]
+        assert "title_translated" not in remaining[0][1].meta
+        assert remaining[1][1].meta["title_translated"] == "Old title"
+    assert reads.count("manifest.json") == 1
+    assert loaded == [8, 3, 5]
+
+
+def test_chapter_snapshot_is_consistent_during_concurrent_publication(store, document):
+    document.chapters.append(document.chapters[0].model_copy(update={"index": 4}, deep=True))
+    manifest = store.init_from_document(document)
+    manifest["chapters"][1]["title_translated"] = "Before"
+    store.save_manifest(manifest)
+
+    def publish():
+        try:
+            with store.state_lock():
+                chapter = store.load_chapter(4)
+                chapter.segments[0].target = "After"
+                store.save_chapter_with_status(chapter, "done")
+                updated = store.load_manifest()
+                updated["chapters"][1]["title_translated"] = "After"
+                store.save_manifest(updated)
+        finally:
+            store.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with store.read_chapters_snapshot() as chapters:
+            assert next(chapters)[1].index == 3
+            pool.submit(publish).result(timeout=5)
+            entry, chapter = next(chapters)
+            assert entry["index"] == chapter.index == 4
+            assert entry["status"] == "pending"
+            assert entry["title_translated"] == chapter.meta["title_translated"] == "Before"
+            assert chapter.segments[0].target is None
+    with store.read_chapters_snapshot() as chapters:
+        next(chapters)
+        entry, chapter = next(chapters)
+        assert entry["status"] == "done"
+        assert entry["title_translated"] == chapter.meta["title_translated"] == "After"
+        assert chapter.segments[0].target == "After"
+
+
+@pytest.mark.parametrize("stop_with_error", [False, True])
+def test_chapter_snapshot_closes_after_partial_iteration(store, document, stop_with_error):
+    document.chapters.append(document.chapters[0].model_copy(update={"index": 4}, deep=True))
+    store.init_from_document(document)
+    outcome = (
+        pytest.raises(RuntimeError, match="reader stopped") if stop_with_error else nullcontext()
+    )
+    with outcome:
+        with store.read_chapters_snapshot() as chapters:
+            assert next(chapters)[1].index == 3
+            if stop_with_error:
+                raise RuntimeError("reader stopped")
+    with pytest.raises(StopIteration):
+        next(chapters)
+    assert store._readers == 0
+    store.close()
+    assert store.exists()
+
+
+def test_chapter_snapshot_releases_reader_after_load_error(store, document):
+    manifest = store.init_from_document(document)
+    manifest["chapters"].append({"index": 4})
+    store.save_manifest(manifest)
+    with pytest.raises(FileNotFoundError, match="Chapter not found: 4"):
+        with store.read_chapters_snapshot() as chapters:
+            assert next(chapters)[1].index == 3
+            next(chapters)
+    with pytest.raises(StopIteration):
+        next(chapters)
+    assert store._readers == 0
+    store.close()
+    assert store.exists()

@@ -5,28 +5,32 @@ from dataclasses import replace
 import pytest
 from fastapi.testclient import TestClient
 from tests.fake_llm import MeteredFakeClient
-from tests.test_precision_pipeline import Handler, _config, _plan, _store
+from tests.precision_fixtures import (
+    PrecisionHandler,
+    precision_config,
+    precision_plan,
+    precision_store,
+)
 from wenyi_api import main
 from wenyi_backend.routers import chapters
-from wenyi_core.pipeline.precision import PrecisionBatchExecutor
+from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor
 from wenyi_core.storage.precision_archive import PrecisionArchive
 
 
 @pytest.fixture
 def draft_api(monkeypatch, tmp_path):
-    store = _store(tmp_path)
-    config = _config(tmp_path)
-    client = MeteredFakeClient(handler=Handler())
-    result = PrecisionBatchExecutor(client, config).execute(_plan(store), store)
+    store, config = precision_store(tmp_path), precision_config(tmp_path)
+    client = MeteredFakeClient(handler=PrecisionHandler())
+    result = PrecisionBatchExecutor(client, config).execute(precision_plan(store), store)
     chapter = store.load_chapter(0)
     for segment, target, before in zip(chapter.text_segments, result.targets, result.before_polish):
         segment.target, segment.target_before_polish = target, before
     store.save_chapter(chapter)
     PrecisionBatchExecutor.mark_published(store, result)
-    project = {"id": "draft-test", "fmt": "text"}
+    project = {"id": "draft-test", "fmt": "text", "initialized": store.exists()}
     monkeypatch.setattr(main, "settings", replace(main.settings, api_token=None))
     monkeypatch.setattr(chapters, "require_project", lambda _: project)
-    monkeypatch.setattr(chapters, "storage_for", lambda _: store)
+    monkeypatch.setattr(chapters, "read_storage_for", lambda _: store)
     http = TestClient(main.create_app())
     yield http, store, result, client, project, tmp_path
     http.close()
@@ -79,14 +83,6 @@ def test_http_drafts_missing_chapter_or_stable_segment_is_404(draft_api, ci, si)
     assert (
         http.get(f"/projects/draft-test/chapters/{ci}/segments/{si}/precision-drafts").status_code
         == 404
-    )
-
-
-def test_http_drafts_reject_subtitles(draft_api):
-    http, _, _, _, project, _ = draft_api
-    project["fmt"] = "srt"
-    assert (
-        http.get("/projects/draft-test/chapters/0/segments/11/precision-drafts").status_code == 422
     )
 
 

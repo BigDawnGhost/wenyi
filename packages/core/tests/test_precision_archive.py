@@ -6,7 +6,7 @@ from dataclasses import asdict, replace
 
 import pytest
 from wenyi_core.agents import prompts
-from wenyi_core.glossary.store import GlossaryTerm
+from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.storage.precision_archive import PrecisionArchive, safe_model_snapshot
 
 

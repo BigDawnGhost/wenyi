@@ -1,6 +1,6 @@
 """Local filesystem implementation of Storage for CLI workflows.
 
-Compose :class:`wenyi_core.pipeline.runstore.RunStore` for JSON run state with
+Compose :class:`wenyi_core.storage.run_store.RunStore` for JSON run state with
 :class:`wenyi_core.glossary.store.GlossaryStore` for the SQLite glossary.
 Domain services use the same storage interface as the Web backend.
 """
@@ -13,10 +13,10 @@ from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
 from ..glossary.store import GlossaryStore, GlossaryTerm
-from ..ingest.models import Chapter, Document
-from ..pipeline.runstore import STATUS_DONE, RunStore  # noqa: F401 (re-export)
+from ..models.document import Chapter, Document
 from .artifacts import FileArtifacts
 from .protocol import STATUS_PENDING  # noqa: F401
+from .run_store import STATUS_DONE, RunStore  # noqa: F401 (re-export)
 
 
 class FileStorage(FileArtifacts):
@@ -26,10 +26,6 @@ class FileStorage(FileArtifacts):
         FileArtifacts.__init__(self, run_dir)
         self._run = RunStore(run_dir, create=create)
         self._glossary: Optional[GlossaryStore] = None
-
-    def __getattr__(self, name: str):
-        # File-only state operations stay in RunStore; domain services receive this port.
-        return getattr(self._run, name)
 
     @property
     def _batch_glossary_event_cache(self):
@@ -98,10 +94,6 @@ class FileStorage(FileArtifacts):
     @property
     def glossary_path(self) -> str:
         return self._run.glossary_path
-
-    @property
-    def report_path(self) -> str:
-        return self._run.report_path
 
     @property
     def manifest_path(self) -> str:
@@ -180,28 +172,12 @@ class FileStorage(FileArtifacts):
     def load_chapter(self, ci: int) -> Chapter:
         return self._run.load_chapter(ci)
 
-    # Context, analysis, reports and usage.
-    def save_context(self, data: dict) -> None:
-        self._run.save_context(data)
-
-    def load_context(self) -> Optional[dict]:
-        return self._run.load_context()
-
+    # Analysis, review results and usage.
     def save_analysis(self, data: dict) -> None:
         self._run.save_analysis(data)
 
     def load_analysis(self) -> Optional[dict]:
         return self._run.load_analysis()
-
-    def save_report(self, data: dict) -> None:
-        self._run.save_report(data)
-
-    def load_report(self) -> Optional[dict]:
-        path = self._run.report_path
-        if not os.path.isfile(path):
-            return None
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
 
     def load_latest_review_result(self) -> Optional[dict]:
         return self._run.load_latest_review_result()
@@ -238,6 +214,14 @@ class FileStorage(FileArtifacts):
     # Glossary operations delegated to GlossaryStore.
     def get_term(self, source: str) -> Optional[GlossaryTerm]:
         return self._g.get_term(source)
+
+    def get_terms(self, sources: list[str]) -> list[GlossaryTerm]:
+        return self._g.get_terms(sources)
+
+    def list_terms_page(
+        self, *, q: str = "", term_type: str = "", offset: int = 0, limit: int = 100
+    ) -> tuple[list[GlossaryTerm], int]:
+        return self._g.list_terms_page(q=q, term_type=term_type, offset=offset, limit=limit)
 
     def upsert_term(self, term: GlossaryTerm, chapter: Optional[int] = None) -> str:
         return self._g.upsert_term(term, chapter=chapter)

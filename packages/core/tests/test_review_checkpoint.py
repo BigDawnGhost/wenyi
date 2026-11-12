@@ -1,9 +1,12 @@
 """Check the trace adapter against existing round-scoped files and events."""
 
 import json
+import tempfile
+import unittest
 from pathlib import Path
 
-from wenyi_core.pipeline.review_checkpoint import ReviewCheckpoint, ReviewTraceStore
+from wenyi_core.pipeline.review.review_checkpoint import ReviewCheckpoint, ReviewTraceStore
+from wenyi_core.pipeline.review.review_chunks import ReviewChunkService, order_buffered_events
 from wenyi_core.review.contracts import ReviewTrace
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.review.session import ReviewRoundResult, ReviewSessionState
@@ -70,3 +73,75 @@ def test_checkpoint_phase_fields_and_history_identity(tmp_path):
         "clean_streak",
         "fix_rounds",
     }
+
+
+class TestReviewChunkCheckpoint(unittest.TestCase):
+    def test_try_cached_subchunks_partial_hit_does_not_record(self):
+        """A partially cached subtree must not write initial snapshots before its parent
+        reruns.
+        """
+        with tempfile.TemporaryDirectory() as d:
+            debug = ReviewRunStore(d)
+            debug.start(
+                reviewed_content_digest="digest",
+                metadata={"config": {}, "glossary_fingerprint": "g"},
+            )
+            # Cache only the left half; the parent and right half remain absent.
+            debug.mark_chunk_done(
+                "r1-ch0-base0-n2",
+                {
+                    "issues": [{"index": 0, "type": "mistranslation"}],
+                    "initial_issues": [{"index": 0, "type": "mistranslation"}],
+                    "dismissed": [],
+                },
+            )
+            pieces = [object(), object(), object(), object()]
+            with debug.round_scope(1):
+                missed = ReviewChunkService.try_cached_subchunks(0, pieces, debug, "r1-", 0)
+            self.assertIsNone(missed)
+            initial, dismissed = debug.result_snapshots(1)
+            self.assertEqual(initial, [])
+            self.assertEqual(dismissed, [])
+
+            debug.mark_chunk_done(
+                "r1-ch0-base2-n2",
+                {
+                    "issues": [{"index": 0, "type": "missing"}],
+                    "initial_issues": [{"index": 0, "type": "missing"}],
+                    "dismissed": [],
+                },
+            )
+            with debug.round_scope(1):
+                hit = ReviewChunkService.try_cached_subchunks(0, pieces, debug, "r1-", 0)
+            self.assertIsNotNone(hit)
+            assert hit is not None
+            self.assertEqual(len(hit), 2)
+            initial, _dismissed = debug.result_snapshots(1)
+            self.assertEqual(len(initial), 2)
+
+
+def test_review_events_are_written_in_source_order():
+    """Chunk completion order must not reach the event log.
+
+    The pool reports chunks in whatever order they finish, so buffered events
+    are reordered by position in the chapter before they are written. Resume and
+    audit both read the log as if it followed the source.
+    """
+    finished_out_of_order = [
+        {"event": "review_leaf_finished", "chunk_base": 30, "segment_count": 5},
+        {"event": "review_leaf_finished", "chunk_base": 0, "segment_count": 7},
+        {"event": "review_singleton_retry", "start_index": 0, "count": 7, "attempt": 1},
+        {"event": "review_leaf_finished", "chunk_base": 10, "segment_count": 6},
+    ]
+
+    ordered = order_buffered_events(finished_out_of_order)
+
+    # Sorted by position in the chapter, not by the order the pool returned.
+    assert [row.get("chunk_base", row.get("start_index")) for row in ordered] == [0, 0, 10, 30]
+    # Within one position a chunk's recovery event precedes its completion.
+    assert [row["event"] for row in ordered] == [
+        "review_singleton_retry",
+        "review_leaf_finished",
+        "review_leaf_finished",
+        "review_leaf_finished",
+    ]

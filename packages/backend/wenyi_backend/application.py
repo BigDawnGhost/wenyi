@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import hmac
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import __version__
 from .context import BackendContext, ContextMiddleware
+from .errors import ApiError, api_error_handler, http_exception_handler
+from .request_context import RequestContextMiddleware
 from .routers import (
     chapters,
     configuration,
@@ -16,22 +21,30 @@ from .routers import (
     export,
     glossary,
     health,
+    metrics,
     projects,
-    report,
     review,
     settings,
     strategies,
     style,
-    subtitles,
     ws,
 )
 
 
 def create_app(
-    context: BackendContext, *, lifespan=None, origins: list[str] | None = None
+    context: BackendContext,
+    *,
+    lifespan=None,
+    origins: list[str] | None = None,
+    handle_errors: bool = True,
 ) -> FastAPI:
     app = FastAPI(lifespan=lifespan, title="Wenyi API", version=__version__)
     app.state.backend = context
+    # Codes are additive: every error keeps its previous "detail" text as well.
+    # Starlette resolves handlers by exact class, so register the base exception
+    # to also cover fastapi.HTTPException raised by the routers.
+    app.add_exception_handler(ApiError, api_error_handler)
+    app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 
     if context.api_token:
 
@@ -42,29 +55,35 @@ def create_app(
                     provided = (
                         request.headers.get("authorization", "").removeprefix("Bearer ").strip()
                     )
-                    if provided != context.api_token:
+                    # Compare bytes, not str: hmac.compare_digest rejects non-ASCII str
+                    # with TypeError, which would turn a failing check into a 500 for any
+                    # token containing non-ASCII characters. Matches the WebSocket path.
+                    if not hmac.compare_digest(provided.encode(), context.api_token.encode()):
                         return JSONResponse({"detail": "invalid api token"}, status_code=401)
                 return await call_next(request)
 
         app.add_middleware(TokenMiddleware)
 
+    allowed_origins = origins if origins is not None else ["*"]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins if origins is not None else ["*"],
-        allow_credentials=True,
+        allow_origins=allowed_origins,
+        # A wildcard deployment must not echo credentials: its origins are untrusted by
+        # definition. Explicit origin lists are admin-curated and may allow credentials.
+        allow_credentials="*" not in allowed_origins,
         allow_methods=["*"],
         allow_headers=["*"],
         expose_headers=["Content-Disposition"],
     )
     app.add_middleware(ContextMiddleware, context=context)
+    # Added last, so it is the outermost layer and can stamp every response.
+    app.add_middleware(RequestContextMiddleware, handle_errors=handle_errors)
     for module in (
         health,
         strategies,
         projects,
         configuration,
         settings,
-        report,
-        subtitles,
         chapters,
         glossary,
         review,
@@ -72,6 +91,7 @@ def create_app(
         export,
         events,
         ws,
+        metrics,
     ):
         app.include_router(module.router)
     return app

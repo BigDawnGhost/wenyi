@@ -1,13 +1,18 @@
 import type { PlatformServices, SourceDropCallbacks } from "@wenyi/ui/platform";
-import { decodeResponse, requestHeaders } from "@wenyi/ui/lib/http";
+import {
+  REQUEST_TIMEOUT_MS,
+  requestHeaders,
+  sendRequest,
+  withTimeout,
+} from "@wenyi/ui/http";
 import { translate } from "@wenyi/ui/i18n";
 
 const authToken = () => localStorage.getItem("wenyi_token");
 
 async function download(path: string, fallback: string) {
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(`/api${path}`, withTimeout({
     headers: requestHeaders(undefined, authToken()),
-  });
+  }, REQUEST_TIMEOUT_MS.download));
   if (!response.ok)
     throw new Error(translate("api.downloadFailed", {
       status: response.status, detail: response.statusText,
@@ -79,10 +84,10 @@ export const webPlatform: PlatformServices = {
       return () => window.removeEventListener("storage", changed);
     },
   },
-  request: async <T>(path: string, init?: RequestInit) =>
-    decodeResponse<T>(await fetch(`/api${path}`, {
+  request: <T>(path: string, init?: RequestInit) =>
+    sendRequest(() => fetch(`/api${path}`, withTimeout({
       ...init, headers: requestHeaders(init, authToken()),
-    })),
+    }))),
   download,
   apiBase: () => "/api",
   setAuthToken: (token) => {
@@ -96,7 +101,7 @@ export const webPlatform: PlatformServices = {
   },
   authenticateProgress: (socket) => socket.send(JSON.stringify({ token: authToken() || "" })),
   progressInterval: (_connected, fallback) => fallback,
-  progressKeys: () => ["project", "chapters", "subtitles", "workflow", "stats"],
+  progressKeys: () => ["project", "chapters", "workflow", "stats"],
   bindSourceDrop,
   capabilities: {},
 };

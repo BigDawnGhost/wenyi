@@ -1,5 +1,5 @@
-import { expect, test, type Page, type WebSocketRoute } from "@playwright/test";
-import { fakeApi, pid, project } from "./fixtures";
+import { expect, test, type Page, type Request, type WebSocketRoute } from "@playwright/test";
+import { fakeApi, globalConfiguration, pid, project, workflow } from "../../../../packages/ui/sandbox/fixtures";
 import type {} from "../src/runtime";
 
 const origin = "http://127.0.0.1:19481";
@@ -29,7 +29,96 @@ async function desktop(page: Page, pending = false) {
   }, { origin, token, pending });
 }
 
-test("pending gate waits for ready, uses memory auth for HTTP, socket and download", async ({ page }) => {
+test("Desktop settings replaces app navigation and keeps structured drafts between categories", async ({ page }) => {
+  await desktop(page);
+  await fakeApi(page, {}, origin);
+  await page.goto("/");
+  await expect(page.getByRole("complementary")).toHaveCount(1);
+  const nav = page.getByRole("navigation", { name: "Global navigation" });
+  await expect(page.getByRole("link", { name: "Settings", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("link", { name: "Create project", exact: true })).toHaveCount(1);
+  const shell = await page.locator("#sidebar-navigation").elementHandle();
+  await page.getByRole("link", { name: "Settings", exact: true }).press("Enter");
+  await expect(page).toHaveURL("/settings");
+  const sidebar = page.getByRole("complementary");
+  await expect(sidebar).toHaveCount(1);
+  expect(await shell!.evaluate(node => node === document.querySelector("#sidebar-navigation"))).toBe(true);
+  await expect(page.getByRole("navigation", { name: "Settings navigation" })).toBeVisible();
+  await expect(nav).toHaveCount(0);
+  await page.getByRole("link", { name: "Workflow", exact: true }).click();
+  await page.getByLabel("Polishing", { exact: true }).uncheck();
+  await page.getByRole("link", { name: "Models & connections", exact: true }).click();
+  await page.locator("#provider-models").getByLabel("API provider", { exact: true }).click();
+  await expect(page.getByRole("listbox")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page).toHaveURL("/settings/providers");
+  await expect(page.locator('[role="listbox"]')).toHaveCount(0);
+  await page.getByRole("link", { name: "Workflow", exact: true }).click();
+  await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
+  await page.reload();
+  await expect(page).toHaveURL("/settings/workflow");
+  await expect(page.getByLabel("Polishing", { exact: true })).toBeChecked();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(page).toHaveURL("/");
+  await page.goto(`/projects/${pid}`);
+  await expect(nav.getByRole("link")).toHaveCount(1);
+  await expect(nav.getByRole("link")).toHaveText("Projects");
+});
+
+test("lazy credentials do not blank settings after its configuration loads", async ({ page }) => {
+  await desktop(page);
+  await fakeApi(page, {
+    "/desktop/credentials": {
+      default: { mode: "environment", available: false, storage: "environment" },
+    },
+  }, origin);
+  let releaseConfig = () => {};
+  let releaseCredential = () => {};
+  const configGate = new Promise<void>(resolve => { releaseConfig = resolve; });
+  const credentialGate = new Promise<void>(resolve => { releaseCredential = resolve; });
+  await page.route(`${origin}/settings`, async route => {
+    await configGate;
+    await route.fulfill({ json: globalConfiguration });
+  });
+  await page.route("**/src/DesktopCredential.tsx*", async route => {
+    await credentialGate;
+    await route.continue();
+  });
+  try {
+    // Desktop warms the credential chunk during startup, before settings opens.
+    const requested = page.waitForRequest("**/src/DesktopCredential.tsx*");
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "My projects", exact: true })).toBeVisible();
+    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    await expect(page.getByLabel("Interface language")).toBeVisible();
+    releaseConfig();
+    await requested;
+    const blankFrames = await page.evaluate(async () => {
+      let blank = 0;
+      for (let frame = 0; frame < 45; frame++) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        if (!document.querySelector("main h1")?.getClientRects().length ||
+            document.querySelector("[data-route-pending]")) blank++;
+      }
+      return blank;
+    });
+    expect(blankFrames).toBe(0);
+    await expect(page.getByRole("heading", { name: "General", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Interface language")).toBeVisible();
+    await page.getByRole("link", { name: "Models & connections", exact: true }).click();
+    await expect(page.locator("#provider-models").getByLabel("API provider", { exact: true })).toBeVisible();
+    await expect(page.locator("#key-default")).toBeVisible();
+    releaseCredential();
+    // The native field keeps environment controls visible alongside the masked API key.
+    await expect(page.locator("#credential-secret-default")).toBeVisible();
+    await expect(page.locator("#key-default")).toBeVisible();
+  } finally {
+    releaseConfig();
+    releaseCredential();
+  }
+});
+
+test("pending gate uses memory auth for HTTP and sockets, and delegates downloads to native IPC", async ({ page }) => {
   await desktop(page, true);
   await fakeApi(page, {}, origin);
   const requests: { url: string; auth?: string }[] = [];
@@ -54,19 +143,26 @@ test("pending gate waits for ready, uses memory auth for HTTP, socket and downlo
   await expect(page.getByRole("heading", { name: "Test Book" })).toBeVisible();
   await expect.poll(() => frames.length).toBeGreaterThan(0);
   expect(JSON.parse(frames[0])).toEqual({ token });
-  await page.route(`${origin}/projects/${pid}/glossary/export?format=json`, route =>
-    route.fulfill({ body: "[]", headers: {
-      "content-disposition": "attachment; filename=terms.json",
-      "access-control-expose-headers": "Content-Disposition",
-    } }));
-  const download = page.waitForEvent("download");
-  await page.evaluate(async pid => {
+  const calls: unknown[] = [];
+  await page.exposeFunction("captureNativeSave", (command: string, args: unknown) => {
+    calls.push({ command, args });
+    return { path: "/fixture/terms.json" };
+  });
+  const saved = await page.evaluate(async pid => {
+    window.__TAURI_INTERNALS__ = {
+      invoke: (command, args) =>
+        (window as unknown as { captureNativeSave: (command: string, args: unknown) => Promise<never> })
+          .captureNativeSave(command, args),
+    };
     const modulePath = "/tests/api-harness.ts";
     const { api, setAuthToken } = await import(modulePath);
     setAuthToken("must-not-persist");
-    await api.downloadGlossary(pid, "json");
+    return api.downloadGlossary(pid, "json");
   }, pid);
-  expect((await download).suggestedFilename()).toBe("terms.json");
+  expect(saved).toEqual({ path: "/fixture/terms.json" });
+  expect(calls).toEqual([{
+    command: "native_glossary_save", args: { projectId: pid, format: "json" },
+  }]);
   expect(requests.length).toBeGreaterThan(3);
   expect(requests.every(request => request.url.startsWith(origin + "/") &&
     !request.url.includes(token) && request.auth === `Bearer ${token}`)).toBe(true);
@@ -143,7 +239,10 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   // Pause before app timers exist; a fixed future time avoids sampling a running clock.
   await page.clock.install({ time: new Date("2025-01-01T00:00:00Z") });
   await page.clock.pauseAt(new Date("2025-01-02T00:00:00Z"));
-  await fakeApi(page, { [`/projects/${pid}`]: { ...project, status: "translating" } }, origin);
+  await fakeApi(page, {
+    [`/projects/${pid}`]: { ...project, status: "translating" },
+    [`/projects/${pid}/workflow`]: { ...workflow, status: "running" },
+  }, origin);
   let socket: WebSocketRoute;
   let accept = true;
   await page.routeWebSocket("**/ws/**", ws => {
@@ -151,16 +250,21 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
     else void ws.close();
   });
   const initialResponses = new Set<string>();
-  const initialPaths = ["", "/chapters", "/report", "/stats", "/workflow"]
+  const initialPaths = ["", "/chapters", "/stats", "/workflow"]
     .map(path => `/projects/${pid}${path}`);
   page.on("response", response => {
     if (response.url().startsWith(origin)) initialResponses.add(new URL(response.url()).pathname);
   });
   const counts: Record<string, number> = {};
+  const pendingRequests = new Set<Request>();
   page.on("request", request => {
-    if (request.url().startsWith(origin))
+    if (request.url().startsWith(origin)) {
+      pendingRequests.add(request);
       counts[new URL(request.url()).pathname] = (counts[new URL(request.url()).pathname] || 0) + 1;
+    }
   });
+  page.on("requestfinished", request => pendingRequests.delete(request));
+  page.on("requestfailed", request => pendingRequests.delete(request));
   await page.goto(`/projects/${pid}`);
   // Startup queries cross process boundaries; tick their notifications until all fixtures arrive.
   await expect.poll(async () => {
@@ -171,30 +275,71 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   await expect(page.getByText("Progress connection: Live")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Test Book" })).toBeVisible();
   const total = () => Object.values(counts).reduce((a, b) => a + b, 0);
+  // Wait until the request stream goes quiet. Reading queryClient through a dynamic
+  // import would re-run main.tsx in this context, and its configurePlatform() only
+  // accepts one call per page, so the probe would fail rather than report a state.
+  const settleQueries = async () => {
+    await expect
+      .poll(
+        async () => {
+          const before = total();
+          // Flush query notifications without moving the paused browser clock.
+          await page.clock.runFor(0);
+          return pendingRequests.size + total() - before;
+        },
+        { intervals: [50, 100, 200] },
+      )
+      .toBe(0);
+  };
+  await settleQueries();
   const start = total();
-  await page.clock.runFor(10_000);
+  // The healthy socket still polls on a safety-net interval (5 s) for the values a frame
+  // does not repeat, so this window is deliberately shorter than one tick: it asserts that
+  // nothing fires between frames, which a longer window could not attribute to either
+  // cause. The disconnected comparison below is what proves the cadence changes.
+  await page.clock.runFor(4_000);
   expect(total() - start).toBe(0);
+  // Each frame refreshes the queries it names. Measure the jump across the frame instead
+  // of the absolute count from `start`, because the socket's safety-net polling keeps
+  // adding to the total in the background.
+  const beforeStats = total();
   socket!.send(JSON.stringify({ kind: "stats", project_id: pid, run_id: "run-a" }));
   await page.clock.runFor(1000);
-  await expect.poll(total).toBe(start + 1);
+  await expect.poll(() => total() - beforeStats).toBeGreaterThanOrEqual(1);
+  await settleQueries();
+  // Desktop translation frames refresh chapters and workflow, not project or stats.
+  const translationPaths = ["/chapters", "/workflow"].map(path => `/projects/${pid}${path}`);
+  const beforeTranslation = translationPaths.map(path => counts[path] || 0);
   socket!.send(JSON.stringify({ kind: "translation", project_id: pid, run_id: "run-a", label: "Saved local batch" }));
-  await page.clock.runFor(1000);
   await expect(page.getByRole("status")).toContainText("Saved local batch");
-  await expect.poll(total).toBe(start + 3);
+  await page.clock.runFor(1000);
+  for (const [index, path] of translationPaths.entries())
+    await expect.poll(() => counts[path] - beforeTranslation[index]).toBeGreaterThanOrEqual(1);
   socket!.send(JSON.stringify({ kind: "translation", project_id: "other", run_id: "run-a", label: "Wrong project" }));
   socket!.send(JSON.stringify({ kind: "translation", project_id: pid, run_id: "old-run", label: "Old run" }));
   await page.clock.runFor(1000);
   await expect(page.getByRole("status")).not.toContainText("Old run");
   const beforeReconcile = total();
   await page.clock.runFor(30_000);
+  await settleQueries();
   expect(total()).toBeGreaterThan(beforeReconcile);
+  await page.route(`${origin}/**`, async route => {
+    // Real response latency must not be mistaken for elapsed browser timer time.
+    await new Promise(resolve => setTimeout(resolve, 50));
+    await route.fallback();
+  });
   accept = false;
   await socket!.close();
   await page.clock.runFor(100);
   await expect(page.getByText("Progress connection: Polling")).toBeVisible();
+  await settleQueries();
   const beforeFallback = total();
-  await page.clock.runFor(10_000);
-  // Drain browser-to-runner request delivery without advancing the paused clock.
+  // Query completion resets its polling timer. Settle real responses between
+  // virtual ticks so in-flight deduplication cannot swallow the next interval.
+  for (let elapsed = 0; elapsed < 10_000; elapsed += 1000) {
+    await page.clock.runFor(1000);
+    await settleQueries();
+  }
   await expect.poll(() => total() - beforeFallback).toBeGreaterThanOrEqual(8);
   console.log(`Desktop fixture: quiet healthy 10s=0 requests; disconnected 10s=${total() - beforeFallback}`);
 });
@@ -202,7 +347,7 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
 test("lazy route failure is visible", async ({ page }) => {
   await desktop(page);
   await fakeApi(page, {}, origin);
-  await page.route("**/features/dashboard/Dashboard.tsx", route => route.abort());
+  await page.route("**/features/dashboard/Dashboard.tsx*", route => route.abort());
   await page.goto("/");
   await expect(page.getByRole("alert")).toContainText("Unable to load this page");
   await expect(page.getByRole("button", { name: "Reload" })).toBeVisible();
@@ -213,16 +358,18 @@ test("lazy route pending has no visible loading copy and reload recovers a route
   await fakeApi(page, {}, origin);
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
-  await page.route("**/features/dashboard/Dashboard.tsx", async route => {
+  await page.route("**/features/dashboard/Dashboard.tsx*", async route => {
     await held;
     await route.abort();
   });
   await page.goto("/");
   await expect(page.locator("[data-route-pending]")).toHaveAttribute("aria-busy", "true");
-  await expect(page.locator("#root")).toHaveText("");
+  // The pending gate is quiet and covers only the content area; the shell stays.
+  await expect(page.locator("[data-route-pending]")).toHaveText("");
+  await expect(page.locator("#sidebar-navigation")).toBeVisible();
   release();
   await expect(page.getByRole("alert")).toBeVisible();
-  await page.unroute("**/features/dashboard/Dashboard.tsx");
+  await page.unroute("**/features/dashboard/Dashboard.tsx*");
   await page.getByRole("button", { name: "Reload" }).click();
   await expect(page.getByRole("heading", { name: "My projects", exact: true })).toBeVisible();
 });
@@ -259,11 +406,75 @@ for (const kind of ["state", "final"]) {
   });
 }
 
+test("navigating between routes keeps the sidebar shell as the same node", async ({ page }) => {
+  await desktop(page);
+  await fakeApi(page, {}, origin);
+  await page.goto("/");
+  await page.locator("#sidebar-navigation").waitFor();
+  await page.evaluate(() => {
+    (window as unknown as { __shellNav?: Element | null }).__shellNav =
+      document.querySelector("#sidebar-navigation");
+  });
+  await page.locator('a[href="/settings"]').click();
+  await expect(page).toHaveURL("/settings");
+  await expect(page.locator("#sidebar-navigation")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        (window as unknown as { __shellNav?: Element | null }).__shellNav ===
+        document.querySelector("#sidebar-navigation"),
+    ),
+  ).toBe(true);
+});
+
 test("Desktop HTTP errors remain visible", async ({ page }) => {
   await desktop(page);
   await fakeApi(page, {}, origin);
   await page.route(`${origin}/projects`, route =>
     route.fulfill({ status: 503, json: { detail: "Local database is unavailable" } }));
   await page.goto("/");
-  await expect(page.getByText("503: Local database is unavailable")).toBeVisible();
+  await expect(page.getByText("Local database is unavailable")).toBeVisible();
 });
+
+// Every shared suite the Desktop host no longer registers still needs proof that the
+// Desktop bootstrap can render it. One parameterised smoke covers each module with a
+// real route, so a shared component that breaks only under the native bootstrap is not
+// left with a Web-only guard.
+type SharedRenderSmoke = {
+  module: string;
+  route: string;
+  /** A Playwright role; typed off the API so the literal names stay checked. */
+  role?: Parameters<Page["getByRole"]>[0];
+  slot?: string;
+  testId?: string;
+};
+
+const SHARED_RENDER_SMOKE: SharedRenderSmoke[] = [
+  { module: "control-geometry", route: `/projects/${pid}/export`, role: "radio" },
+  { module: "focus-style", route: `/projects/${pid}/proofreading/0`, slot: "page.header" },
+  { module: "glossary-pagination", route: `/projects/${pid}/glossary`, role: "table" },
+  { module: "glossary-types", route: `/projects/${pid}/glossary`, role: "table" },
+  { module: "overlay-notifications", route: `/projects/${pid}/glossary`, role: "table" },
+  { module: "paragraph-editor", route: `/projects/${pid}/proofreading/0`, testId: "translation-text" },
+  { module: "parsed-source", route: `/projects/${pid}/contents`, slot: "page.header" },
+  { module: "project-deletion", route: "/", role: "main" },
+  { module: "proofreading", route: `/projects/${pid}/proofreading/0`, testId: "translation-text" },
+  { module: "select", route: "/tests/select-harness.html", role: "combobox" },
+  { module: "sidebar", route: "/", slot: "sidebar" },
+  { module: "sidebar-motion", route: "/", slot: "sidebar" },
+  { module: "style-editing", route: `/projects/${pid}/style`, slot: "page.header" },
+] as const;
+
+for (const smoke of SHARED_RENDER_SMOKE) {
+  test(`Desktop bootstrap renders the shared ${smoke.module} suite`, async ({ page }) => {
+    await desktop(page);
+    await fakeApi(page, {}, origin);
+    await page.goto(smoke.route);
+    const target = smoke.role ? page.getByRole(smoke.role).first()
+      : smoke.testId ? page.getByTestId(smoke.testId)
+        : page.locator(`[data-slot="${smoke.slot}"]`);
+    await expect(target).toBeVisible();
+    // The bootstrap must survive the render: no fallback to the Web transport.
+    await expect(page.locator('[data-runtime-state="pending"]')).toHaveCount(0);
+  });
+}

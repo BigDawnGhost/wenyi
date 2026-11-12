@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Mapping
 from dataclasses import asdict, replace
 from string import Template
 from typing import Any
 
+from ..genres import compose, require_genre
 from ..languages import honorific_rule, profile, require_language
 from ..resources import read_json, read_text
 from .models import (
@@ -19,6 +19,7 @@ from .models import (
     PolicyPlan,
     ResolvedOperation,
     content_hash,
+    used_rule_keys,
 )
 from .registry import OPERATIONS, validate_bindings, validate_options
 
@@ -34,7 +35,6 @@ TASK_GROUPS = {
         "annotation_aligner",
     ),
     "review": ("reviewer", "review_agent", "review_arbiter", "review_fixer"),
-    "srt": ("srt_batch", "srt_single"),
 }
 
 
@@ -81,17 +81,22 @@ def sort_operations(
 
 
 def _rules(context: PolicyContext) -> dict[str, str]:
-    common = read_json("shared/guidance.json")
-    target = profile(context.target)
-    source = profile(context.source) if context.source != "auto" else {}
+    common = {
+        key: compose(value, genre=context.genre)
+        for key, value in read_json("shared/guidance.json").items()
+    }
+    target = profile(context.target, genre=context.genre)
+    source = profile(context.source, genre=context.genre) if context.source != "auto" else {}
     source_guidance = source.get("source_guidance", common["source"])
-    target_guidance = target["target_guidance"]
+    target_guidance = "\n".join(
+        (target["target_guidance"], read_text("shared/target_language.txt").strip())
+    )
     default_guidance = "\n".join(
         (
             source_guidance,
             target_guidance,
             common["evidence"],
-            honorific_rule("keep_style", context.source, context.target),
+            honorific_rule(context.source, context.target),
         )
     )
     return {
@@ -100,36 +105,44 @@ def _rules(context: PolicyContext) -> dict[str, str]:
         "tgt_label": target["label"],
         "target_language": target["english_name"],
         "lang_guidance": default_guidance,
-        "configured_lang_guidance": "\n".join(
-            (
-                source_guidance,
-                target_guidance,
-                common["evidence"],
-                honorific_rule(context.honorific_strategy, context.source, context.target),
-            )
-        ),
+        "configured_lang_guidance": default_guidance,
         "target_guidance": target_guidance,
-        "term_guidance": source.get("term_guidance", common["reading"]) + common["evidence"],
+        "term_guidance": source.get("term_guidance", "") + common["evidence"],
+        "reading_field": source.get("reading_field", ""),
         "punct_rule": target["punctuation_rule"],
         "title_rule": target["title_rule"],
         "digest_length": target["digest_length"],
         "synopsis_length": target["synopsis_length"],
         "review_evidence_tools": read_text("shared/review_evidence_tools.txt"),
-        "metadata_guidance": Template(read_text("shared/metadata_guidance.txt")).substitute(
-            tgt_label=target["english_name"]
-        ),
+        "metadata_guidance": Template(
+            compose(read_text("shared/metadata_guidance.txt"), genre=context.genre)
+        ).substitute(tgt_label=target["english_name"]),
     }
 
 
-def _templates(context: PolicyContext) -> tuple[tuple[str, str], ...]:
+def _template_path(task: str, *, terminology: bool) -> str:
+    """Resolve selected variants while retaining the public task names."""
+    if terminology and task == "polisher_user":
+        return "tasks/polisher_terminology_user.txt"
+    return f"tasks/{task}.txt"
+
+
+def _templates(context: PolicyContext, *, terminology: bool) -> tuple[tuple[str, str], ...]:
     if context.phase == "export":
         return ()
-    groups = context.task_groups or TASK_GROUPS["srt" if context.path == "srt" else context.phase]
+    groups = context.task_groups or TASK_GROUPS[context.phase]
+    if not terminology:
+        groups = tuple(group for group in groups if not group.startswith("terminology_"))
+    if terminology and context.phase in {"analysis", "translation"}:
+        groups += ("terminology_discover", "terminology_evidence", "terminology_merge")
     # Explicit filenames keep registry selection independent of filesystem enumeration.
     from .tasks import TASKS
 
     return tuple(
-        (task, read_text(f"tasks/{task}.txt"))
+        (
+            task,
+            compose(read_text(_template_path(task, terminology=terminology)), genre=context.genre),
+        )
         for task in TASKS
         if any(task.startswith(group + "_") for group in groups)
     )
@@ -144,32 +157,39 @@ def resolve_policy(
         context,
         source=require_language(context.source, allow_auto=True),
         target=require_language(context.target),
+        genre=require_genre(context.genre),
     )
-    if context.phase not in {"analysis", "translation", "review", "export"} or context.path not in {
-        "book",
-        "srt",
-    }:
+    if (
+        context.phase not in {"analysis", "translation", "review", "export"}
+        or context.path != "book"
+    ):
         raise ValueError("Unsupported language policy phase or workflow")
     if context.order not in {"target_first", "source_first"}:
         raise ValueError("Unsupported bilingual output order")
     overrides = overrides or {}
     validate_bindings(overrides)
     if context.phase == "export" and context.format not in (
-        ("srt",) if context.path == "srt" else ("epub", "docx", "html", "txt", "markdown", "pdf")
+        "epub",
+        "docx",
+        "html",
+        "txt",
+        "markdown",
+        "pdf",
     ):
         raise ValueError(f"Unsupported language policy export format: {context.format}")
-    if context.backend not in {"native", "weasyprint", "fpdf2", "babeldoc"}:
+    if context.backend not in {"native", "babeldoc"}:
         raise ValueError(f"Unsupported language policy backend: {context.backend}")
     bindings: dict[str, tuple[OperationBinding, tuple[str, ...]]] = {
         "prompt.language_rules": (OperationBinding(), ("common",)),
         "export.language_metadata": (OperationBinding(), ("common",)),
+        "terminology.context": (OperationBinding(), ("pipeline.terminology_context",)),
     }
     metadata: dict[str, str] = {"language_tag": context.target, "about_locale": "en"}
     conflicts: set[str] = set()
     for role, code in (("source", context.source), ("target", context.target)):
         if code == "auto":
             continue
-        language = profile(code)
+        language = profile(code, genre=context.genre)
         policy = language.get("policy", {})
         role_bindings = {
             key: OperationBinding.model_validate(value)
@@ -235,6 +255,8 @@ def resolve_policy(
             spec.point.startswith("export.")
             if context.phase == "export"
             else spec.point == "prompt.compose"
+            or spec.point == "evidence.prepare"
+            and context.phase in {"analysis", "translation"}
         )
         if not phase_matches:
             # An invocation has separate semantic/export plans. Explicit on is validated
@@ -250,6 +272,8 @@ def resolve_policy(
             reasons.append("unsupported backend")
         if key == "punctuation.zh_cn" and not context.punctuation_normalize:
             reasons.append("output.punctuation_normalize is disabled")
+        if key == "terminology.context" and not context.terminology_context:
+            reasons.append("pipeline.terminology_context is disabled")
         if binding.mode == "on" and reasons:
             raise ValueError(f"Language operation {key} is unavailable: {'; '.join(reasons)}")
         enabled = binding.mode != "off" and not reasons
@@ -293,9 +317,10 @@ def resolve_policy(
         font,
         "markup.japanese_ruby" in enabled_ids,
     )
-    templates = _templates(context)
+    terminology = "terminology.context" in enabled_ids and context.path == "book"
+    templates = _templates(context, terminology=terminology)
     rules = {} if context.phase == "export" else _rules(context)
-    used = set(re.findall(r"\$\{?(\w+)", "\n".join(text for _, text in templates)))
+    used = used_rule_keys(templates)
     effective_rules = {key: value for key, value in rules.items() if key in used}
     if any(
         task
@@ -307,7 +332,10 @@ def resolve_policy(
         for task, _ in templates
     ):
         effective_rules["configured_lang_guidance"] = rules["configured_lang_guidance"]
-    resources = tuple((f"tasks/{task}.txt", content_hash(text)) for task, text in templates)
+    resources = tuple(
+        (_template_path(task, terminology=terminology), content_hash(text))
+        for task, text in templates
+    )
     if context.phase == "export" and context.format == "epub" and context.about_page:
         resources += (
             (

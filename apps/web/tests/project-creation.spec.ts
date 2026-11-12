@@ -1,5 +1,5 @@
 import { test, expect, type Route } from "@playwright/test";
-import { configuration, fakeApi, pid, project } from "./fixtures";
+import { configuration, fakeApi, pid, project } from "../../../packages/ui/sandbox/fixtures";
 
 const preview = {
   title: "Source preview",
@@ -51,7 +51,7 @@ test("creation enters the overview while preparation continues after reload", as
     buffer: Buffer.from("fixture"),
   });
   await page
-    .getByRole("checkbox", { name: "Prepare before translating" })
+    .getByRole("switch", { name: "Prepare before translating" })
     .check();
   await page
     .getByRole("button", { name: "Create project", exact: true })
@@ -79,6 +79,7 @@ test("creation rejects empty files and recovers from an upload failure without l
   await page.route("**/api/projects", (r) => {
     if (r.request().method() !== "POST") return r.fallback();
     requests += 1;
+    if (requests === 2) return r.fulfill({ json: { ...project, status: "parsing" } });
     return r.fulfill({ status: 503, json: { detail: "Upload unavailable" } });
   });
   await page.goto("/projects/new");
@@ -105,15 +106,20 @@ test("creation rejects empty files and recovers from an upload failure without l
     buffer: Buffer.from("fixture"),
   });
   await create.click();
-  await expect(page.getByText("503: Upload unavailable")).toBeVisible();
+  await expect(page.getByText("Upload unavailable")).toBeVisible();
   await expect(page).toHaveURL("/projects/new");
   await expect(page.getByLabel("Project name", { exact: true })).toHaveValue("New book");
   await expect(page.getByText("book.docx", { exact: true })).toBeVisible();
   await expect(create).toBeEnabled();
   expect(requests).toBe(1);
+  await expect(page.getByRole("dialog", { name: "Create project", exact: true })).toBeVisible();
+  await create.click();
+  await expect(page).toHaveURL(`/projects/${pid}`);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(requests).toBe(2);
 });
 
-test("PDF parser is selected before creation and subtitles omit book preparation", async ({
+test("PDF parser is selected before creation", async ({
   page,
 }) => {
   await fakeApi(page);
@@ -134,34 +140,14 @@ test("PDF parser is selected before creation and subtitles omit book preparation
   await page.getByLabel("PDF parser", { exact: true }).click();
   await page.getByRole("option", { name: "BabelDOC", exact: true }).click();
   await page
-    .getByRole("checkbox", { name: "Prepare before translating" })
+    .getByRole("switch", { name: "Prepare before translating" })
     .check();
   await page
     .getByRole("button", { name: "Create project", exact: true })
     .click();
-  await expect(page.getByText("503: Upload unavailable")).toBeVisible();
+  await expect(page.getByText("Upload unavailable")).toBeVisible();
   expect(submitted?.pdf_backend).toBe("babeldoc");
   expect(submitted?.prepare).toBe(true);
-  expect(submitted?.translation_mode).toBe("standard");
-  expect(submitted).not.toHaveProperty("precision_concurrency");
-  await page.getByRole("radio", { name: "Three drafts + synthesis", exact: true }).check();
-  await file.setInputFiles({
-    name: "movie.srt",
-    mimeType: "text/plain",
-    buffer: Buffer.from("fixture"),
-  });
-  await expect(page.getByLabel("PDF parser", { exact: true })).toHaveCount(0);
-  await expect(page.getByRole("radio")).toHaveCount(0);
-  await expect(page.getByLabel("Parallel initial drafts (1–3)", { exact: true })).toHaveCount(0);
-  await expect(
-    page.getByRole("checkbox", { name: "Prepare before translating" }),
-  ).toHaveCount(0);
-  await page
-    .getByRole("button", { name: "Create project", exact: true })
-    .click();
-  await expect(page.getByText("503: Upload unavailable")).toBeVisible();
-  expect(submitted?.pdf_backend).toBeNull();
-  expect(submitted?.prepare).toBe(false);
   expect(submitted?.translation_mode).toBe("standard");
   expect(submitted).not.toHaveProperty("precision_concurrency");
 });
@@ -173,7 +159,7 @@ test("precision creation saves multipart options and enters the overview after r
       ...configuration,
       effective: {
         ...configuration.effective,
-        pipeline: { ...configuration.effective.pipeline, translation_mode: "best_of_three", polish: true },
+        pipeline: { ...configuration.effective.pipeline, translation_mode: "three_draft_synthesis", polish: true },
       },
     },
   });
@@ -184,11 +170,11 @@ test("precision creation saves multipart options and enters the overview after r
     await route.fulfill({ json: { ...project, fmt: "docx" } });
   });
   await page.goto("/projects/new");
-  const standard = page.getByRole("radio", { name: "Standard", exact: true });
-  const mode = page.getByRole("radio", { name: "Three drafts + synthesis", exact: true });
-  await expect(standard).toBeChecked();
-  await standard.focus();
-  await page.keyboard.press("ArrowRight");
+  const mode = page.getByRole("switch", { name: "Three drafts + synthesis", exact: true });
+  await expect(mode).not.toBeChecked();
+  await expect(page.getByRole("radio")).toHaveCount(0);
+  await mode.focus();
+  await page.keyboard.press("Space");
   await expect(mode).toBeChecked();
   await expect(page.getByRole("spinbutton")).toHaveCount(0);
   await page.getByLabel("Project name", { exact: true }).fill("Precision book");
@@ -200,7 +186,7 @@ test("precision creation saves multipart options and enters the overview after r
   await create.click();
   await expect(page).toHaveURL(`/projects/${pid}`);
   await expect(page.getByRole("heading", { name: "Translation overview", exact: true, level: 2 })).toBeVisible();
-  expect(submitted?.translation_mode).toBe("best_of_three");
+  expect(submitted?.translation_mode).toBe("three_draft_synthesis");
   expect(submitted).not.toHaveProperty("precision_concurrency");
   await page.reload();
   await expect(page).toHaveURL(`/projects/${pid}`);
@@ -263,11 +249,11 @@ test("creation with a failed preparation queue enters the overview and retries a
   ).toBeEnabled();
 });
 
-test("Chinese creation fits mobile and enters the overview before parsing finishes", async ({
+test("Chinese creation fits a compact desktop window and opens the overview before parsing finishes", async ({
   page,
 }) => {
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1024, height: 844 });
   await fakeApi(page);
   let ready = false;
   await page.route("**/api/projects", (r) => {
@@ -294,20 +280,19 @@ test("Chinese creation fits mobile and enters the overview before parsing finish
   });
   await page.goto("/projects/new");
   await page.getByLabel("项目名称", { exact: true }).fill("新书翻译");
-  await page.getByRole("radio", { name: "三译合润", exact: true }).check();
+  await page.getByRole("switch", { name: "三译合润", exact: true }).check();
   await expect(page.getByRole("spinbutton")).toHaveCount(0);
-  await expect(page.getByText("精翻自动为本项目启用润色，不受全局设置影响。", { exact: false })).toBeVisible();
   await page.getByLabel("上传原文", { exact: true }).setInputFiles({
     name: "原文.docx",
     mimeType: "application/octet-stream",
     buffer: Buffer.from("fixture"),
   });
   await expect(
-    page.getByRole("checkbox", { name: "创建后执行译前准备" }),
+    page.getByRole("switch", { name: "创建后执行译前准备" }),
   ).not.toBeChecked();
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth),
-  ).toBeLessThanOrEqual(390);
+  ).toBeLessThanOrEqual(1024);
   await page.getByRole("button", { name: "创建项目", exact: true }).click();
   await expect(page).toHaveURL(`/projects/${pid}`);
   await expect(page.getByText("解析中", { exact: true })).toBeVisible();

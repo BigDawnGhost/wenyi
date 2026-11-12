@@ -1,16 +1,17 @@
-import { useEffect, useState } from "react";
-import { Link, Navigate, useParams } from "react-router-dom";
+import { useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { useI18n } from "@/i18n";
-import { statusLabel } from "@/i18n/status";
-import { api, isProjectBusy } from "@/lib/api";
-import { useProjectProgress } from "@/lib/ws";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Select, SelectItem } from "@/components/ui/select";
-import { StatusBadge } from "@/components/StatusBadge";
-import { ErrorNotice } from "@/components/ui/data";
+import { toast } from "../../lib/toast";
+import { useI18n } from "../../i18n";
+import { statusLabel } from "../../i18n/status";
+import { api, isProjectBusy } from "../../api/client";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { useProjectProgress } from "../../lib/ws";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Select, SelectItem } from "../../components/ui/select";
+import { StatusBadge } from "../../components/StatusBadge";
+import { ErrorNotice } from "../../components/ui/data";
 import { ReviewIssues } from "./ReviewIssues";
 import { ReviewActivity } from "./ReviewActivity";
 import { reviewPhase, reviewProgress } from "./reviewData";
@@ -24,45 +25,32 @@ function ReviewWorkbench({ pid }: { pid: string }) {
   const { t, locale } = useI18n();
   const qc = useQueryClient();
   const [selected, setSelected] = useState<string>();
-  const project = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-    refetchInterval: 3000,
-  });
-  const subtitle = project.data?.fmt === "srt";
+  const project = useProjectQuery(pid);
+  const busy = isProjectBusy(project.data?.status);
   const chapters = useQuery({
     queryKey: ["chapters", pid],
     queryFn: () => api.listChapters(pid),
-    enabled: !subtitle,
-    refetchInterval: 4000,
+    refetchInterval: busy ? 4000 : false,
   });
   const runs = useQuery({
     queryKey: ["review-runs", pid],
     queryFn: () => api.listReviewRuns(pid),
-    enabled: !subtitle,
-    refetchInterval: 3000,
+    refetchInterval: busy ? 3000 : false,
   });
   const rid = selected || runs.data?.[0]?.id;
   const historical = !!selected && selected !== runs.data?.[0]?.id;
-  const busy = isProjectBusy(project.data?.status);
   const workflow = useQuery({
     queryKey: ["workflow", pid],
     queryFn: () => api.getWorkflow(pid),
-    enabled: !subtitle,
-    refetchInterval: 3000,
+    refetchInterval: busy ? 3000 : false,
   });
-  const { msg } = useProjectProgress(subtitle ? undefined : pid);
+  const { msg } = useProjectProgress(pid);
   const run = useQuery({
     queryKey: ["review-run", pid, rid],
     queryFn: () => api.getReviewRun(pid, rid!),
-    enabled: !!rid && !subtitle,
+    enabled: !!rid,
     refetchInterval: !historical && busy ? 3000 : false,
   });
-  useEffect(() => {
-    // A terminal status can arrive through polling while the socket is disconnected.
-    if (!busy && rid && !historical)
-      qc.invalidateQueries({ queryKey: ["review-run", pid, rid] });
-  }, [busy, historical, pid, qc, rid]);
   const progress = reviewProgress(pid, workflow.data, msg);
   const job = workflow.data;
   const active = job?.status === "running" || job?.status === "queued";
@@ -103,25 +91,25 @@ function ReviewWorkbench({ pid }: { pid: string }) {
     runs.isLoading ||
     (!!rid && run.isLoading) ||
     workflow.isLoading;
+  // Query errors make the page unreadable, so they also hide the submit button. A
+  // failed submit must not hide the retry button: it is the only path that clears the
+  // mutation error, so review.error stays out of this condition and is shown below.
   const error =
     project.error ||
     chapters.error ||
     runs.error ||
     run.error ||
-    workflow.error ||
-    review.error;
-  if (subtitle) return <Navigate to={`/projects/${pid}/subtitles`} replace />;
+    workflow.error;
   return (
     <>
       <PageHeader
         title={t("common.wholeBookReview")}
-        subtitle={t("review.inspectReviewIssuesEvidenceSuggestedRevisionsAnd")}
         actions={
           <>
             {(runs.data?.length || 0) > 1 && (
               <Select
                 aria-label={t("review.history")}
-                className="w-full sm:w-auto sm:max-w-72"
+                className="w-auto max-w-72"
                 value={rid || ""}
                 onValueChange={(value) =>
                   setSelected(
@@ -160,7 +148,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
         }
       />
       <PageContainer className="space-y-5">
-        <ErrorNotice error={error} />
+        <ErrorNotice error={error || review.error} />
         {historical && (
           <div className="flex flex-wrap items-center gap-3 text-sm">
             <span className="text-muted-foreground">
@@ -175,8 +163,8 @@ function ReviewWorkbench({ pid }: { pid: string }) {
           <ReviewActivity pid={pid} status={job!.status} progress={progress} />
         )}
         {!historical && busy && !reviewing && !showActivity && (
-          <p className="text-sm text-muted-foreground">
-            {t("review.waitingTask")}{" "}
+          <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+            {t("review.waitingTask")}
             <Link
               className="underline underline-offset-4"
               to={`/projects/${pid}`}
@@ -190,7 +178,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
             {t("review.generating")}
           </p>
         )}
-        {loading && (
+        {loading && !run.data && (
           <p role="status" className="text-sm text-muted-foreground">
             {t("progress.loading")}
           </p>
@@ -244,7 +232,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
         {!loading && !error && !run.data && !reviewing && (
           <div className="space-y-2 rounded-lg border p-5 text-sm text-muted-foreground">
             <p>{t("review.noReviewYet")}</p>
-            {!translated && (
+            {!chapters.isPending && !translated && (
               <p>{t("review.wholeBookReviewIsAvailableOnceAll")}</p>
             )}
           </div>

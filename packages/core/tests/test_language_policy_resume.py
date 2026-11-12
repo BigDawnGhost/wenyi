@@ -2,78 +2,15 @@
 
 import pytest
 from wenyi_core.config import Config
+from wenyi_core.glossary.store import GlossaryTerm
+from wenyi_core.i18n.languages import honorific_rule
 from wenyi_core.i18n.resources import read_json, read_text
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.pipeline.language_policies import CHECKPOINT
 from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.run.language_policies import CHECKPOINT
 from wenyi_core.storage.file import FileStorage
 
 from tests.fake_llm import routing_handler
-
-
-def test_subtitle_revision_keeps_completed_cues_and_rejects_old_window_cache(tmp_path, monkeypatch):
-    import json
-
-    from wenyi_core.srt.store import SrtRunStore
-    from wenyi_core.srt.translate import translate_srt
-
-    source = tmp_path / "sample.srt"
-    source.write_text(
-        "1\n00:00:01,000 --> 00:00:02,000\nOne.\n\n"
-        "2\n00:00:02,000 --> 00:00:03,000\nTwo.\n\n"
-        "3\n00:00:03,000 --> 00:00:04,000\nThree.\n\n"
-    )
-    config = Config.from_dict(
-        {
-            "language": {"source": "en", "target": "zh"},
-            "llm": {"preset": "fake"},
-            "paths": {"state_dir": str(tmp_path / "state")},
-        }
-    )
-    store = SrtRunStore.for_source(config.state_dir, str(source), "zh")
-    plan = config.language_policy("translation", path="srt")
-    store.ensure_manifest(str(source), cue_count=3, source_lang="en", plan=plan)
-    cues = store.ensure_cues(
-        [
-            ("1", "00:00:01,000 --> 00:00:02,000", "One."),
-            ("2", "00:00:02,000 --> 00:00:03,000", "Two."),
-            ("3", "00:00:03,000 --> 00:00:04,000", "Three."),
-        ]
-    )
-    store.save_cues(store.apply_translations(cues, {"1": "保留人工译文。"}))
-    store.save_batch(0, {"1": "旧缓存一", "2": "旧缓存二", "3": "旧缓存三"})
-    monkeypatch.setattr(
-        "wenyi_core.i18n.policy.resolver.read_text",
-        lambda path: (
-            read_text(path)
-            + ("\nKeep source evidence." if path == "tasks/srt_batch_system.txt" else "")
-        ),
-    )
-    client = FakeClient(
-        handler=lambda messages, tier, json_mode: json.dumps(
-            {"1": "新译文一", "2": "新译文二", "3": "新译文三"}, ensure_ascii=False
-        )
-    )
-    result = translate_srt(str(source), config, client=client)
-    assert result["translated"] == 3
-    assert [call["operation"] for call in client.calls] == ["srt.translate"]
-    assert {index: row["target"] for index, row in store.load_cues().items()} == {
-        "1": "保留人工译文。",
-        "2": "新译文二",
-        "3": "新译文三",
-    }
-    export_events = [
-        row
-        for row in store._artifacts.read_artifact_records("events.jsonl")
-        if row.get("event") == "language_policy_resolved" and row.get("phase") == "export"
-    ]
-    assert len(export_events) == 1
-    export = store.read_artifact(export_events[0]["artifact"])
-    assert export is not None
-    assert export["context"]["path"] == "srt"
-    assert export["context"]["format"] == "srt"
-    assert export["context"]["source_identity"]
-    assert all(not operation["enabled"] for operation in export["selections"])
 
 
 def book(tmp_path):
@@ -98,7 +35,7 @@ def book(tmp_path):
 
 @pytest.mark.parametrize("fresh_process", [False, True])
 def test_changed_semantic_revision_refreshes_pending_work_and_keeps_completed_targets(
-    tmp_path, fresh_process
+    tmp_path, monkeypatch, fresh_process
 ):
     source, config, store = book(tmp_path)
     initial_client = FakeClient(handler=routing_handler)
@@ -106,7 +43,10 @@ def test_changed_semantic_revision_refreshes_pending_work_and_keeps_completed_ta
     initial.run(str(source), only_chapter=0)
     saved = store.load_chapter(0).model_dump()
     initial_manifest = store.load_manifest()
-    config.honorific_strategy = "normalize"
+    monkeypatch.setattr(
+        "wenyi_core.i18n.policy.resolver.honorific_rule",
+        lambda src, tgt: honorific_rule(src, tgt) + "\nKeep forms of address grounded in context.",
+    )
     client = FakeClient(handler=routing_handler) if fresh_process else initial_client
     previous_calls = len(client.calls)
     resumed = Orchestrator(config, client=client, storage=store) if fresh_process else initial
@@ -115,9 +55,47 @@ def test_changed_semantic_revision_refreshes_pending_work_and_keeps_completed_ta
     assert all(segment.target is not None for segment in store.load_chapter(1).text_segments)
     assert "analysis.style" not in [call["operation"] for call in client.calls[previous_calls:]]
     assert store.load_manifest()["language_policies"] == initial_manifest["language_policies"]
+    translation = next(
+        call for call in client.calls[previous_calls:] if call["operation"] == "translation.body"
+    )
+    assert "Keep forms of address grounded in context." in translation["messages"][0]["content"]
 
 
-def test_missing_identity_rebuilds_analysis_and_failed_rebuild_is_resumable(tmp_path, monkeypatch):
+@pytest.mark.parametrize("initial_genre", ["literary", "academic"])
+def test_genre_switch_rebuilds_analysis_for_pending_work_but_keeps_completed_targets(
+    tmp_path, initial_genre
+):
+    source, config, store = book(tmp_path)
+    config.set_prompt_genre(initial_genre)
+    Orchestrator(config, client=FakeClient(handler=routing_handler), storage=store).run(
+        str(source), only_chapter=0
+    )
+    saved = store.load_chapter(0).model_dump()
+    previous = store.read_artifact(CHECKPOINT)
+    assert previous is not None
+
+    next_genre = "academic" if initial_genre == "literary" else "literary"
+    config.set_prompt_genre(next_genre)
+    client = FakeClient(handler=routing_handler)
+    Orchestrator(config, client=client, storage=store).run(str(source))
+    assert store.load_chapter(0).model_dump() == saved
+    current = store.read_artifact(CHECKPOINT)
+    assert current is not None
+    assert current["analysis"] != previous["analysis"]
+    assert "analysis.style" in [call["operation"] for call in client.calls]
+    translations = [call for call in client.calls if call["operation"] == "translation.body"]
+    assert len(translations) == 1
+    assert f"{next_genre} translator" in translations[0]["messages"][0]["content"]
+    assert all(segment.target is not None for segment in store.load_chapter(1).text_segments)
+    calls = len(client.calls)
+    Orchestrator(config, client=client, storage=store).run(str(source))
+    assert len(client.calls) == calls
+
+
+@pytest.mark.parametrize("cached", [False, True])
+def test_missing_identity_rebuilds_analysis_and_failed_rebuild_is_resumable(
+    tmp_path, monkeypatch, cached
+):
     source, config, store = book(tmp_path)
     Orchestrator(config, client=FakeClient(handler=routing_handler), storage=store).run(str(source))
     saved = [store.load_chapter(index).model_dump() for index in (0, 1)]
@@ -127,6 +105,9 @@ def test_missing_identity_rebuilds_analysis_and_failed_rebuild_is_resumable(tmp_
     analysis.pop("style_policy")
     analysis.pop("language_policy")
     store.save_analysis(analysis)
+    if not cached:
+        for key in store.list_artifacts("preparation/analysis/"):
+            store.delete_artifact(key)
     client = FakeClient(handler=routing_handler)
     resumed = Orchestrator(config, client=client, storage=store)
     monkeypatch.setattr(
@@ -134,6 +115,12 @@ def test_missing_identity_rebuilds_analysis_and_failed_rebuild_is_resumable(tmp_
         "analyze",
         lambda sample: (_ for _ in ()).throw(KeyboardInterrupt()),
     )
+    if cached:
+        resumed.run(str(source))
+        assert client.calls == []
+        assert store.read_artifact(CHECKPOINT) != {}
+        assert [store.load_chapter(index).model_dump() for index in (0, 1)] == saved
+        return
     with pytest.raises(KeyboardInterrupt):
         resumed.run(str(source))
     assert store.read_artifact(CHECKPOINT) == {}
@@ -167,6 +154,38 @@ def test_builtin_analysis_change_rebuilds_analysis_without_retranslating(tmp_pat
     assert current is not None
     assert current["analysis"] != previous["analysis"]
     assert current["translation"] == previous["translation"]
+
+
+def test_target_language_revision_preserves_saved_translations_and_glossary(tmp_path, monkeypatch):
+    source, config, store = book(tmp_path)
+    Orchestrator(config, client=FakeClient(handler=routing_handler), storage=store).run(
+        str(source), only_chapter=0
+    )
+    store.upsert_term(GlossaryTerm(source="灯台", target="灯塔", note="User-approved wording."))
+    saved_chapter = store.load_chapter(0).model_dump()
+    saved_analysis = store.load_analysis()
+    saved_terms = store.all_terms()
+    monkeypatch.setattr(
+        "wenyi_core.i18n.policy.resolver.read_text",
+        lambda path: (
+            read_text(path)
+            + (
+                "\nUse the revised target-language requirements."
+                if path == "shared/target_language.txt"
+                else ""
+            )
+        ),
+    )
+    client = FakeClient(handler=routing_handler)
+    Orchestrator(config, client=client, storage=store).run(str(source))
+    assert store.load_chapter(0).model_dump() == saved_chapter
+    assert store.load_analysis() == saved_analysis
+    assert store.all_terms() == saved_terms
+    assert all(segment.target is not None for segment in store.load_chapter(1).text_segments)
+    assert "analysis.style" not in [call["operation"] for call in client.calls]
+    call_count = len(client.calls)
+    Orchestrator(config, client=client, storage=store).run(str(source))
+    assert len(client.calls) == call_count
 
 
 def test_builtin_font_and_unused_languages_do_not_invalidate_paid_checkpoints(

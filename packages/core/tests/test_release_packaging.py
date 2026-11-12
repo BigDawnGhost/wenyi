@@ -13,11 +13,14 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.packaging
+
 ROOT = Path(__file__).resolve().parents[3]
 
 
 def script(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
+    path = next((ROOT / "scripts").rglob(f"{name}.py"))
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -198,16 +201,35 @@ def test_windows_installers_remain_direct_files(tmp_path):
     assert all(p.read_bytes() == b"installer" for p in outputs)
 
 
-def test_macos_collects_only_the_requested_dmg(tmp_path):
+@pytest.mark.parametrize(
+    ("platform", "arch", "other_arch"),
+    [("macos-arm64", "aarch64", "x64"), ("macos-x64", "x64", "aarch64")],
+)
+def test_macos_collects_only_the_requested_dmg(tmp_path, platform, arch, other_arch):
     source = tmp_path / "bundle"
     (source / "dmg").mkdir(parents=True)
-    (source / "dmg/Wenyi Desktop_1.2.3_aarch64.dmg").write_bytes(b"installer")
-    (source / "dmg/Wenyi Desktop_0.0.1_aarch64.dmg").write_bytes(b"old")
+    (source / f"dmg/Wenyi Desktop_1.2.3_{arch}.dmg").write_bytes(b"installer")
+    (source / f"dmg/Wenyi Desktop_0.0.1_{arch}.dmg").write_bytes(b"old")
+    (source / f"dmg/Wenyi Desktop_1.2.3_{other_arch}.dmg").write_bytes(b"other architecture")
     outputs = script("package_release").desktop_assets(
-        source, tmp_path / "assets", "1.2.3", "macos-arm64", "Wenyi Desktop"
+        source, tmp_path / "assets", "1.2.3", platform, "Wenyi Desktop"
     )
-    assert [p.name for p in outputs] == ["wenyi-desktop-1.2.3-macos-arm64.dmg"]
+    assert [p.name for p in outputs] == [f"wenyi-desktop-1.2.3-{platform}.dmg"]
     assert outputs[0].read_bytes() == b"installer"
+
+
+@pytest.mark.parametrize(
+    ("platform", "other_arch"), [("macos-arm64", "x64"), ("macos-x64", "aarch64")]
+)
+def test_macos_cannot_collect_other_architecture(tmp_path, platform, other_arch):
+    source = tmp_path / "bundle"
+    (source / "dmg").mkdir(parents=True)
+    (source / f"dmg/Wenyi Desktop_1.2.3_{other_arch}.dmg").write_bytes(b"other architecture")
+    with pytest.raises(ValueError, match=f"Missing {platform} 1.2.3"):
+        script("package_release").desktop_assets(
+            source, tmp_path / "assets", "1.2.3", platform, "Wenyi Desktop"
+        )
+    assert not (tmp_path / "assets").exists()
 
 
 def test_collector_does_not_mix_previous_output_with_this_release(tmp_path):
@@ -269,11 +291,33 @@ def test_sidecar_rebuilds_local_packages_instead_of_reusing_cached_wheels(monkey
         assert ("--reinstall-package", package) in set(zip(sync, sync[1:]))
 
 
+def test_sidecar_smoke_test_uses_a_private_user_profile(monkeypatch, tmp_path):
+    sidecar = script("desktop_sidecar")
+    real = tmp_path / "real-profile"
+    monkeypatch.setenv("HOME", str(real))
+    monkeypatch.setenv("USERPROFILE", str(real))
+    monkeypatch.setenv("XDG_DATA_HOME", str(real / "data"))
+    launches = []
+
+    def launch(executable, workspace, env, **kwargs):
+        profile = Path(env["HOME"])
+        assert profile.is_dir() and workspace.parent == profile.parent
+        launches.append(env)
+
+    monkeypatch.setattr(sidecar, "smoke_launch", launch)
+    sidecar.smoke_test(tmp_path / "wenyi-engine")
+    assert len(launches) == 2
+    for env in launches:
+        # The engine resolves the shared catalog from these, so none may name the real one.
+        assert env["HOME"] == env["USERPROFILE"] != str(real)
+        assert "XDG_DATA_HOME" not in env
+
+
 @pytest.mark.parametrize("dockerfile", ["Dockerfile.api", "Dockerfile.api.buildx"])
 def test_web_images_do_not_reuse_cached_local_package_versions(dockerfile):
     text = (ROOT / "docker" / dockerfile).read_text().replace("\\\n", " ")
-    commands = re.findall(r"uv sync [^;]+;", text)
-    assert len(commands) == 2
+    commands = re.findall(r"uv sync [^&;\n]+", text)
+    assert len(commands) == 1
     for command in commands:
         assert "--no-cache" in command or all(
             f"--reinstall-package {package}" in command
@@ -297,4 +341,272 @@ def test_workflows_separate_components():
         assert "--clobber" not in text
         assert "tag_name" in text
         assert "tar.gz" not in text
-        assert document["jobs"]["release"]["if"] == "github.event_name == 'release'"
+        expected = "github.event_name == 'release'"
+        if component == "desktop":
+            expected += " || (github.event_name == 'workflow_dispatch' && inputs.publish)"
+        assert document["jobs"]["release"]["if"] == expected
+
+
+@pytest.mark.parametrize(
+    ("tag", "published_stable", "gh_exit_code", "accepted"),
+    [
+        ("v1.5.0", "true", 0, True),
+        ("1.5.0", "true", 0, True),
+        ("", "true", 0, False),
+        ("main", "true", 0, False),
+        ("v1.5.0rc1", "true", 0, False),
+        ("v01.5.0", "true", 0, False),
+        ("v1.5.0", "false", 0, False),
+        ("v1.5.0", "true", 1, False),
+    ],
+)
+def test_desktop_rebuild_preflight_requires_an_existing_stable_release(
+    tag, published_stable, gh_exit_code, accepted
+):
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/desktop.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    preflight = next(
+        step
+        for step in document["jobs"]["plan"]["steps"]
+        if step.get("name") == "Validate published release rebuild"
+    )
+    assert preflight["shell"] == "bash"
+    assert "--json isDraft,isPrerelease" in preflight["run"]
+    bash = "bash"
+    if os.name == "nt":
+        # PATH may resolve bash to the WSL launcher rather than Git for Windows.
+        git_root = Path(git(ROOT, "--exec-path")).parents[2]
+        git_bash = git_root / "bin" / "bash.exe"
+        assert git_bash.is_file(), "Git for Windows Bash is required for workflow checks"
+        bash = str(git_bash)
+    # Override gh in this shell so the actual workflow guard runs entirely offline.
+    fake_gh = 'gh() { printf "%s\\n" "$PUBLISHED_STABLE"; return "$GH_EXIT_CODE"; }\n'
+    shell_script = "printf '%s\\n' workflow-guard-started\n" + fake_gh + preflight["run"]
+    result = subprocess.run(
+        [bash, "-eu", "-c", shell_script],
+        env={
+            **os.environ,
+            "TAG": tag,
+            "PUBLISHED_STABLE": published_stable,
+            "GH_EXIT_CODE": str(gh_exit_code),
+        },
+        text=True,
+        capture_output=True,
+    )
+    # A shell-launch failure must not pass as an expected admission rejection.
+    assert "workflow-guard-started\n" in result.stdout, result.stdout + result.stderr
+    assert (result.returncode == 0) is accepted, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("file", ["tests.yml", "build.yml", "desktop.yml"])
+def test_workflows_use_main_as_the_only_trunk(file):
+    import yaml
+
+    document = yaml.load((ROOT / ".github/workflows" / file).read_text(), Loader=yaml.BaseLoader)
+    events = document["on"]
+    assert events["pull_request"]["branches"] == ["main"]
+    if file == "tests.yml":
+        assert events["push"]["branches"] == ["main"]
+        assert "paths" not in events["pull_request"]
+        assert "paths-ignore" not in events["pull_request"]
+    elif file == "desktop.yml":
+        # The desktop workflow listens to main only to warm the Rust caches, but
+        # the packaging job must never run there: four runners would burn on
+        # artefacts nobody consumes.
+        assert events["push"]["branches"] == ["main"]
+        jobs = document["jobs"]
+        assert jobs["local-package"]["if"] == "github.event_name != 'push'"
+        assert jobs["cargo-warm"]["if"] == "github.event_name == 'push'"
+    else:
+        assert "push" not in events
+
+
+def test_desktop_workflow_builds_native_macos_installers_and_updates():
+    import json
+
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/desktop.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    jobs = document["jobs"]
+    # The platform list is produced by the plan job so a pull request can run a
+    # reduced subset; the full list is the non-pull-request branch of that step.
+    plan_step = next(step for step in jobs["plan"]["steps"] if step.get("id") == "set")
+    script = plan_step["run"]
+    lines = script.splitlines()
+    # The outer if/else picks the event; the inner one only picks the Linux tier.
+    outer_else = next(i for i, line in enumerate(lines) if line.strip() == "else")
+    full_line = next(line for line in lines[outer_else:] if "matrix='" in line)
+    matrix_json = full_line.split("matrix='", 1)[1].rsplit("'", 1)[0]
+    matrix = {entry["platform"]: entry for entry in json.loads(matrix_json)}
+    assert set(matrix) == {"windows-x64", "linux-x64", "macos-arm64", "macos-x64"}
+    for platform, runner in [("macos-arm64", "macos-15"), ("macos-x64", "macos-15-intel")]:
+        assert matrix[platform]["os"] == runner
+        assert matrix[platform]["bundles"] == "dmg"
+        assert matrix[platform]["signed_bundles"] == "dmg,app"
+
+    # A pull request keeps one Linux leg, and its tier follows the changed paths:
+    # desktop changes need the full packaging run, business code does not.
+    pr_lines = lines[:outer_else]
+    pr_block = "\n".join(pr_lines)
+    assert "tier=full" in pr_block and "tier=test" in pr_block
+    assert "$DESKTOP_CHANGED" in pr_block
+    assert '\\"platform\\":\\"linux-x64\\",\\"tier\\":\\"${tier}\\' in pr_block
+    assert "windows-x64" in pr_block and "smoke" in pr_block
+    # The filter must cover every path the packaging path consumes, including
+    # this workflow file so a change to the tiering itself still builds fully.
+    filters = next(
+        step["with"]["filters"] for step in jobs["plan"]["steps"] if step.get("id") == "filter"
+    )
+    for expected in (
+        "apps/desktop/**",
+        "scripts/dev/desktop*",
+        "scripts/release/desktop_updates.py",
+        "package.json",
+        "pnpm-lock.yaml",
+        ".github/workflows/desktop.yml",
+    ):
+        assert expected in filters, expected
+
+    job = jobs["local-package"]
+    assert job["needs"] == "plan"
+    assert "needs.plan.outputs.matrix" in job["strategy"]["matrix"]
+    build = next(
+        step["run"]
+        for step in job["steps"]
+        if step.get("run", "").startswith("pnpm desktop:build ")
+    )
+    assert (
+        "steps.updater.outputs.signed == 'true' && matrix.signed_bundles || matrix.bundles"
+    ) in build
+
+
+def test_cli_workflow_builds_every_platform_on_release_only():
+    import json
+
+    import yaml
+
+    document = yaml.load((ROOT / ".github/workflows/build.yml").read_text(), Loader=yaml.BaseLoader)
+    jobs = document["jobs"]
+    # The platform list comes from the plan job so a pull request builds only one
+    # leg; the full list is the else branch, used by release and dispatch.
+    script = jobs["plan"]["steps"][0]["run"]
+    pr_block = script.split("if", 1)[1].split("else", 1)[0]
+    full_block = script.split("else", 1)[1].split("fi", 1)[0]
+    pr_matrix = json.loads(pr_block.split("matrix='", 1)[1].rsplit("'", 1)[0])
+    full_matrix = json.loads(full_block.split("matrix='", 1)[1].rsplit("'", 1)[0])
+
+    # A pull request keeps exactly one packaging signal on the cheapest runner.
+    assert [leg["platform"] for leg in pr_matrix] == ["linux-x64"]
+    assert pr_matrix[0]["runner"] == "ubuntu-latest"
+
+    # A release still builds every platform with its original runner and checks.
+    by_platform = {leg["platform"]: leg for leg in full_matrix}
+    assert set(by_platform) == {
+        "windows-x64",
+        "linux-x64",
+        "linux-arm64",
+        "macos-arm64",
+        "macos-x64",
+    }
+    expected = {
+        "windows-x64": ("windows-latest", "expected_machine", "8664"),
+        "linux-x64": ("ubuntu-latest", "expected_arch", "x86-64"),
+        "linux-arm64": ("ubuntu-24.04-arm", "expected_arch", "aarch64"),
+        "macos-arm64": ("macos-15", "expected_arch", "arm64"),
+        "macos-x64": ("macos-15-intel", "expected_arch", "x86_64"),
+    }
+    for platform, (runner, key, value) in expected.items():
+        assert by_platform[platform]["runner"] == runner
+        assert by_platform[platform][key] == value
+        assert by_platform[platform]["binary"].startswith("./dist/wenyi")
+
+    # The build job consumes the plan output and keeps failing fast.
+    job = jobs["build"]
+    assert job["needs"] == "plan"
+    assert "needs.plan.outputs.matrix" in job["strategy"]["matrix"]
+    assert job["strategy"]["fail-fast"] == "false"
+    # Publishing still waits on the build job.
+    assert jobs["release"]["needs"] == "build"
+
+
+def test_pypi_workflow_only_publishes_verified_release_artifacts():
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/publish-pypi.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    assert document["on"]["release"]["types"] == ["published"]
+    assert document["on"]["pull_request"]["branches"] == ["main"]
+    assert "tag" in document["on"]["workflow_dispatch"]["inputs"]
+    assert "push" not in document["on"]
+    assert document["permissions"] == {"contents": "read"}
+    assert document["concurrency"]["cancel-in-progress"] == "false"
+
+    build = document["jobs"]["build"]
+    assert "id-token" not in build.get("permissions", {})
+    checkout = next(step for step in build["steps"] if "actions/checkout@" in step.get("uses", ""))
+    assert checkout["with"]["fetch-depth"] == "0"
+    assert checkout["with"]["persist-credentials"] == "false"
+    assert "github.event.release.tag_name" in checkout["with"]["ref"]
+    identity = next(step for step in build["steps"] if step.get("id") == "version")
+    assert "scripts/release/release_version.py" in identity["run"]
+    assert "github.event.release.tag_name" in identity["env"]["WENYI_BUILD_TAG"]
+
+    commands = "\n".join(step.get("run", "") for step in build["steps"])
+    for package in ("wenyi-core", "wenyi-cli"):
+        assert f"uv build --no-sources --package {package} --out-dir dist/pypi" in commands
+    assert "--all-packages" not in commands
+    assert "check_wheel_resources.py dist/pypi" in commands
+    assert "for extension in whl tar.gz" in commands
+    assert "uv pip check" in commands
+    assert "version(package)" in commands
+    assert '"$environment/bin/wenyi" languages' in commands
+    assert "uv publish" not in commands
+
+    assert document["jobs"]["publish-core"]["needs"] == "build"
+    assert "secrets." not in str(document)
+    producer = next(
+        step for step in build["steps"] if "actions/upload-artifact@" in step.get("uses", "")
+    )
+    for job in ("publish-core", "publish-cli"):
+        publish = document["jobs"][job]
+        assert publish["if"] == (
+            "github.event_name == 'release' && github.repository == 'BigDawnGhost/wenyi'"
+        )
+        assert publish["permissions"] == {"id-token": "write"}
+        assert not any("actions/checkout@" in step.get("uses", "") for step in publish["steps"])
+        upload = next(
+            step["run"] for step in publish["steps"] if "uv publish" in step.get("run", "")
+        )
+        assert "--trusted-publishing always" in upload
+        assert "--check-url https://pypi.org/simple/" in upload
+        consumer = next(
+            step
+            for step in publish["steps"]
+            if "actions/download-artifact@" in step.get("uses", "")
+        )
+        assert producer["with"]["name"] == consumer["with"]["name"]
+
+
+def test_pypi_pending_publishers_have_distinct_package_identities():
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/publish-pypi.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    publishers = {name: job for name, job in document["jobs"].items() if name.startswith("publish")}
+    assert set(publishers) == {"publish-core", "publish-cli"}
+    core, cli = publishers["publish-core"], publishers["publish-cli"]
+    assert core["environment"]["name"] == "pypi"
+    assert cli["environment"]["name"] == "pypi-cli"
+    assert cli["needs"] == ["build", "publish-core"]
+    for package, job in (("wenyi_core", core), ("wenyi_cli", cli)):
+        uploads = [step["run"] for step in job["steps"] if "uv publish" in step.get("run", "")]
+        assert len(uploads) == 1
+        assert uploads[0].count("uv publish") == 1
+        assert f"dist/pypi/{package}-*" in uploads[0]

@@ -2,29 +2,22 @@
 
 from __future__ import annotations
 
-import importlib.util
+from contextlib import closing
 from dataclasses import asdict
 
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from wenyi_core.i18n.languages import label, supported_languages
 from wenyi_core.llm.operations import OPERATIONS, configured_operations
 from wenyi_core.llm.registry import PROVIDERS
 from wenyi_core.llm.routing import resolve_routes
 
-from .. import dal
 from ..config_documents import project_document
 from ..context import current_context
+from ..errors import INVALID_CONFIGURATION, ApiError
 from ..global_settings import load_settings, registry_guard
-from ..project_service import (
-    config_document,
-    config_response,
-    effective_config,
-    parse_project_yaml,
-    project_write,
-    require_project,
-    storage_for,
-)
+from ..ports.projects import RUNNING_PROJECT_STATUSES
+from ..project_service import config_document, config_response, parse_project_yaml
 from ..schemas import (
     Capabilities,
     ConfigInput,
@@ -34,22 +27,18 @@ from ..schemas import (
     ProjectStats,
     WorkflowOut,
 )
+from .dependencies import effective_config, project_write, require_project, storage_for
 
 router = APIRouter(tags=["configuration"])
 
 
 @router.get("/capabilities", response_model=Capabilities)
 def capabilities() -> dict:
-    engines = [
-        name
-        for name, module in (("weasyprint", "weasyprint"), ("fpdf2", "fpdf"))
-        if importlib.util.find_spec(module)
-    ]
     return {
         "languages": [{"code": code, "name": label(code)} for code in supported_languages()],
-        "input_formats": ["epub", "fb2", "txt", "markdown", "html", "pdf", "docx", "srt"],
-        "output_formats": ["epub", "txt", "html", "markdown", "pdf", "docx", "srt"],
-        "pdf": {"backends": ["mineru", "babeldoc"], "engines": engines, "export_backends": engines},
+        "input_formats": ["epub", "fb2", "txt", "markdown", "html", "pdf", "docx"],
+        "output_formats": ["epub", "txt", "html", "markdown", "pdf", "docx"],
+        "pdf": {"backends": ["mineru", "babeldoc"], "export_backends": ["babeldoc"]},
         "providers": list(PROVIDERS),
         "operations": [asdict(spec) for spec in OPERATIONS.values()],
     }
@@ -61,7 +50,7 @@ def get_config(pid: str) -> dict:
     try:
         return config_response(project, effective_config(project))
     except (ValueError, yaml.YAMLError) as error:
-        raise HTTPException(422, str(error)) from error
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from error
 
 
 @router.get("/projects/{pid}/config/defaults", response_model=ProjectConfigOut)
@@ -70,7 +59,7 @@ def project_defaults(pid: str) -> dict:
     try:
         return config_response(project, effective_config(project, document={}))
     except (ValueError, yaml.YAMLError) as error:
-        raise HTTPException(422, str(error)) from error
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from error
 
 
 @router.post("/projects/{pid}/config/validate", response_model=ProjectConfigOut)
@@ -81,7 +70,7 @@ def validate_config(pid: str, body: ConfigInput) -> dict:
             project, effective_config(project, document=parse_project_yaml(body.yaml))
         )
     except (ValueError, yaml.YAMLError) as error:
-        raise HTTPException(422, str(error)) from error
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from error
 
 
 @router.put("/projects/{pid}/config", response_model=ProjectConfigOut)
@@ -94,19 +83,23 @@ def save_config(pid: str, body: ConfigInput) -> dict:
                 defaults=load_settings(connection=conn).config,
             )
         except (ValueError, yaml.YAMLError) as error:
-            raise HTTPException(422, str(error)) from error
-        dal.set_project_config(pid, project_document(config), connection=conn)
+            raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from error
+        repository = current_context().repository
+        repository.set_project_config(pid, project_document(config), connection=conn)
         # The project direction must also drive upload, list and worker dispatch.
-        dal.set_project_languages(pid, config.source_lang, config.target_lang, connection=conn)
+        repository.set_project_languages(
+            pid, config.source_lang, config.target_lang, connection=conn
+        )
         return config_response(project, config)
 
 
 @router.get("/projects/{pid}/models", response_model=list[dict])
 def models(pid: str) -> list[dict]:
-    return [
-        route.describe()
-        for route in resolve_routes(effective_config(require_project(pid)).llm).values()
-    ]
+    try:
+        config = effective_config(require_project(pid))
+    except (ValueError, yaml.YAMLError) as error:
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from None
+    return [route.describe() for route in resolve_routes(config.llm).values()]
 
 
 @router.post("/projects/{pid}/models/check", response_model=ModelCheckResult)
@@ -118,14 +111,16 @@ def check_models(pid: str, body: ModelCheckRequest) -> dict:
         client.validate_credentials(operations)
         return {"valid": True, "operations": list(operations)}
     except (ValueError, RuntimeError) as error:
-        raise HTTPException(422, str(error)) from error
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from error
 
 
 @router.get("/projects/{pid}/stats", response_model=ProjectStats)
 def project_stats(pid: str) -> dict:
     project = require_project(pid)
-    if project.get("status") in dal.RUNNING_PROJECT_STATUSES:
-        job = next((j for j in dal.list_jobs(pid) if j["kind"] != "export"), None)
+    if project.get("status") in RUNNING_PROJECT_STATUSES:
+        job = next(
+            (j for j in current_context().repository.list_jobs(pid) if j["kind"] != "export"), None
+        )
         if job and job.get("status") == "running":
             try:
                 live = current_context().telemetry.statistics_snapshot(pid, job)
@@ -134,11 +129,11 @@ def project_stats(pid: str) -> dict:
             except Exception:
                 # Cached live telemetry is optional; canonical ledgers remain available.
                 pass
-    store = storage_for(pid)
     from wenyi_core.llm.usage import empty_usage
 
-    usage = store.load_usage() or empty_usage()
-    timing = store.read_artifact("timing.json") or {"runs": [], "total_seconds": 0}
+    with closing(storage_for(pid)) as store:
+        usage = store.load_usage() or empty_usage()
+        timing = store.read_artifact("timing.json") or {"runs": [], "total_seconds": 0}
     return {"usage": usage, "timing": timing}
 
 
@@ -146,12 +141,16 @@ def project_stats(pid: str) -> dict:
 def workflow(pid: str) -> dict:
     """Describe the latest workflow using its frozen configuration, not edited settings."""
     project = require_project(pid)
-    job = next((j for j in dal.list_jobs(pid) if j["kind"] != "export"), None)
+    repository = current_context().repository
+    job = next((j for j in repository.list_jobs(pid) if j["kind"] != "export"), None)
     params = (job or {}).get("params") or {}
     snapshot = params.get("config_snapshot")
-    document = snapshot or config_document(effective_config(project))
+    try:
+        document = snapshot or config_document(effective_config(project))
+    except (ValueError, yaml.YAMLError) as error:
+        raise ApiError(INVALID_CONFIGURATION, 422, str(error)) from None
     pipeline = document.get("pipeline", {})
-    kind = job["kind"] if job else ("srt" if project.get("fmt") == "srt" else "translation")
+    kind = job["kind"] if job else "translation"
     stages = []
 
     def add(key, label, enabled=True):
@@ -159,9 +158,6 @@ def workflow(pid: str) -> dict:
 
     if kind == "parse":
         add("parse", "解析原文与生成预览")
-    elif kind == "srt":
-        add("srt", "分批翻译字幕并保存检查点")
-        add("assemble", "组装字幕文件")
     else:
         if kind != "review":
             add("prepare", "解析、术语与风格准备")
@@ -181,7 +177,6 @@ def workflow(pid: str) -> dict:
                 "修复审校问题并写回",
                 review and autofix,
             )
-            add("report", "生成报告")
     progress = None
     if job:
         try:
@@ -200,7 +195,7 @@ def workflow(pid: str) -> dict:
         "kind": kind,
         "status": job["status"] if job else "not_started",
         "run_id": job.get("run_id") if job else None,
-        "review_id": dal.job_review_id(job["id"]) if job and job.get("id") else None,
+        "review_id": repository.job_review_id(job["id"]) if job and job.get("id") else None,
         "stages": stages,
         "progress": progress,
     }

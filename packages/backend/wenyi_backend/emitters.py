@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from datetime import datetime, timezone
 
-from wenyi_core.events import TranslationEvent, make_progress_fn
+from wenyi_core.events import ERROR_KIND, TranslationEvent, make_progress_fn
 
 from .live_statistics import StatisticsCache
+
+log = logging.getLogger(__name__)
 
 
 class RedisEmitter:
@@ -37,8 +40,14 @@ class RedisEmitter:
             encoded = json.dumps(payload, ensure_ascii=False)
             self._redis.set(f"{self.channel}:progress", encoded, ex=604800)
             self._redis.publish(self.channel, encoded)
-        except Exception:
+        except Exception as exc:
             # Redis failures must not interrupt translation; persisted events remain available.
+            log.warning(
+                "Failed to publish progress for project %s: %s",
+                self._project_id,
+                exc,
+                exc_info=False,
+            )
             return None
 
 
@@ -47,3 +56,30 @@ def redis_progress_fn(
 ):
     """Build a core progress callback for the configured telemetry transport."""
     return make_progress_fn(RedisEmitter(redis, project_id, run_id), project_id, kind=kind)
+
+
+def publish_error(
+    redis: StatisticsCache,
+    project_id: str,
+    *,
+    code: str,
+    message: str,
+    run_id: str | None = None,
+) -> None:
+    """Broadcast a terminal failure so live clients stop waiting on a run.
+
+    Publishing is best effort: a broken transport must never turn a task that
+    already failed into a different failure, so every error is logged and
+    swallowed, matching the progress path.
+    """
+    payload = {
+        "kind": ERROR_KIND,
+        "project_id": project_id,
+        "run_id": run_id,
+        "code": code,
+        "message": message,
+    }
+    try:
+        redis.publish(f"project:{project_id}", json.dumps(payload, ensure_ascii=False))
+    except Exception as exc:
+        log.warning("Failed to publish error for project %s: %s", project_id, exc, exc_info=False)

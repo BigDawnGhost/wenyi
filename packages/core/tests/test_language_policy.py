@@ -55,9 +55,7 @@ def test_unknown_operations_and_parameters_are_rejected():
         )
 
 
-def test_srt_and_bridge_do_not_select_book_layout_operations():
-    srt = resolve_policy(PolicyContext("ja", "en", path="srt"))
-    assert all(op.point == "prompt.compose" for op in srt.operations)
+def test_bridge_does_not_select_native_layout_operations():
     bridge = export("ja", "zh", "pdf", backend="babeldoc")
     assert not bridge.enabled("markup.japanese_ruby")
     assert not bridge.enabled("docx.chinese_font")
@@ -76,6 +74,40 @@ def test_fingerprints_exclude_export_options_from_paid_phases():
         ).fingerprint
     )
     assert a.to_dict()["fingerprint"] == a.fingerprint
+
+
+@pytest.mark.parametrize("target", ["zh", "en", "zh-Hant"])
+@pytest.mark.parametrize(
+    "phase,fmt,about_page,invalidates",
+    [
+        ("analysis", "", True, False),
+        ("translation", "", True, False),
+        ("review", "", True, False),
+        ("export", "epub", True, True),
+        ("export", "epub", False, False),
+        ("export", "txt", True, False),
+        ("export", "docx", True, False),
+    ],
+)
+def test_about_page_copy_only_invalidates_enabled_epub_exports(
+    monkeypatch, target, phase, fmt, about_page, invalidates
+):
+    from wenyi_core.i18n.policy import resolver
+
+    context = PolicyContext("en", target, phase=phase, format=fmt, about_page=about_page)
+    before = resolve_policy(context)
+    original = resolver.read_text
+
+    def updated_text(path: str) -> str:
+        text = original(path)
+        if path.startswith("export/about."):
+            return text + "\n<!-- Updated project description. -->"
+        return text
+
+    monkeypatch.setattr(resolver, "read_text", updated_text)
+    after = resolve_policy(context)
+    assert (before.fingerprint != after.fingerprint) == invalidates
+    assert (before.semantic_fingerprint != after.semantic_fingerprint) == invalidates
 
 
 def test_sort_uses_stable_ids_and_rejects_invalid_graphs():
@@ -129,8 +161,8 @@ def test_exact_pairs_and_cross_role_conflicts_need_explicit_resolution(monkeypat
 
     original = resolver.profile
 
-    def profile(code):
-        value = original(code)
+    def profile(code, *, genre):
+        value = original(code, genre=genre)
         value["policy"] = (
             {"source": {"prompt.language_rules": {"options": {}}}}
             if code == "ja"

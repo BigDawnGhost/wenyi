@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import shutil
+from contextlib import contextmanager
 from pathlib import Path
-from typing import BinaryIO
+from typing import BinaryIO, Iterator
 
 from psycopg import Connection
 from psycopg_pool import ConnectionPool
@@ -19,6 +20,28 @@ def export_history_lock(connection: Connection, pid: str, *, shared: bool = Fals
         else "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))"
     )
     connection.execute(statement, (f"wenyi:export-history:{pid}",))
+
+
+@contextmanager
+def export_history_session_lock(pool: ConnectionPool, pid: str) -> Iterator[Connection]:
+    """Exclude export admission/publication/opening without a transaction during cleanup."""
+    key = f"wenyi:export-history:{pid}"
+    with pool.connection() as connection:
+        acquired = False
+        try:
+            row = connection.execute(
+                "SELECT pg_try_advisory_lock(hashtextextended(%s,0))", (key,)
+            ).fetchone()
+            acquired = bool(row and row[0])
+            connection.commit()
+            if not acquired:
+                raise BlockingIOError("Project export history is busy")
+            yield connection
+        finally:
+            if acquired:
+                connection.rollback()
+                connection.execute("SELECT pg_advisory_unlock(hashtextextended(%s,0))", (key,))
+                connection.commit()
 
 
 def publish_export(

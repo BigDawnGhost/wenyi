@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { chapter, fakeApi, pid, project } from "./fixtures";
+import { chapter, fakeApi, pid, project } from "../../../packages/ui/sandbox/fixtures";
 
 const longTitle =
   "A long title about rivers, mountains and regional traditions ".repeat(8);
@@ -67,7 +67,7 @@ async function mockContents(page: Page, state = serverState()) {
 }
 
 for (const chinese of [false, true]) {
-  test(`contents titles persist on the server and fit narrow screens in ${chinese ? "Chinese" : "English"}`, async ({
+  test(`contents titles persist on the server and fit desktop windows in ${chinese ? "Chinese" : "English"}`, async ({
     page,
     browser,
   }, testInfo) => {
@@ -134,7 +134,7 @@ for (const chinese of [false, true]) {
     await expect(rows).toHaveCount(1);
     await search.clear();
     await expect(rows).toHaveCount(2);
-    for (const width of [1440, 900, 390]) {
+    for (const width of [1440, 1280, 1024]) {
       await page.setViewportSize({ width, height: 960 });
       expect(
         await page
@@ -166,7 +166,7 @@ for (const chinese of [false, true]) {
       ).toBe(true);
       await page.keyboard.press("Escape");
     }
-    await page.screenshot({ path: testInfo.outputPath("contents-mobile.png") });
+    await page.screenshot({ path: testInfo.outputPath("contents-compact.png") });
     await rows
       .nth(1)
       .getByRole("button", { name: chinese ? "编辑标题" : "Edit title" })
@@ -201,7 +201,9 @@ test("a title changed before saving preserves the editor input and requires the 
   await draft.fill("My edit");
   state.conflictOnSave = true;
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(dialog.getByRole("alert")).toContainText("409");
+  await expect(dialog.getByRole("alert")).toContainText(
+    "This title changed; reload its latest value before saving",
+  );
   await expect(draft).toHaveValue("My edit");
   await expect(
     dialog.getByRole("button", { name: "Save", exact: true }),
@@ -214,7 +216,7 @@ test("a title changed before saving preserves the editor input and requires the 
   expect(state.rows[0].title_translated).toBe("Reconciled title");
 });
 
-test("polling preserves an unsaved title and disables saving when a task starts", async ({
+test("a rejected idle save preserves an unsaved title and discovers a newly started task", async ({
   page,
 }) => {
   const state = await mockContents(page);
@@ -223,11 +225,15 @@ test("polling preserves an unsaved title and disables saving when a task starts"
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox").fill("Unsaved title");
   state.rows[0].title_translated = "Another editor's title";
+  state.status = "translating";
+  await page.route(`**/api/projects/${pid}/chapters/0/title`, route =>
+    route.fulfill({ status: 409, json: { detail: "A project task is running" } }),
+  );
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog.getByText(/This title has changed/)).toBeVisible({
     timeout: 8000,
   });
   await expect(dialog.getByRole("textbox")).toHaveValue("Unsaved title");
-  state.status = "translating";
   await expect(dialog.getByRole("textbox")).toBeDisabled({ timeout: 8000 });
   await expect(
     dialog.getByRole("button", { name: "Save", exact: true }),
@@ -264,15 +270,4 @@ test("failed server saves retain input and allow retry without browser draft sto
   await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toHaveCount(0);
   expect(state.rows[0].title_translated).toBe("Keep this edit");
-});
-
-test("subtitle projects do not expose book contents editing", async ({
-  page,
-}) => {
-  await fakeApi(page, { [`/projects/${pid}`]: { ...project, fmt: "srt" } });
-  await page.goto(`/projects/${pid}/contents`);
-  await expect(page).toHaveURL(`/projects/${pid}/subtitles`);
-  await expect(
-    page.getByRole("link", { name: "Contents & titles", exact: true }),
-  ).toHaveCount(0);
 });

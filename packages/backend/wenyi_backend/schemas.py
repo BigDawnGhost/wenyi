@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from wenyi_core.i18n.genres import DEFAULT_GENRE, Genre
 from wenyi_core.i18n.languages import require_language
 
 
@@ -20,7 +21,14 @@ class ProjectCreate(RequestModel):
     strategy: dict[str, Any] = Field(default_factory=dict)
     prepare: bool = False
     pdf_backend: Literal["mineru", "babeldoc"] | None = None
-    translation_mode: Literal["standard", "best_of_three"] = "standard"
+    translation_mode: Literal["standard", "three_draft_synthesis"] = "standard"
+    prompt_genre: Genre = DEFAULT_GENRE
+    #: Where the project directory is created, when the host lets a person choose.
+    #:
+    #: Omitted means "the default for this installation", which is also what a
+    #: client that never offers a choice sends. The value is validated by the host
+    #: that owns the filesystem; a host with no library concept ignores it.
+    location: str | None = None
 
     @field_validator("name")
     @classmethod
@@ -53,6 +61,11 @@ class Project(BaseModel):
     initialized: bool = False
     strategy: Optional[dict[str, Any]] = None
     created_at: Optional[str] = None
+    #: False when the project's own directory is not reachable, which on a
+    #: Desktop build means its drive is not mounted. Absent means unknown.
+    available: bool = True
+    #: True when the original file no longer matches the recorded checksum.
+    source_changed: bool = False
 
 
 class ProjectDetail(Project):
@@ -61,6 +74,7 @@ class ProjectDetail(Project):
     total_word_count: int = 0
     done_chapters: int = 0
     source_meta: dict[str, Any] = Field(default_factory=dict)
+    output_formats: list[str] = Field(default_factory=list)
 
 
 class PreviewChapter(BaseModel):
@@ -147,6 +161,9 @@ class PrecisionDraftsOut(BaseModel):
 
 
 # Glossary terms.
+GlossaryExportFormat = Literal["json", "csv", "apkg"]
+
+
 class TermOut(BaseModel):
     source: str
     target: str
@@ -167,6 +184,15 @@ class TermIn(RequestModel):
     gender: str = ""
     aliases: list[str] = []
     note: str = ""
+
+
+class TermPage(BaseModel):
+    items: list[TermOut]
+    total: int
+
+
+class TermLookup(RequestModel):
+    sources: list[str] = Field(max_length=500)
 
 
 class ConflictOut(BaseModel):
@@ -207,13 +233,12 @@ class StrategyTemplateOut(BaseModel):
 
 # Exports.
 class ExportRequest(RequestModel):
-    format: Literal["epub", "txt", "html", "markdown", "pdf", "docx", "srt"] | None = None
+    format: Literal["epub", "txt", "html", "markdown", "pdf", "docx"] | None = None
     bilingual: bool = False
     order: Literal["target_first", "source_first"] = "target_first"
     about_page: bool = True
     preserve_source_style: bool = False
     punctuation_normalize: bool | None = None
-    pdf_engine: Literal["weasyprint", "fpdf2"] = "weasyprint"
 
 
 class ExportOut(BaseModel):
@@ -258,18 +283,17 @@ class AssembleEnqueued(JobEnqueued):
 
 
 class GlossaryImport(RequestModel):
-    terms: list[TermIn]
+    # A bounded list keeps the single-transaction import from holding the project write
+    # lock for minutes on end (audit Y-4/E-5).
+    terms: list[TermIn] = Field(max_length=1000)
 
 
 class DigestUpdate(RequestModel):
     digest: str
 
 
-class TargetEdit(RequestModel):
+class SegmentEdit(RequestModel):
     target: str
-
-
-class SegmentEdit(TargetEdit):
     expected_target: str | None
 
 
@@ -321,23 +345,6 @@ class ReviewRun(BaseModel):
     items: list[ReviewItem] = Field(default_factory=list)
 
 
-class SubtitleCue(BaseModel):
-    id: str
-    index: int
-    timestamp: str
-    start: str
-    end: str
-    source: str
-    target: str | None = None
-    status: str = "pending"
-
-
-class SubtitleResult(BaseModel):
-    cues: list[SubtitleCue]
-    completed: int
-    total: int
-
-
 class LanguageOption(BaseModel):
     code: str
     name: str
@@ -345,7 +352,6 @@ class LanguageOption(BaseModel):
 
 class PDFCapabilities(BaseModel):
     backends: list[str]
-    engines: list[str]
     export_backends: list[str]
 
 
@@ -385,12 +391,47 @@ class GlobalConfigOut(BaseModel):
 
 
 class ModelCheckRequest(RequestModel):
-    workflow: Literal["prepare", "translate", "review", "srt"] = "translate"
+    workflow: Literal["prepare", "translate", "review"] = "translate"
 
 
 class ModelCheckResult(BaseModel):
     valid: bool
     operations: list[str]
+
+
+class ModelPingRequest(RequestModel):
+    timeout: float = Field(default=30, gt=0, le=120)
+
+
+class ModelPingResult(BaseModel):
+    profile: str
+    connection: str
+    provider: str
+    model: str
+    endpoint: Optional[str] = None
+    operations: list[str]
+    ok: bool
+    category: str
+    message: str
+    status_code: Optional[int] = None
+    latency_ms: Optional[int] = None
+
+
+class ModelListRequest(RequestModel):
+    # Hide inputs so validation errors can never echo a typed key.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    connection: Optional[str] = Field(default=None, max_length=200)
+    provider: dict[str, Any]
+    api_key: Optional[SecretStr] = None
+    timeout: float = Field(default=20, gt=0, le=60)
+
+
+class ModelListResult(BaseModel):
+    ok: bool
+    models: list[str]
+    category: str
+    message: str
+    status_code: Optional[int] = None
 
 
 class LiveStatsMetadata(BaseModel):

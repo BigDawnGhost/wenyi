@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation } from "@tanstack/react-query";
-import { useI18n } from "@/i18n";
-import { Button } from "@/components/ui/button";
-import { Label, Textarea } from "@/components/ui/form";
-import { ErrorNotice } from "@/components/ui/data";
+import { useI18n } from "../../i18n";
+import { Button } from "../../components/ui/button";
+import { Label, Textarea } from "../../components/ui/form";
+import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
 
 export function ContentsEditor({
   source,
@@ -42,7 +42,7 @@ export function ContentsEditor({
     <dialog
       ref={dialog}
       aria-labelledby="contents-editor-title"
-      className="fixed inset-0 m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-2xl overflow-y-auto rounded-xl border bg-background p-5 text-foreground shadow-xl backdrop:bg-black/30"
+      className="fixed inset-0 m-auto max-h-[90dvh] w-[calc(100%-32px)] max-w-2xl overflow-y-auto rounded-xl border bg-background p-5 text-foreground shadow-xl backdrop:bg-black/30 backdrop:backdrop-blur-[2px]"
       onCancel={(event) => {
         event.preventDefault();
         if (!save.isPending) onClose();
@@ -60,11 +60,7 @@ export function ContentsEditor({
           {t("contents.editTitle")}
         </h2>
         <ErrorNotice error={save.error} />
-        {readOnly && (
-          <p role="status" className="text-sm text-muted-foreground">
-            {t("contents.unavailable")}
-          </p>
-        )}
+        {readOnly && <ReadOnlyNotice />}
         {stale && (
           <div
             role="status"

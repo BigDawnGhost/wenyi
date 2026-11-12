@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { useI18n } from "@/i18n";
-import { operationLabel } from "@/i18n/labels";
-import { StatusBadge } from "@/components/StatusBadge";
-import { Button } from "@/components/ui/button";
+import { useI18n } from "../../i18n";
+import { operationLabel } from "../../i18n/labels";
+import { StatusBadge } from "../../components/StatusBadge";
+import { Button } from "../../components/ui/button";
 import { formatDuration, timingRuns } from "./accountingData";
 
 export default function RunTimeChart({
@@ -36,9 +36,6 @@ export default function RunTimeChart({
           {t("review.runCount", { count: runs.length })}
         </span>
       </div>
-      <p className="mb-5 text-xs leading-relaxed text-muted-foreground">
-        {t("accounting.timeHelp")}
-      </p>
       {runs.length ? (
         <ol
           aria-label={t("accounting.runHistory")}

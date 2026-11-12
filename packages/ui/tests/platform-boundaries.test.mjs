@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { routeModules } from "./source-contracts.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 function files(directory) {
@@ -10,7 +11,8 @@ function files(directory) {
     entry.isDirectory() ? files(resolve(directory, entry.name)) : [resolve(directory, entry.name)],
   );
 }
-const nativeCode = /__TAURI|__WENYI_DESKTOP|isDesktop|native_drop_|native_export_|\/desktop\/credentials|System credential store|系统凭据库/;
+const nativeCode = /__TAURI|__WENYI_DESKTOP|isDesktop|native_drop_|native_export_|native_glossary_|desktop_update_|Desktop updates|桌面端更新|\/desktop\/credentials|System credential store|系统凭据库/;
+const routeChunks = routeModules().map(path => basename(path));
 
 test("shared UI cannot import hosts or own platform transports/storage", () => {
   const sources = files(resolve(root, "packages/ui/src")).filter((file) => /\.(ts|tsx)$/.test(file));
@@ -24,6 +26,20 @@ test("shared UI cannot import hosts or own platform transports/storage", () => {
       const specifier = match[1];
       const target = specifier.startsWith(".") ? resolve(dirname(file), specifier) : specifier;
       assert(!/[/\\]apps[/\\]|@wenyi\/(?:web|desktop)/.test(target), `${file} imports host ${specifier}`);
+      assert(!/[/\\](?:tests|sandbox)[/\\]/.test(target), `${file} imports test support ${specifier}`);
+    }
+  }
+});
+
+test("frontend modules have distinct names on case-insensitive filesystems", () => {
+  for (const directory of ["packages/ui/src", "apps/web/src", "apps/desktop/frontend/src"]) {
+    const sources = files(resolve(root, directory)).filter((file) => /\.(ts|tsx)$/.test(file));
+    assert(sources.length > 0, `The module-name check must scan ${directory}`);
+    const modules = new Map();
+    for (const file of sources) {
+      const key = file.replace(/\.(ts|tsx)$/, "").toLowerCase();
+      assert(!modules.has(key), `Case-insensitive module collision: ${modules.get(key)} and ${file}`);
+      modules.set(key, file);
     }
   }
 });
@@ -35,8 +51,8 @@ test("production Web output contains no native bootstrap, IPC or vault UI", () =
   assert(outputs.length > 10, "Build Web before running bundle assertions");
   for (const file of outputs)
     assert(!nativeCode.test(readFileSync(file, "utf8")), `Native implementation found in ${file}`);
-  for (const route of ["CreateProject", "ProofreadingPage", "ExportPage", "InterfaceSettingsPage"])
-    assert(outputs.some((file) => file.includes(`/${route}-`)), `${route} must remain a lazy chunk`);
+  for (const route of routeChunks)
+    assert(outputs.some((file) => basename(file).includes(`${route}-`)), `${route} must remain a lazy chunk`);
 });
 
 test("Desktop independently includes the native adapters and keeps routes lazy", () => {
@@ -44,8 +60,8 @@ test("Desktop independently includes the native adapters and keeps routes lazy",
   assert(artifacts.some((file) => /wenyi-emblem-.*\.png$/.test(file)), "Desktop must emit the shared brand asset");
   const outputs = artifacts.filter((file) => /\.js$/.test(file));
   const code = outputs.map((file) => readFileSync(file, "utf8")).join("\n");
-  for (const marker of ["__WENYI_DESKTOP", "native_drop_upload", "native_export_save", "/desktop/credentials"])
+  for (const marker of ["__WENYI_DESKTOP", "native_drop_upload", "native_export_save", "native_glossary_save", "/desktop/credentials", "desktop_update_status", "Desktop updates", "桌面端更新"])
     assert(code.includes(marker), `Desktop is missing ${marker}`);
-  for (const route of ["CreateProject", "ProofreadingPage", "ExportPage", "InterfaceSettingsPage"])
-    assert(outputs.some((file) => file.includes(`/${route}-`)), `${route} must remain a lazy chunk`);
+  for (const route of routeChunks)
+    assert(outputs.some((file) => basename(file).includes(`${route}-`)), `${route} must remain a lazy chunk`);
 });

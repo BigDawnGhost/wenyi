@@ -1,19 +1,21 @@
-import { useI18n } from "@/i18n";
+import { useI18n } from "../../i18n";
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { api, type ExportFormat, type PdfEngine } from "@/lib/api";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { StatusBadge } from "@/components/StatusBadge";
-import { Disclosure } from "@/components/ui/disclosure";
-import { Label } from "@/components/ui/form";
-import { Select, SelectItem } from "@/components/ui/select";
-import { ErrorNotice } from "@/components/ui/data";
-import { cn, formatBytes } from "@/lib/utils";
-import { platform } from "@/platform";
+import { toast } from "../../lib/toast";
+import { api } from "../../api/client";
+import type { ExportFormat } from "../../api/types";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Button } from "../../components/ui/button";
+import { Card, CardContent } from "../../components/ui/card";
+import { StatusBadge } from "../../components/StatusBadge";
+import { Disclosure } from "../../components/ui/disclosure";
+import { Label } from "../../components/ui/form";
+import { Select, SelectItem } from "../../components/ui/select";
+import { ErrorNotice } from "../../components/ui/data";
+import { Progress } from "../../components/ui/progress";
+import { cn, formatBytes } from "../../lib/utils";
+import { platform } from "../../platform";
 
 export default function ExportPage() {
   const saveExport = platform().capabilities.saveExport;
@@ -33,14 +35,9 @@ export default function ExportPage() {
   const [about, setAbout] = useState(true);
   const [punctuation, setPunctuation] = useState(true);
   const [preserveStyle, setPreserveStyle] = useState(false);
-  const [pdfBackend, setPdfBackend] = useState<PdfEngine | "">("");
   const { data: project, error: projectError } = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid),
-  });
-  const { data: caps, error: capsError } = useQuery({
-    queryKey: ["capabilities"],
-    queryFn: api.capabilities,
   });
   const { data: exports, error: exportsError } = useQuery({
     queryKey: ["exports", pid],
@@ -67,23 +64,18 @@ export default function ExportPage() {
       setDefaultsLoaded(true);
     }
   }, [config, defaultsLoaded]);
-  const subtitle = project?.fmt === "srt";
-  const formats: ExportFormat[] = subtitle
-    ? ["srt"]
-    : ((caps?.output_formats || []).filter(
-        (f) => f !== "srt",
-      ) as ExportFormat[]);
-  const fmt = subtitle ? "srt" : format;
+  const formats = (project?.output_formats || []) as ExportFormat[];
+  const fmt = formats.includes(format as ExportFormat) ? format : "";
+  const pdf = fmt === "pdf" || (!fmt && project?.fmt === "pdf" && formats.includes("pdf"));
   const create = useMutation({
     mutationFn: async () => {
       const options = {
         format: fmt || undefined,
         bilingual,
         order,
-        about_page: subtitle ? false : about,
-        preserve_source_style: preserveStyle,
+        about_page: about,
+        preserve_source_style: !pdf && preserveStyle,
         punctuation_normalize: punctuation,
-        ...(pdfBackend && fmt === "pdf" ? { pdf_engine: pdfBackend } : {}),
       };
       if (saveExport) {
         const saved = await saveExport(pid, options);
@@ -108,18 +100,12 @@ export default function ExportPage() {
 
   return (
     <>
-      <PageHeader
-        title={tr("export.exportTranslation")}
-        subtitle={tr(
-          "export.generateFilesFromSavedTranslationsIncludingSnapshots",
-        )}
-      />
+      <PageHeader title={tr("export.exportTranslation")} />
       <PageContainer className="space-y-4 max-w-4xl">
         <ErrorNotice
           error={
             projectError ||
             configError ||
-            capsError ||
             exportsError ||
             create.error ||
             download.error
@@ -129,22 +115,17 @@ export default function ExportPage() {
           <CardContent className="p-5 space-y-4">
             <div>
               <Label>{tr("export.outputFormat")}</Label>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
-                {!subtitle && (
-                  <button
-                    onClick={() => setFormat("")}
-                    aria-pressed={!fmt}
-                    className={cn(
-                      "rounded border p-3 text-left text-sm",
-                      !fmt && "border-muted-foreground bg-accent",
-                    )}
-                  >
-                    <strong>{tr("export.automatic")}</strong>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {tr("export.basedOnTheSourceFormatAndPdf")}
-                    </p>
-                  </button>
-                )}
+              <div className="grid grid-cols-4 gap-2 mt-2">
+                <button
+                  onClick={() => setFormat("")}
+                  aria-pressed={!fmt}
+                  className={cn(
+                    "rounded border p-3 text-left text-sm",
+                    !fmt && "border-muted-foreground bg-accent",
+                  )}
+                >
+                  {tr("export.automatic")}
+                </button>
                 {formats.map((f) => (
                   <button
                     key={f}
@@ -183,111 +164,62 @@ export default function ExportPage() {
                 {tr("export.bilingual")}
               </label>
             </fieldset>
-            {!subtitle && (
-              <Disclosure
-                title={tr("export.advanced")}
-                error={create.error}
-                summary={[
-                  bilingual
-                    ? tr(
-                        order === "target_first"
-                          ? "export.translationFirst"
-                          : "export.sourceFirst",
-                      )
-                    : "",
-                  tr("export.aboutSummary", {
-                    value: tr(about ? "data.yes" : "data.no"),
-                  }),
-                  bilingual
-                    ? tr("export.styleSummary", {
-                        value: tr(preserveStyle ? "data.yes" : "data.no"),
-                      })
-                    : "",
-                  tr("export.punctuationSummary", {
-                    value: tr(punctuation ? "data.yes" : "data.no"),
-                  }),
-                  fmt === "pdf" ? pdfBackend || tr("export.automatic") : "",
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              >
+            {bilingual && pdf && (
+              <p className="text-sm text-muted-foreground">{tr("export.pdfBilingualLayout")}</p>
+            )}
+            <Disclosure title={tr("export.advanced")} error={create.error}>
+              <label className="flex gap-2 items-center text-sm">
+                <input
+                  type="checkbox"
+                  checked={punctuation}
+                  onChange={(e) => setPunctuation(e.target.checked)}
+                />
+                {tr("settings.normalizePunctuationOnExport")}
+              </label>
+              {bilingual && (
+                <Select
+                  aria-label={tr("export.bilingualOrder")}
+                  value={order}
+                  onValueChange={(value) =>
+                    setOrder(
+                      value as "target_first" | "source_first",
+                    )
+                  }
+                  className="max-w-40"
+                >
+                  <SelectItem value="target_first">
+                    {tr("export.translationFirst")}
+                  </SelectItem>
+                  <SelectItem value="source_first">
+                    {tr("export.sourceFirst")}
+                  </SelectItem>
+                </Select>
+              )}
+              <label className="flex gap-2 items-center text-sm">
+                <input
+                  type="checkbox"
+                  checked={about}
+                  onChange={(e) => setAbout(e.target.checked)}
+                />
+                {tr("export.includeAnAboutThisTranslationPage")}
+              </label>
+              {bilingual && !pdf && (
                 <label className="flex gap-2 items-center text-sm">
                   <input
                     type="checkbox"
-                    checked={punctuation}
-                    onChange={(e) => setPunctuation(e.target.checked)}
+                    checked={preserveStyle}
+                    onChange={(e) => setPreserveStyle(e.target.checked)}
                   />
-                  {tr("settings.normalizePunctuationOnExport")}
+                  {tr("export.preserveSourceFormattingInBilingualOutput")}
                 </label>
-                {fmt === "pdf" && (
-                  <div>
-                    <Label htmlFor="pdf-export-engine">
-                      {tr("export.pdfExportEngine")}
-                    </Label>
-                    <Select
-                      id="pdf-export-engine"
-                      value={pdfBackend}
-                      onValueChange={(value) =>
-                        setPdfBackend(value as PdfEngine | "")
-                      }
-                      className="mt-2"
-                    >
-                      <SelectItem value="">{tr("export.automatic")}</SelectItem>
-                      {caps?.pdf?.export_backends?.map((b) => (
-                        <SelectItem key={b} value={b}>
-                          {b}
-                        </SelectItem>
-                      ))}
-                    </Select>
-                  </div>
-                )}
-                {bilingual && !subtitle && (
-                  <Select
-                    aria-label={tr("export.bilingualOrder")}
-                    value={order}
-                    onValueChange={(value) =>
-                      setOrder(
-                        value as "target_first" | "source_first",
-                      )
-                    }
-                    className="max-w-40"
-                  >
-                    <SelectItem value="target_first">
-                      {tr("export.translationFirst")}
-                    </SelectItem>
-                    <SelectItem value="source_first">
-                      {tr("export.sourceFirst")}
-                    </SelectItem>
-                  </Select>
-                )}
-                {!subtitle && (
-                  <label className="flex gap-2 items-center text-sm">
-                    <input
-                      type="checkbox"
-                      checked={about}
-                      onChange={(e) => setAbout(e.target.checked)}
-                    />
-                    {tr("export.includeAnAboutThisTranslationPage")}
-                  </label>
-                )}
-                {!subtitle && bilingual && (
-                  <label className="flex gap-2 items-center text-sm">
-                    <input
-                      type="checkbox"
-                      checked={preserveStyle}
-                      onChange={(e) => setPreserveStyle(e.target.checked)}
-                    />
-                    {tr("export.preserveSourceFormattingInBilingualOutput")}
-                  </label>
-                )}
-              </Disclosure>
-            )}
+              )}
+            </Disclosure>
             <Button
               onClick={() => create.mutate()}
               disabled={
                 create.isPending ||
                 !project?.fmt ||
-                !caps ||
+                !formats.length ||
                 !defaultsLoaded ||
                 !!configError
               }
@@ -296,11 +228,25 @@ export default function ExportPage() {
                 ? tr("common.submitting")
                 : tr("export.generateExport")}
             </Button>
-            <p className="text-xs text-muted-foreground">
-              {tr("export.filenameHelp", {
-                language: project?.target_lang || "—",
-              })}
-            </p>
+            {/*
+              The native host reports no per-byte progress for a save, so this
+              stays indeterminate rather than inventing a percentage. It is
+              shown only while the promise is open, which is what tells a user
+              a large book is still being written.
+            */}
+            {saveExport && create.isPending && (
+              <div
+                className="space-y-2"
+                role="status"
+                data-slot="native-export-progress"
+              >
+                <p className="text-sm font-medium">{tr("export.saving")}</p>
+                <Progress
+                  aria-label={tr("export.saving")}
+                  indeterminate
+                />
+              </div>
+            )}
           </CardContent>
         </Card>
         <Card>

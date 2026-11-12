@@ -7,18 +7,38 @@ the authority for initialization; catalog jobs describe scheduling, not translat
 from __future__ import annotations
 
 import json
-import re
+import os
 import shutil
 import sqlite3
 import uuid
+from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from threading import Lock
 from typing import TYPE_CHECKING, Any, BinaryIO, Iterator
 
 from fastapi import HTTPException
+from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_core.config import Config
+from wenyi_core.errors import SchemaTooNew
+from wenyi_core.storage.io_path import plain_path
+
+from . import catalog, library_location, paths
+
+#: A project database written by a newer build. The catalog row is intact and the
+#: directory is where it should be, so this is a refused open rather than a fault:
+#: the answer names the version that can read the file.
+PROJECT_SCHEMA_TOO_NEW = "project_schema_too_new"
+PROJECT_LOCATION_UNAVAILABLE = "project_location_unavailable"
+
+
+class ProjectLocationUnavailable(ApiError):
+    """A project location that cannot be uniquely and safely opened."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(PROJECT_LOCATION_UNAVAILABLE, 409, message)
+
 
 if TYPE_CHECKING:
     from wenyi_core.storage.sqlite import SqliteStorage
@@ -28,15 +48,63 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _library_root(value: str | Path | None) -> Path | None:
+    """An optional injected default library; otherwise use <data-root>/projects."""
+    if value is None:
+        return None
+    path = Path(value).expanduser()
+    return path if path.is_absolute() else None
+
+
+def _resolves(path: Path) -> bool:
+    """Whether a directory exists and can be resolved, without raising."""
+    try:
+        path.resolve()
+    except (OSError, RuntimeError):
+        return False
+    return True
+
+
+def _same(left: Path, right: Path) -> bool:
+    """Whether two absolute paths name the same directory, by spelling only.
+
+    Neither side is resolved: the roots exist to be compared, and a root that
+    cannot be resolved must still be compared as written rather than skipped.
+    """
+    try:
+        return Path(os.path.normcase(left)) == Path(os.path.normcase(right))
+    except (TypeError, ValueError):
+        return False
+
+
+def _plain_windows_path(path: str) -> str:
+    """Use ordinary Win32 drive/UNC spelling without changing other path types."""
+    return plain_path(path)
+
+
 class LocalBackend:
-    def __init__(self, workspace: str, config_path: str | None = None) -> None:
-        self.workspace = Path(workspace).expanduser().resolve()
+    def __init__(
+        self,
+        workspace: str | Path,
+        config_path: str | None = None,
+        *,
+        library_root: str | Path | None = None,
+        install_root: str | Path | None = None,
+    ) -> None:
+        resolved = Path(workspace).expanduser().resolve()
+        self.workspace = Path(_plain_windows_path(str(resolved)))
         self.workspace.mkdir(parents=True, exist_ok=True)
+        # An explicitly injected library is optional. The ordinary default is
+        # <data-root>/projects, independent of the executable's location.
+        self.library_root = _library_root(library_root)
+        self.install_root = Path(install_root) if install_root else None
         self.config_path = config_path
-        self.database = self.workspace / "local.sqlite3"
+        self.database = paths.catalog(self.workspace)
+        catalog.initialize(self.database)
         # Releasing memory must not depend on an available project directory.
         self._export_leases_lock = Lock()
         self._export_leases: dict[int, int] = {}
+        self._removing_projects: set[str] = set()
         with self.transaction() as connection:
             connection.executescript("""
                 CREATE TABLE IF NOT EXISTS projects (
@@ -52,10 +120,18 @@ class LocalBackend:
                     document TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS application_settings (
                     id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS configuration_backups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+                    document TEXT NOT NULL, removed TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
                 CREATE TABLE IF NOT EXISTS progress (
                     id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
                     document TEXT NOT NULL);
             """)
+        from .config_rebuild import rebuild_saved_settings
+
+        rebuild_saved_settings(self)
 
     @contextmanager
     def transaction(
@@ -87,14 +163,195 @@ class LocalBackend:
             conn.close()
 
     def project_dir(self, pid: str) -> Path:
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", pid):
+        """Find a unique project identity within its authoritative library root.
+
+        A recorded root never falls back to another library, even when its drive
+        is missing. A row without a root is invalid, not a request for discovery.
+        Recheck disk identity on every lookup: cached existence cannot detect a
+        changed catalog owner, a conflicting marker or a newly duplicated folder.
+        """
+        # The same identity rules govern lookup, explicit import and deletion.
+        if not paths.project_id(pid):
             raise ValueError("Invalid project ID")
-        return self.workspace / "projects" / pid
+        record = self._get("projects", pid) or {}
+        recorded_roots = self._recorded_roots(record)
+        found: dict[Path, Path] = {}
+        try:
+            for root in recorded_roots or self.project_roots():
+                candidate = paths.find_project(root, pid)
+                if candidate is not None:
+                    found[candidate.resolve()] = candidate
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ProjectLocationUnavailable(f"Project {pid}: {error}") from error
+        if len(found) > 1:
+            raise ProjectLocationUnavailable(
+                f"Project {pid} has ambiguous directory ownership. "
+                "Keep only the intended project in its library before retrying.",
+            )
+        if found:
+            return next(iter(found.values()))
+        name = str(record.get("name") or "")
+        if recorded_roots:
+            root = recorded_roots[0]
+            return (
+                paths.project(self.workspace, pid)
+                if _same(root, paths.projects(self.workspace))
+                else paths.project_in(root, pid, name)
+            )
+        return self.new_project_dir(pid, name, None)
+
+    def new_project_dir(self, pid: str, name: str, location: str | None) -> Path:
+        """Where a project's files go, before its record exists.
+
+        `location` is the folder a person chose. It is validated here and the
+        project directory is named from it, so the upload, the record and every
+        later lookup are built from one answer rather than from three guesses.
+        Omitting it keeps the default: the chosen library root, or the workspace
+        when this installation has none.
+        """
+        if location is None or not str(location).strip():
+            if self.library_root is None:
+                return paths.project(self.workspace, pid)
+            return paths.project_in(self.library_root, pid, name)
+        root = library_location.admit(location, self)
+        return paths.project_in(root, pid, name)
+
+    def _admitted_roots(self) -> tuple[Path, ...]:
+        """Every library root this installation owns, derived from configuration.
+
+        Deliberately independent of the project table: a root is admitted because
+        this installation is configured with it, never because a record claims it.
+        That is what lets the directory lookup and the deletion gate agree without
+        either one reading the other.
+
+        Roots remembered in the settings document are included, and they are why a
+        project stays reachable after the installation moves: the default root
+        follows the executable, the chosen ones do not.
+        """
+        roots: list[Path] = []
+        if self.library_root is not None:
+            roots.append(self.library_root)
+        for saved in self._saved_roots():
+            if not any(_same(saved, known) for known in roots):
+                roots.append(saved)
+        workspace = paths.projects(self.workspace)
+        if not any(_same(workspace, known) for known in roots):
+            roots.append(workspace)
+        return tuple(roots)
+
+    def _saved_roots(self) -> list[Path]:
+        """The library roots this installation has written projects under before."""
+        saved = self.load_settings() or {}
+        values = saved.get(paths.LIBRARY_ROOTS)
+        if not isinstance(values, list):
+            values = []
+        values = [*values, saved.get(paths.LAST_LIBRARY_ROOT)]
+        roots = []
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                path = Path(value)
+                if path.is_absolute():
+                    roots.append(path)
+        return roots
+
+    def source_reference(self, source: Path) -> str:
+        """Keep an original with its project, including across Windows volumes."""
+        return source.name
+
+    def source_path(self, pid: str, reference: str) -> Path:
+        """Constrain any stored source reference to the owning project directory."""
+        return self.project_dir(pid) / PureWindowsPath(reference).name
+
+    def _recorded_roots(self, record: dict) -> list[Path]:
+        """Match the authoritative root, refusing an unadmitted or invalid claim.
+
+        A record is editable data, so the value it carries is matched against the
+        roots this installation already owns instead of being trusted as a path.
+        A record with a missing root is refused rather than searched elsewhere.
+        The comparison is spelling-only, with the resolved spelling tried second:
+        a chosen root arrives spelled the way the executable reported it, while a
+        record remembers the spelling it was created under.
+        """
+        recorded = record.get("library_root")
+        if not record:
+            return []
+        if (
+            not isinstance(recorded, str)
+            or not recorded.strip()
+            or not Path(recorded).is_absolute()
+        ):
+            raise ProjectLocationUnavailable("The project's recorded library root is invalid")
+        named = Path(recorded)
+        matched = []
+        for root in self._admitted_roots():
+            if _same(named, root) or (_resolves(root) and _same(named, root.resolve())):
+                matched.append(root)
+        if not matched:
+            raise ProjectLocationUnavailable(
+                "The project's recorded library root is not an admitted Desktop library"
+            )
+        return matched
+
+    def mark_project(self, pid: str, *, library_root: Path | None = None) -> Path:
+        """Write the self-describing marker for one project directory.
+
+        The catalog records where a project is, and the catalog can be lost. The
+        marker is what lets a scan that has no catalog rebuild the entry, and it is
+        what a later deletion checks the catalog against: the directory carries its
+        own identity rather than depending on the name someone gave it.
+
+        The file sits beside the project's own state rather than inside the store
+        that state lives in: it describes the directory, and the domain database
+        owns everything the directory's contents mean.
+
+        A failure to write it propagates. A project without a marker still works,
+        but it is no longer recoverable by scan, and that silent degradation is
+        exactly what the marker exists to end.
+        """
+        directory = self.project_dir(pid)
+        directory.mkdir(parents=True, exist_ok=True)
+        document = {
+            "schema_version": paths.PROJECT_SCHEMA_VERSION,
+            "pid": pid,
+            "name": (self._get("projects", pid) or {}).get("name"),
+            "library_root": str(library_root if library_root is not None else directory.parent),
+            "created_at": _now(),
+        }
+        destination = paths.marker_in(directory)
+        temporary = destination.with_name(destination.name + ".writing")
+        try:
+            temporary.write_text(
+                json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            # A half-written marker would describe a directory that is not this
+            # project's, so it is published only once it is complete.
+            temporary.replace(destination)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return destination
 
     def storage_for(self, pid: str, *, create: bool = True) -> SqliteStorage:
         from wenyi_core.storage.sqlite import SqliteStorage
 
-        return SqliteStorage(str(self.project_dir(pid)), create=create)
+        directory = self.project_dir(pid)
+        if create and not directory.is_dir():
+            project = self._get("projects", pid) or {}
+            if project.get("source_path"):
+                raise ProjectLocationUnavailable(
+                    f"Project {pid} is unavailable at {directory}. "
+                    "Reconnect its drive before opening it for writes."
+                )
+        if create and not paths.marker_in(directory).is_file():
+            # A store is only ever created for a project the catalog already has,
+            # so this is the one place every project directory passes through.
+            self.mark_project(pid)
+        try:
+            return SqliteStorage(str(directory), create=create)
+        except SchemaTooNew as error:
+            # A refused schema is a state the user has to see, not a server fault:
+            # the route answers with a stable code and the sentence that names the
+            # upgrade, so the project list and the page can both explain it.
+            raise ApiError(PROJECT_SCHEMA_TOO_NEW, 409, error.message) from error
 
     def defaults(self) -> Config:
         # Config() uses built-in defaults, never the CLI's cwd config.yaml.
@@ -132,8 +389,28 @@ class LocalBackend:
         source: dict | None = None,
         config: dict | None = None,
         connection: sqlite3.Connection | None = None,
+        library_root: str | Path | None = None,
     ) -> str:
+        """Record one project, in the library the caller chose or the default one.
+
+        `library_root` is the resolved parent of this project's directory. Omitting
+        it selects the current default. Both choices are persisted so later
+        changes to the installation or its defaults cannot move existing projects.
+
+        A location that is not admitted raises before anything is written, so a
+        refused choice leaves no record and no directory behind.
+        """
         pid = project_id or uuid.uuid4().hex[:16]
+        # A chosen location is checked before anything is written, so a refusal
+        # leaves no record and no directory behind.
+        chosen = self.library_root or paths.projects(self.workspace)
+        if library_root is not None:
+            requested = Path(library_root)
+            # The creation route already resolved a default directory. Recovery
+            # also reuses admitted roots; neither is a new picker location.
+            chosen = next(
+                (root for root in self.project_roots() if _same(root, requested)), None
+            ) or library_location.admit(library_root, self)
         document = {
             "id": pid,
             "name": name,
@@ -151,17 +428,69 @@ class LocalBackend:
             "error": None,
             "config": config or {},
             "created_at": _now(),
+            # Persist the actual root, including defaults that may change when
+            # the installation moves. Titles never determine project identity.
+            "library_root": str(chosen),
             **(source or {}),
         }
         with self.transaction(connection) as conn:
             conn.execute("INSERT INTO projects VALUES (?,?)", (pid, json.dumps(document)))
+            self._remember_root(chosen, conn)
         return pid
 
+    def _remember_root(self, root: Path, connection: sqlite3.Connection) -> None:
+        """Record a library root so its projects stay findable after a restart.
+
+        The root a project was created under is not recoverable from anything else:
+        the next start resolves a default from its own executable, and a project in
+        a folder the person chose is not below it. Losing this list would leave
+        those projects in place but unreachable, which is the one outcome a change
+        of location must never produce.
+
+        Written inside the caller's transaction so a project and the record of
+        where it lives are committed together or not at all.
+        """
+        saved = self._get("application_settings", 1, connection)
+        if saved is None:
+            # The document has to be complete: the settings store reads its config
+            # key on every load, so a document holding only library roots would
+            # fail the next load for a project that was created successfully.
+            from wenyi_backend.config_documents import global_document
+
+            saved = {
+                "config": global_document(self.defaults()),
+                "template": "标准翻译",
+                "revision": 0,
+            }
+        existing = [
+            value
+            for value in saved.get(paths.LIBRARY_ROOTS) or []
+            if isinstance(value, str) and value.strip()
+        ]
+        if not any(_same(Path(value), root) for value in existing):
+            existing.append(str(root))
+        saved[paths.LIBRARY_ROOTS] = existing
+        saved[paths.LAST_LIBRARY_ROOT] = str(root)
+        self.save_settings(saved, connection)
+
     def get_project(self, pid: str) -> dict | None:
+        with self._export_leases_lock:
+            if pid in self._removing_projects:
+                return None
         project = self._get("projects", pid)
         if project is not None:
-            storage = self.storage_for(pid, create=False)
+            # A project written by a newer build keeps its row and its directory:
+            # it is not damaged, it is unreadable here. The list says so for the
+            # same reason it says so for an unmounted drive, so the project does
+            # not disappear from a downgraded installation.
+            #
+            # A read-only store opens lazily, so the refusal can arrive from the
+            # constructor or from the first read. Both are handled below.
+            readable = True
+            available = False
+            storage = None
             try:
+                storage = self.storage_for(pid, create=False)
                 if storage.exists():
                     manifest = storage.load_manifest()
                     project.update(
@@ -171,16 +500,43 @@ class LocalBackend:
                         source_lang=manifest.get("source_lang", project["source_lang"]),
                         target_lang=manifest.get("target_lang", project["target_lang"]),
                     )
+                available = self.project_dir(pid).is_dir()
+            except ProjectLocationUnavailable as error:
+                # One unsafe row must not hide unrelated healthy projects.
+                readable = False
+                project["error"] = error.message
+            except SchemaTooNew:
+                # Lazy reads raise the domain error before the HTTP boundary
+                # converts it; discovery still keeps the project listed.
+                readable = False
+            except ApiError as error:
+                if error.code != PROJECT_SCHEMA_TOO_NEW:
+                    raise
+                readable = False
             finally:
-                storage.close()
+                if storage is not None:
+                    storage.close()
             project.pop("updated_at", None)
+            # A project on a drive that is not mounted cannot be opened, and the
+            # list has to say so instead of failing when the project is chosen.
+            project["available"] = readable and available
         return project
 
     def list_projects(self) -> list[dict]:
         rows = sorted(self._list("projects"), key=lambda row: row["created_at"], reverse=True)
-        keys = ("id", "name", "title", "fmt", "source_lang", "target_lang", "status", "created_at")
+        keys = (
+            "id",
+            "name",
+            "title",
+            "fmt",
+            "source_lang",
+            "target_lang",
+            "status",
+            "created_at",
+            "available",
+        )
         return [
-            {key: project[key] for key in keys}
+            {**{key: project[key] for key in keys}, "error": project.get("error")}
             for row in rows
             if (project := self.get_project(row["id"])) is not None
         ]
@@ -197,6 +553,31 @@ class LocalBackend:
 
     def set_project_status(self, pid: str, status: str, *, error: str | None = None) -> None:
         self.update_project(pid, status=status, error=error)
+
+    def request_pause(self, pid: str, run_id: str) -> bool:
+        """Serialize the pause decision with completion and new task admission."""
+        from wenyi_backend.ports.projects import RUNNING_PROJECT_STATUSES
+
+        with self.transaction() as connection:
+            project = self._get("projects", pid, connection)
+            job = next(
+                (
+                    row
+                    for row in self._list("jobs", pid=pid, connection=connection)
+                    if row["kind"] != "export"
+                ),
+                None,
+            )
+            if (
+                project is None
+                or project["status"] not in RUNNING_PROJECT_STATUSES
+                or job is None
+                or job["run_id"] != run_id
+                or job["status"] not in {"queued", "running"}
+            ):
+                return False
+            self.update_project(pid, status="pausing", error=None, connection=connection)
+            return True
 
     def set_project_strategy(
         self, pid: str, strategy: dict, *, connection: sqlite3.Connection | None = None
@@ -237,17 +618,228 @@ class LocalBackend:
         )
 
     def delete_project(self, pid: str) -> None:
-        # Deliberately retain source and generated files, just as the Web endpoint does.
+        """Remove catalog records; remove_project owns permanent Desktop deletion."""
         with self.transaction() as conn:
-            if any(
-                row["status"] in {"pending", "running"}
-                for row in self._list("exports", pid=pid, connection=conn)
-            ) or any(
-                row["kind"] == "export" and row["status"] in {"queued", "running"}
-                for row in self._list("jobs", pid=pid, connection=conn)
-            ):
-                raise HTTPException(409, "An export is active; wait for it before deleting")
+            self._check_project_deletion(pid, conn)
             conn.execute("DELETE FROM projects WHERE id=?", (pid,))
+
+    def _check_project_deletion(self, pid: str, connection: sqlite3.Connection) -> None:
+        if any(
+            row["status"] in {"pending", "running"}
+            for row in self._list("exports", pid=pid, connection=connection)
+        ) or any(
+            row["status"] in {"queued", "running"}
+            for row in self._list("jobs", pid=pid, connection=connection)
+        ):
+            raise HTTPException(409, "A task is active; wait for it before deleting")
+
+    def _reject_removing(self, pid: str) -> None:
+        with self._export_leases_lock:
+            if pid in self._removing_projects:
+                raise HTTPException(409, "Project deletion is in progress")
+
+    def project_roots(self) -> tuple[Path, ...]:
+        """Every directory a project directory may live under.
+
+        Deletion recurses into whatever this list admits, so it is deliberately a
+        list of roots rather than one root with a prefix test. A root on another
+        drive is simply another entry; containment is decided per root, never by
+        comparing strings.
+
+        The data-root library and explicitly admitted custom libraries coexist.
+        Each registered project must use its own recorded root.
+        """
+        return self._admitted_roots()
+
+    def project_directories(self) -> tuple[Path, ...]:
+        """Exact owned directories for a prepared backup, never their library roots."""
+        directories = []
+        for project in self._list("projects"):
+            pid = project["id"]
+            directory = self._admitted_project_directory(pid, project)
+            if not directory.is_dir():
+                raise ProjectLocationUnavailable(
+                    f"Project {pid} is unavailable at {directory}. "
+                    "Reconnect its drive before backing up or upgrading.",
+                )
+            directories.append(directory)
+        return tuple(directories)
+
+    def _admitted_project_directory(self, pid: str, project: dict) -> Path:
+        """The directory deletion may remove for `pid`, or a refusal.
+
+        Deletion is recursive, so the path it recurses into has to be argued for
+        rather than read and trusted. **The path is derived here, from the
+        identifier, and never taken from the record.** A catalog is editable data
+        -- a user can open it, a damaged write can change it, an import can
+        fill it -- so a path read from it is a path an attacker chooses. Deriving
+        it means the worst a tampered record can do is refuse its own deletion.
+
+        The record is then used as a *claim to check*: when it names a directory,
+        that directory has to be the one this backend derived. A disagreement is
+        refused rather than resolved, because the two disagreeing means one of them
+        is describing a project that is not this one.
+
+        What is left to check about the derived path is where it lands. It is
+        resolved and compared against the roots this backend actually owns rather
+        than against its own spelling, so a linked root or a linked project entry
+        is refused: `rmtree` follows both. This is the same containment test
+        `export_path()` makes for a downloaded file, in the opposite direction.
+
+        The marker is the last check and the only one that reads the directory. It
+        is skipped when absent, because a project directory written by the version
+        that had no marker is still this project's directory -- the identifier in
+        its name is, in that layout, the entire identity.
+        """
+        directory = self.project_dir(pid)
+        owning_roots = self._recorded_roots(project) or self.project_roots()
+        try:
+            resolved = directory.resolve()
+            roots = tuple(root.resolve() for root in owning_roots)
+        except (OSError, RuntimeError) as error:
+            raise HTTPException(409, "Project directory cannot be resolved") from error
+        recorded = project.get("location")
+        if recorded:
+            claimed = Path(str(recorded))
+            try:
+                agrees = claimed.is_absolute() and claimed.resolve() == resolved
+            except (OSError, RuntimeError):
+                agrees = False
+            if not agrees:
+                raise HTTPException(409, "Project directory is outside the Desktop workspace")
+        if resolved.parent not in roots:
+            raise HTTPException(409, "Project directory is outside the Desktop workspace")
+        if directory.is_symlink():
+            raise HTTPException(409, "Project directory is outside the Desktop workspace")
+        marker = resolved / paths.PROJECT_MARKER
+        if marker.is_file():
+            try:
+                embedded = json.loads(marker.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error:
+                raise HTTPException(
+                    409, "Project directory does not belong to this project"
+                ) from error
+            embedded_pid = str(embedded.get("pid", "")) if isinstance(embedded, dict) else ""
+            if embedded_pid and embedded_pid != pid:
+                raise HTTPException(409, "Project directory does not belong to this project")
+        return resolved
+
+    def remove_project(self, pid: str) -> None:
+        """Delete a project in three durable steps: mark, remove, then unlist.
+
+        The order is what makes an interrupted deletion recoverable. Removing the
+        files first and the catalog row second leaves, on a crash in between, a
+        listed project with no directory that is indistinguishable from a project
+        whose drive was unplugged.
+
+        Marking first turns that intermediate state into one this application can
+        recognise. The row stays listed, because the retry has to be reachable and
+        a file still held open is the reason it failed; the directory carries the
+        same mark, which also prevents explicit reimport. Files can be removed at
+        any point after the mark, so a
+        crash after `rmtree` but before the row is deleted simply retries the
+        cleanup that is already done.
+
+        Nothing about the guard changed: the directory to remove is derived from
+        the identifier and checked against the record, the marker and the owned
+        roots before the mark is written, so a refused deletion still writes
+        nothing.
+        """
+        from wenyi_backend.project_service import project_write
+
+        project = self._get("projects", pid)
+        if project is None:
+            raise HTTPException(404, "project not found")
+        directory = self._admitted_project_directory(pid, project)
+        self._reject_removing(pid)
+        if not directory.exists():
+            # Forget an unavailable project without creating a replacement store
+            # or touching files if its drive reconnects during this operation.
+            with self.transaction() as connection:
+                self._check_project_deletion(pid, connection)
+                exports = self._list("exports", pid=pid, connection=connection)
+                with self._export_leases_lock:
+                    if any(self._export_leases.get(row["id"]) for row in exports):
+                        raise HTTPException(409, "An export download is active; retry later")
+                    connection.execute("DELETE FROM projects WHERE id=?", (pid,))
+            return
+        if project.get("deleting"):
+            # An earlier attempt was interrupted after the mark. The book and
+            # export locks below would open the project store, which recreates
+            # a directory this deletion may already have removed, so they are
+            # skipped. The catalog check they exist to protect still runs, and
+            # it is the one that matters here: nothing is removed while a task
+            # or a download is still using the project.
+            with self.transaction() as connection:
+                self._check_project_deletion(pid, connection)
+            self._finish_removal(pid, directory)
+            return
+        admitted = False
+        try:
+            # Book and export locks protect admission, not recursive file cleanup:
+            # Windows cannot remove their files while our own handles remain open.
+            with project_write(pid, self, self.storage_for), self._export_history_lock(pid):
+                with self.transaction() as connection:
+                    self._check_project_deletion(pid, connection)
+                    exports = self._list("exports", pid=pid, connection=connection)
+                    with self._export_leases_lock:
+                        if any(self._export_leases.get(row["id"]) for row in exports):
+                            raise HTTPException(409, "An export download is active; retry later")
+                        self._removing_projects.add(pid)
+                        admitted = True
+                    # The sentinel is written before the row is marked, because a
+                    # repair rebuilds the catalog by reading directories rather
+                    # than rows: a mark with no sentinel would be forgotten.
+                    self._write_deleting_sentinel(directory)
+                    self.update_project(
+                        pid, deleting=True, deleting_since=_now(), connection=connection
+                    )
+            self._finish_removal(pid, directory)
+        finally:
+            if admitted:
+                with self._export_leases_lock:
+                    self._removing_projects.discard(pid)
+
+    def _write_deleting_sentinel(self, directory: Path) -> None:
+        """Leave the deletion intent inside the directory being deleted.
+
+        The catalog holds the same state, and the two are written in this order
+        because they answer different questions. The row is what this running
+        installation consults before listing or admitting the project; the file
+        is what a later repair finds when the catalog it rebuilds has no row at
+        all. A sentinel that cannot be written refuses the deletion rather than
+        proceeding without it, because the alternative is a repair that puts the
+        project back.
+
+        A directory that does not exist yet has nothing to protect: the removal
+        below will not run for it either, so the sentinel is skipped.
+        """
+        if not directory.is_dir():
+            return
+        try:
+            paths.deleting_marker_in(directory).write_text("deleting\n", encoding="utf-8")
+        except OSError as error:
+            raise HTTPException(
+                409, "Could not mark the project for deletion; retry after closing files using it"
+            ) from error
+
+    def _finish_removal(self, pid: str, directory: Path) -> None:
+        """Remove the marked directory, then the catalog row.
+
+        Called with the project already marked. Both steps are idempotent so a
+        retry after an interruption repeats only what is left: a directory that
+        is already gone is skipped, and the row delete is a no-op once it ran.
+        """
+        try:
+            if directory.exists():
+                shutil.rmtree(directory)
+        except OSError as error:
+            # The mark stays, so the project is not listed and the removal can be
+            # retried after the files that are still open are closed.
+            raise HTTPException(
+                409, "Could not remove project files; close files using this project and retry"
+            ) from error
+        self.delete_project(pid)
 
     def create_job(
         self,
@@ -300,14 +892,15 @@ class LocalBackend:
         run_id: str | None = None,
     ) -> int:
         """Commit scheduling identity and busy status together, outside domain state."""
-        from wenyi_backend.dal import RUNNING_PROJECT_STATUSES
+        from wenyi_backend.ports.projects import RUNNING_PROJECT_STATUSES
 
         with self.transaction() as connection:
+            self._reject_removing(pid)
             project = self._get("projects", pid, connection)
             if project is None:
-                raise HTTPException(404, "project not found")
+                raise ApiError(PROJECT_NOT_FOUND, 404, "project not found")
             if project["status"] in RUNNING_PROJECT_STATUSES:
-                raise HTTPException(409, "project already has a running task")
+                raise ApiError(PROJECT_BUSY, 409, "project already has a running task")
             identity = self.create_job(
                 pid,
                 kind,
@@ -347,6 +940,9 @@ class LocalBackend:
         self, pid: str, fmt: str, options: dict, run_id: str, config_snapshot: dict
     ) -> tuple[int, int]:
         with self.transaction() as connection:
+            self._reject_removing(pid)
+            if self._get("projects", pid, connection) is None:
+                raise ApiError(PROJECT_NOT_FOUND, 404, "project not found")
             export_id = self.create_export(pid, fmt, options, connection=connection)
             job_id = self.create_job(
                 pid,
@@ -378,7 +974,7 @@ class LocalBackend:
         return self._get("jobs", job_id)
 
     def get_job_by_arq_id(self, arq_job_id: str) -> dict | None:
-        with self.transaction() as conn:
+        with self.transaction(write=False) as conn:
             row = conn.execute("SELECT id FROM jobs WHERE arq_job_id=?", (arq_job_id,)).fetchone()
             return self._get("jobs", row[0], conn) if row else None
 
@@ -388,6 +984,12 @@ class LocalBackend:
     def all_jobs(self) -> list[dict]:
         """Return durable jobs for startup recovery."""
         return self._list("jobs")
+
+    def queued_job_count(self) -> int:
+        with self.transaction(write=False) as connection:
+            return connection.execute(
+                "SELECT count(*) FROM jobs WHERE json_extract(document, '$.status')='queued'"
+            ).fetchone()[0]
 
     def set_job_status(
         self,
@@ -470,30 +1072,31 @@ class LocalBackend:
             if not store.exists():
                 return []
             review = store.load_latest_review_result() or {}
+            issue_counts = Counter(
+                issue.get("chapter")
+                for issue in review.get("issues", [])
+                if isinstance(issue.get("chapter"), int)
+            )
             result = []
-            for entry in store.load_manifest().get("chapters", []):
-                chapter = store.load_chapter(entry["index"])
-                state, current = chapter_review_state(
-                    review, chapter.meta, entry.get("review_status")
-                )
-                segments = [s for s in chapter.text_segments if s.source]
-                result.append(
-                    {
-                        "index": chapter.index,
-                        "title": chapter.title,
-                        "title_translated": entry.get("title_translated"),
-                        "status": entry.get("status") or "pending",
-                        "word_count": len(segments),
-                        "target_word_count": sum(s.target is not None for s in segments),
-                        "review_status": state or "pending",
-                        "review_issue_count": sum(
-                            issue.get("chapter") == chapter.index
-                            for issue in review.get("issues", [])
-                        )
-                        if current
-                        else 0,
-                    }
-                )
+            # Parse the manifest once without retaining the whole book's chapter bodies.
+            with store.read_chapters_snapshot() as chapters:
+                for entry, chapter in chapters:
+                    state, current = chapter_review_state(
+                        review, chapter.meta, entry.get("review_status")
+                    )
+                    segments = [s for s in chapter.text_segments if s.source]
+                    result.append(
+                        {
+                            "index": chapter.index,
+                            "title": chapter.title,
+                            "title_translated": entry.get("title_translated"),
+                            "status": entry.get("status") or "pending",
+                            "word_count": len(segments),
+                            "target_word_count": sum(s.target is not None for s in segments),
+                            "review_status": state or "pending",
+                            "review_issue_count": issue_counts[chapter.index] if current else 0,
+                        }
+                    )
             return result
         finally:
             store.close()
@@ -558,6 +1161,31 @@ class LocalBackend:
             reverse=True,
         )[:5]
 
+    def _export_location(self, pid: str) -> tuple[str, str]:
+        """The root and the directory name one project's exports live under.
+
+        `export_path()` derives `<root>/<name>/exports` and then checks that the
+        stored path resolves inside it, so both halves have to describe the
+        directory this project actually has. The workspace alone is not that
+        answer any more: a project created under a chosen library is not named by
+        its identifier, and a stored path built from the workspace would fail the
+        containment check against the very file it had just written.
+
+        The name is the directory's own, so the old flat layout keeps answering
+        with the identifier and nothing about it changes.
+
+        The root is resolved because the stored path is later compared against a
+        resolved file. The chosen library comes from the native parent, which
+        spells the installation directory the way the executable reported it, so
+        the two spellings have to be brought together before they are subtracted.
+        """
+        directory = self.project_dir(pid)
+        try:
+            directory = directory.resolve()
+        except OSError:
+            pass
+        return str(directory.parent), directory.name
+
     def _export_history_lock(self, pid: str):
         from wenyi_core.storage.sqlite import SqliteStorage
 
@@ -570,9 +1198,9 @@ class LocalBackend:
     def publish_export(self, pid: str, export_id: int, output: str) -> None:
         from wenyi_backend.export_paths import EXPORT_LIMIT, export_path
 
-        root = str(self.workspace / "projects")
+        root, name = self._export_location(pid)
         with self._export_history_lock(pid):
-            file = export_path(root, pid, str(Path(output).absolute()))
+            file = export_path(root, name, str(Path(output).absolute()))
             if file is None or not file.is_file():
                 raise ValueError("Export output must be a file in the project's export directory")
             size = file.stat().st_size
@@ -612,19 +1240,19 @@ class LocalBackend:
         """Called under the history lock, never inside a catalog transaction."""
         from wenyi_backend.export_paths import export_path, log
 
-        root = str(self.workspace / "projects")
+        root, name = self._export_location(pid)
         for old in self._list("exports", pid=pid):
             with self._export_leases_lock:
                 leased = bool(self._export_leases.get(old["id"], 0))
             if old["status"] != "deleting" or leased:
                 continue
             try:
-                old_file = export_path(root, pid, old["path"])
+                old_file = export_path(root, name, old["path"])
                 if old_file is None:
                     raise OSError("Export resolves outside its owned directory")
                 if old["format"] == "html":
                     assets = old_file.with_name(f"{old_file.stem}.assets")
-                    if export_path(root, pid, str(assets)) is None:
+                    if export_path(root, name, str(assets)) is None:
                         raise OSError("Export assets resolve outside their owned directory")
                     if assets.exists():
                         shutil.rmtree(assets)
@@ -656,16 +1284,18 @@ class LocalBackend:
             log.warning("Could not reclaim exports after closing %s", export_id, exc_info=True)
 
     def open_export(
-        self, pid: str, export_id: int, *, bundle_html: bool = False
+        self, pid: str, export_id: int, *, inline_html: bool = False
     ) -> tuple[BinaryIO, Path]:
         from wenyi_backend.export_paths import export_path
 
-        from .local_export_files import ExportLease, html_bundle, open_regular
+        from .local_export_files import ExportLease, html_document, open_regular
 
         with self._export_history_lock(pid):
+            self._reject_removing(pid)
             export = self._get("exports", export_id)
+            root, name = self._export_location(pid)
             file = (
-                export_path(str(self.workspace / "projects"), pid, export["path"])
+                export_path(root, name, export["path"])
                 if export
                 and export["project_id"] == pid
                 and export["status"] == "done"
@@ -674,9 +1304,10 @@ class LocalBackend:
             )
             if file is None or not file.is_file():
                 raise FileNotFoundError("Completed export not found")
-            # Keep owned assets alive until bundled, without a catalog transaction.
-            if bundle_html and file.suffix == ".html":
-                return html_bundle(file), file
+            # Convert legacy multi-file history without changing published artifacts.
+            # Keep owned assets alive during conversion, without a catalog transaction.
+            if inline_html and file.suffix == ".html" and file.with_suffix(".assets").exists():
+                return html_document(file), file
             stream = open_regular(file)
             try:
                 leased = ExportLease(stream, lambda: self._release_export(pid, export_id))
@@ -696,10 +1327,15 @@ class LocalBackend:
         return self._get("application_settings", 1, connection)
 
     def save_settings(self, document: dict, connection: sqlite3.Connection) -> None:
+        # Settings edits replace config/template/revision, not project-location
+        # metadata. Merge in this same transaction so concurrent creation cannot
+        # lose a root that was just committed.
+        saved = self.load_settings(connection) or {}
+        saved.update(document)
         connection.execute(
             "INSERT INTO application_settings VALUES(1,?) "
             "ON CONFLICT(id) DO UPDATE SET document=excluded.document",
-            (json.dumps(document),),
+            (json.dumps(saved),),
         )
 
     def save_progress(self, pid: str, payload: dict) -> None:

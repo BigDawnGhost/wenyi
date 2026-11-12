@@ -5,6 +5,12 @@
   "build": {
     "frontendDist": "frontend/dist"
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "",
+      "requireSignedVersion": true
+    }
+  },
   "app": {
     "windows": [],
     "security": {

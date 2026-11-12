@@ -5,13 +5,27 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ..genres import DEFAULT_GENRE, Genre
+
+
+def used_rule_keys(templates: Iterable[tuple[str, str]]) -> set[str]:
+    """Return the rule keys referenced by ``${key}``/``$key`` placeholders in templates.
+
+    Single source of truth for :meth:`PolicyPlan.task_fingerprint` and
+    ``resolver.resolve_policy``; the two previously kept divergent copies (audit X-4).
+    """
+    return set(re.findall(r"\$\{?(\w+)", "\n".join(text for _, text in templates)))
+
+
 Point = Literal[
     "prompt.compose",
+    "evidence.prepare",
     "candidate.validate",
     "export.text",
     "export.source_markup",
@@ -47,6 +61,10 @@ class ExportDefaults(BaseModel):
     def reject_null(cls, value: Any) -> Any:
         if value is None:
             raise ValueError("Export policy defaults cannot be null")
+        if isinstance(value, str) and not value.strip():
+            # Align with registry.validate_options: blank strings are not valid values
+            # (audit Y-4/D-2).
+            raise ValueError("Export policy defaults cannot be blank")
         return value
 
 
@@ -71,7 +89,7 @@ class OperationSpec:
     contract_version: int = 1
     roles: tuple[Role, ...] = ("source", "target", "pair")
     languages: tuple[str, ...] = ()
-    paths: tuple[str, ...] = ("book", "srt")
+    paths: tuple[str, ...] = ("book",)
     formats: tuple[str, ...] = ()
     backends: tuple[str, ...] = ()
     options_schema: tuple[tuple[str, str, str], ...] = ()
@@ -89,17 +107,18 @@ class PolicyContext:
     source: str
     target: str
     phase: Phase = "translation"
-    path: Literal["book", "srt"] = "book"
+    path: Literal["book"] = "book"
     format: str = ""
     backend: str = "native"
     punctuation_normalize: bool = True
-    honorific_strategy: str = "keep_style"
     source_identity: str = ""
     task_groups: tuple[str, ...] = ()
     bilingual: bool = False
     order: Literal["target_first", "source_first"] = "target_first"
     preserve_source_style: bool = False
     about_page: bool = True
+    terminology_context: bool = False
+    genre: Genre = DEFAULT_GENRE
 
 
 @dataclass(frozen=True)
@@ -167,7 +186,7 @@ class PolicyPlan:
         templates = tuple(
             (name, text) for name, text in self.templates if name.startswith(prefix + "_")
         )
-        used = set(re.findall(r"\$\{?(\w+)", "\n".join(text for _, text in templates)))
+        used = used_rule_keys(templates)
         values = {key: value for key, value in self.prompt_values if key in used}
         if prefix in {"translator", "review_fixer", "precision"} and "lang_guidance" in used:
             values["lang_guidance"] = dict(self.prompt_values)["configured_lang_guidance"]
@@ -183,6 +202,9 @@ class PolicyPlan:
                     (op.id, op.implementation_version, op.contract_version, op.options)
                     for op in self.operations
                     if op.point == "prompt.compose"
+                    or op.point == "evidence.prepare"
+                    # Book preparation has the same inputs and semantics in both modes.
+                    and prefix not in {"analyzer", "chapter_digest", "book_synopsis"}
                 ],
             }
         )

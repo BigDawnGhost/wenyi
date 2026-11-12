@@ -17,6 +17,10 @@ from typing import Optional, Protocol, runtime_checkable
 ProgressFn = Callable[[int, int, str], None]
 """Core progress callback: ``(done, total, label)``."""
 
+# Event kinds that carry a terminal failure to live subscribers. Anything not
+# listed here keeps its existing progress handling, so this stays additive.
+ERROR_KIND = "error"
+
 
 @dataclass
 class TranslationEvent:
@@ -27,7 +31,7 @@ class TranslationEvent:
     """
 
     project_id: Optional[str] = None
-    kind: str = "progress"  # progress | batch | chapter | term | pipeline | log
+    kind: str = "progress"  # progress | batch | chapter | term | pipeline | log | error
     done: int = 0
     total: int = 0
     label: str = ""

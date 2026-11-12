@@ -4,10 +4,21 @@
   "type": "module",
   "description": "Shared Wenyi interface and platform capability contracts.",
   "exports": {
-    "./*": "./src/*"
+    "./app": "./src/App.tsx",
+    "./platform": "./src/platform.ts",
+    "./api": "./src/api/client.ts",
+    "./api/types": "./src/api/types.ts",
+    "./http": "./src/lib/http.ts",
+    "./i18n": "./src/i18n/index.ts",
+    "./document-language": "./src/i18n/DocumentLanguage.tsx",
+    "./styles.css": "./src/index.css",
+    "./primitives": "./src/components/ui/index.ts",
+    "./settings": "./src/features/settings/SettingsSection.tsx",
+    "./format": "./src/format.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
+    "@radix-ui/react-dialog": "^1.1.23",
     "@radix-ui/react-select": "^2.3.7",
     "@tanstack/react-query": "^5.59.0",
     "@tanstack/react-virtual": "^3.10.0",
@@ -26,7 +37,9 @@
     "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0"
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.6.0"
   }
 }

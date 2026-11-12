@@ -342,17 +342,71 @@ def _paragraph_text_and_style_meta(
 
 
 def _cell_text_and_style(cell, numbering_root=None) -> tuple[str, dict[str, Any]]:
-    """Combine cell paragraphs, taking styles from the first nonempty paragraph."""
+    """Combine cell paragraphs into one text with span styles shifted to joined offsets.
+
+    Each paragraph contributes its own style spans; offsets accumulate across the "\\n"
+    separators so export-side placements land on the right characters (audit G-3). When
+    every paragraph shares one uniform style the compact ``docx_style`` form is kept;
+    otherwise the styles become a shifted ``docx_styles.items`` list.
+    """
     texts: list[str] = []
-    style_meta: dict[str, Any] = {}
+    items: list[dict[str, Any]] = []
+    uniform_styles: list[dict[str, Any]] = []
+    paragraph_count = 0
+    paragraph_props: dict[str, Any] | None = None
+    offset = 0
     for paragraph in cell.paragraphs:
         text, meta = _paragraph_text_and_style_meta(paragraph, numbering_root)
         if not text:
             continue
-        if not style_meta and meta:
-            style_meta = meta
+        paragraph_count += 1
+        if texts:
+            offset += 1  # the "\n" separator between cell paragraphs
+        styles = meta.get("docx_styles")
+        raw_items = styles.get("items") if isinstance(styles, dict) else None
+        para_items = [item for item in (raw_items or []) if isinstance(item, dict)]
+        if isinstance(meta.get("docx_style"), dict) and meta["docx_style"]:
+            uniform_styles.append(meta["docx_style"])
+            para_items = [
+                {
+                    "mode": "range",
+                    "source_start": 0,
+                    "source_end": len(text),
+                    **meta["docx_style"],
+                }
+            ]
+        for item in para_items:
+            items.append(
+                {
+                    **item,
+                    "source_start": item["source_start"] + offset,
+                    "source_end": item["source_end"] + offset,
+                }
+            )
+        if paragraph_props is None:
+            paragraph_props = meta
         texts.append(text)
-    return "\n".join(texts), style_meta
+        offset += len(text)
+    joined = "\n".join(texts)
+    if paragraph_props is None:
+        return "", {}
+    combined = dict(paragraph_props)
+    combined.pop("docx_style", None)
+    combined.pop("docx_styles", None)
+    if (
+        paragraph_count
+        and len(uniform_styles) == paragraph_count
+        and all(style == uniform_styles[0] for style in uniform_styles)
+    ):
+        combined["docx_style"] = uniform_styles[0]
+    elif items:
+        combined["docx_styles"] = {
+            "items": [
+                {"id": f"s{index}", **{key: value for key, value in item.items() if key != "id"}}
+                for index, item in enumerate(items)
+            ]
+        }
+    return joined, combined
 
 
 def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
@@ -397,12 +451,18 @@ def read_docx(path: str, source_lang: str, target_lang: str) -> Document:
             cells: list[dict[str, Any]] = []
             for r_idx, row in enumerate(rows):
                 row_cells = list(row.cells)
+                previous: Any = None
                 for c_idx in range(cols):
                     cell = row_cells[c_idx] if c_idx < len(row_cells) else None
                     if cell is None:
                         text, style_meta = "", {}
+                    elif cell is previous:
+                        # gridSpan merge continuation: the same cell repeats per column,
+                        # so the text is kept once in the first spanned column (audit G-4).
+                        text, style_meta = "", {}
                     else:
                         text, style_meta = _cell_text_and_style(cell, numbering_root)
+                    previous = cell
                     cells.append(
                         {
                             "text": text or "",

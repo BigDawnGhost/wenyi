@@ -3,14 +3,26 @@
 from __future__ import annotations
 
 import os
+from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
-from wenyi_core.config import Config
 from wenyi_core.i18n.languages import validate_run_languages
-from wenyi_core.ingest.errors import IngestError
-from wenyi_core.ingest.segmenter import load_document
-from wenyi_core.pipeline.runstore import RunStore, translation_run_dir
+
+if TYPE_CHECKING:
+    from wenyi_core.config import Config
+    from wenyi_core.storage.run_store import RunStore
+
+
+def load_document(*args, **kwargs):
+    """Defer the ingest stack while keeping a patchable module attribute.
+
+    Callers and tests have always reached this name through the module, so the
+    import stays behind the call rather than moving out of the namespace.
+    """
+    from wenyi_core.ingest.segmenter import load_document as parse
+
+    return parse(*args, **kwargs)
 
 
 def require_input_file(input_path: str, *, console: Console | None = None) -> None:
@@ -37,7 +49,7 @@ def validate_output_format(fmt: str, *, console: Console | None = None) -> str:
 def resolve_output_format(
     input_path: str, fmt: str | None, *, console: Console | None = None
 ) -> str | None:
-    """Defer PDF defaults to saved backend metadata; keep DOCX and EPUB defaults."""
+    """Keep HTML/DOCX input formats; defer PDF defaults to saved backend metadata."""
     console = console or Console()
     if fmt is not None and str(fmt).strip():
         return validate_output_format(str(fmt), console=console)
@@ -45,21 +57,17 @@ def resolve_output_format(
         return None
     if os.path.splitext(input_path)[1].lower() == ".docx":
         return "docx"
+    if os.path.splitext(input_path)[1].lower() in {".html", ".htm", ".xhtml"}:
+        return "html"
     return "epub"
-
-
-def validate_pdf_engine(engine: str, *, console: Console | None = None) -> str:
-    """Normalize and validate the PDF rendering engine."""
-    console = console or Console()
-    normalized = engine.strip().lower()
-    if normalized not in {"weasyprint", "fpdf2"}:
-        console.print(f"[red]Unsupported PDF engine: {engine} (choose weasyprint / fpdf2)[/]")
-        raise typer.Exit(2)
-    return normalized
 
 
 def runstore_for(config: Config, input_path: str, *, console: Console | None = None) -> RunStore:
     """Resolve the title and locate existing state without creating a directory."""
+    # Deferred: reading a title pulls the ingest stack (bs4/lxml) in; --help
+    # must not pay for that.
+    from wenyi_core.storage.run_store import RunStore, translation_run_dir
+
     console = console or Console()
     require_input_file(input_path, console=console)
     if os.path.splitext(input_path)[1].lower() == ".pdf":
@@ -80,7 +88,9 @@ def runstore_for(config: Config, input_path: str, *, console: Console | None = N
 def runstore_for_cli(
     config: Config, input_path: str, *, console: Console | None = None
 ) -> RunStore:
-    """Locate state for inspection commands and report identity errors concisely."""
+    # Deferred with the ingest stack; the base error class drags it in.
+    from wenyi_core.models.errors import IngestError
+
     console = console or Console()
     try:
         return runstore_for(config, input_path, console=console)

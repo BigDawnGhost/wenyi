@@ -1,4 +1,4 @@
-"""Three independent drafts and one source-aware synthesis, without extra model rounds."""
+"""Three independent drafts and one source-aware synthesis with bounded output retries."""
 
 from __future__ import annotations
 
@@ -6,10 +6,11 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from ..glossary.store import GlossaryTerm
+from ..errors import WenyiError
 from ..llm.base import Messages
 from ..llm.json_parser import JsonParseError, parse_json_loose
 from ..llm.retrying import TruncatedResponseError
+from ..models.glossary import GlossaryTerm
 from . import prompts
 from .base import Agent
 from .translator import Translator
@@ -20,7 +21,7 @@ PrecisionCallRecorder = Callable[
 ]
 
 
-class PrecisionError(ValueError):
+class PrecisionError(WenyiError, ValueError):
     """A precision response cannot safely be used for document backfill."""
 
 
@@ -55,7 +56,14 @@ class PrecisionAgent(Agent):
                 {
                     "style": inputs.style,
                     "book_synopsis": inputs.book_synopsis,
-                    "glossary": prompts.render_glossary(list(inputs.terms)),
+                    "glossary": prompts.render_glossary(
+                        list(inputs.terms),
+                        source_lang=self.src,
+                        genre=self.language_policy.context.genre,
+                        note_source="\n".join(inputs.sources)
+                        if self.config.pipeline.terminology_context
+                        else None,
+                    ),
                     "chapter_digest": inputs.chapter_digest,
                     "context": inputs.context,
                     "sources": inputs.sources,
@@ -70,7 +78,7 @@ class PrecisionAgent(Agent):
     def _call(self, inputs: PrecisionInputs, task: str, payload: dict, operation: str) -> list[str]:
         if not any(Translator._needs_translation(source) for source in inputs.sources):
             return list(inputs.sources)
-        messages = [
+        messages: Messages = [
             {"role": "system", "content": self.render("precision_generation_system")},
             {"role": "user", "content": self._packet(inputs)},
             {
@@ -81,37 +89,81 @@ class PrecisionAgent(Agent):
             },
         ]
 
-        def invoke() -> str:
-            # Match standard translation: leave output limits to the model/provider configuration.
-            return self.client.complete(messages, operation=operation, json_mode=True)
+        retries_remaining = self.config.pipeline.align_retry_limit
+        feedback: list[dict[str, str]] = []
+        last_raw: dict[str, str] = {}
+        while True:
+            attempt = messages + feedback
 
-        def validate(raw: str) -> list[str]:
-            data = parse_json_loose(raw)
-            return self._targets(
-                inputs, data.get("translations") if isinstance(data, dict) else None
-            )
+            def invoke(attempt: Messages = attempt) -> str:
+                # Match standard translation: leave output limits to the model/provider configuration.
+                text = self.client.complete(attempt, operation=operation, json_mode=True)
+                last_raw["raw"] = text
+                return text
 
-        try:
-            if self._recorder:
-                targets, self.last_call_ref = self._recorder(operation, messages, invoke, validate)
-                return targets
-            return validate(invoke())
-        except (JsonParseError, TruncatedResponseError) as error:
-            raise PrecisionError(f"{operation}: invalid or truncated precision response") from error
+            def validate(raw: str) -> list[str]:
+                data = parse_json_loose(raw)
+                # Match standard translation: accept both {"translations": [...]} and a bare array.
+                items = data.get("translations") if isinstance(data, dict) else data
+                return self._targets(inputs, items)
+
+            try:
+                if self._recorder:
+                    targets, self.last_call_ref = self._recorder(
+                        operation, attempt, invoke, validate
+                    )
+                    return targets
+                return validate(invoke())
+            except (PrecisionError, JsonParseError, TruncatedResponseError) as error:
+                # Output recovery is separate from provider transport retries and archival failures.
+                if retries_remaining <= 0:
+                    if isinstance(error, PrecisionError):
+                        raise
+                    raise PrecisionError(
+                        f"{operation}: invalid or truncated precision response"
+                    ) from error
+                retries_remaining -= 1
+                if isinstance(error, TruncatedResponseError) or "raw" not in last_raw:
+                    # Feedback cannot raise an output cap; without a received reply it is empty.
+                    continue
+                # Models that merge or drop segments repeat the mistake on identical retries;
+                # quote the rejected reply and restate the exact structural contract instead.
+                feedback.extend(
+                    [
+                        {"role": "assistant", "content": last_raw["raw"]},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"The previous reply failed local validation: {error}. "
+                                'Return only a JSON object like {"translations": ["...", ...]} '
+                                f"with exactly {len(inputs.sources)} strings, one per requested "
+                                "segment in task.segments order. Do not merge, split, omit or "
+                                "pad segments, and do not add extra fields."
+                            ),
+                        },
+                    ]
+                )
 
     @staticmethod
     def _targets(inputs: PrecisionInputs, targets: object) -> list[str]:
-        """Check structure once for backfill; never retry or split model requests."""
-        if not isinstance(targets, list) or len(targets) != len(inputs.sources):
-            raise PrecisionError("Precision output count does not match the document segments")
+        """Validate structure and restore protected sources without splitting."""
+        if not isinstance(targets, list):
+            raise PrecisionError("Precision output did not include a translations array")
+        if len(targets) != len(inputs.sources):
+            raise PrecisionError(
+                "Precision output count does not match the document segments: "
+                f"expected {len(inputs.sources)}, got {len(targets)}"
+            )
+        output: list[str] = []
         for index, (source, target) in enumerate(zip(inputs.sources, targets)):
             if not isinstance(target, str):
                 raise PrecisionError(f"Precision output {index} must be a string")
-            if not inputs.allow_empty_translations and source.strip() and not target.strip():
+            if not Translator._needs_translation(source):
+                target = source
+            elif not inputs.allow_empty_translations and not target.strip():
                 raise PrecisionError(f"Precision output {index} must not be blank")
-            if not Translator._needs_translation(source) and target != source:
-                raise PrecisionError(f"Precision output changed protected segment {index}")
-        return targets
+            output.append(target)
+        return output
 
     def translate(self, inputs: PrecisionInputs) -> list[str]:
         return self._call(
@@ -124,8 +176,7 @@ class PrecisionAgent(Agent):
     def synthesize(self, inputs: PrecisionInputs, drafts: list[list[str]]) -> list[str]:
         if len(drafts) != 3:
             raise PrecisionError("Precision synthesis requires three initial drafts")
-        for draft in drafts:
-            self._targets(inputs, draft)
+        drafts = [self._targets(inputs, draft) for draft in drafts]
         # Keep all draws in checkpoints; identical text is not additional evidence.
         distinct = [list(draft) for draft in dict.fromkeys(tuple(draft) for draft in drafts)]
         return self._call(

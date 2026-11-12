@@ -1,15 +1,21 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
-import { toast } from "sonner";
-import { useI18n } from "@/i18n";
-import { api, type ChapterSegments } from "@/lib/api";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/form";
-import { ErrorNotice } from "@/components/ui/data";
+import { toast } from "../../lib/toast";
+import { useI18n } from "../../i18n";
+import { api } from "../../api/client";
+import type { ChapterSegments } from "../../api/types";
+import { Button } from "../../components/ui/button";
+import { Textarea } from "../../components/ui/form";
+import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
 import { RevisionHistory } from "./RevisionHistory";
 import { PrecisionDrafts } from "./PrecisionDrafts";
+
+function fitTextarea(element: HTMLTextAreaElement) {
+  element.style.height = "0px";
+  element.style.height = `${element.scrollHeight + 2}px`;
+}
 
 export function ParagraphEditor({
   pid,
@@ -43,10 +49,11 @@ export function ParagraphEditor({
     queryKey: ["segmentHistory", pid, chapterIndex, segment.index],
     queryFn: () => api.segmentHistory(pid, chapterIndex, segment.index),
     enabled: view === "history",
-    refetchInterval: view === "history" ? 3000 : false,
+    refetchInterval: view === "history" && busy ? 3000 : false,
   });
   const refresh = () =>
     Promise.all([
+      qc.invalidateQueries({ queryKey: ["project", pid] }),
       qc.invalidateQueries({ queryKey: ["review", pid, chapterIndex] }),
       qc.invalidateQueries({ queryKey: ["chapters", pid] }),
       qc.invalidateQueries({
@@ -73,9 +80,10 @@ export function ParagraphEditor({
   });
   const stale = segment.target !== baseline;
   const disabled = readOnly || segment.target == null || save.isPending;
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = dialog.current!;
     const previous = document.activeElement;
+    // Open before measuring the textarea; a closed dialog has no usable dimensions.
     element.showModal();
     if (textarea.current && !textarea.current.disabled)
       textarea.current.focus({ preventScroll: true });
@@ -89,21 +97,31 @@ export function ParagraphEditor({
   useLayoutEffect(() => {
     const element = textarea.current;
     if (!element) return;
-    const fit = () => {
-      element.style.height = "0px";
-      element.style.height = `${element.scrollHeight + 2}px`;
-    };
-    fit();
-    let width = element.clientWidth;
-    const observer = new ResizeObserver(() => {
-      if (element.clientWidth !== width) {
-        width = element.clientWidth;
-        fit();
+    fitTextarea(element);
+  }, [draft, view]);
+  useLayoutEffect(() => {
+    const element = textarea.current;
+    if (!element) return;
+    let width: number | undefined;
+    let frame: number | undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      const nextWidth = entry.contentRect.width;
+      if (nextWidth !== width && frame === undefined) {
+        // Writing the observed height inside delivery causes ResizeObserver loop errors.
+        // Include the first delivery: scrollbars or fonts can change the initial width.
+        frame = requestAnimationFrame(() => {
+          frame = undefined;
+          fitTextarea(element);
+        });
       }
+      width = nextWidth;
     });
     observer.observe(element);
-    return () => observer.disconnect();
-  }, [draft, view]);
+    return () => {
+      observer.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
+  }, [view]);
   const close = () => {
     if (!save.isPending) onClose();
   };
@@ -111,8 +129,7 @@ export function ParagraphEditor({
     <dialog
       ref={dialog}
       aria-labelledby="paragraph-editor-title"
-      aria-describedby="paragraph-editor-help"
-      className="fixed inset-0 m-auto w-[calc(100%-2rem)] max-w-6xl max-h-[90dvh] overflow-hidden rounded-xl border bg-background p-0 text-foreground shadow-xl backdrop:bg-black/30 open:flex open:flex-col"
+      className="fixed inset-0 m-auto w-[calc(100%-32px)] max-w-6xl max-h-[90dvh] overflow-hidden rounded-xl border bg-background p-0 text-foreground shadow-xl backdrop:bg-black/30 backdrop:backdrop-blur-[2px] open:flex open:flex-col"
       onCancel={(event) => {
         event.preventDefault();
         close();
@@ -138,9 +155,6 @@ export function ParagraphEditor({
         >
           {t("proofreading.paragraphEditor")}
         </h2>
-        <p id="paragraph-editor-help" className="text-sm text-muted-foreground">
-          {t("proofreading.editorHelp")}
-        </p>
         <button
           type="button"
           aria-label={t("common.close")}
@@ -205,11 +219,7 @@ export function ParagraphEditor({
         <ErrorNotice
           error={save.error || (view === "history" ? history.error : undefined)}
         />
-        {readOnly && (
-          <p role="status" className="mb-4 text-sm text-muted-foreground">
-            {t("proofreading.pauseToEdit")}
-          </p>
-        )}
+        {readOnly && <ReadOnlyNotice className="mb-4" />}
         {stale && (
           <div
             role="status"
@@ -231,7 +241,7 @@ export function ParagraphEditor({
           </div>
         )}
         <div
-          className={`grid gap-6 ${view !== "precision" ? "md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" : ""}`}
+          className={`grid gap-6 ${view !== "precision" ? "grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" : ""}`}
         >
           <section className="min-w-0 space-y-3">
             <h3 className="text-sm font-medium">{t("common.source")}</h3>

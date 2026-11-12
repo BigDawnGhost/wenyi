@@ -1,4 +1,4 @@
-[Characters / Style guide]
+[${genre_style_heading}]
 $style
 
 [Whole-book synopsis]

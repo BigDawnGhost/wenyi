@@ -2,15 +2,31 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "sonner";
-import App from "@wenyi/ui/App";
-import { DocumentLanguage } from "@wenyi/ui/i18n/DocumentLanguage";
+import App from "@wenyi/ui/app";
+import { DocumentLanguage } from "@wenyi/ui/document-language";
 import { configurePlatform } from "@wenyi/ui/platform";
-import "@wenyi/ui/index.css";
+import "@wenyi/ui/styles.css";
 import { useRuntimeStatus } from "./runtime";
 import { useDesktopI18n } from "./i18n";
 import { desktopPlatform } from "./platform";
 import { configureQueryActivity } from "./activity";
+import { installDiagnostics } from "./diagnostics";
+import { DiagnosticExportButton } from "./DesktopDiagnostics";
+
+installDiagnostics();
+
+// Keep native text-editing menus, but not browser navigation menus in Desktop.
+// Bubble normally so React's paragraph context menu can still handle the event.
+document.addEventListener("contextmenu", (event) => {
+  const target = event.target;
+  const textField = (
+    target instanceof HTMLTextAreaElement ||
+    (target instanceof HTMLInputElement &&
+      ["text", "search", "email", "url", "tel", "password", "number"].includes(target.type))
+  ) && !target.disabled;
+  if (textField || (target instanceof HTMLElement && target.isContentEditable)) return;
+  event.preventDefault();
+});
 
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -45,13 +61,11 @@ function Bootstrap() {
         <button className="underline" onClick={() => location.reload()}>
           {t("runtime.reload")}
         </button>
+        <div className="mt-4"><DiagnosticExportButton /></div>
       </main>
     );
   return (
-    <>
-      <App />
-      <Toaster richColors position="top-right" />
-    </>
+    <App />
   );
 }
 

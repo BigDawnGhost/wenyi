@@ -8,12 +8,21 @@ on:
         description: Git tag to build (empty means development checkout)
         type: string
         default: ""
+      publish:
+        description: Upload rebuilt assets to an existing stable release (requires tag)
+        type: boolean
+        default: false
   release:
     types: [published]
+  push:
+    branches: [main]
   pull_request:
+    branches: [main]
     paths:
       - "apps/desktop/**"
       - "apps/api/**"
+      # The sidecar bundles the lock crate, so its changes reach this workflow.
+      - "native/**"
       - "packages/core/**"
       - "packages/backend/**"
       - "packages/ui/**"
@@ -21,9 +30,10 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - "apps/web/**"
-      - "scripts/desktop*"
-      - "scripts/release_version.py"
-      - "scripts/package_release.py"
+      - "scripts/dev/desktop*"
+      - "scripts/release/release_version.py"
+      - "scripts/release/package_release.py"
+      - "scripts/release/desktop_updates.py"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -33,74 +43,309 @@ permissions:
   contents: read
 
 jobs:
-  local-package:
-    name: Desktop · ${{ matrix.platform }}
+  # A pull request needs feedback on Linux plus a Windows smoke check; only a
+  # release or a manual dispatch pays for every platform and the packaging run.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+    steps:
+      - name: Validate published release rebuild
+        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -eu
+          if [[ ! "$TAG" =~ ^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Publishing a rebuild requires an existing stable release tag."
+            exit 1
+          fi
+          published="$(gh release view "$TAG" --json isDraft,isPrerelease \
+            --jq '.isDraft == false and .isPrerelease == false')"
+          if [[ "$published" != true ]]; then
+            echo "::error::Rebuild publication requires an already published stable release."
+            exit 1
+          fi
+      # Full history so the path filter can diff a push; a pull request reads it
+      # through the API, but the shallow clone costs little here.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            # Everything the packaging path actually consumes. The workflow file
+            # itself is listed so a change to this logic still builds in full.
+            desktop:
+              - "apps/desktop/**"
+              - "scripts/dev/desktop*"
+              - "scripts/release/desktop_updates.py"
+              - "package.json"
+              - "pnpm-lock.yaml"
+              - ".github/workflows/desktop.yml"
+      - id: set
+        # The value must be a single line: a multi-line $GITHUB_OUTPUT entry is
+        # rejected by the runner as an invalid output format.
+        env:
+          # A business-code pull request does not need the Tauri release build;
+          # it still runs cargo test, the menu test and the desktop suite.
+          DESKTOP_CHANGED: ${{ steps.filter.outputs.desktop }}
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "$DESKTOP_CHANGED" = "true" ]; then tier=full; else tier=test; fi
+            matrix="[{\"os\":\"ubuntu-22.04\",\"platform\":\"linux-x64\",\"tier\":\"${tier}\",\"bundles\":\"appimage,deb,rpm\"},{\"os\":\"windows-latest\",\"platform\":\"windows-x64\",\"tier\":\"smoke\",\"bundles\":\"nsis\"}]"
+          else
+            matrix='[{"os":"ubuntu-22.04","platform":"linux-x64","tier":"full","bundles":"appimage,deb,rpm"},{"os":"windows-latest","platform":"windows-x64","tier":"full","bundles":"nsis"},{"os":"macos-15","platform":"macos-arm64","tier":"full","bundles":"dmg","signed_bundles":"dmg,app"},{"os":"macos-15-intel","platform":"macos-x64","tier":"full","bundles":"dmg","signed_bundles":"dmg,app"}]'
+          fi
+          echo "matrix={\"include\":${matrix}}" >> "$GITHUB_OUTPUT"
+
+  # Warm the Rust caches on every push to main so a later pull request or
+  # release starts with a populated target directory instead of compiling the
+  # whole dependency graph from cold. --no-run compiles but does not execute,
+  # and both profiles are warmed because cargo test and the Tauri bundle use
+  # different ones.
+  cargo-warm:
+    if: github.event_name == 'push'
+    name: Cargo warm · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-22.04
-            platform: linux-x64
-            bundles: appimage,deb,rpm
-          - os: windows-latest
-            platform: windows-x64
-            bundles: nsis
-          - os: macos-15
-            platform: macos-arm64
-            bundles: dmg
+        os: [ubuntu-22.04, windows-latest]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      # The desktop build script shells out to uv during compilation to
+      # resolve the Git version, so a runner without uv fails before cargo
+      # writes a single object file. Same step as the packaging job.
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      # generate_context! reads frontendDist at compile time, so the frontend
+      # must exist before cargo runs -- the packaging job builds it for the same
+      # reason. pnpm/action-setup comes first because setup-node resolves the
+      # pnpm binary when caching is enabled.
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 9
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the frontend the Tauri context embeds
+        run: pnpm -C apps/desktop/frontend build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop -> target
+          # The cache has to be readable from the packaging job, so both jobs
+          # build the key from the same inputs: the job id and the Rust
+          # environment hash are left out, exactly as in local-package.
+          add-job-id-key: false
+          add-rust-environment-hash-key: false
+          # A warm-only job must save the cache, not just consume it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev libdbus-1-dev librsvg2-dev patchelf
+      - name: Warm the test profile
+        run: cargo test --locked --no-run --manifest-path apps/desktop/Cargo.toml
+      - name: Warm the release profile
+        run: cargo build --locked --release --manifest-path apps/desktop/Cargo.toml
+  local-package:
+    needs: plan
+    # A push to main only warms the caches; packaging there would burn four
+    # runners for artefacts nobody consumes. Release and pull requests still
+    # build, and a manual dispatch keeps the full matrix available.
+    if: github.event_name != 'push'
+    name: Desktop · ${{ matrix.platform }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      # The plan job decides which platforms this event actually needs, so a
+      # pull request stops paying for two macOS builds and a full packaging run.
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
-      - uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
       - name: Resolve Git version
         id: version
         shell: bash
         env:
           WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
-        run: uv run --no-project --with hatch-vcs python scripts/release_version.py --github-output "$GITHUB_OUTPUT"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-      - uses: pnpm/action-setup@v4
+        run: uv run --no-project --with hatch-vcs python scripts/release/release_version.py --github-output "$GITHUB_OUTPUT"
+      - name: Configure stable release updater signing
+        id: updater
+        if: >-
+          (github.event_name == 'release' && !github.event.release.prerelease) ||
+          (github.event_name == 'workflow_dispatch' && inputs.publish)
+        shell: bash
+        env:
+          PUBLIC_KEY: ${{ vars.WENYI_UPDATER_PUBLIC_KEY }}
+          PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          PRIVATE_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [[ -z "$PUBLIC_KEY" && -z "$PRIVATE_KEY" && -z "$PRIVATE_PASSWORD" ]]; then
+            echo "::notice::Updater signing absent: manual installers only; no latest.json will be published."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          elif [[ -z "$PUBLIC_KEY" || -z "$PRIVATE_KEY" ]]; then
+            echo "::error::Partial updater configuration: public and private signing keys are both required."
+            exit 1
+          elif [[ ! "$VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::Updater signing requires a stable release identity."
+            exit 1
+          else
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          fi
+      # pnpm/action-setup must run first: setup-node resolves the pnpm binary
+      # when caching is enabled, so the reverse order fails on a clean runner.
+      - uses: pnpm/action-setup@v5
         with:
           version: "9"
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: pnpm
       - uses: dtolnay/rust-toolchain@stable
+      # nextest runs every test in its own process and reports per-test timings,
+      # which the plain harness cannot do.
+      - uses: taiki-e/install-action@nextest
+      - name: Build and test the wenyi-locks native library
+        # Runs per platform so each target's own lock implementation is executed,
+        # not just compiled.
+        run: |
+          cargo build --release --manifest-path native/wenyi-locks/Cargo.toml
+          cargo test --manifest-path native/wenyi-locks/Cargo.toml
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop -> target
+          # Keep the key in step with cargo-warm, which writes this cache on
+          # every push to main; the per-job suffix would make it unreadable.
+          add-job-id-key: false
+          add-rust-environment-hash-key: false
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev libdbus-1-dev librsvg2-dev patchelf
-      - run: uv sync --locked --package wenyi-desktop --group dev
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev libdbus-1-dev librsvg2-dev patchelf xvfb
+      # Packaging tests need the root dev group and CLI console fixtures.
+      # The sidecar is still built in its separate desktop-only environment.
+      - run: uv sync --locked --all-packages --group dev
+      - name: Prepare token-budget vocabulary
+        run: uv run --no-sync python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
       - run: pnpm install --frozen-lockfile
-      - run: node --test scripts/desktop.test.mjs
-      - run: uv run --no-sync pytest -q apps/desktop/backend/tests
+      - run: node --test scripts/dev/desktop.test.mjs
+      - run: uv run --no-sync pytest -q -m packaging packages/core/tests/test_release_packaging.py packages/core/tests/test_desktop_updates.py
+      - name: Test Windows local state and artifact paths
+        if: runner.os == 'Windows'
+        env:
+          WENYI_LOCKS_LIB: ${{ github.workspace }}/target/release/wenyi_locks.dll
+        run: >
+          uv run --no-sync pytest -q -n auto --dist loadgroup
+          packages/core/tests/test_file_artifacts.py
+          packages/core/tests/test_file_storage.py
+          packages/core/tests/test_file_migrations.py
+          packages/core/tests/test_precision_pipeline.py
+          packages/core/tests/test_locks_contract.py
+          packages/core/tests/test_orchestrator.py
+      # loadgroup keeps tests that drive one runtime on the same worker; --dist
+      # defaults to load, which would scatter them and race the scheduler.
+      - name: Desktop backend suite
+        env:
+          WENYI_LOCKS_LIB: ${{ github.workspace }}/target/release/${{ runner.os == 'Windows' && 'wenyi_locks.dll' || 'libwenyi_locks.so' }}
+        run: uv run --no-sync pytest -q -n auto --dist loadgroup apps/desktop/backend/tests
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
-      - run: cargo test --locked --manifest-path apps/desktop/Cargo.toml
-      - run: pnpm desktop:build --bundles ${{ matrix.bundles }}
+      - run: cargo nextest run --locked --manifest-path apps/desktop/Cargo.toml
+        # Older tags assume a temporary directory is a valid project location.
+        # macOS's system default is under protected /var; use the runner workspace.
+        env:
+          TMPDIR: ${{ runner.temp }}
+      # Feature unification is the quiet failure mode here: if any dependency
+      # enables a rustls-backed reqwest for the Windows target, ring returns to
+      # that build graph and the C compile path comes back with it. Windows is
+      # deliberately on the system TLS stack (native-tls/schannel), so this
+      # asserts the Windows graph stays free of every C TLS backend.
+      - name: Assert the Windows target links no C TLS backend
+        if: matrix.tier == 'full'
+        shell: bash
+        run: |
+          set -eu
+          for crate in ring aws-lc-sys openssl-sys; do
+            output=$(cargo tree --locked --manifest-path apps/desktop/Cargo.toml \
+              --target x86_64-pc-windows-msvc -i "$crate" 2>&1 || true)
+            if ! printf '%s' "$output" | grep -q "nothing to print"; then
+              echo "::error::$crate reached the Windows target graph; the system TLS path is broken."
+              printf '%s\n' "$output"
+              exit 1
+            fi
+          done
+          echo "Windows target graph is free of ring, aws-lc-sys and openssl-sys."
+      - name: Test Linux menu visibility after native window remaps
+        if: runner.os == 'Linux'
+        run: >
+          xvfb-run -a cargo test --locked --manifest-path apps/desktop/Cargo.toml
+          gtk_menu_stays_hidden_after_repeated_window_remaps -- --ignored
+      - name: Build installers
+        if: matrix.tier == 'full'
+        run: pnpm desktop:build --bundles ${{ steps.updater.outputs.signed == 'true' && matrix.signed_bundles || matrix.bundles }}
         env:
           WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          WENYI_UPDATER_PUBLIC_KEY: ${{ steps.updater.outputs.signed == 'true' && vars.WENYI_UPDATER_PUBLIC_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ steps.updater.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ steps.updater.outputs.signed == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          # The repository this build reads its own releases from. Set here
+          # rather than left to the compiled default so a fork that reuses this
+          # workflow publishes installers that update from its own repository.
+          WENYI_UPDATE_REPO: ${{ github.repository }}
+      # The crates share one workspace at the repository root, so cargo writes the
+      # binaries and the bundle tree there rather than inside apps/desktop.
       - name: Verify native Windows GUI subsystem
-        if: runner.os == 'Windows'
-        run: uv run --no-project python scripts/desktop_pe.py apps/desktop/target/release/wenyi-desktop.exe
+        if: runner.os == 'Windows' && matrix.tier == 'full'
+        run: uv run --no-project python scripts/dev/desktop_pe.py target/release/wenyi-desktop.exe
       - name: Verify native application version
+        if: matrix.tier == 'full'
         shell: bash
         env:
           EXPECTED_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          binary=apps/desktop/target/release/wenyi-desktop
+          binary=target/release/wenyi-desktop
           if [[ "$RUNNER_OS" == Windows ]]; then binary="${binary}.exe"; fi
           actual="$("$binary" --version)"
           test "$actual" = "Wenyi Desktop $EXPECTED_VERSION"
       - name: Collect standalone installers (no extra ZIP)
+        if: matrix.tier == 'full'
         run: >
-          uv run --no-project python scripts/package_release.py desktop
+          uv run --no-project python scripts/release/package_release.py desktop
           --version "${{ steps.version.outputs.version }}"
           --platform "${{ matrix.platform }}"
-          --source apps/desktop/target/release/bundle
-      - uses: actions/upload-artifact@v4
+          --source target/release/bundle
+      - name: Collect signed updater payload and signature
+        if: steps.updater.outputs.signed == 'true' && matrix.tier == 'full'
+        env:
+          WENYI_UPDATER_PUBLIC_KEY: ${{ vars.WENYI_UPDATER_PUBLIC_KEY }}
+        run: >
+          uv run --no-project python scripts/release/desktop_updates.py collect
+          --version "${{ steps.version.outputs.version }}"
+          --platform "${{ matrix.platform }}"
+          --source target/release/bundle
+      - uses: actions/upload-artifact@v6
+        if: matrix.tier == 'full'
         with:
           name: wenyi-desktop-${{ steps.version.outputs.version }}-${{ matrix.platform }}
           path: release-assets/*
@@ -108,14 +353,30 @@ jobs:
           retention-days: 14
 
   release:
-    name: Publish Desktop assets · ${{ github.event.release.tag_name }}
-    if: github.event_name == 'release'
+    name: Publish Desktop assets · ${{ inputs.tag || github.event.release.tag_name }}
+    if: >-
+      github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish)
     needs: local-package
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag || github.event.release.tag_name }}
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Resolve release identity
+        id: version
+        env:
+          WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        run: uv run --no-project --with hatch-vcs python scripts/release/release_version.py --github-output "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v7
         with:
           pattern: wenyi-desktop-*
           path: release-assets
@@ -127,7 +388,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.event.release.tag_name }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: |
           gh release view "$TAG" --repo "$GH_REPO" >/dev/null
           gh release upload "$TAG" release-assets/* --repo "$GH_REPO"
+      - name: Generate and publish complete stable updater manifest last
+        if: '!github.event.release.prerelease'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+          WENYI_UPDATER_PUBLIC_KEY: ${{ vars.WENYI_UPDATER_PUBLIC_KEY }}
+        run: |
+          if compgen -G 'release-assets/*.sig' >/dev/null; then
+            gh release view "$TAG" --repo "$GH_REPO" --json body --jq '.body' > release-notes.txt
+            uv run --no-project python scripts/release/desktop_updates.py manifest \
+              --version "$VERSION" --tag "$TAG" --repository "$GH_REPO" \
+              --source release-assets --output updater-manifest --notes-file release-notes.txt
+            gh release upload "$TAG" updater-manifest/latest.json --repo "$GH_REPO"
+          else
+            echo "::notice::Manual installers published; updater signing absent, no latest.json."
+          fi

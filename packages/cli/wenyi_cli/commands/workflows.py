@@ -2,128 +2,116 @@
 
 from __future__ import annotations
 
-import os
 from enum import Enum
 
 import typer
 from rich.progress import Progress
 from wenyi_core.config import PipelineConfig
-from wenyi_core.ingest.errors import IngestError
+from wenyi_core.errors import WenyiError
 from wenyi_core.timing import load_timing
 
 from wenyi_cli.commands import presentation
 from wenyi_cli.commands import progress as progress_view
 
 from .context import ContextAccessor
+from .machine_output import MachineOutput
 from .validation import (
     require_input_file,
     resolve_output_format,
-    validate_pdf_engine,
 )
 
 
 class TranslationMode(str, Enum):
     standard = "standard"
-    best_of_three = "best_of_three"
+    three_draft_synthesis = "three_draft_synthesis"
 
 
 def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> None:
+    @app.command(rich_help_panel="Main workflow")
+    def parse(
+        input_path: str = typer.Argument(..., help="Source book to parse without AI"),
+    ) -> None:
+        """Parse source chapters and list the contents without AI initialization."""
+        from rich.table import Table
+        from wenyi_core.pipeline.prepare.input_preparation import (
+            locate_input_storage,
+            parse_document,
+        )
+        from wenyi_core.storage.file import FileStorage
+
+        console = context().console
+        try:
+            require_input_file(input_path, console=console)
+            config = context().load_config()
+            store, digest = locate_input_storage(input_path, config, FileStorage)
+            try:
+                with store.lock():
+                    document = parse_document(store, input_path, config, expected_sha256=digest)
+                table = Table("Chapter", "Title", "Paragraphs")
+                for chapter in document.chapters:
+                    table.add_row(
+                        str(chapter.index), chapter.title, str(len(chapter.text_segments))
+                    )
+                console.print(table)
+                console.print(f"State directory: {store.run_dir}", markup=False)
+                console.print("Source parsed. AI preparation has not been run by this command.")
+            finally:
+                store.close()
+        except (WenyiError, ImportError, OSError, ValueError, RuntimeError) as error:
+            console.print(f"[red]Error: {error}[/]")
+            raise typer.Exit(1) from None
+
     def _translate_impl(
         input_path: str,
         *,
         chapter: int | None = None,
         fmt: str | None = None,
         out: str | None = None,
-        pdf_engine: str = "weasyprint",
         polish: bool | None = None,
         translation_mode: TranslationMode | None = None,
         review: bool | None = None,
         mono: bool | None = None,
         bilingual: bool | None = None,
+        progress_json: str | None = None,
+        result_json: str | None = None,
     ) -> None:
         """Run translation and report expected input or configuration errors concisely."""
         console = context().console
+        machine = None
         try:
+            machine = MachineOutput(
+                progress_json,
+                result_json,
+                source=input_path,
+                config=context().config_path,
+                output=out,
+            )
+            machine.start()
             _translate_impl_or_raise(
                 input_path,
                 chapter=chapter,
                 fmt=fmt,
                 out=out,
-                pdf_engine=pdf_engine,
                 polish=polish,
                 translation_mode=translation_mode,
                 review=review,
                 mono=mono,
                 bilingual=bilingual,
+                machine=machine,
             )
         except typer.Exit:
             raise
-        except (IngestError, ImportError, OSError, ValueError, RuntimeError) as error:
+        except (WenyiError, ImportError, OSError, ValueError, RuntimeError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
-
-    def _translate_srt_or_raise(
-        input_path: str,
-        *,
-        chapter: int | None = None,
-        fmt: str = "epub",
-        out: str | None = None,
-        polish: bool | None = None,
-        translation_mode: TranslationMode | None = None,
-        review: bool | None = None,
-        mono: bool | None = None,
-        bilingual: bool | None = None,
-    ) -> None:
-        """Translate subtitles with the strong tier, concurrency and state under state/srt/."""
-        console = context().console
-        from wenyi_core.srt.translate import translate_srt
-
-        if chapter is not None:
-            raise ValueError("SRT translation does not support --chapter")
-        ignored: list[str] = []
-        if fmt != "epub":
-            ignored.append("--format")
-        if polish is not None:
-            ignored.append("--polish/--no-polish")
-        if translation_mode is not None:
-            ignored.append("--translation-mode")
-        if review is not None:
-            ignored.append("--review/--no-review")
-        if ignored:
-            raise ValueError("SRT translation does not support: " + ", ".join(ignored))
-
-        config = context().load_config()
-        context().validate_api_configuration(config, "srt")
-        require_input_file(input_path, console=console)
-        if mono is not None:
-            config.output.mono = mono
-        if bilingual is not None:
-            config.output.bilingual = bilingual
-
-        with Progress(
-            *progress_view.progress_columns(),
-            console=console,
-        ) as prog:
-            cb = progress_view.RichProgressBridge(prog, "Translating subtitles…")
-            result = translate_srt(
-                input_path,
-                config,
-                out=out,
-                mono=mono,
-                bilingual=bilingual,
-                progress=cb,
-            )
-
-        presentation.print_subtitle_summary(
-            console,
-            translated=result["translated"],
-            cue_count=result["cue_count"],
-            run_dir=result["run_dir"],
-        )
-        presentation.print_usage(console, result.get("usage") or {})
-        presentation.print_timing(console, load_timing(result["run_dir"]))
-        for path in result.get("outputs") or []:
-            console.print(f"Translation: [bold]{path}[/]")
+        finally:
+            # Includes cancellation and unexpected exceptions. Never leave a stale success
+            # receipt, and never replace the original error with a reporting failure.
+            if machine is not None and not machine.completed:
+                try:
+                    machine.failed()
+                except (OSError, WenyiError):
+                    console.print("[red]Could not publish the machine failure receipt.[/]")
 
     def _translate_impl_or_raise(
         input_path: str,
@@ -131,33 +119,18 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         chapter: int | None = None,
         fmt: str | None = None,
         out: str | None = None,
-        pdf_engine: str = "weasyprint",
         polish: bool | None = None,
         translation_mode: TranslationMode | None = None,
         review: bool | None = None,
         mono: bool | None = None,
         bilingual: bool | None = None,
+        machine: MachineOutput,
     ) -> None:
         """Run translation; let ``_translate_impl`` convert exceptions to CLI errors."""
         console = context().console
         from wenyi_core.pipeline.orchestrator import Orchestrator
 
-        if os.path.splitext(input_path)[1].lower() == ".srt":
-            _translate_srt_or_raise(
-                input_path,
-                chapter=chapter,
-                fmt=fmt or "epub",
-                out=out,
-                polish=polish,
-                translation_mode=translation_mode,
-                review=review,
-                mono=mono,
-                bilingual=bilingual,
-            )
-            return
-
         fmt = resolve_output_format(input_path, fmt, console=console)
-        pdf_engine = validate_pdf_engine(pdf_engine, console=console)
         config = context().load_config()
         pipeline_values = config.pipeline.model_dump()
         if polish is not None:
@@ -168,11 +141,11 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             config.pipeline = PipelineConfig.model_validate(pipeline_values)
         except ValueError:
             if (
-                pipeline_values["translation_mode"] == "best_of_three"
+                pipeline_values["translation_mode"] == "three_draft_synthesis"
                 and not pipeline_values["polish"]
             ):
                 raise ValueError(
-                    "best_of_three translation mode requires pipeline.polish=true; remove --no-polish"
+                    "three_draft_synthesis translation mode requires pipeline.polish=true; remove --no-polish"
                 ) from None
             raise
         if review is not None:
@@ -203,7 +176,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             config.pipeline.review = False
         context().validate_api_configuration(config, "translate")
         require_input_file(input_path, console=console)
-        orch = Orchestrator(config)
+        orch = Orchestrator(config, allow_terminology_context=True)
 
         with (
             orch.client.interrupt_scope(),
@@ -212,7 +185,11 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 console=console,
             ) as prog,
         ):
-            cb = progress_view.RichProgressBridge(prog, "Preparing…")
+            rich_progress = progress_view.RichProgressBridge(prog, "Preparing…")
+
+            def cb(done: int, total: int, label: str) -> None:
+                rich_progress(done, total, label)
+                machine(done, total, label)
 
             if chapter is not None:
                 try:
@@ -225,6 +202,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 )
                 presentation.print_usage(console, store.load_usage() or {})
                 presentation.print_timing(console, load_timing(store.run_dir))
+                machine.success([], store.run_dir)
                 return
 
             result = orch.run_all(
@@ -232,18 +210,28 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 progress=cb,
                 out_format=fmt,
                 out_path=out,
-                pdf_engine=pdf_engine,
             )
 
-        presentation.print_translation_summary(console, result["report"]["summary"])
-        presentation.print_usage(console, result["store"].load_usage() or {})
-        presentation.print_timing(console, load_timing(result["store"].run_dir))
+        store = result["store"]
+        with store.lock(), store.state_lock():
+            chapters = store.load_manifest()["chapters"]
+            chapters_done = sum(chapter["status"] == "done" for chapter in chapters)
+            term_count = store.stats()["terms"]
+        presentation.print_translation_summary(
+            console,
+            chapters_done=chapters_done,
+            chapters_total=len(chapters),
+            terms=term_count,
+        )
+        presentation.print_usage(console, store.load_usage() or {})
+        presentation.print_timing(console, load_timing(store.run_dir))
         for path in result.get("outputs") or [result["output"]]:
             console.print(f"Translation: [bold]{path}[/]")
         if result.get("review_dir"):
             presentation.print_review_details(
                 console, result.get("review_result"), result["review_dir"]
             )
+        machine.success(result.get("outputs") or [result["output"]], store.run_dir)
 
     def _prepare_impl(input_path: str) -> None:
         """Complete preparation without translating body text or exporting files."""
@@ -254,7 +242,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             config = context().load_config()
             context().validate_api_configuration(config, "prepare")
             require_input_file(input_path, console=console)
-            orch = Orchestrator(config)
+            orch = Orchestrator(config, allow_terminology_context=True)
             with (
                 orch.client.interrupt_scope(),
                 Progress(
@@ -266,7 +254,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 store = orch.prepare_for_translation(input_path, progress=cb)
         except typer.Exit:
             raise
-        except (IngestError, ImportError, OSError, ValueError, RuntimeError) as error:
+        except (WenyiError, ImportError, OSError, ValueError, RuntimeError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
 
@@ -290,28 +278,23 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
     def translate(
         input: str = typer.Argument(
             ...,
-            help="Book or subtitles to translate (EPUB / FB2 / TXT / Markdown / HTML / PDF / DOCX / SRT)",
+            help="Book to translate (EPUB / FB2 / TXT / Markdown / HTML / PDF / DOCX)",
         ),
         chapter: int | None = typer.Option(
             None,
             "--chapter",
             min=0,
-            help="Translate and save one chapter (zero-based); skip review, report and export",
+            help="Translate and save one chapter (zero-based); skip review and export",
         ),
         fmt: str | None = typer.Option(
             None,
             "--format",
-            help="Output format: epub / txt / html / markdown / pdf / docx; default: pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
+            help="Output format: epub / txt / html / markdown / docx / pdf (BabelDOC only); default: html for HTML input, pdf for BabelDOC PDF state, docx for .docx input, epub otherwise",
         ),
         out: str | None = typer.Option(
             None,
             "--out",
             help="Monolingual output path; defaults to the output directory beside the source",
-        ),
-        pdf_engine: str = typer.Option(
-            "weasyprint",
-            "--pdf-engine",
-            help="PDF renderer: weasyprint (default) / fpdf2",
         ),
         polish: bool | None = typer.Option(
             None,
@@ -321,7 +304,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         translation_mode: TranslationMode | None = typer.Option(
             None,
             "--translation-mode",
-            help="Book translation mode; best_of_three requires polishing",
+            help="Book translation mode; three_draft_synthesis requires polishing",
         ),
         review: bool | None = typer.Option(
             None,
@@ -338,19 +321,26 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             "--bilingual/--no-bilingual",
             help="Override output.bilingual to enable or disable bilingual output",
         ),
+        progress_json: str | None = typer.Option(
+            None, "--progress-json", help="Atomically publish protocol-1 progress JSON"
+        ),
+        result_json: str | None = typer.Option(
+            None, "--result-json", help="Atomically publish a protocol-1 output receipt"
+        ),
     ):
-        """Prepare, translate, optionally review, report and export. Repeat to resume."""
+        """Prepare, translate, optionally review and export. Repeat to resume."""
         _translate_impl(
             input,
             chapter=chapter,
             fmt=fmt,
             out=out,
-            pdf_engine=pdf_engine,
             polish=polish,
             translation_mode=translation_mode,
             review=review,
             mono=mono,
             bilingual=bilingual,
+            progress_json=progress_json,
+            result_json=result_json,
         )
 
     @app.command(rich_help_panel="Main workflow")
@@ -395,7 +385,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 result = orch.run_review(input, progress=cb)
         except typer.Exit:
             raise
-        except (IngestError, ImportError, OSError, ValueError, RuntimeError) as error:
+        except (WenyiError, ImportError, OSError, ValueError, RuntimeError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
 

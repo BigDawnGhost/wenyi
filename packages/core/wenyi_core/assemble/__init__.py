@@ -1,1 +1,1 @@
-"""Assemble translations into EPUB or text and generate translation reports."""
+"""Assemble translations into the configured output formats."""

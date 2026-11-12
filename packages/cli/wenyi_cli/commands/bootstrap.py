@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Sequence
+from enum import Enum
 from importlib.metadata import version as package_version
 from typing import Any
 
@@ -12,8 +13,15 @@ import typer
 from rich.console import Console
 from typer.core import TyperGroup
 from wenyi_core.config import Config
+from wenyi_core.i18n.genres import DEFAULT_GENRE
 
+from ..logging_config import CliLoggingError, invocation_logging
 from .context import CommandContext, current_context
+
+
+class PromptGenre(str, Enum):
+    literary = "literary"
+    academic = "academic"
 
 
 def configure_windows_console(
@@ -67,13 +75,22 @@ def initializing_group(console: Console) -> type[TyperGroup]:
             main_kwargs["obj"] = CommandContext(
                 config_path, any(arg in {"--help", "-h"} for arg in cli_args), console
             )
-            Config.create_default_file(config_path)
             from wenyi_core.llm.limits import RequestStopped
 
             try:
-                return super().main(*main_args, args=args, **main_kwargs)
-            except RequestStopped as error:
-                typer.echo(f"Stopped: {error}", err=True)
+                with invocation_logging(config_path):
+                    try:
+                        Config.create_default_file(config_path)
+                    except OSError as error:
+                        typer.echo(f"Configuration error: {error}", err=True)
+                        raise SystemExit(1) from None
+                    try:
+                        return super().main(*main_args, args=args, **main_kwargs)
+                    except RequestStopped as error:
+                        typer.echo(f"Stopped: {error}", err=True)
+                        raise SystemExit(1) from None
+            except CliLoggingError as error:
+                typer.echo(f"Error: {error}", err=True)
                 raise SystemExit(1) from None
 
     return ConfigInitializingGroup
@@ -95,6 +112,17 @@ def register_bootstrap(app: typer.Typer) -> None:
             "-c",
             help="Configuration path; created automatically if missing",
         ),
+        prompt_genre: PromptGenre | None = typer.Option(
+            None,
+            "--prompt-genre",
+            help="Translation style for this invocation; not saved in configuration",
+            show_default=DEFAULT_GENRE,
+        ),
+        legacy_prompt_genre: PromptGenre | None = typer.Option(
+            None,
+            "--experimental-prompt-genre",
+            hidden=True,
+        ),
         version: bool = typer.Option(
             False,
             "--version",
@@ -105,4 +133,15 @@ def register_bootstrap(app: typer.Typer) -> None:
     ):
         """Record the config path; workflow commands validate credentials after their overrides."""
         del version
+        if (
+            prompt_genre is not None
+            and legacy_prompt_genre is not None
+            and prompt_genre != legacy_prompt_genre
+        ):
+            raise typer.BadParameter(
+                "Conflicting translation styles; use --prompt-genre with one value.",
+                param_hint="--prompt-genre",
+            )
+        genre = prompt_genre or legacy_prompt_genre or PromptGenre(DEFAULT_GENRE)
         current_context().config_path = config
+        current_context().prompt_genre = genre.value

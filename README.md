@@ -6,22 +6,23 @@
   <img src="docs/images/wenyi-wordmark-en.svg" alt="Wenyi" width="180" height="54">
 </h1>
 
-**Carry stories across languages.**
+**Bringing literature into your language.**
 
 A desktop app for translating books and long-form writing, with the whole work in view.
 
 Whole-book understanding · Consistent terminology · Evidence-based review
 
-[![Tests](https://img.shields.io/github/actions/workflow/status/BigDawnGhost/wenyi/tests.yml?style=flat-square&labelColor=00263D)](https://github.com/BigDawnGhost/wenyi/actions/workflows/tests.yml)
-[![License](https://img.shields.io/badge/license-MIT-D4B56A?style=flat-square&labelColor=00263D)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPLv3-D4B56A?style=flat-square&labelColor=00263D)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/BigDawnGhost/wenyi?style=flat-square&labelColor=00263D&color=D4B56A)](https://github.com/BigDawnGhost/wenyi/stargazers)
 [![Discord](https://img.shields.io/badge/Discord-join-D4B56A?style=flat-square&labelColor=00263D&logo=discord&logoColor=white)](https://discord.gg/sM3AQcF5D2)
 
-[Quick start](#quick-start) · [Language support](#language-support) · [Documentation](#documentation)
+[Quick start](#quick-start) · [Supported formats](#supported-formats) · [Interface preview](#interface-preview) · [Documentation](#documentation)
 
 **English** | [简体中文](docs/zh/README.md)
 
 <a href="https://hellogithub.com/repository/BigDawnGhost/wenyi" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=648c0ab0997c42479027e360f604fa23&claim_uid=EkLpt1FHIqRrade&theme=small" alt="Featured｜HelloGitHub" /></a>
+
+<a href="https://www.readfrog.app/zh?utm_source=github&utm_medium=readme&utm_campaign=wenyi&utm_content=en" target="_blank"><img src="docs/images/read-frog-banner.png" alt="陪读蛙：在浏览器里沉浸式双语翻译网页、划词与 YouTube 字幕，免费安装，开始翻译。" /></a>
 
 </div>
 
@@ -29,57 +30,13 @@ Whole-book understanding · Consistent terminology · Evidence-based review
 
 ## Why Wenyi
 
-| Typical approach | Wenyi |
-|---|---|
-| Segments translated in isolation, unaware of surrounding content | Whole-book prescan with chapter digests and rolling context |
-| Glossary managed manually or as an afterthought | Real-time term extraction with conflict detection, fed back into subsequent batches |
-| Single-pass translation, fragile to interruptions | Batch checkpoints and chapter status tracking: reopen the project and resume saved progress |
-| Raw model output, no systematic quality process | Translate → polish → evidence-driven whole-book review |
-
 Wenyi is designed for **long-form texts** — novels, social-science monographs, narrative nonfiction, and more.
 
----
-
-## Core features
-
-- **Local Desktop app** — import books, translate, proofread, and save exports in one application. Projects stay in an independent local workspace; packaged releases include the Python engine, with no separate Python, PostgreSQL, Redis, or Docker setup. See the [Desktop guide](docs/desktop.md).
-- **Visual proofreading** — English and Chinese interfaces, live translation progress, paragraph editing with revision history, and whole-book review with evidence and publication results. See the [interface preview](#interface-preview).
-- **Native file and credential support** — drag files into a new project, choose export destinations with the system save dialog, and save API keys in the OS credential store when available.
-- **Whole-book understanding** — prescans the source before translation, creating per-chapter digests and a book-level synopsis injected into every batch
-- **Real-time glossary** — extracts proper names, terms, and recurring expressions as translation progresses; detects conflicting translations and surfaces them for resolution
-- **Multi-stage quality** — optional polishing (strong model) and an evidence-driven whole-book AI review
-- **Resumability** — completed batches and chapter progress are saved; reopen the application and continue from saved checkpoints
-- **Multiple LLM providers** — DeepSeek, OpenAI, OpenRouter, OrcaRouter, Atlas Cloud, Google Gemini, Ollama, vLLM, and generic OpenAI-compatible endpoints; keep three convenient tiers or select models per operation, mix connections, and share request limits. See [model routing](docs/configuration.md#models-and-operation-routing).
-- **Native EPUB preservation** — writes translated text back into the original XHTML templates and attempts to preserve styles, images, TOC, and anchors
-- **Bilingual output** — optional source-and-translation edition with visually subdued source text, including dark mode support.
-
----
-
-## Interface preview
-
-Desktop and Web share these workspace pages. The screenshot below shows the translation overview in the Web Chinese interface; English is available in Settings.
-
-<p align="center">
-  <img src="docs/images/web-translation-overview.png" alt="Translation overview: usage by step, cache hit rates, and run durations." width="960">
-  <br>
-  <sub>Translation overview: usage by step, cache hit rates, and run durations.</sub>
-</p>
-
----
-
-## Quick start
-
-With Python 3.10+ and [uv](https://docs.astral.sh/uv/) installed, run from the repository root:
-
-```bash
-uv sync --locked
-export DEEPSEEK_API_KEY="YOUR_DEEPSEEK_API_KEY"
-uv run wenyi translate book.epub
-```
-
-This shell example uses the default DeepSeek provider. Supply your own key and review `config.yaml` before translating. For Windows commands, other providers, and resume/export options, see the [CLI guide](docs/cli.md).
-
-Prefer a graphical app? See the [Desktop quick start](docs/desktop.md#quick-start) for downloads and setup.
+- **Whole-book context** — chapter digests, a book-level synopsis, and rolling context help each batch stay connected to the rest of the work.
+- **Consistent terminology** — names, terms, and recurring expressions are extracted during translation; conflicting translations are surfaced for resolution and feed back into subsequent batches.
+- **Translation and review** — optional polishing and evidence-driven whole-book review complement paragraph editing with revision history.
+- **Resumable progress** — completed batches and chapters are saved; reopen the project and continue from its checkpoints.
+- **Flexible models** — use DeepSeek, OpenAI, OpenRouter, OrcaRouter, Atlas Cloud, Google Gemini, Ollama, vLLM, or other OpenAI-compatible services. Choose models per operation and share request limits through [model routing](docs/reference/configuration.md).
 
 ---
 
@@ -87,80 +44,89 @@ Prefer a graphical app? See the [Desktop quick start](docs/desktop.md#quick-star
 
 | Input | Output |
 |---|---|
-| EPUB, FB2, TXT, Markdown, HTML, PDF, DOCX | EPUB (monolingual / bilingual), TXT, HTML, Markdown, DOCX |
-| SRT (movie / series subtitles) | SRT (monolingual / bilingual) |
+| EPUB, PDF, DOCX, FB2, TXT, Markdown, HTML | EPUB, PDF (BabelDOC projects), DOCX, TXT, HTML, Markdown |
 
-- PDF input defaults to MinerU and requires its API key for the initial conversion; the resulting HTML is cached and reused. The BabelDOC bridge is optional for layout-preserving PDFs. See [PDF configuration](docs/configuration.md#pipeline).
-- EPUB output attempts to preserve the original book's styles, images, table of contents, and anchors. Vertical layout is converted to horizontal for Chinese reading.
-- SRT projects use a lightweight subtitle workflow without a glossary, polishing, or whole-book review.
-- DOCX uses the full book pipeline. Headings, simple tables, lists, and common run/paragraph styles are preserved where possible; translated Chinese uses Song (宋体).
-
-### Language support
-
-Choose languages when creating a project, including directions such as Chinese → English or English → Japanese. Built-in profiles cover Chinese, English, Japanese, Korean, French, German, Spanish, Italian, Portuguese, Russian, Vietnamese, and selected variants. Multilingual translation remains experimental; real-model long-form quality needs further evaluation.
+- **EPUB** — translated text is written back into the original XHTML templates, preserving styles, images, table of contents, and anchors where possible. Vertical layout is converted to horizontal for Chinese reading.
+- **PDF** — MinerU is the default input backend; the initial conversion requires its API key, and the resulting HTML is cached. For PDFs with a text layer, the optional BabelDOC bridge can preserve layout through translation and PDF export. **PDF output is available only for saved BabelDOC projects**; MinerU projects export to the other formats above. See [PDF support](docs/reference/formats.md#pdf).
+- **DOCX** — headings, simple tables, lists, and common character/paragraph styles are preserved where possible; translated Chinese uses Song (宋体).
+- **Bilingual editions** — export source-and-translation editions where supported; EPUB and HTML offer subdued source text with dark-mode support.
 
 ---
 
-## Translation pipeline
+## Quick start
 
-Wenyi combines whole-book understanding, batch translation, optional polishing, review, and export. See the [translation pipeline](docs/pipeline.md) for the flowchart and stage details.
+### Desktop (recommended)
+
+1. Download the `wenyi-desktop-*` package for your system from [GitHub Releases](https://github.com/BigDawnGhost/wenyi/releases).
+2. Open **Settings → Models & connections**, choose a provider, enter your API key if required, and save.
+3. Create a project, import a book, and start translating. Proofread in the app, then choose an export format and save destination.
+
+The installer includes the translation engine and Python runtime. Projects stay in a local workspace; translation uses your configured model service. See the [Desktop guide](docs/guide/desktop.md) for platform requirements and setup.
+
+### CLI (PyPI)
+
+No repository checkout is needed. With Python 3.10+ and [uv](https://docs.astral.sh/uv/), install [wenyi-cli](https://pypi.org/project/wenyi-cli/) and preview the default model configuration:
+
+```bash
+uv tool install wenyi-cli
+wenyi models list
+```
+
+The first `models list` creates `config.yaml` in the current directory if it is missing, without calling a model. Review it before translating. For the default DeepSeek provider, set your own key in your local terminal:
+
+```bash
+export DEEPSEEK_API_KEY="YOUR_DEEPSEEK_API_KEY"
+wenyi translate book.epub
+```
+
+For Windows commands, other providers, upgrades, and resume/export options, see the [CLI guide](docs/guide/cli.md).
+
+### Web
+
+For a self-hosted browser workspace, see [Web deployment](docs/guide/web.md).
 
 ---
 
-## Documentation
+## Interface preview
 
-### Client guides
+Desktop and Web share the proofreading workspace: live progress, paragraph editing with revision history, and whole-book review results. The screenshot below shows the Web Chinese interface; English is available in Settings.
 
-- [Desktop guide](docs/desktop.md) — installation/builds, API keys, native import and save, local data, and troubleshooting
-- [CLI guide](docs/cli.md) — local installation, commands, translation, resume, and export
-- [Web deployment](docs/web.md) — optional self-hosted browser workspace with its own project data
+<p align="center">
+  <img src="docs/images/web-translation-overview.png" alt="Translation overview: usage by step, cache hit rates, and run durations." width="960">
+  <br>
+  <sub>Translation overview: usage by step, cache hit rates, and run durations.</sub>
+</p>
 
-### Shared reference
-
-- [Configuration](docs/configuration.md) — providers, languages, pipeline switches, segmentation, paths
-- [Translation pipeline](docs/pipeline.md) — whole-book analysis, terminology, context, polishing, review
-
-### Development
-
-- [Architecture](docs/architecture.md) — module responsibilities, shared services, and platform boundaries
-- [Contributing](CONTRIBUTING.md) — development, testing, and contribution guidelines
-
-Public-domain translation examples are shared through [wenyi-bookcase](https://github.com/BigDawnGhost/wenyi-bookcase). Do not publish copyrighted text, private books, or workspace data containing sensitive information without permission.
+**Translation examples:** browse public-domain translations in [wenyi-bookcase](https://github.com/BigDawnGhost/wenyi-bookcase), or contribute your own. Do not share copyrighted text, private books, or sensitive workspace data without permission.
 
 ---
 
 ## Limitations
 
-- Multilingual translation is experimental. Prompt instructions use English, while generated descriptive metadata follows the translation target.
-- Polishing and final review are the most expensive stages. Shadow fixing may
-  trigger multiple full-book review passes and additional Fixer calls.
-- PDF input defaults to MinerU and requires an API key for the initial conversion. The BabelDOC bridge is optional for layout-preserving PDFs.
-- SRT translation does not include a glossary, polishing, or whole-book review.
-- Translation quality is bounded by the capabilities of the chosen LLM model.
-- Very long books may produce large workspaces; storage requirements grow with book length.
+- **Translation quality** — Results are bounded by the capabilities of the chosen LLM model.
+- **Token usage** — Polishing and whole-book review can significantly increase token usage. Shadow fixing may trigger multiple full-book review passes and additional Fixer calls.
+- **Storage** — Workspace size grows with book length; very long books may require substantial disk space.
+
+---
+
+## Documentation
+
+**Documentation site:** [bigdawnghost.github.io/wenyi](https://bigdawnghost.github.io/wenyi/)
+
+The site groups user guides, reference material, and developer documentation in its
+sidebar. Switch between English and Simplified Chinese using the site's language menu.
+Contribution and review requirements remain in [Contributing](CONTRIBUTING.md).
 
 ---
 
 ## Community
 
+Wenyi is a personal project created to help bring books and long-form writing across languages. Bug reports, ideas, and pull requests are welcome.
+
 - [Discord server](https://discord.gg/sM3AQcF5D2)
 - QQ group: 1055065098
 - [GitHub Issues](https://github.com/BigDawnGhost/wenyi/issues) — bug reports and feature requests
 - [GitHub Discussions](https://github.com/BigDawnGhost/wenyi/discussions) — ideas and questions
-
----
-
-## Support
-
-If this project has been helpful, tips are welcome.
-
-<p align="center">
-  <img src="docs/images/tip-wechat.jpg" alt="WeChat Pay tip QR code" width="220">
-  &nbsp;&nbsp;
-  <img src="docs/images/tip-alipay.jpg" alt="Alipay tip QR code" width="220">
-  <br>
-  <sub>WeChat Pay · Alipay</sub>
-</p>
 
 ---
 
@@ -178,7 +144,10 @@ If this project has been helpful, tips are welcome.
 
 ## License
 
-[MIT](LICENSE)
+Wenyi is licensed under the [GNU General Public License v3.0 (GPLv3)](LICENSE).
+
+The optional BabelDOC bridge is a separately licensed AGPL service, accessed over
+HTTP in a separate process. See [PDF support](docs/reference/formats.md#pdf).
 
 ---
 

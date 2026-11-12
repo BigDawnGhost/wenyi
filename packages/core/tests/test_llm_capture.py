@@ -54,6 +54,21 @@ def test_nested_capture_restores_parent_without_global_sink():
     assert inner == ["inside"]
 
 
+def test_client_observation_survives_sink_rebinding_and_raw_threads():
+    client = FakeClient()
+    observed, ledger, captured = [], [], []
+    with client.observe_events(lambda event, **data: observed.append(event)):
+        client.set_event_sink(lambda event, **data: ledger.append(event))
+        with client.capture_events(lambda event, **data: captured.append(event)):
+            client._emit_event("captured")
+        client.set_event_sink(None)
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pool.submit(client._emit_event, "thread").result(timeout=5)
+    client._emit_event("outside")
+    assert observed == ["captured", "thread"]
+    assert ledger == captured == ["captured"]
+
+
 def test_three_concurrent_calls_isolate_scoped_metadata(monkeypatch):
     client = RoutedLLMClient(LLMConfig.model_validate({"preset": "fake"}))
     barrier = Barrier(3)
@@ -99,7 +114,8 @@ def test_three_concurrent_calls_isolate_scoped_metadata(monkeypatch):
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_observer_failure_preserves_result_or_source_error(monkeypatch, fail):
+@pytest.mark.parametrize("method", ["capture_events", "observe_events"])
+def test_observer_failure_preserves_result_or_source_error(monkeypatch, fail, method):
     client = RoutedLLMClient(LLMConfig.model_validate({"preset": "fake"}))
     source = ValueError("source")
 
@@ -115,7 +131,7 @@ def test_observer_failure_preserves_result_or_source_error(monkeypatch, fail):
         raise RuntimeError("observer")
 
     monkeypatch.setattr(FakeProvider, "_request", request)
-    with client.capture_events(observer):
+    with getattr(client, method)(observer):
         if fail:
             with pytest.raises(ValueError) as caught:
                 client.complete([], operation="translation.body")

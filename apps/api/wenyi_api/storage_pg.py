@@ -18,15 +18,20 @@ from typing import Any, Iterator, Literal
 from psycopg import sql
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
-from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
-from wenyi_core.ingest.models import Chapter, Document, Segment
-from wenyi_core.pipeline.runstore import ExportSnapshotStore, source_sha256
+from wenyi_core.errors import WenyiError
+from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm, search_term_page
+from wenyi_core.models.document import Chapter, Document, Segment
+from wenyi_core.storage.run_store import ExportSnapshotStore, source_sha256
 
 from .segment_history import load_history, record_chapter_changes
 
 
-class ProjectBusyError(BlockingIOError):
-    """A different workflow or editor currently owns this project."""
+class ProjectBusyError(WenyiError, BlockingIOError):
+    """A different workflow or editor currently owns this project.
+
+    Keeps ``BlockingIOError`` so existing ``except BlockingIOError`` guards keep
+    matching while the code migrates.
+    """
 
 
 class PostgresStorage:
@@ -129,7 +134,7 @@ class PostgresStorage:
                 finally:
                     self._local.state_conn = None
 
-    # Initialization is committed only after chapters, analysis, glossary and context.
+    # Initialization is committed only after chapters, analysis and glossary.
     def exists(self) -> bool:
         with self._conn as conn:
             row = conn.execute(
@@ -153,12 +158,15 @@ class PostgresStorage:
                 raise KeyError(f"project {self.project_id} not found")
             if row[0]:
                 raise ValueError("Project is already initialized; create a new project")
+            same_source = row[1] == source_hash
+            if same_source:
+                self.recover_usage()
             for table in ("chapters", "glossary", "term_conflicts"):
                 conn.execute(
                     sql.SQL("DELETE FROM {} WHERE project_id=%s").format(sql.Identifier(table)),
                     (self.project_id,),
                 )
-            if row[1] != source_hash:
+            if not same_source:
                 conn.execute("DELETE FROM events WHERE project_id=%s", (self.project_id,))
                 # Upload parsing happens before preparation. Preserve the matching
                 # source preview, but discard mutable run state.
@@ -170,15 +178,16 @@ class PostgresStorage:
                 conn.execute("DELETE FROM artifact_events WHERE project_id=%s", (self.project_id,))
             else:
                 conn.execute(
-                    "DELETE FROM artifacts WHERE project_id=%s AND key IN ('usage-pending.json','timing.json')",
+                    "DELETE FROM artifacts WHERE project_id=%s AND key='timing.json'",
                     (self.project_id,),
                 )
             conn.execute(
                 """UPDATE projects SET initialization_sha256=%s, source_sha256=%s,
-                manifest='{}'::jsonb, meta='{}'::jsonb, context=NULL,
-                annotation_contexts=NULL, analysis=NULL, usage=NULL, report=NULL,
+                manifest='{}'::jsonb, meta='{}'::jsonb,
+                annotation_contexts=NULL, analysis=NULL,
+                usage=CASE WHEN %s THEN usage ELSE NULL END,
                 updated_at=now() WHERE id=%s""",
-                (source_hash, source_hash, self.project_id),
+                (source_hash, source_hash, same_source, self.project_id),
             )
 
     def finish_initialization(self) -> None:
@@ -481,23 +490,11 @@ class PostgresStorage:
             ).fetchone()
         return row[0] if row else None
 
-    def save_context(self, data: dict) -> None:
-        self._save_field("context", data)
-
-    def load_context(self) -> dict | None:
-        return self._load_field("context")
-
     def save_analysis(self, data: dict) -> None:
         self._save_field("analysis", data)
 
     def load_analysis(self) -> dict | None:
         return self._load_field("analysis")
-
-    def save_report(self, data: dict) -> None:
-        self._save_field("report", data)
-
-    def load_report(self) -> dict | None:
-        return self._load_field("report")
 
     def save_usage(self, data: dict) -> None:
         self._save_field("usage", data)
@@ -709,6 +706,41 @@ class PostgresStorage:
                 (self.project_id, source),
             ).fetchone()
         return self._row_to_term(row) if row else None
+
+    def get_terms(self, sources: list[str]) -> list[GlossaryTerm]:
+        if not sources:
+            return []
+        with self._conn as conn:
+            rows = conn.execute(
+                f"SELECT {self._TERM_COLS} FROM glossary WHERE project_id=%s AND source=ANY(%s)",
+                (self.project_id, sources),
+            ).fetchall()
+        return [self._row_to_term(row) for row in rows]
+
+    def list_terms_page(
+        self, *, q: str = "", term_type: str = "", offset: int = 0, limit: int = 100
+    ) -> tuple[list[GlossaryTerm], int]:
+        """Keep display ordering independent of the insertion-ordered prompt snapshot."""
+        where = "project_id=%s" + (" AND type=%s" if term_type else "")
+        params = (self.project_id, term_type) if term_type else (self.project_id,)
+        query = f'SELECT {self._TERM_COLS} FROM glossary WHERE {where} ORDER BY source COLLATE "C"'
+        with self._conn as conn:
+            if q.strip():
+                # A server cursor bounds memory while keeping the same Unicode search as SQLite.
+                with conn.transaction(), conn.cursor(name="glossary_search") as cursor:
+                    cursor.execute(query, params)
+                    return search_term_page(
+                        (self._row_to_term(row) for row in cursor), q, offset=offset, limit=limit
+                    )
+            # One statement gives the page and count the same MVCC snapshot, including empty pages.
+            rows = conn.execute(
+                f"""SELECT page.*, counts.total
+                FROM (SELECT count(*) AS total FROM glossary WHERE {where}) counts
+                LEFT JOIN ({query} LIMIT %s OFFSET %s) page ON TRUE
+                ORDER BY page.source COLLATE "C" """,
+                (*params, *params, limit, offset),
+            ).fetchall()
+        return [self._row_to_term(row) for row in rows if row[0] is not None], rows[0][-1]
 
     def upsert_term(self, term: GlossaryTerm, chapter: int | None = None) -> str:
         with self.state_lock(), self._conn as conn:

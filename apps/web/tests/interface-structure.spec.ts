@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { fakeApi, pid, chapter, project } from "./fixtures";
+import { fakeApi, pid, chapter, project } from "../../../packages/ui/sandbox/fixtures";
 
 test("chapter rows localize pending status and support search and filtering", async ({
   page,
@@ -97,7 +97,7 @@ test("review issues use searchable rows and preserve complete evidence on demand
   await expect(list.getByText("Pending", { exact: true })).toBeVisible();
 });
 
-test("progress keeps runtime and matching live progress visible while folding advanced sections", async ({
+test("progress keeps runtime and resume actions without report controls", async ({
   page,
 }) => {
   await fakeApi(page, {
@@ -126,21 +126,18 @@ test("progress keeps runtime and matching live progress visible while folding ad
   await expect(page.getByText("2m 3s", { exact: true })).toBeVisible();
   await expect(
     page.getByText("Translate chapters in batches", { exact: true }),
-  ).not.toBeVisible();
-  await page.getByText("Workflow details", { exact: true }).click();
+  ).toHaveCount(0);
   await expect(
-    page.getByText("Translate chapters in batches", { exact: true }),
+    page.getByRole("region", { name: "Current workflow" }),
   ).toBeVisible();
+  await expect(page.getByText("Workflow details", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Project report", { exact: true })).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Update report", exact: true }),
-  ).not.toBeVisible();
-  await page.getByText("Project report", { exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Update report", exact: true }),
-  ).toBeVisible();
+  ).toHaveCount(0);
 });
 
-test("export history shows only five files with its retention notice", async ({
+test("export history shows only the latest five files", async ({
   page,
 }) => {
   await fakeApi(page, {
@@ -157,9 +154,6 @@ test("export history shows only five files with its retention notice", async ({
   });
   await page.goto(`/projects/${pid}/export`);
   await expect(
-    page.getByText(/The server keeps the latest 5 completed exports/),
-  ).toBeVisible();
-  await expect(
     page.getByRole("button", { name: "Download", exact: true }),
   ).toHaveCount(5);
   await expect(page.locator("tbody tr")).toHaveCount(5);
@@ -175,37 +169,35 @@ test("folded export options preserve edits and reveal controls after a validatio
     submitted = route.request().postDataJSON();
     return route.fulfill({
       status: 422,
-      json: { detail: "Invalid PDF engine" },
+      json: { detail: "Export validation failed" },
     });
   });
   await page.goto(`/projects/${pid}/export`);
-  await page.getByRole("button", { name: "PDF", exact: true }).click();
+  await page.getByRole("button", { name: "EPUB", exact: true }).click();
   await page.getByRole("radio", { name: "Bilingual", exact: true }).check();
   const advanced = page
     .locator("summary")
     .filter({ hasText: "Layout and advanced options" });
-  await expect(page.getByLabel("PDF export engine")).not.toBeVisible();
+  await expect(page.getByLabel("Bilingual order")).not.toBeVisible();
   await advanced.click();
   await page.getByLabel("Bilingual order").click();
   await page.getByRole("option", { name: "Source first", exact: true }).click();
-  await page.getByLabel("PDF export engine").click();
-  await page.getByRole("option", { name: "fpdf2", exact: true }).click();
   await page.getByLabel("Normalize punctuation on export").uncheck();
   await page.getByLabel("Include an “About this translation” page").uncheck();
   await advanced.click();
-  await expect(advanced).toContainText("Source first");
+  // The folded section shows only its title; edits are verified through the submission.
+  await expect(advanced).toHaveText("Layout and advanced options");
   await page
     .getByRole("button", { name: "Generate export", exact: true })
     .click();
-  await expect(page.getByRole("alert")).toContainText("Invalid PDF engine");
-  await expect(page.getByLabel("PDF export engine")).toBeVisible();
-  await expect(page.getByLabel("PDF export engine")).toHaveText("fpdf2");
+  await expect(page.getByRole("alert")).toContainText("Export validation failed");
+  await expect(page.getByLabel("Bilingual order")).toBeVisible();
+  await expect(page.getByLabel("Bilingual order")).toHaveText("Source first");
   expect(submitted).toMatchObject({
-    format: "pdf",
+    format: "epub",
     bilingual: true,
     order: "source_first",
     about_page: false,
-    pdf_engine: "fpdf2",
     punctuation_normalize: false,
   });
 });

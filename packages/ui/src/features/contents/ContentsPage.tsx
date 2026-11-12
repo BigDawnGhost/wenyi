@@ -1,30 +1,27 @@
 import { useState } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
-import { useI18n } from "@/i18n";
-import { api, isProjectBusy, type ChapterSummary } from "@/lib/api";
-import { PageContainer, PageHeader } from "@/components/layout/AppLayout";
-import { ErrorNotice } from "@/components/ui/data";
-import { Input } from "@/components/ui/form";
+import { toast } from "../../lib/toast";
+import { useI18n } from "../../i18n";
+import { api, isProjectBusy } from "../../api/client";
+import type { ChapterSummary } from "../../api/types";
+import { useProjectQuery } from "../../lib/projectQuery";
+import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
+import { Input } from "../../components/ui/form";
 import { ContentsEditor } from "./ContentsEditor";
 import { ContentsList } from "./ContentsList";
 
 export default function ContentsPage() {
   const { pid = "" } = useParams();
-  const project = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-    refetchInterval: 3000,
-  });
-  const subtitle = project.data?.fmt === "srt";
+  const project = useProjectQuery(pid);
+  const busy = isProjectBusy(project.data?.status);
   const chapters = useQuery({
     queryKey: ["chapters", pid],
     queryFn: () => api.listChapters(pid),
-    enabled: !!project.data && !subtitle,
-    refetchInterval: 3000,
+    enabled: !!project.data,
+    refetchInterval: busy ? 3000 : false,
   });
-  if (subtitle) return <Navigate to={`/projects/${pid}/subtitles`} replace />;
   return (
     <ContentsWorkspace
       key={pid}
@@ -32,7 +29,8 @@ export default function ContentsPage() {
       chapters={chapters.data || []}
       loading={project.isPending || chapters.isPending}
       error={project.error || chapters.error}
-      busy={isProjectBusy(project.data?.status)}
+      busy={busy}
+      initialized={project.data?.initialized === true}
     />
   );
 }
@@ -43,12 +41,14 @@ function ContentsWorkspace({
   loading,
   error,
   busy,
+  initialized,
 }: {
   pid: string;
   chapters: ChapterSummary[];
   loading: boolean;
   error: unknown;
   busy: boolean;
+  initialized: boolean;
 }) {
   const { t } = useI18n();
   const qc = useQueryClient();
@@ -72,17 +72,13 @@ function ContentsWorkspace({
       .toLocaleLowerCase()
       .includes(query),
   );
-  const readOnly = busy || !!error || loading;
+  const readOnly = !initialized || busy || !!error || loading;
   return (
     <>
-      <PageHeader title={t("contents.title")} subtitle={t("contents.help")} />
+      <PageHeader title={t("contents.title")} />
       <PageContainer className="space-y-4">
         <ErrorNotice error={error} />
-        {busy && (
-          <p role="status" className="text-sm text-muted-foreground">
-            {t("contents.pauseToEdit")}
-          </p>
-        )}
+        {!initialized ? <ReadOnlyNotice reason="source" /> : busy && <ReadOnlyNotice />}
         <Input
           aria-label={t("contents.search")}
           placeholder={t("contents.search")}
@@ -99,6 +95,12 @@ function ContentsWorkspace({
             pid={pid}
             entries={visible}
             readOnly={readOnly}
+            sourceOnly={!initialized}
+            empty={
+              chapters.length
+                ? undefined
+                : t("progress.chaptersWillAppearAfterParsing")
+            }
             onEdit={setEditing}
           />
         )}
@@ -117,6 +119,7 @@ function ContentsWorkspace({
                 });
               } finally {
                 await Promise.all([
+                  qc.invalidateQueries({ queryKey: ["project", pid] }),
                   qc.invalidateQueries({ queryKey: ["chapters", pid] }),
                   qc.invalidateQueries({ queryKey: ["review", pid] }),
                   qc.invalidateQueries({ queryKey: ["events", pid] }),

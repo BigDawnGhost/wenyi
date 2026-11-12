@@ -1,0 +1,109 @@
+{
+  "templates": {
+    "analyzer_system": "78b7b00d5f9f39a77dec07b63c7094ec91800f3858de44379f7d4d9e692ed7f0",
+    "analyzer_user": "d19791307d7a2fb544caaedb1dfaa2865dd2e7ba8d66a484fda8b2d3d58c1a26",
+    "book_synopsis_system": "944b4f9a3eedf8ab5902424aae5380a60a4e58f50fa08609dd3fc27d1c58f784",
+    "book_synopsis_user": "a98e6c041848bf6d62e13ea4c4accf5b15e0ecd317e1ecc8660bc247e20e9563",
+    "chapter_digest_system": "bbf4b562238bee78ace2e93296b65f54babff5bea0bd4dfa15aede38315a7ed9",
+    "chapter_digest_user": "37e13d04f0a29c0226f766e6bbf63325b3cd2a0e8ed35a911ffed227c620f13d",
+    "glossary_extractor_system": "b29e87059fec489a8c42262f4855ca239dad693b14d0348bf47c58a4b154f93f",
+    "glossary_extractor_user": "c1e634c7492d1bb22e783d54f11b29553aa699ac44a812659192619524a9846a",
+    "glossary_history_system": "512961e2fec727899fc50fe3062c1417d8a1748f3d62f398fab7384a826ddea3",
+    "glossary_history_user": "fd7a58d0f334fd93c3d023ecc48a27e882674ad376faf28a2c5bb89b97542611",
+    "language_detector_system": "29ac0d90d9ae06a3f24a22e3d3a3ef8cb76eb2b44c4d104f6cee58d476f42996",
+    "polisher_continue_user": "b5dcf4631168d5c0951f3d948cbef2daecc7eb66a6482aa86d6c3b33a5fc15a2",
+    "polisher_system": "6419acf7c3efa14f6a8eba8065a1805108ca7f45e7f56390b67aaf2cb4ccd178",
+    "polisher_terminology_user": "410196751befab0d0c1f300b623fc47001453fa4450010f9bd37b103bdf78eec",
+    "polisher_user": "c9c7c97380f7156b2303b4775d49e2fb4fbafed7bc25465e2a961702429f1366",
+    "precision_generation_system": "15a13a51def33297e8bd79badebb840938b0cf421ffe3d30d8a0c522f01631a8",
+    "precision_packet": "c94cd6bc3d315118c9c6b56b01ae5d757a9d1d54786b49c198e5a223c0f84492",
+    "precision_synthesize": "f086ce49bd411770c80d794f0c1ef28b8ecac7673cea82a221c205ad058e745a",
+    "precision_translate": "98d0519ab801f5bcbfe5d14511398334606fd00b7bb81db681392f4555778680",
+    "review_agent_system": "87bced96ae0c7faf237ef8101d52ddeedd91792a2dd89b732d5db5ffc2676aa4",
+    "review_agent_user": "52d7942e030e5dbd03ba94bace02b33d2a2abe08b5032d0574e578fb832ce986",
+    "review_arbiter_system": "d2dfefcd93bbe9efbc2cff4772bbf84243fc1c79e85b02cdcfe04fadc731370d",
+    "review_arbiter_user": "fb938afb236b7ca93fdf205b381a5b9ae01915bce2e62bb0464b480839250d2a",
+    "review_fixer_system": "0020ac2a4281b77fe5013e25195159b324c471368f8970f9b6ba18c3b5e586f7",
+    "review_fixer_user": "f785ec218bc18cbf95f4fcd605ed7672df82f4b0a26f57455753a24f14d9a172",
+    "reviewer_system": "bf37315f0bdbc21ef64fa59b36f78b021a5cceb8d1add9dad5c754dacd8c1d35",
+    "reviewer_user": "bd00cf2f32214f1363de9e250dee6eac79b0657c228f0b0f902ffe8c8b64a95e",
+    "terminology_discover_system": "f596c41e8bc5b1194ca0d20c0f2be6c12e2e0eac99f97464c36cb21b9fc3b36a",
+    "terminology_discover_user": "bfefa6696ae8cac2119123b4d5a8bf59569271c8d32a211c246a64ae4b7eb39a",
+    "terminology_evidence_system": "9023736e5db1a0027a7f3c825eb82d9a2305604dd72edfdb86db7c52e6a61f81",
+    "terminology_evidence_user": "b3ad3a64bffb9d09d58f0a973528bc5d3f574f5af2165c064f1b5aae6b1fd594",
+    "terminology_merge_system": "be1df08fc6422e78dc68bd69fdfa369623c2e60bec6c211a0c904c878bc05048",
+    "terminology_merge_user": "ed9d4e8b8573eca1b6de62a4708518ea96fc2ada4e2bd7ecf1428f496e5e9747",
+    "title_translator_system": "4bf8a316bb821f98cb8a0f7c4b3b29537b06fa38c48300748602a53498a7848b",
+    "title_translator_user": "bcd8d7cb5aa0795235ef4b088948406d4457d83b2e2ab3fbceb3b1d45e5306eb",
+    "translator_system": "877a6f8bcf7c7f22cadffc264b5244cab40d224bff7b6c2dca356837f971a65e",
+    "translator_user": "a792e4cc787680d074ef79560dd11d557e390c40efb759bc050a22215d25fc1f"
+  },
+  "profiles": {
+    "zh": "bbd9db85af300add7df7216221235494e5c6834cce3143d74a41ae223197fa83",
+    "en": "bfdf7205994b081ef7eda1944e37227a0538a6725ffc1875eae0efd42918d0ef",
+    "ja": "832d6278fdf88f09083a539a86db2577914694196bdb60a9ff28fbe1532d8659",
+    "ko": "f5ae21a72da1773858aaa9980e860ffad8576085abc8b1f7a6dc02a7f60ba737",
+    "fr": "bb08df896bb48a0fe3e34d770601ede11985d1b803ccecc94a397b4e0a8fa448",
+    "de": "d0f952c07ddb5071e91ad19a398189b92f432a8f0557c24f842111ed31b440cc",
+    "es": "e91f0a5dfb2b113c126e393d999a2589a8248a0e7415d4912344dfbd38b8a40e",
+    "it": "1b4c06e6fec5810982d54ded5d94e98184bdc699c7d1ec8f3474e598240c5665",
+    "pt": "e4f4fad6eaaad44c8bec4eb05ba3bc6f38e2f138dace9baccca02ea12ed1abaa",
+    "ru": "7c64e806763a3be3a5ec079f85be9360eafe1541a61d932c757b020b826d9514",
+    "vi": "92f2e288e1147b441776bbcdb39ff9c73148431327472031c4d694faa018576b",
+    "zh-Hant": "b46b87c12d3a8dfc9312fd230fdc8a7476783232e312e0bc5a9ea69d8ec7dff2",
+    "en-US": "4859a0199190d7682cc99251c56d5eb1979791eeb8cedb6eb6b7b93d1e6236d6",
+    "en-GB": "9007b09353453fd596c400335d586c70ee8381080ff36416a1b286854d3140e9",
+    "pt-BR": "60b63ccd1086a8b27c1f3b647263bff159d5db3dbb6916c79a43338628981f38",
+    "pt-PT": "4cc33deb3b9baf3c9431cd89e52d64ef86861bc124c7958ff43384b4252f8e3a"
+  },
+  "rendered": {
+    "zh": "2034030cc15b3e8c0ac736ac810d5895f03a13b002b26c1391061b94d2bfe178",
+    "en": "9e4533913351bd438ccf7a3807e55acf79ff6c7a627271468a39d9de75673c41",
+    "ja": "8bf92cb05eb4879b1aa3e69417988fe4f3872c16f4f2a05babb08f1d3e354b75",
+    "ko": "0af4ba8faa174ecc64bcbd682db68790f03fa60d642640a5418ded1b4f895472",
+    "fr": "292e8ea1bfab221d23e200d83ee9513151258d746be09488ec6b34a85bc22578",
+    "de": "bdba5be3aba5403c2c438d21cf63618c3a3b5bd3287efd55eefe963ba60f33e3",
+    "es": "d8c5216daa109b8ebc75a33128d16cb432f27c44b6507a143c57401ee656439d",
+    "it": "b61fe8bb6a1219ce2cde868f0329e2dc80f67a80d39afd266a8b1e7b0f1c5b4c",
+    "pt": "25e1e037e41d0da7c1f2fa029e9db331d3e564545f79cdefe27a7db1556ac347",
+    "ru": "73dbcb976986aaeb913c6fa7de949a5b7f6f76c9c10e67d74bf389be1d6613dd",
+    "vi": "3182a86384ea30235c63ca590d9bc8da1ffcbdf593f4bbf7e45c98a901438a2e",
+    "zh-Hant": "e34a87d1b10ae1ebbe47451b3ba50f2b99534a1a1163b26e3bcfb95af0fbbc8e",
+    "en-US": "b794ccc83bcd5403b079d1729b44adb912c587f3d39161d831d2c20063b78958",
+    "en-GB": "3ad5c9ffe28090319b458908c630f0b3e91e72d933ed33dc06f2ec0afff1735d",
+    "pt-BR": "30535bae7fdb5e8a0736752e3b8c88cb834087d81e15623f2f7014d1832d5e58",
+    "pt-PT": "14c134d500b8f52811ceeb4b1c1b1d1687371e62707b5913f894dfe99110a32f"
+  },
+  "plans": {
+    "standard": {
+      "analysis": "f7e33dfe9db15a2ea06491cf232ff14aac08a11652093736211b79fa61a4942e",
+      "translation": "27eb7ba6d5b3ab7bcd5577233c8d3b8c2c3971feff24e618d86d9c641cfc5c8c",
+      "review": "67b4e05448bd0828969a04193951a8f8ea01ef4ba2068537800ad20930c1dc45"
+    },
+    "three_draft_synthesis": {
+      "analysis": "f7e33dfe9db15a2ea06491cf232ff14aac08a11652093736211b79fa61a4942e",
+      "translation": "5bd371b5273a741e84f65f8ba3156075853f3ba495ebc2607f7f0adb24ffdfc0",
+      "review": "67b4e05448bd0828969a04193951a8f8ea01ef4ba2068537800ad20930c1dc45"
+    },
+    "terminology": {
+      "analysis": "555306d4a0d99ffadcc017c283830aef82f3e21b774e3c7c9a8fb44cfd588987",
+      "translation": "c019147f4b3db85223773ecf2dbb2f320249cb710613e5adbf9804f3bbc91868",
+      "review": "9bb03e8eefa40dc83fae57d53f97b0ccdc4cb8a9ca7faa8064fd722517286a80"
+    },
+    "traditional": {
+      "analysis": "06b4d28ab9dadf01fa9bb46687eb4b2cf4bbb228a136e9976c97885713036cd1",
+      "translation": "9c001e491499c36368b1a1aaa4e5cf0e93a15611f006ba3b6b53c9d1a9ab3fd1",
+      "review": "bab0d2b1234e0777d4c276689b5f7d4e99b58dacd2ad7aa4c560972115421dbb"
+    },
+    "regional": {
+      "analysis": "2bec7b2ee740f7c2590d1245d32e6da835e33186b872cf8a50103f8863ad13d5",
+      "translation": "3aa8ca9976b41d0085fce03315fd5c5f4875eb3aa321dcff37c6d241312af9f7",
+      "review": "ecee2c079955d259cc43cfc268ad2eec572f449457071cb335114690f4917fbf"
+    },
+    "vietnamese": {
+      "analysis": "944d538a1ea14870aab16f82608a15c97af8e86d8d4bb3bda8be68544d2d61e2",
+      "translation": "7027e029a918f76cc30ae98714d9797b55353bea7dbc7001955b6627d3a375f1",
+      "review": "b32fd13ef366e1a45348a6e4ce45da0480910b3f7074af5d45027dc8316109e5"
+    }
+  }
+}

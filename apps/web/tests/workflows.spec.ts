@@ -9,7 +9,7 @@ import {
   configuration,
   capabilities,
   globalConfiguration,
-} from "./fixtures";
+} from "../../../packages/ui/sandbox/fixtures";
 
 test("creates a multilingual project and waits for background parsing", async ({
   page,
@@ -77,7 +77,7 @@ test("creates a multilingual project and waits for background parsing", async ({
   await expect(create).toBeDisabled();
   expect(created).toBeUndefined();
   await expect(
-    page.getByRole("checkbox", { name: "Prepare before translating" }),
+    page.getByRole("switch", { name: "Prepare before translating" }),
   ).not.toBeChecked();
   const browseFiles = page.getByRole("button", {
     name: "Browse files",
@@ -85,15 +85,15 @@ test("creates a multilingual project and waits for background parsing", async ({
   });
   await expect(browseFiles).toBeVisible();
   await expect(
-    page.getByText("No file selected", { exact: true }),
+    page.getByText("Drop a file here", { exact: true }),
   ).toBeVisible();
   await browseFiles
     .locator("..")
     .screenshot({ path: testInfo.outputPath("upload-control-desktop.png") });
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.setViewportSize({ width: 1024, height: 844 });
   await browseFiles
     .locator("..")
-    .screenshot({ path: testInfo.outputPath("upload-control-mobile.png") });
+    .screenshot({ path: testInfo.outputPath("upload-control-compact.png") });
   await page.setViewportSize({ width: 1280, height: 720 });
   const chooserPromise = page.waitForEvent("filechooser");
   await browseFiles.focus();
@@ -133,7 +133,7 @@ test("unreviewed chapters remain unreviewed and obsolete QA actions are absent",
 }) => {
   await fakeApi(page);
   await page.goto(`/projects/${pid}`);
-  await expect(page.getByText("Not reviewed", { exact: true })).toBeVisible();
+  await expect(page.getByText("Not reviewed", { exact: true }).first()).toBeVisible();
   await expect(
     page.getByText("Consistency check", { exact: true }),
   ).toHaveCount(0);
@@ -201,41 +201,13 @@ test("failed manual edit keeps the draft and does not show a success state", asy
     .click();
   await page.getByLabel("Edit translation").fill("Keep this draft");
   await page.getByRole("button", { name: "Save translation" }).click();
-  await expect(page.getByRole("alert")).toContainText("409");
+  await expect(page.getByRole("alert")).toContainText("项目正在执行任务");
   await expect(page.getByLabel("Edit translation")).toHaveValue(
     "Keep this draft",
   );
   await expect(
     page.getByText("Translation saved", { exact: true }),
   ).toHaveCount(0);
-});
-
-test("subtitle projects expose timeline and only SRT exports", async ({
-  page,
-}) => {
-  await fakeApi(page, {
-    [`/projects/${pid}`]: { ...project, fmt: "srt", status: "translating" },
-  });
-  await page.goto(`/projects/${pid}/subtitles`);
-  await expect(
-    page.getByText("#007 · 00:00:01,000 → 00:00:03,000"),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "你好", exact: true }),
-  ).toBeDisabled();
-  await expect(
-    page.getByRole("link", { name: "Glossary", exact: true }),
-  ).toHaveCount(0);
-  await page.goto(`/projects/${pid}/export`);
-  await expect(
-    page.getByRole("button", { name: "SRT", exact: true }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "EPUB", exact: true }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Generate export" }),
-  ).toBeEnabled();
 });
 
 test("advanced configuration reports validation errors", async ({
@@ -250,18 +222,14 @@ test("advanced configuration reports validation errors", async ({
   );
   await page.goto(`/projects/${pid}/settings`);
   await expect(
-    page.locator("summary").filter({ hasText: "Saved model routes" }),
+    page.getByRole("heading", { name: "Advanced YAML configuration", exact: true }),
   ).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("settings.png"),
     fullPage: true,
   });
   await page
-    .locator("summary")
-    .filter({ hasText: "Advanced YAML configuration" })
-    .click();
-  await page
-    .getByLabel("Advanced YAML configuration", { exact: true })
+    .getByRole("textbox", { name: "Advanced YAML configuration", exact: true })
     .fill("pipeline:\n  invalid_option: true");
   await page
     .getByRole("button", { name: "Validate configuration", exact: true })
@@ -272,7 +240,10 @@ test("advanced configuration reports validation errors", async ({
 test("authenticates the progress socket before displaying project events", async ({
   page,
 }) => {
-  await fakeApi(page);
+  await fakeApi(page, {
+    [`/projects/${pid}`]: { ...project, status: "translating" },
+    [`/projects/${pid}/workflow`]: { ...workflow, status: "running" },
+  });
   await page.addInitScript(() =>
     localStorage.setItem("wenyi_token", "test-auth-token"),
   );
@@ -334,18 +305,15 @@ test("global API provider form saves endpoint, model and tier changes", async ({
       yaml: JSON.stringify(settings),
     },
   });
-  await page.goto("/settings");
+  await page.goto("/settings/providers");
   await page
-    .locator("summary")
-    .filter({ hasText: "API providers & models" })
-    .click();
-  await page
+    .locator("#provider-models")
     .getByLabel("API provider", { exact: true })
     .click();
   await page.getByRole("option", { name: "openai-compatible", exact: true }).click();
   await page.getByLabel("API base URL").fill("https://example.com/v1");
   await page.getByLabel("API key environment variable").fill("CUSTOM_API_KEY");
-  await page.getByLabel("Model name", { exact: true }).fill("custom-model");
+  await page.locator("#provider-models").getByLabel("Model name", { exact: true }).fill("custom-model");
   const request = page.waitForRequest(
     (r) => r.method() === "PUT" && r.url().endsWith("/settings"),
   );
@@ -367,6 +335,7 @@ test("workflow snapshot and cached progress survive a page reload", async ({
   page,
 }) => {
   await fakeApi(page, {
+    [`/projects/${pid}`]: { ...project, status: "paused" },
     [`/projects/${pid}/workflow`]: {
       source: "snapshot",
       kind: "translation",
@@ -377,6 +346,8 @@ test("workflow snapshot and cached progress survive a page reload", async ({
         { id: "review", label: "全书审校", enabled: false },
       ],
       progress: {
+        kind: "translation",
+        project_id: pid,
         label: "正在翻译第 3 章",
         done: 2,
         total: 5,
@@ -391,8 +362,8 @@ test("workflow snapshot and cached progress survive a page reload", async ({
   await expect(
     page.getByText("正在翻译第 3 章", { exact: false }),
   ).toBeVisible();
-  await page.getByText("Workflow details", { exact: true }).click();
-  await expect(page.getByText("2 · Disabled")).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Paused");
+  await expect(page.getByRole("status")).toContainText("(2/5)");
   await page.reload();
   await expect(
     page.getByText("正在翻译第 3 章", { exact: false }),

@@ -1,15 +1,65 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid } from "./fixtures";
+import { fakeApi, pid, project } from "../../../../packages/ui/sandbox/fixtures";
+import { chooseOption } from "../../../../packages/ui/tests/e2e/select-helper";
 
 const origin = "http://127.0.0.1:19481";
 
-test("HTML native save preserves the options and reports the archive path", async ({ page }) => {
+for (const [babeldoc, order] of [
+  [false, "target_first"],
+  [true, "target_first"],
+  [true, "source_first"],
+] as const) {
+  test(`native PDF export is ${babeldoc ? "available for BabelDOC" : "hidden for MinerU"} (${order})`, async ({ page }) => {
+    await page.addInitScript(() => {
+      window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
+      window.__TAURI_INTERNALS__ = {
+        invoke: (_command, args) => {
+          Object.assign(window, { savedOptions: args.options });
+          return Promise.resolve({ path: "/fixture/book.pdf" } as never);
+        },
+      };
+    });
+    await fakeApi(page, {
+      [`/projects/${pid}`]: {
+        ...project,
+        fmt: "pdf",
+        output_formats: [...project.output_formats, ...(babeldoc ? ["pdf"] : [])],
+      },
+    }, origin);
+    await page.goto(`/projects/${pid}/export`);
+    await expect(page.getByRole("button", { name: "EPUB", exact: true })).toBeVisible();
+    const pdf = page.getByRole("button", { name: "PDF", exact: true });
+    if (!babeldoc) {
+      await expect(pdf).toHaveCount(0);
+      return;
+    }
+    await pdf.click();
+    await page.getByRole("radio", { name: "Bilingual", exact: true }).check();
+    await expect(page.getByText(/Each PDF page pairs the original and translated pages side by side/)).toBeVisible();
+    await page.getByText("Layout and advanced options", { exact: true }).click();
+    await expect(page.getByLabel("PDF export engine")).toHaveCount(0);
+    const bilingualOrder = page.getByLabel("Bilingual order", { exact: true });
+    await expect(bilingualOrder).toHaveText("Translation first");
+    await chooseOption(bilingualOrder, order === "target_first" ? "Translation first" : "Source first");
+    await page.getByRole("button", { name: "Generate export", exact: true }).click();
+    await expect(page.getByText("Saved to /fixture/book.pdf", { exact: true })).toBeVisible();
+    const options = await page.evaluate(() =>
+      (window as unknown as { savedOptions: Record<string, unknown> }).savedOptions,
+    );
+    expect(options.format).toBe("pdf");
+    expect(options.bilingual).toBe(true);
+    expect(options.order).toBe(order);
+    expect(options).not.toHaveProperty("pdf_engine");
+  });
+}
+
+test("HTML native save preserves the options and reports the HTML path", async ({ page }) => {
   await page.addInitScript(() => {
     window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
     window.__TAURI_INTERNALS__ = {
       invoke: (_command, args) => {
         Object.assign(window, { savedOptions: args.options });
-        return Promise.resolve({ path: "/fixture/book.html.zip" } as never);
+        return Promise.resolve({ path: "/fixture/book.html" } as never);
       },
     };
   });
@@ -21,7 +71,7 @@ test("HTML native save preserves the options and reports the archive path", asyn
   await page.goto(`/projects/${pid}/export`);
   await page.getByRole("button", { name: "HTML", exact: true }).click();
   await page.getByRole("button", { name: "Generate export", exact: true }).click();
-  await expect(page.getByText("Saved to /fixture/book.html.zip")).toBeVisible();
+  await expect(page.getByText("Saved to /fixture/book.html", { exact: true })).toBeVisible();
   expect(await page.evaluate(() =>
     (window as unknown as { savedOptions: { format: string } }).savedOptions.format,
   )).toBe("html");
@@ -34,6 +84,7 @@ test("Desktop cancellation creates no browser job; history uses native Save as",
     Object.assign(window, { saveCalls: [] });
     window.__TAURI_INTERNALS__ = {
       invoke: (command, args) => {
+        if (command !== "native_export_save") return Promise.resolve(null as never);
         (window as unknown as { saveCalls: unknown[] }).saveCalls.push({ command, args });
         return Promise.resolve(null as never);
       },
@@ -83,4 +134,48 @@ test("Desktop saving completes and reports its path after leaving the export pag
       .finishSave({ path: "/fixture/destination/book.zh.docx" });
   });
   await expect(page.getByText("Saved to /fixture/destination/book.zh.docx")).toBeVisible();
+});
+
+test("an open native save shows indeterminate progress without a percentage", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
+    window.__TAURI_INTERNALS__ = {
+      invoke: () => new Promise(resolve => Object.assign(window, { finishSave: resolve })),
+    };
+  });
+  await fakeApi(page, {}, origin);
+  await page.goto(`/projects/${pid}/export`);
+  const progress = page.locator('[data-slot="native-export-progress"]');
+  await expect(progress).toHaveCount(0);
+  await page.getByRole("button", { name: "Generate export", exact: true }).click();
+  await expect(progress).toBeVisible();
+  await expect(progress).toContainText("Saving the export…");
+  // The native host reports no byte count for a save, so no percentage may appear.
+  await expect(progress.getByRole("progressbar")).not.toHaveAttribute("aria-valuenow");
+  await page.evaluate(() => {
+    (window as unknown as { finishSave: (value: unknown) => void })
+      .finishSave({ path: "/fixture/book.docx" });
+  });
+  await expect(page.getByText("Saved to /fixture/book.docx", { exact: true })).toBeVisible();
+  await expect(progress).toHaveCount(0);
+});
+
+test("structured native save failures retain their actionable message", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
+    window.__TAURI_INTERNALS__ = {
+      invoke: (command) => command === "native_export_save"
+        ? Promise.reject({
+            code: "export_destination_invalid",
+            message: "The original source cannot be overwritten.",
+          })
+        : Promise.resolve(null as never),
+    };
+  });
+  await fakeApi(page, {}, origin);
+  await page.goto(`/projects/${pid}/export`);
+  await page.getByRole("button", { name: "Generate export", exact: true }).click();
+  await expect(page.getByText("The original source cannot be overwritten.", { exact: true }))
+    .toBeVisible();
+  await expect(page.getByText("[object Object]", { exact: true })).toHaveCount(0);
 });
