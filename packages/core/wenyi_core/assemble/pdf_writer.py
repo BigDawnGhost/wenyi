@@ -13,6 +13,7 @@ from ..atomicio import publish_target
 from ..ingest.pdf_babeldoc import (
     _selected_page_indices,
     annotations_from_store,
+    rows_from_store,
     translations_from_store,
 )
 from ..pdf_bridge import BabeldocBridgeClient, BabeldocBridgeError
@@ -96,6 +97,9 @@ def _assemble_pdf(
     session_id, bridge_url, mapping = translations_from_store(store)
     annotations = annotations_from_store(store, mapping)
     annotation_options = {"annotations": annotations} if annotations else {}
+    rows = rows_from_store(store, mapping)
+    if rows:
+        annotation_options["rows"] = rows
     client = BabeldocBridgeClient(bridge_url, timeout=timeout)
     if not bilingual:
         return client.fillback(session_id, mapping, out_path=out_path, **annotation_options)
