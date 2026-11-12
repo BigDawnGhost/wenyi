@@ -1,10 +1,10 @@
 """Atomic file publication shared by export and bridge output paths.
 
-Export artifacts must never appear half-written: crash or disk-full leaves the previous
-target intact and no debris behind. Temporary files use the ``<name>.<uuid>.tmp`` shape
-so sweepers can recognize them. Windows virus scanners and open readers can briefly pin
-the target, so replacement retries ``PermissionError`` with a bound before failing with
-a readable error.
+Export artifacts are written to uniquely named sibling files before replacement.
+Temporary names do not depend on the target name, which may already be close to
+the filesystem's component limit. Windows virus scanners and open readers can
+briefly pin the target, so replacement retries ``PermissionError`` with a bound
+before failing with a readable error.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ class PublishError(WenyiError, RuntimeError):
 
 
 def _temp_name(target: Path) -> Path:
-    return target.with_name(f"{target.name}.{uuid4().hex}.tmp")
+    return target.with_name(f".wenyi-{uuid4().hex}.tmp")
 
 
 def _fsync_best_effort(temp: Path) -> None:
