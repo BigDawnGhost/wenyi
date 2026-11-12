@@ -81,6 +81,7 @@ class BabeldocBridgeClient:
         *,
         out_path: str | Path,
         annotations: dict[str, Any] | None = None,
+        rows: dict[str, list[dict[str, int]]] | None = None,
     ) -> str:
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -90,10 +91,17 @@ class BabeldocBridgeClient:
                 "This PDF requires best-effort annotation support. Update and restart "
                 "wenyi-babeldoc-bridge before exporting."
             )
+        if rows and "toc-rows-v1" not in health.get("capabilities", []):
+            raise BabeldocBridgeError(
+                "This PDF requires directory row support. Update and restart "
+                "wenyi-babeldoc-bridge before exporting."
+            )
         connection = resolve_connection(self.base_url)
         payload: dict[str, Any] = {"session_id": session_id, "translations": translations}
         if annotations:
             payload["annotations"] = annotations
+        if rows:
+            payload["rows"] = rows
         try:
             response = httpx.post(
                 f"{connection.url}/fillback",
