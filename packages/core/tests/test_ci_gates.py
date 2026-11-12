@@ -69,6 +69,27 @@ def test_both_python_versions_run_the_full_workspace(name):
     assert "packages/core/tests" not in step["run"]
 
 
+def test_nightly_docker_proxy_images_are_prepared_before_integration():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
+    steps = jobs["python"]["steps"]
+    prepare = next(
+        (step for step in steps if step.get("name") == "Prepare Docker proxy test images"), None
+    )
+    assert prepare is not None, "The Docker proxy suite requires pre-pulled images"
+    integration = next(
+        step
+        for step in steps
+        if step.get("name") == "Service integration tests (PostgreSQL and Redis enabled)"
+    )
+    assert steps.index(prepare) < steps.index(integration)
+    assert prepare["if"] == "github.event_name == 'schedule'"
+    assert integration["env"]["WENYI_TEST_DOCKER"] == "${{ " + prepare["if"] + " && '1' || '0' }}"
+    assert prepare["run"].splitlines() == [
+        "docker pull nginx:alpine",
+        "docker pull python:3.12-slim",
+    ]
+
+
 @pytest.mark.parametrize(
     ("event", "ref", "expected"),
     [

@@ -210,6 +210,12 @@ jobs:
         # Packaging coverage builds distributions and belongs to the release workflows,
         # which run this marker explicitly; the regression job stays offline and fast.
         run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration and not packaging"
+      - name: Prepare Docker proxy test images
+        if: github.event_name == 'schedule'
+        # The proxy fixture inspects local images and starts containers with --pull=never.
+        run: |
+          docker pull nginx:alpine
+          docker pull python:3.12-slim
       - name: Service integration tests (PostgreSQL and Redis enabled)
         # Two workers bound connections against the shared postgres service.
         # One rerun absorbs resource flake; a retried pass lands in the job
