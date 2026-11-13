@@ -395,7 +395,7 @@ Review 可以使用已有备注，不生成新证据。
 |---|---|---|
 | `pipeline.review` | `true` | 完整翻译后执行全书 Review。 |
 | `pipeline.review_concurrency` | `4` | Review 块及同轮 Fixer 并发；`1` 为顺序执行。 |
-| `pipeline.review_output_retries` | `2` | 单段 Review 输出无效的额外尝试次数；`0`–`5`。 |
+| `pipeline.review_output_retries` | `2` | 单段审校输出无效或被截断时的额外尝试次数。多段审校块会先拆分。范围为 `0`–`5`。 |
 | `pipeline.review_agent_loop` | `true` | 通过选择性取证核查初始候选。 |
 | `pipeline.review_agent_max_evidence_rounds` | `2` | 每个循环取证轮数；`0`–`2`。 |
 | `pipeline.review_conflict_arbitration` | `true` | 取证审校后仲裁矛盾的一致性建议。 |
