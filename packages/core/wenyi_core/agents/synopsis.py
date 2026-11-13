@@ -13,11 +13,8 @@ import json
 from collections.abc import Callable
 
 from ..glossary.store import GlossaryStore, GlossaryTerm
+from ..ingest.tokens import count_tokens, split_balanced_tokens
 from .base import Agent
-
-# Character budget for one digest merge; group and recursively merge larger inputs.
-_REDUCE_BUDGET = 12000
-_SOURCE_BUDGET = 8000
 
 
 class Synopsizer(Agent):
@@ -27,10 +24,11 @@ class Synopsizer(Agent):
         """Cover every source block; publish nothing if any map or merge fails."""
         if not source_text.strip():
             return ""
+        pipeline = self.config.pipeline
         digests = []
-        for start in range(0, len(source_text), _SOURCE_BUDGET):
-            digest = self._digest(source_text[start : start + _SOURCE_BUDGET])
-            if not digest or len(digest) > _REDUCE_BUDGET:
+        for source in split_balanced_tokens(source_text, pipeline.synopsis_source_tokens):
+            digest = self._digest(source)
+            if not digest or count_tokens(digest) > pipeline.synopsis_reduce_tokens:
                 return ""
             digests.append(digest)
         return self._reduce(digests, self._merge_digests)
@@ -61,11 +59,8 @@ class Synopsizer(Agent):
         if not items:
             return ""
         # Split oversized legacy/caller inputs without dropping their endings.
-        items = [
-            item[start : start + _REDUCE_BUDGET]
-            for item in items
-            for start in range(0, len(item), _REDUCE_BUDGET)
-        ]
+        budget = self.config.pipeline.synopsis_reduce_tokens
+        items = [chunk for item in items for chunk in split_balanced_tokens(item, budget)]
         return self._reduce(
             items, lambda group: self._synth(group, analysis_brief, glossary), synthesize_one=True
         )
@@ -80,22 +75,23 @@ class Synopsizer(Agent):
         """Bound every group and require strict progress to prevent runaway reductions."""
         if len(items) == 1 and not synthesize_one:
             return items[0]
+        budget = self.config.pipeline.synopsis_reduce_tokens
         for _ in range(32):
-            groups = self._group(items, _REDUCE_BUDGET)
+            groups = self._group(items, budget)
             if len(groups) == 1:
                 result = synthesize(groups[0]).strip()
-                return result if len(result) <= _REDUCE_BUDGET else ""
+                return result if count_tokens(result) <= budget else ""
             # Summarize each group first, then merge those summaries in the next round.
             summaries = []
             for group in groups:
                 summary = synthesize(group).strip()
-                if not summary or len(summary) > _REDUCE_BUDGET:
+                if not summary or count_tokens(summary) > budget:
                     # Every group is required; dropping one would hide missing chapters on resume.
                     return ""
                 summaries.append(summary)
-            if (len(summaries), sum(map(len, summaries))) >= (
+            if (len(summaries), sum(map(count_tokens, summaries))) >= (
                 len(items),
-                sum(map(len, items)),
+                sum(map(count_tokens, items)),
             ):
                 return ""
             items = summaries
@@ -104,18 +100,14 @@ class Synopsizer(Agent):
     # Internal helpers.
     @staticmethod
     def _group(items: list[str], budget: int) -> list[list[str]]:
-        """Greedily group strings by character budget, keeping joined groups near or below
-        budget.
-        """
+        """Group intact digests in order, counting tokens in the newline-joined content."""
         groups: list[list[str]] = []
         cur: list[str] = []
-        size = 0
         for it in items:
-            if cur and size + len(it) > budget:
+            if cur and count_tokens("\n".join([*cur, it])) > budget:
                 groups.append(cur)
-                cur, size = [], 0
+                cur = []
             cur.append(it)
-            size += len(it) + 1
         if cur:
             groups.append(cur)
         return groups
@@ -129,13 +121,11 @@ class Synopsizer(Agent):
         """Merge one group of chapter digests and style analysis into a higher-level synopsis."""
         numbered = "\n".join(f"[{i}] {d}" for i, d in enumerate(digests))
         style_lines = []
-        used = 0
         for line in analysis_brief.splitlines():
-            if used + len(line) + 1 > 4000:
+            if count_tokens("\n".join([*style_lines, line])) > 4000:
                 style_lines.append("[Additional style context omitted by budget.]")
                 break
             style_lines.append(line)
-            used += len(line) + 1
         system = self.render("book_synopsis_system", src=self.src, tgt=self.tgt)
         user = self.render(
             "book_synopsis_user",
@@ -145,13 +135,13 @@ class Synopsizer(Agent):
             digests=numbered,
         )
         user += "\n\n[Relevant authoritative mappings: source, target, type]\n"
-        used = 0
+        mappings = ""
         for term in GlossaryStore.terms_in(glossary or [], "\n".join(digests)):
-            line = json.dumps([term.source, term.target, term.type], ensure_ascii=False)
-            if used + len(line) + 1 > 6000:
-                user += "[Additional mappings omitted; retain source-spelling identities.]\n"
+            line = json.dumps([term.source, term.target, term.type], ensure_ascii=False) + "\n"
+            if count_tokens(mappings + line) > 6000:
+                mappings += "[Additional mappings omitted; retain source-spelling identities.]\n"
                 break
-            user += line + "\n"
-            used += len(line) + 1
+            mappings += line
+        user += mappings
         # Shared transport retries truncation; optional synopsis failures keep an empty fallback.
         return self._ask_text(system, user, operation="synopsis.book")

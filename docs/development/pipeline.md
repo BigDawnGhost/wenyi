@@ -48,6 +48,17 @@ A failed synopsis group invalidates the whole synopsis; stale retained analysis 
 not be injected as a current synopsis. Preparation never extracts or seeds glossary
 entries.
 
+Prescan content budgets use the shared `cl100k_base` token estimator, not character
+counts or a provider-specific tokenizer. The source and reduction limits come from
+the [synopsis settings](../reference/configuration.md#translation).
+Oversized source and individual digests are split into the fewest chunks that fit,
+as evenly as complete Unicode characters permit. Merge groups retain intact digest
+order and count newline separators. Style and glossary context have separate
+4,000- and 6,000-token budgets; prompt instructions and formatting are additional,
+so these are not whole-request context limits. Budget-only changes preserve
+verified complete digests and cached synopses; unfinished chapters use the current
+budgets on retry without discarding other completed work.
+
 <a id="translation-checkpoints"></a>
 
 ## Stable state and translation checkpoints

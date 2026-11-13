@@ -85,6 +85,10 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertEqual(cfg.pipeline.rolling_context_tokens, 512)
             self.assertIn("rolling_context_tokens: 512", generated)
             self.assertNotIn("rolling_context_segments", generated)
+            self.assertEqual(cfg.pipeline.synopsis_source_tokens, 8000)
+            self.assertEqual(cfg.pipeline.synopsis_reduce_tokens, 12000)
+            self.assertIn("synopsis_source_tokens: 8000", generated)
+            self.assertIn("synopsis_reduce_tokens: 12000", generated)
             self.assertNotIn("glossary_scope", generated)
             self.assertNotIn("glossary_scope", cfg.pipeline.model_dump())
 
@@ -103,6 +107,27 @@ class TestConfigFileCreation(unittest.TestCase):
         self.assertEqual(cfg.pipeline.rolling_context_tokens, 0)
         with self.assertRaisesRegex(ValidationError, "rolling_context_tokens"):
             Config.from_dict({"pipeline": {"rolling_context_tokens": -1}})
+
+    def test_synopsis_token_budgets_load_from_yaml(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.yaml"
+            path.write_text(
+                "pipeline:\n  synopsis_source_tokens: 16000\n  synopsis_reduce_tokens: 24000\n",
+                encoding="utf-8",
+            )
+            cfg = Config.load(str(path))
+        self.assertEqual(cfg.pipeline.synopsis_source_tokens, 16000)
+        self.assertEqual(cfg.pipeline.synopsis_reduce_tokens, 24000)
+        self.assertEqual(cfg.pipeline.prescan_concurrency, 4)
+
+    def test_synopsis_token_budgets_require_positive_integers(self):
+        for key in ("synopsis_source_tokens", "synopsis_reduce_tokens"):
+            for value in (0, -1, 1.5, "invalid", None):
+                with self.subTest(key=key, value=value):
+                    with self.assertRaisesRegex(ValidationError, key):
+                        Config.from_dict({"pipeline": {key: value}})
+            cfg = Config.from_dict({"pipeline": {key: 1}})
+            self.assertEqual(getattr(cfg.pipeline, key), 1)
 
     def test_segment_budgets_guard_batch_only(self):
         # max_tokens_per_batch=0 would degrade packing to one request per segment
@@ -152,6 +177,8 @@ class TestConfigFileCreation(unittest.TestCase):
         self.assertEqual(cfg.pipeline.review_clean_confirmations, 2)
         self.assertTrue(cfg.pipeline.review_autofix)
         self.assertEqual(cfg.pipeline.pdf_backend, "mineru")
+        self.assertEqual(cfg.pipeline.synopsis_source_tokens, 8000)
+        self.assertEqual(cfg.pipeline.synopsis_reduce_tokens, 12000)
 
     def test_about_page_can_be_disabled(self):
         cfg = Config.from_dict({"output": {"about_page": False}})
