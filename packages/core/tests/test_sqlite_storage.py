@@ -71,6 +71,20 @@ def test_run_exit_invalidates_connections_in_reused_threads(store):
     assert store.read_artifact("probe.json") == {"value": 2}
 
 
+def test_short_lived_event_workers_do_not_accumulate_connections(store):
+    with store.lock(), ThreadPoolExecutor(max_workers=1) as resident:
+        # Keep a worker alive across multiple short-lived pools, as the desktop
+        # heartbeat does. Reclaiming an exited worker must not close its connection.
+        connection = resident.submit(store._connection).result(timeout=5)
+        for batch in range(8):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pool.submit(store.log_event, "annotation", batch=batch).result(timeout=5)
+            assert len(store._connections) <= 3
+        assert resident.submit(store._connection).result(timeout=5) is connection
+        assert [row["batch"] for row in store.list_events()] == list(range(8))
+    assert not store._connections
+
+
 def test_close_all_waits_for_active_read_snapshot(store):
     store.write_artifact("probe.json", {"value": 1})
     reading, finish_read, closing = Event(), Event(), Event()

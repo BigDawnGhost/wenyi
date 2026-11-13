@@ -70,7 +70,7 @@ class SqliteStorage:
         self._mutex = threading.RLock()
         self._lock_local = threading.local()
         self._conn_local = threading.local()
-        self._connections: set[sqlite3.Connection] = set()
+        self._connections: dict[sqlite3.Connection, threading.Thread] = {}
         self._connections_guard = threading.Condition()
         self._readers = 0
         self._closing = False
@@ -94,6 +94,14 @@ class SqliteStorage:
             os.makedirs(self.run_dir, exist_ok=True)
         elif not os.path.isfile(self.database_path):
             raise FileNotFoundError(f"Local state database not found: {self.database_path}")
+        # Short-lived model workers write events through this store. Reclaim
+        # their connections before opening another one so a long run cannot
+        # exhaust file descriptors. Live threads keep their cached connections.
+        with self._connections_guard:
+            for connection, owner in tuple(self._connections.items()):
+                if not owner.is_alive():
+                    connection.close()
+                    del self._connections[connection]
         # SQLite exposes the new file before its schema transaction commits.
         # Serialize first opens across instances/processes, including discovery;
         # ordinary reads/writes keep using WAL without holding this OS lock.
@@ -102,7 +110,7 @@ class SqliteStorage:
         # Readers must not take the writer mutex: close_all holds it while
         # draining snapshots, and a first read may still be opening its connection.
         with self._connections_guard:
-            self._connections.add(conn)
+            self._connections[conn] = threading.current_thread()
         self._conn_local.conn = conn
         self._conn_local.depth = 0
         return conn
@@ -218,7 +226,7 @@ class SqliteStorage:
             self._conn_local.depth = 0
             if conn is not None:
                 with self._connections_guard:
-                    self._connections.discard(conn)
+                    self._connections.pop(conn, None)
                 conn.close()
 
     def _check_close(self) -> None:
@@ -233,7 +241,7 @@ class SqliteStorage:
                 self._closing = True
                 try:
                     self._connections_guard.wait_for(lambda: self._readers == 0)
-                    connections, self._connections = self._connections, set()
+                    connections, self._connections = self._connections, {}
                     # Replacing the TLS object invalidates caches in surviving worker
                     # threads too, not only in the thread releasing the run lock.
                     self._conn_local = threading.local()
