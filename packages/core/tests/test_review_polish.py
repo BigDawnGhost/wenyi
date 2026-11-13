@@ -13,6 +13,7 @@ from wenyi_core.agents.polisher import Polisher
 from wenyi_core.agents.reviewer import Reviewer, ReviewOutputError
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.llm.retrying import TruncatedResponseError, safe_provider_error
 from wenyi_core.models.document import Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.review.run_store import ReviewRunStore
@@ -319,6 +320,62 @@ class TestReviewer(unittest.TestCase):
         self.assertTrue(all(event["chapter"] == 7 for event in splits))
         self.assertTrue(all(event["reason"] == "unsafe_json_repair" for event in splits))
         self.assertTrue(all("source" not in event and "target" not in event for event in events))
+
+    def test_truncated_chunk_splits_and_resumes_from_saved_children(self):
+        calls = []
+
+        def handler(messages, tier, json_mode):
+            indices = re.findall(r"源文(\d+)", messages[-1]["content"])
+            calls.append(tuple(indices))
+            if len(indices) > 2:
+                raise safe_provider_error(
+                    TruncatedResponseError("provider output ended"),
+                    provider="openai-compatible",
+                    operation="review.scan",
+                )
+            if indices == ["2", "3"] and calls.count(("2", "3")) == 1:
+                raise RuntimeError("interrupted after the first child was saved")
+            return _review_response(
+                [{"index": 0, "type": "missing", "detail": "漏译", "suggestion": "补译"}],
+                len(indices),
+            )
+
+        cfg = _cfg()
+        cfg.segment.max_tokens_per_batch = 100_000
+        chunks = Orchestrator(cfg, client=FakeClient(handler=handler))._review._chunks
+        segments = [Segment(index=i, source=f"源文{i}", target=f"译文{i}") for i in range(4)]
+        with tempfile.TemporaryDirectory() as directory:
+            debug = ReviewRunStore(directory)
+            with self.assertRaisesRegex(RuntimeError, "interrupted after the first child"):
+                chunks.review_chapter(segments, [], chapter_index=7, debug=debug)
+            issues = chunks.review_chapter(segments, [], chapter_index=7, debug=debug)
+            self.assertEqual([issue["index"] for issue in issues], [0, 2])
+            with open(debug.path("events.jsonl"), encoding="utf-8") as file:
+                events = [json.loads(line) for line in file]
+            self.assertIn(
+                "truncated_response",
+                [event["reason"] for event in events if event["event"] == "review_chunk_split"],
+            )
+            self.assertEqual(
+                chunks.review_chapter(segments, [], chapter_index=7, debug=debug), issues
+            )
+        self.assertEqual(
+            calls,
+            [("0", "1", "2", "3"), ("0", "1"), ("2", "3"), ("2", "3")],
+        )
+
+    def test_truncated_singleton_respects_retry_limit(self):
+        def handler(messages, tier, json_mode):
+            raise TruncatedResponseError("provider output ended")
+
+        cfg = _cfg()
+        cfg.pipeline.review_output_retries = 1
+        client = FakeClient(handler=handler)
+        with self.assertRaisesRegex(ReviewOutputError, "truncated_response"):
+            Orchestrator(cfg, client=client)._review._chunks.review_chapter(
+                [Segment(index=0, source="源文", target="译文")], []
+            )
+        self.assertEqual(len(client.calls), 2)
 
     def test_singleton_retries_then_recovers(self):
         attempts = 0
