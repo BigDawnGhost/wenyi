@@ -11,6 +11,7 @@ from typing import Any
 
 from ..errors import WenyiError
 from ..llm.json_parser import parse_json_result
+from ..llm.retrying import TruncatedResponseError
 from . import prompts
 from .base import Agent
 
@@ -88,6 +89,8 @@ class Reviewer(Agent):
                         "error": str(error),
                     },
                 )
+            if isinstance(error, TruncatedResponseError):
+                raise ReviewOutputError("truncated_response") from error
             raise
         if trace:
             trace("response", {"raw_response": text})

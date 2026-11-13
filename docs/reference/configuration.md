@@ -419,7 +419,7 @@ limitations belong in [formats](formats.md).
 |---|---|---|
 | `pipeline.review` | `true` | Run whole-book Review after complete translation. |
 | `pipeline.review_concurrency` | `4` | Concurrent Review chunks and same-round Fixer calls; `1` is sequential. |
-| `pipeline.review_output_retries` | `2` | Additional attempts for malformed single-segment Review output; `0`–`5`. |
+| `pipeline.review_output_retries` | `2` | Additional attempts for invalid or truncated single-segment Review output. Larger blocks are split first. Range `0`–`5`. |
 | `pipeline.review_agent_loop` | `true` | Verify initial candidates with selectively requested evidence. |
 | `pipeline.review_agent_max_evidence_rounds` | `2` | Evidence rounds per loop; `0`–`2`. |
 | `pipeline.review_conflict_arbitration` | `true` | Arbitrate contradictory consistency recommendations after evidence review. |
