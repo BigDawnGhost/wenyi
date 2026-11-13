@@ -8,16 +8,62 @@ import json
 import os
 import queue
 import secrets
+import socket
 import subprocess
 import sys
 import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 from wenyi_desktop.desktop import ORIGINS, LocalBoundary
+
+
+def test_engine_listener_accepts_low_latency_tcp_connections(tmp_path, monkeypatch):
+    import uvicorn
+    from wenyi_desktop import desktop, main
+    from wenyi_desktop.diagnostics import EngineDiagnostics
+
+    observed = []
+
+    class Server:
+        started = False
+        should_exit = True
+
+        def __init__(self, config):
+            pass
+
+        async def serve(self, *, sockets):
+            accepted = asyncio.get_running_loop().create_future()
+
+            def connected(reader, writer):
+                connection = writer.get_extra_info("socket")
+                accepted.set_result(connection.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY))
+                writer.close()
+
+            async with await asyncio.start_server(connected, sock=sockets[0]) as server:
+                _, writer = await asyncio.open_connection(*server.sockets[0].getsockname())
+                try:
+                    observed.append(await asyncio.wait_for(accepted, 5))
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+            self.started = True
+
+    monkeypatch.setattr(uvicorn, "Server", Server)
+    monkeypatch.setattr(desktop, "watch_parent", lambda server: None)
+    monkeypatch.setattr(
+        main,
+        "create_app",
+        lambda *args, **kwargs: SimpleNamespace(
+            state=SimpleNamespace(backend=SimpleNamespace(repository=MagicMock()))
+        ),
+    )
+    asyncio.run(desktop.serve(tmp_path, io.StringIO(), EngineDiagnostics(None)))
+    assert observed == [1]
 
 
 @pytest.mark.parametrize("transport", ["http", "websocket"])

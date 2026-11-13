@@ -162,13 +162,15 @@ class LocalBackend:
         finally:
             conn.close()
 
-    def project_dir(self, pid: str) -> Path:
+    def project_dir(
+        self, pid: str, *, locations: dict[Path, paths.ProjectDirectoryIndex] | None = None
+    ) -> Path:
         """Find a unique project identity within its authoritative library root.
 
         A recorded root never falls back to another library, even when its drive
         is missing. A row without a root is invalid, not a request for discovery.
-        Recheck disk identity on every lookup: cached existence cannot detect a
-        changed catalog owner, a conflicting marker or a newly duplicated folder.
+        A list read can share one library inventory, but it never survives that
+        read: subsequent operations must detect changed owners and duplicate folders.
         """
         # The same identity rules govern lookup, explicit import and deletion.
         if not paths.project_id(pid):
@@ -178,7 +180,12 @@ class LocalBackend:
         found: dict[Path, Path] = {}
         try:
             for root in recorded_roots or self.project_roots():
-                candidate = paths.find_project(root, pid)
+                if locations is None:
+                    candidate = paths.find_project(root, pid)
+                else:
+                    if root not in locations:
+                        locations[root] = paths.ProjectDirectoryIndex(root)
+                    candidate = locations[root].find(pid)
                 if candidate is not None:
                     found[candidate.resolve()] = candidate
         except (OSError, RuntimeError, ValueError) as error:
@@ -331,11 +338,19 @@ class LocalBackend:
         return destination
 
     def storage_for(
-        self, pid: str, *, create: bool = True, upgrade: bool | None = None
+        self,
+        pid: str,
+        *,
+        create: bool = True,
+        upgrade: bool | None = None,
+        locations: dict[Path, paths.ProjectDirectoryIndex] | None = None,
     ) -> SqliteStorage:
         from wenyi_core.storage.sqlite import SqliteStorage
 
-        directory = self.project_dir(pid)
+        # Cached inventories are only for a single read, never write admission.
+        if (create or upgrade) and locations is not None:
+            raise ValueError("Writable storage requires a fresh directory lookup")
+        directory = self.project_dir(pid, locations=locations)
         if create and not directory.is_dir():
             project = self._get("projects", pid) or {}
             if project.get("source_path"):
@@ -475,7 +490,11 @@ class LocalBackend:
         saved[paths.LAST_LIBRARY_ROOT] = str(root)
         self.save_settings(saved, connection)
 
-    def get_project(self, pid: str) -> dict | None:
+    def get_project(
+        self, pid: str, *, locations: dict[Path, paths.ProjectDirectoryIndex] | None = None
+    ) -> dict | None:
+        if locations is None:
+            locations = {}
         with self._export_leases_lock:
             if pid in self._removing_projects:
                 return None
@@ -492,7 +511,7 @@ class LocalBackend:
             available = False
             storage = None
             try:
-                storage = self.storage_for(pid, create=False)
+                storage = self.storage_for(pid, create=False, locations=locations)
                 if storage.exists():
                     manifest = storage.load_manifest()
                     project.update(
@@ -502,7 +521,7 @@ class LocalBackend:
                         source_lang=manifest.get("source_lang", project["source_lang"]),
                         target_lang=manifest.get("target_lang", project["target_lang"]),
                     )
-                available = self.project_dir(pid).is_dir()
+                available = self.project_dir(pid, locations=locations).is_dir()
             except ProjectLocationUnavailable as error:
                 # One unsafe row must not hide unrelated healthy projects.
                 readable = False
@@ -526,6 +545,7 @@ class LocalBackend:
 
     def list_projects(self) -> list[dict]:
         rows = sorted(self._list("projects"), key=lambda row: row["created_at"], reverse=True)
+        locations: dict[Path, paths.ProjectDirectoryIndex] = {}
         keys = (
             "id",
             "name",
@@ -540,7 +560,7 @@ class LocalBackend:
         return [
             {**{key: project[key] for key in keys}, "error": project.get("error")}
             for row in rows
-            if (project := self.get_project(row["id"])) is not None
+            if (project := self.get_project(row["id"], locations=locations)) is not None
         ]
 
     def update_project(
@@ -1071,24 +1091,25 @@ class LocalBackend:
 
         store = self.storage_for(pid, create=False)
         try:
-            review = store.load_latest_review_result() or {}
-            issue_counts = Counter(
-                issue.get("chapter")
-                for issue in review.get("issues", [])
-                if isinstance(issue.get("chapter"), int)
-            )
             result = []
-            for row in store.chapter_statistics():
-                state, current = chapter_review_state(
-                    review, row.pop("meta"), row.get("review_status")
+            with store.read_chapter_statistics_snapshot() as chapters:
+                review = store.load_latest_review_result() or {}
+                issue_counts = Counter(
+                    issue.get("chapter")
+                    for issue in review.get("issues", [])
+                    if isinstance(issue.get("chapter"), int)
                 )
-                result.append(
-                    {
-                        **row,
-                        "review_status": state or "pending",
-                        "review_issue_count": issue_counts[row["index"]] if current else 0,
-                    }
-                )
+                for chapter in chapters:
+                    state, current = chapter_review_state(
+                        review, chapter.pop("meta"), chapter["review_status"]
+                    )
+                    result.append(
+                        {
+                            **chapter,
+                            "review_status": state or "pending",
+                            "review_issue_count": issue_counts[chapter["index"]] if current else 0,
+                        }
+                    )
             return result
         finally:
             store.close()

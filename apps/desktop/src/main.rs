@@ -378,6 +378,20 @@ fn main() {
             let reload_state = startup_state.clone();
             let webview_data = paths::webview(&workspace);
             std::fs::create_dir_all(&webview_data)?;
+            // Overlap Python startup with WebView creation. State retains an
+            // early ready/error result for the initialization/page-load scripts;
+            // the UI still cannot issue requests before the owned engine is ready.
+            let handle = app.handle().clone();
+            let backend_engine = startup_engine.clone();
+            let backend_state = startup_state.clone();
+            std::thread::spawn(move || {
+                if backend_engine.closing.load(Ordering::SeqCst) { return; }
+                if let Err(error) = start_backend(&handle, &backend_engine, false) {
+                    fail(&handle, &backend_state, error);
+                    return;
+                }
+                publish(&handle, &backend_state);
+            });
             // The shared shell reserves 752 logical px for content plus the 240 px
             // expanded sidebar, so a narrower minimum would clip settings behind a
             // horizontal scrollbar; 1024 leaves room for both scrollbar styles.
@@ -431,21 +445,20 @@ fn main() {
                     std::thread::sleep(std::time::Duration::from_millis(250));
                 }
             });
-            std::thread::spawn(move || {
-                // Serialize spawning with close so quit never outruns child ownership.
-                if startup_engine.closing.load(Ordering::SeqCst) { return; }
-                if let Err(error) = start_backend(&handle, &startup_engine, false) {
-                    fail(&handle, &startup_state, error);
-                    return;
-                }
-                publish(&handle, &startup_state);
-            });
             Ok(())
         })
         .build(application_context());
     let app = match app {
         Ok(app) => app,
         Err(_) => {
+            // Setup may fail after spawning, before any event-loop shutdown
+            // handler exists. Close admission first, then take the same ownership
+            // mutex used by start_backend so a late spawn cannot escape cleanup.
+            closing.store(true, Ordering::SeqCst);
+            closed.store(true, Ordering::SeqCst);
+            if let Some(mut backend) = lock(&child).take() {
+                backend.shutdown();
+            }
             diagnostics_ui::startup_failure(&diagnostics);
             return;
         }

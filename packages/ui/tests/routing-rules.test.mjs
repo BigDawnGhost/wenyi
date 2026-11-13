@@ -113,6 +113,6 @@ test("route manifest is complete and consistent", () => {
 
   const app = readFileSync(join(uiSrc, "App.tsx"), "utf8");
   assert(app.includes("routeEntries.map"), "App must render routes from the manifest");
-  assert(app.includes("pageLoaders.map"), "App must warm chunks from the manifest");
+  assert(app.includes("warmPages(pageLoaders"), "App must warm chunks from the manifest");
   assert(!/path="\/[^"]/.test(app), "App must not declare route paths outside the manifest");
 });

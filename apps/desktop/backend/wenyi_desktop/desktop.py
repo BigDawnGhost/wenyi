@@ -178,8 +178,11 @@ async def serve(
             install_root=install_root,
         )
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        # asyncio recognizes TCP sockets by their protocol before enabling
+        # TCP_NODELAY on accepted connections. Protocol 0 skips that check.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP) as listener:
             with lifecycle.observe("listen"):
+                listener.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 listener.bind(("127.0.0.1", 0))
                 port = listener.getsockname()[1]
                 config = uvicorn.Config(

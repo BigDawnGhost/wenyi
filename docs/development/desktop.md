@@ -69,6 +69,12 @@ The [native process protocol](../../apps/desktop/src/process.rs#L65) validates t
 connection. The UI waits for readiness; startup failure is not permission to try
 another endpoint. Do not persist ports or tokens in project data.
 
+Engine startup overlaps WebView creation after native admission. Readiness and
+failure must survive a window that has not loaded yet, and setup failure must
+close spawn admission and reap the owned child even before the event loop runs.
+The loopback listener uses an explicit TCP protocol and `TCP_NODELAY`; test the
+accepted connection, not just an in-process ASGI client.
+
 On Windows, a debug Python override must be an existing executable path, not a
 PATH command or wrapper. For a CPython venv, the host starts the base interpreter
 with `__PYVENV_LAUNCHER__` so imports retain venv identity while the engine remains
@@ -107,6 +113,11 @@ Resolve projects through the
 not by concatenating the current root and project ID. Changing the default library
 does not move registered projects; a readable directory suffix is not stronger
 identity evidence than its project marker.
+
+A project-list read scans each required library once and shares that inventory
+only within the read. Duplicate identities, conflicting markers and links still
+refuse the affected project. Never reuse this inventory for write admission or
+across requests: relocation and new duplicate folders must be detected next time.
 
 The data root and libraries must be on local disks. Network shares and cloud-synced
 folders are unsupported because SQLite locks, placeholders and independently copied
@@ -154,13 +165,16 @@ accepts only a deliberately selected current-format project:
   succeed. Import is not an old-format migration or restoration of the old catalog.
 
 Project databases separately carry `PRAGMA user_version`.
-[Schema checks](../../packages/core/wenyi_core/storage/sqlite.py#L212) reject unknown
+[Schema checks](../../packages/core/wenyi_core/storage/sqlite.py#L210) reject unknown
 newer versions for both reads and writes. Keep the catalog entry visible as
 unavailable while other projects remain usable. Normal HTTP reads may upgrade an
 existing admitted database without creating a missing project; recovery inspection
 does not upgrade it. Version 2 repairs compact paragraph counts, including headings
-and excluding blank sources. Version 3 adds a derived paragraph index inside the
-same database. Each chapter is indexed on first use; later seeks use indexed
+and excluding blank sources; an empty target counts as translated. Manifest,
+statistics and Review status share one WAL snapshot. Upgrading schema 0/1 atomically
+rebuilds the compact statistics; recovery reads calculate from chapter bodies until
+the upgrade, without changing data. Version 3 adds a derived paragraph index inside
+the same database. Each chapter is indexed on first use; later seeks use indexed
 positions and translation refresh uses segment IDs, without scanning chapter JSON.
 Artifact writes update existing indexes in the same transaction, including rollback
 and deletion. Chapter artifacts remain authoritative and unchanged by index creation.

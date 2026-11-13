@@ -16,6 +16,25 @@ test('the main WebviewWindow forwards native window drag events to the source br
   );
 });
 
+// Browser E2E cannot check native macOS menu registration or responder-chain actions.
+test('macOS keeps the full native Edit menu when replacing the application menu', () => {
+  const source = readFileSync(new URL('../../apps/desktop/src/background.rs', import.meta.url), 'utf8');
+  const install = source.slice(source.indexOf('pub fn install('));
+  const macos = install.match(/#\[cfg\(target_os = "macos"\)\]\s*\{([\s\S]*?)\n    \}/)?.[1];
+  assert.ok(macos, 'Install the native Edit menu only on macOS.');
+  const items = macos.match(
+    /Submenu::with_items\(\s*app,\s*"Edit",\s*true,\s*&\[([\s\S]*?)\],?\s*\)\?/,
+  )?.[1];
+  assert.ok(items, 'Build an enabled Edit submenu with native predefined actions.');
+  assert.deepEqual(
+    [...items.matchAll(/&PredefinedMenuItem::(\w+)\(app(?:, None)?\)\?/g)].map(match => match[1]),
+    ['undo', 'redo', 'separator', 'cut', 'copy', 'paste', 'select_all'],
+    'Keep every standard editing action, in the same order as the Tauri default menu.',
+  );
+  assert.match(macos, /app_menu\.append\(&edit\)\?/);
+  assert.match(install, /app\.set_menu\(app_menu\)\?/);
+});
+
 test('Tauri runs in the native project without pnpm changing its working directory', async () => {
   // This file lives two levels below the repository root, alongside the script it covers.
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
