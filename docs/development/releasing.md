@@ -150,6 +150,11 @@ the clean original tag, not the workflow branch; this does not move a tag or inc
 new runtime fixes. All four platforms must pass before assets are uploaded.
 Existing asset names are not overwritten, and CLI/PyPI publication is not rerun.
 
+For legacy tags, the backend test step corrects the `TCP_NODELAY` assertion to
+accept any nonzero enabled value (`4` on macOS, rather than only `1`). It runs the
+full backend suite and restores the original test bytes on success or failure,
+so version validation and packaging still use the clean original tag.
+
 Desktop PR checks use reduced platform/build tiers; a passing PR is not the full
 release packaging matrix. Published releases and manual Desktop builds exercise the
 full Linux x64, Windows x64 and two native macOS targets. Push-to-main Desktop work

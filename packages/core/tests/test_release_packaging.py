@@ -8,6 +8,7 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -399,6 +400,70 @@ def test_desktop_rebuild_preflight_requires_an_existing_stable_release(
     # A shell-launch failure must not pass as an expected admission rejection.
     assert "workflow-guard-started\n" in result.stdout, result.stdout + result.stderr
     assert (result.returncode == 0) is accepted, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("fails", [False, True])
+@pytest.mark.parametrize("newline", [b"\n", b"\r\n"])
+def test_desktop_backend_suite_restores_tag_after_portable_flag_check(
+    tmp_path, monkeypatch, legacy, fails, newline
+):
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/desktop.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    step = next(
+        step
+        for step in document["jobs"]["local-package"]["steps"]
+        if step.get("name") == "Desktop backend suite"
+    )
+    assert step["shell"] == "bash"
+    assert step["run"].startswith("uv run --no-sync python - <<'PY'\n")
+    program = step["run"].split("\n", 1)[1].rsplit("\nPY", 1)[0]
+    path = tmp_path / "apps/desktop/backend/tests/test_desktop_entry.py"
+    path.parent.mkdir(parents=True)
+    assertion = (
+        b"assert observed == [1]" if legacy else b"assert len(observed) == 1 and observed[0] != 0"
+    )
+    original = newline.join([b"def check_flag(observed):", b"    " + assertion, b""])
+    path.write_bytes(original)
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    def run(command, *, check):
+        calls.append(command)
+        assert check is True
+        namespace = {}
+        exec(compile(path.read_bytes(), str(path), "exec"), namespace)
+        for value in (1, 4):
+            namespace["check_flag"]([value])
+        for observed in ([], [0], [1, 4]):
+            with pytest.raises(AssertionError):
+                namespace["check_flag"](observed)
+        if fails:
+            raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    if fails:
+        with pytest.raises(subprocess.CalledProcessError):
+            exec(compile(program, "desktop-backend-workflow", "exec"), {})
+    else:
+        exec(compile(program, "desktop-backend-workflow", "exec"), {})
+    assert calls == [
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-n",
+            "auto",
+            "--dist",
+            "loadgroup",
+            "apps/desktop/backend/tests",
+        ]
+    ]
+    assert path.read_bytes() == original
 
 
 @pytest.mark.parametrize("file", ["tests.yml", "build.yml", "desktop.yml"])

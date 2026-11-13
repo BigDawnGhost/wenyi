@@ -266,9 +266,37 @@ jobs:
       # loadgroup keeps tests that drive one runtime on the same worker; --dist
       # defaults to load, which would scatter them and race the scheduler.
       - name: Desktop backend suite
+        shell: bash
         env:
           WENYI_LOCKS_LIB: ${{ github.workspace }}/target/release/${{ runner.os == 'Windows' && 'wenyi_locks.dll' || 'libwenyi_locks.so' }}
-        run: uv run --no-sync pytest -q -n auto --dist loadgroup apps/desktop/backend/tests
+        run: |
+          uv run --no-sync python - <<'PY'
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          # Legacy tags compare TCP_NODELAY with 1; macOS returns the enabled flag 4.
+          # Correct only that assertion while testing, then restore the clean tag.
+          path = Path("apps/desktop/backend/tests/test_desktop_entry.py")
+          original = path.read_bytes()
+          legacy = b"assert observed == [1]"
+          portable = b"assert len(observed) == 1 and observed[0] != 0"
+          try:
+              if legacy in original:
+                  if original.count(legacy) != 1:
+                      raise ValueError("Ambiguous legacy TCP_NODELAY assertion")
+                  print("Applying test-only TCP_NODELAY boolean compatibility", flush=True)
+                  path.write_bytes(original.replace(legacy, portable))
+              subprocess.run(
+                  [
+                      sys.executable, "-m", "pytest", "-q", "-n", "auto",
+                      "--dist", "loadgroup", "apps/desktop/backend/tests",
+                  ],
+                  check=True,
+              )
+          finally:
+              path.write_bytes(original)
+          PY
       - run: pnpm -C apps/desktop/frontend typecheck
       - run: pnpm -C apps/desktop/frontend build
       - run: cargo nextest run --locked --manifest-path apps/desktop/Cargo.toml
