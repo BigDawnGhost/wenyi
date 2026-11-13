@@ -63,7 +63,7 @@ def test_engine_listener_accepts_low_latency_tcp_connections(tmp_path, monkeypat
         ),
     )
     asyncio.run(desktop.serve(tmp_path, io.StringIO(), EngineDiagnostics(None)))
-    assert observed == [1]
+    assert len(observed) == 1 and observed[0] != 0
 
 
 @pytest.mark.parametrize("transport", ["http", "websocket"])

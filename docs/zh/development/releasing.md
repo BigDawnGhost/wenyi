@@ -134,6 +134,10 @@ workflow 和[发布契约](publishing.md)。
 也不会纳入新的运行时代码修复。四个平台全部通过后才上传附件，不覆盖已有同名文件，
 也不重新触发 CLI/PyPI 发布。
 
+对旧 tag，后端测试步骤会将 `TCP_NODELAY` 断言修正为接受任意非零启用值
+（macOS 返回 `4`，不限定为 `1`），运行完整后端测试，并在成功或失败后按原始字节
+恢复测试文件，因此版本校验与打包仍使用原始干净 tag。
+
 Desktop PR 检查使用缩减的平台/构建层级；PR 通过不等于完整发行打包矩阵通过。
 已发布 Release 和手动 Desktop 构建覆盖完整的 Linux x64、Windows x64 及两种原生
 macOS 目标。Desktop 的 main push 工作用于预热构建缓存，不发布安装包。
