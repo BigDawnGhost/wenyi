@@ -376,6 +376,8 @@ described under [scope](#scope).
 | `pipeline.rolling_context_tokens` | `512` | Preceding translation budget, integer ≥ 0, counted with `cl100k_base`. |
 | `pipeline.book_understanding` | `true` | Generate full-source chapter digests and a book synopsis. |
 | `pipeline.prescan_concurrency` | `4` | Chapter-digest concurrency; use `1` for sequential work. |
+| `pipeline.synopsis_source_tokens` | `8000` | Positive integer token budget for each chapter-digest source chunk. |
+| `pipeline.synopsis_reduce_tokens` | `12000` | Positive integer token budget for each digest merge group and generated summary. |
 | `pipeline.terminology_context` | `false` | CLI-only experimental whole-book evidence for person entries. |
 | `pipeline.annotation_alignment` | `true` | Align translated links/annotations. EPUB uses paragraph-end fallbacks; PDF omits failed items. See [PDF formats](formats.md#babeldoc). |
 | `pipeline.annotation_alignment_concurrency` | `4` | Concurrent per-annotation requests within one logical paragraph. |
@@ -398,6 +400,17 @@ Chapters containing source text need usable digests before translation; a failed
 whole-book synopsis does not block translation. Failed digests can be completed
 on a later prepare/translate run. Preparation never extracts or pre-fills glossary
 entries, with or without `terminology_context`.
+
+The synopsis budgets use `cl100k_base`, not character counts or provider-specific
+tokenizers. Oversized source and individual digests are split as evenly as complete
+Unicode characters permit; 8,001 source tokens at an 8,000-token limit become
+roughly 4,000 and 4,001. Larger budgets can reduce requests but increase per-request
+input, may exceed the selected model's context window, and can affect summary
+quality. Leave room for instructions, formatting, style/glossary context, and
+output: these are content budgets, not whole-request limits.
+`synopsis_reduce_tokens` rejects summaries that exceed its budget; it does not
+override the model's output-token limit. Budget changes apply to pending work and
+do not by themselves regenerate verified complete digests or cached synopses.
 
 Terminology evidence adds person discovery and source-grounded notes during
 pending CLI translation work. Other term types retain ordinary extraction.

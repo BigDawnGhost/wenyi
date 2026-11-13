@@ -72,6 +72,37 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         create.assert_called_once_with("settings/config.yaml")
 
+    def test_translate_loads_synopsis_budgets_from_yaml(self):
+        captured = {}
+
+        class FakeOrchestrator:
+            def __init__(self, config, *, allow_terminology_context=False):
+                self.client = FakeClient()
+                captured["source"] = config.pipeline.synopsis_source_tokens
+                captured["reduce"] = config.pipeline.synopsis_reduce_tokens
+
+            def run_all(self, input_path, **kwargs):
+                return {"output": "out.epub", "store": FakeStore()}
+
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = os.path.join(directory, "custom.yaml")
+            source_path = os.path.join(directory, "source.txt")
+            with open(config_path, "w", encoding="utf-8") as config:
+                config.write(
+                    "llm: {preset: fake}\n"
+                    "pipeline:\n"
+                    "  synopsis_source_tokens: 16000\n"
+                    "  synopsis_reduce_tokens: 24000\n"
+                )
+            with open(source_path, "w", encoding="utf-8") as source:
+                source.write("Temporary source.")
+            with patch("wenyi_core.pipeline.orchestrator.Orchestrator", FakeOrchestrator):
+                result = runner.invoke(app, ["--config", config_path, "translate", source_path])
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(captured, {"source": 16000, "reduce": 24000})
+
     def test_version_reads_installed_package_metadata(self):
         with patch("wenyi_cli.commands.bootstrap.package_version", return_value="0.3.5"):
             result = CliRunner().invoke(app, ["--version"])

@@ -53,6 +53,10 @@ pipeline:
   terminology_context: false # CLI-only experimental whole-book terminology evidence
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
+  # Prescan content budgets in cl100k_base tokens; prompt/context overhead is additional.
+  # Larger values reduce splitting but may exceed model limits or reduce summary quality.
+  synopsis_source_tokens: 8000 # Maximum source tokens per chapter-digest chunk
+  synopsis_reduce_tokens: 12000 # Maximum joined digest tokens per merge and per generated summary
   annotation_alignment: true # Align translated annotations; EPUB uses fallback markers, PDF omits failed items
   annotation_alignment_concurrency: 4 # Maximum concurrent per-annotation requests for a logical paragraph with multiple annotations
   review_concurrency: 4 # Concurrent review blocks over a read-only translation/glossary snapshot; 1 runs serially
@@ -124,6 +128,9 @@ class PipelineConfig(BaseModel):
     prescan_concurrency: int = (
         4  # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
     )
+    # Prescan content budgets in cl100k_base tokens, excluding prompt/context overhead.
+    synopsis_source_tokens: int = Field(default=8000, gt=0)
+    synopsis_reduce_tokens: int = Field(default=12000, gt=0)
     annotation_alignment: bool = (
         True  # Align annotations after each logical paragraph; PDF omits failed items
     )

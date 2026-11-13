@@ -357,6 +357,8 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | `pipeline.rolling_context_tokens` | `512` | 前文译文预算，整数 ≥ 0，按 `cl100k_base` 计数。 |
 | `pipeline.book_understanding` | `true` | 生成覆盖完整原文的章节梗概和全书概览。 |
 | `pipeline.prescan_concurrency` | `4` | 章节梗概并发；`1` 为顺序执行。 |
+| `pipeline.synopsis_source_tokens` | `8000` | 每个章节梗概原文块的 token 预算，正整数。 |
+| `pipeline.synopsis_reduce_tokens` | `12000` | 每组摘要归并内容及生成摘要的 token 预算，正整数。 |
 | `pipeline.terminology_context` | `false` | 仅 CLI 可用的实验性全书人物证据。 |
 | `pipeline.annotation_alignment` | `true` | 定位译文链接／注释。EPUB 使用段末回退标记；PDF 忽略失败项，见 [PDF 格式说明](formats.md#babeldoc)。 |
 | `pipeline.annotation_alignment_concurrency` | `4` | 单个逻辑段内逐注释请求的并发数。 |
@@ -376,6 +378,14 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 有原文的章节需要可用梗概才能翻译；全书概览失败不阻止翻译。
 失败梗概可在下次 prepare/translate 中补齐。
 无论是否开启 `terminology_context`，准备阶段都不抽取或预填术语。
+
+概览预算使用 `cl100k_base`，不按字符数或 provider 专属分词器计算。
+超长原文及单条摘要在完整 Unicode 字符边界内尽量均分；
+8,001 个原文 token 在 8,000 上限下约分为 4,000 和 4,001。
+增大预算可减少请求次数，但会增加单次输入，可能超出所选模型的上下文窗口，并影响摘要质量。
+这些是内容预算，不是整个请求的上限，需为提示词指令、格式、文风／术语上下文及输出预留空间。
+`synopsis_reduce_tokens` 会拒绝超出预算的生成摘要，不覆盖模型的输出 token 上限。
+修改预算只影响待完成工作，本身不会重新生成已验证的完整章节梗概或已缓存的全书概览。
 
 术语证据在 CLI 待译工作中增加人物发现和原文备注，
 其他术语类型保持常规抽取，不产生多义项或逐次出现的译名选择。
