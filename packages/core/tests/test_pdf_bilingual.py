@@ -214,7 +214,7 @@ def test_pdf_invalid_fillback_does_not_replace_existing_export(pdf_project, cont
     with pytest.raises(BabeldocBridgeError):
         assemble(store, str(source), out_path=str(output), bilingual=True)
     assert output.read_bytes() == b"previous complete edition"
-    assert list(source.parent.glob("edition.pdf.*.tmp")) == []
+    assert list(source.parent.glob("*.tmp")) == []
 
 
 def test_pdf_source_mismatch_fails_before_bridge_request(pdf_project):
@@ -320,4 +320,4 @@ def test_pdf_composition_failure_preserves_previous_output(pdf_project, monkeypa
     with pytest.raises(BabeldocBridgeError, match="write failure"):
         assemble(store, str(source), out_path=str(output), bilingual=True)
     assert output.read_bytes() == b"previous complete edition"
-    assert list(source.parent.glob("edition.pdf.*.tmp")) == []
+    assert list(source.parent.glob("*.tmp")) == []
