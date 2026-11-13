@@ -135,7 +135,7 @@ def create_context(
         exports=backend,
         telemetry=services,
         storage_for=backend.storage_for,
-        read_storage_for=lambda pid: backend.storage_for(pid, create=False),
+        read_storage_for=lambda pid: backend.storage_for(pid, create=False, upgrade=True),
         build_client=lambda config: build_local_client(config, credentials),
         mineru_token_resolver=credentials.resolve_mineru_token,
         connection_credential=credentials.resolve,

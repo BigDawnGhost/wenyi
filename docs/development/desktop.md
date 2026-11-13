@@ -165,16 +165,21 @@ accepts only a deliberately selected current-format project:
   succeed. Import is not an old-format migration or restoration of the old catalog.
 
 Project databases separately carry `PRAGMA user_version`.
-[Schema checks](../../packages/core/wenyi_core/storage/sqlite.py#L204) reject unknown
+[Schema checks](../../packages/core/wenyi_core/storage/sqlite.py#L210) reject unknown
 newer versions for both reads and writes. Keep the catalog entry visible as
-unavailable while other projects remain usable. Project schema 2 uses the compact
-chapter statistics written with each chapter; nonblank headings count as segments,
-and an empty target counts as translated. Manifest, statistics and Review status
-are read from one WAL snapshot, without decoding current-schema chapter bodies.
-Writable opens of schema 0/1 atomically rebuild only this derived table and stamp
-schema 2; interruption leaves the old version intact. Read-only legacy opens
-continue to calculate from chapter bodies until that upgrade, without changing
-data. Upgrades never bypass catalog or project-marker admission.
+unavailable while other projects remain usable. Normal HTTP reads may upgrade an
+existing admitted database without creating a missing project; recovery inspection
+does not upgrade it. Version 2 repairs compact paragraph counts, including headings
+and excluding blank sources; an empty target counts as translated. Manifest,
+statistics and Review status share one WAL snapshot. Upgrading schema 0/1 atomically
+rebuilds the compact statistics; recovery reads calculate from chapter bodies until
+the upgrade, without changing data. Version 3 adds a derived paragraph index inside
+the same database. Each chapter is indexed on first use; later seeks use indexed
+positions and translation refresh uses segment IDs, without scanning chapter JSON.
+Artifact writes update existing indexes in the same transaction, including rollback
+and deletion. Chapter artifacts remain authoritative and unchanged by index creation.
+The index trades extra disk space and a one-time cold build for bounded warm reads.
+Schema upgrades never bypass catalog or project-marker admission.
 
 Deletion and recovery share directory ownership rules. Preserve the
 [deletion sentinel](../../apps/desktop/backend/wenyi_desktop/local_backend.py#L795):

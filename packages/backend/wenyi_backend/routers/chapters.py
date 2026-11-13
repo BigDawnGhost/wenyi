@@ -3,23 +3,30 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from typing import cast
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from wenyi_core.storage.chapter_reading import ChapterReader
 from wenyi_core.storage.precision_drafts import read_precision_drafts
 
+from .. import chapter_reading
 from ..chapter_state import chapter_review_state
 from ..context import current_context
 from ..errors import CHAPTER_NOT_FOUND, ApiError
 from ..schemas import (
+    ChapterRefresh,
     ChapterSegments,
     ChapterSummary,
     ChapterTitleOut,
     ChapterTitleUpdate,
+    ChapterWindow,
     JobEnqueued,
+    ParagraphUpdate,
     PrecisionDraftsOut,
 )
 from .dependencies import (
     chapter_summaries,
+    effective_config,
     parsed_source,
     project_write,
     read_storage_for,
@@ -94,6 +101,90 @@ def get_chapter(pid: str, ci: int) -> dict:
     storage = read_storage_for(pid)
     try:
         return chapter_payload(storage, ci, project=project)
+    finally:
+        storage.close()
+
+
+@router.get("/{ci}/window", response_model=ChapterWindow)
+def get_chapter_window(
+    pid: str,
+    ci: int,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=128, ge=1, le=256),
+    around: int | None = Query(default=None, ge=0),
+) -> dict:
+    project = require_project(pid)
+    storage = read_storage_for(pid)
+    try:
+        parsed = (
+            None
+            if project.get("initialized")
+            else chapter_reading.parsed_identity(project, effective_config(project))
+        )
+        return chapter_reading.window(
+            storage, ci, offset=offset, limit=limit, around=around, parsed=parsed
+        )
+    except (KeyError, FileNotFoundError):
+        raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter or paragraph not found") from None
+    finally:
+        storage.close()
+
+
+@router.post("/{ci}/updates", response_model=list[ParagraphUpdate])
+def get_chapter_updates(pid: str, ci: int, body: ChapterRefresh) -> list[dict]:
+    project = require_project(pid)
+    if not project.get("initialized"):
+        return []
+    storage = read_storage_for(pid)
+    try:
+        return chapter_reading.updates(
+            storage, ci, {segment.index: segment.revision for segment in body.segments}
+        )
+    finally:
+        storage.close()
+
+
+@router.get("/{ci}/issues", response_model=list[dict])
+def get_chapter_issues(pid: str, ci: int) -> list[dict]:
+    project = require_project(pid)
+    if not project.get("initialized"):
+        return []
+    storage = read_storage_for(pid)
+    try:
+        review = storage.load_latest_review_result() or {}
+        issues = [issue for issue in review.get("issues", []) if issue.get("chapter") == ci]
+        if not issues:
+            return []
+        reader = cast(ChapterReader, storage)
+        first = reader.read_chapter_window(ci, offset=0, limit=128)
+        if not chapter_review_state(review, first["_meta"])[1]:
+            return []
+        positions = {
+            issue["index"]
+            for issue in issues
+            if isinstance(issue.get("index"), int)
+            and not isinstance(issue["index"], bool)
+            and 0 <= issue["index"] < first["total"]
+        }
+        indices = {}
+        for offset in sorted({position // 128 * 128 for position in positions}):
+            chunk = (
+                first if offset == 0 else reader.read_chapter_window(ci, offset=offset, limit=128)
+            )
+            indices.update(
+                (segment["position"], segment["index"])
+                for segment in chunk["segments"]
+                if segment["position"] in positions
+            )
+        return [
+            {**issue, "text_position": issue["index"], "index": indices[issue["index"]]}
+            for issue in issues
+            if isinstance(issue.get("index"), int)
+            and not isinstance(issue["index"], bool)
+            and issue["index"] in indices
+        ]
+    except (KeyError, FileNotFoundError):
+        raise ApiError(CHAPTER_NOT_FOUND, 404, "chapter not found") from None
     finally:
         storage.close()
 

@@ -342,12 +342,13 @@ class LocalBackend:
         pid: str,
         *,
         create: bool = True,
+        upgrade: bool | None = None,
         locations: dict[Path, paths.ProjectDirectoryIndex] | None = None,
     ) -> SqliteStorage:
         from wenyi_core.storage.sqlite import SqliteStorage
 
         # Cached inventories are only for a single read, never write admission.
-        if create and locations is not None:
+        if (create or upgrade) and locations is not None:
             raise ValueError("Writable storage requires a fresh directory lookup")
         directory = self.project_dir(pid, locations=locations)
         if create and not directory.is_dir():
@@ -362,7 +363,7 @@ class LocalBackend:
             # so this is the one place every project directory passes through.
             self.mark_project(pid)
         try:
-            return SqliteStorage(str(directory), create=create)
+            return SqliteStorage(str(directory), create=create, upgrade=upgrade)
         except SchemaTooNew as error:
             # A refused schema is a state the user has to see, not a server fault:
             # the route answers with a stable code and the sentence that names the

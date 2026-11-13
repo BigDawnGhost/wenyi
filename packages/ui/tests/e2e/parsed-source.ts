@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { chapter, fakeApi, pid, project } from "../../sandbox/fixtures";
+import { chapter, fakeApi, mockChapter, pid, project } from "../../sandbox/fixtures";
 
 
 /** Whether the Desktop host must keep running this suite as well.
@@ -26,7 +26,8 @@ for (const { locale, entry } of [
     const writes: string[] = [];
     const unsupported: string[] = [];
     page.on("request", (request) => {
-      if (request.method() !== "GET" && request.url().includes("/projects/")) writes.push(request.url());
+      if (request.method() !== "GET" && request.url().includes("/projects/")
+        && !request.url().endsWith("/updates")) writes.push(request.url());
       if (/\/(history|precision)/.test(request.url())) unsupported.push(request.url());
     });
     await page.route(`${api}/projects/${pid}`, (route) => route.fulfill({
@@ -35,12 +36,10 @@ for (const { locale, entry } of [
     await page.route(`${api}/projects/${pid}/chapters`, (route) => route.fulfill({
       json: state.parsed ? [{ ...chapter, status: "pending", target_word_count: 0 }] : [],
     }));
-    await page.route(`${api}/projects/${pid}/review/0`, (route) => route.fulfill({
-      json: {
+    await mockChapter(page, 0, () => ({
         index: 0, title: chapter.title, title_translated: null, review_issues: [],
         segments: [{ index: 0, kind: "text", source: "Parsed source paragraph.", target: state.initialized ? "Translated paragraph." : null }],
-      },
-    }));
+    }), api);
     const zh = locale === "zh-CN";
     const contents = zh ? "目录与标题" : "Contents & titles";
     const editTitle = zh ? "编辑标题" : "Edit title";

@@ -415,6 +415,28 @@ class PostgresStorage:
         with self.state_lock(), self._conn as conn:
             return load_history(conn, self.project_id, ci, si)
 
+    def read_chapter_window(
+        self,
+        ci: int,
+        *,
+        offset: int,
+        limit: int,
+        around: int | None = None,
+        parsed: dict | None = None,
+    ) -> dict:
+        from .chapter_reading import PostgresChapterReader
+
+        with self.state_lock(), self._conn as conn:
+            return PostgresChapterReader(conn, self.project_id, ci, parsed).window(
+                offset, limit, around
+            )
+
+    def read_chapter_targets(self, ci: int, indices: list[int]) -> list[dict]:
+        from .chapter_reading import PostgresChapterReader
+
+        with self.state_lock(), self._conn as conn:
+            return PostgresChapterReader(conn, self.project_id, ci).targets(indices)
+
     def load_chapter(self, ci: int) -> Chapter:
         with self.state_lock(), self._conn as conn:
             row = conn.execute(

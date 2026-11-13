@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
-import { chapter, fakeApi, pid, project } from "../../../packages/ui/sandbox/fixtures";
+import { chapter, fakeApi, mockChapter, pid, project } from "../../../packages/ui/sandbox/fixtures";
 
 const longTitle =
   "Lịch sử và văn hóa Việt Nam / Études sur les échanges et les traditions régionales — ".repeat(
@@ -88,11 +88,7 @@ for (const locale of ["en", "zh-CN"] as const) {
       page,
     }) => {
       const untitled = locale === "en" ? "Untitled chapter" : "未命名章节";
-      await page.route(`**/api/projects/${pid}/review/1`, (route) =>
-        route.fulfill({
-          json: { index: 1, title: "", segments: [], review_issues: [] },
-        }),
-      );
+      await mockChapter(page, 1, () => ({ index: 1, title: "", segments: [], review_issues: [] }));
       await page.goto(`/projects/${pid}/proofreading`);
       const item = page
         .getByRole("list")
@@ -208,16 +204,12 @@ for (const locale of ["en", "zh-CN"] as const) {
       const source =
         `Một buổi sáng yên tĩnh bên dòng sông. `.repeat(32) + reference;
       const target = "清晨，河水从村庄旁流过。".repeat(20) + reference;
-      await page.route(`**/api/projects/${pid}/review/0`, (route) =>
-        route.fulfill({
-          json: {
+      await mockChapter(page, 0, () => ({
             index: 0,
             title: `${longTitle}${reference}`,
             segments: [{ index: 12, source, target, kind: "text" }],
             review_issues: [],
-          },
-        }),
-      );
+      }));
       await page.goto(`/projects/${pid}/proofreading/0`);
       const row = page.locator("#paragraph-12");
       await expect(row.getByTestId("translation-text")).toHaveText(target);

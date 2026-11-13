@@ -42,10 +42,9 @@ from .run_store import ExportSnapshotStore, RunStore, source_sha256
 #: leaves the newer tables untouched while writing rows the newer build reads as
 #: complete. Refusing is the only outcome that keeps both versions honest.
 #:
-#: Versions 0 and 1 have the same tables but count text-only, nonempty sources
-#: in chapter_statistics. Version 2 rebuilds that derived table on writable open;
-#: read-only legacy stores fall back to chapter bodies without changing the file.
-SCHEMA_VERSION = 2
+#: Older schemas are upgraded on writable opens; recovery opens leave them alone.
+#: Version 2 repairs compact counts; version 3 adds lazy paragraph projections.
+SCHEMA_VERSION = 3
 
 # Re-exported: the class moved to locks.py, but callers still import it from here.
 __all__ = ["SCHEMA_VERSION", "SqliteStorage", "StorageBusyError"]
@@ -59,12 +58,13 @@ class SqliteStorage:
     borrowed glossary operations. Closing all connections drains active snapshots.
     """
 
-    def __init__(self, run_dir: str, *, create: bool = True):
+    def __init__(self, run_dir: str, *, create: bool = True, upgrade: bool | None = None):
         self.run_dir = os.path.abspath(run_dir)
         self.database_path = os.path.join(self.run_dir, "state.sqlite3")
         self.source_dir = os.path.join(self.run_dir, "source")
         self.reviews_dir = os.path.join(self.run_dir, "reviews")
         self._create = create
+        self._upgrade = create if upgrade is None else upgrade
         # The mutex serializes writers across threads; reads use per-thread
         # connections and a WAL snapshot instead of queueing behind it.
         self._mutex = threading.RLock()
@@ -123,6 +123,8 @@ class SqliteStorage:
 
     def _open_connection(self) -> sqlite3.Connection:
         """Called under the short schema initialization lock."""
+        from .sqlite_reader_index import install
+
         # SQLite rejects the extended-length prefix, so a long database path
         # cannot be rescued the way an ordinary file path can. Checking first
         # replaces "unable to open database file" with a message naming the limit.
@@ -179,21 +181,25 @@ class SqliteStorage:
                     "ON segment_revisions(chapter_index, segment_index, id)"
                 )
                 GlossaryStore.initialize_schema(conn)
+                install(conn)
                 conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 conn.commit()
-            elif self._create and version < SCHEMA_VERSION:
+            elif self._upgrade and version < SCHEMA_VERSION:
                 # Only derived summaries change. Publish their new counting rule
                 # and the version together, or leave the old database untouched.
                 conn.execute("BEGIN IMMEDIATE")
-                conn.execute("DELETE FROM chapter_statistics")
-                for row in conn.execute(
-                    "SELECT key, value FROM artifacts WHERE key >= 'chapters/' AND key < 'chapters0'"
-                ):
-                    if re.fullmatch(r"chapters/ch\d+\.json", row["key"]):
-                        chapter = Chapter.model_validate(json.loads(row["value"]))
-                        if row["key"] != f"chapters/ch{chapter.index}.json":
-                            raise ValueError("Chapter index does not match its artifact key")
-                        self._save_chapter_statistics(conn, chapter)
+                if version < 2:
+                    conn.execute("DELETE FROM chapter_statistics")
+                    for row in conn.execute(
+                        "SELECT key, value FROM artifacts "
+                        "WHERE key >= 'chapters/' AND key < 'chapters0'"
+                    ):
+                        if re.fullmatch(r"chapters/ch\d+\.json", row["key"]):
+                            chapter = Chapter.model_validate(json.loads(row["value"]))
+                            if row["key"] != f"chapters/ch{chapter.index}.json":
+                                raise ValueError("Chapter index does not match its artifact key")
+                            self._save_chapter_statistics(conn, chapter)
+                install(conn)
                 conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 conn.commit()
         except BaseException:
@@ -202,7 +208,11 @@ class SqliteStorage:
         return conn
 
     def _check_schema_version(self, conn: sqlite3.Connection) -> int:
-        """Refuse newer data before access; upgrade only in a writable transaction."""
+        """Refuse newer schemas before reading data or attempting an upgrade.
+
+        Writable opens repair older compact counts and stamp the schema after
+        table creation. Recovery/read-only opens neither migrate nor stamp it.
+        """
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if not isinstance(version, int) or isinstance(version, bool) or version < 0:
             raise ValueError(f"Invalid local state database: {self.database_path}")
@@ -410,6 +420,10 @@ class SqliteStorage:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, encoded),
             )
+            if conn.execute("PRAGMA user_version").fetchone()[0] >= 3:
+                from .sqlite_reader_index import refresh
+
+                refresh(conn, key, value)
             # Generic artifact writes must not leave a summary for an old body.
             # save_chapter replaces it in this same transaction; raw writes use
             # the read-only fallback until the next normal chapter save.
@@ -638,7 +652,7 @@ class SqliteStorage:
             manifest = self.read_artifact("manifest.json") or {}
             conn = self._connection()
             # Old writers used different counts. Never trust those rows, or
-            # write a migration as a side effect of a read-only HTTP request.
+            # change the database during read-only recovery inspection.
             rows = (
                 {
                     row["chapter_index"]: row
@@ -839,6 +853,65 @@ class SqliteStorage:
                 (entry for entry in manifest.get("chapters", []) if entry["index"] == ci), {}
             )
             return self._load_chapter(ci, entry)
+
+    def _prepare_reader(self, ci: int, parsed: dict | None = None) -> bool:
+        from .sqlite_reader_index import prepare
+
+        with self._read_lock():
+            conn = self._connection()
+            if conn.execute("PRAGMA user_version").fetchone()[0] < 3:
+                return False
+            key = "parsed_document.json" if parsed is not None else f"chapters/ch{ci}.json"
+            if conn.execute(
+                "SELECT 1 FROM reader_chapters WHERE artifact_key=? AND chapter_index=?", (key, ci)
+            ).fetchone():
+                return True
+        # Do not escalate a recovery snapshot into a writer. Normal Desktop reads
+        # explicitly permit upgrades and lazy projection construction.
+        if not self._upgrade:
+            return False
+        with self.state_lock():
+            prepare(self._connection(), ci, parsed)
+        return True
+
+    def read_chapter_window(
+        self,
+        ci: int,
+        *,
+        offset: int,
+        limit: int,
+        around: int | None = None,
+        parsed: dict | None = None,
+    ) -> dict:
+        from .sqlite_reader_index import IndexedChapterReader
+        from .sqlite_reading import SqliteChapterReader
+
+        indexed = self._prepare_reader(ci, parsed)
+        with self._read_lock():
+            reader = IndexedChapterReader if indexed else SqliteChapterReader
+            result = reader(self._connection(), ci, parsed).window(offset, limit, around)
+            if parsed is None:
+                manifest = self.read_artifact("manifest.json") or {}
+                entry = next(
+                    (entry for entry in manifest.get("chapters", []) if entry["index"] == ci),
+                    {},
+                )
+                result["title_translated"] = self._translated_title(
+                    entry, {"title_translated": result["title_translated"]}
+                )
+            return result
+
+    def read_chapter_targets(self, ci: int, indices: list[int]) -> list[dict]:
+        from .sqlite_reader_index import IndexedChapterReader
+        from .sqlite_reading import SqliteChapterReader
+
+        indexed = self._prepare_reader(ci)
+        with self._read_lock():
+            reader = IndexedChapterReader if indexed else SqliteChapterReader
+            try:
+                return reader(self._connection(), ci, None).targets(indices)
+            except KeyError:
+                return []
 
     @contextmanager
     def read_chapters_snapshot(self) -> Iterator[Iterator[tuple[dict, Chapter]]]:
