@@ -86,6 +86,7 @@ export function useProjectProgress(pid: string | undefined) {
       "review-runs",
       "review-run",
       "events",
+      "chapterUpdates",
     ];
 
     const connect = () => {

@@ -484,6 +484,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{pid}/chapters/{ci}/window": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Chapter Window */
+        get: operations["get_chapter_window_projects__pid__chapters__ci__window_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{pid}/chapters/{ci}/updates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get Chapter Updates */
+        post: operations["get_chapter_updates_projects__pid__chapters__ci__updates_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{pid}/chapters/{ci}/issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Chapter Issues */
+        get: operations["get_chapter_issues_projects__pid__chapters__ci__issues_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{pid}/chapters/{ci}/segments/{si}/precision-drafts": {
         parameters: {
             query?: never;
@@ -975,6 +1026,11 @@ export interface components {
             /** Digest */
             digest: string;
         };
+        /** ChapterRefresh */
+        ChapterRefresh: {
+            /** Segments */
+            segments: components["schemas"]["ParagraphRevision"][];
+        };
         /** ChapterSegments */
         ChapterSegments: {
             /** Index */
@@ -1046,6 +1102,25 @@ export interface components {
             title_translated: string;
             /** Expected Title Translated */
             expected_title_translated: string | null;
+        };
+        /** ChapterWindow */
+        ChapterWindow: {
+            /** Index */
+            index: number;
+            /** Title */
+            title: string;
+            /** Title Translated */
+            title_translated: string | null;
+            /** Total */
+            total: number;
+            /** Saved Count */
+            saved_count: number;
+            /** Offset */
+            offset: number;
+            /** Position */
+            position?: number | null;
+            /** Segments */
+            segments: components["schemas"]["ReaderSegment"][];
         };
         /** ConfigInput */
         ConfigInput: {
@@ -1286,6 +1361,26 @@ export interface components {
             /** Export Backends */
             export_backends: string[];
         };
+        /** ParagraphRevision */
+        ParagraphRevision: {
+            /** Index */
+            index: number;
+            /** Revision */
+            revision: string;
+        };
+        /** ParagraphUpdate */
+        ParagraphUpdate: {
+            /** Index */
+            index: number;
+            /** Target */
+            target: string | null;
+            /** Target Before Polish */
+            target_before_polish: string | null;
+            /** Revision */
+            revision: string;
+            /** Previous Revision */
+            previous_revision: string;
+        };
         /** PrecisionCandidateOut */
         PrecisionCandidateOut: {
             /**
@@ -1501,6 +1596,28 @@ export interface components {
                 [key: string]: unknown;
             };
             live?: components["schemas"]["LiveStatsMetadata"] | null;
+        };
+        /** ReaderSegment */
+        ReaderSegment: {
+            /** Index */
+            index: number;
+            /** Source */
+            source: string;
+            /** Target */
+            target?: string | null;
+            /** Target Before Polish */
+            target_before_polish?: string | null;
+            /** Anchor */
+            anchor?: string | null;
+            /**
+             * Kind
+             * @default text
+             */
+            kind: string;
+            /** Position */
+            position: number;
+            /** Revision */
+            revision: string;
         };
         /** ResolveConflict */
         ResolveConflict: {
@@ -2778,6 +2895,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChapterSegments"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_chapter_window_projects__pid__chapters__ci__window_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+                around?: number | null;
+            };
+            header?: never;
+            path: {
+                pid: string;
+                ci: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChapterWindow"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_chapter_updates_projects__pid__chapters__ci__updates_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+                ci: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChapterRefresh"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParagraphUpdate"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_chapter_issues_projects__pid__chapters__ci__issues_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                pid: string;
+                ci: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    }[];
                 };
             };
             /** @description Validation Error */

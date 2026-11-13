@@ -143,6 +143,39 @@ class ChapterSegments(BaseModel):
     review_issues: list[dict[str, Any]] = []
 
 
+class ReaderSegment(SegmentOut):
+    position: int
+    revision: str
+
+
+class ChapterWindow(BaseModel):
+    index: int
+    title: str
+    title_translated: str | None
+    total: int
+    saved_count: int
+    offset: int
+    position: int | None = None
+    segments: list[ReaderSegment]
+
+
+class ParagraphRevision(RequestModel):
+    index: int = Field(ge=0)
+    revision: str = Field(min_length=1, max_length=64)
+
+
+class ChapterRefresh(RequestModel):
+    segments: list[ParagraphRevision] = Field(max_length=256)
+
+
+class ParagraphUpdate(BaseModel):
+    index: int
+    target: str | None
+    target_before_polish: str | None
+    revision: str
+    previous_revision: str
+
+
 class PrecisionCandidateOut(BaseModel):
     id: Literal["T1", "T2", "T3"]
     target: str

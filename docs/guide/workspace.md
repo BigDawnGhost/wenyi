@@ -51,6 +51,8 @@ Navigating away does not pause a run. Closing a Web tab does not stop server wor
 
 Open **Manual proofreading** to compare source and translation. Parsed but uninitialized projects show source only; after preparation, unfinished paragraphs are distinguished from saved translations. An intentionally saved empty translation still counts as complete.
 
+Chapters scroll continuously, without page controls. Only nearby paragraphs are loaded and displayed; paragraph links jump directly to their location. While a task runs, saved translations refresh in place without reloading the chapter. Browser find and select-all cover mounted content only, not the whole chapter.
+
 Pause active work, open a paragraph, edit it, and **save**. Automatic refresh does not turn an unsaved draft into a saved revision. Save important edits before reloading, closing the app, or leaving an editor whose draft you need.
 
 - **Change history** compares polishing and manual revisions, with a full-text view when useful. Loading an old version only loads an editing draft; it does not replace the translation until you save. Older “initial translation → current version” comparisons can include later manual or automatic changes.

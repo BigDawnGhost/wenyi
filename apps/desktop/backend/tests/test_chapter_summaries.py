@@ -76,6 +76,7 @@ def test_summaries_read_the_manifest_once(desktop_context, tmp_path, monkeypatch
     read_artifact = SqliteStorage.read_artifact
 
     def track(storage, key):
+        assert not key.startswith("chapters/"), "summaries loaded chapter bodies"
         reads.append(key)
         return read_artifact(storage, key)
 

@@ -41,6 +41,7 @@ export function ParagraphActions({
     >
       <p
         data-testid="translation-text"
+        data-reader-text="target"
         className="select-text whitespace-pre-wrap p-4 pr-10 text-sm leading-relaxed [overflow-wrap:anywhere]"
       >
         {target == null ? (

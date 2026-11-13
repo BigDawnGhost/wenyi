@@ -503,11 +503,26 @@ export function resolveFixture(
     }
   }
   const data = { ...tableData(), ...overrides };
+  const reader = path.match(/^(\/projects\/[^/]+)\/chapters\/(\d+)\/(window|updates|issues)$/);
+  if (reader) {
+    const sourcePath = `${reader[1]}/review/${reader[2]}`;
+    const chapter = data[sourcePath] ?? familyFixture(sourcePath)?.json;
+    if (chapter) return chapterReaderFixture(chapter, rawPath, rawBody);
+  }
   if (verb === "GET" || verb === "HEAD") {
     const respond = (json: unknown): FixtureResponse => ({
       status: 200,
       json: sandbox ? evolveSandbox(json, path, sandbox) : json,
     });
+    if (path.endsWith("/chapters") && !(path in overrides) && Array.isArray(data[path])) {
+      return respond((data[path] as { index: number }[]).map((row) => {
+        const chapter = overrides[`${path.replace(/\/chapters$/, "")}/review/${row.index}`] as ReaderFixture | undefined;
+        if (!chapter?.segments) return row;
+        const segments = chapter.segments.filter((s) => s.source.trim());
+        return { ...row, word_count: segments.length,
+          target_word_count: segments.filter((s) => s.target != null).length };
+      }));
+    }
     if (path in data) return respond(data[path]);
     if (path.endsWith("/glossary/terms/page")) {
       const sourcePath = path.replace(/\/page$/, "");
@@ -575,5 +590,70 @@ export async function fakeApi(
       method === "GET" ? undefined : route.request().postData() ?? undefined;
     const { status, json } = resolveFixture(method, pathname, rawBody, overrides);
     return route.fulfill({ status, json });
+  });
+}
+
+type ReaderFixture = {
+  index: number;
+  title?: string;
+  title_translated?: string | null;
+  segments: {
+    index: number; source: string; target?: string | null; target_before_polish?: string | null;
+    kind?: string; anchor?: string | null;
+  }[];
+  review_issues?: unknown[];
+};
+
+function fixtureRevision(segment: ReaderFixture["segments"][number]) {
+  let hash = 2166136261;
+  for (const char of JSON.stringify([segment.index, segment.target ?? null, segment.target_before_polish ?? null]))
+    hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+/** Model the reader's bounded wire contract; never send the complete fixture to the page. */
+export function chapterReaderFixture(value: unknown, rawPath: string, rawBody?: string): FixtureResponse {
+  const chapter = value as ReaderFixture;
+  const url = new URL(rawPath, "http://fixture");
+  const rows = chapter.segments.filter((s) => s.source.trim());
+  const projectRow = (s: ReaderFixture["segments"][number], position: number) => ({
+    ...s, target: s.target ?? null, target_before_polish: s.target_before_polish ?? null,
+    kind: s.kind || "text", anchor: s.anchor ?? null, position, revision: fixtureRevision(s),
+  });
+  if (url.pathname.endsWith("/issues")) return { status: 200, json: chapter.review_issues || [] };
+  if (url.pathname.endsWith("/updates")) {
+    const known = new Map<number, string>(
+      JSON.parse(rawBody || "{}").segments?.map((s: { index: number; revision: string }) => [s.index, s.revision]),
+    );
+    return { status: 200, json: rows.filter((s) => known.has(s.index)).map(projectRow)
+      .filter((s) => known.get(s.index) !== s.revision)
+      .map((s) => ({ index: s.index, target: s.target, target_before_polish: s.target_before_polish,
+        revision: s.revision, previous_revision: known.get(s.index) })) };
+  }
+  const limit = Number(url.searchParams.get("limit") || 128);
+  let offset = Number(url.searchParams.get("offset") || 0);
+  let position: number | null = null;
+  if (url.searchParams.has("around")) {
+    position = rows.findIndex((s) => s.index === Number(url.searchParams.get("around")));
+    if (position < 0) return { status: 404, json: { detail: "Paragraph not found" } };
+    offset = Math.floor(position / limit) * limit;
+  }
+  return { status: 200, json: {
+    index: chapter.index, title: chapter.title || "", title_translated: chapter.title_translated ?? null,
+    total: rows.length, saved_count: rows.filter((s) => s.target != null).length,
+    offset, position, segments: rows.slice(offset, offset + limit).map((s, i) => projectRow(s, offset + i)),
+  } };
+}
+
+export async function mockChapter(
+  page: Page,
+  ci: number,
+  read: () => unknown | Promise<unknown>,
+  origin = "**/api",
+) {
+  await page.route(`${origin}/projects/${pid}/chapters/${ci}/{window*,updates,issues}`, async (route) => {
+    const chapter = await read();
+    const response = chapterReaderFixture(chapter, route.request().url(), route.request().postData() || undefined);
+    await route.fulfill(response);
   });
 }

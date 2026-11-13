@@ -3,17 +3,17 @@
 Run from the repository root with the normal frontend dependencies installed:
 
 ```sh
-pnpm -C apps/web test:e2e --project=performance --no-deps --repeat-each=3
+PLAYWRIGHT_PERF=1 pnpm -C apps/web test:e2e --project=performance --no-deps --repeat-each=3
 
 # Same shared behavior through the Desktop entry
-pnpm -C apps/desktop/frontend test:e2e --project=desktop-performance --no-deps --repeat-each=3
+PLAYWRIGHT_PERF=1 pnpm -C apps/desktop/frontend test:e2e --project=desktop-performance --no-deps --repeat-each=3
 
-# Optional stress size (supported range: 1000–5000)
-PERF_PARAGRAPHS=5000 pnpm -C apps/web test:e2e --project=performance --no-deps
+# Optional stress size (default: 65000; supported range: 1000–100000)
+PLAYWRIGHT_PERF=1 PERF_PARAGRAPHS=100000 pnpm -C apps/web test:e2e --project=performance --no-deps
 ```
 
-The normal `test:e2e` run executes the functional Web tests first, then both
-large-chapter tests in the one-worker `performance` project. `--no-deps` runs only
+Performance projects require `PLAYWRIGHT_PERF=1`; ordinary `test:e2e` runs skip them.
+The enabled project runs after functional tests with one worker. `--no-deps` runs only
 the measurements locally. This prevents concurrent browser workloads from
 distorting measurements on small CI runners. Initial visibility uses the existing
 30-second whole-test budget instead of treating the default five-second assertion
@@ -23,8 +23,8 @@ Use Playwright's installed Chromium; set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` only w
 an explicit system-browser comparison is needed. Tracing adds substantial overhead
 to the large DOM fixture and should be disabled for comparable measurements.
 
-常规 `test:e2e` 先执行 Web 功能测试，再由单 worker 的 `performance`
-项目执行两个大章节测试。局部测量可使用 `--no-deps`，避免同时运行的浏览器负载
+性能项目需要 `PLAYWRIGHT_PERF=1`，普通 `test:e2e` 不运行。启用后在功能测试结束时
+使用单 worker 运行。局部测量可使用 `--no-deps`，避免同时运行的浏览器负载
 影响小型 CI 机器上的结果。首屏就绪等待使用已有的整条测试 30 秒预算，不把默认
 5 秒断言超时当作首屏性能门槛；完整冷启动仍计入 `firstRenderMs`，渲染次数断言
 与整条测试截止时间保持不变。默认使用 Playwright 安装的
@@ -34,6 +34,19 @@ Trace 对大 DOM 用例有显著开销，可比较的性能测量应关闭 Trace
 The fixture generates long English/Chinese paragraphs and mocks HTTP and WebSocket
 traffic. It does not read books, start a backend, or call model services.
 Each measurement is printed as JSON and attached to the Playwright result.
+
+The current [continuous reader contract](../../../docs/development/frontend.md#continuous-chapter-reader)
+keeps a bounded DOM and transfers only nearby windows and changed translations.
+Readiness means visible rows, not all chapter nodes. Native find is not a whole-chapter
+check for this reader. Report browser measurements separately from real SQLite/API
+and native WebView measurements; include cold index construction and warm random seeks.
+The historical measurements below describe earlier full-DOM implementations, not the
+current reader or its acceptance thresholds.
+
+当前[连续阅读契约](../../../docs/zh/development/frontend.md#连续章节阅读)只保留有界 DOM，
+传输附近窗口和变化译文；就绪指可见段落，不要求挂载整章。浏览器查找不作为整章验收。
+浏览器测试与真实 SQLite／API、原生 WebView 的测量分别报告，包括冷索引构建与后续随机
+定位。下文历史数据对应先前保留整章 DOM 的实现，不代表当前实现或验收门槛。
 
 ## Earlier per-row memoization baseline / 先前的逐行 memo 优化基线
 

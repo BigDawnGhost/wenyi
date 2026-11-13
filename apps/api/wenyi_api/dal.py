@@ -10,6 +10,7 @@ from psycopg import Connection
 from psycopg.types.json import Jsonb
 from wenyi_backend.chapter_state import chapter_review_state
 from wenyi_backend.ports.projects import RUNNING_PROJECT_STATUSES
+from wenyi_core.storage.chapter_reading import SOURCE_WHITESPACE
 
 from .db import get_pool
 
@@ -194,14 +195,13 @@ def chapter_summaries(pid: str) -> list[dict]:
             """SELECT ch.seq, ch.title, ch.title_translated, ch.status,
                       (SELECT COUNT(*) FROM segments s
                         WHERE s.project_id=ch.project_id AND s.chapter_seq=ch.seq
-                          AND s.source<>'' AND s.kind='text') AS src_words,
+                          AND btrim(s.source,%s)<>'') AS src_words,
                       (SELECT COUNT(*) FROM segments s
                         WHERE s.project_id=ch.project_id AND s.chapter_seq=ch.seq
-                          AND s.source<>'' AND s.target IS NOT NULL
-                          AND s.kind='text') AS tgt_words,
+                          AND btrim(s.source,%s)<>'' AND s.target IS NOT NULL) AS tgt_words,
                       ch.review_status,ch.meta
                  FROM chapters ch WHERE ch.project_id=%s ORDER BY ch.seq""",
-            (pid,),
+            (SOURCE_WHITESPACE, SOURCE_WHITESPACE, pid),
         ).fetchall()
         latest = c.execute(
             """SELECT value FROM artifacts WHERE project_id=%s
@@ -236,8 +236,8 @@ def total_word_count(pid: str) -> int:
     with _conn() as c:
         r = c.execute(
             """SELECT COUNT(*) FROM segments
-               WHERE project_id=%s AND source<>'' AND kind='text'""",
-            (pid,),
+               WHERE project_id=%s AND btrim(source,%s)<>''""",
+            (pid, SOURCE_WHITESPACE),
         ).fetchone()
     return r[0] if r else 0
 

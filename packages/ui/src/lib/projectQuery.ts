@@ -7,6 +7,7 @@ const snapshotKeys = new Set([
   "chapters", "review", "segmentHistory", "precisionDrafts", "terms", "conflicts",
   "workflow", "stats", "review-runs", "review-run", "events",
   "analysis", "preview",
+  "chapterUpdates",
 ]);
 
 /** Poll only active tasks; reconcile their final saved output before going idle. */

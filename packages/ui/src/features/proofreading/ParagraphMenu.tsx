@@ -21,6 +21,7 @@ export function ParagraphMenu({
   disabled,
   onOpen,
   onClose,
+  selectionText,
 }: {
   anchor: ParagraphMenuAnchor;
   source: string;
@@ -28,6 +29,7 @@ export function ParagraphMenu({
   disabled: boolean;
   onOpen: (index: number, view: "edit" | "history" | "precision") => void;
   onClose: () => void;
+  selectionText?: () => Promise<string>;
 }) {
   const { t } = useI18n();
   const popup = useRef<HTMLDivElement>(null);
@@ -65,11 +67,11 @@ export function ParagraphMenu({
       window.removeEventListener("scroll", scrolled, true);
     };
   }, [anchor, onClose]);
-  const copy = async (text: string) => {
+  const copy = async (text: string | Promise<string>) => {
     // Closing now also prevents a slow clipboard write from closing a newer menu.
     close();
     try {
-      await copyText(text);
+      await copyText(await text);
       toast.success(t("proofreading.copied"));
     } catch {
       toast.error(t("proofreading.copyFailed"));
@@ -128,7 +130,7 @@ export function ParagraphMenu({
       </button>
       <div role="separator" className="my-1 border-t" />
       {anchor.selection && (
-        <button role="menuitem" className={item} onClick={() => void copy(anchor.selection)}>
+        <button role="menuitem" className={item} onClick={() => void copy(selectionText ? selectionText() : anchor.selection)}>
           <Copy className="h-4 w-4" />
           {t("proofreading.copySelection")}
         </button>

@@ -330,7 +330,9 @@ class LocalBackend:
             temporary.unlink(missing_ok=True)
         return destination
 
-    def storage_for(self, pid: str, *, create: bool = True) -> SqliteStorage:
+    def storage_for(
+        self, pid: str, *, create: bool = True, upgrade: bool | None = None
+    ) -> SqliteStorage:
         from wenyi_core.storage.sqlite import SqliteStorage
 
         directory = self.project_dir(pid)
@@ -346,7 +348,7 @@ class LocalBackend:
             # so this is the one place every project directory passes through.
             self.mark_project(pid)
         try:
-            return SqliteStorage(str(directory), create=create)
+            return SqliteStorage(str(directory), create=create, upgrade=upgrade)
         except SchemaTooNew as error:
             # A refused schema is a state the user has to see, not a server fault:
             # the route answers with a stable code and the sentence that names the
@@ -1069,8 +1071,6 @@ class LocalBackend:
 
         store = self.storage_for(pid, create=False)
         try:
-            if not store.exists():
-                return []
             review = store.load_latest_review_result() or {}
             issue_counts = Counter(
                 issue.get("chapter")
@@ -1078,25 +1078,17 @@ class LocalBackend:
                 if isinstance(issue.get("chapter"), int)
             )
             result = []
-            # Parse the manifest once without retaining the whole book's chapter bodies.
-            with store.read_chapters_snapshot() as chapters:
-                for entry, chapter in chapters:
-                    state, current = chapter_review_state(
-                        review, chapter.meta, entry.get("review_status")
-                    )
-                    segments = [s for s in chapter.text_segments if s.source]
-                    result.append(
-                        {
-                            "index": chapter.index,
-                            "title": chapter.title,
-                            "title_translated": entry.get("title_translated"),
-                            "status": entry.get("status") or "pending",
-                            "word_count": len(segments),
-                            "target_word_count": sum(s.target is not None for s in segments),
-                            "review_status": state or "pending",
-                            "review_issue_count": issue_counts[chapter.index] if current else 0,
-                        }
-                    )
+            for row in store.chapter_statistics():
+                state, current = chapter_review_state(
+                    review, row.pop("meta"), row.get("review_status")
+                )
+                result.append(
+                    {
+                        **row,
+                        "review_status": state or "pending",
+                        "review_issue_count": issue_counts[row["index"]] if current else 0,
+                    }
+                )
             return result
         finally:
             store.close()

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { fakeApi, pid, project, chapter } from "../../sandbox/fixtures";
+import { fakeApi, mockChapter, pid, project, chapter } from "../../sandbox/fixtures";
 
 
 /** Whether the Desktop host must keep running this suite as well.
@@ -28,9 +28,7 @@ test("proofreading is separate and refreshes saved batches before a chapter fini
       ],
     }),
   );
-  await page.route(`**/api/projects/${pid}/review/0`, (route) =>
-    route.fulfill({
-      json: {
+  await mockChapter(page, 0, () => ({
         index: 0,
         title: chapter.title,
         segments: [
@@ -48,9 +46,7 @@ test("proofreading is separate and refreshes saved batches before a chapter fini
           },
         ],
         review_issues: [],
-      },
-    }),
-  );
+  }));
   await page.goto(`/projects/${pid}/review`);
   await expect(
     page.getByRole("heading", { name: "Proofread by chapter" }),
@@ -115,10 +111,9 @@ test("paused proofreading stops polling, preserves conflicting drafts and isolat
       ],
     },
   });
-  await page.route(`**/api/projects/${pid}/review/0`, (route) => {
+  await mockChapter(page, 0, () => {
     reads++;
-    return route.fulfill({
-      json: {
+    return {
         index: 0,
         title: chapter.title,
         review_issues: [],
@@ -126,8 +121,7 @@ test("paused proofreading stops polling, preserves conflicting drafts and isolat
           { index: 12, source: "First source", target, kind: "text" },
           { index: 18, source: "Pending source", target: null, kind: "text" },
         ],
-      },
-    });
+    };
   });
   await page.route(`**/api/projects/${pid}/review/0/segments/12`, (route) => {
     edit = route.request().postDataJSON();

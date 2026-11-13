@@ -20,7 +20,8 @@ export const activity = { isForeground, subscribe };
 
 function reconcileQueries(queryClient: QueryClient) {
   const predicate = (query: { queryKey: readonly unknown[] }) =>
-    query.queryKey[0] !== credentialQuery.queryKey[0];
+    query.queryKey[0] !== credentialQuery.queryKey[0] &&
+    query.queryKey[0] !== "chapterWindow";
   const active = queryClient.getQueryCache().findAll({ type: "active", predicate });
   // Inactive cached pages must also become stale, without fetching them.
   void queryClient.invalidateQueries({ predicate, refetchType: "none" });

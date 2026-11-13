@@ -27,7 +27,7 @@ def backend(tmp_path, monkeypatch):
     # Core SqliteStorage is tested separately; catalog tests do not depend on its schema.
     stores = {}
 
-    def store(pid, *, create=True):
+    def store(pid, *, create=True, upgrade=None):
         return stores.setdefault(
             pid,
             SimpleNamespace(

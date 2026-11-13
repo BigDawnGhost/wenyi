@@ -26,6 +26,7 @@ export function ParagraphEditor({
   busy,
   targetLanguage,
   onClose,
+  onRefresh,
 }: {
   pid: string;
   chapterIndex: number;
@@ -35,6 +36,7 @@ export function ParagraphEditor({
   busy: boolean;
   targetLanguage?: string;
   onClose: () => void;
+  onRefresh: () => Promise<void>;
 }) {
   const { t } = useI18n();
   const qc = useQueryClient();
@@ -54,7 +56,7 @@ export function ParagraphEditor({
   const refresh = () =>
     Promise.all([
       qc.invalidateQueries({ queryKey: ["project", pid] }),
-      qc.invalidateQueries({ queryKey: ["review", pid, chapterIndex] }),
+      onRefresh(),
       qc.invalidateQueries({ queryKey: ["chapters", pid] }),
       qc.invalidateQueries({
         queryKey: ["segmentHistory", pid, chapterIndex, segment.index],
