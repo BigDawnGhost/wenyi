@@ -29,6 +29,14 @@ export interface ProgressMessage {
  */
 const WATCHDOG_MS = 60_000;
 
+function fieldsDiffer(
+  saved: Record<string, unknown>,
+  snapshot: Record<string, unknown>,
+  fields: string[],
+) {
+  return fields.some((key) => key in snapshot && saved[key] !== snapshot[key]);
+}
+
 export function useProjectProgress(pid: string | undefined) {
   const qc = useQueryClient();
   const [msg, setMsg] = useState<ProgressMessage | null>(null);
@@ -48,26 +56,40 @@ export function useProjectProgress(pid: string | undefined) {
     let lastMessageAt = Date.now();
     let reconnect: ReturnType<typeof setTimeout> | undefined;
     let refresh: ReturnType<typeof setTimeout> | undefined;
-    let forceRefresh = false;
+    let snapshotFallback: ReturnType<typeof setTimeout> | undefined;
+    let opened = false;
     const pending = new Set<string>();
+    const trailing = new Set<string>();
     const { isForeground } = platform().activity;
+    const flush = (force = false) => {
+      clearTimeout(refresh);
+      refresh = undefined;
+      const keys = [...pending];
+      pending.clear();
+      if (!isForeground()) return;
+      for (const key of keys) {
+        const filters = { queryKey: [key, pid] };
+        // React Query cannot replace an initial fetch with no cached data.
+        // A terminal event must follow that read, not accept its older snapshot.
+        const initial = force ? qc.getQueryCache().findAll({ ...filters, type: "active" })
+          .filter((query) => query.state.data === undefined &&
+            query.state.fetchStatus === "fetching" && !trailing.has(query.queryHash)) : [];
+        initial.forEach((query) => trailing.add(query.queryHash));
+        void qc.invalidateQueries(filters, { cancelRefetch: force }).then(() => {
+          for (const query of initial) {
+            trailing.delete(query.queryHash);
+            if (!stopped && isForeground())
+              void qc.refetchQueries({ queryKey: query.queryKey, exact: true, type: "active" });
+          }
+        });
+      }
+    };
     const invalidate = (keys: string[], force = false) => {
       if (!isForeground()) return;
       keys.forEach((key) => pending.add(key));
-      forceRefresh ||= force;
-      if (refresh !== undefined) return;
-      // Coalesce bursts from concurrent batches while retaining the final event.
-      refresh = setTimeout(() => {
-        refresh = undefined;
-        if (isForeground())
-          for (const key of pending)
-            qc.invalidateQueries(
-              { queryKey: [key, pid] },
-              { cancelRefetch: forceRefresh },
-            );
-        pending.clear();
-        forceRefresh = false;
-      }, 500);
+      // Batch traffic is coalesced; completion, failure and reconnection are not.
+      if (force) flush(true);
+      else if (refresh === undefined) refresh = setTimeout(() => flush(), 500);
     };
     const unsubscribeActivity = platform().activity.subscribe(() => {
       if (isForeground()) return;
@@ -76,7 +98,6 @@ export function useProjectProgress(pid: string | undefined) {
       clearTimeout(refresh);
       refresh = undefined;
       pending.clear();
-      forceRefresh = false;
     });
     const all = [
       "project",
@@ -91,9 +112,12 @@ export function useProjectProgress(pid: string | undefined) {
     const connect = () => {
       if (stopped) return;
       const ws = platform().connectProgress(pid);
+      const firstConnection = !opened;
+      let snapshotReceived = false;
       wsRef.current = ws;
       ws.onopen = () => {
-        if (stopped) return;
+        if (stopped || ws !== wsRef.current) return;
+        opened = true;
         platform().authenticateProgress(ws);
         setConnected(true);
         // A stale failure belongs to the connection that reported it.
@@ -101,7 +125,13 @@ export function useProjectProgress(pid: string | undefined) {
         setFailure(null);
         lastMessageAt = Date.now();
         backoff = 500;
-        invalidate(all, true);
+        if (firstConnection) {
+          // The initial HTTP reads and authenticated snapshot usually agree.
+          // Retain reconciliation for older/silent servers, even on idle pages.
+          snapshotFallback = setTimeout(() => invalidate(all, true), 1000);
+        } else {
+          invalidate(all, true);
+        }
       };
       ws.onmessage = (ev) => {
         if (stopped || ws !== wsRef.current) return;
@@ -117,7 +147,35 @@ export function useProjectProgress(pid: string | undefined) {
           // Only proves liveness; there is no state to show or refetch.
           if (incoming.kind === "heartbeat") return;
           if (incoming.kind === "snapshot") {
-            if (incoming.project?.id === pid) invalidate(all, true);
+            if (incoming.project?.id !== pid || snapshotReceived) return;
+            snapshotReceived = true;
+            clearTimeout(snapshotFallback);
+            // Reconnect reads can also precede server-side subscription. Never
+            // put a partial socket project into the complete HTTP-detail cache.
+            const reads = ["project", "chapters"].map((key) =>
+              qc.getQueryCache().find({ queryKey: [key, pid], exact: true }));
+            void Promise.all(reads.map((query) =>
+              query?.state.fetchStatus === "fetching" ? query.promise?.catch(() => {}) : undefined,
+            )).then(() => {
+              if (stopped || ws !== wsRef.current || !isForeground()) return;
+              const project = qc.getQueryData<Record<string, unknown>>(["project", pid]);
+              const chapters = qc.getQueryData<Record<string, unknown>[]>(["chapters", pid]);
+              const changedProject = project && fieldsDiffer(project, incoming.project!, [
+                "id", "name", "status", "initialized", "title", "fmt",
+                "source_lang", "target_lang", "available", "error",
+              ]);
+              const changedChapters = chapters && incoming.chapters && (
+                chapters.length !== incoming.chapters.length ||
+                incoming.chapters.some((entry, index) => !entry || typeof entry !== "object" ||
+                  fieldsDiffer(chapters[index], entry as Record<string, unknown>, [
+                    "index", "title", "title_translated", "status", "word_count",
+                    "target_word_count", "review_status", "review_issue_count",
+                  ]))
+              );
+              // A pre-subscription read may have missed a change. Compare only;
+              // an older snapshot must never overwrite a newer HTTP response.
+              if (changedProject || changedChapters) invalidate(all, true);
+            });
             return;
           }
           if (incoming.project_id !== pid) return;
@@ -164,6 +222,7 @@ export function useProjectProgress(pid: string | undefined) {
       };
       ws.onclose = () => {
         if (stopped || ws !== wsRef.current) return;
+        clearTimeout(snapshotFallback);
         setConnected(false);
         setMsg(null);
         setFailure(null);
@@ -193,6 +252,7 @@ export function useProjectProgress(pid: string | undefined) {
       unsubscribeActivity();
       clearTimeout(reconnect);
       clearTimeout(refresh);
+      clearTimeout(snapshotFallback);
       clearInterval(watchdog);
       wsRef.current?.close();
     };

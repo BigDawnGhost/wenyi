@@ -37,8 +37,11 @@ settings-section availability in one module. Register new feature pages, their
 lazy loader and any navigation entry there; do not create parallel route tables,
 warm-up lists or sidebar lists in the hosts.
 
-The application renders URL routes from the manifest and warms page chunks at
-startup. Navigation prefetches the same loader on pointer entry and keyboard focus.
+The application renders URL routes from the manifest. After yielding the first
+paint, it warms one page chunk at a time during foreground idle periods, with a
+spaced timer fallback on hosts without idle callbacks. Hiding or unmounting cancels
+queued warm-up work. Navigation prefetches the same loader immediately on pointer
+entry and keyboard focus.
 Retain URL routing and the wildcard redirect; route aliases can share one loader.
 Settings sections use capability availability rather than assuming both hosts expose
 the same native panels.
@@ -90,6 +93,13 @@ Apply these query rules:
 4. Preserve data only for the identity it belongs to. On a project/workspace/run
    change, never show a previous project's metadata, progress or editable state as
    the newly selected one. Keeping the shell is not permission to mix query identities.
+
+Progress subscriptions coalesce ordinary batch refreshes, but reconcile terminal
+state, errors and reconnects immediately. On the first connection, compare the
+authenticated snapshot with completed initial HTTP reads before requesting them
+again; a partial socket project must never replace a complete HTTP detail.
+Retain a bounded reconciliation fallback for missing snapshots, polling for
+missed events, and a trailing read when a terminal event overlaps an initial fetch.
 
 Short code-loading placeholders should not flash “Loading…” text. Initial data
 loading can use localized inline copy and `role="status"`. Reuse the existing

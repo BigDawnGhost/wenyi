@@ -4,6 +4,8 @@ import { AppLayout } from "./components/layout/AppLayout";
 import { AppErrorBoundary } from "./routes/AppErrorBoundary";
 import { DesktopOnly } from "./routes/DesktopOnly";
 import { pageLoaders, routeEntries, type RouteEntry } from "./routes/manifest";
+import { warmPages } from "./routes/warmup";
+import { platform } from "./platform";
 
 function renderRoute({ path, element, children }: RouteEntry) {
   return (
@@ -24,10 +26,7 @@ export default function App() {
 }
 
 function Workspace() {
-  useEffect(() => {
-    // A warm-up failure stays quiet: the route retries when it is visited.
-    void Promise.all(pageLoaders.map((load) => load())).catch(() => {});
-  }, []);
+  useEffect(() => warmPages(pageLoaders, platform().activity), []);
   return (
     <Routes>
       <Route element={<AppLayout />}>

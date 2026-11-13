@@ -344,6 +344,120 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   console.log(`Desktop fixture: quiet healthy 10s=0 requests; disconnected 10s=${total() - beforeFallback}`);
 });
 
+test("a matching first socket snapshot does not repeat the initial HTTP reads", async ({ page }) => {
+  await desktop(page);
+  await fakeApi(page, {}, origin);
+  await page.routeWebSocket("**/ws/**", socket => {
+    socket.onMessage(() => socket.send(JSON.stringify({ kind: "snapshot", project })));
+  });
+  const counts: Record<string, number> = {};
+  page.on("request", request => {
+    if (request.url().startsWith(origin))
+      counts[request.url()] = (counts[request.url()] || 0) + 1;
+  });
+  await page.goto(`/projects/${pid}`);
+  await expect(page.getByRole("heading", { name: "Test Book" })).toBeVisible();
+  await expect(page.getByText("Progress connection: Live")).toBeVisible();
+  await page.waitForTimeout(1200);
+  for (const suffix of ["", "/chapters", "/workflow", "/stats"])
+    expect(counts[`${origin}/projects/${pid}${suffix}`]).toBe(1);
+});
+
+for (const connection of ["initial", "reconnected"]) {
+  test(`the ${connection} socket snapshot reconciles a stale in-flight project read`, async ({ page }) => {
+    await desktop(page);
+    await fakeApi(page, {}, origin);
+    const sockets: WebSocketRoute[] = [];
+    await page.routeWebSocket("**/ws/**", ws => {
+      sockets.push(ws);
+      if (connection === "reconnected" && sockets.length === 1)
+        ws.onMessage(() => ws.send(JSON.stringify({ kind: "snapshot", project })));
+    });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const latest = { ...project, name: "Project updated during subscription" };
+    const heldRead = connection === "initial" ? 1 : 2;
+    let reads = 0;
+    await page.route(`${origin}/projects/${pid}`, async route => {
+      const current = ++reads;
+      if (current === heldRead) await held;
+      await route.fulfill({ json: current <= heldRead ? project : latest });
+    });
+    await page.goto(`/projects/${pid}`);
+    if (connection === "reconnected") {
+      await expect(page.getByRole("heading", { name: "Test Book" })).toBeVisible();
+      await expect(page.getByText("Progress connection: Live")).toBeVisible();
+      sockets[0].close();
+    }
+    await expect.poll(() => reads).toBe(heldRead);
+    await expect(page.getByText("Progress connection: Live")).toBeVisible();
+    sockets.at(-1)!.send(JSON.stringify({ kind: "snapshot", project: latest }));
+    release();
+    await expect(page.getByRole("heading", { name: latest.name })).toBeVisible();
+    expect(reads).toBe(heldRead + 1);
+  });
+}
+
+test("a final socket event follows an initial chapter read before going idle", async ({ page }) => {
+  await desktop(page);
+  await fakeApi(page, {}, origin);
+  let socket!: WebSocketRoute;
+  await page.routeWebSocket("**/ws/**", ws => {
+    socket = ws;
+    ws.onMessage(() => ws.send(JSON.stringify({ kind: "snapshot", project })));
+  });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let reads = 0;
+  await page.route(`${origin}/projects/${pid}/chapters`, async route => {
+    const first = ++reads === 1;
+    if (first) await held;
+    await route.fulfill({ json: [{
+      index: 0, title: first ? "Old chapter" : "Final chapter",
+      status: "done", word_count: 1, target_word_count: first ? 0 : 1,
+      review_status: "pending", review_issue_count: 0,
+    }] });
+  });
+  await page.goto(`/projects/${pid}`);
+  await expect.poll(() => reads).toBe(1);
+  await expect(page.getByText("Progress connection: Live")).toBeVisible();
+  const refreshed = page.waitForResponse(`${origin}/projects/${pid}`);
+  socket.send(JSON.stringify({ kind: "final", project_id: pid, run_id: "run-a" }));
+  // Observe the event-triggered refresh before releasing the pre-event body.
+  await refreshed;
+  release();
+  await expect(page.getByRole("cell", { name: "Final chapter", exact: true })).toBeVisible();
+  expect(reads).toBe(2);
+});
+
+for (const kind of ["state", "final", "error"]) {
+  test(`Desktop ${kind} bypasses the batch refresh delay`, async ({ page }) => {
+    await desktop(page);
+    await page.clock.install({ time: new Date("2025-01-01T00:00:00Z") });
+    await page.clock.pauseAt(new Date("2025-01-02T00:00:00Z"));
+    await fakeApi(page, {}, origin);
+    let socket!: WebSocketRoute;
+    await page.routeWebSocket("**/ws/**", ws => { socket = ws; });
+    let reads = 0;
+    await page.route(`${origin}/projects/${pid}`, route => {
+      reads++;
+      return route.fulfill({ json: project });
+    });
+    await page.goto(`/projects/${pid}`);
+    await expect.poll(async () => {
+      await page.clock.runFor(50);
+      return page.getByRole("heading", { name: "Test Book" }).count();
+    }).toBe(1);
+    await expect(page.getByText("Progress connection: Live")).toBeVisible();
+    await page.clock.runFor(1000);
+    await page.clock.runFor(0);
+    const before = reads;
+    socket.send(JSON.stringify({ kind, project_id: pid, run_id: "run-a" }));
+    // The browser clock stays paused: a 500ms timer cannot satisfy this.
+    await expect.poll(() => reads).toBeGreaterThan(before);
+  });
+}
+
 test("lazy route failure is visible", async ({ page }) => {
   await desktop(page);
   await fakeApi(page, {}, origin);

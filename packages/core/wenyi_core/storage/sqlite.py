@@ -42,10 +42,10 @@ from .run_store import ExportSnapshotStore, RunStore, source_sha256
 #: leaves the newer tables untouched while writing rows the newer build reads as
 #: complete. Refusing is the only outcome that keeps both versions honest.
 #:
-#: A database carrying 0 predates this guard. It is stamped with the current
-#: number and otherwise left alone, which is what makes the upgrade free;
-#: refusing 0 instead would declare every existing project unsupported.
-SCHEMA_VERSION = 1
+#: Versions 0 and 1 have the same tables but count text-only, nonempty sources
+#: in chapter_statistics. Version 2 rebuilds that derived table on writable open;
+#: read-only legacy stores fall back to chapter bodies without changing the file.
+SCHEMA_VERSION = 2
 
 # Re-exported: the class moved to locks.py, but callers still import it from here.
 __all__ = ["SCHEMA_VERSION", "SqliteStorage", "StorageBusyError"]
@@ -138,7 +138,7 @@ class SqliteStorage:
                 conn.execute("PRAGMA journal_mode = WAL")
             # Every connection passes here, including the readers that drain on
             # close, so the guard is stated once rather than at each open site.
-            self._check_schema_version(conn)
+            version = self._check_schema_version(conn)
             if not conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifacts'"
             ).fetchone():
@@ -179,25 +179,30 @@ class SqliteStorage:
                     "ON segment_revisions(chapter_index, segment_index, id)"
                 )
                 GlossaryStore.initialize_schema(conn)
+                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                conn.commit()
+            elif self._create and version < SCHEMA_VERSION:
+                # Only derived summaries change. Publish their new counting rule
+                # and the version together, or leave the old database untouched.
+                conn.execute("BEGIN IMMEDIATE")
+                conn.execute("DELETE FROM chapter_statistics")
+                for row in conn.execute(
+                    "SELECT key, value FROM artifacts WHERE key >= 'chapters/' AND key < 'chapters0'"
+                ):
+                    if re.fullmatch(r"chapters/ch\d+\.json", row["key"]):
+                        chapter = Chapter.model_validate(json.loads(row["value"]))
+                        if row["key"] != f"chapters/ch{chapter.index}.json":
+                            raise ValueError("Chapter index does not match its artifact key")
+                        self._save_chapter_statistics(conn, chapter)
+                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 conn.commit()
         except BaseException:
             conn.close()
             raise
         return conn
 
-    def _check_schema_version(self, conn: sqlite3.Connection) -> None:
-        """Refuse a database a newer build created, and stamp an older one.
-
-        The stamp is written here rather than beside schema creation because the
-        number has to be set for a database whose tables already exist as well:
-        the upgrade path is a file this build did not create, and leaving it at 0
-        would make every later open repeat the same upgrade.
-
-        Reading and writing are decided by how this store was constructed. A
-        read-only store is how a caller inspects or recovers a project without
-        writing to it, so the refusal still applies there while the stamp is
-        skipped: the writable path the caller eventually takes records it.
-        """
+    def _check_schema_version(self, conn: sqlite3.Connection) -> int:
+        """Refuse newer data before access; upgrade only in a writable transaction."""
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if not isinstance(version, int) or isinstance(version, bool) or version < 0:
             raise ValueError(f"Invalid local state database: {self.database_path}")
@@ -209,8 +214,7 @@ class SqliteStorage:
                 "incompletely.",
                 code="database_schema_too_new",
             )
-        if version == 0 and self._create:
-            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        return version
 
     def close(self) -> None:
         """Release this thread's connection; other threads release their own.
@@ -406,6 +410,11 @@ class SqliteStorage:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, encoded),
             )
+            # Generic artifact writes must not leave a summary for an old body.
+            # save_chapter replaces it in this same transaction; raw writes use
+            # the read-only fallback until the next normal chapter save.
+            if key.startswith("chapters/"):
+                conn.execute("DELETE FROM chapter_statistics WHERE artifact_key=?", (key,))
 
     def delete_artifact(self, key: str) -> None:
         key = self._key(key)
@@ -589,63 +598,85 @@ class SqliteStorage:
         if revision_kind not in (None, "manual"):
             raise ValueError("Invalid chapter revision kind")
         key = f"chapters/ch{chapter.index}.json"
-        text = [
-            segment for segment in chapter.segments if segment.source and segment.kind == "text"
-        ]
         with self.state_lock():
             previous = self.read_artifact(key)
             self.write_artifact(key, chapter.model_dump())
             self._record_chapter_changes(chapter, previous, kind=revision_kind)
-            self._connection().execute(
-                "INSERT INTO chapter_statistics "
-                "(chapter_index, artifact_key, title, meta, word_count, target_word_count) "
-                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chapter_index) DO UPDATE SET "
-                "title=excluded.title, meta=excluded.meta, word_count=excluded.word_count, "
-                "target_word_count=excluded.target_word_count",
-                (
-                    chapter.index,
-                    key,
-                    chapter.title,
-                    json.dumps(chapter.meta, ensure_ascii=False),
-                    len(text),
-                    sum(segment.target is not None for segment in text),
-                ),
-            )
+            self._save_chapter_statistics(self._connection(), chapter)
+
+    @staticmethod
+    def _save_chapter_statistics(conn: sqlite3.Connection, chapter: Chapter) -> None:
+        segments = chapter.text_segments
+        conn.execute(
+            "INSERT INTO chapter_statistics "
+            "(chapter_index, artifact_key, title, meta, word_count, target_word_count) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chapter_index) DO UPDATE SET "
+            "artifact_key=excluded.artifact_key, title=excluded.title, meta=excluded.meta, "
+            "word_count=excluded.word_count, target_word_count=excluded.target_word_count",
+            (
+                chapter.index,
+                f"chapters/ch{chapter.index}.json",
+                chapter.title,
+                json.dumps(chapter.meta, ensure_ascii=False),
+                len(segments),
+                sum(segment.target is not None for segment in segments),
+            ),
+        )
 
     def chapter_statistics(self) -> list[dict]:
-        """Read compact chapter summaries without loading any segment bodies.
+        """Read summaries in manifest order, including headings and empty targets."""
+        with self.read_chapter_statistics_snapshot() as chapters:
+            return list(chapters)
 
-        Counts match the API's segment counts, including intentionally empty targets.
-        Manifest status and translated titles remain authoritative; review presentation
-        is intentionally left to the caller.
-        """
-        if not self.exists():
-            return []
+    @contextmanager
+    def read_chapter_statistics_snapshot(self) -> Iterator[Iterator[dict]]:
+        """Keep manifest, compact counts and the caller's review reads in one snapshot."""
+        if not self._database_present():
+            yield iter(())
+            return
         with self._read_lock():
-            inventory = {
-                entry["index"]: entry for entry in self.load_manifest().get("chapters", [])
-            }
-            result = []
-            for row in self._connection().execute(
-                "SELECT * FROM chapter_statistics ORDER BY chapter_index"
-            ):
-                entry = inventory.get(row["chapter_index"])
-                if entry is None:
-                    continue
-                meta = json.loads(row["meta"])
-                result.append(
-                    {
-                        "index": row["chapter_index"],
-                        "title": row["title"],
+            manifest = self.read_artifact("manifest.json") or {}
+            conn = self._connection()
+            # Old writers used different counts. Never trust those rows, or
+            # write a migration as a side effect of a read-only HTTP request.
+            rows = (
+                {
+                    row["chapter_index"]: row
+                    for row in conn.execute("SELECT * FROM chapter_statistics")
+                }
+                if conn.execute("PRAGMA user_version").fetchone()[0] >= 2
+                else {}
+            )
+
+            def summaries():
+                for entry in manifest.get("chapters", []):
+                    ci = entry["index"]
+                    row = rows.get(ci)
+                    if row is None:
+                        chapter = self._load_chapter(ci, entry)
+                        segments = chapter.text_segments
+                        title, meta = chapter.title, chapter.meta
+                        count = len(segments)
+                        translated = sum(segment.target is not None for segment in segments)
+                    else:
+                        title, meta = row["title"], json.loads(row["meta"])
+                        count, translated = row["word_count"], row["target_word_count"]
+                    yield {
+                        "index": ci,
+                        "title": title,
                         "title_translated": self._translated_title(entry, meta),
-                        "status": entry.get("status", STATUS_PENDING),
-                        "review_status": entry.get("review_status", STATUS_PENDING),
-                        "word_count": row["word_count"],
-                        "target_word_count": row["target_word_count"],
+                        "status": entry.get("status") or STATUS_PENDING,
+                        "review_status": entry.get("review_status") or STATUS_PENDING,
+                        "word_count": count,
+                        "target_word_count": translated,
                         "meta": meta,
                     }
-                )
-            return result
+
+            chapters = summaries()
+            try:
+                yield chapters
+            finally:
+                chapters.close()
 
     def _record_chapter_changes(
         self, chapter: Chapter, previous: dict | None, *, kind: Literal["manual"] | None

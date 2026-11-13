@@ -27,7 +27,7 @@ def backend(tmp_path, monkeypatch):
     # Core SqliteStorage is tested separately; catalog tests do not depend on its schema.
     stores = {}
 
-    def store(pid, *, create=True):
+    def store(pid, *, create=True, locations=None):
         return stores.setdefault(
             pid,
             SimpleNamespace(
@@ -869,7 +869,7 @@ def test_project_read_opens_existing_storage_only_and_always_closes(backend, mon
             raise ValueError("Unreadable manifest")
         return {"title": "Stored title", "fmt": "txt"}
 
-    def storage(project_id, *, create):
+    def storage(project_id, *, create, locations=None):
         calls.append((project_id, create))
         return SimpleNamespace(
             exists=lambda: True,

@@ -633,6 +633,130 @@ def test_compact_chapter_statistics_track_atomic_edits(store, document, monkeypa
     ]
 
 
+def test_compact_statistics_count_all_nonblank_sources(store, document):
+    document.chapters[0].segments = [
+        Segment(index=0, source="Heading", kind="heading", target=""),
+        Segment(index=1, source="Body"),
+        Segment(index=2, source=" \t\u3000", target="ignored"),
+        Segment(index=3, source="", target="ignored"),
+        Segment(index=4, source="\n"),
+    ]
+    store.init_from_document(document)
+    assert store.chapter_statistics()[0]["word_count"] == 2
+    assert store.chapter_statistics()[0]["target_word_count"] == 1
+
+
+@pytest.mark.parametrize("version", [0, 1])
+def test_legacy_statistics_read_without_writing_then_upgrade_atomically(
+    store, document, monkeypatch, version
+):
+    document.chapters[0].segments.append(
+        Segment(index=10, source="Heading", kind="heading", target="")
+    )
+    store.init_from_document(document)
+    original = store.read_artifact("chapters/ch3.json")
+    store.close_all()
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute(f"PRAGMA user_version={version}")
+        connection.execute("UPDATE chapter_statistics SET word_count=999, target_word_count=999")
+    reader = SqliteStorage(store.run_dir, create=False)
+    try:
+        assert reader.chapter_statistics()[0]["word_count"] == 3
+        assert reader.chapter_statistics()[0]["target_word_count"] == 2
+    finally:
+        reader.close()
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == version
+        assert connection.execute("SELECT word_count FROM chapter_statistics").fetchone()[0] == 999
+    writer = SqliteStorage(store.run_dir)
+    try:
+        assert writer.read_artifact("chapters/ch3.json") == original
+        monkeypatch.setattr(
+            writer, "_load_chapter", lambda *args: pytest.fail("decoded an upgraded chapter")
+        )
+        assert writer.chapter_statistics()[0]["word_count"] == 3
+        assert writer.chapter_statistics()[0]["target_word_count"] == 2
+    finally:
+        writer.close()
+
+
+def test_raw_chapter_artifact_write_cannot_leave_a_stale_summary(store, document):
+    store.init_from_document(document)
+    chapter = document.chapters[0].model_copy(deep=True)
+    chapter.segments[0].target = "New"
+    store.write_artifact("chapters/ch3.json", chapter.model_dump())
+    assert store.chapter_statistics()[0]["target_word_count"] == 2
+    with pytest.raises(RuntimeError):
+        with store.state_lock():
+            chapter.segments[0].target = None
+            store.write_artifact("chapters/ch3.json", chapter.model_dump())
+            raise RuntimeError("rollback body and invalidation")
+    assert store.chapter_statistics()[0]["target_word_count"] == 2
+
+
+def test_statistics_upgrade_failure_preserves_old_version_and_rows(store, document, monkeypatch):
+    store.init_from_document(document)
+    store.close_all()
+    with sqlite3.connect(store.database_path) as connection:
+        connection.execute("PRAGMA user_version=1")
+        before = connection.execute("SELECT * FROM chapter_statistics").fetchall()
+
+    def fail(*args):
+        raise RuntimeError("Interrupted summary rebuild")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SqliteStorage, "_save_chapter_statistics", fail)
+        with pytest.raises(RuntimeError, match="Interrupted"):
+            SqliteStorage(store.run_dir)
+    with sqlite3.connect(store.database_path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("SELECT * FROM chapter_statistics").fetchall() == before
+    recovered = SqliteStorage(store.run_dir)
+    try:
+        assert recovered.chapter_statistics()[0]["word_count"] == 2
+    finally:
+        recovered.close()
+
+
+def test_compact_snapshot_keeps_manifest_counts_and_review_in_one_commit(store, document):
+    document.chapters.append(document.chapters[0].model_copy(update={"index": 1}, deep=True))
+    store.init_from_document(document)
+    store.write_artifact("reviews/latest/result.json", {"status": "running"})
+
+    def publish():
+        try:
+            with store.state_lock():
+                chapter = store.load_chapter(1)
+                chapter.segments[0].target = "New translation"
+                chapter.meta["review_invalidated_at"] = "2026-01-01T00:00:00Z"
+                store.save_chapter_with_status(chapter, "done")
+                manifest = store.load_manifest()
+                manifest["chapters"][1]["title_translated"] = "New title"
+                store.save_manifest(manifest)
+                store.write_artifact("reviews/latest/result.json", {"status": "completed"})
+        finally:
+            store.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with store.read_chapter_statistics_snapshot() as chapters:
+            assert next(chapters)["index"] == 3
+            pool.submit(publish).result(timeout=5)
+            summary = next(chapters)
+            assert summary["index"] == 1
+            assert summary["status"] == "pending"
+            assert summary["target_word_count"] == 1
+            assert summary["title_translated"] is None
+            assert "review_invalidated_at" not in summary["meta"]
+            assert store.read_artifact("reviews/latest/result.json")["status"] == "running"
+        with pytest.raises(StopIteration):
+            next(chapters)
+    summary = store.chapter_statistics()[1]
+    assert summary["status"] == "done"
+    assert summary["target_word_count"] == 2
+    assert summary["title_translated"] == "New title"
+    assert summary["meta"]["review_invalidated_at"] == "2026-01-01T00:00:00Z"
+
+
 def test_segment_revisions_manual_polish_and_rollback(store, document):
     store.init_from_document(document)
     assert store.load_segment_history(3, 7) == []

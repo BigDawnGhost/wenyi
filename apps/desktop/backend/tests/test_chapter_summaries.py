@@ -109,3 +109,17 @@ def test_summaries_release_chapters_as_they_are_read(desktop_context, tmp_path, 
     monkeypatch.setattr(SqliteStorage, "_load_chapter", track)
     assert backend.chapter_summaries(pid) == _expected(30)
     assert not live_chapters
+
+
+def test_current_summaries_never_read_chapter_bodies(desktop_context, tmp_path, monkeypatch):
+    backend = desktop_context.repository
+    pid, store = _project(backend, tmp_path, 30)
+    store.close()
+    read_artifact = SqliteStorage.read_artifact
+
+    def read(storage, key):
+        assert not key.startswith("chapters/"), "summary decoded a chapter body"
+        return read_artifact(storage, key)
+
+    monkeypatch.setattr(SqliteStorage, "read_artifact", read)
+    assert backend.chapter_summaries(pid) == _expected(30)

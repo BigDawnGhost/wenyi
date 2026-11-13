@@ -69,6 +69,12 @@ The [native process protocol](../../apps/desktop/src/process.rs#L65) validates t
 connection. The UI waits for readiness; startup failure is not permission to try
 another endpoint. Do not persist ports or tokens in project data.
 
+Engine startup overlaps WebView creation after native admission. Readiness and
+failure must survive a window that has not loaded yet, and setup failure must
+close spawn admission and reap the owned child even before the event loop runs.
+The loopback listener uses an explicit TCP protocol and `TCP_NODELAY`; test the
+accepted connection, not just an in-process ASGI client.
+
 On Windows, a debug Python override must be an existing executable path, not a
 PATH command or wrapper. For a CPython venv, the host starts the base interpreter
 with `__PYVENV_LAUNCHER__` so imports retain venv identity while the engine remains
@@ -107,6 +113,11 @@ Resolve projects through the
 not by concatenating the current root and project ID. Changing the default library
 does not move registered projects; a readable directory suffix is not stronger
 identity evidence than its project marker.
+
+A project-list read scans each required library once and shares that inventory
+only within the read. Duplicate identities, conflicting markers and links still
+refuse the affected project. Never reuse this inventory for write admission or
+across requests: relocation and new duplicate folders must be detected next time.
 
 The data root and libraries must be on local disks. Network shares and cloud-synced
 folders are unsupported because SQLite locks, placeholders and independently copied
@@ -154,10 +165,16 @@ accepts only a deliberately selected current-format project:
   succeed. Import is not an old-format migration or restoration of the old catalog.
 
 Project databases separately carry `PRAGMA user_version`.
-[Schema checks](../../packages/core/wenyi_core/storage/sqlite.py#L193) reject unknown
+[Schema checks](../../packages/core/wenyi_core/storage/sqlite.py#L204) reject unknown
 newer versions for both reads and writes. Keep the catalog entry visible as
-unavailable while other projects remain usable. Supported version-zero database
-stamping does not bypass catalog or project-marker admission.
+unavailable while other projects remain usable. Project schema 2 uses the compact
+chapter statistics written with each chapter; nonblank headings count as segments,
+and an empty target counts as translated. Manifest, statistics and Review status
+are read from one WAL snapshot, without decoding current-schema chapter bodies.
+Writable opens of schema 0/1 atomically rebuild only this derived table and stamp
+schema 2; interruption leaves the old version intact. Read-only legacy opens
+continue to calculate from chapter bodies until that upgrade, without changing
+data. Upgrades never bypass catalog or project-marker admission.
 
 Deletion and recovery share directory ownership rules. Preserve the
 [deletion sentinel](../../apps/desktop/backend/wenyi_desktop/local_backend.py#L795):
