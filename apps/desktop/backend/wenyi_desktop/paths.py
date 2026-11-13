@@ -149,29 +149,46 @@ def project_id_in(directory: Path) -> str:
 
 def find_project(root: Path, pid: str) -> Path | None:
     """Find one identity only within its recorded root; refuse duplicates and links."""
-    try:
-        entries = list(root.iterdir())
-    except FileNotFoundError:
-        return None
-    matches = []
-    for entry in sorted(entries):
-        named, _ = split_project_name(entry.name)
-        if is_link(entry) or not entry.is_dir():
-            if named == pid:
-                raise ValueError("Project directory is not an owned folder")
-            continue
+    return ProjectDirectoryIndex(root).find(pid)
+
+
+class ProjectDirectoryIndex:
+    """One read's library inventory, never an authority for subsequent operations."""
+
+    def __init__(self, root: Path):
+        self._matches: dict[str, list[Path]] = {}
+        self._errors: dict[str, str] = {}
         try:
-            embedded = _project_marker_id(entry)
-        except (OSError, ValueError) as error:
-            if named == pid:
-                raise ValueError("Project directory does not belong to this project") from error
-            continue
-        if embedded and named and embedded != named:
-            if pid in (named, embedded):
-                raise ValueError("Project directory does not belong to this project")
-            continue
-        if (embedded or named) == pid:
-            matches.append(entry)
-    if len(matches) > 1:
-        raise ValueError("Multiple directories claim the same project identity")
-    return matches[0] if matches else None
+            entries = sorted(root.iterdir())
+        except FileNotFoundError:
+            return
+        for entry in entries:
+            named, _ = split_project_name(entry.name)
+            if is_link(entry) or not entry.is_dir():
+                if named:
+                    self._errors.setdefault(named, "Project directory is not an owned folder")
+                continue
+            try:
+                embedded = _project_marker_id(entry)
+            except (OSError, ValueError):
+                if named:
+                    self._errors.setdefault(
+                        named, "Project directory does not belong to this project"
+                    )
+                continue
+            if embedded and named and embedded != named:
+                for pid in (named, embedded):
+                    self._errors.setdefault(
+                        pid, "Project directory does not belong to this project"
+                    )
+                continue
+            if pid := embedded or named:
+                self._matches.setdefault(pid, []).append(entry)
+
+    def find(self, pid: str) -> Path | None:
+        if error := self._errors.get(pid):
+            raise ValueError(error)
+        matches = self._matches.get(pid, [])
+        if len(matches) > 1:
+            raise ValueError("Multiple directories claim the same project identity")
+        return matches[0] if matches else None

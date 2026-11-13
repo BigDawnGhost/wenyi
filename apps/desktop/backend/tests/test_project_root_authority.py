@@ -17,6 +17,34 @@ from wenyi_desktop.main import create_app, create_context
 PROJECT = "0123456789abcdef"
 
 
+def test_project_list_scans_each_library_once_and_rechecks_next_time(desktop_context, monkeypatch):
+    backend = desktop_context.repository
+    identities = [backend.create_project(f"Book {index}", "en", "zh", {}) for index in range(10)]
+    for pid in identities:
+        backend.storage_for(pid).close()
+    root = paths.projects(backend.workspace)
+    scans = []
+    iterdir = Path.iterdir
+
+    def tracked(path):
+        if path == root:
+            scans.append(path)
+        return iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", tracked)
+    assert all(row["available"] for row in backend.list_projects())
+    assert scans == [root]
+    # No directory result may survive this request: even an otherwise valid
+    # second claim must make the next list refuse this identity, not every book.
+    directory = root / identities[0]
+    shutil.copytree(directory, directory.with_name(f"{identities[0]}-Copy"))
+    scans.clear()
+    listed = {row["id"]: row for row in backend.list_projects()}
+    assert scans == [root]
+    assert listed[identities[0]]["available"] is False
+    assert all(listed[pid]["available"] for pid in identities[1:])
+
+
 def project_with_stale_copy(tmp_path, *, stale_name="Original"):
     owner, other = tmp_path / "Owner", tmp_path / "Other"
     context = create_context(tmp_path / "workspace", library_root=other)
