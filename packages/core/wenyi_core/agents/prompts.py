@@ -17,6 +17,18 @@ def protected_object_guidance(texts: list[str]) -> str:
     return ""
 
 
+def readonly_object_context(contexts: list[list[dict[str, str]]] | None) -> str:
+    """Keep mathematical references separate from editable Review evidence and patches."""
+    if not contexts or not any(contexts):
+        return ""
+    return (
+        "\n\n"
+        + read_text("shared/object_references.txt").rstrip("\n")
+        + "\n"
+        + json.dumps(contexts, ensure_ascii=False, indent=2)
+    )
+
+
 def render_glossary(
     terms: list[GlossaryTerm],
     *,

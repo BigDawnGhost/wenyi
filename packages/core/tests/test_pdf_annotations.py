@@ -7,14 +7,20 @@ from types import SimpleNamespace
 
 import pytest
 from wenyi_core.agents.annotation_aligner import target_digest
+from wenyi_core.assemble.export_view import ExportViewStore
 from wenyi_core.assemble.pdf_writer import _assemble_pdf
 from wenyi_core.config import Config
-from wenyi_core.ingest.pdf_babeldoc import _segment_from_para, annotations_from_store
+from wenyi_core.ingest.pdf_babeldoc import (
+    _fillback_text,
+    _segment_from_para,
+    annotations_from_store,
+)
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pdf_bridge import BabeldocBridgeClient, BabeldocBridgeError
 from wenyi_core.pipeline.annotate.annotations import AnnotationService
 from wenyi_core.pipeline.run.runtime import PipelineRuntime
+from wenyi_core.review.evidence import BookEvidenceIndex
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
 
@@ -40,6 +46,139 @@ def test_pdf_ingest_retains_annotation_offsets_and_source_whitespace():
         "source_length": len(source),
         "items": [item],
     }
+
+
+def test_pdf_protected_objects_use_shared_transport_and_embedded_context():
+    item = {
+        "id": "formula:1",
+        "kind": "formula",
+        "mode": "point",
+        "source_start": 8,
+        "source_end": 8,
+        "composition_index": 1,
+        "protected": True,
+        "object_source": "|g|<1",
+        "reference_quality": "pdf_unicode_unverified",
+    }
+    segment = _segment_from_para(0, {"id": "0:2", "source": "We wish .", "annotations": [item]})
+    assert segment is not None
+    saved = segment.meta["pdf_annotations"]["items"][0]
+    assert saved["relation"] == "inline_object"
+    contexts = AnnotationService.annotation_contexts_for_segments([segment], None)
+    assert contexts[0][0]["marker"] == saved["marker"]
+    assert contexts[0][0]["source"] == "Original PDF mathematical glyph object"
+    assert "|g|<1" not in str(contexts)
+    assert contexts[0][0]["source_offset"] == "8"
+    assert segment.source == "We wish ."
+    evidence = BookEvidenceIndex([Chapter(index=0, segments=[segment])], [], {})
+    reference = evidence.segment_ref(0, 0)
+    assert reference is not None
+    assert reference.source == segment.source
+    assert evidence.object_contexts(0, 0)[0][0]["marker"] == saved["marker"]
+    assert "|g|<1" not in str(evidence.object_contexts(0, 0))
+
+
+def test_pdf_protected_export_rejects_stale_or_pending_object(project):
+    chapter = project.load_chapter(0)
+    chapter.segments[0].meta["pdf_annotations"]["items"][0].update(
+        kind="formula",
+        protected=True,
+        mode="point",
+        source_end=0,
+    )
+    project.save_chapter(chapter)
+    with pytest.raises(BabeldocBridgeError, match="protected"):
+        annotations_from_store(project, {"0:0": chapter.segments[0].target})
+
+
+def test_pdf_markers_survive_alignment_and_export_is_read_only(project):
+    segment = _segment_from_para(
+        0,
+        {
+            "id": "0:0",
+            "source": "We wish .",
+            "annotations": [
+                {
+                    "id": "formula:1",
+                    "kind": "formula",
+                    "mode": "point",
+                    "source_start": 8,
+                    "source_end": 8,
+                    "composition_index": 1,
+                    "protected": True,
+                }
+            ],
+        },
+    )
+    assert segment is not None
+    marker = segment.meta["pdf_annotations"]["items"][0]["marker"]
+    segment.target = f"我们希望{marker}。"
+    chapter = project.load_chapter(0)
+    chapter.segments = [segment]
+    project.save_chapter(chapter)
+    annotations, client = service()
+    annotations.align_annotations_after_batch(0, chapter, 0, 1, project)
+    saved = project.load_chapter(0).segments[0]
+    assert saved.target == f"我们希望{marker}。"
+    assert _fillback_text(saved) == "我们希望。"
+    payload = annotations_from_store(project, {"0:0": _fillback_text(saved)})
+    assert payload["0:0"]["placements"][0]["target_start"] == 4
+    assert client.calls == []
+    # A Review-style complete replacement must still carry the opaque identity.
+    chapter.segments[0].target = f"在此我们希望{marker}。"
+    annotations.align_annotations_after_batch(0, chapter, 0, 1, project)
+    assert chapter.segments[0].meta["pdf_annotations"]["placements"][0]["target_start"] == 6
+    before = project.load_chapter(0).model_dump()
+    assert _fillback_text(project.load_chapter(0).segments[0]) == "在此我们希望。"
+    assert project.load_chapter(0).model_dump() == before
+    chapter.segments[0].target = "在此我们希望。"
+    annotations.align_annotations_after_batch(0, chapter, 0, 1, project)
+    assert chapter.segments[0].meta["pdf_annotations"]["placements"][0]["status"] == "pending"
+    with pytest.raises(BabeldocBridgeError, match="protected"):
+        _fillback_text(chapter.segments[0])
+
+
+def test_pdf_export_copy_keeps_marker_order_when_clean_prose_matches_source(project):
+    segment = _segment_from_para(
+        0,
+        {
+            "id": "0:0",
+            "source": "A  B.",
+            "annotations": [
+                {
+                    "id": f"formula:{i}",
+                    "kind": "formula",
+                    "mode": "point",
+                    "source_start": 2,
+                    "source_end": 2,
+                    "composition_index": i,
+                    "protected": True,
+                }
+                for i in range(2)
+            ],
+        },
+    )
+    assert segment is not None
+    first, second = segment.meta["pdf_annotations"]["items"]
+    segment.target = f"A {second['marker']}{first['marker']} B."
+    chapter = project.load_chapter(0)
+    chapter.segments = [segment]
+    project.save_chapter(chapter)
+    annotations, _ = service()
+    annotations.align_annotations_after_batch(0, chapter, 0, 1, project)
+    before = project.load_chapter(0).model_dump()
+    export = ExportViewStore(project, punctuation_normalize=False)
+    assert export.load_chapter(0).segments[0].target == segment.source
+    payload = annotations_from_store(export, {"0:0": segment.source})["0:0"]
+    assert [row["target_order"] for row in payload["placements"]] == [1, 0]
+    assert project.load_chapter(0).model_dump() == before
+    chapter.segments[0].target = ""
+    project.save_chapter(chapter)
+    export = ExportViewStore(project, punctuation_normalize=False)
+    clean = _fillback_text(export.load_chapter(0).segments[0])
+    assert clean == segment.source
+    payload = annotations_from_store(export, {"0:0": clean})["0:0"]
+    assert [row["target_order"] for row in payload["placements"]] == [0, 1]
 
 
 @pytest.fixture(params=[FileStorage, SqliteStorage])

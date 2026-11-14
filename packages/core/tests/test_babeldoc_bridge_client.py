@@ -13,6 +13,33 @@ from wenyi_core.pdf_bridge.client import BabeldocBridgeClient, BabeldocBridgeErr
 
 
 class BabeldocBridgeClientTests(unittest.TestCase):
+    def test_protected_objects_require_bridge_capability_before_publication(self):
+        import tempfile
+
+        client = BabeldocBridgeClient("http://bridge.test")
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "existing.pdf"
+            output.write_bytes(b"unchanged")
+            with (
+                patch.object(
+                    client,
+                    "health",
+                    return_value={
+                        "capabilities": ["annotation-best-effort-v1"],
+                    },
+                ),
+                patch("wenyi_core.pdf_bridge.client.httpx.post") as post,
+            ):
+                with self.assertRaisesRegex(BabeldocBridgeError, "protected object"):
+                    client.fillback(
+                        "session",
+                        {"0:0": "译文"},
+                        out_path=output,
+                        annotations={"0:0": {"protected_objects": True}},
+                    )
+                post.assert_not_called()
+                self.assertEqual(output.read_bytes(), b"unchanged")
+
     def test_scoped_connection_keeps_saved_url_and_credentials_separate(self):
         from wenyi_core.pdf_bridge.connection import (
             BridgeConnection,

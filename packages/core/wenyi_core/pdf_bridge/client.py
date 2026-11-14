@@ -91,6 +91,15 @@ class BabeldocBridgeClient:
                 "This PDF requires best-effort annotation support. Update and restart "
                 "wenyi-babeldoc-bridge before exporting."
             )
+        if (
+            annotations
+            and any(value.get("protected_objects") for value in annotations.values())
+            and "protected-objects-v1" not in health.get("capabilities", [])
+        ):
+            raise BabeldocBridgeError(
+                "This PDF requires protected object support. Update and restart "
+                "wenyi-babeldoc-bridge before exporting."
+            )
         if rows and "toc-rows-v1" not in health.get("capabilities", []):
             raise BabeldocBridgeError(
                 "This PDF requires directory row support. Update and restart "

@@ -243,6 +243,11 @@ class AutofixVerification:
                 relevant_glossary=relevant_terms,
                 nearby_pairs=nearby_pairs,
                 trace=record,
+                **(
+                    {"object_contexts": self.evidence.object_contexts(*location)}
+                    if any(self.evidence.object_contexts(*location))
+                    else {}
+                ),
             )
         except Exception as error:  # noqa: BLE001 - Preserve unchanged issues when final verification fails.
             if is_resumable_provider_interrupt(error):

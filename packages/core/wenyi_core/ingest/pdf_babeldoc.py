@@ -14,6 +14,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from ..alignment.objects import object_marker, resolve_objects
+from ..markup.objects import OBJECT_RELATION, object_anchors
 from ..pdf_bridge import BabeldocBridgeClient, BabeldocBridgeError
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
@@ -303,9 +305,25 @@ def _segment_from_para(index: int, para: dict) -> Segment | None:
         "para_index": para.get("index"),
     }
     if isinstance(annotations, list) and annotations:
+        annotations = deepcopy(annotations)
+        for item in annotations:
+            if item.get("protected"):
+                if item.get("kind") != "formula" or item.get("mode") != "point":
+                    raise BabeldocBridgeError("Invalid protected PDF object; update the bridge.")
+                key = f"pdf:{pid}:{item['id']}"
+                # The PDF's extracted spelling is not mathematical evidence.
+                # Keep only an opaque type/identity hint in model context.
+                item.update(
+                    relation=OBJECT_RELATION,
+                    target_key=key,
+                    marker=object_marker(key, source),
+                    object_tag="PDF mathematics",
+                    object_source="Original PDF mathematical glyph object",
+                )
+                item.pop("reference_quality", None)
         metadata["pdf_annotations"] = {
             "source_length": len(source),
-            "items": deepcopy(annotations),
+            "items": annotations,
         }
     return Segment(
         index=index,
@@ -414,7 +432,18 @@ def _fillback_groups(store) -> dict[str, list[Segment]]:
 def _fillback_text(segment: Segment) -> str:
     """Keep source fallback export-only; never turn pending rows into saved targets."""
     text = segment.target
-    return str(text if text is not None and text.strip() else segment.source)
+    text = str(text if text is not None and text.strip() else segment.source)
+    metadata = segment.meta.get("pdf_annotations", {})
+    items = [item for item in metadata.get("items", []) if item.get("protected")]
+    if items and not metadata.get("objects_resolved_for_export"):
+        resolved = resolve_objects([text], object_anchors(items), segment.source)
+        if resolved.damaged or len(resolved.placements) != len(items):
+            raise BabeldocBridgeError(
+                "Cannot export protected PDF objects with missing or damaged markers. "
+                "Repair the translation before exporting."
+            )
+        return resolved.targets[0]
+    return text
 
 
 def rows_from_store(store, translations: dict[str, str]) -> dict[str, list[dict[str, int]]]:
@@ -506,20 +535,48 @@ def _segment_annotations(segment: Segment, text: str) -> dict[str, Any] | None:
     if not isinstance(items, list) or not items:
         return None
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    if text == segment.source:
+    protected = {item["id"] for item in items if item.get("protected")}
+    transported = protected and (
+        metadata.get("objects_resolved_for_export")
+        or (segment.target and segment.target.strip() and segment.target != segment.source)
+    )
+    if text == segment.source and not transported:
         placements = [
             {
                 "id": item["id"],
                 "mode": item["mode"],
                 "target_start": item["source_start"],
                 "target_end": item["source_end"],
+                **({"target_order": order} if item.get("protected") else {}),
                 "status": "aligned",
                 "method": "source_identity",
             }
-            for item in items
+            for order, item in enumerate(items)
         ]
     else:
         # Keep stale positions invalid rather than blessing them with a new digest.
         digest = metadata.get("target_digest")
         placements = metadata.get("placements", [])
-    return {"target_digest": digest, "placements": deepcopy(placements)}
+    if protected:
+        valid = [
+            row["id"]
+            for row in placements
+            if isinstance(row, dict)
+            and row.get("status") == "aligned"
+            and row.get("mode") == "point"
+            and type(row.get("target_start")) is int
+            and row["target_start"] == row.get("target_end")
+            and 0 <= row["target_start"] <= len(text)
+        ]
+        if digest != hashlib.sha256(text.encode()).hexdigest() or any(
+            valid.count(item_id) != 1 for item_id in protected
+        ):
+            raise BabeldocBridgeError(
+                "Cannot export protected PDF objects with stale or incomplete alignment. "
+                "Resume annotation alignment before exporting."
+            )
+    return {
+        "target_digest": digest,
+        "placements": deepcopy(placements),
+        **({"protected_objects": True} if protected else {}),
+    }
