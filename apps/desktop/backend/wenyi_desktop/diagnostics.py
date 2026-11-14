@@ -20,6 +20,8 @@ from contextvars import ContextVar
 from typing import Any, TextIO
 from uuid import uuid4
 
+from . import notices
+
 EVENTS = frozenset(
     {
         "engine_bootstrap",
@@ -288,6 +290,28 @@ class Reporter:
         except queue.Full:
             with self.lock:
                 self.dropped += 1
+
+    def notice(self, value: dict[str, Any]) -> bool:
+        """Queue one status notice on the same ordered writer as diagnostics.
+
+        A notice carries a project display name, so it never enters the
+        diagnostic projection. Oversized or malformed notices are dropped and
+        counted, and a full queue never blocks a task or a state transaction.
+        """
+        if self.closed:
+            return False
+        line = notices.encode(value)
+        if line is None:
+            with self.lock:
+                self.dropped += 1
+            return False
+        try:
+            self.queue.put_nowait(line)
+        except queue.Full:
+            with self.lock:
+                self.dropped += 1
+            return False
+        return True
 
     def _write(self) -> None:
         while True:
