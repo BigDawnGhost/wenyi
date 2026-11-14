@@ -56,6 +56,12 @@ pub enum Event {
     LlmRetryExhausted,
     LlmModelFailover,
     LlmUsage,
+    /// One status notification was handed to the platform.
+    NotificationShown,
+    /// A status notification was suppressed by policy; carries only a reason.
+    NotificationSuppressed,
+    /// A platform notification failed; carries only a bounded classification.
+    NotificationFailed,
     FrontendReady,
     FrontendError,
     FrontendRejection,
@@ -107,7 +113,8 @@ impl Event {
             | LoggerDropped
             | PreviousUnclean
             | LayoutRefused
-            | InstallLocationChanged => "WARN",
+            | InstallLocationChanged
+            | NotificationFailed => "WARN",
             HttpCompleted | LlmRequestStarted | LlmUsage => "DEBUG",
             _ => "INFO",
         }
@@ -170,6 +177,9 @@ impl Event {
                     | NativePanic
                     | LayoutRefused
                     | InstallLocationChanged
+                    | NotificationShown
+                    | NotificationSuppressed
+                    | NotificationFailed
             ),
         }
     }
@@ -267,6 +277,16 @@ fn attributes(input: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
                         | "shutdown_requested"
                         | "forced"
                         | "wait_failed"
+                        | "disabled"
+                        | "disabled_success"
+                        | "unarmed"
+                        | "duplicate"
+                        | "rate_limited"
+                        | "os_disabled"
+                        | "queue_full"
+                        | "invalid_payload"
+                        | "winrt_failed"
+                        | "unavailable"
                 )
             ),
             "exception" | "cause_exception" => matches!(

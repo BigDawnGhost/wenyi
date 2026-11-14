@@ -170,6 +170,7 @@ impl Backend {
         library: Option<&Path>,
         native_owner: &crate::instance::NativeOwner,
         diagnostics: Diagnostics,
+        notifications: &crate::notifications::Center,
     ) -> Result<(Self, ReadySignal), Failure> {
         let token = token().map_err(Failure::Setup)?;
         let mut command = Command::new(resources.join("sidecar/wenyi-engine").join(engine_name()));
@@ -240,8 +241,9 @@ impl Backend {
             .ok_or(Failure::Setup("Missing protocol pipe"))?;
         let pid = backend.child.id();
         let (tx, rx) = mpsc::channel();
+        let notifications = notifications.clone();
         std::thread::spawn(move || {
-            receive_protocol(output, pid, &token, &diagnostics, tx);
+            receive_protocol(output, pid, &token, &diagnostics, &notifications, tx);
         });
         Ok((backend, rx))
     }
@@ -353,6 +355,7 @@ fn receive_protocol(
     pid: u32,
     token: &str,
     diagnostics: &Diagnostics,
+    notifications: &crate::notifications::Center,
     tx: mpsc::Sender<Result<String, Failure>>,
 ) {
     let mut reader = BufReader::new(output);
@@ -395,6 +398,12 @@ fn receive_protocol(
         if let Some(payload) = line.strip_prefix("WENYI_DIAGNOSTIC ") {
             // Only typed content-free observations cross the persistence boundary.
             diagnostics.ingest(crate::diagnostics::Source::Engine, payload);
+        } else if let Some(payload) = line.strip_prefix("WENYI_NOTICE ") {
+            // A notice cannot exist before a task could start; readiness is the
+            // first moment the native owner is willing to deliver one.
+            if sent {
+                notifications.submit_payload(payload);
+            }
         } else if !sent {
             let result = ready(line, pid).map_err(|_| Failure::InvalidProtocol).map(|port| {
                 serde_json::json!({"apiBase": format!("http://127.0.0.1:{port}"), "token": token}).to_string()
@@ -442,6 +451,7 @@ mod tests {
     #[test]
     fn readiness_failure_reasons_are_distinct_and_never_include_protocol_content() {
         let diagnostics = Diagnostics::new(None);
+        let notifications = crate::notifications::Center::silent(diagnostics.clone());
         for (input, expected) in [
             (Vec::new(), Failure::ProtocolEof),
             (b"fake-private-token\n".to_vec(), Failure::InvalidProtocol),
@@ -456,7 +466,14 @@ mod tests {
             ),
         ] {
             let (tx, rx) = mpsc::channel();
-            receive_protocol(input.as_slice(), 9, "fake-private-token", &diagnostics, tx);
+            receive_protocol(
+                input.as_slice(),
+                9,
+                "fake-private-token",
+                &diagnostics,
+                &notifications,
+                tx,
+            );
             assert_eq!(wait_ready(&rx, Duration::ZERO), Err(expected));
             assert!(rx.try_recv().is_err());
         }
@@ -467,7 +484,14 @@ mod tests {
             }
         }
         let (tx, rx) = mpsc::channel();
-        receive_protocol(BrokenReader, 9, "fake-private-token", &diagnostics, tx);
+        receive_protocol(
+            BrokenReader,
+            9,
+            "fake-private-token",
+            &diagnostics,
+            &notifications,
+            tx,
+        );
         assert_eq!(wait_ready(&rx, Duration::ZERO), Err(Failure::ReadProtocol));
         let (tx, rx) = mpsc::channel();
         assert_eq!(wait_ready(&rx, Duration::ZERO), Err(Failure::ReadyTimeout));
@@ -571,7 +595,15 @@ mod tests {
             "WENYI_DIAGNOSTIC {\"event\":\"task_failed\",\"attributes\":{\"raw\":\"fake-private-token\"}}\n",
         );
         let (tx, rx) = mpsc::channel();
-        receive_protocol(input.as_bytes(), 9, "owner-token", &diagnostics, tx);
+        let notifications = crate::notifications::Center::silent(diagnostics.clone());
+        receive_protocol(
+            input.as_bytes(),
+            9,
+            "owner-token",
+            &diagnostics,
+            &notifications,
+            tx,
+        );
         let connection: serde_json::Value =
             serde_json::from_str(&rx.recv().unwrap().unwrap()).unwrap();
         assert_eq!(connection["apiBase"], "http://127.0.0.1:1234");

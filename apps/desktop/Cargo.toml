@@ -40,7 +40,10 @@ gtk = "0.18"
 # which is the same failure mode this avoids.
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "multipart", "json", "native-tls"] }
 tauri-plugin-updater = { version = "2", default-features = false, features = ["native-tls"] }
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Shell"] }
+windows-sys = { version = "0.61", features = ["Win32_Globalization", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+# WinRT toast support. Kept target-specific so other platforms never compile it,
+# and on the same release line tauri already uses so the tree keeps one WinRT stack.
+windows = { version = "0.62", features = ["Data_Xml_Dom", "Foundation", "UI_Notifications"] }
 
 # Every other target keeps rustls, so Linux and macOS behaviour is unchanged.
 [target.'cfg(not(windows))'.dependencies]

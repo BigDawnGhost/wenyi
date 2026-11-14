@@ -73,6 +73,13 @@
 ; project location is a later batch -- but the uninstaller reads it already so
 ; that the file cannot become a silent no-op once a writer appears.
 !define WENYI_LIBRARY_ROOTS "$INSTDIR\..\Wenyi Desktop Data\.library-roots"
+; The identity WinRT resolves for toasts. Must match AUMID in
+; src/notifications/mod.rs; the application sets the same value on its process
+; before the first window exists.
+!define WENYI_AUMID "org.wenyi.desktop"
+; The executable the bundler installs. Its icon comes from icons/icon.ico, so
+; notifications and the installed shortcut show the product icon.
+!define WENYI_MAIN_EXE "wenyi-desktop.exe"
 
 ; Remove one directory without following a link out of it.
 ;
@@ -532,4 +539,22 @@
     !insertmacro wenyi_remove_tree "${WENYI_USER_ROOT}"
     !insertmacro wenyi_remove_tree "${WENYI_RUNTIME_ROOT}"
   ${EndIf}
+!macroend
+
+; Runs after the bundler has copied files and created shortcuts.
+;
+; Windows delivers a toast only for an application identity the shell knows.
+; Registering the AppUserModelID with a display name and the product icon is
+; what makes an installed build resolve "Wenyi Desktop" instead of a generic
+; host name. The same identity is set on the process at startup and on the
+; shortcuts by the bundler. A clean-install check of the shortcut property
+; remains the release gate described in the design.
+!macro NSIS_HOOK_POSTINSTALL
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\${WENYI_AUMID}" "DisplayName" "Wenyi Desktop"
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\${WENYI_AUMID}" "IconUri" "$INSTDIR\${WENYI_MAIN_EXE}"
+!macroend
+
+; Remove only the identity this installer registered.
+!macro NSIS_HOOK_PREUNINSTALL
+  DeleteRegKey HKCU "Software\Classes\AppUserModelId\${WENYI_AUMID}"
 !macroend
