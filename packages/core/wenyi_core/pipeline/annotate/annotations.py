@@ -82,11 +82,9 @@ class AnnotationService:
         every intersecting slice. Inject each destination only once per slice.
         """
         assigned: list[list[dict[str, str]]] = [[] for _ in segments]
-        if not isinstance(registry, dict):
-            return assigned
-        raw_contexts = registry.get("contexts")
+        raw_contexts = registry.get("contexts") if isinstance(registry, dict) else None
         if not isinstance(raw_contexts, dict):
-            return assigned
+            raw_contexts = {}
 
         position = 0
         while position < len(segments):
@@ -103,7 +101,7 @@ class AnnotationService:
                 boundaries.append((cursor, end))
                 cursor = end
 
-            metadata = logical_segments[0].meta.get("epub_annotations")
+            metadata = AnnotationService.annotation_metadata(logical_segments[0])
             raw_items = metadata.get("items") if isinstance(metadata, dict) else None
             items = raw_items if isinstance(raw_items, list) else []
             source_length = metadata.get("source_length") if isinstance(metadata, dict) else None
@@ -125,15 +123,17 @@ class AnnotationService:
                 target_key = raw_item.get("target_key")
                 if not isinstance(target_key, str) or not target_key:
                     continue
-                record = raw_contexts.get(target_key)
+                record = raw_contexts.get(target_key, {})
                 if not isinstance(record, dict):
-                    continue
+                    record = {}
                 raw_blocks = record.get("source_blocks")
                 blocks = (
                     [block for block in raw_blocks if isinstance(block, str) and block.strip()]
                     if isinstance(raw_blocks, list)
                     else []
                 )
+                if not blocks and raw_item.get("protected") and raw_item.get("object_source"):
+                    blocks = [raw_item["object_source"]]
                 if not blocks:
                     continue
                 note = {
@@ -232,6 +232,9 @@ class AnnotationService:
         resolution = resolve_objects(targets, object_anchors(objects), source)
         target = "".join(resolution.targets)
         copied = {row["id"]: row for row in resolution.placements}
+        strict_pdf = "pdf_annotations" in segment.meta and any(
+            item.get("protected") for item in objects
+        )
         if resolution.damaged:
             # No immutable-target locator can repair broken transport. Preserve the complete
             # response and stop here, including on resume, rather than paying for unusable offsets.
@@ -256,7 +259,14 @@ class AnnotationService:
                     pending_objects=[item["id"] for item in objects],
                 )
             return
-        if objects:
+        if strict_pdf and len(copied) != len(objects):
+            metadata.update(
+                target_digest=target_digest(target),
+                placements=[copied.get(item["id"], pending_object(item)) for item in objects],
+            )
+            store.save_chapter(chapter)
+            return
+        if objects and not strict_pdf:
             before_polish = clean_object_markers(
                 [item.target_before_polish or "" for item in logical_segments], source
             )

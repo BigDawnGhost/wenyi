@@ -368,6 +368,11 @@ class ReviewRoundService:
                     relevant_glossary=relevant_terms,
                     nearby_pairs=nearby_pairs,
                     trace=record,
+                    **(
+                        {"object_contexts": evidence.object_contexts(chapter, index)}
+                        if any(evidence.object_contexts(chapter, index))
+                        else {}
+                    ),
                 )
             except Exception as error:  # noqa: BLE001 - Keep individual fixer failures as unresolved suggestions.
                 if is_resumable_provider_interrupt(error):

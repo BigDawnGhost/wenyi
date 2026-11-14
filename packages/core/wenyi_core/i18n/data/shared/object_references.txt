@@ -1,0 +1,2 @@
+Immutable object references (read-only, not missing prose):
+These objects are restored separately from original PDF glyphs. No formula transcription is provided. The editable source omits their contents; source offsets identify insertion points. A target can contain opaque object markers. Preserve each marker exactly once at its corresponding logical position in any replacement paragraph. Do not reconstruct, correct, translate, or add mathematical contents. Original glyph objects, not model-generated text, are authoritative.

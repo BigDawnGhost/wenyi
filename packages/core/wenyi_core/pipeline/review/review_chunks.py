@@ -233,11 +233,17 @@ class ReviewChunkService:
                     debug.write_json(initial_path, initial_trace)
 
                 try:
+                    object_contexts = (
+                        evidence.object_contexts(chapter_index, chunk_base, len(chunk))
+                        if evidence is not None and chapter_index is not None
+                        else []
+                    )
                     review_result = self._reviewer.review_result(
                         srcs,
                         tgts,
                         terms,
                         trace=trace if debug is not None else None,
+                        **({"object_contexts": object_contexts} if any(object_contexts) else {}),
                     )
                 except Exception as error:
                     if debug is not None and initial_trace is not None:

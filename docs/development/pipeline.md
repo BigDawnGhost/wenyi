@@ -111,6 +111,18 @@ an immutable-target locator cannot repair damaged prose. Resume does not repeat
 unusable paid calls; the response must be corrected before it can be aligned.
 Pronunciation-hint cleanup must not remove object markers.
 
+BabelDOC adapts `protected: true` PDF annotations to the same transport. The bridge
+owns frozen mathematical glyphs; Core receives only object identities and insertion
+points, never an unverified formula transcription. Unlike EPUB's semantic fallback,
+strict PDF objects retain their markers in formal targets through Review/Autofix;
+missing or duplicate markers become pending without a semantic-location request.
+Review evidence hashes still bind the actual saved target, with opaque references
+supplied separately. Annotation offsets/digests bind the marker-free text. Export
+resolves markers only on a disposable chapter copy, then remaps clean offsets during
+punctuation normalization. Incomplete objects block export; ordinary styles remain
+best effort. Older PDF sessions require a fresh import rather than an in-place source
+rewrite.
+
 EPUB adapts its `epub_annotations` items and existing annotation-context registry to
 these contracts. Save cleaned slices and digest-bound placements together; damaged
 responses remain verbatim. Pending objects block export rather than receiving note-link
