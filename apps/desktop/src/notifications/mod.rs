@@ -164,8 +164,8 @@ pub struct Failure(pub &'static str);
 
 /// The only port a platform has to implement.
 pub trait Sink: Send + 'static {
-    /// Whether this platform can show a notification right now.
-    fn available(&mut self) -> bool;
+    /// Why this platform cannot show a notification right now, if it cannot.
+    fn available(&mut self) -> Result<(), Failure>;
     /// Show one already-localized notification.
     fn show(&mut self, presentation: &Presentation) -> Result<(), Failure>;
     /// Best-effort tray/taskbar fallback after a failed or unavailable toast.
@@ -179,8 +179,8 @@ struct NullSink;
 
 #[cfg(any(not(windows), test))]
 impl Sink for NullSink {
-    fn available(&mut self) -> bool {
-        false
+    fn available(&mut self) -> Result<(), Failure> {
+        Err(Failure("unavailable"))
     }
     fn show(&mut self, _presentation: &Presentation) -> Result<(), Failure> {
         Err(Failure("unavailable"))
@@ -549,9 +549,9 @@ impl Worker {
             return;
         }
         let presentation = self.policy.presentation(&notice);
-        if !self.sink.available() {
+        if let Err(failure) = self.sink.available() {
             self.policy.seen.insert(key, now);
-            self.suppress("os_disabled");
+            self.suppress(failure.0);
             self.sink.fallback(&presentation);
             return;
         }
@@ -648,8 +648,8 @@ mod tests {
     struct Recording(Arc<Mutex<Vec<Presentation>>>);
 
     impl Sink for Recording {
-        fn available(&mut self) -> bool {
-            true
+        fn available(&mut self) -> Result<(), Failure> {
+            Ok(())
         }
         fn show(&mut self, presentation: &Presentation) -> Result<(), Failure> {
             self.0.lock().unwrap().push(presentation.clone());
@@ -753,8 +753,8 @@ mod tests {
     }
 
     impl Sink for Unavailable {
-        fn available(&mut self) -> bool {
-            false
+        fn available(&mut self) -> Result<(), Failure> {
+            Err(Failure("os_disabled"))
         }
         fn show(&mut self, _presentation: &Presentation) -> Result<(), Failure> {
             *self.shown.lock().unwrap() += 1;

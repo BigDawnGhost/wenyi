@@ -16,14 +16,64 @@ use super::{Failure, Presentation, Sink, AUMID};
 /// Set the process identity before the first window exists.
 ///
 /// Windows groups the process, its taskbar button and its toasts by this value.
-/// The installer registers the same identity, so an installed build resolves its
-/// name and icon rather than falling back to the executable.
+/// The installer registers the same identity on its shortcuts; this also writes
+/// the per-user registration Windows needs to resolve the display name and icon
+/// for toasts from an unpackaged build.
 pub fn set_app_user_model_id() {
     let value: Vec<u16> = AUMID.encode_utf16().chain(std::iter::once(0)).collect();
     // SAFETY: the buffer is NUL-terminated and only read during this call.
     unsafe {
         windows_sys::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID(value.as_ptr());
     }
+    register_aumid();
+}
+
+/// Best-effort per-user registration under HKCU, so an unpackaged build has an
+/// identity that the notification platform can resolve. Failures are harmless:
+/// the explicit process identity still applies.
+fn register_aumid() {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{
+        RegCloseKey, RegCreateKeyW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, REG_SZ,
+    };
+
+    let subkey = wide(&format!("Software\\Classes\\AppUserModelId\\{AUMID}"));
+    let mut key: HKEY = std::ptr::null_mut();
+    // SAFETY: both strings are NUL-terminated and outlive the calls.
+    let status = unsafe { RegCreateKeyW(HKEY_CURRENT_USER, subkey.as_ptr(), &mut key) };
+    if status != ERROR_SUCCESS {
+        return;
+    }
+    write_string(key, "DisplayName", "Wenyi Desktop");
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(path) = executable.to_str() {
+            write_string(key, "IconUri", path);
+        }
+    }
+    // SAFETY: the handle came from RegCreateKeyW and is not used afterwards.
+    unsafe {
+        RegCloseKey(key);
+    }
+}
+
+fn write_string(key: windows_sys::Win32::System::Registry::HKEY, name: &str, value: &str) {
+    let name = wide(name);
+    let value = wide(value);
+    // SAFETY: the data buffer is NUL-terminated; the byte length includes it.
+    unsafe {
+        windows_sys::Win32::System::Registry::RegSetValueExW(
+            key,
+            name.as_ptr(),
+            0,
+            windows_sys::Win32::System::Registry::REG_SZ,
+            value.as_ptr() as *const u8,
+            (value.len() * 2) as u32,
+        );
+    }
+}
+
+fn wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 /// The language Windows would use for this user, or an empty string.
@@ -76,18 +126,23 @@ impl WindowsSink {
 }
 
 impl Sink for WindowsSink {
-    fn available(&mut self) -> bool {
+    fn available(&mut self) -> Result<(), Failure> {
         self.initialize();
-        Self::notifier()
-            .and_then(|notifier| notifier.Setting())
-            .is_ok_and(|setting| setting == NotificationSetting::Enabled)
+        let notifier = Self::notifier().map_err(|_| Failure("notifier_failed"))?;
+        match notifier.Setting() {
+            Ok(NotificationSetting::Enabled) => Ok(()),
+            Ok(_) => Err(Failure("os_disabled")),
+            Err(_) => Err(Failure("setting_failed")),
+        }
     }
 
     fn show(&mut self, presentation: &Presentation) -> Result<(), Failure> {
         self.initialize();
-        let notifier = Self::notifier().map_err(|_| Failure("unavailable"))?;
-        if !matches!(notifier.Setting(), Ok(setting) if setting == NotificationSetting::Enabled) {
-            return Err(Failure("os_disabled"));
+        let notifier = Self::notifier().map_err(|_| Failure("notifier_failed"))?;
+        match notifier.Setting() {
+            Ok(NotificationSetting::Enabled) => {}
+            Ok(_) => return Err(Failure("os_disabled")),
+            Err(_) => return Err(Failure("setting_failed")),
         }
         let xml = format!(
             concat!(
