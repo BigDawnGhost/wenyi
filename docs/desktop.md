@@ -799,6 +799,29 @@ editor drafts before quitting; an unsaved in-memory draft is not a persisted
 checkpoint. Background translation continues to make configured model requests
 and can incur provider usage until the task finishes or is paused.
 
+### Status notifications (Windows)
+
+Windows builds show a system notification when a task fails, times out, or the
+local engine stops unexpectedly. Translation preparation finishing (`prepared`)
+and a book reaching `done` also produce a completion notification. Notifications
+are enabled by default; this version has no notification settings section.
+
+- A notification shows the project's display name and a short, localized reason.
+  It never contains error text, file paths, chapter text or credentials. The
+  project name can therefore appear in the system notification center and, if
+  your system allows it, on the lock screen. The full error remains on the
+  project page.
+- Notifications do not depend on the window being hidden or focused. Pausing,
+  cancelling, quitting, updating, or a failed startup does not notify. Repeated
+  terminal signals for one run do not stack.
+- Clicking a notification restores the existing window through the same
+  single-instance path as reopening the application. It does not open a second
+  window.
+- If notifications are disabled in Windows or cannot be shown, Wenyi flashes the
+  taskbar button when the main window exists; tasks are never delayed or
+  changed. Tray state is not modified.
+- Linux and macOS builds do not show status notifications yet.
+
 On Linux, native Wayland is preferred when available; X11 is a connection-time fallback, not a global override. For proprietary NVIDIA drivers, Desktop uses a process-local explicit-sync compatibility setting on native Wayland while keeping DMA-BUF enabled. NVIDIA/X11 and NVIDIA/Hyprland use a separate DMA-BUF fallback. Explicit user graphics environment settings take precedence.
 
 If the window still fails, try this diagnostic for one launch rather than setting it globally:
