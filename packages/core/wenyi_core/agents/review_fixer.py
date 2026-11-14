@@ -208,6 +208,7 @@ class ReviewFixer(Agent):
         relevant_glossary: Sequence[GlossaryTerm] | str = (),
         nearby_pairs: Sequence[tuple[str, str]] = (),
         trace: Callable[[str, dict[str, Any]], None] | None = None,
+        object_contexts: list[list[dict[str, str]]] | None = None,
     ) -> ProvisionalPatch:
         """Generate a temporary single-paragraph replacement; raise on protocol errors.
         nearby_pairs must come from the same immutable shadow snapshot. The model may
@@ -264,6 +265,7 @@ class ReviewFixer(Agent):
             source=source,
             current_target=current_target,
         )
+        user += prompts.readonly_object_context(object_contexts)
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},

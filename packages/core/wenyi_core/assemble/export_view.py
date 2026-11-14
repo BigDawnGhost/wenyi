@@ -91,6 +91,22 @@ class ExportViewStore(RunStore):
         if ci in self._chapters:
             return self._chapters[ci].model_copy(deep=True)
         chapter = self._store.load_chapter(ci).model_copy(deep=True)
+        # PDF markers stay in formal targets through Review/Autofix. Resolve only
+        # this export copy, before punctuation normalization remaps clean offsets.
+        from ..ingest.pdf_babeldoc import _fillback_text
+
+        for segment in chapter.text_segments:
+            if (
+                segment.target is not None
+                and segment.target.strip()
+                and segment.target != segment.source
+                and any(
+                    item.get("protected")
+                    for item in segment.meta.get("pdf_annotations", {}).get("items", [])
+                )
+            ):
+                segment.target = _fillback_text(segment)
+                segment.meta["pdf_annotations"]["objects_resolved_for_export"] = True
         operations = [op for op in self.language_policy.operations if op.point == "export.text"]
         if not operations:
             self._chapters[ci] = chapter.model_copy(deep=True)
@@ -136,6 +152,7 @@ class ExportViewStore(RunStore):
             if before != after:
                 metadata = segments[position].meta
                 _remap_metadata_offsets(metadata.get("epub_annotations"), before, after, mapping)
+                _remap_metadata_offsets(metadata.get("pdf_annotations"), before, after, mapping)
                 _remap_metadata_offsets(metadata.get("docx_styles"), before, after, mapping)
 
         for segment, target in zip(segments, current.targets):

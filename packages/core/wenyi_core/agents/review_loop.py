@@ -125,6 +125,9 @@ class ReviewAgentLoop:
             ),
             candidates_json=json.dumps(candidates, ensure_ascii=False, indent=2),
         )
+        user += prompts.readonly_object_context(
+            self.evidence.object_contexts(chapter, chunk_base, len(sources))
+        )
         allowed_refs = set(current_refs.values())
 
         def issue_refs(index: int, value: Any, valid_refs: set[str]) -> list[str]:

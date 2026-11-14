@@ -256,20 +256,28 @@ or whitespace-only targets fall back to original paragraph text for that export,
 without changing saved targets. Layout boxes and role labels are omitted by default.
 Fonts, text expansion and the external engine still limit layout fidelity.
 
-With an annotation-capable bridge, Wenyi uses its shared annotation aligner to
-locate PDF formulas, superscript/citation markers, mixed styles and linked text in
-the completed translation. The bridge restores original formula/marker objects
-and styles, and rebuilds URI and internal page links against the typeset glyphs.
+With a `protected-objects-v1` bridge, mathematical expressions and their adjacent
+variables use opaque object markers through translation, polishing, Review and
+Autofix. The bridge keeps original glyphs, fonts and relative geometry; lossy PDF
+Unicode is not supplied as formula context or used to regenerate mathematics.
+Missing, duplicated or damaged object markers block export instead of silently
+dropping formulas or guessing their positions. Reimport with updated Wenyi and
+bridge versions to enable protection; existing sessions are not upgraded in place.
+Recognition still depends on native formula detection, mathematical character and
+font evidence, and grouping boundaries; verify formula coverage and final layout.
+
+Wenyi's shared annotation aligner locates ordinary mixed styles and linked text.
+The bridge restores original objects and styles, and rebuilds URI and internal page links against the typeset glyphs.
 Resolved named destinations, commonly used by citation links, are supported.
 Internal links to pages excluded from the export are omitted; other PDF action
-types are not reconstructed. Formula recognition still depends on BabelDOC.
+types are not reconstructed.
 
 Keep `pipeline.annotation_alignment` enabled to locate translated PDF annotations.
-Export applies valid items independently: successful links, styles, formulas and
-markers remain even when another item in the same paragraph fails. Missing,
+Ordinary annotations and legacy unprotected formulas are best effort: successful
+items remain even when another ordinary item in the same paragraph fails. Missing,
 invalid, stale or fallback positions are omitted without guessing locations,
 blocking export or replacing the translated body with source text. Conflicting
-formulas or incompatible styles omit only the conflicting items.
+legacy formulas or incompatible styles omit only the conflicting items.
 
 Export itself makes no model calls. Resume translation refreshes missing/stale
 alignment after editing saved targets, but does not automatically retry unchanged

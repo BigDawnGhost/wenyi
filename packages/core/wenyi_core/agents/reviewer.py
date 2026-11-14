@@ -48,6 +48,7 @@ class Reviewer(Agent):
         glossary_terms=None,
         *,
         trace: Callable[[str, dict[str, Any]], None] | None = None,
+        object_contexts: list[list[dict[str, str]]] | None = None,
     ) -> ReviewResult:
         """Return issues with recovery metadata; leave service exceptions to the caller."""
         if not sources:
@@ -68,6 +69,7 @@ class Reviewer(Agent):
             n=len(sources),
             pairs=prompts.numbered_pairs(sources, targets),
         )
+        user += prompts.readonly_object_context(object_contexts)
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
