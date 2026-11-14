@@ -193,6 +193,7 @@ llm:
 | `gemini` | 原生 API，`https://generativelanguage.googleapis.com` | 未指定自定义变量时，先 `GEMINI_API_KEY`，再 `GOOGLE_API_KEY` |
 | `openai-compatible` | 必须显式设置 `base_url` | 可选 `api_key_env` |
 | `orcarouter` | `https://api.orcarouter.ai/v1` | `ORCAROUTER_API_KEY` |
+| `atlascloud` | `https://api.atlascloud.ai/v1` | `ATLASCLOUD_API_KEY` |
 | `ollama` | `http://localhost:11434/v1` | 可选 `api_key_env` |
 | `vllm` | `http://localhost:8000/v1` | 可选 `api_key_env` |
 | `fake` | 无网络 | 无 |
@@ -209,7 +210,7 @@ llm:
 | `json_response_fallback` | 兼容类型 | `none`；网关在该字段返回有效 JSON 时可显式选 `reasoning_content`。 |
 | `request_overrides` | 兼容类型 | `{}`，端点专属请求扩展。 |
 
-“兼容类型”指 `openai-compatible`、`orcarouter`、`ollama` 和 `vllm`。
+“兼容类型”指 `openai-compatible`、`orcarouter`、`atlascloud`、`ollama` 和 `vllm`。
 它们还支持**连接级** `llm.providers.<id>.reasoning_style`：
 `none`（默认）、`deepseek`、`openai` 或 `openrouter`。
 `fake` 不接受模型选项。OpenCode Go 自动发送 Wenyi 身份／会话请求头。

@@ -123,6 +123,13 @@ PROVIDERS = register_providers(
             "OpenAICompatibleOptions",
         ),
         ProviderSpec(
+            "atlascloud",
+            "atlascloud",
+            "AtlasCloudClient",
+            "OpenAICompatibleOptions",
+            "openai_compatible",
+        ),
+        ProviderSpec(
             "orcarouter",
             "orcarouter",
             "OrcaRouterClient",

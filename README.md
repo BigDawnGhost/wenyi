@@ -36,7 +36,7 @@ Wenyi is designed for **long-form texts** — novels, social-science monographs,
 - **Consistent terminology** — names, terms, and recurring expressions are extracted during translation; conflicting translations are surfaced for resolution and feed back into subsequent batches.
 - **Translation and review** — optional polishing and evidence-driven whole-book review complement paragraph editing with revision history.
 - **Resumable progress** — completed batches and chapters are saved; reopen the project and continue from its checkpoints.
-- **Flexible models** — use DeepSeek, OpenAI, OpenRouter, OrcaRouter, Google Gemini, Ollama, vLLM, or other OpenAI-compatible services. Choose models per operation and share request limits through [model routing](docs/reference/configuration.md).
+- **Flexible models** — use DeepSeek, OpenAI, OpenRouter, OrcaRouter, Atlas Cloud, Google Gemini, Ollama, vLLM, or other OpenAI-compatible services. Choose models per operation and share request limits through [model routing](docs/reference/configuration.md).
 
 ---
 

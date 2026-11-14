@@ -36,7 +36,7 @@
 - **术语一致** — 翻译中提取人名、术语和固定表达，发现译法冲突后提示裁决，并将结果用于后续批次。
 - **翻译与审校** — 可选润色和取证式全书审校，结合带版本记录的段落编辑完成校阅。
 - **断点续跑** — 自动保存已完成批次和章节进度，重新打开项目即可从检查点继续。
-- **灵活选模型** — 支持 DeepSeek、OpenAI、OpenRouter、OrcaRouter、Google Gemini、Ollama、vLLM 及其他 OpenAI 兼容服务，可通过[模型路由](reference/configuration.md)按操作选择模型、共享请求限额。
+- **灵活选模型** — 支持 DeepSeek、OpenAI、OpenRouter、OrcaRouter、Atlas Cloud、Google Gemini、Ollama、vLLM 及其他 OpenAI 兼容服务，可通过[模型路由](reference/configuration.md)按操作选择模型、共享请求限额。
 
 ---
 
