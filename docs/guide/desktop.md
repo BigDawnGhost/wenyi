@@ -137,6 +137,16 @@ Both options apply only to `%LOCALAPPDATA%\Wenyi\Desktop`; custom data roots, ex
 
 If a previous instance is still closing, wait for it to finish rather than trying to bypass its lock.
 
+## Status notifications (Windows)
+
+Windows builds show a system notification when a task fails, times out, or the local engine stops unexpectedly. Translation preparation reaching `prepared` and a book reaching `done` also produce a completion notification. Notifications are enabled by default; this version has no notification settings section.
+
+- A notification shows the project's display name and a short, localized reason. It never contains error text, file paths, chapter text, or credentials. The project name can therefore appear in the system notification center and, if your system allows it, on the lock screen. The full error remains on the project page.
+- Notifications do not depend on whether the window is hidden or focused. Pausing, cancelling, quitting, updating, or a failed startup does not notify. Repeated terminal signals for one run do not stack.
+- Clicking a notification restores the existing window through the same single-instance path as reopening the application; it does not open a second window.
+- If notifications are disabled in Windows or cannot be shown, Wenyi flashes the taskbar button when the main window exists. Tasks are never delayed or changed, and tray state is not modified.
+- Linux and macOS builds do not show status notifications yet.
+
 ## Diagnostics and feedback
 
 For a Desktop problem:

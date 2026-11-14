@@ -26,7 +26,7 @@ from wenyi_backend.context import BackendContext
 from wenyi_backend.live_statistics import read_live_statistics
 from wenyi_core.storage.locks import FileLockHandle, StorageBusyError
 
-from . import paths
+from . import notices, paths
 from .diagnostics import Reporter, emit, failure_attributes, scope
 from .local_backend import LocalBackend
 
@@ -286,13 +286,90 @@ class LocalRuntime:
                 emit("task_cancelled", kind=kind)
                 raise
             except Exception as error:
-                emit("task_failed", kind=kind, **failure_attributes(error))
+                attributes = failure_attributes(error)
+                emit("task_failed", kind=kind, **attributes)
+                # The shared runner has already written the terminal job status
+                # before it lets the exception reach this point.
+                job = await asyncio.to_thread(self._durable_job, run_id)
+                if job is not None and job["status"] == "error":
+                    await self._task_notice(
+                        "export_failed" if name == "run_export" else "task_failed",
+                        name,
+                        values,
+                        run_id,
+                        attributes.get("category"),
+                    )
                 raise
             else:
                 # Return can mean completed or paused; the durable job remains authoritative.
                 emit(
                     "task_finished", kind=kind, duration_ms=int((time.monotonic() - started) * 1000)
                 )
+                await self._completed_notice(name, values, run_id)
+
+    def _durable_job(self, run_id: str) -> dict | None:
+        try:
+            return self.backend.get_job_by_arq_id(run_id)
+        except Exception:
+            log.debug("Could not read a durable job for a status notice", exc_info=True)
+            return None
+
+    async def _completed_notice(self, name: str, values: dict, run_id: str) -> None:
+        """Announce only a persisted success, never a pause that returned normally."""
+        job = await asyncio.to_thread(self._durable_job, run_id)
+        if job is None or job["status"] != "done":
+            return
+        project = await asyncio.to_thread(self._catalog_project, values)
+        if project is None:
+            return
+        status = project.get("status")
+        if name == "run_prepare" and status == "prepared":
+            self._emit_notice(
+                notices.task_notice(
+                    "prepare_completed", project=project, run_id=run_id, task="prepare"
+                )
+            )
+        elif name in {"run_translation", "run_chapter_translation"} and status == "done":
+            self._emit_notice(
+                notices.task_notice(
+                    "project_completed",
+                    project=project,
+                    run_id=run_id,
+                    task=name.removeprefix("run_"),
+                )
+            )
+
+    async def _task_notice(
+        self, kind: str, name: str, values: dict, run_id: str, reason: str | None
+    ) -> None:
+        project = await asyncio.to_thread(self._catalog_project, values)
+        if project is None:
+            return
+        self._emit_notice(
+            notices.task_notice(
+                kind,
+                project=project,
+                run_id=run_id,
+                task=name.removeprefix("run_"),
+                reason=reason,
+            )
+        )
+
+    def _catalog_project(self, values: dict) -> dict | None:
+        try:
+            return self.backend.catalog_project(str(values.get("project_id", "")))
+        except Exception:
+            log.debug("Could not read a catalog row for a status notice", exc_info=True)
+            return None
+
+    def _emit_notice(self, notice: dict | None) -> None:
+        if notice is None or self.diagnostics is None:
+            return
+        try:
+            self.diagnostics.notice(notice)
+        except Exception:
+            # Notifications are advisory and must never change a task's outcome.
+            log.debug("Could not queue a Desktop status notice", exc_info=True)
 
     async def _consume(self, queue: asyncio.Queue, timeout: float) -> None:
         while True:
@@ -320,7 +397,11 @@ class LocalRuntime:
                     emit("task_timeout", kind=name.removeprefix("run_"), category="timeout")
                 self._cancel(task)
                 await asyncio.gather(task, return_exceptions=True)
-                await asyncio.to_thread(self._interrupt, run_id, "Desktop task timed out.")
+                changed = await asyncio.to_thread(
+                    self._interrupt, run_id, "Desktop task timed out."
+                )
+                if changed:
+                    await self._task_notice("task_timeout", name, values, run_id, "timeout")
             except asyncio.CancelledError:
                 self._cancel(task)
                 await asyncio.gather(task, return_exceptions=True)
@@ -337,10 +418,11 @@ class LocalRuntime:
                 self._cancelling.discard(finished)
             self._submitted.discard(run_id)
 
-    def _interrupt(self, run_id: str, reason: str) -> None:
+    def _interrupt(self, run_id: str, reason: str) -> bool:
+        """Stop one durable job; True only when this call changed its status."""
         job = self.backend.get_job_by_arq_id(run_id)
         if job is None or job["status"] not in {"queued", "running"}:
-            return
+            return False
         pid = job["project_id"]
         storage = self.backend.storage_for(pid)
         is_export = job["kind"] == "export"
@@ -358,7 +440,7 @@ class LocalRuntime:
                     expected_status={"queued", "running"},
                 )
                 if not changed:
-                    return
+                    return False
                 if is_export:
                     self.backend.set_export_status(
                         job["params"]["export_id"], "error", error=reason
@@ -370,9 +452,10 @@ class LocalRuntime:
                     )
                     if latest and latest["id"] == job["id"]:
                         self.backend.set_project_status(pid, "paused", error=reason)
+                return True
         except BlockingIOError:
             # A live writer must never be declared dead just because its work is slow.
-            return
+            return False
         finally:
             storage.close()
 
