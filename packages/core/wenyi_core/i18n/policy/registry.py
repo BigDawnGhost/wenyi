@@ -53,16 +53,6 @@ OPERATIONS = MappingProxyType(
                 writes=("target_font",),
             ),
             OperationSpec(
-                "markup.japanese_ruby",
-                "export.source_markup",
-                roles=("source", "pair"),
-                languages=("ja",),
-                paths=("book",),
-                formats=("epub", "html"),
-                backends=("native",),
-                writes=("preserve_source_ruby",),
-            ),
-            OperationSpec(
                 "export.language_metadata",
                 "export.metadata",
                 roles=("target", "pair"),

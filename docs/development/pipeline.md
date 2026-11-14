@@ -86,6 +86,46 @@ retranslation. A fully checkpointed batch skips both. Chapter completion follows
 its required batch and chapter-level work. Keep interruption tests at the boundaries
 between target persistence, alignment and glossary checkpointing.
 
+`wenyi_core.alignment` owns the format-independent text-location contract, not DOM,
+storage or provider behavior. `AlignmentUnit` requests points/ranges in immutable
+source/target text; `TextAligner` returns digest-bound `aligned` or `unresolved`
+placements. Offsets count Unicode characters. Unresolved placements have no offsets.
+A point normally follows its translated referent; supplying an `object_reference`
+instead requests the insertion boundary of an omitted immutable object. Format
+adapters supply that reference and decide rendering policy: markup notes can become
+paragraph-end fallbacks, protected objects become pending, and DOCX retains its style
+fallback policy. The model agent does not inspect format-specific relation tags.
+
+Protected-object transport lives in `alignment.objects`. Each `ObjectAnchor` supplies
+an ID, marker and original source boundary; it needs no EPUB metadata. Marker IDs use
+ASCII letters, digits and `_ . : -`. Stored source stays unchanged; markers are added
+only to model inputs. Once all logical-paragraph slices are complete, validate the
+whole response before consuming tokens, including tokens crossing slice boundaries.
+Unique exact copies establish offsets and `target_order`; coincident objects follow
+this target order, not DOM order. Unordered legacy placements retain stable caller
+order without invalidating paid caches. Literal source tokens are never consumed.
+Missing, duplicated or changed complete tokens leave their objects for semantic
+alignment. An unclosed, nested or otherwise malformed token preserves the **entire**
+logical response unchanged, marks its objects pending and skips model alignment:
+an immutable-target locator cannot repair damaged prose. Resume does not repeat
+unusable paid calls; the response must be corrected before it can be aligned.
+Pronunciation-hint cleanup must not remove object markers.
+
+EPUB adapts its `epub_annotations` items and existing annotation-context registry to
+these contracts. Save cleaned slices and digest-bound placements together; damaged
+responses remain verbatim. Pending objects block export rather than receiving note-link
+fallbacks. Translation resume reparses missing EPUB object references under the book
+lock, validates original logical sources before writing, and commits its metadata
+version last, preserving targets, paragraph identities and completion checkpoints.
+
+Template-backed bilingual export snapshots all source subtrees before any translated
+text or attributes are backfilled. Source copies do not use target placements or
+rebuild content from model-facing `Segment.source`; they preserve the original DOM.
+Remove internal transport attributes and allocate collision-free source IDs, then
+rewrite local/cross-resource fragment references, IDREF attributes and local
+`url(#id)` references to those copies. Presentation may adapt the outer wrapper,
+but must not filter inline content by tag or language.
+
 Recent context is derived from formal targets in book order, not an independent
 persisted rolling-context string. Stop at pending text; skip intentionally blank
 completed targets. Lookahead is a read-only source neighbor, excluded from numbered
@@ -292,7 +332,7 @@ digest/style caches; an interrupted rebuild must not prematurely commit the new
 checkpoint. Completed targets and glossary notes remain intact.
 
 Export identity is separate and includes actual format/backend and the consistent
-source/target snapshot. Punctuation, font and ruby changes require re-export rather
+source/target snapshot. Punctuation, font and source-presentation changes require re-export rather
 than retranslation. Normalize complete logical paragraphs on an export-only copy,
 remap annotation/style offsets once, and validate the complete view before opening
 the output. Preserve pending, intentionally empty, and source-fallback identities.

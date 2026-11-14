@@ -28,7 +28,6 @@ Point = Literal[
     "evidence.prepare",
     "candidate.validate",
     "export.text",
-    "export.source_markup",
     "export.style",
     "export.metadata",
 ]
@@ -139,7 +138,6 @@ class ExportOptions:
     language_tag: str
     about_locale: str = "en"
     target_font: str | None = None
-    preserve_source_ruby: bool = False
 
 
 @dataclass(frozen=True)

@@ -26,7 +26,9 @@ class Polisher(Agent):
         if not targets:
             return []
         n = len(targets)
-        system = self.render("polisher_system", src=self.src, tgt=self.tgt, n=n)
+        system = self.render(
+            "polisher_system", src=self.src, tgt=self.tgt, n=n
+        ) + prompts.protected_object_guidance(targets)
         user = self.render(
             "polisher_user",
             src=self.src,
@@ -82,7 +84,7 @@ class Polisher(Agent):
             tgt=self.tgt,
             n=n,
             next_source=prompts.render_source_reference(next_source),
-        )
+        ) + prompts.protected_object_guidance([message["content"] for message in turn])
         messages: Messages = [
             *turn,
             {"role": "user", "content": continue_user},

@@ -73,6 +73,10 @@ def plan_digests(case: str) -> dict[str, str]:
         document = config.language_policy(phase).to_dict()
         # The pre-selector snapshot had no genre field; compare all existing fields unchanged.
         assert document["context"].pop("genre") == "literary"
+        # Only export serialization lost this field. Restore its historical inert value
+        # for comparison so prompt content and both paid-phase fingerprints stay pinned.
+        assert "preserve_source_ruby" not in document["export"]
+        document["export"]["preserve_source_ruby"] = False
         digests[phase] = content_hash(document)
     return digests
 
@@ -91,7 +95,14 @@ def test_composed_templates_match_pre_split_bytes():
 
 @pytest.mark.parametrize("language", supported_languages())
 def test_composed_language_profiles_match_pre_split_values(language):
-    assert content_hash(profile(language)) == baseline()["profiles"][language]
+    values = profile(language)
+    if language == "ja":
+        # Source preservation is now language-independent. Project the retired export
+        # binding into the historical snapshot without weakening prompt-value coverage.
+        assert values["policy"] == values["_policy_origins"] == {}
+        values["policy"] = {"source": {"markup.japanese_ruby": {"mode": "auto"}}}
+        values["_policy_origins"] = {"source": {"markup.japanese_ruby": "ja"}}
+    assert content_hash(values) == baseline()["profiles"][language]
 
 
 @pytest.mark.parametrize("target", supported_languages())

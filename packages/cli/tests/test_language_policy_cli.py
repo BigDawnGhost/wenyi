@@ -29,7 +29,7 @@ def test_builtin_policy_diagnostics_need_no_credentials(tmp_path):
     assert config.pipeline.polish is False
     assert preview["revision"]["fingerprint"] == config.language_policy_revision()
     assert preview["export"]["export"]["language_tag"] == "zh-Hant"
-    assert preview["export"]["export"]["preserve_source_ruby"] is True
+    assert "preserve_source_ruby" not in preview["export"]["export"]
     assert config.language_document() == {"source": "ja", "target": "zh-Hant"}
 
 

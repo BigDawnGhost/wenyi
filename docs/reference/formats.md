@@ -51,6 +51,11 @@ wider page; see [BabelDOC](#babeldoc).
   Paragraph-paired formats place that version first; PDF places it on the left.
 - EPUB/HTML source text is subdued by default.
   `output.bilingual_preserve_source_style: true` inherits normal book styling.
+  For template-backed input, source blocks retain their complete original content
+  and inline structure, including formulas, images, emphasis, code, ruby and links,
+  regardless of source language or this styling option. Source-copy IDs and their
+  references are remapped to avoid collisions with the translation; image copies
+  reference the same asset. Paragraph wrappers may be adapted for bilingual layout.
 - DOCX source text defaults to normal body styling, without forced gray text,
   highlighting or reduced font size. The same preservation option restores recorded
   source character styles, including mixed spans in paragraphs and tables.
@@ -65,8 +70,8 @@ platform interfaces rather than the CLI's source-adjacent directory.
 
 EPUB-to-EPUB export attempts to backfill the original XHTML templates, retaining
 styles, images, table of contents, anchors and internal links. It merges split
-continuations into their original logical paragraphs. Original source copies in
-bilingual output retain their own markup without duplicating anchor IDs.
+continuations into their original logical paragraphs. Source preservation follows
+the [bilingual-output rules](#naming-and-bilingual-output).
 
 High-confidence footnote/endnote references supply their source note bodies as
 translation context. Ordinary navigation links, backlinks and external links are
@@ -79,6 +84,23 @@ notes may need model requests. Unusable/conflicting placements degrade to clicka
 end markers instead of dropping the translation or link. Turning alignment off
 avoids its calls but can lose inline placement. A full translation run can retry
 fallback annotations; export alone does not.
+
+Inline MathML and other objects embedded within prose use protected markers such as
+`〘object:ID〙`. Their original content is supplied through the same read-only
+annotation-reference context as notes. Unchanged, unique markers locate objects
+without an extra alignment request, preserving their order in the translated text
+even when adjacent. Missing, duplicated or changed but complete markers fall
+back to annotation alignment. If that fails, the object remains pending:
+EPUB/HTML export stops rather than guessing a position from text lengths or moving
+the object to the paragraph end. Resume translation with
+`pipeline.annotation_alignment` enabled to retry pending objects without
+retranslating completed text. Malformed markers, such as a missing closing delimiter,
+are different: the entire paragraph response is preserved unchanged and export is
+blocked. Correct the damaged response before resuming; alignment cannot rewrite it,
+and resume alone does not repeatedly call the model. Export itself never calls the model. Old EPUB
+projects acquire the references on translation resume, preserving saved translations.
+Standalone formula blocks and text-free media at paragraph boundaries retain their
+original structural positions.
 
 Navigation follows saved chapter boundaries. A TOC fragment missing from a uniquely
 targeted resource can still establish a boundary at that resource's start.

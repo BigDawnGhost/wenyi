@@ -10,11 +10,11 @@ RUBY_MARK_LEFT = "〘"
 RUBY_MARK_RIGHT = "〙"
 
 
-_RUBY_MARK_RE = re.compile(r"〘[^〙]*〙")
+_RUBY_MARK_RE = re.compile(r"〘(?!object:)[^〙]*〙")
 
 
 def strip_ruby_markers(text: str) -> str:
-    """Strip pronunciation hint markers for glossary matching and accidental-copy recovery."""
+    """Strip pronunciation hints, reserving object markers for validated object restoration."""
     if not text or RUBY_MARK_LEFT not in text:
         return text
     return _RUBY_MARK_RE.sub("", text)

@@ -62,7 +62,7 @@ def align(value, handler, *, concurrency=4):
 def test_production_routes_one_annotation_per_request_without_editing_target():
     value = unit()
     result, client = align(value, valid_response)
-    assert not result.used_fallback
+    assert not result.has_unresolved
     assert result.target_digest == target_digest(value.target)
     assert value.target == "阿达见到了博。"
     assert [row["id"] for row in result.placements] == ["name", "note"]
@@ -95,7 +95,7 @@ def test_whole_source_range_maps_entire_target_without_model(relation, marker_te
     value = replace(value, source=source, items=(item,))
     result, client = align(value, lambda _: pytest.fail("Whole-source ranges need no model"))
     assert not client.calls
-    assert not result.used_fallback
+    assert not result.has_unresolved
     assert result.target_digest == target_digest(value.target)
     assert result.placements == (
         {
@@ -116,7 +116,7 @@ def test_whole_source_range_does_not_skip_model_alignment_for_other_items():
     )
     result, client = align(value, valid_response)
     assert len(client.calls) == 1
-    assert not result.used_fallback
+    assert not result.has_unresolved
     assert [row["method"] for row in result.placements] == ["whole_source_range", "llm_local_patch"]
     assert result.placements[0]["target_end"] == len(value.target)
     assert result.placements[1]["target_start"] == 6
@@ -129,7 +129,7 @@ def test_punctuation_outside_source_link_keeps_range_on_model_path():
         value, lambda _: {"target_quote": value.target[:-1], "context": value.target}
     )
     assert len(client.calls) == 1
-    assert not result.used_fallback
+    assert not result.has_unresolved
     assert result.placements[0]["method"] == "llm_source_focus"
     assert result.placements[0]["target_end"] == len(value.target) - 1
 
@@ -180,16 +180,16 @@ def test_whole_source_link_rejoins_continuations_and_exports_without_model(
 
 
 @pytest.mark.parametrize("failed_mode", ["point", "range"])
-def test_invalid_response_only_falls_back_that_annotation_without_repair_calls(failed_mode):
+def test_invalid_response_only_leaves_that_annotation_unresolved_without_repair_calls(failed_mode):
     def handler(payload):
         mode = "range" if "source_with_focus" in payload else "point"
         return {} if mode == failed_mode else valid_response(payload)
 
     result, client = align(unit(), handler)
-    assert result.used_fallback
+    assert result.has_unresolved
     assert len(client.calls) == 2
     assert [row["status"] for row in result.placements] == (
-        ["fallback", "aligned"] if failed_mode == "range" else ["aligned", "fallback"]
+        ["unresolved", "aligned"] if failed_mode == "range" else ["aligned", "unresolved"]
     )
 
 
@@ -207,7 +207,7 @@ def test_corrupt_source_metadata_does_not_crash_or_poison_the_other_item(bad_ite
     value = unit()
     value = replace(value, items=(value.items[0], {**value.items[1], **bad_item}))
     result, client = align(value, valid_response)
-    assert result.used_fallback
+    assert result.has_unresolved
     assert result.placements[0]["status"] == "aligned"
     assert len(client.calls) == 1
 
@@ -217,14 +217,14 @@ def test_empty_reversed_or_invalid_source_range_is_not_sent_to_model(end):
     value = unit()
     value = replace(value, items=({**value.items[0], "source_end": end},))
     result, client = align(value, lambda _: pytest.fail("Invalid range must be rejected locally"))
-    assert result.used_fallback
+    assert result.has_unresolved
     assert not client.calls
 
 
 def test_focus_wrapper_collision_falls_back_without_guessing_a_span():
     value = replace(unit(), source="<focus>Ada</focus> met Bo.", items=unit().items[:1])
     result, client = align(value, lambda _: pytest.fail("Ambiguous wrapper must not be sent"))
-    assert result.used_fallback
+    assert result.has_unresolved
     assert not client.calls
 
 
@@ -233,14 +233,14 @@ def test_empty_targets_and_unannotated_units_do_not_call_model():
         result, client = align(value, lambda _: pytest.fail("No model call is needed"))
         assert result.target_digest == target_digest(value.target)
         assert not client.calls
-        assert result.used_fallback == bool(value.items)
+        assert result.has_unresolved == bool(value.items)
 
 
 def test_duplicate_ids_are_rejected_before_requests():
     value = unit()
     value = replace(value, items=(value.items[0], {**value.items[1], "id": "name"}))
     result, client = align(value, lambda _: pytest.fail("Ambiguous identity must not be sent"))
-    assert result.used_fallback
+    assert result.has_unresolved
     assert not client.calls
 
 
@@ -272,14 +272,14 @@ def test_concurrency_cap_applies_across_all_annotations_not_separately_per_route
     result, client = align(replace(value, items=items), handler, concurrency=2)
     assert maximum == 2
     assert len(client.calls) == 6
-    assert not result.used_fallback
+    assert not result.has_unresolved
     assert [row["id"] for row in result.placements] == [item["id"] for item in items]
 
 
 def test_repeated_range_quote_is_located_by_unique_context():
     value = replace(unit(), target="阿达离开了。阿达见到了博。", items=unit().items[:1])
     result, _ = align(value, lambda _: {"target_quote": "阿达", "context": "阿达见到了博"})
-    assert not result.used_fallback
+    assert not result.has_unresolved
     assert result.placements[0]["target_start"] == len("阿达离开了。")
 
 
@@ -296,7 +296,7 @@ def test_repeated_range_quote_is_located_by_unique_context():
 def test_missing_or_ambiguous_range_context_is_not_guessed(response):
     value = replace(unit(), target="阿达阿达", items=unit().items[:1])
     result, client = align(value, lambda _: response)
-    assert result.used_fallback
+    assert result.has_unresolved
     assert len(client.calls) == 1
 
 
@@ -311,7 +311,7 @@ def test_short_patch_in_long_target_uses_exact_codepoint_offsets():
             "replacement": f"cafe\u0301{payload['markers'][0]}。",
         },
     )
-    assert not result.used_fallback
+    assert not result.has_unresolved
     assert result.placements[0]["target_start"] == len(target) - 1
 
 
@@ -329,7 +329,7 @@ def test_literal_marker_tokens_are_preserved_and_request_tokens_do_not_collide()
         }
 
     result, _ = align(value, handler)
-    assert not result.used_fallback
+    assert not result.has_unresolved
     assert result.placements[0]["target_start"] == len(value.target)
 
 
@@ -352,11 +352,13 @@ def test_literal_marker_tokens_are_preserved_and_request_tokens_do_not_collide()
         {"id": "note", "abstain": True},
     ],
 )
-def test_unsafe_local_patches_fall_back_without_changing_target_or_retrying(response):
+def test_unsafe_local_patches_are_unresolved_without_changing_target_or_retrying(response):
     value = replace(unit(target="甲甲甲乙"), items=unit().items[1:])
     result, client = align(value, lambda _: response)
-    assert result.used_fallback
-    assert result.placements[0]["status"] == "fallback"
+    assert result.has_unresolved
+    assert result.placements[0]["status"] == "unresolved"
+    assert result.placements[0]["target_start"] is None
+    assert result.placements[0]["target_end"] is None
     assert value.target == "甲甲甲乙"
     assert result.target_digest == target_digest(value.target)
     assert len(client.calls) == 1
@@ -372,7 +374,7 @@ def test_unicode_normalization_is_rejected_in_both_protocols(mode):
         else {"id": "note", "search": "café。", "replacement": "café⟪wenyi_alignment_note⟫。"}
     )
     result, client = align(value, lambda _: response)
-    assert result.used_fallback
+    assert result.has_unresolved
     assert len(client.calls) == 1
     assert value.target == "cafe\u0301。"
 
@@ -385,11 +387,11 @@ def test_units_are_sequential_and_duplicate_unit_identity_makes_no_requests():
     second = replace(unit(), unit_id="second", items=unit().items[1:])
     results = aligner.align_units([first, second])
     assert [result.unit_id for result in results] == ["paragraph", "second"]
-    assert all(not result.used_fallback for result in results)
+    assert all(not result.has_unresolved for result in results)
     assert "source_with_focus" in request(client.calls[0]["messages"])
     assert "source_with_markers" in request(client.calls[1]["messages"])
     before = len(client.calls)
-    assert all(result.used_fallback for result in aligner.align_units([first, first]))
+    assert all(result.has_unresolved for result in aligner.align_units([first, first]))
     assert len(client.calls) == before
 
 

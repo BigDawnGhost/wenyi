@@ -15,6 +15,7 @@ from ...events import ProgressFn
 from ...ingest.epub_reader import peek_epub_title
 from ...ingest.fb2_reader import peek_fb2_title
 from ...ingest.segmenter import load_document
+from ...markup.objects import OBJECT_SCHEMA_VERSION
 from ...models.document import Document
 from ...storage.protocol import ArtifactStorage, Storage
 from ...storage.run_store import source_sha256, translation_run_dir
@@ -46,6 +47,8 @@ def load_parsed_document(
     ):
         return None
     document = Document.model_validate(cached["document"])
+    if document.fmt == "epub" and document.meta.get("epub_objects") != OBJECT_SCHEMA_VERSION:
+        return None
     document.source_path = input_path
     return document
 

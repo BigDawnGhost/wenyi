@@ -18,7 +18,6 @@ def export(src="ja", tgt="zh", fmt="epub", **kwargs):
 
 def test_profiles_keep_roles_and_scripts_separate():
     plan = export("ja-JP", "zh-Hans")
-    assert plan.enabled("markup.japanese_ruby")
     assert plan.enabled("punctuation.zh_cn")
     assert plan.export.language_tag == "zh-Hans"
     assert plan.export.about_locale == "zh"
@@ -26,7 +25,6 @@ def test_profiles_keep_roles_and_scripts_separate():
     assert not traditional.enabled("punctuation.zh_cn")
     assert traditional.export.language_tag == "zh-Hant"
     assert traditional.export.about_locale == "en"
-    assert not export("en", "ja").enabled("markup.japanese_ruby")
     assert export("vi", "en", "docx").export.target_font is None
     assert export("en", "zh", "docx").export.target_font == "宋体"
 
@@ -57,7 +55,6 @@ def test_unknown_operations_and_parameters_are_rejected():
 
 def test_bridge_does_not_select_native_layout_operations():
     bridge = export("ja", "zh", "pdf", backend="babeldoc")
-    assert not bridge.enabled("markup.japanese_ruby")
     assert not bridge.enabled("docx.chinese_font")
 
 

@@ -16,7 +16,6 @@ from .writer_common import _ch_title, _manifest_target_lang, output_backend
 WRITER_OPERATIONS = MappingProxyType(
     {
         "export.style": ("docx.chinese_font",),
-        "export.source_markup": ("markup.japanese_ruby",),
         "export.metadata": ("export.language_metadata",),
     }
 )

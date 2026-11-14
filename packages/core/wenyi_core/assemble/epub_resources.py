@@ -11,6 +11,7 @@ from wenyi_core.assemble.epub_navigation import _is_nav, _rewrite_toc
 from wenyi_core.assemble.epub_presentation import EpubPresentation, _rewrite_html_document
 from wenyi_core.assemble.html_bilingual import (
     _build_source_anchor_ids,
+    _build_source_fragment_ids,
     _index_soup_ids,
 )
 from wenyi_core.assemble.html_renderer import (
@@ -31,7 +32,6 @@ class _RenderOptions:
     order: str
     preserve_source_style: bool
     source_lang: str
-    preserve_source_ruby: bool | None
     toc_paths: frozenset[str]
     toc_entries: list[dict[str, object]]
     presentation: EpubPresentation | None
@@ -156,13 +156,18 @@ def _prepare_resource(task: _PrepareTask) -> _PreparedResource:
             source_id = source_ids.get(segment_anchor) if isinstance(segment_anchor, str) else None
             if fragment and source_id:
                 source_links[(task.href, fragment)] = source_id
-        for link in soup.find_all("a", href=True):
-            raw_href = link.get("href")
-            if not isinstance(raw_href, str):
-                continue
-            resolved = resolve_epub_href(task.href, raw_href)
-            if not resolved.external and resolved.fragment:
-                source_targets.add((resolved.resource_href, resolved.fragment))
+        for fragments in _build_source_fragment_ids(source_ids, tn_id_index, occupied_ids).values():
+            source_links.update(
+                {(task.href, original): cloned for original, cloned in fragments.items()}
+            )
+        for node in soup.find_all(True):
+            for attr in ("href", "xlink:href"):
+                raw_href = node.get(attr)
+                if not isinstance(raw_href, str):
+                    continue
+                resolved = resolve_epub_href(task.href, raw_href)
+                if not resolved.external and resolved.fragment:
+                    source_targets.add((resolved.resource_href, resolved.fragment))
     return _PreparedResource(
         task.href, task.segments, template, metadata, source_ids, source_links, source_targets
     )
@@ -178,7 +183,6 @@ def _render_resource(task: _RenderTask) -> tuple[str, str]:
         order=options.order,
         preserve_source_style=options.preserve_source_style,
         source_lang=options.source_lang,
-        preserve_source_ruby=options.preserve_source_ruby,
         resource_href=resource.href,
         source_ids_by_anchor=resource.source_ids,
         source_link_targets=task.source_link_targets,
@@ -214,7 +218,6 @@ def _render_epub_resources(
     order: str,
     preserve_source_style: bool,
     source_lang: str,
-    preserve_source_ruby: bool | None = None,
     presentation: EpubPresentation | None = None,
 ) -> dict[str, str]:
     """Rebuild stable templates from the original EPUB and render each physical XHTML once.
@@ -257,7 +260,6 @@ def _render_epub_resources(
         order,
         preserve_source_style,
         source_lang,
-        preserve_source_ruby,
         frozenset(toc_paths),
         toc_entries,
         presentation,

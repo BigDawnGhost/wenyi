@@ -748,6 +748,17 @@ tunnel<sup class="key" id="key-1">〔＊1〕</sup></a> opens.</p></body></html>"
                 ],
             }
         )
+        segment.meta["epub_annotations"]["placements"].extend(
+            {
+                "id": obj["id"],
+                "target_start": start + (2 if obj["object_tag"] == "img" else 0),
+                "target_end": start + (2 if obj["object_tag"] == "img" else 0),
+                "status": "aligned",
+                "method": "copied_object_marker",
+            }
+            for obj in segment.meta["epub_annotations"]["items"]
+            if obj["relation"] == "inline_object"
+        )
 
         rendered = BeautifulSoup(_render_segments_html(template, [segment]), "html.parser")
 
@@ -926,8 +937,11 @@ now.</p></body></html>"""
             source.get_text().replace("\n", " ").split(), ["See", "border", "tunnel〔＊1〕", "now."]
         )
         self.assertEqual(source.get("id"), "tn-source-tn0_0")
-        self.assertIsNone(source_reference.get("id"))
+        self.assertTrue(source_reference.get("id"))
+        self.assertNotEqual(source_reference.get("id"), "ref-1")
         self.assertEqual(target_reference.get("id"), "ref-1")
+        ids = [str(node["id"]) for node in rendered.find_all(id=True)]
+        self.assertEqual(len(ids), len(set(ids)))
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
 
     def test_bilingual_internal_links_stay_with_their_language(self):
@@ -972,7 +986,10 @@ now.</p></body></html>"""
                 self.assertIsNotNone(target_body.find("a", href="#note-1"))
                 self.assertIsNotNone(target_note.find("a", href="#key-1"))
                 self.assertIsNotNone(source_body.find("a", href="#tn-source-tn0_1"))
-                self.assertIsNotNone(source_note.find("a", href="#tn-source-tn0_0"))
+                source_marker = source_body.find("sup")
+                self.assertIsInstance(source_marker, Tag)
+                assert isinstance(source_marker, Tag)
+                self.assertIsNotNone(source_note.find("a", href=f"#{source_marker['id']}"))
                 ids = [str(node["id"]) for node in rendered.find_all(id=True)]
                 self.assertEqual(len(ids), len(set(ids)))
                 for link in rendered.find_all("a", href=True):
@@ -1382,7 +1399,7 @@ Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
             ["First", "Second"],
         )
 
-    def test_bilingual_render_does_not_duplicate_inline_images(self):
+    def test_bilingual_source_retains_inline_images(self):
         html = """<html><body>
 <p><img src="illustration.jpg"/>Texte original.</p>
 </body></html>"""
@@ -1405,11 +1422,12 @@ Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
             "html.parser",
         )
 
-        self.assertEqual(len(rendered.find_all("img")), 1)
+        self.assertEqual(len(rendered.find_all("img")), 2)
         source = rendered.find(class_="tn-source")
         self.assertIsInstance(source, Tag)
         assert isinstance(source, Tag)
-        self.assertIsNone(source.find("img"))
+        self.assertIsNotNone(source.find("img", src="illustration.jpg"))
+        self.assertEqual(source.get_text(), "Texte original.")
 
     def test_bilingual_cross_file_links_only_rewrite_source_fragments(self):
         """Preserve relative cross-XHTML paths and separate source/target footnote cycles."""
@@ -1460,7 +1478,10 @@ Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
 
         self.assertIsNotNone(body_target.find("a", href="../notes/notes.xhtml#note-1"))
         self.assertIsNotNone(notes_target.find("a", href="../text/body.xhtml#key-1"))
-        body_source_id = str(body_source.get("id"))
+        source_marker = body_source.find("sup")
+        self.assertIsInstance(source_marker, Tag)
+        assert isinstance(source_marker, Tag)
+        source_marker_id = str(source_marker["id"])
         notes_source_id = str(notes_source.get("id"))
         self.assertIsNotNone(
             body_source.find(
@@ -1471,7 +1492,7 @@ Isaac Asimov<br/><br/>Tales of the Black Widowers<br/>
         self.assertIsNotNone(
             notes_source.find(
                 "a",
-                href=f"../text/body.xhtml#{body_source_id}",
+                href=f"../text/body.xhtml#{source_marker_id}",
             )
         )
 

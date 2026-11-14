@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 from wenyi_core.markup.anchors import fragment_nodes, resolve_epub_href, scope_segment_anchors
 from wenyi_core.markup.annotations import _note_context_scope
-from wenyi_core.markup.contracts import ANNOTATION_META_KEY
+from wenyi_core.markup.contracts import ANNOTATION_ID_ATTR, ANNOTATION_META_KEY, INLINE_ID_ATTR
+from wenyi_core.markup.objects import OBJECT_RELATION
 from wenyi_core.models.document import Segment
 from wenyi_core.resource_pool import ResourcePool
 
@@ -41,8 +42,32 @@ class _ResolvedContext:
 def _resolve_resource_contexts(task: _ContextTask) -> list[_ResolvedContext]:
     """Parse one target without mutating any referring Segment or annotation."""
     soup = BeautifulSoup(task.template, "html.parser")
+    object_nodes: dict[str, list[Tag]] = {}
+    for node in soup.find_all(True, attrs={ANNOTATION_ID_ATTR: True}):
+        object_nodes.setdefault(str(node[ANNOTATION_ID_ATTR]), []).append(node)
     results: list[_ResolvedContext] = []
     for reference in task.references:
+        if reference.relation == OBJECT_RELATION:
+            nodes = object_nodes.get(reference.fragment, [])
+            if len(nodes) == 1:
+                node = nodes[0]
+                for element in (node, *node.find_all(True)):
+                    for attribute in (ANNOTATION_ID_ATTR, INLINE_ID_ATTR, "data-tn-id"):
+                        element.attrs.pop(attribute, None)
+                results.append(
+                    _ResolvedContext(
+                        reference.ordinal,
+                        False,
+                        {
+                            "target_key": reference.target_key,
+                            "resource_href": task.href,
+                            "fragment": reference.fragment,
+                            "source_blocks": [str(node)],
+                            "segment_anchors": [],
+                        },
+                    )
+                )
+            continue
         nodes = fragment_nodes(soup, reference.fragment)
         if len(nodes) != 1:
             # Duplicate id/name values make reference ownership ambiguous.
@@ -95,6 +120,20 @@ def _build_epub_annotation_contexts(
             raw_items = annotations.get("items")
             for item in raw_items if isinstance(raw_items, list) else []:
                 if not isinstance(item, dict) or not isinstance(item.get("raw_href"), str):
+                    continue
+                if item.get("relation") == OBJECT_RELATION:
+                    href = segment.resource_href or ""
+                    references.setdefault(href, []).append(
+                        _Reference(
+                            len(items),
+                            href,
+                            segment.anchor,
+                            str(item["id"]),
+                            str(item["target_key"]),
+                            OBJECT_RELATION,
+                        )
+                    )
+                    items.append(item)
                     continue
                 resolved = resolve_epub_href(segment.resource_href or "", item["raw_href"])
                 if (
