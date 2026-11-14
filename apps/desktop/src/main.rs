@@ -387,6 +387,15 @@ fn main() {
             let reload_state = startup_state.clone();
             let webview_data = paths::webview(&workspace);
             std::fs::create_dir_all(&webview_data)?;
+            // The center owns policy and the platform sink; the engine and the
+            // tray keep their existing lifecycles. It must be managed before the
+            // engine thread starts: start_backend reads it from managed state.
+            let notifications = notifications::install(
+                app.handle(),
+                app.state::<diagnostics::Diagnostics>().inner().clone(),
+                &notification_workspace,
+            );
+            app.manage(notifications);
             // Overlap Python startup with WebView creation. State retains an
             // early ready/error result for the initialization/page-load scripts;
             // the UI still cannot issue requests before the owned engine is ready.
@@ -419,14 +428,6 @@ fn main() {
                 })
                 .build()?;
             setup_tray.store(background::install(app.handle())?, Ordering::SeqCst);
-            // The center owns policy and the platform sink; the engine and the
-            // tray keep their existing lifecycles.
-            let notifications = notifications::install(
-                app.handle(),
-                app.state::<diagnostics::Diagnostics>().inner().clone(),
-                &notification_workspace,
-            );
-            app.manage(notifications);
             let handle = app.handle().clone();
             updates::check_on_startup(&handle);
             let monitor_handle = handle.clone();
