@@ -23,6 +23,7 @@ from ...storage.protocol import Storage
 from ...storage.run_store import source_sha256, translation_run_dir
 from ..run.language_policies import commit_revision, initialize_policies, translation_revision
 from .book_understanding import BookUnderstandingService
+from .epub_objects import refresh_epub_objects
 from .input_preparation import (
     locate_input_storage,
     parse_document,
@@ -129,6 +130,7 @@ class PreparationService:
         with store.lock():
             if store.exists():
                 self._runtime.ensure_store_source(store, input_path)
+                refresh_epub_objects(store, input_path)
                 store.log_event("run_resumed", input_path=input_path, run_dir=store.run_dir)
                 return store
             if os.path.splitext(input_path)[1].lower() == ".pdf":
@@ -164,6 +166,7 @@ class PreparationService:
         """
         if store.exists():
             self._runtime.ensure_store_source(store, input_path)
+            refresh_epub_objects(store, input_path, document=doc)
             store.log_event("run_resumed", input_path=input_path, run_dir=store.run_dir)
             return store  # Resume existing progress without reset; run() restores languages from the manifest.
 

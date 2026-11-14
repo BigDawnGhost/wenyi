@@ -7,6 +7,7 @@ import hashlib
 from bs4 import BeautifulSoup
 from bs4.element import ProcessingInstruction, Tag
 
+from wenyi_core.alignment import coincident_point_order
 from wenyi_core.markup.contracts import (
     ANNOTATION_ID_ATTR,
     ANNOTATION_META_KEY,
@@ -14,6 +15,7 @@ from wenyi_core.markup.contracts import (
     INLINE_ID_ATTR,
     INLINE_META_KEY,
 )
+from wenyi_core.markup.objects import OBJECT_RELATION
 
 
 def _append_text_with_breaks(soup: BeautifulSoup, element: Tag, text: str) -> None:
@@ -141,6 +143,17 @@ def _annotation_restorations(
                 _fallback_annotation_node(root, mode=str(item["mode"]), marker_text=marker_text)
             )
 
+    def ordered_points(points: list[tuple[int, int, Tag]]) -> list[tuple[int, int, Tag]]:
+        # Validate structure using source identities first. At rendering time replace only
+        # coincident point slots with the order proved by copied target markers.
+        order = coincident_point_order(
+            [placement_by_id.get(items[index]["id"], {}) for _, index, _ in points]
+        )
+        return [
+            (offset, source_order, points[target_index][2])
+            for (offset, source_order, _), target_index in zip(points, order)
+        ]
+
     for order, item in enumerate(items):
         if not isinstance(item, dict):
             continue
@@ -160,7 +173,7 @@ def _annotation_restorations(
         end = placement.get("target_end") if isinstance(placement, dict) else None
         status = placement.get("status") if isinstance(placement, dict) else None
         method = placement.get("method") if isinstance(placement, dict) else None
-        rejected = {"fallback", "failed", "invalid", "missing", "stale"}
+        rejected = {"fallback", "pending", "failed", "invalid", "missing", "stale"}
         usable = (
             digest_matches
             and isinstance(start, int)
@@ -171,6 +184,16 @@ def _annotation_restorations(
             and str(status or "").lower() not in rejected
             and str(method or "").lower() not in rejected
         )
+        if item.get("relation") == OBJECT_RELATION and not usable:
+            if method == "damaged_object_marker":
+                raise ValueError(
+                    f"Protected object {annotation_id} is pending because its marker is damaged; "
+                    "correct the saved paragraph response before resuming translation and exporting"
+                )
+            raise ValueError(
+                f"Protected object {annotation_id} has pending or stale alignment; "
+                "run translation again to repair it before exporting"
+            )
         if not usable:
             source_start = item.get("source_start")
             source_end = item.get("source_end")
@@ -239,7 +262,7 @@ def _annotation_restorations(
                 fallbacks.append(root)
             else:
                 safe_points.append((offset, order, root))
-        return safe_points, ranges, fallbacks
+        return ordered_points(safe_points), ranges, fallbacks
 
     # EPUB note links cannot cross or nest. Keep its existing conservative policy.
     last_end = -1
@@ -257,11 +280,17 @@ def _annotation_restorations(
         last_end = end
     safe_points: list[tuple[int, int, Tag]] = []
     for offset, order, root in points:
-        if any(start < offset < end for start, end, _order, _root, _markers in ranges):
+        is_object = items[order].get("relation") == OBJECT_RELATION
+        inside_link = any(start < offset < end for start, end, _order, _root, _markers in ranges)
+        if inside_link and is_object and root.name == "a":
+            raise ValueError(
+                f"Protected object {items[order]['id']} has conflicting link alignment"
+            )
+        if inside_link and not is_object:
             fallbacks.append(root)
         else:
             safe_points.append((offset, order, root))
-    return safe_points, ranges, fallbacks
+    return ordered_points(safe_points), ranges, fallbacks
 
 
 def _render_text_with_nodes(
@@ -380,12 +409,21 @@ def _replace_block_content(
         source_length = 0
 
     restored: list[tuple[int, int, Tag]] = []
+    raw_annotations = meta.get(ANNOTATION_META_KEY)
+    annotations = raw_annotations if isinstance(raw_annotations, dict) else {}
+    object_ids = {
+        item.get("id")
+        for item in annotations.get("items", [])
+        if isinstance(item, dict) and item.get("relation") == OBJECT_RELATION
+    }
     for order, record in enumerate(nodes):
         if not isinstance(record, dict):
             continue
         inline_id = record.get("id")
         offset = record.get("offset")
         if not isinstance(inline_id, str) or not isinstance(offset, int):
+            continue
+        if inline_id in object_ids:
             continue
         node = el.find(True, attrs={INLINE_ID_ATTR: inline_id})
         if not isinstance(node, Tag):
@@ -397,7 +435,7 @@ def _replace_block_content(
         elif source_length <= 0 or offset >= source_length:
             target_offset = len(text)
         else:
-            target_offset = round(offset * len(text) / source_length)
+            raise ValueError(f"Protected object {inline_id} has pending alignment")
         restored.append((target_offset, len(nodes) + order, node))
 
     # Extract ordinary inline nodes first: range links may contain images, which become inaccessible

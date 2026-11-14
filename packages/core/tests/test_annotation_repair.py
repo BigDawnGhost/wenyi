@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 
 import pytest
-from wenyi_core.agents.annotation_aligner import AnnotationUnit, fallback_alignment
+from wenyi_core.alignment import AlignmentUnit, unresolved_alignment
 from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.retrying import ProviderRequestError
+from wenyi_core.markup.objects import annotation_placements
 from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
@@ -41,8 +42,9 @@ def annotated_chapter(index=0):
         {"id": "name", "mode": "range", "source_start": 0, "source_end": 3},
         {"id": "note", "mode": "point", "source_start": 10, "source_end": 10},
     )
-    result = fallback_alignment(AnnotationUnit("paragraph", "Ada met Bo.", "阿达见到了博。", items))
-    placements = [dict(item) for item in result.placements]
+    unit = AlignmentUnit("paragraph", "Ada met Bo.", "阿达见到了博。", items)
+    result = unresolved_alignment(unit)
+    placements = annotation_placements(result, items, unit.target)
     placements[0].update(status="aligned", method="llm_markers", target_start=0, target_end=2)
     return Chapter(
         index=index,

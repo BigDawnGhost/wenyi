@@ -315,7 +315,6 @@ def resolve_policy(
         metadata["language_tag"],
         metadata["about_locale"],
         font,
-        "markup.japanese_ruby" in enabled_ids,
     )
     terminology = "terminology.context" in enabled_ids and context.path == "book"
     templates = _templates(context, terminology=terminology)

@@ -8,12 +8,5 @@
   "term_guidance": "Copy reading only from kana explicitly given for the term in the Japanese source, such as furigana in 〘…〙 or an explicit reading explanation. Keep it in source-language kana, regardless of the target language. Do not infer a reading from kanji, a conventional name pronunciation or the translation. Leave reading empty when the source provides no reading. ",
   "reading_field": "\"reading\":\"Kana explicitly given in the Japanese source, or empty\",",
   "digest_length": "200 characters",
-  "synopsis_length": "500 characters",
-  "policy": {
-    "source": {
-      "markup.japanese_ruby": {
-        "mode": "auto"
-      }
-    }
-  }
+  "synopsis_length": "500 characters"
 }

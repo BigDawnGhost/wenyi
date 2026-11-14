@@ -25,7 +25,6 @@ from .html_resources import (
     _template_resource_source,
 )
 from .html_source import _render_html_source
-from .policy import export_options
 from .writer_common import _bilingual_source, _epub_lang, _manifest_target_lang, _merged_paragraphs
 
 
@@ -79,7 +78,6 @@ def _assemble_html(
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
-            preserve_source_ruby=export_options(store, "html").preserve_source_ruby,
         )
     elif m.get("fmt") == "epub" and _epub_resource_specs(meta):
         chapters = [store.load_chapter(c["index"]) for c in m["chapters"]]
@@ -101,7 +99,6 @@ def _assemble_html(
                 source_lang=(
                     m.get("source_lang", "") if isinstance(m.get("source_lang"), str) else ""
                 ),
-                preserve_source_ruby=export_options(store, "html").preserve_source_ruby,
             )
             for _resource_index, href in _epub_resource_specs(meta):
                 resource_html = rendered.get(href)
@@ -138,7 +135,6 @@ def _assemble_html(
                     bilingual=bilingual,
                     order=order,
                     preserve_source_style=preserve_source_style,
-                    preserve_source_ruby=export_options(store, "html").preserve_source_ruby,
                 )
             )
             continue

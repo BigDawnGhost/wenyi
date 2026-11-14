@@ -61,7 +61,6 @@ def _render_html_source(
     bilingual: bool,
     order: str,
     preserve_source_style: bool,
-    preserve_source_ruby: bool | None,
 ) -> str:
     """Regenerate deterministic anchors, validate saved sources, then apply translations.
 
@@ -129,5 +128,4 @@ def _render_html_source(
         order=order,
         preserve_source_style=preserve_source_style,
         source_lang=manifest.get("source_lang", ""),
-        preserve_source_ruby=preserve_source_ruby,
     )

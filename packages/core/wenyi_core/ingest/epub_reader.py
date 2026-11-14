@@ -16,6 +16,7 @@ from wenyi_core.ingest.epub_package import (
 from wenyi_core.ingest.epub_toc import parse_toc_entries
 from wenyi_core.markup.anchors import fragment_anchor_map
 from wenyi_core.markup.contracts import INLINE_META_KEY
+from wenyi_core.markup.objects import OBJECT_SCHEMA_VERSION
 from wenyi_core.markup.segments import annotate_epub_resource
 from wenyi_core.models.document import Document
 from wenyi_core.resource_pool import ResourcePool
@@ -111,6 +112,7 @@ def read_epub(path: str, source_lang: str, target_lang: str) -> Document:
         chapters=chapters,
         meta={
             "epub_schema": 5,
+            "epub_objects": OBJECT_SCHEMA_VERSION,
             "opf_path": opf_path,
             "toc_paths": toc_paths,
             "toc_entries": toc_entries,

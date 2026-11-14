@@ -44,6 +44,7 @@ from .orchestrator import Orchestrator  # noqa: F401
 # prepare: source parsing, language detection, prescan and book synthesis
 from .prepare import (
     book_understanding,  # noqa: F401
+    epub_objects,  # noqa: F401
     input_preparation,  # noqa: F401
     preparation,  # noqa: F401
 )
@@ -83,6 +84,7 @@ __all__ = [
     "language_policies",
     "preparation",
     "input_preparation",
+    "epub_objects",
     "book_understanding",
     "translation",
     "translation_batch",

@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from ..alignment.objects import marked_sources
 from ..errors import WenyiError
 from ..llm.base import Messages
 from ..llm.json_parser import JsonParseError, parse_json_loose
@@ -66,7 +67,7 @@ class PrecisionAgent(Agent):
                     ),
                     "chapter_digest": inputs.chapter_digest,
                     "context": inputs.context,
-                    "sources": inputs.sources,
+                    "sources": marked_sources(list(inputs.sources), annotations),
                     "annotations": json.loads(prompts.render_annotation_contexts(annotations)),
                     "next_source": inputs.next_source,
                     "allow_empty_translations": inputs.allow_empty_translations,
@@ -78,8 +79,14 @@ class PrecisionAgent(Agent):
     def _call(self, inputs: PrecisionInputs, task: str, payload: dict, operation: str) -> list[str]:
         if not any(Translator._needs_translation(source) for source in inputs.sources):
             return list(inputs.sources)
+        object_guidance = prompts.protected_object_guidance(
+            [item.get("marker", "") for group in inputs.annotation_contexts for item in group]
+        )
         messages: Messages = [
-            {"role": "system", "content": self.render("precision_generation_system")},
+            {
+                "role": "system",
+                "content": self.render("precision_generation_system") + object_guidance,
+            },
             {"role": "user", "content": self._packet(inputs)},
             {
                 "role": "user",

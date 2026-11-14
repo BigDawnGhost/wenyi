@@ -10,6 +10,7 @@ from wenyi_core.assemble.html_bilingual import (
     _append_source,
     _bilingual_source_markup,
     _build_source_anchor_ids,
+    _build_source_fragment_ids,
     _index_soup_ids,
 )
 from wenyi_core.assemble.html_inline import _merge_epub_render_meta, _replace_block_content
@@ -115,7 +116,6 @@ def _render_segments_html(
     order: str = "target_first",
     preserve_source_style: bool = False,
     source_lang: str = "",
-    preserve_source_ruby: bool | None = None,
     resource_href: str = "",
     source_ids_by_anchor: dict[str, str] | None = None,
     source_link_targets: dict[tuple[str, str], str] | None = None,
@@ -144,6 +144,7 @@ def _render_segments_html(
             occupied_ids,
         )
     source_ids_by_anchor = source_ids_by_anchor or {}
+    source_fragments = _build_source_fragment_ids(source_ids_by_anchor, tn_id_index, occupied_ids)
     if bilingual and source_link_targets is None:
         # Direct calls support same-XHTML links. Complete EPUB exports supply the book-wide mapping
         # to support links across resources as well.
@@ -156,7 +157,25 @@ def _render_segments_html(
             and isinstance(segment_anchor, str)
             and segment_anchor in source_ids_by_anchor
         }
-    source_link_targets = source_link_targets or {}
+    source_link_targets = dict(source_link_targets or {})
+    source_link_targets.update(
+        {
+            (resource_href, original): cloned
+            for fragments in source_fragments.values()
+            for original, cloned in fragments.items()
+        }
+    )
+    # Snapshot every source before changing any text or translated attribute. Earlier
+    # regions may otherwise mutate content that a later source block must preserve.
+    source_markup_by_anchor = {
+        anchor: _bilingual_source_markup(
+            tn_id_index[anchor],
+            resource_href=resource_href,
+            source_link_targets=source_link_targets,
+            source_fragment_ids=source_fragments[anchor],
+        )
+        for anchor in source_ids_by_anchor
+    }
     for anchor, text in by_anchor.items():
         stored_meta = stored_meta_by_anchor.get(anchor, {})
         fresh_meta = (
@@ -186,17 +205,7 @@ def _render_segments_html(
             if bilingual and kind_by_anchor.get(anchor) != KIND_HEADING and el.name != "option"
             else ""
         )
-        source_markup = (
-            _bilingual_source_markup(
-                el,
-                source_lang,
-                resource_href=resource_href,
-                source_link_targets=source_link_targets,
-                preserve_source_ruby=preserve_source_ruby,
-            )
-            if src
-            else ""
-        )
+        source_snapshot = source_markup_by_anchor.get(anchor) if src else None
         line_wrapper = el.has_attr(LINE_WRAPPER_ATTR)
         if text != src_by_anchor.get(anchor, ""):
             # Temporary HTML runs omit edge whitespace from model input. Preserve it
@@ -222,23 +231,27 @@ def _render_segments_html(
         src_el = soup.new_tag(
             "span" if line_wrapper or html_nested_source else "div" if nested_source else "p"
         )
+        if source_snapshot is not None and source_snapshot.name != "a":
+            src_el.attrs.update(source_snapshot.attrs)
+        if source_lang and not src_el.has_attr("lang"):
+            src_el["lang"] = source_lang
+            if src_el.has_attr("xml:lang"):
+                src_el["xml:lang"] = source_lang
         source_classes = ["tn-source"]
         if preserve_source_style:
-            original_classes = el.get("class")
+            original_classes = src_el.get("class")
             if isinstance(original_classes, list):
                 source_classes = [str(value) for value in original_classes]
                 if "tn-source" not in source_classes:
                     source_classes.append("tn-source")
-            original_style = el.get("style")
-            if isinstance(original_style, str):
-                src_el["style"] = original_style
         else:
+            src_el.attrs.pop("style", None)
             source_classes.append("ibooks-dark-theme-use-custom-text-color")
         src_el["class"] = " ".join(source_classes)
         source_id = source_ids_by_anchor.get(anchor)
         if source_id:
             src_el["id"] = source_id
-        _append_source(soup, src_el, src, source_markup)
+        _append_source(src_el, src, source_snapshot)
         if line_wrapper and order == "source_first":
             el.insert_before(src_el)
             src_el.insert_after(soup.new_tag("br"))
@@ -276,7 +289,6 @@ def _render_chapter_html(
     order: str = "target_first",
     preserve_source_style: bool = False,
     source_lang: str = "",
-    preserve_source_ruby: bool | None = None,
 ) -> str:
     """Backfill a chapter template for HTML/PDF input and generated HTML output."""
     return _render_segments_html(
@@ -286,6 +298,5 @@ def _render_chapter_html(
         order=order,
         preserve_source_style=preserve_source_style,
         source_lang=source_lang,
-        preserve_source_ruby=preserve_source_ruby,
         resource_href=chapter.href or "",
     )

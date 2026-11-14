@@ -138,15 +138,19 @@ def test_default_polisher_preserves_resource_and_invalidates_old_language_rules(
         ("analysis", "395155e77e13b4da88691410724aaa83b5f924b9b8afb6690c196aed969af139"),
         ("translation", "d5b09a1db42684cc475fd55e88d84ec09ad2f0ab2ab79db91bd8c3dc19e303eb"),
         ("review", "6297d2547a9a32893e34291f22051e3d3dfda78fefa80ff3c5b784e938139611"),
-        ("export", "d4de743d62c14ff316fee9bcb27075cae1f7f260a3cf9cf056914ed022d47fe6"),
     ],
 )
-def test_model_phases_reject_older_prompt_baselines_but_export_is_unchanged(phase, fingerprint):
+def test_model_phases_reject_older_prompt_baselines(phase, fingerprint):
     # Older preparation rules changed analysis; the output rule changes translation and Fixer.
-    # Exclude project-page copy from this baseline.
     selected = Config.from_dict({"llm": {"preset": "fake"}, "output": {"about_page": False}})
-    plan = selected.language_policy(phase, format="epub" if phase == "export" else "")
-    assert (plan.fingerprint != fingerprint) == (phase != "export")
+    assert selected.language_policy(phase).fingerprint != fingerprint
+
+
+def test_export_identity_retires_language_filtered_source_markup():
+    selected = Config.from_dict({"llm": {"preset": "fake"}, "output": {"about_page": False}})
+    plan = selected.language_policy("export", format="epub")
+    assert "preserve_source_ruby" not in plan.to_dict()["export"]
+    assert plan.fingerprint != "d4de743d62c14ff316fee9bcb27075cae1f7f260a3cf9cf056914ed022d47fe6"
 
 
 def test_selected_polisher_variant_freezes_the_source_context_resource():

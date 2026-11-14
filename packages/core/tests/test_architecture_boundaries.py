@@ -284,7 +284,7 @@ def test_pipeline_modules_live_in_a_stage_subpackage():
                 f"{path.stem} appears in {staged[path.stem]} and {stage}"
             )
             staged[path.stem] = stage
-    assert len(staged) == 28, sorted(staged)
+    assert len(staged) == 29, sorted(staged)
 
 
 def test_pipeline_stage_packages_do_not_import_across_unrelated_stages():
@@ -529,15 +529,44 @@ def test_review_models_have_no_application_dependencies():
 
 
 def test_shared_markup_has_no_workflow_or_archive_dependencies():
-    """The shared DOM layer depends only on markup and the pure data models."""
+    """The DOM layer may use pure alignment logic, never models that call providers."""
     for path in (TRANS_NOVEL_DIR / "markup").rglob("*.py"):
         for module in _imported_modules(path):
             if not module.startswith("wenyi_core."):
                 continue
-            assert _matches(module, ("wenyi_core.markup", "wenyi_core.models")), (
+            assert _matches(
+                module, ("wenyi_core.markup", "wenyi_core.models", "wenyi_core.alignment")
+            ), (
                 path,
                 module,
             )
+
+
+def test_alignment_contracts_are_format_and_runtime_independent():
+    paths = list((TRANS_NOVEL_DIR / "alignment").rglob("*.py"))
+    assert paths, "The alignment boundary must inspect real modules"
+    for path in paths:
+        for module in _imported_modules(path):
+            if module.startswith("wenyi_core."):
+                assert _matches(module, ("wenyi_core.alignment", "wenyi_core.errors")), (
+                    path,
+                    module,
+                )
+            else:
+                assert module.split(".")[0] in {
+                    "__future__",
+                    "collections",
+                    "dataclasses",
+                    "hashlib",
+                    "re",
+                    "typing",
+                }, (path, module)
+    agent_imports = _imported_modules(AGENTS_DIR / "annotation_aligner.py")
+    assert any(module.startswith("wenyi_core.alignment") for module in agent_imports)
+    assert not any(
+        _matches(module, ("wenyi_core.markup", "wenyi_core.document_styles"))
+        for module in agent_imports
+    )
 
 
 def test_writers_do_not_import_reader_private_helpers():
