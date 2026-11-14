@@ -343,7 +343,8 @@ fn attributes(input: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
                         | "main"
                         | "local_runtime"
                         | "local_backend"
-                        | "catalog_recovery"
+                        | "catalog"
+                        | "ownership"
                         | "local_credentials"
                         | "babeldoc_plugin"
                         | "locks"
@@ -743,10 +744,8 @@ impl Diagnostics {
         Self::with_limits(path, Limits::default())
     }
 
-    /// The workspace copy first, then the user-level fallback that keeps logging
-    /// possible when the workspace is not writable. Both candidates are resolved
-    /// by paths.rs, and neither depends on layers one to three, so this can start
-    /// before any layout assertion runs.
+    /// All disk logs stay in the selected data root. An unavailable directory
+    /// falls back to bounded memory, never another profile's hidden disk path.
     pub fn for_workspace(workspace: &Path) -> Self {
         Self::with_paths(crate::paths::log_roots(workspace), Limits::default())
     }

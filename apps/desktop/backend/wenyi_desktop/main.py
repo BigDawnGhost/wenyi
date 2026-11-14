@@ -26,8 +26,6 @@ from .local_runtime import (
     run_workflow_sync,
     statistics_snapshot,
 )
-from .migration.ownership import NativeOwner
-from .migration.startup import adopt
 from .settings import DesktopSettings
 from .updates import UpdateAdmissionMiddleware, UpdateGuard
 from .updates import router as updates_router
@@ -40,10 +38,10 @@ HEARTBEAT_FRAME = '{"kind": "heartbeat"}'
 
 
 class DesktopServices:
-    def __init__(self, backend: LocalBackend, runtime_dir: Path | None = None):
+    def __init__(self, backend: LocalBackend):
         self.backend = backend
         self.runtime: LocalRuntime | None = None
-        self.babeldoc = BabeldocPlugin(backend.workspace, runtime_dir)
+        self.babeldoc = BabeldocPlugin(backend.workspace)
 
     def connect(self):
         if self.runtime is None:
@@ -118,40 +116,26 @@ def create_context(
     api_token: str | None = None,
     config_path: str | None = None,
     credentials: CredentialStore | None = None,
-    user_home: str | Path | None = None,
-    migrate: bool = True,
     library_root: str | Path | None = None,
     install_root: str | Path | None = None,
-    runtime_dir: str | Path | None = None,
-    native_owner: NativeOwner | None = None,
 ) -> BackendContext:
-    home = Path(user_home) if user_home is not None else None
-    if migrate:
-        # Layer two has to exist before either store opens it, and the move is
-        # the only step that reads the old workspace. It raises when another
-        # instance owns that read, which is a refusal this version cannot fix by
-        # waiting: the old application is still writing the data being moved.
-        adopt(Path(workspace), home=home, native_owner=native_owner)
     backend = LocalBackend(
         workspace,
         config_path,
-        user_home=home,
         library_root=library_root,
         install_root=install_root,
     )
-    credentials = credentials or CredentialStore(
-        backend.workspace, vault_factory=system_keyring, user_home=home
-    )
-    # Layer one is injected by the native parent; None keeps a standalone
-    # engine on the workspace so existing data and tests resolve as before.
-    services = DesktopServices(backend, Path(runtime_dir) if runtime_dir is not None else None)
+    credentials = credentials or CredentialStore(backend.workspace, vault_factory=system_keyring)
+    if credentials.database != backend.database:
+        raise ValueError("Desktop credentials must belong to the selected data root")
+    services = DesktopServices(backend)
     return BackendContext(
         repository=backend,
         settings_store=DesktopSettings(backend, credentials),
         exports=backend,
         telemetry=services,
         storage_for=backend.storage_for,
-        read_storage_for=lambda pid: backend.storage_for(pid, create=False),
+        read_storage_for=lambda pid: backend.storage_for(pid, create=False, upgrade=True),
         build_client=lambda config: build_local_client(config, credentials),
         mineru_token_resolver=credentials.resolve_mineru_token,
         connection_credential=credentials.resolve,
@@ -177,9 +161,7 @@ def create_app(
     diagnostics: Reporter | None = None,
     library_root: str | Path | None = None,
     install_root: str | Path | None = None,
-    runtime_dir: str | Path | None = None,
     engine_diagnostics: EngineDiagnostics | None = None,
-    native_owner: NativeOwner | None = None,
 ):
     from .desktop import ORIGINS
     from .routers import (
@@ -189,7 +171,6 @@ def create_app(
         external_credentials,
         library_location,
         project_import,
-        recovery,
     )
 
     # The sidecar owns its own stderr; stdout carries the parent/child protocol.
@@ -203,8 +184,6 @@ def create_app(
             api_token=api_token,
             library_root=library_root,
             install_root=install_root,
-            runtime_dir=runtime_dir,
-            native_owner=native_owner,
         )
     services = context.telemetry
     lifecycle = engine_diagnostics or EngineDiagnostics(diagnostics)
@@ -253,7 +232,6 @@ def create_app(
     app.include_router(babeldoc_plugin.router)
     app.include_router(project_import.router)
     app.include_router(library_location.router)
-    app.include_router(recovery.router)
     app.state.babeldoc_plugin = services.babeldoc
     app.state.update_guard = UpdateGuard(services)
     app.add_middleware(

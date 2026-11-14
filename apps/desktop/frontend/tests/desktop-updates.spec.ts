@@ -190,7 +190,10 @@ test("validated YAML is still unsaved and prevents installation", async ({ page 
   await yaml.fill((await yaml.inputValue()) + "\n# changed");
   await page.getByRole("link", { name: "About", exact: true }).click();
   await expect(page.getByRole("button", { name: "Install and restart", exact: true })).toBeDisabled();
+  await page.getByRole("link", { name: "Advanced", exact: true }).click();
   await page.getByRole("button", { name: "Validate configuration", exact: true }).click();
+  await expect(page.getByText("Configuration is valid but not saved yet", { exact: true })).toBeVisible();
+  await page.getByRole("link", { name: "About", exact: true }).click();
   await expect(page.getByRole("button", { name: "Install and restart", exact: true })).toBeDisabled();
 });
 

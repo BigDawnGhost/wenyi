@@ -7,7 +7,6 @@ from threading import Event, Lock
 
 import pytest
 from wenyi_core.agents.precision import PrecisionError
-from wenyi_core.config import Config
 from wenyi_core.pipeline import precision as precision_module
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor
@@ -149,11 +148,8 @@ def test_incompatible_pending_checkpoints_are_not_reused(tmp_path, change):
     assert len(client.calls) == 8
 
 
-def test_builtin_concurrency_ignores_legacy_values_and_preserves_saved_work(tmp_path, monkeypatch):
+def test_builtin_concurrency_preserves_saved_work(tmp_path, monkeypatch):
     store, config = _store(tmp_path), _config(tmp_path)
-    document = config.model_dump()
-    document["pipeline"]["precision_concurrency"] = 1
-    config = Config.model_validate(document)
     workers = []
     original_pool = precision_module.ThreadPoolExecutor
 
@@ -340,7 +336,7 @@ def test_cli_exports_and_resumes_with_four_body_calls(tmp_path, monkeypatch):
         "translate",
         str(source),
         "--translation-mode",
-        "best_of_three",
+        "three_draft_synthesis",
         "--polish",
         "--no-review",
         "--format",

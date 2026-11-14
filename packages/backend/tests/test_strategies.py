@@ -4,9 +4,7 @@ import pytest
 from wenyi_backend.schemas import ExportRequest, ProjectCreate, ReviewRunRequest, StartTranslation
 from wenyi_backend.strategies import (
     PRESET_TEMPLATES,
-    _saved_strategy_to_config,
     strategy_to_config,
-    workflow_steps,
 )
 from wenyi_core.config import Config
 
@@ -33,10 +31,10 @@ def test_defaults_match_dev_and_preserve_language_direction():
 
 def test_explicit_project_mode_does_not_inherit_precision_defaults():
     precision = base()
-    precision.pipeline.translation_mode = "best_of_three"
+    precision.pipeline.translation_mode = "three_draft_synthesis"
     standard = strategy_to_config({}, precision, translation_mode="standard")
     assert standard.pipeline.translation_mode == "standard"
-    assert precision.pipeline.translation_mode == "best_of_three"
+    assert precision.pipeline.translation_mode == "three_draft_synthesis"
 
 
 def test_explicit_precision_choice_enables_polish_for_the_project():
@@ -45,9 +43,9 @@ def test_explicit_precision_choice_enables_polish_for_the_project():
     precision = strategy_to_config(
         {"steps": {"polish": False}},
         defaults,
-        translation_mode="best_of_three",
+        translation_mode="three_draft_synthesis",
     )
-    assert precision.pipeline.translation_mode == "best_of_three"
+    assert precision.pipeline.translation_mode == "three_draft_synthesis"
     assert precision.pipeline.polish is True
     assert "precision_concurrency" not in precision.pipeline.model_dump()
     assert defaults.pipeline.polish is False
@@ -55,7 +53,7 @@ def test_explicit_precision_choice_enables_polish_for_the_project():
 
 def test_precision_cannot_disable_required_polishing():
     precision = base()
-    precision.pipeline.translation_mode = "best_of_three"
+    precision.pipeline.translation_mode = "three_draft_synthesis"
     with pytest.raises(ValueError, match="polish"):
         strategy_to_config({"steps": {"polish": False}}, precision)
 
@@ -66,15 +64,6 @@ def test_precision_cannot_disable_required_polishing():
 def test_retired_steps_fail_instead_of_silently_ignoring(step):
     with pytest.raises(ValueError):
         strategy_to_config({"steps": {step: True}}, base())
-
-
-@pytest.mark.parametrize("template", ["标准翻译", "快速出稿"])
-def test_saved_report_step_does_not_block_existing_projects(template):
-    saved = {"template": template, "steps": {"report": True, "review": False}}
-    cfg = _saved_strategy_to_config(saved, base())
-    assert cfg.pipeline.review is False
-    assert "report" not in workflow_steps(cfg)
-    assert saved == {"template": template, "steps": {"report": True, "review": False}}
 
 
 @pytest.mark.parametrize(

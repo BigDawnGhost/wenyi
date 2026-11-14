@@ -11,6 +11,7 @@ from wenyi_core.agents.polisher import Polisher
 from wenyi_core.agents.translator import Translator
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore
+from wenyi_core.i18n.resources import read_text
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
@@ -40,18 +41,20 @@ def test_resume_and_review_pack_by_tokens_and_preserve_completed_blank():
     ]
 
 
+@pytest.mark.parametrize("genre", ["literary", "academic"])
 @pytest.mark.parametrize("invalid_continuation", [False, True])
-def test_batch_polish_preserves_filtered_positions_and_fallback(invalid_continuation):
+def test_batch_polish_preserves_filtered_positions_and_fallback(invalid_continuation, genre):
     def handler(messages, tier, json_mode):
         if len(messages) == 4:
             return json.dumps(
                 {"polished": ["wrong count"] if invalid_continuation else ["ONE", "TWO"]}
             )
-        if "literary translator" in messages[0]["content"]:
+        if f"{genre} translator" in messages[0]["content"]:
             return json.dumps({"translations": ["one", "two"]})
         return json.dumps({"polished": ["ONE", "123", "TWO"]})
 
     config = Config.from_dict({"llm": {"preset": "fake"}})
+    config.set_prompt_genre(genre)
     client = FakeClient(handler=handler)
     executor = TranslationBatchExecutor(Translator(client, config), Polisher(client, config))
     plan = _plan(["alpha", "123", "beta"])
@@ -65,6 +68,13 @@ def test_batch_polish_preserves_filtered_positions_and_fallback(invalid_continua
     )
     assert client.calls[1]["messages"][:2] == client.calls[0]["messages"]
     assert client.calls[1]["messages"][2]["role"] == "assistant"
+    rules = dict(config.language_policy().prompt_values)
+    for call in client.calls:
+        # Continuation repeats the complete rules in its own user turn.
+        instruction = call["messages"][-1 if len(call["messages"]) == 4 else 0]["content"]
+        assert rules["target_guidance"] in instruction
+        assert read_text("shared/target_language.txt").strip() in instruction
+        assert rules["punct_rule"] in instruction
 
 
 def test_batch_passes_mineru_blank_allowance_to_translator():

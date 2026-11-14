@@ -5,25 +5,45 @@ from __future__ import annotations
 from typing import Any
 
 from wenyi_core.config import Config, parse_config_yaml
+from wenyi_core.config_rebuild import merge_section
+from wenyi_core.i18n.genres import DEFAULT_GENRE
 
 PROJECT_LLM_FIELDS = frozenset({"tiers", "routes", "budget"})
-PROJECT_PIPELINE_FIELDS = frozenset({"translation_mode", "precision_concurrency"})
+PROJECT_PIPELINE_FIELDS = frozenset({"translation_mode", "prompt_genre"})
 
 
 def config_document(config: Config) -> dict[str, Any]:
-    """Serialize all runtime settings, including resolved model definitions."""
+    """Serialize Core settings, including resolved model definitions but not runtime overrides."""
     return {
         "language": config.language_document(),
         "llm": config.llm.model_dump(mode="json"),
         "segment": config.segment.model_dump(mode="json"),
         "pipeline": config.pipeline.model_dump(mode="json"),
         "output": config.output.model_dump(mode="json"),
-        "honorific": {"strategy": config.honorific_strategy},
     }
 
 
+def runtime_document(config: Config) -> dict[str, Any]:
+    """Freeze the project prompt family alongside complete execution settings."""
+    document = config_document(config)
+    document["pipeline"]["prompt_genre"] = config.prompt_genre
+    return document
+
+
+def config_from_document(document: dict[str, Any]) -> Config:
+    """Restore a backend document without making prompt_genre a Core YAML field."""
+    pipeline = document.get("pipeline", {})
+    if not isinstance(pipeline, dict):
+        raise ValueError("Configuration section pipeline must be a mapping")
+    pipeline = dict(pipeline)
+    genre = pipeline.pop("prompt_genre", DEFAULT_GENRE)
+    config = Config.from_dict({**document, "pipeline": pipeline})
+    config.set_prompt_genre(genre)
+    return config
+
+
 def global_document(config: Config) -> dict[str, Any]:
-    """Exclude project-specific precision choices from application defaults."""
+    """Exclude creation-time project choices from application defaults."""
     document = config_document(config)
     for key in PROJECT_PIPELINE_FIELDS:
         document["pipeline"].pop(key, None)
@@ -31,7 +51,7 @@ def global_document(config: Config) -> dict[str, Any]:
 
 
 def project_document(config: Config) -> dict[str, Any]:
-    document = config_document(config)
+    document = runtime_document(config)
     document["llm"] = {key: document["llm"][key] for key in sorted(PROJECT_LLM_FIELDS)}
     return document
 
@@ -69,7 +89,5 @@ def merge_project(base: dict, override: dict) -> dict:
             for key, item in value.items():
                 if not isinstance(item, dict):
                     raise ValueError(f"llm.{key} must be a mapping")
-        result[section] = {**base.get(section, {}), **value}
-        if section == "llm" and "tiers" in value:
-            result[section]["tiers"] = {**base[section]["tiers"], **value["tiers"]}
+        result[section] = merge_section(section, base.get(section, {}), value)
     return result

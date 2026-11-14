@@ -45,7 +45,7 @@ gh pr create --base main --head feat/short-description
 
 在 `main` 上经过验证的提交处创建版本标签，例如 `v1.2.8` 或 `v1.2.8rc1`，
 然后为该标签发布 GitHub Release。发布 Release 会触发 CLI/Desktop 打包与产物上传。
-完成[可信发布配置](publishing.md)后，还会将 CLI/Core 发布到 PyPI。
+完成[可信发布配置](development/publishing.md)后，还会将 CLI/Core 发布到 PyPI。
 仅合并 PR 或推送标签不会发布安装包或 PyPI 包；仍可手动触发工作流验证构建。修复同样经过
 短期分支 → PR → `main`，再用新标签发布。不移动已有发布标签，不维护长期 hotfix 分支。
 
@@ -68,7 +68,7 @@ CLI/Desktop 打包工作流有路径过滤，不应将这些条件检查设为�
 ## 从源码运行 CLI
 
 开发时，在源码仓库中使用 Python 3.10+ 和 [uv](https://docs.astral.sh/uv/)。
-如果只是使用已发布版本，无需拉取源码，按 [CLI 安装指南](cli.md#安装与运行)操作即可。
+如果只是使用已发布版本，无需拉取源码，按 [CLI 安装指南](guide/cli.md)操作即可。
 
 从仓库根目录执行：
 
@@ -82,7 +82,18 @@ uv run wenyi models list
 CLI 命令。开发包含共享 backend 和各应用的完整 Python 工作区时，使用下方的开发环境配置。
 
 Python 包版本由仓库 Git 标签生成：标签构建显示正式版本，开发构建包含距标签的提交数
-与提交哈希。自动发布流程见 [Python 包发布指南](publishing.md)。
+与提交哈希。自动发布流程见 [Python 包发布指南](development/publishing.md)
+和[桌面发布](development/releasing.md)。
+
+## 开发文档与文档站
+
+架构、Web/Desktop 源码启动、前端规范和发布流程见[开发维护指南](development/index.md)。
+用户操作单独放在 `docs/guide/`，配置与格式查询放在 `docs/reference/`。
+修改负责该主题的现有章节，不把使用手册写成变更日志，并同步 `docs/zh/` 下的对应页面。
+
+[文档站预览说明](development/index.md#本地预览文档站)提供本地 VitePress 启动、
+静态构建与链接检查方法；同页的 [GitHub Pages 部署](development/index.md#github-pages-部署)
+说明发布流程：PR 验证站点，`main` 上的相关变更自动发布。
 
 ## Python 回归测试
 
@@ -106,4 +117,11 @@ uv run --no-sync pytest -q -n auto                       # Full collection.
 
 `WENYI_TEST_DATABASE_URL` 和 `WENYI_TEST_REDIS_URL` 只能指向隔离测试服务。PostgreSQL fixture 会创建私有 schema 并在结束时删除。Docker 代理测试也标记为 `integration`，还需设置 `WENYI_TEST_DOCKER=1`。缺少服务导致的跳过不算集成验证通过。
 
-CI 在 Python 3.10 和 3.12 下分别运行两组测试并启用 PostgreSQL、Redis，并在本地沿用同样的分层：`changes` job 为每个 PR 分类，纯文档改动会跳过 Python 与 web job，而 push 到 `main` 与手动触发始终全跑。两个 Python 步骤都使用 `pytest-xdist`，integration 限两个 worker。Desktop 在 PR 上只跑 smoke 层，仅在 release 或手动触发时构建全部平台。integration 会重试一次，但只在重试后才通过的用例会写入 job 摘要并标为 flaky，因此重试不会掩盖真实问题。
+CI 在 Python 3.10 和 3.12 下分别运行两组测试，并启用 PostgreSQL、Redis。
+`changes` job 对 PR 与推送到 `main` 的变更进行过滤；手动和定时运行执行全量检查。
+纯文档路径可以跳过应用 job，但共享配置、锁文件或工作流变更会强制运行相应检查；
+这种过滤不免除合入前的完整检查要求。两个 Python 步骤都使用 `pytest-xdist`，
+integration 限两个 worker。Desktop PR 按变更路径运行 Linux 测试或完整 Linux
+打包，另加 Windows smoke 检查；release 和手动触发覆盖全部打包平台。
+integration 重试一次，只在重试后通过的用例会在 job 摘要中标为 flaky，
+不会被静默视为一次干净通过。

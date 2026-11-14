@@ -8,4 +8,4 @@ export type {
 } from "./desktop";
 
 /** Pipeline mode stored inside the editable configuration document. */
-export type TranslationMode = "standard" | "best_of_three";
+export type TranslationMode = "standard" | "three_draft_synthesis";

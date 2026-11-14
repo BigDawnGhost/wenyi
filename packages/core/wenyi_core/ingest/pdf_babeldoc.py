@@ -6,9 +6,11 @@ Chapters are split by the PDF outline (TOC bookmarks) via pypdf.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -199,10 +201,8 @@ def _chapters_from_paragraphs(
 ) -> list[Chapter]:
     if not toc_starts:
         segments: list[Segment] = []
-        for index, para in enumerate(paragraphs):
-            segment = _segment_from_para(index, para)
-            if segment is not None:
-                segments.append(segment)
+        for para in paragraphs:
+            segments.extend(_segments_from_para(len(segments), para))
         for i, segment in enumerate(segments):
             segment.index = i
         return [Chapter(index=0, title=book_title, segments=segments, meta={BABELDOC_META: True})]
@@ -216,9 +216,7 @@ def _chapters_from_paragraphs(
         if page is None:
             page = toc_starts[0][0]
         chapter_i = _assign_chapter_index(page, toc_starts)
-        segment = _segment_from_para(len(buckets[chapter_i]), para)
-        if segment is not None:
-            buckets[chapter_i].append(segment)
+        buckets[chapter_i].extend(_segments_from_para(len(buckets[chapter_i]), para))
 
     chapters: list[Chapter] = []
     out_index = 0
@@ -246,24 +244,74 @@ def _chapters_from_paragraphs(
     return chapters
 
 
+def _segments_from_para(index: int, para: dict) -> list[Segment]:
+    """Translate directory rows independently while retaining the original parent ID."""
+    rows = para.get("rows")
+    if not rows:
+        segment = _segment_from_para(index, para)
+        return [segment] if segment is not None else []
+    source = str(para.get("source") or "")
+    if not isinstance(rows, list) or len(rows) < 2:
+        raise BabeldocBridgeError("Invalid BabelDOC directory rows; update the bridge and reparse.")
+    segments = []
+    cursor = 0
+    for row_index, row in enumerate(rows):
+        if not isinstance(row, dict):
+            raise BabeldocBridgeError("Invalid BabelDOC directory row boundaries.")
+        start, end = row.get("source_start"), row.get("source_end")
+        if (
+            type(start) is not int
+            or type(end) is not int
+            or not cursor <= start < end <= len(source)
+            or source[cursor:start].strip()
+            or not source[start:end].strip()
+        ):
+            raise BabeldocBridgeError("Invalid BabelDOC directory row boundaries.")
+        items = []
+        for item in para.get("annotations") or []:
+            left, right = item["source_start"], item["source_end"]
+            if start <= left <= right <= end:
+                items.append({**item, "source_start": left - start, "source_end": right - start})
+            elif left < end and start < right:
+                raise BabeldocBridgeError("BabelDOC annotation crosses a directory row.")
+        segment = _segment_from_para(
+            index + row_index, {**para, "source": source[start:end], "annotations": items}
+        )
+        if segment is None:
+            raise BabeldocBridgeError("BabelDOC directory row is missing its parent identity.")
+        segment.meta["babeldoc_row"] = {"index": row_index, "count": len(rows)}
+        segments.append(segment)
+        cursor = end
+    if source[cursor:].strip():
+        raise BabeldocBridgeError("BabelDOC directory rows leave source text uncovered.")
+    return segments
+
+
 def _segment_from_para(index: int, para: dict) -> Segment | None:
-    source = str(para.get("source") or "").strip()
+    source = str(para.get("source") or "")
     pid = str(para.get("id") or "").strip()
-    if not source or not pid:
+    if not source.strip() or not pid:
         return None
     layout = para.get("layout_label")
     kind = KIND_HEADING if layout == "title" else KIND_TEXT
+    annotations = para.get("annotations")
+    metadata: dict[str, Any] = {
+        BABELDOC_ID_META: pid,
+        "layout_label": layout,
+        "debug_id": para.get("debug_id"),
+        "page": para.get("page"),
+        "para_index": para.get("index"),
+    }
+    if isinstance(annotations, list) and annotations:
+        metadata["pdf_annotations"] = {
+            "source_length": len(source),
+            "items": deepcopy(annotations),
+        }
     return Segment(
         index=index,
         source=source,
         kind=kind,
-        meta={
-            BABELDOC_ID_META: pid,
-            "layout_label": layout,
-            "debug_id": para.get("debug_id"),
-            "page": para.get("page"),
-            "para_index": para.get("index"),
-        },
+        meta=metadata,
     )
 
 
@@ -332,6 +380,61 @@ def read_pdf_babeldoc(
     )
 
 
+def _fillback_groups(store) -> dict[str, list[Segment]]:
+    """Recover stable row order and reject missing/duplicated row checkpoints."""
+    groups: dict[str, list[Segment]] = {}
+    for info in store.load_manifest().get("chapters") or []:
+        for segment in store.load_chapter(info["index"]).segments:
+            pid = str(segment.meta.get(BABELDOC_ID_META) or "")
+            if pid:
+                groups.setdefault(pid, []).append(segment)
+    for pid, segments in groups.items():
+        if not any("babeldoc_row" in segment.meta for segment in segments):
+            groups[pid] = segments[-1:]
+            continue
+        indices: list[int] = []
+        for segment in segments:
+            row = segment.meta.get("babeldoc_row")
+            if (
+                not isinstance(row, dict)
+                or type(row.get("index")) is not int
+                or type(row.get("count")) is not int
+                or row["count"] != len(segments)
+            ):
+                raise BabeldocBridgeError(
+                    f"Incomplete or duplicate directory rows for {pid}; reparse."
+                )
+            indices.append(row["index"])
+        if sorted(indices) != list(range(len(segments))):
+            raise BabeldocBridgeError(f"Incomplete or duplicate directory rows for {pid}; reparse.")
+        segments.sort(key=lambda segment: segment.meta["babeldoc_row"]["index"])
+    return groups
+
+
+def _fillback_text(segment: Segment) -> str:
+    """Keep source fallback export-only; never turn pending rows into saved targets."""
+    text = segment.target
+    return str(text if text is not None and text.strip() else segment.source)
+
+
+def rows_from_store(store, translations: dict[str, str]) -> dict[str, list[dict[str, int]]]:
+    """Export explicit target ranges, independent of newlines inside a translated row."""
+    result = {}
+    for pid, segments in _fillback_groups(store).items():
+        if "babeldoc_row" not in segments[0].meta:
+            continue
+        texts = [_fillback_text(segment) for segment in segments]
+        if translations.get(pid) != "\n".join(texts):
+            raise BabeldocBridgeError(f"Directory row text changed during export for {pid}.")
+        ranges = []
+        cursor = 0
+        for text in texts:
+            ranges.append({"target_start": cursor, "target_end": cursor + len(text)})
+            cursor += len(text) + 1
+        result[pid] = ranges
+    return result
+
+
 def translations_from_store(store) -> tuple[str, str, dict[str, str]]:
     """Collect fillback text, falling back to source for blank targets without saving it."""
     manifest = store.load_manifest()
@@ -345,24 +448,78 @@ def translations_from_store(store) -> tuple[str, str, dict[str, str]]:
         )
 
     mapping: dict[str, str] = {}
-    for info in manifest.get("chapters") or []:
-        chapter = store.load_chapter(info["index"])
-        for segment in chapter.segments:
-            pid = None
-            if isinstance(segment.meta, dict):
-                pid = segment.meta.get(BABELDOC_ID_META)
-            if not pid:
-                continue
-            # The bridge requires nonblank text for every parsed paragraph ID.
-            # Polishing can blank layout-only units such as a standalone period.
-            text = segment.target
-            if text is None or not text.strip():
-                text = segment.source
-            if text is None or not str(text).strip():
-                continue
-            mapping[str(pid)] = str(text)
+    for pid, segments in _fillback_groups(store).items():
+        text = "\n".join(_fillback_text(segment) for segment in segments)
+        if text.strip():
+            mapping[pid] = text
     if not mapping:
         raise BabeldocBridgeError(
             "No translated paragraphs with babeldoc_id are available for backfill"
         )
     return str(session_id), str(bridge_url), mapping
+
+
+def annotations_from_store(store, translations: dict[str, str]) -> dict[str, Any]:
+    """Forward cached positions for per-item validation, without model calls or state changes."""
+    result: dict[str, Any] = {}
+    for pid, segments in _fillback_groups(store).items():
+        if pid not in translations:
+            continue
+        if "babeldoc_row" in segments[0].meta:
+            placements = []
+            cursor = 0
+            for segment in segments:
+                text = _fillback_text(segment)
+                payload = _segment_annotations(segment, text)
+                if (
+                    payload
+                    and payload["target_digest"] == hashlib.sha256(text.encode()).hexdigest()
+                    and isinstance(payload["placements"], list)
+                ):
+                    for row in payload["placements"]:
+                        if not isinstance(row, dict):
+                            continue
+                        shifted = deepcopy(row)
+                        for key in ("target_start", "target_end"):
+                            if type(shifted.get(key)) is int:
+                                shifted[key] += cursor
+                        placements.append(shifted)
+                cursor += len(text) + 1
+            if any(segment.meta.get("pdf_annotations") for segment in segments):
+                result[pid] = {
+                    "target_digest": hashlib.sha256(translations[pid].encode()).hexdigest(),
+                    "placements": placements,
+                }
+        else:
+            payload = _segment_annotations(segments[0], translations[pid])
+            if payload is not None:
+                result[pid] = payload
+    return result
+
+
+def _segment_annotations(segment: Segment, text: str) -> dict[str, Any] | None:
+    """Keep local annotation digests intact until a structured export validates them."""
+    metadata = segment.meta.get("pdf_annotations")
+    if not isinstance(metadata, dict):
+        return None
+    items = metadata.get("items")
+    if not isinstance(items, list) or not items:
+        return None
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+    if text == segment.source:
+        placements = [
+            {
+                "id": item["id"],
+                "mode": item["mode"],
+                "target_start": item["source_start"],
+                "target_end": item["source_end"],
+                "status": "aligned",
+                "method": "source_identity",
+            }
+            for item in items
+        ]
+    else:
+        # Keep stale positions invalid rather than blessing them with a new digest.
+        digest = metadata.get("target_digest")
+        placements = metadata.get("placements", [])
+    return {"target_digest": digest, "placements": deepcopy(placements)}

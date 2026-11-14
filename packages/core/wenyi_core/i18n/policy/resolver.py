@@ -7,6 +7,7 @@ from dataclasses import asdict, replace
 from string import Template
 from typing import Any
 
+from ..genres import compose, require_genre
 from ..languages import honorific_rule, profile, require_language
 from ..resources import read_json, read_text
 from .models import (
@@ -80,9 +81,12 @@ def sort_operations(
 
 
 def _rules(context: PolicyContext) -> dict[str, str]:
-    common = read_json("shared/guidance.json")
-    target = profile(context.target)
-    source = profile(context.source) if context.source != "auto" else {}
+    common = {
+        key: compose(value, genre=context.genre)
+        for key, value in read_json("shared/guidance.json").items()
+    }
+    target = profile(context.target, genre=context.genre)
+    source = profile(context.source, genre=context.genre) if context.source != "auto" else {}
     source_guidance = source.get("source_guidance", common["source"])
     target_guidance = "\n".join(
         (target["target_guidance"], read_text("shared/target_language.txt").strip())
@@ -92,7 +96,7 @@ def _rules(context: PolicyContext) -> dict[str, str]:
             source_guidance,
             target_guidance,
             common["evidence"],
-            honorific_rule("keep_style", context.source, context.target),
+            honorific_rule(context.source, context.target),
         )
     )
     return {
@@ -101,14 +105,7 @@ def _rules(context: PolicyContext) -> dict[str, str]:
         "tgt_label": target["label"],
         "target_language": target["english_name"],
         "lang_guidance": default_guidance,
-        "configured_lang_guidance": "\n".join(
-            (
-                source_guidance,
-                target_guidance,
-                common["evidence"],
-                honorific_rule(context.honorific_strategy, context.source, context.target),
-            )
-        ),
+        "configured_lang_guidance": default_guidance,
         "target_guidance": target_guidance,
         "term_guidance": source.get("term_guidance", "") + common["evidence"],
         "reading_field": source.get("reading_field", ""),
@@ -117,9 +114,9 @@ def _rules(context: PolicyContext) -> dict[str, str]:
         "digest_length": target["digest_length"],
         "synopsis_length": target["synopsis_length"],
         "review_evidence_tools": read_text("shared/review_evidence_tools.txt"),
-        "metadata_guidance": Template(read_text("shared/metadata_guidance.txt")).substitute(
-            tgt_label=target["english_name"]
-        ),
+        "metadata_guidance": Template(
+            compose(read_text("shared/metadata_guidance.txt"), genre=context.genre)
+        ).substitute(tgt_label=target["english_name"]),
     }
 
 
@@ -142,7 +139,10 @@ def _templates(context: PolicyContext, *, terminology: bool) -> tuple[tuple[str,
     from .tasks import TASKS
 
     return tuple(
-        (task, read_text(_template_path(task, terminology=terminology)))
+        (
+            task,
+            compose(read_text(_template_path(task, terminology=terminology)), genre=context.genre),
+        )
         for task in TASKS
         if any(task.startswith(group + "_") for group in groups)
     )
@@ -157,6 +157,7 @@ def resolve_policy(
         context,
         source=require_language(context.source, allow_auto=True),
         target=require_language(context.target),
+        genre=require_genre(context.genre),
     )
     if (
         context.phase not in {"analysis", "translation", "review", "export"}
@@ -188,7 +189,7 @@ def resolve_policy(
     for role, code in (("source", context.source), ("target", context.target)):
         if code == "auto":
             continue
-        language = profile(code)
+        language = profile(code, genre=context.genre)
         policy = language.get("policy", {})
         role_bindings = {
             key: OperationBinding.model_validate(value)
@@ -314,7 +315,6 @@ def resolve_policy(
         metadata["language_tag"],
         metadata["about_locale"],
         font,
-        "markup.japanese_ruby" in enabled_ids,
     )
     terminology = "terminology.context" in enabled_ids and context.path == "book"
     templates = _templates(context, terminology=terminology)

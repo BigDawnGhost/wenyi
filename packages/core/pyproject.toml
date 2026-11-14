@@ -21,7 +21,7 @@ dependencies = [
 
 [project.urls]
 Repository = "https://github.com/BigDawnGhost/wenyi"
-Documentation = "https://github.com/BigDawnGhost/wenyi/blob/main/docs/architecture.md"
+Documentation = "https://github.com/BigDawnGhost/wenyi/blob/main/docs/development/architecture.md"
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]

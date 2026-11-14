@@ -1,5 +1,5 @@
 import { expect, test, type Page, type Request } from "@playwright/test";
-import { fakeApi, pid, project } from "../../sandbox/fixtures";
+import { fakeApi, mockChapter, pid, project } from "../../sandbox/fixtures";
 
 
 /** Whether the Desktop host must keep running this suite as well.
@@ -84,14 +84,12 @@ test("a terminal project read fetches the final chapter before stopping polling"
   let target = "Partial translation";
   let reads = 0;
   await fakeApi(page, { [`/projects/${pid}`]: saved });
-  await page.route(`**/api/projects/${pid}/review/0`, route => {
+  await mockChapter(page, 0, () => {
     reads++;
-    return route.fulfill({
-      json: {
+    return {
         index: 0, title: "Chapter One", review_issues: [],
         segments: [{ index: 0, source: "Source", target, kind: "text" }],
-      },
-    });
+    };
   });
   await page.goto(`/projects/${pid}/proofreading/0`);
   await expect(page.getByTestId("translation-text")).toHaveText(target);
@@ -118,19 +116,17 @@ test("an in-flight chapter read cannot swallow the final paused snapshot", async
   let release!: () => void;
   const delayed = new Promise<void>(resolve => { release = resolve; });
   await fakeApi(page, { [`/projects/${pid}`]: saved });
-  await page.route(`**/api/projects/${pid}/review/0`, async route => {
+  await mockChapter(page, 0, async () => {
     reads++;
     const initial = holding;
     if (initial) await delayed;
-    await route.fulfill({
-      json: {
+    return {
         index: 0, title: "Chapter One", review_issues: [],
         segments: [{
           index: 0, source: "Source",
           target: initial ? "Old snapshot" : "Final paused snapshot", kind: "text",
         }],
-      },
-    });
+    };
   });
   await page.goto(`/projects/${pid}/proofreading/0`);
   // Development StrictMode may cancel and restart the first mount's request.
@@ -236,11 +232,11 @@ test("leaving a chapter cancels its unused in-flight content request", async ({ 
   let release!: () => void;
   const delayed = new Promise<void>(resolve => { release = resolve; });
   page.on("requestfailed", request => {
-    if (request.url().endsWith(`/review/0`)) aborted++;
+    if (request.url().includes(`/chapters/0/window?`)) aborted++;
   });
-  await page.route(`**/api/projects/${pid}/review/0`, async route => {
+  await mockChapter(page, 0, async () => {
     await delayed;
-    await route.fulfill({ json: { index: 0, title: "Old chapter", segments: [], review_issues: [] } });
+    return { index: 0, title: "Old chapter", segments: [], review_issues: [] };
   });
   try {
     await page.goto(`/projects/${pid}/proofreading/0`);

@@ -40,7 +40,8 @@ fn release_api_url() -> String {
 ///
 /// Layer two and not layer one: the copy has to outlive the application, and
 /// layer one is the directory that is rebuilt on every launch.
-const BACKUP: &str = "backup";
+#[cfg(test)]
+const BACKUP: &str = "backups";
 type Result<T> = std::result::Result<T, IpcError>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
@@ -553,17 +554,40 @@ fn backup_plan(connection: &Connection) -> Result<BackupPlan> {
 /// the copy, so the bytes read would be a mixture of two states, and an installer
 /// that started first has already replaced the files the copy is meant to preserve.
 ///
-/// Layer two, not layer one, holds the copy: the point of keeping it is to have it
-/// after the application that wrote it is gone, and layer one is rebuilt on every
-/// launch.
-fn snapshot(plan: &BackupPlan) -> std::result::Result<PathBuf, String> {
-    let target = paths::user_root()
-        .map_err(|error| error.message().to_owned())?
-        .join(BACKUP);
-    let snapshot =
-        migration::snapshot_sources(&plan.sources, &target, env!("WENYI_DESKTOP_VERSION"))
-            .map_err(|error| error.to_string())?;
+/// The backup is a sibling of projects/runtime, not a copy of the entire root.
+fn snapshot(
+    plan: &BackupPlan,
+    workspace: &std::path::Path,
+) -> std::result::Result<PathBuf, String> {
+    let target = paths::backups(workspace);
+    let sources = stopped_sources(plan)?;
+    let snapshot = migration::snapshot_sources(&sources, &target, env!("WENYI_DESKTOP_VERSION"))
+        .map_err(|error| error.to_string())?;
     Ok(snapshot.root)
+}
+
+fn stopped_sources(plan: &BackupPlan) -> std::result::Result<Vec<migration::BackupSource>, String> {
+    let mut sources = plan.sources.clone();
+    for catalog in plan
+        .sources
+        .iter()
+        .filter(|source| source.name == "catalog.sqlite3")
+    {
+        for suffix in ["-wal", "-shm"] {
+            let mut path = catalog.path.as_os_str().to_os_string();
+            path.push(suffix);
+            let path = PathBuf::from(path);
+            match std::fs::symlink_metadata(&path) {
+                Ok(_) => sources.push(migration::BackupSource {
+                    name: format!("catalog.sqlite3{suffix}"),
+                    path,
+                }),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+    }
+    Ok(sources)
 }
 
 /// The production install gate. Neither a failed copy nor verification can
@@ -626,7 +650,7 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
     };
     let connection = Connection::new(&raw)
         .map_err(|_| IpcError::new("update_unavailable", "Updates are not available right now."))?;
-    // Exclude every other native/standalone engine sharing layer two before
+    // Exclude every other native/standalone engine sharing this data root before
     // freezing the plan, and retain the lease until installation or recovery.
     let owned_writer = lock(&engine.child)
         .as_ref()
@@ -688,7 +712,15 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
     // the recovery path below is the one an installer that refused to start
     // already used.
     if let Err((code, error)) = install_prepared(
-        || snapshot(&plan),
+        || {
+            snapshot(
+                &plan,
+                engine
+                    .workspace
+                    .as_deref()
+                    .ok_or("Desktop data root unavailable.")?,
+            )
+        },
         || {
             update
                 .install(bytes.as_slice())
@@ -1032,15 +1064,42 @@ mod tests {
     }
 
     #[test]
-    fn the_backup_lands_below_layer_two_and_not_below_the_data_directory() {
-        // The two roots are separate layers, so copying one never has to walk the
-        // other. Asserting the relationship here keeps the preflight refusal from
-        // being the only place it is written down.
-        let profile = Path::new("C:/Users/example");
-        let workspace = profile.join("AppData/Local/Wenyi Desktop");
-        let backup = profile.join("Wenyi").join(BACKUP);
-        paths::check_disjoint(&[("data", &workspace), ("backup", &backup)]).unwrap();
-        assert_eq!(backup, PathBuf::from("C:/Users/example/Wenyi/backup"));
+    fn backups_and_projects_are_disjoint_children_of_the_actual_data_root() {
+        let workspace = Path::new("C:/Users/example/AppData/Local/Wenyi/Desktop");
+        let backup = paths::backups(workspace);
+        let projects = workspace.join("projects");
+        paths::check_disjoint(&[("projects", &projects), ("backup", &backup)]).unwrap();
+        assert_eq!(backup, workspace.join(BACKUP));
+    }
+
+    #[test]
+    fn catalog_companions_are_resolved_after_engine_exit_not_during_preparation() {
+        let root = std::env::temp_dir().join(format!(
+            "wenyi-catalog-companions-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let catalog = root.join("catalog.sqlite3");
+        let wal = root.join("catalog.sqlite3-wal");
+        let plan = BackupPlan {
+            schema_version: 1,
+            sources: vec![migration::BackupSource {
+                name: "catalog.sqlite3".into(),
+                path: catalog,
+            }],
+        };
+        assert_eq!(stopped_sources(&plan).unwrap().len(), 1);
+        std::fs::write(&wal, b"committed pages left by a stopped engine").unwrap();
+        let sources = stopped_sources(&plan).unwrap();
+        assert_eq!(sources.len(), 2);
+        assert_eq!(sources[1].path, wal);
+        std::fs::remove_file(wal).unwrap();
+        assert_eq!(stopped_sources(&plan).unwrap().len(), 1);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -1083,31 +1142,29 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ));
-        let user = root.join("profile/Wenyi");
+        let user = root.join("data");
         let project = root.join("chosen/0123456789abcdef-Book");
-        std::fs::create_dir_all(user.join("storages")).unwrap();
-        std::fs::create_dir_all(user.join("storages/.desktop-writers")).unwrap();
+        std::fs::create_dir_all(user.join("locks/.desktop-writers")).unwrap();
         std::fs::create_dir_all(&project).unwrap();
         std::fs::create_dir_all(user.join(BACKUP)).unwrap();
         for (path, bytes) in [
             (
-                user.join("storages/catalog.sqlite3"),
-                b"catalog and credentials".as_slice(),
+                user.join("catalog.sqlite3"),
+                b"catalog, settings and credential references".as_slice(),
             ),
             (
-                user.join("storages/catalog.sqlite3-wal"),
+                user.join("catalog.sqlite3-wal"),
                 b"committed WAL".as_slice(),
             ),
-            (user.join("settings.yaml"), b"settings".as_slice()),
             (project.join("state.sqlite3"), b"project".as_slice()),
-            (user.join("backup/old-copy"), b"do not recurse".as_slice()),
+            (user.join("backups/old-copy"), b"do not recurse".as_slice()),
             (root.join("chosen/private.txt"), b"not a project".as_slice()),
             (
-                user.join("storages/.desktop-profile-admission.lock"),
+                user.join("locks/.desktop-profile-admission.lock"),
                 b"".as_slice(),
             ),
             (
-                user.join("storages/.desktop-writers/transient.lock"),
+                user.join("locks/.desktop-writers/transient.lock"),
                 b"".as_slice(),
             ),
         ] {
@@ -1115,12 +1172,12 @@ mod tests {
         }
         let sources = vec![
             migration::BackupSource {
-                name: "user/storages".into(),
-                path: user.join("storages"),
+                name: "catalog.sqlite3".into(),
+                path: user.join("catalog.sqlite3"),
             },
             migration::BackupSource {
-                name: "user/settings.yaml".into(),
-                path: user.join("settings.yaml"),
+                name: "catalog.sqlite3-wal".into(),
+                path: user.join("catalog.sqlite3-wal"),
             },
             migration::BackupSource {
                 name: "projects/0".into(),
@@ -1138,11 +1195,11 @@ mod tests {
                         )
                         .unwrap();
                         assert_eq!(manifest["sources"].as_array().unwrap().len(), 3);
-                        assert_eq!(copy.files.len(), 4);
+                        assert_eq!(copy.files.len(), 3);
                         assert!(copy
                             .files
                             .iter()
-                            .any(|entry| entry.path == "user/storages/catalog.sqlite3-wal"));
+                            .any(|entry| entry.path == "catalog.sqlite3-wal"));
                         assert!(copy
                             .files
                             .iter()

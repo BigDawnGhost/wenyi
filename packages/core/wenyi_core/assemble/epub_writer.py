@@ -13,6 +13,7 @@ from wenyi_core.assemble.epub_navigation import _is_nav, _rewrite_opf_metadata, 
 from wenyi_core.assemble.epub_package import EpubChapter, EpubResource, EpubTocEntry, write_epub
 from wenyi_core.assemble.epub_presentation import (
     _HTML_EXTS,
+    EpubPresentation,
     _epub_looks_vertical,
     _rewrite_html_document,
 )
@@ -41,7 +42,6 @@ from wenyi_core.ingest.fb2_reader import read_fb2_binaries
 from wenyi_core.models.document import KIND_HEADING
 
 from .export_view import AssembleStore
-from .policy import export_options
 
 
 def _assemble_epub(
@@ -111,7 +111,7 @@ def _assemble_epub(
                 order=order,
                 preserve_source_style=preserve_source_style,
                 source_lang=source_lang,
-                preserve_source_ruby=export_options(store, "epub").preserve_source_ruby,
+                presentation=EpubPresentation(target_lang, force_horizontal),
             )
 
             infos = zin.infolist()
@@ -143,23 +143,26 @@ def _assemble_epub(
                             ),
                         )
                     elif low.endswith(_HTML_EXTS):
-                        html_data = rendered[name].encode("utf-8") if name in rendered else data
-                        if name in toc_paths or _is_nav(html_data):
-                            html_data = _rewrite_toc(
-                                html_data,
-                                toc_entries,
-                                is_ncx=False,
-                                toc_path=name,
+                        if name in rendered:
+                            # Resource workers already applied TOC, language and layout rewrites.
+                            zout.writestr(info, rendered[name].encode("utf-8"))
+                        else:
+                            if name in toc_paths or _is_nav(data):
+                                data = _rewrite_toc(
+                                    data,
+                                    toc_entries,
+                                    is_ncx=False,
+                                    toc_path=name,
+                                )
+                            zout.writestr(
+                                info,
+                                _rewrite_html_document(
+                                    data,
+                                    lang=target_lang,
+                                    force_horizontal=force_horizontal,
+                                    bilingual=bilingual and not preserve_source_style,
+                                ),
                             )
-                        zout.writestr(
-                            info,
-                            _rewrite_html_document(
-                                html_data,
-                                lang=target_lang,
-                                force_horizontal=force_horizontal,
-                                bilingual=bilingual and not preserve_source_style,
-                            ),
-                        )
                     else:
                         zout.writestr(info, data)
     return out_path
@@ -338,7 +341,6 @@ def _build_epub_from_html_templates(
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
-            preserve_source_ruby=export_options(store, "epub").preserve_source_ruby,
         )
         rendered, assets = _package_html_resources(
             rendered,

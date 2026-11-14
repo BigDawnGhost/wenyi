@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from typing import Any
 
+from ...agents import prompts
 from ...agents.precision import PrecisionAgent, PrecisionError, PrecisionInputs
 from ...config import Config
 from ...llm.base import LLMClient
@@ -168,6 +169,11 @@ class _PrecisionRun:
             "glossary_reading_source": "ja",
             "inference": inference_snapshot(config.llm, _OPERATIONS),
         }
+        object_guidance = prompts.protected_object_guidance(
+            [item.get("marker", "") for group in plan.annotation_contexts for item in group]
+        )
+        if object_guidance:
+            self.binding["protected_objects"] = object_guidance
         self.fingerprint = identity(self.binding)
         self.key = (
             f"precision/chapters/{plan.chapter}/"

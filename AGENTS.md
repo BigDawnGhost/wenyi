@@ -15,8 +15,8 @@ Wenyi 是支持多语言互译、术语、润色、全书 Review 和多格式导
 - Python：3.10+；CI 覆盖 3.10 和 3.12。
 - 包管理与命令执行：优先使用 `uv`。
 - CLI：`uv run wenyi ...`（`packages/cli`）；`wenyi_cli/cli.py` 装配应用，`wenyi_cli/commands/` 和 `model_commands.py` 注册命令。
-- Web：`apps/web`（React/Vite）；API 与 worker：`apps/api/wenyi_api`。前端使用 pnpm，Node/pnpm 版本以 CI 和 [Web 文档](docs/web.md) 为准。
-- Desktop：`apps/desktop`（Tauri）、`apps/desktop/frontend`、`apps/desktop/backend/wenyi_desktop`；共享 UI 在 `packages/ui`。开发启动与打包见 [Desktop 文档](docs/desktop.md)。
+- Web：`apps/web`（React/Vite）；API 与 worker：`apps/api/wenyi_api`。前端使用 pnpm，Node/pnpm 版本以 CI 和 [Web 开发](docs/development/web.md)为准。
+- Desktop：`apps/desktop`（Tauri）、`apps/desktop/frontend`、`apps/desktop/backend/wenyi_desktop`；共享 UI 在 `packages/ui`。启动见 [Desktop 开发](docs/development/desktop.md)，打包见[桌面发布](docs/development/releasing.md)。
 - CLI/Core/backend/API/Desktop Python 包的发布版本由仓库 Git 标签通过 `hatch-vcs` 生成，运行时读取已安装包的元数据；根虚拟工作区和私有前端包不维护独立发布版本。包描述统一使用英语。
 - 默认配置：仓库根目录 `config.yaml`；内置模板位于 `packages/core/wenyi_core/config.py` 的 `_DEFAULT_CONFIG_YAML`。
 - 主仓许可证为 GNU GPL v3，条款见 [LICENSE](LICENSE)；BabelDOC 是独立 AGPL 服务。
@@ -28,12 +28,12 @@ Wenyi 是支持多语言互译、术语、润色、全书 Review 和多格式导
 | 任务 | 源码入口与职责 | 相关测试入口 |
 | --- | --- | --- |
 | CLI、配置 | CLI 的 `commands/`、`model_commands.py`；Core 的 `config.py` | `test_cli*.py`、`test_model_commands.py`、`test_config.py` |
-| 装配、初始化、状态与账本 | `pipeline/` 的 `orchestrator.py`、`preparation.py`、`runtime.py`、`runstore.py` | `test_preparation.py`、`test_orchestrator*.py` |
-| 存储接口与本地适配 | `storage/protocol.py`、`file.py`、`artifacts.py`；`pipeline/runstore.py` | `test_storage_injection.py`、`test_file_storage.py`、`test_file_artifacts.py` |
-| 翻译与上下文 | `pipeline/translation.py`、`translation_batch.py`、`context.py`、`title_translation.py`；`agents/` 模型任务 | `test_translator.py`、`test_translation*.py`、`test_title_translation.py` |
-| Review、润色、Autofix | `pipeline/review_*.py`、`autofix_*.py`；`agents/review_*.py`；`review/` 模型、证据与运行记录 | `test_review*.py`、`test_routing_resume.py` |
-| 输入、导出与报告 | `ingest/`、`assemble/`、`pipeline/finalization.py`、`postprocess/` | `test_ingest.py`、`test_assemble.py`、`test_bilingual.py` |
-| EPUB/HTML 注释与 DOCX 样式 | `markup/` 共享标记处理；`pipeline/annotations.py` 对齐；`document_styles/docx.py` 纯样式策略 | `test_annotation_aligner.py`、`test_docx.py` |
+| 装配、初始化、状态与账本 | `pipeline/orchestrator.py`、`pipeline/prepare/`、`pipeline/run/`；`storage/run_store.py` | `test_preparation.py`、`test_orchestrator*.py` |
+| 存储接口与本地适配 | `storage/` 的 `protocol.py`、`file.py`、`artifacts.py`、`run_store.py` | `test_storage_injection.py`、`test_file_storage.py`、`test_file_artifacts.py` |
+| 翻译与上下文 | `pipeline/translate/` 的 `translation.py`、`translation_batch.py`、`context.py`、`title_translation.py`；`agents/` 模型任务 | `test_translator.py`、`test_translation*.py`、`test_title_translation.py` |
+| Review、润色、Autofix | `pipeline/review/`、`pipeline/autofix/`；`agents/review_*.py`；`review/` 模型、证据与运行记录 | `test_review*.py`、`test_routing_resume.py` |
+| 输入、导出与报告 | `ingest/`、`assemble/`、`pipeline/finalize/`、`postprocess/` | `test_ingest.py`、`test_assemble.py`、`test_bilingual.py` |
+| EPUB/HTML 注释与 DOCX 样式 | `markup/` 共享标记处理；`pipeline/annotate/` 对齐；`document_styles/docx.py` 纯样式策略 | `test_annotation_aligner.py`、`test_docx.py` |
 | PDF | `ingest/`、`assemble/` 的 PDF 路径；`pdf_bridge/` | `test_pdf_support.py`、`test_babeldoc_bridge_client.py` |
 | 术语 | `glossary/` SQLite、抽取与冲突裁定 | `test_glossary*.py` |
 | 模型路由与 provider | `llm/`；操作注册 `operations.py`，provider 注册 `registry.py` | `test_llm*.py`、`test_usage.py`、`test_routing_resume.py` |
@@ -45,7 +45,7 @@ Web/Desktop 相关入口使用仓库根目录相对路径：
 - Web 装配、PostgreSQL 与队列：`apps/api/wenyi_api/`；测试在 `apps/api/tests/`。Desktop SQLite、凭据和本地运行器：`apps/desktop/backend/wenyi_desktop/`；测试在 `apps/desktop/backend/tests/`。
 - 共享页面与组件：`packages/ui/`；平台入口与适配分别在 `apps/web/src/` 和 `apps/desktop/frontend/src/`，E2E 在各自 `tests/`。API 类型在 `packages/shared-schema/`，接口变更需同步检查后端 schema、共享类型与前端调用。
 
-配置查阅 [configuration](docs/configuration.md)，流程语义查阅 [pipeline](docs/pipeline.md)，Web 部署查阅 [web](docs/web.md)，模块职责查阅 [architecture](docs/architecture.md)；中文版在 `docs/zh/`。历史设计稿不代表当前行为。CI 与打包查阅 `.github/workflows/` 和 `pyproject.toml`。
+用户操作查阅 [guide](docs/guide/index.md)，选项与格式查阅 [configuration](docs/reference/configuration.md)、[formats](docs/reference/formats.md)，内部职责与恢复契约查阅 [architecture](docs/development/architecture.md)、[pipeline](docs/development/pipeline.md)。前端约定见 [frontend](docs/development/frontend.md)；中文版在 `docs/zh/` 的对应目录。CI 与打包以 `.github/workflows/` 和 `pyproject.toml` 为准。
 
 `packages/` 和 `apps/` 包含产品源码；其中忽略的运行产物仍属于本地数据。`state/`、`output/`、`review-*`、Web `DATA_DIR`、Desktop 工作区、缓存、构建目录和样例书籍均需保留。除非用户明确要求，不读取整本私有书籍，不改写、移动、删除或提交这些数据。
 
@@ -76,7 +76,7 @@ CLI / Web / Desktop → Orchestrator → Runtime / Preparation / Translation / A
 
 - CLI 书籍状态按 `state/<slug>/targets/<target-language>/` 隔离；派生状态先落盘，`manifest.json` 最后原子提交，作为初始化成功标志。文件 JSON 通过同目录临时文件和 `os.replace` 原子写入。
 - Web 可变状态由 PostgreSQL 按项目持久化，通过事务与 advisory lock 保持一致性；`DATA_DIR` 仅保存上传原文、解析缓存和导出产物，不另存 JSON/SQLite 状态副本。
-- Desktop 使用独立目录库和项目 SQLite 状态，不读取或迁移 CLI/Web 项目。凭据库、模型请求、压缩和文件清理等慢操作不持有目录库写事务。原生导出先选目标后入队，同目录临时文件完整写入后原子发布；取消不创建任务。
+- Desktop 的 `--data-dir` 选择完整数据根目录，目录库、设置、日志、锁、运行时和备份均归其所有；项目位置以目录库登记为准。不自动发现或迁移旧 Desktop 数据，也不读取或迁移 CLI/Web 项目；准入与显式导入见 [Desktop 开发](docs/development/desktop.md#catalog-admission-and-project-import)。凭据库、模型请求、压缩和文件清理等慢操作不持有目录库写事务。原生导出先选目标后入队，同目录临时文件完整写入后原子发布；取消不创建任务。
 - Artifact key 使用运行目录相对路径和 `/` 分隔符，在所有平台及后端保持一致；按前缀检索时限制扫描范围，避免遍历无关源文缓存。
 - `source_sha256` 绑定输入内容，不按相同文件名复用不同内容的状态。
 - 保持锁语义：长流程使用书级运行锁；一致状态读写使用短状态锁；事件追加与产物导出分别使用专用锁。
@@ -130,7 +130,7 @@ git diff --check
 
 按风险决定验证范围，不必每次都跑全量。只改动单个领域时，跑该领域的测试及其周边套件即可；一个批次收尾时跑一次全量，push 前再跑一次。测试运行在 `pytest-xdist` 下，请保留 `-n auto`：全量并行约 80-120 秒，串行需要数分钟。`integration` 标记是例外，CI 中限两个 worker，因为它持有真实的 PostgreSQL 与 Redis 连接。
 
-前端安装使用 `pnpm install --frozen-lockfile`。分别对 `apps/web` 和 `apps/desktop/frontend` 运行 `pnpm -C <目录> typecheck`、`build` 和 `test:e2e`；共享 UI 变更验证两端，并在两端构建后运行 `pnpm test:frontend-boundaries`。E2E 需要 Playwright Chromium，安装与服务配置见 [Web 文档](docs/web.md)、[Desktop 文档](docs/desktop.md) 和 CI。
+前端安装使用 `pnpm install --frozen-lockfile`。分别对 `apps/web` 和 `apps/desktop/frontend` 运行 `pnpm -C <目录> typecheck`、`build` 和 `test:e2e`；共享 UI 变更验证两端，并在两端构建后运行 `pnpm test:frontend-boundaries`。E2E 需要 Playwright Chromium，安装与服务配置见 [Web 开发](docs/development/web.md)、[Desktop 开发](docs/development/desktop.md)和 CI。
 
 若沙箱不允许写用户级 uv 缓存，为单次命令设置 `UV_CACHE_DIR=/tmp/wenyi-uv-cache`，不要修改 `HOME`。
 
@@ -139,7 +139,15 @@ git diff --check
 - 代码注释、docstring、配置注释和默认 CLI 文案统一使用标准英语；公共代码保持清晰类型提示。提示词指令使用英语，模型生成的说明性内容使用目标语言，原文身份字段与语言示例保留原样。
 - Ruff 配置以 `pyproject.toml` 为准：目标 Python 3.10、行宽 100、E/W/F/I 检查。
 - 优先小而可审查的改动，避免顺手重排大文件或更改无关行为。
-- 用户行为变化必须更新英文与中文文档；README、cli、configuration、pipeline 只更新受影响部分并保持两种语言一致。
+
+## 文档维护
+
+- 按读者与主题归档，不在 `docs/` 根目录继续平铺：`guide/` 写安装、使用、部署与故障处理；`reference/` 写配置和格式约束；`development/` 写架构、内部契约、开发、测试与发布。`docs/zh/` 镜像同一结构。README 只作项目介绍和入口，不承载完整手册。
+- 先判断改动是否改变长期有效的使用方式、设置、限制、兼容性或开发契约。仅移动按钮、调整间距、重排组件，或修复到已说明的行为，不要求新增文档段落；若使既有操作说明或截图失真，原位修正即可。
+- 需要文档时修改所属主题的现有章节，合并相关说明并删除被替代的文字；不要在文末追加“这次新增/修复了什么”。Web/Desktop 共有操作只写在 `guide/workspace.md`，各端指南只写平台差异；内部字段、锁和实现约束不混进用户步骤。
+- 每个规则保留一个主要说明位置，其他页面链接引用；配置默认值和字段以模型与模板为准，命令以实际 CLI 为准，不复制过时帮助或历史设计结论。英文与中文同步修改；文档站的语言切换由前端导航提供，不在各页正文重复放语言跳转链接。
+- 设计讨论、修复过程、测试运行记录放在 PR、提交或发行说明中。实现后将仍有效的决策并入对应开发文档，删除完成或过时的设计稿，不另设 `design/`、`archive/` 保存语义重复的说明。
+- 移动或删除文档时更新站点导航、README、贡献指南、源码注释、技能和包元数据中的引用。检查相对路径、锚点和双语对应；运行 `pnpm docs:build` 与 `git diff --check`，涉及导航时验证本地页面、搜索和语言切换。预览方法见[开发文档入口](docs/development/index.md#documentation-preview)。
 
 ## Git 与交付
 

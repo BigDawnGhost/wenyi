@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import typer
 from rich.console import Console
-from wenyi_core.observability import configure_logging
 
 from .commands.bootstrap import configure_windows_console, initializing_group, register_bootstrap
 from .commands.context import current_context
@@ -17,13 +16,12 @@ from .model_commands import register_model_commands
 def create_app(*, console: Console | None = None) -> typer.Typer:
     """Build an independent application with fresh context on every invocation."""
     configure_windows_console()
-    configure_logging(service="wenyi-cli")
     console = console or Console()
     application = typer.Typer(
         cls=initializing_group(console),
         add_completion=False,
         no_args_is_help=True,
-        help="Multilingual translation workflows for long-form fiction.",
+        help="Multilingual translation workflows for long-form texts.",
     )
     register_bootstrap(application)
     register_model_commands(application, lambda: current_context().load_config(), console)

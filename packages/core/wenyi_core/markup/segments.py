@@ -7,6 +7,7 @@ import posixpath
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString, Tag
 
+from wenyi_core.alignment.objects import object_marker
 from wenyi_core.markup.annotations import (
     _ANNOTATION_MARKER_ONLY,
     _annotation_roots,
@@ -25,6 +26,7 @@ from wenyi_core.markup.contracts import (
     INLINE_META_KEY,
     LINE_WRAPPER_ATTR,
 )
+from wenyi_core.markup.objects import OBJECT_RELATION
 from wenyi_core.markup.ruby import RUBY_MARK_LEFT, RUBY_MARK_RIGHT
 from wenyi_core.models.document import KIND_HEADING, KIND_TEXT, Segment
 
@@ -36,6 +38,12 @@ def _preserved_inline_roots(block: Tag) -> list[Tag]:
     roots: list[Tag] = []
     seen: set[int] = set()
     for candidate in block.find_all(True):
+        if any(
+            parent.name in _ATOMIC_INLINE_TAGS
+            for parent in candidate.parents
+            if parent is not block
+        ):
+            continue
         if candidate.has_attr(ANNOTATION_ID_ATTR):
             # Annotation roots are restored separately by epub_annotations, so do not duplicate them as
             # ordinary inline nodes. Still record their atomic children, such as images, independently
@@ -228,6 +236,11 @@ def _segment_content(
             "nodes": nodes,
         }
     annotation_items: list[dict[str, object]] = []
+    dom_order = {id(node): index for index, node in enumerate(block.descendants)}
+    annotation_order = {
+        annotation["id"]: dom_order.get(id(annotation.get("root")), -1)
+        for annotation in ordered_annotations
+    }
     for annotation in ordered_annotations:
         start = normalized_offsets[offset_cursor]
         end = normalized_offsets[offset_cursor + 1]
@@ -248,7 +261,32 @@ def _segment_content(
         for key in ("html_tag", "html_parent"):
             if key in annotation:
                 annotation_items[-1][key] = annotation[key]
+    for record, (node, _raw_offset) in zip(nodes, preserved_nodes):
+        # Text-free media/anchors at a block boundary have an exact structural position.
+        # Interior objects and text-bearing formulas need a translated insertion boundary.
+        if record["placement"] != "inline" and not node.get_text(strip=True):
+            continue
+        object_id = str(record["id"])
+        node[ANNOTATION_ID_ATTR] = object_id
+        annotation_order[object_id] = dom_order[id(node)]
+        annotation_items.append(
+            {
+                "id": object_id,
+                "mode": "point",
+                "source_start": record["offset"],
+                "source_end": record["offset"],
+                "source_text": "",
+                "marker_text": "",
+                "raw_href": "",
+                "target_key": object_id,
+                "relation": OBJECT_RELATION,
+                "marker": object_marker(object_id, text),
+                "object_source": node.get_text(" ", strip=True) or str(node.get("src", node.name)),
+                "object_tag": node.name,
+            }
+        )
     if annotation_items:
+        annotation_items.sort(key=lambda item: annotation_order[item["id"]])
         meta[ANNOTATION_META_KEY] = {
             "version": 1,
             "source_length": source_length,
@@ -420,6 +458,12 @@ def annotate_epub_resource(
         # to empty anchors at the same position so the existing nontext restoration mechanism preserves them.
         for descendant in list(el.find_all(True)):
             if not descendant.get_text(strip=True):
+                continue
+            if descendant.name in _ATOMIC_INLINE_TAGS or any(
+                parent.name in _ATOMIC_INLINE_TAGS
+                for parent in descendant.parents
+                if parent is not el
+            ):
                 continue
             if id(descendant) in protected_annotation_nodes:
                 # Preserve attributes on point roots, range roots and confirmed note markers. Move id/name from

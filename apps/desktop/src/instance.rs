@@ -19,7 +19,7 @@ use std::{
 const LOCK: &str = ".desktop-instance.lock";
 const ENDPOINT: &str = ".desktop-instance.json";
 const MAGIC: &[u8; 16] = b"WENYI_ACTIVATE\0\x01";
-const MIGRATE: &[u8; 16] = b"WENYI_MIGRATE\0\0\x01";
+const OWNER: &[u8; 16] = b"WENYI_OWNER\0\0\0\0\x01";
 const WAKE_TIMEOUT: Duration = Duration::from_secs(3);
 const SOCKET_TIMEOUT: Duration = Duration::from_millis(250);
 
@@ -181,12 +181,14 @@ impl Drop for Instance {
 
 /// Some means primary; None means an existing primary acknowledged activation.
 pub fn enter(workspace: &Path) -> Result<Option<Instance>, Error> {
+    let directory = crate::paths::locks(workspace);
+    fs::create_dir_all(&directory).map_err(|_| Error::Workspace)?;
     let lock = OpenOptions::new()
         .create(true)
         .truncate(false)
         .read(true)
         .write(true)
-        .open(workspace.join(LOCK))
+        .open(directory.join(LOCK))
         .map_err(|_| Error::Workspace)?;
     let deadline = Instant::now() + WAKE_TIMEOUT;
     loop {
@@ -211,7 +213,7 @@ fn start(workspace: &Path, lock: File) -> Result<Instance, Error> {
     match OpenOptions::new()
         .read(true)
         .write(true)
-        .open(workspace.join(".desktop.lock"))
+        .open(crate::paths::locks(workspace).join(".desktop.lock"))
     {
         Ok(backend) => match backend.try_lock() {
             Ok(()) => {}
@@ -235,7 +237,8 @@ fn start(workspace: &Path, lock: File) -> Result<Instance, Error> {
     };
     // A separate record is required: Windows denies reads of an exclusively locked file.
     let generation: String = instance.iter().map(|byte| format!("{byte:02x}")).collect();
-    let temporary = workspace.join(format!(".desktop-instance-{generation}.tmp"));
+    let directory = crate::paths::locks(workspace);
+    let temporary = directory.join(format!(".desktop-instance-{generation}.tmp"));
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -244,7 +247,7 @@ fn start(workspace: &Path, lock: File) -> Result<Instance, Error> {
     let publish = || -> std::io::Result<()> {
         file.write_all(&serde_json::to_vec(&endpoint)?)?;
         drop(file);
-        fs::rename(&temporary, workspace.join(ENDPOINT))
+        fs::rename(&temporary, directory.join(ENDPOINT))
     };
     let published = publish();
     if published.is_err() {
@@ -307,7 +310,7 @@ fn respond(
         if &generation == instance {
             stream.write_all(&[activation.request() as u8])?;
         }
-    } else if &kind == MIGRATE {
+    } else if &kind == OWNER {
         let mut proof = [0u8; 32];
         stream.read_exact(&mut proof)?;
         if &proof == capability {
@@ -323,7 +326,7 @@ fn respond(
 
 fn forward(workspace: &Path, deadline: Instant) -> Option<Reply> {
     let mut record = Vec::new();
-    File::open(workspace.join(ENDPOINT))
+    File::open(crate::paths::locks(workspace).join(ENDPOINT))
         .ok()?
         .take(256)
         .read_to_end(&mut record)
@@ -355,6 +358,7 @@ fn forward(workspace: &Path, deadline: Instant) -> Option<Reply> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct Workspace(PathBuf);
@@ -520,16 +524,17 @@ mod tests {
         let workspace = Workspace::new();
         let original = enter(&workspace.0).unwrap().unwrap();
         drop(original);
-        assert!(workspace.0.join(LOCK).exists());
-        assert!(workspace.0.join(ENDPOINT).exists());
+        assert!(paths::locks(&workspace.0).join(LOCK).exists());
+        assert!(paths::locks(&workspace.0).join(ENDPOINT).exists());
         let _replacement = enter(&workspace.0).unwrap().unwrap();
         assert!(enter(&workspace.0).unwrap().is_none());
     }
 
     #[test]
-    fn old_engine_lock_blocks_new_native_owner_without_modifying_it() {
+    fn engine_lock_blocks_new_native_owner_without_modifying_it() {
         let workspace = Workspace::new();
-        let path = workspace.0.join(".desktop.lock");
+        fs::create_dir_all(paths::locks(&workspace.0)).unwrap();
+        let path = paths::locks(&workspace.0).join(".desktop.lock");
         fs::write(&path, b"\0").unwrap();
         let engine = OpenOptions::new()
             .read(true)
@@ -554,7 +559,8 @@ mod tests {
             Reply::Activated
         }));
         let endpoint: Endpoint =
-            serde_json::from_slice(&fs::read(workspace.0.join(ENDPOINT)).unwrap()).unwrap();
+            serde_json::from_slice(&fs::read(paths::locks(&workspace.0).join(ENDPOINT)).unwrap())
+                .unwrap();
         let mut stale = [0u8; 32];
         stale[..16].copy_from_slice(MAGIC);
         stale[16..].copy_from_slice(&endpoint.instance);
@@ -574,15 +580,16 @@ mod tests {
     #[test]
     fn unavailable_owner_times_out_without_taking_its_lock() {
         let workspace = Workspace::new();
+        fs::create_dir_all(paths::locks(&workspace.0)).unwrap();
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .open(workspace.0.join(LOCK))
+            .open(paths::locks(&workspace.0).join(LOCK))
             .unwrap();
         lock.try_lock().unwrap();
-        fs::write(workspace.0.join(ENDPOINT), b"invalid").unwrap();
+        fs::write(paths::locks(&workspace.0).join(ENDPOINT), b"invalid").unwrap();
         let started = Instant::now();
         assert_eq!(enter(&workspace.0).err(), Some(Error::Unreachable));
         assert!(started.elapsed() < WAKE_TIMEOUT + Duration::from_secs(1));
@@ -637,8 +644,8 @@ mod tests {
         await_owner(&mut child);
         child.kill().unwrap();
         child.wait().unwrap();
-        assert!(workspace.0.join(LOCK).exists());
-        assert!(workspace.0.join(ENDPOINT).exists());
+        assert!(paths::locks(&workspace.0).join(LOCK).exists());
+        assert!(paths::locks(&workspace.0).join(ENDPOINT).exists());
         let _replacement = enter(&workspace.0).unwrap().unwrap();
         assert!(enter(&workspace.0).unwrap().is_none());
     }
@@ -653,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn default_workspace_matches_existing_python_location() {
+    fn default_workspace_matches_python_location() {
         let output = std::process::Command::new(python())
             .args([
                 "-c",
@@ -748,7 +755,7 @@ finally:
     }
 
     #[test]
-    fn admitted_native_parent_can_migrate_but_standalone_engine_cannot_bypass_it() {
+    fn engine_validates_native_ownership_proof_before_taking_writer_lease() {
         let directory = Workspace::new();
         let workspace = directory.0.join("workspace");
         let profile = directory.0.join("profile");
@@ -763,39 +770,17 @@ finally:
             .args([
                 "-c",
                 r#"
-import json, sqlite3, sys
+import io, json, sys
 from pathlib import Path
-from wenyi_desktop import paths
-from wenyi_desktop.migration import layers, startup
+from wenyi_desktop.ownership import NativeOwner, profile_lock
 
 workspace = Path(sys.argv[1])
-with sqlite3.connect(paths.catalog(workspace)) as db:
-    db.executescript("""
-        CREATE TABLE projects(id TEXT PRIMARY KEY, document TEXT NOT NULL);
-        CREATE TABLE jobs(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-            run_id TEXT NOT NULL UNIQUE, arq_job_id TEXT NOT NULL UNIQUE,
-            document TEXT NOT NULL);
-        CREATE TABLE exports(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-            document TEXT NOT NULL);
-        CREATE TABLE application_settings(
-            id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL);
-        CREATE TABLE progress(
-            id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
-            document TEXT NOT NULL);
-    """)
 try:
-    startup.adopt(workspace)
-except layers.MigrationBusy:
+    with profile_lock(workspace, None):
+        raise AssertionError("standalone engine bypassed the native owner")
+except RuntimeError:
     pass
-else:
-    raise AssertionError("standalone engine bypassed the native owner")
 # The authorized child receives proof on its anonymous input pipe, not an env flag.
-from wenyi_desktop.migration.ownership import NativeOwner
-import io
 proof = json.loads(sys.stdin.readline())
 for invalid in (
     {**proof, "token": "00" * 32},
@@ -809,8 +794,12 @@ for invalid in (
     else:
         raise AssertionError("invalid parent ownership proof was accepted")
 owner = NativeOwner.read(io.StringIO(json.dumps(proof) + "\n"), workspace)
-assert startup.adopt(workspace, native_owner=owner).ok
-assert paths.user_catalog().is_file()
+with profile_lock(workspace, owner):
+    from wenyi_desktop.local_backend import LocalBackend
+    backend = LocalBackend(workspace)
+    # Windows may expand a short temp-directory alias while resolving the backend root.
+    assert backend.database.samefile(workspace / "catalog.sqlite3")
+    backend.close()
 "#,
             ])
             .arg(&workspace)

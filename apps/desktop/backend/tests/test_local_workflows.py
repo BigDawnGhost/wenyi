@@ -474,6 +474,36 @@ def test_snapshot_export_download_and_ownership(desktop):
 
 
 @pytest.mark.parametrize("bilingual", [False, True])
+def test_epub_export_preserves_long_filename(desktop, bilingual):
+    client, backend, _ = desktop
+    pid, store = initialize(backend)
+    store.close()
+    stem = "a" * 230
+    backend.update_project(pid, source_meta={"original_filename": f"{stem}.txt"})
+    filename = f"{stem}.zh{'-bi' if bilingual else ''}.epub"
+
+    plan = client.post(
+        f"/desktop/projects/{pid}/exports/plan", json={"format": "epub", "bilingual": bilingual}
+    )
+    assert plan.status_code == 200, plan.text
+    assert plan.json()["filename"] == filename
+
+    response = client.post(f"/projects/{pid}/exports", json=plan.json()["request"])
+    assert response.status_code == 200, response.text
+    job = wait_job(response.json()["job_id"])
+    assert job["status"] == "done", job
+    export_id = response.json()["export_id"]
+    download = client.get(f"/desktop/projects/{pid}/exports/{export_id}/content")
+    assert download.status_code == 200, download.text
+    with ZipFile(BytesIO(download.content)) as archive:
+        assert archive.testzip() is None
+        assert archive.read("mimetype") == b"application/epub+zip"
+    saved_plan = client.get(f"/desktop/projects/{pid}/exports/{export_id}/plan")
+    assert saved_plan.status_code == 200, saved_plan.text
+    assert saved_plan.json()["filename"] == filename
+
+
+@pytest.mark.parametrize("bilingual", [False, True])
 @pytest.mark.parametrize("punctuation_normalize", [False, True])
 def test_repeated_epub_export_with_leading_punctuation(desktop, bilingual, punctuation_normalize):
     client, backend, fake = desktop
@@ -759,14 +789,10 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
         for owner in range(2):
             workspace = tmp_path / str(owner)
             workspace.mkdir()
-            # Both apps share one machine profile, so each gets its own: the
-            # point of the test is that one project identity stays one project,
-            # not that two workspaces share a catalog.
             context = create_context(
                 workspace,
                 api_token=f"fake-token-{owner}",
-                credentials=CredentialStore(workspace, user_home=tmp_path / f"{owner}-profile"),
-                user_home=tmp_path / f"{owner}-profile",
+                credentials=CredentialStore(workspace),
             )
             contexts.append(context)
             stack.callback(context.repository.close)

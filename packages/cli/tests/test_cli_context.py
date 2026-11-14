@@ -9,6 +9,7 @@ from rich.console import Console
 from typer.testing import CliRunner
 from wenyi_cli.cli import create_app, main
 from wenyi_cli.commands.context import current_context
+from wenyi_core.atomicio import PublishError
 
 
 def test_help_paths_and_overrides_do_not_leak_between_invocations(tmp_path, monkeypatch):
@@ -85,13 +86,30 @@ def test_early_argument_error_still_creates_selected_config(tmp_path):
 
 
 @pytest.mark.parametrize("scope", ["chapter", "full"])
-def test_removed_glossary_scope_reports_configuration_error(tmp_path, scope):
+def test_removed_glossary_scope_is_backed_up_and_discarded(tmp_path, scope):
     config_path = tmp_path / "retired-scope.yaml"
     content = f"llm:\n  preset: fake\npipeline:\n  glossary_scope: {scope}\n"
     config_path.write_text(content, encoding="utf-8")
     result = CliRunner().invoke(create_app(), ["-c", str(config_path), "models", "list"])
-    assert result.exit_code == 1
-    assert "Configuration error" in result.output
-    assert "glossary_scope" in result.output
+    assert result.exit_code == 0, result.output
     assert "Traceback" not in result.output
-    assert config_path.read_text(encoding="utf-8") == content
+    assert "glossary_scope" not in config_path.read_text(encoding="utf-8")
+    backups = list(tmp_path.glob("retired-scope.yaml.backup-*.yaml"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8") == content
+
+
+def test_reconstruction_publication_failure_is_a_concise_configuration_error(tmp_path, monkeypatch):
+    config_path = tmp_path / "old.yaml"
+    original = "llm: {preset: fake}\nhonorific: {strategy: drop}\n"
+    config_path.write_text(original, encoding="utf-8")
+
+    def fail(*_):
+        raise PublishError("synthetic locked file")
+
+    monkeypatch.setattr("wenyi_core.config_rebuild._publish_config", fail)
+    result = CliRunner().invoke(create_app(), ["-c", str(config_path), "models", "list"])
+    assert result.exit_code == 1
+    assert "Configuration error: synthetic locked file" in result.output
+    assert "Traceback" not in result.output
+    assert config_path.read_text(encoding="utf-8") == original

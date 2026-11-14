@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { FileText, FolderOpen } from "lucide-react";
+import { FileText, FolderOpen, Upload } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { Button } from "../../components/ui/button";
@@ -67,6 +67,7 @@ export function SourceFilePicker({
       error: setSelectionError,
     });
   }, []);
+  const SourceIcon = filename ? FileText : Upload;
   return (
     <div
       ref={zone}
@@ -77,7 +78,7 @@ export function SourceFilePicker({
     >
       <div
         className={cn(
-          "flex min-h-24 flex-wrap items-center gap-3 rounded-lg border border-dashed px-4 py-4 transition-colors",
+          "flex min-h-[88px] flex-wrap items-center gap-3 rounded-lg border border-dashed bg-muted/20 p-4 transition-colors",
           dragging && !disabled && "border-foreground bg-muted",
           filename && "border-solid",
         )}
@@ -97,28 +98,32 @@ export function SourceFilePicker({
             }
           }}
         />
-        {filename ? (
-          <FileText className="h-5 w-5 shrink-0 text-muted-foreground" aria-hidden="true" />
-        ) : null}
+        <span className="flex h-10 w-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
+          <SourceIcon className="h-5 w-5" aria-hidden="true" />
+        </span>
         <div
           id="source-file-name"
           aria-live="polite"
-          className="min-w-0 flex-1 basis-40 text-sm [overflow-wrap:anywhere]"
+          className="min-w-0 flex-1 basis-40 text-sm"
         >
           {dragging && !disabled ? (
             <span role="status">{t("createProject.releaseFile")}</span>
           ) : filename ? (
             <>
-              <span className="font-medium">{filename}</span>
+              <span className="block truncate font-medium" title={filename}>
+                {filename}
+              </span>
               {size !== undefined && (
-                <span className="ml-2 text-muted-foreground">{formatSize(size, locale)}</span>
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  {formatSize(size, locale)}
+                </span>
               )}
             </>
           ) : (
             <>
               <span className="block">{t("createProject.dropFileHint")}</span>
               {formats.length > 0 && (
-                <span className="mt-1 block text-xs uppercase tracking-wide text-muted-foreground">
+                <span className="mt-1 block text-xs uppercase text-muted-foreground">
                   {formats.join(" · ")}
                 </span>
               )}

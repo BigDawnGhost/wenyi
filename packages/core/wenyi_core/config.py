@@ -8,6 +8,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
+from .i18n.genres import DEFAULT_GENRE, Genre, require_genre
 from .i18n.languages import require_language
 from .i18n.policy.models import Phase, PolicyContext, PolicyPlan, content_hash
 from .i18n.policy.resolver import resolve_policy
@@ -47,12 +48,16 @@ pipeline:
   # Additional structural retries for standard translation and each precision stage; 0 disables retries.
   align_retry_limit: 2
   polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
-  translation_mode: standard # standard | best_of_three; best_of_three requires polish
+  translation_mode: standard # standard | three_draft_synthesis; three_draft_synthesis requires polish
   rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)
   terminology_context: false # CLI-only experimental whole-book terminology evidence
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
-  annotation_alignment: true # Align links after each annotated logical paragraph; if disabled, target links fall back to paragraph ends
+  # Prescan content budgets in cl100k_base tokens; prompt/context overhead is additional.
+  # Larger values reduce splitting but may exceed model limits or reduce summary quality.
+  synopsis_source_tokens: 8000 # Maximum source tokens per chapter-digest chunk
+  synopsis_reduce_tokens: 12000 # Maximum joined digest tokens per merge and per generated summary
+  annotation_alignment: true # Align translated annotations; EPUB uses fallback markers, PDF omits failed items
   annotation_alignment_concurrency: 4 # Maximum concurrent per-annotation requests for a logical paragraph with multiple annotations
   review_concurrency: 4 # Concurrent review blocks over a read-only translation/glossary snapshot; 1 runs serially
   review_output_retries: 2 # Additional retries for malformed single-paragraph review output; 2 allows 3 attempts total
@@ -69,11 +74,6 @@ pipeline:
   # babeldoc_pages: "15"   # Optional page restriction for the bridge (one-based)
   babeldoc_timeout: 600
 
-# ── Honorific strategy (language-specific rules apply where available)────────────────────
-honorific:
-  # keep_style: preserve relationship and tone; normalize: apply consistent conventions; drop: omit where meaning permits
-  strategy: keep_style
-
 # ── Paths ─────────────────────────────────────────────────────────────────
 paths:
   state_dir: state # Run state, intermediate chapter files and glossary
@@ -83,6 +83,7 @@ output:
   mono: true # Monolingual output (<title>.<target-language>.epub; default target is zh)
   bilingual: false # Bilingual output (<title>.<target-language>-bi.epub)
   bilingual_order: target_first # target_first=translation first; source_first=source first
+  # PDF places the first version on the left; other formats use paragraph order.
   # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
   bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page
@@ -105,20 +106,12 @@ class SegmentConfig(BaseModel):
 class PipelineConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    translation_mode: Literal["standard", "best_of_three"] = "standard"
-
-    @model_validator(mode="before")
-    @classmethod
-    def ignore_legacy_precision_concurrency(cls, value: Any) -> Any:
-        """Read existing configurations and job snapshots without exposing a retired option."""
-        if isinstance(value, dict) and "precision_concurrency" in value:
-            return {key: item for key, item in value.items() if key != "precision_concurrency"}
-        return value
+    translation_mode: Literal["standard", "three_draft_synthesis"] = "standard"
 
     @model_validator(mode="after")
     def validate_translation_mode(self) -> PipelineConfig:
-        if self.translation_mode == "best_of_three" and not self.polish:
-            raise ValueError("best_of_three translation mode requires pipeline.polish=true")
+        if self.translation_mode == "three_draft_synthesis" and not self.polish:
+            raise ValueError("three_draft_synthesis translation mode requires pipeline.polish=true")
         return self
 
     review: bool = True
@@ -135,8 +128,11 @@ class PipelineConfig(BaseModel):
     prescan_concurrency: int = (
         4  # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
     )
+    # Prescan content budgets in cl100k_base tokens, excluding prompt/context overhead.
+    synopsis_source_tokens: int = Field(default=8000, gt=0)
+    synopsis_reduce_tokens: int = Field(default=12000, gt=0)
     annotation_alignment: bool = (
-        True  # Align links after each annotated logical paragraph is finalized
+        True  # Align annotations after each logical paragraph; PDF omits failed items
     )
     # For multiple annotations in a logical paragraph, align each with a concurrent request.
     # This limit bounds concurrency and avoids all markers falling back after one bad response.
@@ -174,6 +170,8 @@ class PipelineConfig(BaseModel):
 
 
 class OutputConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     mono: bool = True  # Generate monolingual output
     bilingual: bool = False  # Generate bilingual output
     bilingual_order: Literal["target_first", "source_first"] = (
@@ -186,15 +184,50 @@ class OutputConfig(BaseModel):
     )
 
 
+class LanguageConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source: str = "auto"
+    target: str = "zh"
+
+    @field_validator("source")
+    @classmethod
+    def validate_source(cls, value: str) -> str:
+        return require_language(value, allow_auto=True)
+
+    @field_validator("target")
+    @classmethod
+    def validate_target(cls, value: str) -> str:
+        return require_language(value)
+
+
+class PathsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state_dir: str = "state"
+
+
+CONFIG_SECTIONS: dict[str, type[BaseModel]] = {
+    "language": LanguageConfig,
+    "llm": LLMConfig,
+    "segment": SegmentConfig,
+    "pipeline": PipelineConfig,
+    "output": OutputConfig,
+    "paths": PathsConfig,
+}
+
+
 class Config(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     source_lang: str = "auto"  # auto | ja | en | … (auto uses model detection)
     target_lang: str = "zh"
     _language_plans: dict[str, PolicyPlan] = PrivateAttr(default_factory=dict)
+    _prompt_genre: Genre = PrivateAttr(default=DEFAULT_GENRE)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     segment: SegmentConfig = Field(default_factory=SegmentConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
-    honorific_strategy: str = "keep_style"
     state_dir: str = "state"
 
     @model_validator(mode="after")
@@ -207,6 +240,20 @@ class Config(BaseModel):
             ),
         )
         return self
+
+    @property
+    def prompt_genre(self) -> Genre:
+        """Return the runtime prompt family without adding a Core YAML setting."""
+        return self._prompt_genre
+
+    def set_prompt_genre(self, genre: str) -> None:
+        """Select a runtime prompt family before constructing agents; keep Core YAML unchanged."""
+        self._prompt_genre = require_genre(genre)
+        self._language_plans.clear()
+
+    def set_experimental_prompt_genre(self, genre: str) -> None:
+        """Keep the original experimental API as an alias for existing callers."""
+        self.set_prompt_genre(genre)
 
     def language_policy(
         self,
@@ -227,7 +274,6 @@ class Config(BaseModel):
             format=format,
             backend=backend,
             punctuation_normalize=self.output.punctuation_normalize,
-            honorific_strategy=self.honorific_strategy,
             source_identity=source_identity,
             task_groups=self._policy_tasks(phase),
             bilingual=self.output.bilingual,
@@ -235,6 +281,7 @@ class Config(BaseModel):
             preserve_source_style=self.output.bilingual_preserve_source_style,
             about_page=self.output.about_page,
             terminology_context=self.pipeline.terminology_context,
+            genre=self._prompt_genre,
         )
         return resolve_policy(context)
 
@@ -251,7 +298,7 @@ class Config(BaseModel):
                 else ("analyzer",)
             ) + terminology
         if phase == "translation":
-            if self.pipeline.translation_mode == "best_of_three":
+            if self.pipeline.translation_mode == "three_draft_synthesis":
                 return (
                     "precision",
                     "title_translator",
@@ -371,16 +418,15 @@ class Config(BaseModel):
     def load(cls, path: str = "config.yaml") -> Config:
         """Load YAML configuration and apply typed defaults for missing fields."""
         with open(path, "r", encoding="utf-8") as f:
-            raw = parse_config_yaml(f.read()) or {}
-        return cls.from_dict(raw)
+            raw = parse_config_yaml(f.read())
+        return cls.from_dict({} if raw is None else raw)
 
     @classmethod
     def from_dict(cls, raw: Any) -> Config:
         """Convert a nested YAML dictionary into the runtime configuration model."""
         if not isinstance(raw, dict):
             raise ValueError("Configuration must be a mapping of sections.")
-        sections = {"language", "llm", "segment", "pipeline", "output", "honorific", "paths"}
-        unknown = set(raw) - sections
+        unknown = set(raw) - CONFIG_SECTIONS.keys()
         if unknown:
             raise ValueError(
                 "Unknown configuration sections: " + ", ".join(sorted(map(str, unknown)))
@@ -388,18 +434,15 @@ class Config(BaseModel):
         lang = raw.get("language", {})
         if not isinstance(lang, dict) or set(lang) - {"source", "target"}:
             raise ValueError("Invalid or unknown language configuration fields")
-        llm_raw = raw.get("llm", {})
-        llm = LLMConfig.model_validate({} if llm_raw is None else llm_raw)
-        segment = SegmentConfig.model_validate(raw.get("segment", {}) or {})
-        pipeline = PipelineConfig.model_validate(raw.get("pipeline", {}) or {})
-        output = OutputConfig.model_validate(raw.get("output", {}) or {})
+        sections = {name: {} if raw.get(name) is None else raw[name] for name in CONFIG_SECTIONS}
+        language = LanguageConfig.model_validate(sections["language"])
+        paths = PathsConfig.model_validate(sections["paths"])
         return cls(
-            source_lang=lang.get("source", "auto"),
-            target_lang=lang.get("target", "zh"),
-            llm=llm,
-            segment=segment,
-            pipeline=pipeline,
-            output=output,
-            honorific_strategy=raw.get("honorific", {}).get("strategy", "keep_style"),
-            state_dir=raw.get("paths", {}).get("state_dir", "state"),
+            source_lang=language.source,
+            target_lang=language.target,
+            llm=LLMConfig.model_validate(sections["llm"]),
+            segment=SegmentConfig.model_validate(sections["segment"]),
+            pipeline=PipelineConfig.model_validate(sections["pipeline"]),
+            output=OutputConfig.model_validate(sections["output"]),
+            state_dir=paths.state_dir,
         )

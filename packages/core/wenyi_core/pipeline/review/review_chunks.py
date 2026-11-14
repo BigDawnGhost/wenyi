@@ -73,7 +73,7 @@ class ReviewChunkService:
         Convert valid block-local indices by the block offset and reject invalid positions.
         Supply the full glossary to every fresh reviewer request and share the same
         snapshot across workers. Completed chunks and initial traces bypass model calls.
-        Read fixed target/glossary snapshots. Recursively bisect malformed output and retry
+        Read fixed target/glossary snapshots. Recursively bisect invalid output and retry
         single paragraphs a bounded number of times. Merge results in original block order
         for determinism.
         """
@@ -176,6 +176,19 @@ class ReviewChunkService:
                 ):
                     reused_initial = existing_initial
                 else:
+                    if (
+                        len(chunk) > 1
+                        and existing_initial
+                        and existing_initial.get("status") == "failed"
+                    ):
+                        failure = existing_initial.get("error")
+                        # Older runs stored the provider error type directly.
+                        if isinstance(failure, dict) and (
+                            failure.get("reason") == "truncated_response"
+                            or failure.get("type")
+                            in ("TruncatedResponseError", "_SafeTruncatedResponseError")
+                        ):
+                            raise ReviewOutputError("truncated_response")
                     initial_trace = {
                         "agent_id": initial_id,
                         "chapter": chapter_index,
@@ -233,6 +246,8 @@ class ReviewChunkService:
                             "type": type(error).__name__,
                             "message": str(error),
                         }
+                        if isinstance(error, ReviewOutputError):
+                            initial_trace["error"]["reason"] = error.reason
                         debug.write_json(initial_path, initial_trace)
                     raise
                 repaired = review_result.repaired

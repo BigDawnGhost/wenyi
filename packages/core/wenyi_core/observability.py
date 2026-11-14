@@ -7,6 +7,8 @@ import json
 import logging
 import os
 import sys
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
 from typing import Any
 
 # Carries the correlation ID for the request or task currently being served.
@@ -80,6 +82,21 @@ class _ConsoleHandler(logging.StreamHandler):
     _wenyi_handler = True
 
 
+class _FileHandler(RotatingFileHandler):
+    """Bound one invocation's disk usage and keep diagnostic files owner-only."""
+
+    _wenyi_handler = True
+
+    def _open(self) -> Any:
+        return open(
+            self.baseFilename,
+            self.mode,
+            encoding=self.encoding,
+            errors=self.errors,
+            opener=lambda path, flags: os.open(path, flags, 0o600),
+        )
+
+
 def console_handler(*, stream: Any | None = None, service: str | None = None) -> logging.Handler:
     """One owned handler factory for dictConfig and application entry points."""
     handler = _ConsoleHandler(stream if stream is not None else sys.stderr)
@@ -93,6 +110,7 @@ def configure_logging(
     json: bool | None = None,
     service: str | None = None,
     stream: Any | None = None,
+    file_path: str | Path | None = None,
 ) -> None:
     """Install process logging; safe to call again when an entry point restarts.
 
@@ -100,20 +118,26 @@ def configure_logging(
     someone else — a test runner's capture handler, for example — is kept so
     reconfiguring never silences existing output.
     """
+    if file_path is not None and stream is not None:
+        raise ValueError("Choose either a diagnostic file or a console stream")
     root = logging.getLogger()
-    configured_json = False
-    for existing in list(root.handlers):
-        if getattr(existing, "_wenyi_handler", False):
-            configured_json |= isinstance(existing.formatter, JsonFormatter)
-            root.removeHandler(existing)
+    owned = [handler for handler in root.handlers if getattr(handler, "_wenyi_handler", False)]
+    configured_json = any(isinstance(handler.formatter, JsonFormatter) for handler in owned)
 
     # Preserve an explicit server log configuration unless the caller or environment
     # selects a format. Docker's dictConfig and app startup share this ownership.
     if json is None and JSON_LOG_FORMAT_ENV not in os.environ:
         json = configured_json
-    handler = console_handler(stream=stream, service=service)
+    if file_path is None:
+        handler = console_handler(stream=stream, service=service)
+    else:
+        handler = _FileHandler(file_path, maxBytes=5 * 1024 * 1024, backupCount=2, encoding="utf-8")
+        handler.addFilter(_ContextFilter(service))
     handler.setFormatter(
         JsonFormatter() if use_json_logs(json) else logging.Formatter(HUMAN_FORMAT)
     )
+    for existing in owned:
+        root.removeHandler(existing)
+        existing.close()
     root.addHandler(handler)
     root.setLevel(level.upper())

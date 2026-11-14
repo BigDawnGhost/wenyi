@@ -7,10 +7,12 @@ from contextlib import contextmanager
 
 import yaml
 from wenyi_core.config import Config
+from wenyi_core.i18n.genres import DEFAULT_GENRE
 from wenyi_core.llm.routing import resolve_routes
 
 from .config_documents import (
     config_document,
+    config_from_document,
     merge_project,
     parse_yaml,
     project_document,
@@ -20,7 +22,7 @@ from .context import BackendStorage
 from .errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from .global_settings import registered_models
 from .ports.projects import RUNNING_PROJECT_STATUSES, ProjectReader
-from .strategies import _saved_strategy_to_config
+from .strategies import strategy_to_config
 
 
 def require_project(pid: str, projects: ProjectReader) -> dict:
@@ -59,7 +61,7 @@ def effective_config(
     state_dir: str,
 ) -> Config:
     base = defaults
-    base = _saved_strategy_to_config(
+    base = strategy_to_config(
         project.get("strategy") or {"template": "标准翻译"},
         base,
         source_lang=project.get("source_lang") or "auto",
@@ -71,17 +73,22 @@ def effective_config(
     if not isinstance(saved_pipeline, dict):
         raise ValueError("Saved pipeline configuration must be a mapping")
     saved_mode = saved_pipeline.get("translation_mode", "standard")
-    if document is not None:
-        requested_mode = document.get("pipeline", {}).get("translation_mode", saved_mode)
-        if requested_mode != saved_mode:
-            raise ValueError("Create a new project to change the translation mode")
-    raw["pipeline"]["translation_mode"] = saved_mode
-    if saved_mode == "best_of_three" and (
+    for field, default, label in (
+        ("translation_mode", "standard", "translation mode"),
+        ("prompt_genre", DEFAULT_GENRE, "prompt genre"),
+    ):
+        saved_value = saved_pipeline.get(field, default)
+        if document is not None:
+            requested_value = document.get("pipeline", {}).get(field, saved_value)
+            if requested_value != saved_value:
+                raise ValueError(f"Create a new project to change the {label}")
+        raw["pipeline"][field] = saved_value
+    if saved_mode == "three_draft_synthesis" and (
         document is not None and "polish" not in document.get("pipeline", {})
     ):
         raw["pipeline"]["polish"] = True
     raw["paths"] = {"state_dir": state_dir}
-    config = Config.from_dict(raw)
+    config = config_from_document(raw)
     if config.source_lang == config.target_lang:
         raise ValueError("Source and target languages are identical; choose another direction")
     if project.get("initialized"):
@@ -94,6 +101,7 @@ def effective_config(
         resolved = Config.model_validate(
             {**config.model_dump(), "source_lang": project["source_lang"]}
         )
+        resolved.set_prompt_genre(config.prompt_genre)
     else:
         resolved = config
     resolved.language_policy("translation")
@@ -102,11 +110,6 @@ def effective_config(
 
 def parse_project_yaml(value: str) -> dict:
     raw = parse_yaml(value)
-    pipeline = raw.get("pipeline")
-    if isinstance(pipeline, dict) and "precision_concurrency" in pipeline:
-        raise ValueError(
-            "Initial-draft concurrency is built in; remove pipeline.precision_concurrency"
-        )
     if "llm" in raw:
         project_llm(raw["llm"], strict=True)
     return raw

@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from wenyi_backend.context import current_context
 from wenyi_backend.errors import ApiError
 
-from ..catalog_recovery import ImportRefused, import_project
 from ..local_backend import LocalBackend
+from ..project_import import ImportRefused, import_project
 
 router = APIRouter(prefix="/desktop/projects", tags=["desktop-import"])
 

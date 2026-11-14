@@ -42,10 +42,9 @@ from .run_store import ExportSnapshotStore, RunStore, source_sha256
 #: leaves the newer tables untouched while writing rows the newer build reads as
 #: complete. Refusing is the only outcome that keeps both versions honest.
 #:
-#: A database carrying 0 predates this guard. It is stamped with the current
-#: number and otherwise left alone, which is what makes the upgrade free;
-#: refusing 0 instead would declare every existing project unsupported.
-SCHEMA_VERSION = 1
+#: Older schemas are upgraded on writable opens; recovery opens leave them alone.
+#: Version 2 repairs compact counts; version 3 adds lazy paragraph projections.
+SCHEMA_VERSION = 3
 
 # Re-exported: the class moved to locks.py, but callers still import it from here.
 __all__ = ["SCHEMA_VERSION", "SqliteStorage", "StorageBusyError"]
@@ -59,18 +58,19 @@ class SqliteStorage:
     borrowed glossary operations. Closing all connections drains active snapshots.
     """
 
-    def __init__(self, run_dir: str, *, create: bool = True):
+    def __init__(self, run_dir: str, *, create: bool = True, upgrade: bool | None = None):
         self.run_dir = os.path.abspath(run_dir)
         self.database_path = os.path.join(self.run_dir, "state.sqlite3")
         self.source_dir = os.path.join(self.run_dir, "source")
         self.reviews_dir = os.path.join(self.run_dir, "reviews")
         self._create = create
+        self._upgrade = create if upgrade is None else upgrade
         # The mutex serializes writers across threads; reads use per-thread
         # connections and a WAL snapshot instead of queueing behind it.
         self._mutex = threading.RLock()
         self._lock_local = threading.local()
         self._conn_local = threading.local()
-        self._connections: set[sqlite3.Connection] = set()
+        self._connections: dict[sqlite3.Connection, threading.Thread] = {}
         self._connections_guard = threading.Condition()
         self._readers = 0
         self._closing = False
@@ -94,6 +94,14 @@ class SqliteStorage:
             os.makedirs(self.run_dir, exist_ok=True)
         elif not os.path.isfile(self.database_path):
             raise FileNotFoundError(f"Local state database not found: {self.database_path}")
+        # Short-lived model workers write events through this store. Reclaim
+        # their connections before opening another one so a long run cannot
+        # exhaust file descriptors. Live threads keep their cached connections.
+        with self._connections_guard:
+            for connection, owner in tuple(self._connections.items()):
+                if not owner.is_alive():
+                    connection.close()
+                    del self._connections[connection]
         # SQLite exposes the new file before its schema transaction commits.
         # Serialize first opens across instances/processes, including discovery;
         # ordinary reads/writes keep using WAL without holding this OS lock.
@@ -102,7 +110,7 @@ class SqliteStorage:
         # Readers must not take the writer mutex: close_all holds it while
         # draining snapshots, and a first read may still be opening its connection.
         with self._connections_guard:
-            self._connections.add(conn)
+            self._connections[conn] = threading.current_thread()
         self._conn_local.conn = conn
         self._conn_local.depth = 0
         return conn
@@ -115,6 +123,8 @@ class SqliteStorage:
 
     def _open_connection(self) -> sqlite3.Connection:
         """Called under the short schema initialization lock."""
+        from .sqlite_reader_index import install
+
         # SQLite rejects the extended-length prefix, so a long database path
         # cannot be rescued the way an ordinary file path can. Checking first
         # replaces "unable to open database file" with a message naming the limit.
@@ -130,7 +140,7 @@ class SqliteStorage:
                 conn.execute("PRAGMA journal_mode = WAL")
             # Every connection passes here, including the readers that drain on
             # close, so the guard is stated once rather than at each open site.
-            self._check_schema_version(conn)
+            version = self._check_schema_version(conn)
             if not conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='artifacts'"
             ).fetchone():
@@ -171,24 +181,37 @@ class SqliteStorage:
                     "ON segment_revisions(chapter_index, segment_index, id)"
                 )
                 GlossaryStore.initialize_schema(conn)
+                install(conn)
+                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                conn.commit()
+            elif self._upgrade and version < SCHEMA_VERSION:
+                # Only derived summaries change. Publish their new counting rule
+                # and the version together, or leave the old database untouched.
+                conn.execute("BEGIN IMMEDIATE")
+                if version < 2:
+                    conn.execute("DELETE FROM chapter_statistics")
+                    for row in conn.execute(
+                        "SELECT key, value FROM artifacts "
+                        "WHERE key >= 'chapters/' AND key < 'chapters0'"
+                    ):
+                        if re.fullmatch(r"chapters/ch\d+\.json", row["key"]):
+                            chapter = Chapter.model_validate(json.loads(row["value"]))
+                            if row["key"] != f"chapters/ch{chapter.index}.json":
+                                raise ValueError("Chapter index does not match its artifact key")
+                            self._save_chapter_statistics(conn, chapter)
+                install(conn)
+                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 conn.commit()
         except BaseException:
             conn.close()
             raise
         return conn
 
-    def _check_schema_version(self, conn: sqlite3.Connection) -> None:
-        """Refuse a database a newer build created, and stamp an older one.
+    def _check_schema_version(self, conn: sqlite3.Connection) -> int:
+        """Refuse newer schemas before reading data or attempting an upgrade.
 
-        The stamp is written here rather than beside schema creation because the
-        number has to be set for a database whose tables already exist as well:
-        the upgrade path is a file this build did not create, and leaving it at 0
-        would make every later open repeat the same upgrade.
-
-        Reading and writing are decided by how this store was constructed. A
-        read-only store is how a caller inspects or recovers a project without
-        writing to it, so the refusal still applies there while the stamp is
-        skipped: the writable path the caller eventually takes records it.
+        Writable opens repair older compact counts and stamp the schema after
+        table creation. Recovery/read-only opens neither migrate nor stamp it.
         """
         version = conn.execute("PRAGMA user_version").fetchone()[0]
         if not isinstance(version, int) or isinstance(version, bool) or version < 0:
@@ -201,8 +224,7 @@ class SqliteStorage:
                 "incompletely.",
                 code="database_schema_too_new",
             )
-        if version == 0 and self._create:
-            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        return version
 
     def close(self) -> None:
         """Release this thread's connection; other threads release their own.
@@ -218,7 +240,7 @@ class SqliteStorage:
             self._conn_local.depth = 0
             if conn is not None:
                 with self._connections_guard:
-                    self._connections.discard(conn)
+                    self._connections.pop(conn, None)
                 conn.close()
 
     def _check_close(self) -> None:
@@ -233,7 +255,7 @@ class SqliteStorage:
                 self._closing = True
                 try:
                     self._connections_guard.wait_for(lambda: self._readers == 0)
-                    connections, self._connections = self._connections, set()
+                    connections, self._connections = self._connections, {}
                     # Replacing the TLS object invalidates caches in surviving worker
                     # threads too, not only in the thread releasing the run lock.
                     self._conn_local = threading.local()
@@ -398,6 +420,15 @@ class SqliteStorage:
                 "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                 (key, encoded),
             )
+            if conn.execute("PRAGMA user_version").fetchone()[0] >= 3:
+                from .sqlite_reader_index import refresh
+
+                refresh(conn, key, value)
+            # Generic artifact writes must not leave a summary for an old body.
+            # save_chapter replaces it in this same transaction; raw writes use
+            # the read-only fallback until the next normal chapter save.
+            if key.startswith("chapters/"):
+                conn.execute("DELETE FROM chapter_statistics WHERE artifact_key=?", (key,))
 
     def delete_artifact(self, key: str) -> None:
         key = self._key(key)
@@ -534,7 +565,8 @@ class SqliteStorage:
                     raise ValueError("Invalid chapter index in translation state")
                 if index in chapters:
                     raise ValueError(f"Duplicate chapter index in translation state: {index}")
-                chapter = self.load_chapter(index)
+                # Reuse this manifest: per-chapter reloads make large exports quadratic.
+                chapter = self._load_chapter(index, entry)
                 if chapter.index != index:
                     raise ValueError(f"Chapter index mismatch: {index}")
                 chapters[index] = chapter
@@ -580,63 +612,85 @@ class SqliteStorage:
         if revision_kind not in (None, "manual"):
             raise ValueError("Invalid chapter revision kind")
         key = f"chapters/ch{chapter.index}.json"
-        text = [
-            segment for segment in chapter.segments if segment.source and segment.kind == "text"
-        ]
         with self.state_lock():
             previous = self.read_artifact(key)
             self.write_artifact(key, chapter.model_dump())
             self._record_chapter_changes(chapter, previous, kind=revision_kind)
-            self._connection().execute(
-                "INSERT INTO chapter_statistics "
-                "(chapter_index, artifact_key, title, meta, word_count, target_word_count) "
-                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chapter_index) DO UPDATE SET "
-                "title=excluded.title, meta=excluded.meta, word_count=excluded.word_count, "
-                "target_word_count=excluded.target_word_count",
-                (
-                    chapter.index,
-                    key,
-                    chapter.title,
-                    json.dumps(chapter.meta, ensure_ascii=False),
-                    len(text),
-                    sum(segment.target is not None for segment in text),
-                ),
-            )
+            self._save_chapter_statistics(self._connection(), chapter)
+
+    @staticmethod
+    def _save_chapter_statistics(conn: sqlite3.Connection, chapter: Chapter) -> None:
+        segments = chapter.text_segments
+        conn.execute(
+            "INSERT INTO chapter_statistics "
+            "(chapter_index, artifact_key, title, meta, word_count, target_word_count) "
+            "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chapter_index) DO UPDATE SET "
+            "artifact_key=excluded.artifact_key, title=excluded.title, meta=excluded.meta, "
+            "word_count=excluded.word_count, target_word_count=excluded.target_word_count",
+            (
+                chapter.index,
+                f"chapters/ch{chapter.index}.json",
+                chapter.title,
+                json.dumps(chapter.meta, ensure_ascii=False),
+                len(segments),
+                sum(segment.target is not None for segment in segments),
+            ),
+        )
 
     def chapter_statistics(self) -> list[dict]:
-        """Read compact chapter summaries without loading any segment bodies.
+        """Read summaries in manifest order, including headings and empty targets."""
+        with self.read_chapter_statistics_snapshot() as chapters:
+            return list(chapters)
 
-        Counts match the API's segment counts, including intentionally empty targets.
-        Manifest status and translated titles remain authoritative; review presentation
-        is intentionally left to the caller.
-        """
-        if not self.exists():
-            return []
+    @contextmanager
+    def read_chapter_statistics_snapshot(self) -> Iterator[Iterator[dict]]:
+        """Keep manifest, compact counts and the caller's review reads in one snapshot."""
+        if not self._database_present():
+            yield iter(())
+            return
         with self._read_lock():
-            inventory = {
-                entry["index"]: entry for entry in self.load_manifest().get("chapters", [])
-            }
-            result = []
-            for row in self._connection().execute(
-                "SELECT * FROM chapter_statistics ORDER BY chapter_index"
-            ):
-                entry = inventory.get(row["chapter_index"])
-                if entry is None:
-                    continue
-                meta = json.loads(row["meta"])
-                result.append(
-                    {
-                        "index": row["chapter_index"],
-                        "title": row["title"],
+            manifest = self.read_artifact("manifest.json") or {}
+            conn = self._connection()
+            # Old writers used different counts. Never trust those rows, or
+            # change the database during read-only recovery inspection.
+            rows = (
+                {
+                    row["chapter_index"]: row
+                    for row in conn.execute("SELECT * FROM chapter_statistics")
+                }
+                if conn.execute("PRAGMA user_version").fetchone()[0] >= 2
+                else {}
+            )
+
+            def summaries():
+                for entry in manifest.get("chapters", []):
+                    ci = entry["index"]
+                    row = rows.get(ci)
+                    if row is None:
+                        chapter = self._load_chapter(ci, entry)
+                        segments = chapter.text_segments
+                        title, meta = chapter.title, chapter.meta
+                        count = len(segments)
+                        translated = sum(segment.target is not None for segment in segments)
+                    else:
+                        title, meta = row["title"], json.loads(row["meta"])
+                        count, translated = row["word_count"], row["target_word_count"]
+                    yield {
+                        "index": ci,
+                        "title": title,
                         "title_translated": self._translated_title(entry, meta),
-                        "status": entry.get("status", STATUS_PENDING),
-                        "review_status": entry.get("review_status", STATUS_PENDING),
-                        "word_count": row["word_count"],
-                        "target_word_count": row["target_word_count"],
+                        "status": entry.get("status") or STATUS_PENDING,
+                        "review_status": entry.get("review_status") or STATUS_PENDING,
+                        "word_count": count,
+                        "target_word_count": translated,
                         "meta": meta,
                     }
-                )
-            return result
+
+            chapters = summaries()
+            try:
+                yield chapters
+            finally:
+                chapters.close()
 
     def _record_chapter_changes(
         self, chapter: Chapter, previous: dict | None, *, kind: Literal["manual"] | None
@@ -794,20 +848,102 @@ class SqliteStorage:
         if not self._database_present():
             raise FileNotFoundError(f"Chapter not found: {ci}")
         with self._read_lock():
-            value = self.read_artifact(f"chapters/ch{ci}.json")
-            if value is None:
-                raise FileNotFoundError(f"Chapter not found: {ci}")
-            chapter = Chapter.model_validate(value)
             manifest = self.read_artifact("manifest.json") or {}
             entry = next(
                 (entry for entry in manifest.get("chapters", []) if entry["index"] == ci), {}
             )
-            translated = self._translated_title(entry, chapter.meta)
-            if translated is not None:
-                chapter.meta["title_translated"] = translated
-            elif "title_translated" in entry:
-                chapter.meta.pop("title_translated", None)
-            return chapter
+            return self._load_chapter(ci, entry)
+
+    def _prepare_reader(self, ci: int, parsed: dict | None = None) -> bool:
+        from .sqlite_reader_index import prepare
+
+        with self._read_lock():
+            conn = self._connection()
+            if conn.execute("PRAGMA user_version").fetchone()[0] < 3:
+                return False
+            key = "parsed_document.json" if parsed is not None else f"chapters/ch{ci}.json"
+            if conn.execute(
+                "SELECT 1 FROM reader_chapters WHERE artifact_key=? AND chapter_index=?", (key, ci)
+            ).fetchone():
+                return True
+        # Do not escalate a recovery snapshot into a writer. Normal Desktop reads
+        # explicitly permit upgrades and lazy projection construction.
+        if not self._upgrade:
+            return False
+        with self.state_lock():
+            prepare(self._connection(), ci, parsed)
+        return True
+
+    def read_chapter_window(
+        self,
+        ci: int,
+        *,
+        offset: int,
+        limit: int,
+        around: int | None = None,
+        parsed: dict | None = None,
+    ) -> dict:
+        from .sqlite_reader_index import IndexedChapterReader
+        from .sqlite_reading import SqliteChapterReader
+
+        indexed = self._prepare_reader(ci, parsed)
+        with self._read_lock():
+            reader = IndexedChapterReader if indexed else SqliteChapterReader
+            result = reader(self._connection(), ci, parsed).window(offset, limit, around)
+            if parsed is None:
+                manifest = self.read_artifact("manifest.json") or {}
+                entry = next(
+                    (entry for entry in manifest.get("chapters", []) if entry["index"] == ci),
+                    {},
+                )
+                result["title_translated"] = self._translated_title(
+                    entry, {"title_translated": result["title_translated"]}
+                )
+            return result
+
+    def read_chapter_targets(self, ci: int, indices: list[int]) -> list[dict]:
+        from .sqlite_reader_index import IndexedChapterReader
+        from .sqlite_reading import SqliteChapterReader
+
+        indexed = self._prepare_reader(ci)
+        with self._read_lock():
+            reader = IndexedChapterReader if indexed else SqliteChapterReader
+            try:
+                return reader(self._connection(), ci, None).targets(indices)
+            except KeyError:
+                return []
+
+    @contextmanager
+    def read_chapters_snapshot(self) -> Iterator[Iterator[tuple[dict, Chapter]]]:
+        """Yield manifest entries and chapter bodies lazily from one read snapshot.
+
+        Parse the manifest once, preserving its chapter order and translated titles.
+        Close the iterator before releasing the snapshot, including on early exits,
+        so it cannot read chapters outside this context.
+        """
+        with self._read_lock():
+            manifest = self.load_manifest()
+            chapters = (
+                (entry, self._load_chapter(entry["index"], entry))
+                for entry in manifest.get("chapters", [])
+            )
+            try:
+                yield chapters
+            finally:
+                chapters.close()
+
+    def _load_chapter(self, ci: int, entry: dict) -> Chapter:
+        """Load one chapter body, applying its already-read manifest entry's title."""
+        value = self.read_artifact(f"chapters/ch{ci}.json")
+        if value is None:
+            raise FileNotFoundError(f"Chapter not found: {ci}")
+        chapter = Chapter.model_validate(value)
+        translated = self._translated_title(entry, chapter.meta)
+        if translated is not None:
+            chapter.meta["title_translated"] = translated
+        elif "title_translated" in entry:
+            chapter.meta.pop("title_translated", None)
+        return chapter
 
     def save_annotation_contexts(self, data: dict) -> None:
         self.write_artifact("annotation_contexts.json", data)

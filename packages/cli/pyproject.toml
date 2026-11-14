@@ -12,7 +12,7 @@ dependencies = [
 
 [project.urls]
 Repository = "https://github.com/BigDawnGhost/wenyi"
-Documentation = "https://github.com/BigDawnGhost/wenyi/blob/main/docs/cli.md"
+Documentation = "https://github.com/BigDawnGhost/wenyi/blob/main/docs/guide/cli.md"
 
 [project.scripts]
 wenyi = "wenyi_cli.main:main"

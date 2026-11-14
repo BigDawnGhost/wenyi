@@ -7,12 +7,13 @@ test("project settings retain creation-time precision without a mode selector", 
       ...configuration,
       effective: {
         ...effective,
-        pipeline: { ...effective.pipeline, translation_mode: "best_of_three", polish: true },
+        pipeline: { ...effective.pipeline, translation_mode: "three_draft_synthesis", polish: true },
       },
     },
   });
   let submitted: Record<string, any> | undefined;
-  await page.route(`**/api/projects/${pid}/config/validate`, async (route) => {
+  await page.route(`**/api/projects/${pid}/config`, async (route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
     submitted = JSON.parse(route.request().postDataJSON().yaml);
     await route.fulfill({
       json: { ...configuration, effective: submitted, yaml: JSON.stringify(submitted) },
@@ -22,14 +23,15 @@ test("project settings retain creation-time precision without a mode selector", 
   await expect(page.getByLabel("Translation mode", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Polishing", { exact: true })).toBeChecked();
   await expect(page.getByLabel("Polishing", { exact: true })).toBeDisabled();
-  await page.locator("summary").filter({ hasText: "Segmentation and performance" }).click();
   await expect(page.getByLabel("Parallel initial drafts (1–3)")).toHaveCount(0);
-  await page.getByLabel("Tokens per batch", { exact: true }).fill("1400");
-  await page.getByRole("button", { name: "Validate configuration", exact: true }).click();
-  expect(submitted?.pipeline.translation_mode).toBe("best_of_three");
+  await page.getByLabel("Whole-book review", { exact: true }).uncheck();
+  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+  await expect(page.getByText("Project settings saved", { exact: true })).toBeVisible();
+  expect(submitted?.pipeline.translation_mode).toBe("three_draft_synthesis");
   expect(submitted?.pipeline.polish).toBe(true);
+  expect(submitted?.pipeline.review).toBe(false);
   expect(submitted?.pipeline.precision_concurrency).toBeUndefined();
-  expect(submitted?.segment.max_tokens_per_batch).toBe(1400);
+  expect(submitted?.segment.max_tokens_per_batch).toBe(1800);
   await expect(page.getByLabel("Polishing", { exact: true })).toBeDisabled();
 });
 
@@ -117,7 +119,7 @@ for (const chinese of [false, true]) {
   });
 }
 
-test("advanced settings retain invalid drafts and reveal them after validation", async ({
+test("project settings retain invalid inline YAML and prevent basic edits from overwriting it", async ({
   page,
 }) => {
   const settings = {
@@ -157,19 +159,24 @@ test("advanced settings retain invalid drafts and reveal them after validation",
   await expect(
     page.getByLabel("API provider", { exact: true }),
   ).not.toBeVisible();
-  await expect(page.getByLabel("Tokens per batch")).not.toBeVisible();
-  const performance = page
-    .locator("summary")
-    .filter({ hasText: "Segmentation and performance" });
-  await performance.click();
-  await page.getByLabel("Tokens per batch").fill("0");
-  await performance.click();
+  await expect(page.getByLabel("Tokens per batch")).toHaveCount(0);
+  const yaml = page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true });
+  const invalid = JSON.stringify({
+    ...settings,
+    segment: { ...settings.segment, max_tokens_per_batch: 0 },
+  });
+  await yaml.fill(invalid);
+  await expect(page.getByLabel("Quality tier", { exact: true })).toBeDisabled();
+  await expect(page.getByLabel("Polishing", { exact: true })).toBeDisabled();
+  await page.getByRole("link", { name: /Advanced YAML has unvalidated changes/ }).click();
+  await expect(page).toHaveURL(`/projects/${pid}/settings#advanced-yaml`);
+  await expect(yaml).toBeInViewport();
+  await expect(yaml).toHaveValue(invalid);
   await page
     .getByRole("button", { name: "Validate configuration", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText("max_tokens_per_batch");
-  await expect(page.getByLabel("Tokens per batch")).toBeVisible();
-  await expect(page.getByLabel("Tokens per batch")).toHaveValue("0");
+  await expect(yaml).toHaveValue(invalid);
   expect(submitted?.segment.max_tokens_per_batch).toBe(0);
   expect(submitted?.llm.routes).toEqual(settings.llm.routes);
   await expect(page.getByLabel("PDF parser")).toHaveCount(0);

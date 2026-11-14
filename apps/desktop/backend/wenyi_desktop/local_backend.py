@@ -11,6 +11,7 @@ import os
 import shutil
 import sqlite3
 import uuid
+from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PureWindowsPath
@@ -23,7 +24,7 @@ from wenyi_core.config import Config
 from wenyi_core.errors import SchemaTooNew
 from wenyi_core.storage.io_path import plain_path
 
-from . import library_location, paths
+from . import catalog, library_location, paths
 
 #: A project database written by a newer build. The catalog row is intact and the
 #: directory is where it should be, so this is a refused open rather than a fault:
@@ -48,12 +49,7 @@ def _now() -> str:
 
 
 def _library_root(value: str | Path | None) -> Path | None:
-    """Layer three as the native parent resolved it, or `None` when it did not.
-
-    An absent root is the ordinary state of a development run and of an engine
-    started by hand: both keep creating projects in the workspace, exactly as
-    they did before layer three existed.
-    """
+    """An optional injected default library; otherwise use <data-root>/projects."""
     if value is None:
         return None
     path = Path(value).expanduser()
@@ -92,26 +88,19 @@ class LocalBackend:
         workspace: str | Path,
         config_path: str | None = None,
         *,
-        user_home: Path | None = None,
         library_root: str | Path | None = None,
         install_root: str | Path | None = None,
     ) -> None:
         resolved = Path(workspace).expanduser().resolve()
-        # Also accept --data-dir from older native parents or direct engine launches.
         self.workspace = Path(_plain_windows_path(str(resolved)))
         self.workspace.mkdir(parents=True, exist_ok=True)
-        # Layer three, when the native parent resolved one for an installed
-        # application. It is a *default* for new projects, never a migration:
-        # every project already on this machine keeps the directory it has, and
-        # `project_dir()` finds it there. Nothing is copied or moved here.
+        # An explicitly injected library is optional. The ordinary default is
+        # <data-root>/projects, independent of the executable's location.
         self.library_root = _library_root(library_root)
         self.install_root = Path(install_root) if install_root else None
-        self.user_home = user_home
         self.config_path = config_path
-        # Layer two holds the catalog now. The workspace stays the parent of the
-        # project directories and the owner of the workspace locks.
-        self.database = paths.user_catalog(home=user_home)
-        self.database.parent.mkdir(parents=True, exist_ok=True)
+        self.database = paths.catalog(self.workspace)
+        catalog.initialize(self.database)
         # Releasing memory must not depend on an available project directory.
         self._export_leases_lock = Lock()
         self._export_leases: dict[int, int] = {}
@@ -131,10 +120,18 @@ class LocalBackend:
                     document TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS application_settings (
                     id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS configuration_backups (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+                    document TEXT NOT NULL, removed TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
                 CREATE TABLE IF NOT EXISTS progress (
                     id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
                     document TEXT NOT NULL);
             """)
+        from .config_rebuild import rebuild_saved_settings
+
+        rebuild_saved_settings(self)
 
     @contextmanager
     def transaction(
@@ -165,18 +162,17 @@ class LocalBackend:
         finally:
             conn.close()
 
-    def project_dir(self, pid: str) -> Path:
+    def project_dir(
+        self, pid: str, *, locations: dict[Path, paths.ProjectDirectoryIndex] | None = None
+    ) -> Path:
         """Find a unique project identity within its authoritative library root.
 
         A recorded root never falls back to another library, even when its drive
-        is missing. Legacy rows without a root may search admitted libraries, but
-        multiple copies are a refusal rather than a choice based on scan order.
-        Recheck disk identity on every lookup: cached existence cannot detect a
-        changed catalog owner, a conflicting marker or a newly duplicated folder.
+        is missing. A row without a root is invalid, not a request for discovery.
+        A list read can share one library inventory, but it never survives that
+        read: subsequent operations must detect changed owners and duplicate folders.
         """
-        # One pattern for the identifier, shared with the recovery scan: the two
-        # used to disagree, and the wider one here meant a directory the scan
-        # then refused could still be opened, written to, and deleted by id.
+        # The same identity rules govern lookup, explicit import and deletion.
         if not paths.project_id(pid):
             raise ValueError("Invalid project ID")
         record = self._get("projects", pid) or {}
@@ -184,7 +180,12 @@ class LocalBackend:
         found: dict[Path, Path] = {}
         try:
             for root in recorded_roots or self.project_roots():
-                candidate = paths.find_project(root, pid)
+                if locations is None:
+                    candidate = paths.find_project(root, pid)
+                else:
+                    if root not in locations:
+                        locations[root] = paths.ProjectDirectoryIndex(root)
+                    candidate = locations[root].find(pid)
                 if candidate is not None:
                     found[candidate.resolve()] = candidate
         except (OSError, RuntimeError, ValueError) as error:
@@ -237,7 +238,7 @@ class LocalBackend:
         roots: list[Path] = []
         if self.library_root is not None:
             roots.append(self.library_root)
-        for saved in [*self._saved_roots(), *self.indexed_roots()]:
+        for saved in self._saved_roots():
             if not any(_same(saved, known) for known in roots):
                 roots.append(saved)
         workspace = paths.projects(self.workspace)
@@ -260,35 +261,12 @@ class LocalBackend:
                     roots.append(path)
         return roots
 
-    def indexed_roots(self) -> list[Path]:
-        """Legacy project roots retained by the layer-two migration index."""
-        try:
-            document = json.loads(
-                paths.user_workspace_index(home=self.user_home).read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError):
-            return []
-        entries = document.get("projects") if isinstance(document, dict) else None
-        if not isinstance(entries, list):
-            return []
-        roots = []
-        for entry in entries:
-            recorded = entry.get("path") if isinstance(entry, dict) else None
-            if isinstance(recorded, str) and Path(recorded).is_absolute():
-                roots.append(Path(recorded).parent)
-        return roots
-
     def source_reference(self, source: Path) -> str:
         """Keep an original with its project, including across Windows volumes."""
         return source.name
 
     def source_path(self, pid: str, reference: str) -> Path:
-        """Resolve current and legacy references within the owning project directory.
-
-        Older catalogs stored absolute or workspace-relative paths. Their basename
-        still identifies the same immutable upload after a directory is renamed
-        or imported; neither spelling is permission to read an unrelated folder.
-        """
+        """Constrain any stored source reference to the owning project directory."""
         return self.project_dir(pid) / PureWindowsPath(reference).name
 
     def _recorded_roots(self, record: dict) -> list[Path]:
@@ -296,13 +274,13 @@ class LocalBackend:
 
         A record is editable data, so the value it carries is matched against the
         roots this installation already owns instead of being trusted as a path.
-        Only a legacy record with no root may search other admitted libraries.
+        A record with a missing root is refused rather than searched elsewhere.
         The comparison is spelling-only, with the resolved spelling tried second:
         a chosen root arrives spelled the way the executable reported it, while a
         record remembers the spelling it was created under.
         """
         recorded = record.get("library_root")
-        if recorded is None:
+        if not record:
             return []
         if (
             not isinstance(recorded, str)
@@ -359,10 +337,20 @@ class LocalBackend:
             temporary.unlink(missing_ok=True)
         return destination
 
-    def storage_for(self, pid: str, *, create: bool = True) -> SqliteStorage:
+    def storage_for(
+        self,
+        pid: str,
+        *,
+        create: bool = True,
+        upgrade: bool | None = None,
+        locations: dict[Path, paths.ProjectDirectoryIndex] | None = None,
+    ) -> SqliteStorage:
         from wenyi_core.storage.sqlite import SqliteStorage
 
-        directory = self.project_dir(pid)
+        # Cached inventories are only for a single read, never write admission.
+        if (create or upgrade) and locations is not None:
+            raise ValueError("Writable storage requires a fresh directory lookup")
+        directory = self.project_dir(pid, locations=locations)
         if create and not directory.is_dir():
             project = self._get("projects", pid) or {}
             if project.get("source_path"):
@@ -375,7 +363,7 @@ class LocalBackend:
             # so this is the one place every project directory passes through.
             self.mark_project(pid)
         try:
-            return SqliteStorage(str(directory), create=create)
+            return SqliteStorage(str(directory), create=create, upgrade=upgrade)
         except SchemaTooNew as error:
             # A refused schema is a state the user has to see, not a server fault:
             # the route answers with a stable code and the sentence that names the
@@ -512,7 +500,11 @@ class LocalBackend:
         """
         return self._get("projects", pid)
 
-    def get_project(self, pid: str) -> dict | None:
+    def get_project(
+        self, pid: str, *, locations: dict[Path, paths.ProjectDirectoryIndex] | None = None
+    ) -> dict | None:
+        if locations is None:
+            locations = {}
         with self._export_leases_lock:
             if pid in self._removing_projects:
                 return None
@@ -529,7 +521,7 @@ class LocalBackend:
             available = False
             storage = None
             try:
-                storage = self.storage_for(pid, create=False)
+                storage = self.storage_for(pid, create=False, locations=locations)
                 if storage.exists():
                     manifest = storage.load_manifest()
                     project.update(
@@ -539,7 +531,7 @@ class LocalBackend:
                         source_lang=manifest.get("source_lang", project["source_lang"]),
                         target_lang=manifest.get("target_lang", project["target_lang"]),
                     )
-                available = self.project_dir(pid).is_dir()
+                available = self.project_dir(pid, locations=locations).is_dir()
             except ProjectLocationUnavailable as error:
                 # One unsafe row must not hide unrelated healthy projects.
                 readable = False
@@ -563,6 +555,7 @@ class LocalBackend:
 
     def list_projects(self) -> list[dict]:
         rows = sorted(self._list("projects"), key=lambda row: row["created_at"], reverse=True)
+        locations: dict[Path, paths.ProjectDirectoryIndex] = {}
         keys = (
             "id",
             "name",
@@ -577,7 +570,7 @@ class LocalBackend:
         return [
             {**{key: project[key] for key in keys}, "error": project.get("error")}
             for row in rows
-            if (project := self.get_project(row["id"])) is not None
+            if (project := self.get_project(row["id"], locations=locations)) is not None
         ]
 
     def update_project(
@@ -685,9 +678,8 @@ class LocalBackend:
         drive is simply another entry; containment is decided per root, never by
         comparing strings.
 
-        Both layouts are listed together, and the old one never drops out.
-        Individual projects use their recorded root; only legacy rows without
-        that claim search all these roots, refusing ambiguous identities.
+        The data-root library and explicitly admitted custom libraries coexist.
+        Each registered project must use its own recorded root.
         """
         return self._admitted_roots()
 
@@ -711,7 +703,7 @@ class LocalBackend:
         Deletion is recursive, so the path it recurses into has to be argued for
         rather than read and trusted. **The path is derived here, from the
         identifier, and never taken from the record.** A catalog is editable data
-        -- a user can open it, a corrupted migration can write it, an import can
+        -- a user can open it, a damaged write can change it, an import can
         fill it -- so a path read from it is a path an attacker chooses. Deriving
         it means the worst a tampered record can do is refuse its own deletion.
 
@@ -769,15 +761,14 @@ class LocalBackend:
 
         The order is what makes an interrupted deletion recoverable. Removing the
         files first and the catalog row second leaves, on a crash in between, a
-        listed project with no directory: the row still opens, so it is presented
-        as a project whose files are missing, and the next startup repair cannot
-        tell it from a project whose drive was unplugged.
+        listed project with no directory that is indistinguishable from a project
+        whose drive was unplugged.
 
         Marking first turns that intermediate state into one this application can
         recognise. The row stays listed, because the retry has to be reachable and
         a file still held open is the reason it failed; the directory carries the
-        same mark, which is what a repair rebuilding the catalog from directories
-        reads instead. Files can be removed at any point after the mark, so a
+        same mark, which also prevents explicit reimport. Files can be removed at
+        any point after the mark, so a
         crash after `rmtree` but before the row is deleted simply retries the
         cleanup that is already done.
 
@@ -1110,33 +1101,25 @@ class LocalBackend:
 
         store = self.storage_for(pid, create=False)
         try:
-            if not store.exists():
-                return []
-            review = store.load_latest_review_result() or {}
             result = []
-            for entry in store.load_manifest().get("chapters", []):
-                chapter = store.load_chapter(entry["index"])
-                state, current = chapter_review_state(
-                    review, chapter.meta, entry.get("review_status")
+            with store.read_chapter_statistics_snapshot() as chapters:
+                review = store.load_latest_review_result() or {}
+                issue_counts = Counter(
+                    issue.get("chapter")
+                    for issue in review.get("issues", [])
+                    if isinstance(issue.get("chapter"), int)
                 )
-                segments = [s for s in chapter.text_segments if s.source]
-                result.append(
-                    {
-                        "index": chapter.index,
-                        "title": chapter.title,
-                        "title_translated": entry.get("title_translated"),
-                        "status": entry.get("status") or "pending",
-                        "word_count": len(segments),
-                        "target_word_count": sum(s.target is not None for s in segments),
-                        "review_status": state or "pending",
-                        "review_issue_count": sum(
-                            issue.get("chapter") == chapter.index
-                            for issue in review.get("issues", [])
-                        )
-                        if current
-                        else 0,
-                    }
-                )
+                for chapter in chapters:
+                    state, current = chapter_review_state(
+                        review, chapter.pop("meta"), chapter["review_status"]
+                    )
+                    result.append(
+                        {
+                            **chapter,
+                            "review_status": state or "pending",
+                            "review_issue_count": issue_counts[chapter["index"]] if current else 0,
+                        }
+                    )
             return result
         finally:
             store.close()

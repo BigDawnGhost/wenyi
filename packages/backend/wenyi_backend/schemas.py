@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from wenyi_core.i18n.genres import DEFAULT_GENRE, Genre
 from wenyi_core.i18n.languages import require_language
 
 
@@ -20,7 +21,8 @@ class ProjectCreate(RequestModel):
     strategy: dict[str, Any] = Field(default_factory=dict)
     prepare: bool = False
     pdf_backend: Literal["mineru", "babeldoc"] | None = None
-    translation_mode: Literal["standard", "best_of_three"] = "standard"
+    translation_mode: Literal["standard", "three_draft_synthesis"] = "standard"
+    prompt_genre: Genre = DEFAULT_GENRE
     #: Where the project directory is created, when the host lets a person choose.
     #:
     #: Omitted means "the default for this installation", which is also what a
@@ -139,6 +141,39 @@ class ChapterSegments(BaseModel):
     title_translated: Optional[str] = None
     segments: list[SegmentOut]
     review_issues: list[dict[str, Any]] = []
+
+
+class ReaderSegment(SegmentOut):
+    position: int
+    revision: str
+
+
+class ChapterWindow(BaseModel):
+    index: int
+    title: str
+    title_translated: str | None
+    total: int
+    saved_count: int
+    offset: int
+    position: int | None = None
+    segments: list[ReaderSegment]
+
+
+class ParagraphRevision(RequestModel):
+    index: int = Field(ge=0)
+    revision: str = Field(min_length=1, max_length=64)
+
+
+class ChapterRefresh(RequestModel):
+    segments: list[ParagraphRevision] = Field(max_length=256)
+
+
+class ParagraphUpdate(BaseModel):
+    index: int
+    target: str | None
+    target_before_polish: str | None
+    revision: str
+    previous_revision: str
 
 
 class PrecisionCandidateOut(BaseModel):

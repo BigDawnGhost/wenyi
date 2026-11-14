@@ -191,7 +191,29 @@ pub fn install(app: &tauri::AppHandle) -> tauri::Result<bool> {
     let menu = Menu::with_items(app, &[&show, &diagnostics, &quit])?;
     // Always install the application menu and its keyboard quit accelerator.
     let application = Submenu::with_items(app, "Wenyi", true, &[&show, &diagnostics, &quit])?;
-    app.set_menu(Menu::with_items(app, &[&application])?)?;
+    let app_menu = Menu::with_items(app, &[&application])?;
+    #[cfg(target_os = "macos")]
+    {
+        use tauri::menu::PredefinedMenuItem;
+
+        // Keep WKWebView editing shortcuts on the native macOS responder chain.
+        let edit = Submenu::with_items(
+            app,
+            "Edit",
+            true,
+            &[
+                &PredefinedMenuItem::undo(app, None)?,
+                &PredefinedMenuItem::redo(app, None)?,
+                &PredefinedMenuItem::separator(app)?,
+                &PredefinedMenuItem::cut(app, None)?,
+                &PredefinedMenuItem::copy(app, None)?,
+                &PredefinedMenuItem::paste(app, None)?,
+                &PredefinedMenuItem::select_all(app, None)?,
+            ],
+        )?;
+        app_menu.append(&edit)?;
+    }
+    app.set_menu(app_menu)?;
     if hide_window_menu_on(std::env::consts::OS) {
         if let Some(window) = app.get_webview_window("main") {
             // Hide the embedded bar without unregistering the Quit accelerator.

@@ -11,6 +11,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from ..genres import DEFAULT_GENRE, Genre
+
 
 def used_rule_keys(templates: Iterable[tuple[str, str]]) -> set[str]:
     """Return the rule keys referenced by ``${key}``/``$key`` placeholders in templates.
@@ -26,7 +28,6 @@ Point = Literal[
     "evidence.prepare",
     "candidate.validate",
     "export.text",
-    "export.source_markup",
     "export.style",
     "export.metadata",
 ]
@@ -109,7 +110,6 @@ class PolicyContext:
     format: str = ""
     backend: str = "native"
     punctuation_normalize: bool = True
-    honorific_strategy: str = "keep_style"
     source_identity: str = ""
     task_groups: tuple[str, ...] = ()
     bilingual: bool = False
@@ -117,6 +117,7 @@ class PolicyContext:
     preserve_source_style: bool = False
     about_page: bool = True
     terminology_context: bool = False
+    genre: Genre = DEFAULT_GENRE
 
 
 @dataclass(frozen=True)
@@ -137,7 +138,6 @@ class ExportOptions:
     language_tag: str
     about_locale: str = "en"
     target_font: str | None = None
-    preserve_source_ruby: bool = False
 
 
 @dataclass(frozen=True)

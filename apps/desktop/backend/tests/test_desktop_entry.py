@@ -8,15 +8,62 @@ import json
 import os
 import queue
 import secrets
+import socket
 import subprocess
 import sys
 import threading
 import urllib.error
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from wenyi_desktop.desktop import ORIGINS, LocalBoundary
+
+
+def test_engine_listener_accepts_low_latency_tcp_connections(tmp_path, monkeypatch):
+    import uvicorn
+    from wenyi_desktop import desktop, main
+    from wenyi_desktop.diagnostics import EngineDiagnostics
+
+    observed = []
+
+    class Server:
+        started = False
+        should_exit = True
+
+        def __init__(self, config):
+            pass
+
+        async def serve(self, *, sockets):
+            accepted = asyncio.get_running_loop().create_future()
+
+            def connected(reader, writer):
+                connection = writer.get_extra_info("socket")
+                accepted.set_result(connection.getsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY))
+                writer.close()
+
+            async with await asyncio.start_server(connected, sock=sockets[0]) as server:
+                _, writer = await asyncio.open_connection(*server.sockets[0].getsockname())
+                try:
+                    observed.append(await asyncio.wait_for(accepted, 5))
+                finally:
+                    writer.close()
+                    await writer.wait_closed()
+            self.started = True
+
+    monkeypatch.setattr(uvicorn, "Server", Server)
+    monkeypatch.setattr(desktop, "watch_parent", lambda server: None)
+    monkeypatch.setattr(
+        main,
+        "create_app",
+        lambda *args, **kwargs: SimpleNamespace(
+            state=SimpleNamespace(backend=SimpleNamespace(repository=MagicMock()))
+        ),
+    )
+    asyncio.run(desktop.serve(tmp_path, io.StringIO(), EngineDiagnostics(None)))
+    assert len(observed) == 1 and observed[0] != 0
 
 
 @pytest.mark.parametrize("transport", ["http", "websocket"])
@@ -192,15 +239,61 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
         child.wait(timeout=5)
 
 
+@pytest.mark.parametrize("encoding", ["cp936", "cp1252", "utf-8"])
+def test_native_startup_reads_utf8_proof_with_legacy_stdin_encoding(
+    tmp_path, monkeypatch, encoding
+):
+    from wenyi_desktop import desktop, paths
+    from wenyi_desktop.ownership import MAGIC
+
+    workspace = (tmp_path / "中文用户" / "文译").resolve()
+    paths.locks(workspace).mkdir(parents=True)
+    endpoint = {
+        "protocol": 1,
+        "pid": os.getppid(),
+        "port": 12345,
+        "instance": list(range(16)),
+    }
+    paths.instance_endpoint(workspace).write_text(json.dumps(endpoint), encoding="utf-8")
+    proof = {**endpoint, "workspace": str(workspace), "token": secrets.token_hex(32)}
+    wire = (json.dumps(proof, ensure_ascii=False) + '\n{"command":"shutdown"}\n').encode("utf-8")
+    connection = MagicMock()
+    connection.__enter__.return_value.recv.return_value = b"\x01"
+    monkeypatch.setattr(
+        "wenyi_desktop.ownership.socket.create_connection", lambda *args, **kwargs: connection
+    )
+    served = []
+
+    async def serve(root, stream, lifecycle, **_roots):
+        assert json.loads(sys.stdin.readline()) == {"command": "shutdown"}
+        served.append(root)
+        lifecycle.ready = True
+
+    monkeypatch.setattr(desktop, "serve", serve)
+    monkeypatch.setattr(sys, "stdout", io.StringIO())
+    monkeypatch.setattr(
+        sys, "argv", ["wenyi-engine", "--native-startup", "--data-dir", str(workspace)]
+    )
+    monkeypatch.setenv("WENYI_API_TOKEN", secrets.token_hex(32))
+    monkeypatch.delenv("WENYI_DIAGNOSTICS_PROTOCOL", raising=False)
+    with io.TextIOWrapper(io.BytesIO(wire), encoding=encoding) as stream:
+        monkeypatch.setattr(sys, "stdin", stream)
+        desktop.main()
+    assert served == [workspace]
+    connection.__enter__.return_value.sendall.assert_called_with(
+        MAGIC + bytes.fromhex(proof["token"])
+    )
+
+
 @pytest.mark.parametrize("stage", ["application", "runtime"])
 def test_startup_failure_reports_original_error_before_uvicorn_exit(tmp_path, stage):
     """A real failed lifespan must not become just bootstrap + stopped."""
     workspace = tmp_path / "fake-private-workspace"
+    workspace.mkdir()
     if stage == "application":
-        workspace.write_text("A file cannot be a workspace.")
+        (workspace / "catalog.sqlite3").write_text("Not a SQLite database.")
     else:
-        workspace.mkdir()
-        (workspace / ".desktop.lock").mkdir()
+        (workspace / "locks" / ".desktop.lock").mkdir(parents=True)
     token = secrets.token_hex(32)
     env = {k: v for k, v in os.environ.items() if not k.startswith("WENYI_")}
     env.update(WENYI_API_TOKEN=token, WENYI_DIAGNOSTICS_PROTOCOL="1")
@@ -235,7 +328,7 @@ def test_startup_failure_reports_original_error_before_uvicorn_exit(tmp_path, st
     failures = [row for row in observations if row["event"] == "engine_bootstrap_failed"]
     assert len(failures) == 1
     assert failures[0]["attributes"]["stage"] == stage
-    assert failures[0]["attributes"]["module"] in {"local_backend", "local_runtime"}
+    assert failures[0]["attributes"]["module"] in {"catalog", "local_backend", "local_runtime"}
     assert failures[0]["attributes"]["line"] > 0
     assert observations[-1] == {
         "event": "engine_stopped",

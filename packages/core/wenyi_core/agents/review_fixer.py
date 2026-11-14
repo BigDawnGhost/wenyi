@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from ..config import Config
 from ..errors import WenyiError
+from ..i18n.genres import Genre
 from ..llm.base import LLMClient
 from ..llm.json_parser import parse_json_result
 from ..models.glossary import GlossaryTerm
@@ -114,13 +115,14 @@ def _glossary_text(
     relevant_glossary: Sequence[GlossaryTerm] | str,
     *,
     source_lang: str,
+    genre: Genre,
     note_source: str | None = None,
 ) -> str:
     """Filter structured terms; legacy text remains caller-owned and is not rewritten."""
     if isinstance(relevant_glossary, str):
         return relevant_glossary.strip() or "(none)"
     return prompts.render_glossary(
-        list(relevant_glossary), source_lang=source_lang, note_source=note_source
+        list(relevant_glossary), source_lang=source_lang, note_source=note_source, genre=genre
     )
 
 
@@ -251,6 +253,7 @@ class ReviewFixer(Agent):
             glossary=_glossary_text(
                 relevant_glossary,
                 source_lang=self.src,
+                genre=self.language_policy.context.genre,
                 note_source=source if self.config.pipeline.terminology_context else None,
             ),
             nearby_pairs=_nearby_text(nearby_pairs),

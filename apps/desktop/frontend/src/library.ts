@@ -1,4 +1,4 @@
-import type { LibraryServices, RecoveryReport } from "@wenyi/ui/platform";
+import type { LibraryServices } from "@wenyi/ui/platform";
 import { api } from "@wenyi/ui/api";
 import { asIpcError } from "./ipcError";
 
@@ -18,11 +18,4 @@ async function admitLocation(path: string): Promise<string> {
   return api.admitProjectLocation(path);
 }
 
-/** What the startup repair found, or null when it ran nothing worth reporting. */
-async function recoveryReport(): Promise<RecoveryReport | null> {
-  const answer = await api.lastRecovery();
-  return answer.recovered || answer.skipped.length ? answer : null;
-}
-
 export const library: LibraryServices = { choose, importProject: api.importProject, admitLocation };
-export { recoveryReport };

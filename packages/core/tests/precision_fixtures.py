@@ -20,7 +20,7 @@ def precision_config(tmp_path: Path) -> Config:
             "language": {"source": "en", "target": "zh"},
             "llm": {"preset": "fake"},
             "pipeline": {
-                "translation_mode": "best_of_three",
+                "translation_mode": "three_draft_synthesis",
                 "review": False,
                 "book_understanding": False,
                 "annotation_alignment": False,

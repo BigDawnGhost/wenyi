@@ -23,7 +23,7 @@ from .validation import (
 
 class TranslationMode(str, Enum):
     standard = "standard"
-    best_of_three = "best_of_three"
+    three_draft_synthesis = "three_draft_synthesis"
 
 
 def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> None:
@@ -141,11 +141,11 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             config.pipeline = PipelineConfig.model_validate(pipeline_values)
         except ValueError:
             if (
-                pipeline_values["translation_mode"] == "best_of_three"
+                pipeline_values["translation_mode"] == "three_draft_synthesis"
                 and not pipeline_values["polish"]
             ):
                 raise ValueError(
-                    "best_of_three translation mode requires pipeline.polish=true; remove --no-polish"
+                    "three_draft_synthesis translation mode requires pipeline.polish=true; remove --no-polish"
                 ) from None
             raise
         if review is not None:
@@ -304,7 +304,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         translation_mode: TranslationMode | None = typer.Option(
             None,
             "--translation-mode",
-            help="Book translation mode; best_of_three requires polishing",
+            help="Book translation mode; three_draft_synthesis requires polishing",
         ),
         review: bool | None = typer.Option(
             None,

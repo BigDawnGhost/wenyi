@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid, project } from "../../../../packages/ui/sandbox/fixtures";
+import { fakeApi, project } from "../../../../packages/ui/sandbox/fixtures";
 
 const origin = "http://127.0.0.1:19481";
 
@@ -74,6 +74,22 @@ test("a dismissed picker asks the engine for nothing", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Import existing project", exact: true }))
     .toBeEnabled();
   expect(asked).toBe(0);
+});
+
+test("an empty library never requests legacy startup recovery", async ({ page }) => {
+  await desktop(page, null);
+  await fakeApi(page, { "/projects": [] }, origin);
+  const recoveryRequests: string[] = [];
+  page.on("request", request => {
+    if (request.url().includes("/desktop/recovery/")) recoveryRequests.push(request.url());
+  });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "My projects", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Import existing project", exact: true }))
+    .toBeEnabled();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "My projects", exact: true })).toBeVisible();
+  expect(recoveryRequests).toEqual([]);
 });
 
 test("a project whose folder is missing is shown without an open link", async ({ page }) => {

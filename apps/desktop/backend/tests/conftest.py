@@ -13,21 +13,14 @@ from wenyi_desktop.local_credentials import CredentialStore
 
 @pytest.fixture(autouse=True)
 def private_profile(tmp_path, monkeypatch):
-    """Keep layer two inside the test's own directory.
-
-    The application's user-level data lives under the user profile now, so a
-    test that let it default would write into the developer's real profile and
-    share one catalog with every other test. The profile is redirected through
-    the two variables the application resolves it from, which is also what the
-    child processes a few tests start read; patching only the Python function
-    would leave those subprocesses pointing at the real profile.
-    """
+    """Keep platform defaults, including child-process defaults, in temporary data."""
     profile = tmp_path / "profile"
     profile.mkdir()
     # Both variables, because the platform picks one of them and the other is
     # what a subprocess started through a POSIX-style shell would read.
     monkeypatch.setenv("USERPROFILE", str(profile))
     monkeypatch.setenv("HOME", str(profile))
+    monkeypatch.setenv("LOCALAPPDATA", str(profile / "AppData" / "Local"))
     # An inherited XDG root must not bypass the temporary profile on Unix.
     monkeypatch.delenv("XDG_DATA_HOME", raising=False)
     return profile

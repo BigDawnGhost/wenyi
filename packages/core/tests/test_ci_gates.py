@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parents[3]
         ("apps/desktop/backend/wenyi_desktop/main.py", True, True),
         ("apps/web/src/main.tsx", False, True),
         ("pnpm-lock.yaml", False, True),
-        ("docs/web.md", False, False),
+        ("docs/guide/web.md", False, False),
     ],
 )
 def test_contract_or_browser_signal_always_builds_before_e2e(path, contract_changed, expected):
@@ -69,6 +69,83 @@ def test_both_python_versions_run_the_full_workspace(name):
     assert "packages/core/tests" not in step["run"]
 
 
+def test_nightly_docker_proxy_images_are_prepared_before_integration():
+    jobs = yaml.safe_load((ROOT / ".github/workflows/tests.yml").read_text())["jobs"]
+    steps = jobs["python"]["steps"]
+    prepare = next(
+        (step for step in steps if step.get("name") == "Prepare Docker proxy test images"), None
+    )
+    assert prepare is not None, "The Docker proxy suite requires pre-pulled images"
+    integration = next(
+        step
+        for step in steps
+        if step.get("name") == "Service integration tests (PostgreSQL and Redis enabled)"
+    )
+    assert steps.index(prepare) < steps.index(integration)
+    assert prepare["if"] == "github.event_name == 'schedule'"
+    assert integration["env"]["WENYI_TEST_DOCKER"] == "${{ " + prepare["if"] + " && '1' || '0' }}"
+    assert prepare["run"].splitlines() == [
+        "docker pull nginx:alpine",
+        "docker pull python:3.12-slim",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("event", "ref", "expected"),
+    [
+        ("push", "refs/heads/main", True),
+        ("workflow_dispatch", "refs/heads/main", True),
+        ("pull_request", "refs/pull/42/merge", False),
+        ("workflow_dispatch", "refs/heads/docs/local-preview", False),
+        ("push", "refs/heads/docs/local-preview", False),
+    ],
+)
+def test_documentation_deploys_only_from_main(event, ref, expected):
+    workflow = yaml.safe_load((ROOT / ".github/workflows/docs.yml").read_text())
+    jobs = workflow["jobs"]
+    upload = next(
+        step
+        for step in jobs["build"]["steps"]
+        if step.get("uses", "").startswith("actions/upload-pages-artifact@")
+    )
+    assert upload["if"] == jobs["deploy"]["if"]
+    expression = jobs["deploy"]["if"].replace("&&", "and")
+    assert (
+        eval(
+            expression,
+            {"__builtins__": {}},
+            {"github": SimpleNamespace(event_name=event, ref=ref)},
+        )
+        is expected
+    )
+    assert jobs["deploy"]["needs"] == "build"
+
+
+def test_documentation_build_is_read_only_and_uploads_only_the_static_site():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/docs.yml").read_text())
+    build = workflow["jobs"]["build"]
+    deploy = workflow["jobs"]["deploy"]
+    assert workflow["permissions"] == {"contents": "read"}
+    assert build.get("permissions", workflow["permissions"]) == {"contents": "read"}
+    assert deploy["permissions"] == {
+        "contents": "read",
+        "pages": "write",
+        "id-token": "write",
+    }
+    assert deploy["environment"]["name"] == "github-pages"
+    assert workflow["concurrency"] == {
+        "group": "docs-${{ github.ref }}",
+        "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+    }
+    steps = build["steps"]
+    commands = [step["run"] for step in steps if "run" in step]
+    assert commands == ["pnpm install --frozen-lockfile", "pnpm docs:build"]
+    upload = next(
+        step for step in steps if step.get("uses", "").startswith("actions/upload-pages-artifact@")
+    )
+    assert upload["with"]["path"] == "docs/.vitepress/dist"
+
+
 def _bundle_entries() -> list[tuple[str, str]]:
     """Every (key, value) pair of the bundle members that name paths.
 
@@ -114,6 +191,60 @@ def test_the_bundle_assertion_reads_a_real_configuration():
     assert any("sidecar" in value for _, value in entries)
 
 
+@pytest.mark.parametrize(
+    ("event", "publish", "prerelease", "signs", "uploads"),
+    [
+        ("release", False, False, True, True),
+        ("release", False, True, False, True),
+        ("release", True, True, False, True),
+        ("workflow_dispatch", False, False, False, False),
+        ("workflow_dispatch", True, False, True, True),
+        ("pull_request", True, False, False, False),
+        ("push", True, False, False, False),
+    ],
+)
+def test_desktop_publication_requires_a_release_or_explicit_rebuild(
+    event, publish, prerelease, signs, uploads
+):
+    workflow = yaml.load(
+        (ROOT / ".github/workflows/desktop.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    option = workflow["on"]["workflow_dispatch"]["inputs"]["publish"]
+    assert option["type"] == "boolean" and option["default"] == "false"
+    jobs = workflow["jobs"]
+    package = jobs["local-package"]
+    assert package["needs"] == "plan"
+    assert jobs["release"]["needs"] == "local-package"
+    signing = next(step for step in package["steps"] if step.get("id") == "updater")
+    preflight = next(
+        step
+        for step in jobs["plan"]["steps"]
+        if step.get("name") == "Validate published release rebuild"
+    )
+
+    def admits(expression):
+        expression = expression.replace("&&", "and").replace("||", "or").replace("!", "not ")
+        return eval(
+            expression,
+            {"__builtins__": {}},
+            {
+                "github": SimpleNamespace(
+                    event_name=event,
+                    event=SimpleNamespace(release=SimpleNamespace(prerelease=prerelease)),
+                ),
+                "inputs": SimpleNamespace(publish=publish),
+            },
+        )
+
+    assert admits(preflight["if"]) is (event == "workflow_dispatch" and publish)
+    assert admits(signing["if"]) is signs
+    assert admits(jobs["release"]["if"]) is uploads
+    native_tests = next(
+        step for step in package["steps"] if step.get("run", "").startswith("cargo nextest run ")
+    )
+    assert native_tests["env"]["TMPDIR"] == "${{ runner.temp }}"
+
+
 def test_windows_full_tier_uses_bash_for_the_tls_graph_check():
     jobs = yaml.safe_load((ROOT / ".github/workflows/desktop.yml").read_text())["jobs"]
     steps = jobs["local-package"]["steps"]
@@ -125,178 +256,160 @@ def test_windows_full_tier_uses_bash_for_the_tls_graph_check():
     assert "packages/core/tests/test_file_migrations.py" in windows["run"]
 
 
-def _installer_hooks() -> Path:
-    """The NSIS hook file the Windows bundle configuration names."""
-    config = json.loads((ROOT / "apps/desktop/tauri.windows.conf.json").read_text())
-    declared = config["bundle"]["windows"]["nsis"]["installerHooks"]
-    return (ROOT / "apps/desktop" / declared).resolve()
-
-
-def _hook_code() -> str:
-    """The hooks file with its comments removed, so prose cannot satisfy a check."""
-    return "\n".join(
-        line
-        for line in _installer_hooks().read_text(encoding="utf-8").splitlines()
-        if not line.lstrip().startswith(";")
-    )
-
-
-def test_the_windows_bundle_installs_its_nsis_hooks():
-    # tauri-bundler only emits `!include` for the hooks file when this setting
-    # exists. Without it the template has no include at all, all four
-    # `!ifmacrodef NSIS_HOOK_*` checks are false, and every macro is skipped while
-    # the build still succeeds. A hooks file that nothing includes is the failure
-    # this asserts against -- not a missing macro body.
-    hooks = _installer_hooks()
-    assert hooks.is_file(), f"installerHooks names a missing file: {hooks}"
-    # The macro name is matched whole. A substring test accepts a renamed macro
-    # that still starts with the expected name (NSIS_HOOK_PREINSTALLX), and a
-    # renamed macro is a macro the bundler never inserts -- which is the silent
-    # skip this asserts against.
-    declared = set(re.findall(r"^\s*!macro\s+(\S+)", hooks.read_text(encoding="utf-8"), re.M))
-    for macro in ("NSIS_HOOK_PREINSTALL", "NSIS_HOOK_POSTUNINSTALL"):
-        assert macro in declared, f"{macro} is missing from {hooks.name}: {sorted(declared)}"
-
-
-def test_installer_hooks_never_name_bundler_defines():
-    # The hooks file is included before the block that defines PRODUCTNAME,
-    # BUNDLEID and MANUPRODUCTKEY, so referring to one there expands to nothing or
-    # fails to compile -- and either way the guard would name the wrong key. The
-    # registry path is spelled out instead; this keeps a later tidy-up from
-    # reintroducing the define and silently disabling the check.
-    code = _hook_code()
-    for define in ("${PRODUCTNAME}", "${BUNDLEID}", "${MANUPRODUCTKEY}"):
-        assert define not in code, f"{define} is undefined where the hooks are included"
-
-
-def test_the_nsis_hook_names_the_same_install_location_key_as_rust():
-    # The folder-ownership check and Rust's startup check must agree on the saved
-    # location. Unlike the active uninstall registration, this preference can
-    # survive an uninstall that keeps application data.
-    rust = (ROOT / "apps/desktop/src/paths.rs").read_text(encoding="utf-8")
-    declared = next(
-        line.split("=", 1)[1].strip().rstrip(";").strip()
-        for line in rust.splitlines()
-        if "pub const INSTALL_KEY" in line
-    )
-    # The Rust literal escapes each separator for the compiler; NSIS does not, so
-    # the two spellings are compared after undoing the source escaping.
-    assert declared == '"Software\\\\wenyi\\\\Wenyi Desktop"'
-    assert declared.strip('"').replace("\\\\", "\\") in _hook_code()
-
-
-def test_the_backup_guard_uses_active_uninstall_registration_not_saved_location():
-    # Tauri keeps the saved installation directory after an ordinary uninstall,
-    # but always removes the Add/Remove Programs entry. A saved location alone
-    # must not make a reinstall require a backup of an application already removed.
-    code = _hook_code()
-    product = json.loads((ROOT / "apps/desktop/tauri.conf.json").read_text())["productName"]
-    uninstall_key = rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{product}"
-    assert f'!define WENYI_UNINSTALL_KEY "{uninstall_key}"' in code
-    pre = code.split("!macro NSIS_HOOK_PREINSTALL", 1)[1].split("!macroend", 1)[0]
-    read = 'ReadRegStr $R5 HKCU "${WENYI_UNINSTALL_KEY}" "UninstallString"'
-    assert read in pre
-    assert "${WENYI_INSTALL_KEY}" not in pre
-    assert pre.index(read) < pre.index("wenyi_has_backup")
-    assert '${If} $UpdateMode != "1"' in pre
-    assert '${If} $R5 != ""' in pre
-    assert '${If} $R8 != "1"' in pre
-
-
-def test_the_nsis_hook_names_layer_two_under_the_user_profile():
-    # Layer two is %USERPROFILE%\\Wenyi. The first review of the isolation design
-    # put it under %LOCALAPPDATA%, where that path names the disposable runtime
-    # layer instead -- and the wrong value leaves the user's real data behind.
-    code = _hook_code()
-    assert "$PROFILE\\Wenyi" in code
-    assert "$LOCALAPPDATA\\Wenyi" not in code
-
-
-def test_the_nsis_hook_checks_for_a_reparse_point_before_recursing():
-    # RMDir /r recurses through a junction, so a project directory a user has
-    # replaced with a link to another drive would take that drive's contents with
-    # it on the way out. The one recursive removal here is guarded.
-    code = _hook_code()
-    assert "GetFileAttributes" in code
-    assert "${WENYI_REPARSE_POINT}" in code
-    remove = code.split("!macro wenyi_remove_tree", 1)[1].split("!macroend", 1)[0]
-    assert "RMDir /r" in remove
-    assert remove.index("GetFileAttributes") < remove.index("RMDir /r")
-
-
-def test_the_nsis_hook_rechecks_the_uninstall_checkbox_itself():
-    # NSIS_HOOK_POSTUNINSTALL is inserted outside the `delete app data` branch, so
-    # that branch does not filter it. Without its own test, an uninstall that never
-    # asked to delete anything would delete the user's work.
-    code = _hook_code()
-    post = code.split("!macro NSIS_HOOK_POSTUNINSTALL", 1)[1]
-    assert "$DeleteAppDataCheckboxState" in post
-    assert "$UpdateMode" in post
-    assert post.index("$DeleteAppDataCheckboxState") < post.index("!insertmacro wenyi_remove_tree")
-
-
 def _windows_bundle() -> dict:
     """The Windows bundle configuration that carries the NSIS settings."""
     return json.loads((ROOT / "apps/desktop/tauri.windows.conf.json").read_text())
 
 
-def test_the_installer_mode_is_declared_and_stays_current_user():
-    # tauri-bundler defaults to currentUser, so declaring it changes nothing today.
-    # It is declared anyway because the hook file's correctness depends on it:
-    # installer.nsh names layer two as $PROFILE\\Wenyi, and $PROFILE is the profile
-    # of the account running setup. Under perMachine, or when setup is started from
-    # an elevated shell, that is the administrator's profile -- the uninstaller
-    # would then remove a directory the user never owned and leave the user's real
-    # data in place. An inherited default is one edit away from being wrong
-    # silently; an explicit value fails the build instead.
+def _installer_code(member: str) -> str:
+    """Configured installer sources, excluding comments."""
+    config = json.loads((ROOT / "apps/desktop/tauri.windows.conf.json").read_text())
+    path = ROOT / "apps/desktop" / config["bundle"]["windows"]["nsis"][member]
+    return "\n".join(
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if not line.lstrip().startswith(";")
+    )
+
+
+def test_windows_installer_uses_explicit_template_and_bilingual_current_user_policy():
     nsis = _windows_bundle()["bundle"]["windows"]["nsis"]
     assert nsis["installMode"] == "currentUser"
+    assert nsis["languages"] == ["English", "SimpChinese"]
+    assert nsis["displayLanguageSelector"] is True
+    template = _installer_code("template")
+    assert '!include "{{installer_hooks}}"' in template
+    assert "RequestExecutionLevel user" in template
+    assert "WenyiRequireUser" in template.split("Function .onInit")[1].split("FunctionEnd")[0]
+    assert "IsUserAnAdmin" in _installer_code("installerHooks")
 
 
-def test_the_windows_bundle_refuses_to_install_an_older_version():
-    # tauri-bundler defaults allowDowngrades to true, so a setup file carried to
-    # a machine running a newer build silently replaces it. The project database
-    # records its schema version and refuses to be opened by a build that only
-    # knows an older one, so a downgrade would leave a working installation with
-    # projects it cannot read. The refusal belongs at the installer, which is the
-    # only place that can stop the replacement before it happens.
+def test_installer_separates_program_and_data_without_restoring_old_default():
+    code = _installer_code("template")
+    assert r"$LOCALAPPDATA\Programs\${PRODUCTNAME}" in code
+    assert r'!define DATA_ROOT "$LOCALAPPDATA\Wenyi\Desktop"' in code
+    init = code.split("Function .onInit")[1].split("FunctionEnd")[0]
+    assert "$PreviousLayout == 2" in init
+    assert "$PreviousLayout != 2" in init
+    assert "ReadRegDWORD $PreviousLayout" in init
+
+
+def test_installer_preflight_runs_before_dependency_or_payload_writes():
+    code = _installer_code("template")
+    assert code.index("Section Preflight") < code.index("Section WebView2")
+    assert code.index("Section WebView2") < code.index("Section ReplacePrevious")
+    assert code.index("Section ReplacePrevious") < code.index("Section Install")
+    pre = code.split("Section Preflight")[1].split("SectionEnd")[0]
+    assert "Call CheckDirectory" in pre and "WenyiRequireStopped" in pre
+    assert "ExecWait" not in pre
+    replace = code.split("Section ReplacePrevious")[1].split("SectionEnd")[0]
+    assert replace.index("WenyiRequireStopped") < replace.index("ExecWait")
+    assert 'RMDir "$PreviousDirectory"' in replace
+    assert "RMDir /r" not in replace
+    assert "/S /UPDATE" in replace
+    assert "CloseHandle" in replace and "Call AcquireSetupMutex" in replace
+
+
+def test_installer_retains_registered_directory_ownership_across_uninstall():
+    template = _installer_code("template")
+    init = template.split("Function .onInit")[1].split("FunctionEnd")[0]
+    assert init.index("Call AcquireSetupMutex") < init.index("ReadRegStr $PreviousDirectory")
+    assert "ReadRegDWORD $PreviousLayout" in init
+    assert re.search(r'\$\{If\} \$0 == ""\s+StrCpy \$PreviousDirectory ""', init)
+
+    directory = _installer_code("installerHooks").split("!macro WenyiCheckDirectory")[1]
+    directory = directory.split("!macroend")[0]
+    # The previous uninstaller removes these registry entries. Re-reading them
+    # rejects its preserved extra files only after the working app is gone.
+    assert "ReadReg" not in directory
+    assert "${If} $PreviousDirectory != $INSTDIR" in directory
+    assert "${OrIf} $PreviousLayout != 2" in directory
+    assert directory.index("WenyiNoLinkedParents") < directory.index("$PreviousDirectory")
+    assert "WenyiDisjoint" in directory and "GetTempFileName" in directory
+    for stage in ("Preflight", "Install"):
+        section = template.split(f"Section {stage}")[1].split("SectionEnd")[0]
+        assert "Call CheckDirectory" in section
+
+
+def test_windows_installer_refuses_downgrades_in_all_modes():
     windows = _windows_bundle()["bundle"]["windows"]
     assert windows["allowDowngrades"] is False
+    pre = _installer_code("template").split("Section Preflight")[1].split("SectionEnd")[0]
+    assert "SemverCompare" in pre and "$0 == -1" in pre
+    assert "${Silent}" not in pre
 
 
-def test_the_nsis_hook_refuses_the_install_location_before_copying():
-    # The four refusals of the isolation design are only refusals if they run
-    # before the first file is written. NSIS_HOOK_PREINSTALL is inserted ahead of
-    # every File instruction, so the ordering inside that macro is what makes them
-    # blocking rather than advisory.
-    code = _hook_code()
-    pre = code.split("!macro NSIS_HOOK_PREINSTALL", 1)[1].split("!macroend", 1)[0]
-    assert pre.index("wenyi_refuse_install_location") < pre.index("Abort")
-    # The backup refusal that predates this batch is still there and still the
-    # second thing the macro does: this batch added checks in front of it rather
-    # than replacing any part of it.
-    assert "wenyi_has_backup" in pre
-    assert pre.index("wenyi_refuse_install_location") < pre.index("wenyi_has_backup")
+def test_installer_serializes_setup_and_checks_the_real_engine_without_forcing_shutdown():
+    code = _installer_code("installerHooks")
+    assert "CreateMutexW" in code and "$1 == 183" in code
+    assert 'WenyiMutexFunction "un."' in code
+    stopped = code.split("!macro WenyiRequireStopped")[1].split("!macroend")[0]
+    assert r"\${MAINBINARYNAME}.exe" in stopped
+    assert r"\sidecar\wenyi-engine\wenyi-engine.exe" in stopped
+    assert "RmGetList" in stopped
+    assert "RmShutdown" not in stopped
+    assert "$0 != 0" in stopped
+    assert r"$TEMP\MicrosoftEdge" not in _installer_code("template")
 
 
-def test_the_nsis_hook_compares_paths_by_whole_components():
-    # Layer three's default directory is "Wenyi Desktop Data" and the installation
-    # is "Wenyi Desktop". A bare prefix comparison calls those two nested and
-    # refuses the layout every default install produces, so the separator after the
-    # longer name is part of the test rather than an optimisation.
-    code = _hook_code()
-    contains = code.split("!macro wenyi_contains", 1)[1].split("!macroend", 1)[0]
-    assert "StrCmp" in contains or '== "$R0"' in contains
+def test_uninstaller_deletion_is_opt_in_scoped_and_does_not_follow_nested_links():
+    template = _installer_code("template")
+    uninstall = template.split("Section Uninstall")[1].split("SectionEnd")[0]
+    assert uninstall.index("$UpdateMode != 1") < uninstall.index("$DeleteSettings == 1")
+    assert uninstall.index("$DeleteProjects == 1") < uninstall.index(r"${DATA_ROOT}\projects")
+    assert "WENYI_LIBRARY_ROOTS" not in uninstall
+    assert r"$PROFILE\Wenyi" not in uninstall
+    assert r"$LOCALAPPDATA\Wenyi Desktop" not in uninstall
+    code = _installer_code("installerHooks")
+    remove = code.split("Function un.RemoveTree")[1].split("FunctionEnd")[0]
+    assert remove.index("GetFileAttributesW") < remove.index("FindFirst")
+    assert "${WENYI_REPARSE_POINT}" in remove
+    assert "Call un.RemoveTree" in remove
+    assert "RMDir /r" not in remove
+
+
+def test_installer_compares_whole_components_and_refuses_linked_ancestors():
+    code = _installer_code("installerHooks")
+    contains = code.split("!macro WenyiContains")[1].split("!macroend")[0]
     assert '"\\"' in contains
-    # Equality is nesting: an installation that is layer two itself is one
-    # uninstall away from taking the settings with it.
-    assert contains.count('StrCpy ${RESULT} "1"') == 2
+    assert '$4 == ""' in contains
+    links = code.split("!macro WenyiNoLinkedParents")[1].split("!macroend")[0]
+    assert "GetFileAttributesW" in links and "${GetParent}" in links
+    directory = code.split("!macro WenyiCheckDirectory")[1].split("!macroend")[0]
+    assert directory.index("WenyiNoLinkedParents") < directory.index("GetTempFileName")
+    assert "WenyiDisjoint" in directory
 
 
-def test_the_nsis_hook_has_no_compiled_helper():
-    # The installer and the uninstaller are separate programs and both include
-    # this file. A helper expanded into a Function would be defined twice and fail
-    # to link, so every helper has to stay a macro of plain instructions.
-    code = _hook_code()
-    assert "Function " not in code
-    assert "Var " not in code
+def test_installer_normalizes_missing_paths_without_nsis_existing_file_requirement():
+    code = _installer_code("installerHooks")
+    assert not re.search(r"^\s*GetFullPathName ", code, re.M)
+    assert "kernel32::GetFullPathNameW" in code
+    assert "kernel32::GetLongPathNameW" in code
+    normalize = code.split("!macro WenyiFullPath")[1].split("!macroend")[0]
+    assert "${GetParent}" in normalize
+    assert "${GetFileName}" in normalize
+    assert "${NSIS_MAX_STRLEN}" in normalize
+
+
+def test_installer_validates_explicit_directory_even_if_nsis_discards_it():
+    init = _installer_code("template").split("Function .onInit")[1].split("FunctionEnd")[0]
+    raw = init.index("kernel32::GetCommandLineW")
+    explicit = init.index('${GetOptions} $0 "/D=" $0')
+    assert raw < explicit
+    assert "StrCpy $INSTDIR $0" in init[explicit:]
+    assert explicit < init.index('$INSTDIR == "${PLACEHOLDER}"')
+
+
+def test_installer_template_does_not_escape_handlebars_path_variables():
+    template = _installer_code("template")
+    # Handlebars treats \{{name}} as a literal, not a separator plus expansion.
+    # An even number of backslashes emits the separator and expands the field.
+    assert all(len(slashes) % 2 == 0 for slashes in re.findall(r"(\\+)\{\{", template))
+
+
+def test_installer_custom_messages_are_available_in_both_languages():
+    code = _installer_code("installerHooks")
+    messages = re.findall(r"^LangString (\w+) (\S+) ", code, re.M)
+    english = {name for name, language in messages if language == "${LANG_ENGLISH}"}
+    chinese = {name for name, language in messages if language == "${LANG_SIMPCHINESE}"}
+    assert english and english == chinese

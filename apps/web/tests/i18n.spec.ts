@@ -120,12 +120,10 @@ test("known workflow labels and language names are localized without changing AP
   await expect(page.getByRole("option", { name: "English (en)", exact: true })).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByLabel("Translation workflow")).toHaveCount(0);
+  await expect(page.getByRole("radio")).toHaveCount(0);
   await expect(
-    page.getByRole("radio", { name: "Standard", exact: true }),
-  ).toHaveValue("standard");
-  await expect(
-    page.getByRole("radio", { name: "Three drafts + synthesis", exact: true }),
-  ).toHaveValue("best_of_three");
+    page.getByRole("switch", { name: "Three drafts + synthesis", exact: true }),
+  ).not.toBeChecked();
   await page.goto("/settings");
   await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
   await page.goto(`/projects/${pid}`);
@@ -251,6 +249,18 @@ for (const locale of ["en", "zh-CN"] as const) {
         name: chinese ? "生成导出文件" : "Generate export",
       }),
     ).toBeVisible();
+    await page.getByRole("radio", {
+      name: chinese ? "双语版" : "Bilingual",
+      exact: true,
+    }).check();
+    await page.getByText(
+      chinese ? "排版与高级选项" : "Layout and advanced options",
+      { exact: true },
+    ).click();
+    const bilingualOrder = page.getByLabel(chinese ? "双语顺序" : "Bilingual order");
+    await expect(bilingualOrder).toHaveText(chinese ? "译文在前" : "Translation first");
+    await chooseOption(bilingualOrder, chinese ? "原文在前" : "Source first");
+    await expect(bilingualOrder).toHaveText(chinese ? "原文在前" : "Source first");
   });
 }
 

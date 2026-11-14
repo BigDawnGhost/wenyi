@@ -281,8 +281,8 @@ class TestPunct(unittest.TestCase):
 
 
 class TestLanguageProfile(unittest.TestCase):
-    def test_keep_style_requires_stable_honorific_choice(self):
-        rule = honorific_rule("keep_style")
+    def test_language_pair_requires_stable_honorific_choice(self):
+        rule = honorific_rule("ja", "zh")
 
         self.assertIn("use it consistently for that relationship throughout the book", rule)
         self.assertNotIn("可酌情保留", rule)

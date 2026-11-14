@@ -15,16 +15,16 @@ from wenyi_backend.config_documents import global_document
 from wenyi_backend.context import use_context
 from wenyi_backend.execution.bindings import resolve_source
 from wenyi_backend.source_upload import UploadedSource
-from wenyi_desktop import catalog_recovery, paths
+from wenyi_desktop import paths
 from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.main import create_app, create_context
 
 
 @pytest.mark.parametrize("chosen", [False, True])
 def test_settings_save_and_changed_default_keep_existing_project(tmp_path, chosen):
-    workspace, profile = tmp_path / "workspace", tmp_path / "profile"
+    workspace = tmp_path / "workspace"
     library = tmp_path / "Library"
-    context = create_context(workspace, user_home=profile, library_root=library)
+    context = create_context(workspace, library_root=library)
     backend = context.repository
     selected = tmp_path / "Selected" if chosen else library
     pid = backend.create_project(
@@ -44,9 +44,7 @@ def test_settings_save_and_changed_default_keep_existing_project(tmp_path, chose
     assert str(selected) in saved[paths.LIBRARY_ROOTS]
     backend.close()
 
-    restarted = create_context(
-        workspace, user_home=profile, library_root=tmp_path / "New installation library"
-    )
+    restarted = create_context(workspace, library_root=tmp_path / "New installation library")
     try:
         assert restarted.repository.project_dir(pid) == directory
         assert restarted.repository.get_project(pid)["available"] is True
@@ -114,12 +112,11 @@ def test_desktop_source_identity_does_not_compute_a_cross_volume_relative_path(t
 
 @pytest.mark.parametrize("rename", ["title", "suffix", "marker"])
 def test_project_lookup_and_source_identity_survive_renaming(tmp_path, rename):
-    workspace, profile, library = (
+    workspace, library = (
         tmp_path / "workspace",
-        tmp_path / "profile",
         tmp_path / "Library",
     )
-    context = create_context(workspace, user_home=profile, library_root=library)
+    context = create_context(workspace, library_root=library)
     backend = context.repository
     pid = backend.create_project("Named Book", "en", "zh", {})
     backend.storage_for(pid).close()
@@ -135,7 +132,7 @@ def test_project_lookup_and_source_identity_survive_renaming(tmp_path, rename):
         directory = renamed
     backend.close()
 
-    restarted = create_context(workspace, user_home=profile, library_root=library)
+    restarted = create_context(workspace, library_root=library)
     assert restarted.repository.project_dir(pid) == directory
     assert Path(resolve_source(restarted, pid)) == directory / source.name
     assert restarted.repository.project_directories() == (directory.resolve(),)
@@ -183,7 +180,7 @@ def test_import_refuses_changed_source_before_moving_or_rewriting_state(tmp_path
     assert (directory / "state.sqlite3").read_bytes() == before
 
 
-def test_recovery_uses_every_saved_root_and_keeps_external_source_resolvable(tmp_path):
+def test_saved_roots_are_not_scanned_when_the_catalog_is_empty(tmp_path):
     first, _, _ = orphan(tmp_path / "First")
     second, source, _ = orphan(tmp_path / "Second", "b" * 16)
     context = create_context(tmp_path / "workspace")
@@ -199,11 +196,9 @@ def test_recovery_uses_every_saved_root_and_keeps_external_source_resolvable(tmp
             },
             connection,
         )
-    report = catalog_recovery.recover_empty_catalog(backend)
-    assert report.recovered == 2
-    assert backend.project_dir(second.name) == second
-    assert Path(resolve_source(context, second.name)) == source
-    assert backend.get_project(second.name)["available"] is True
+    with TestClient(create_app(context=context)) as client:
+        assert client.get("/projects").json() == []
+    assert first.is_dir() and second.is_dir() and source.is_file()
 
 
 def test_backup_directory_enumeration_refuses_a_missing_registered_project(tmp_path):
@@ -262,11 +257,10 @@ def test_legacy_source_references_follow_the_owning_project(tmp_path, reference)
     assert Path(resolve_source(context, pid)) == source
 
 
-def test_legacy_index_uses_the_injected_profile_and_preserves_owned_directories(tmp_path):
+def test_legacy_index_is_not_used_to_locate_a_project(tmp_path):
     directory, source, digest = orphan(tmp_path / "Old workspace")
-    home = tmp_path / "Different profile"
     workspace = tmp_path / "Current workspace"
-    backend = LocalBackend(workspace, user_home=home)
+    backend = LocalBackend(workspace)
     pid = backend.create_project(
         "Book",
         "en",
@@ -277,14 +271,14 @@ def test_legacy_index_uses_the_injected_profile_and_preserves_owned_directories(
     )
     # A migrated pre-library catalog did not record its root on each row.
     backend.update_project(pid, library_root=None)
-    index = paths.user_workspace_index(home=home)
+    index = workspace / "workspace.json"
     index.write_text(
         json.dumps({"schema_version": 1, "projects": [{"id": pid, "path": str(directory)}]}),
         encoding="utf-8",
     )
     backend.close()
-    restarted = create_context(workspace, user_home=home, migrate=False)
-    assert restarted.repository.project_dir(pid) == directory
-    assert Path(resolve_source(restarted, pid)) == source
-    assert restarted.repository.project_directories() == (directory.resolve(),)
+    restarted = create_context(workspace)
+    with pytest.raises(HTTPException):
+        restarted.repository.project_dir(pid)
+    assert directory.is_dir() and source.is_file()
     restarted.repository.close()

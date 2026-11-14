@@ -4,21 +4,32 @@ Whole-source ranges map directly to the whole target. Partial source ranges use
 exact target quotes with unique context. Point annotations use small local insertion
 patches, without guessing a source span. Neither model protocol may modify target text.
 
-This module deliberately returns deterministic fallback placements instead of
-raising.  Link preservation is useful metadata, but a transient alignment error
-must neither alter nor discard a completed translation.
+Failures return unresolved placements without offsets. Rendering policy belongs
+to callers: this agent does not decide whether a note moves to the paragraph end,
+a style degrades, or an immutable object blocks export.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
-from ..errors import WenyiError
+from ..alignment import (
+    AlignmentError as AnnotationAlignmentError,
+)
+from ..alignment import (
+    AlignmentResult as AnnotationAlignment,
+)
+from ..alignment import (
+    AlignmentUnit as AnnotationUnit,
+)
+from ..alignment import (
+    target_digest,
+    unresolved_alignment,
+)
 from .base import Agent
 
 _MARKER_RE = re.compile(r"⟪([^⟪⟫]+)⟫")
@@ -33,6 +44,10 @@ For a POINT: insert the supplied marker immediately AFTER that translated refere
 not before it. Preserve the source marker's relationship to punctuation.
 For a RANGE: insert the supplied :S and :E markers around the translated source span.
 Translations may reorder clauses and names. Follow meaning, not relative position.
+When object_reference is present, the marker represents a protected object that is
+itself part of the sentence, NOT a note attached after a referent. Locate the object's
+insertion boundary using source_with_markers and the read-only object reference.
+Never rewrite the object, add its contents to the target, or guess from text lengths.
 
 Return a short "search" copied EXACTLY from immutable_target. It must occur exactly ONCE;
 include more neighboring text to disambiguate repeated phrases. Return "replacement"
@@ -73,36 +88,6 @@ return {"abstain":true}.
 Return JSON only:
 {"target_quote":"exact translated span","context":"unique exact surrounding phrase"}.
 """
-
-
-class AnnotationAlignmentError(WenyiError, ValueError):
-    """The model output cannot safely be mapped back to the immutable target."""
-
-
-@dataclass(frozen=True)
-class AnnotationUnit:
-    """One logical text block and the annotation or style spans found in its source."""
-
-    unit_id: str
-    source: str
-    target: str
-    items: tuple[dict[str, Any], ...]
-
-
-@dataclass(frozen=True)
-class AnnotationAlignment:
-    """Validated target offsets for every annotation in one logical block."""
-
-    unit_id: str
-    target_digest: str
-    placements: tuple[dict[str, Any], ...]
-    used_fallback: bool = False
-
-
-def target_digest(text: str) -> str:
-    """Return the stable digest used to detect stale alignment metadata."""
-
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _item_id(item: dict[str, Any]) -> str:
@@ -283,56 +268,6 @@ def validate_marked_target(
     return tuple(placements)
 
 
-def fallback_alignment(unit: AnnotationUnit) -> AnnotationAlignment:
-    """Return deterministic placements that never depend on model output.
-
-    Point annotations use their proportional source offset.  A source range has
-    no safely inferable translated span, so it becomes a zero-width placement at
-    the paragraph end; the writer can render its original marker as a link.
-    """
-
-    source_length = len(unit.source)
-    target_length = len(unit.target)
-    placements: list[dict[str, Any]] = []
-    for item in unit.items:
-        try:
-            item_id = _item_id(item)
-            mode = _item_mode(item)
-            source_start = _source_offset(item, "source_start", source_length)
-        except AnnotationAlignmentError:
-            # Parser-produced metadata should always be valid.  If persisted
-            # state was manually corrupted, omit only that unusable placement.
-            continue
-        if mode == "point":
-            if source_length:
-                position = min(
-                    target_length,
-                    (source_start * target_length + source_length // 2) // source_length,
-                )
-            else:
-                position = 0
-            method = "proportional_source_offset"
-        else:
-            position = target_length
-            method = "paragraph_end"
-        placements.append(
-            {
-                "id": item_id,
-                "mode": mode,
-                "target_start": position,
-                "target_end": position,
-                "status": "fallback",
-                "method": method,
-            }
-        )
-    return AnnotationAlignment(
-        unit_id=unit.unit_id,
-        target_digest=target_digest(unit.target),
-        placements=tuple(placements),
-        used_fallback=True,
-    )
-
-
 class AnnotationAligner(Agent):
     """Route each annotation by available source evidence, never rewriting text."""
 
@@ -341,9 +276,9 @@ class AnnotationAligner(Agent):
 
         unit_ids = [unit.unit_id for unit in units]
         if any(not isinstance(unit_id, str) or not unit_id for unit_id in unit_ids):
-            return [fallback_alignment(unit) for unit in units]
+            return [unresolved_alignment(unit) for unit in units]
         if len(set(unit_ids)) != len(unit_ids):
-            return [fallback_alignment(unit) for unit in units]
+            return [unresolved_alignment(unit) for unit in units]
         return [self.align_unit(unit) for unit in units]
 
     def align_unit(self, unit: AnnotationUnit) -> AnnotationAlignment:
@@ -352,13 +287,13 @@ class AnnotationAligner(Agent):
         if not unit.items:
             return AnnotationAlignment(unit.unit_id, target_digest(unit.target), ())
         if not isinstance(unit.unit_id, str) or not unit.unit_id or not unit.target:
-            return fallback_alignment(unit)
+            return unresolved_alignment(unit)
         try:
             ids = [_item_id(item) for item in unit.items]
             if len(set(ids)) != len(ids):
                 raise AnnotationAlignmentError("duplicate_annotation_id")
         except AnnotationAlignmentError:
-            return fallback_alignment(unit)
+            return unresolved_alignment(unit)
 
         workers = min(self.config.pipeline.annotation_alignment_concurrency, len(unit.items))
         if workers <= 1:
@@ -370,7 +305,7 @@ class AnnotationAligner(Agent):
             unit.unit_id,
             target_digest(unit.target),
             tuple(placement for result in results for placement in result.placements),
-            any(result.used_fallback for result in results),
+            any(result.has_unresolved for result in results),
         )
 
     def _align_item(self, unit: AnnotationUnit, item: dict[str, Any]) -> AnnotationAlignment:
@@ -412,7 +347,7 @@ class AnnotationAligner(Agent):
             placement = validate(single, response)
             return AnnotationAlignment(unit.unit_id, target_digest(unit.target), (placement,))
         except Exception:  # noqa: BLE001 - failed metadata must not discard completed text
-            return fallback_alignment(single)
+            return unresolved_alignment(single)
 
 
 def patch_unit(unit: AnnotationUnit) -> AnnotationUnit:
@@ -433,13 +368,16 @@ def build_patch_payload(unit: AnnotationUnit) -> dict[str, Any]:
     """Describe one local insertion patch; never infer a point annotation's source span."""
     [item] = unit.items
     prompt_unit = patch_unit(unit)
-    return {
+    payload = {
         "id": _item_id(item),
         "mode": _item_mode(item),
         "source_with_markers": build_marked_source(prompt_unit),
         "immutable_target": unit.target,
         "markers": list(marker_tokens(prompt_unit.items[0])),
     }
+    if "object_reference" in item:
+        payload["object_reference"] = item["object_reference"]
+    return payload
 
 
 def _unique_offset(text: str, quote: Any, *, field: str) -> int:
@@ -546,7 +484,6 @@ __all__ = [
     "build_focus_payload",
     "build_marked_source",
     "build_patch_payload",
-    "fallback_alignment",
     "marker_tokens",
     "patch_unit",
     "target_digest",

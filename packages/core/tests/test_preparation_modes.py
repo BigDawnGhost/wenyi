@@ -6,6 +6,7 @@ import pytest
 from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.agents.synopsis import Synopsizer
 from wenyi_core.config import Config
+from wenyi_core.ingest.tokens import count_tokens
 from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
@@ -52,7 +53,8 @@ def test_preparation_agents_cover_source_and_preserve_original_identities(enable
     client = MeteredFakeClient(handler=handler)
     selected = config(enabled)
     synopsis = Synopsizer(client, selected)
-    source = "Alice waited. " * 1200 + "FINAL_SOURCE_FACT"
+    source = "Alice waited. " * 6000 + "FINAL_SOURCE_FACT"
+    assert 16000 < count_tokens(source) <= 24000
     digest = synopsis.digest_chapter(source)
     assert digest
     digest_calls = list(client.calls)

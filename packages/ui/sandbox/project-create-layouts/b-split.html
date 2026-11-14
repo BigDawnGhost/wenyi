@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>B · 左右双栏 · 创建项目</title>
+  <style>
+    :root { color-scheme: light; font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; color: #202225; background: #f2f3f5; }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    button, input, select { font: inherit; color: inherit; }
+    button, select, input[role="switch"] { cursor: pointer; }
+    button:disabled { cursor: not-allowed; }
+    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 2px solid #686e77; outline-offset: 3px; }
+    [hidden] { display: none !important; }
+    .preview-shell { max-width: 1040px; margin: 36px auto; padding: 0 28px; color: #6e737c; }
+    .preview-shell nav { display: flex; gap: 20px; margin: 20px 0; }
+    a { color: inherit; text-underline-offset: 4px; }
+    dialog { width: min(880px, calc(100vw - 40px)); max-height: calc(100dvh - 40px); margin: auto; padding: 0; border: 1px solid #e2e4e8; border-radius: 12px; background: white; box-shadow: 0 20px 70px #181b2533; }
+    dialog::backdrop { background: #20232866; backdrop-filter: blur(3px); }
+    form { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; max-height: calc(100dvh - 42px); }
+    .dialog-header { display: flex; align-items: center; justify-content: space-between; padding: 18px 24px; border-bottom: 1px solid #e7e8eb; }
+    h1 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -.4px; }
+    .close { width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent; color: #7b8089; font-size: 24px; line-height: 1; }
+    .close:hover { background: #f3f4f6; }
+    .body { display: grid; grid-template-columns: 310px minmax(0, 1fr); overflow: auto; }
+    .source-panel { display: flex; flex-direction: column; gap: 20px; padding: 24px; border-right: 1px solid #e7e8eb; background: #f8f9fb; }
+    .panel-label { font-size: 13px; font-weight: 500; }
+    .settings-panel { display: grid; align-content: start; gap: 19px; padding: 24px 28px; }
+    .field { display: grid; min-width: 0; gap: 7px; }
+    .field > label { font-size: 13px; font-weight: 500; }
+    input[type="text"], select { width: 100%; min-width: 0; height: 36px; padding: 0 11px; border: 1px solid #dfe2e7; border-radius: 7px; background: white; box-shadow: 0 1px 2px #20222505; }
+    input::placeholder { color: #999da5; }
+    input[readonly] { color: #777d87; }
+    .direction { display: grid; grid-template-columns: 1fr 16px 1fr; align-items: end; gap: 10px; }
+    .arrow { padding-bottom: 9px; color: #9297a0; text-align: center; }
+    .dropzone { display: flex; min-height: 230px; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 17px; padding: 25px 15px; border: 1px dashed #d5dae2; border-radius: 9px; background: white; text-align: center; }
+    .dropzone[data-dragging="true"] { border-color: #34383f; background: #f1f3f6; }
+    .file-icon { display: grid; width: 52px; height: 58px; place-items: center; border: 1px solid #e4e7ed; border-radius: 11px; background: #f8f9fb; color: #777f8c; }
+    .icon { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .file-icon .icon { width: 25px; height: 25px; }
+    .file-copy { max-width: 100%; }
+    .file-title { overflow-wrap: anywhere; font-weight: 500; }
+    .file-meta { margin-top: 7px; color: #9399a3; font-size: 11px; line-height: 1.9; }
+    .button { display: inline-flex; min-height: 35px; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border: 1px solid #dfe2e7; border-radius: 7px; background: white; white-space: nowrap; }
+    .button:hover:not(:disabled) { background: #f7f8fa; }
+    .button.primary { border-color: #202225; background: #202225; color: white; }
+    .button.primary:disabled { border-color: #d2d5da; background: #d2d5da; }
+    .location-control { display: flex; min-width: 0; gap: 7px; }
+    .location-control .button { flex-shrink: 0; padding: 0 10px; }
+    .options { display: grid; gap: 15px; padding-top: 19px; border-top: 1px solid #e9ebef; }
+    .toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; cursor: pointer; font-size: 13px; }
+    input[role="switch"] { position: relative; width: 32px; height: 18px; flex-shrink: 0; margin: 0; appearance: none; border: 0; border-radius: 20px; background: #e2e5e9; transition: background .15s; }
+    input[role="switch"]::after { position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: white; box-shadow: 0 1px 2px #0002; content: ""; transition: transform .15s; }
+    input[role="switch"]:checked { background: #202225; }
+    input[role="switch"]:checked::after { transform: translateX(14px); }
+    .footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 15px 24px; border-top: 1px solid #e7e8eb; }
+    .preview-hint { color: #999da5; font-size: 11px; }
+    .actions { display: flex; gap: 9px; }
+    .notice { color: #696f79; font-size: 12px; overflow-wrap: anywhere; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    @media (max-width: 760px) {
+      .body { grid-template-columns: 1fr; }
+      .source-panel { border-right: 0; border-bottom: 1px solid #e7e8eb; }
+      .dropzone { min-height: 150px; }
+      .preview-hint { display: none; }
+      .footer { justify-content: flex-end; }
+    }
+  </style>
+</head>
+<body>
+  <div class="preview-shell">
+    <strong>Wenyi · B / 左右双栏</strong>
+    <nav aria-label="布局预览"><a href="index.html">全部方案</a><a href="a-compact.html">A 紧凑单栏</a><a href="c-source-first.html">C 原文优先</a></nav>
+    <button class="button" id="reopen" type="button">重新打开预览</button>
+  </div>
+  <svg style="display:none" aria-hidden="true">
+    <symbol id="upload-icon" viewBox="0 0 24 24"><path d="M12 16V4m-4 4 4-4 4 4M4 16v4h16v-4"/></symbol>
+    <symbol id="folder-icon" viewBox="0 0 24 24"><path d="M3 7V5h6l2 2h10v12H3z"/></symbol>
+  </svg>
+  <dialog aria-labelledby="dialog-title">
+    <form id="project-form" novalidate>
+      <header class="dialog-header">
+        <h1 id="dialog-title">创建项目</h1>
+        <button class="close" type="button" data-close aria-label="关闭">×</button>
+      </header>
+      <div class="body">
+        <section class="source-panel" aria-labelledby="source-heading">
+          <span id="source-heading" class="panel-label">原文文件</span>
+          <div id="source-zone" class="dropzone" role="group" aria-label="原文文件选择区域">
+            <span class="file-icon"><svg class="icon" aria-hidden="true"><use href="#upload-icon"/></svg></span>
+            <div class="file-copy">
+              <div id="source-title" class="file-title">将原文拖到此处</div>
+              <div id="source-meta" class="file-meta">EPUB · FB2 · TXT · Markdown<br>HTML · PDF · DOCX</div>
+            </div>
+            <input id="source-file" class="sr-only" type="file" accept=".epub,.fb2,.txt,.text,.md,.markdown,.html,.htm,.pdf,.docx" aria-label="上传原文" tabindex="-1">
+            <button class="button" id="browse-source" type="button">浏览文件</button>
+          </div>
+          <div class="field">
+            <label for="project-location">项目文件夹</label>
+            <div class="location-control">
+              <input id="project-location" type="text" value="文译的默认文件夹" readonly>
+              <button class="button" id="choose-location" type="button" aria-label="选择文件夹"><svg class="icon" aria-hidden="true"><use href="#folder-icon"/></svg></button>
+            </div>
+          </div>
+        </section>
+        <div class="settings-panel">
+          <div class="field">
+            <label for="project-name">项目名称</label>
+            <input id="project-name" name="project_name" type="text" placeholder="输入项目名称" autocomplete="off" autofocus>
+          </div>
+          <div class="direction">
+            <div class="field">
+              <label for="source-language">源语言</label>
+              <select id="source-language" name="source_lang"><option value="auto">自动检测</option><option value="en">英语 (en)</option><option value="ja">日语 (ja)</option><option value="zh">中文 (zh)</option></select>
+            </div>
+            <span class="arrow" aria-hidden="true">→</span>
+            <div class="field">
+              <label for="target-language">目标语言</label>
+              <select id="target-language" name="target_lang"><option value="zh">中文 (zh)</option><option value="en">英语 (en)</option><option value="ja">日语 (ja)</option></select>
+            </div>
+          </div>
+          <div class="field">
+            <label for="prompt-genre">翻译风格</label>
+            <select id="prompt-genre" name="prompt_genre"><option value="literary">文学</option><option value="academic">学术</option></select>
+          </div>
+          <div id="pdf-settings" class="field" hidden>
+            <label for="pdf-backend">PDF 解析器</label>
+            <select id="pdf-backend"><option value="">使用默认设置</option><option value="mineru">MinerU</option><option value="babeldoc">BabelDOC</option></select>
+          </div>
+          <div class="options">
+            <label class="toggle">三译合润<input id="precision" name="precision" type="checkbox" role="switch"></label>
+            <label class="toggle">创建后执行译前准备<input id="prepare" name="prepare" type="checkbox" role="switch"></label>
+          </div>
+          <output id="notice" class="notice" aria-live="polite" hidden></output>
+        </div>
+      </div>
+      <footer class="footer">
+        <span class="preview-hint">布局预览 · 不会上传文件</span>
+        <div class="actions"><button class="button" type="button" data-close>取消</button><button class="button primary" id="create" type="submit" disabled>创建项目</button></div>
+      </footer>
+    </form>
+  </dialog>
+  <script>
+    // This standalone prototype never reads file contents, uploads data or persists settings.
+    const dialog = document.querySelector("dialog");
+    const form = document.querySelector("form");
+    const byId = (id) => document.getElementById(id);
+    const nameInput = byId("project-name");
+    const fileInput = byId("source-file");
+    const zone = byId("source-zone");
+    const create = byId("create");
+    let source = null;
+    function notify(message) {
+      byId("notice").textContent = message;
+      byId("notice").hidden = false;
+    }
+    function refresh() {
+      const sameLanguage = byId("source-language").value === byId("target-language").value;
+      create.disabled = !source || !nameInput.value.trim() || sameLanguage;
+      if (sameLanguage) notify("源语言和目标语言不能相同。");
+      else byId("notice").hidden = true;
+    }
+    function choose(file) {
+      if (!file) return;
+      const extension = file.name.split(".").pop().toLowerCase();
+      if (!file.size || !fileInput.accept.split(",").includes("." + extension)) {
+        notify("请选择支持格式的非空原文文件。");
+        return;
+      }
+      source = file;
+      byId("source-title").textContent = file.name;
+      byId("source-meta").textContent = `${extension.toUpperCase()} · ${new Intl.NumberFormat("zh-CN").format(file.size)} B`;
+      byId("browse-source").textContent = "更换文件";
+      byId("pdf-settings").hidden = extension !== "pdf";
+      if (!nameInput.value.trim()) nameInput.value = file.name.replace(/\.[^.]+$/, "") || file.name;
+      refresh();
+    }
+    byId("browse-source").addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", () => choose(fileInput.files[0]));
+    form.addEventListener("input", refresh);
+    form.addEventListener("change", (event) => {
+      if (event.target !== fileInput) refresh();
+    });
+    for (const type of ["dragenter", "dragover"]) zone.addEventListener(type, (event) => {
+      event.preventDefault();
+      zone.dataset.dragging = "true";
+    });
+    zone.addEventListener("dragleave", () => delete zone.dataset.dragging);
+    zone.addEventListener("drop", (event) => {
+      event.preventDefault();
+      delete zone.dataset.dragging;
+      const files = event.dataTransfer.files;
+      if (files.length !== 1) notify("一次只能选择一个原文文件。");
+      else choose(files[0]);
+    });
+    byId("choose-location").addEventListener("click", () => notify("布局预览：正式应用中会打开系统文件夹选择器。"));
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!create.disabled) notify(`预览完成：「${nameInput.value.trim()}」。没有创建项目或上传文件。`);
+    });
+    document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => dialog.close()));
+    byId("reopen").addEventListener("click", () => dialog.showModal());
+    dialog.showModal();
+  </script>
+</body>
+</html>

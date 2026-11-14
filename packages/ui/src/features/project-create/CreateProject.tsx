@@ -5,12 +5,12 @@ import { ArrowRight } from "lucide-react";
 import { useLocation, useNavigate, useSearchParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "../../components/ui/button";
-import { Input, Label } from "../../components/ui/form";
+import { Input, Label, Switch } from "../../components/ui/form";
 import { Dialog } from "../../components/ui/misc";
 import { Select, SelectItem } from "../../components/ui/select";
 import { ErrorNotice } from "../../components/ui/data";
 import { api, isProjectBusy } from "../../api/client";
-import { cn } from "../../lib/utils";
+import type { ProjectInput } from "../../api/types";
 import { SourcePreview } from "./SourcePreview";
 import { SourceFilePicker } from "./SourceFilePicker";
 import { ProjectLocationPicker } from "./ProjectLocationPicker";
@@ -46,8 +46,11 @@ export default function CreateProjectDialog() {
   }, [file]);
   const [prepare, setPrepare] = useState(false);
   const [translationMode, setTranslationMode] = useState<
-    "standard" | "best_of_three"
+    NonNullable<ProjectInput["translation_mode"]>
   >("standard");
+  const [promptGenre, setPromptGenre] = useState<
+    NonNullable<ProjectInput["prompt_genre"]>
+  >("literary");
   const [pdfBackend, setPdfBackend] = useState<"" | "mineru" | "babeldoc">("");
   const { data: caps, error: capsError } = useQuery({
     queryKey: ["capabilities"],
@@ -72,6 +75,9 @@ export default function CreateProjectDialog() {
   const displayedMode = pid
     ? String(savedPipeline?.translation_mode ?? "standard")
     : translationMode;
+  const displayedGenre = pid
+    ? String(savedPipeline?.prompt_genre ?? "literary")
+    : promptGenre;
   const { data: preview } = useQuery({
     queryKey: ["preview", pid],
     queryFn: () => api.getPreview(pid!),
@@ -121,6 +127,7 @@ export default function CreateProjectDialog() {
             target_lang: target,
             prepare,
             translation_mode: translationMode,
+            prompt_genre: promptGenre,
             pdf_backend: extension === "pdf" && pdfBackend ? pdfBackend : null,
             // Omitted rather than sent as null when no folder was chosen: the
             // request then means "the default", exactly as it did before a
@@ -225,7 +232,7 @@ export default function CreateProjectDialog() {
       className="max-w-2xl"
       footer={footer}
     >
-      <div className="space-y-5">
+      <div className="space-y-4">
         <ErrorNotice
           error={
             capsError ||
@@ -248,7 +255,7 @@ export default function CreateProjectDialog() {
             onChange={(e) => setName(e.target.value)}
           />
         </div>
-        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-3">
+        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,1fr)]">
           <div className="min-w-0 space-y-2">
             <Label htmlFor="source-language">{tr("createProject.sourceLanguage")}</Label>
             <Select
@@ -284,18 +291,23 @@ export default function CreateProjectDialog() {
               ))}
             </Select>
           </div>
+          {(!pid || savedPipeline) && (
+            <div className="col-span-3 min-w-0 space-y-2 sm:col-span-1">
+              <Label htmlFor="prompt-genre">{tr("createProject.promptGenre")}</Label>
+              <Select
+                id="prompt-genre"
+                value={displayedGenre}
+                disabled={locked}
+                onValueChange={(value) => setPromptGenre(value as typeof promptGenre)}
+              >
+                <SelectItem value="literary">{tr("createProject.literaryGenre")}</SelectItem>
+                <SelectItem value="academic">{tr("createProject.academicGenre")}</SelectItem>
+              </Select>
+            </div>
+          )}
         </div>
         {sameLanguage && (
           <ErrorNotice error={tr("createProject.theSourceAndTargetLanguagesAreThe")} />
-        )}
-        {/* Only offered while creating: an existing project keeps the directory it
-            has, so a picker here would promise a move this application never makes. */}
-        {!pid && (
-          <ProjectLocationPicker
-            location={folder}
-            disabled={locked}
-            onChange={setFolder}
-          />
         )}
         <SourceFilePicker
           filename={typeof filename === "string" ? filename : undefined}
@@ -305,6 +317,9 @@ export default function CreateProjectDialog() {
           disabled={locked}
           onSelectFile={(file) => {
             setFile(file);
+            setName((current) =>
+              current.trim() ? current : file.name.replace(/\.[^.]+$/, "").trim() || file.name,
+            );
             setSourceConsumed(false);
             create.reset();
           }}
@@ -324,54 +339,51 @@ export default function CreateProjectDialog() {
             </Select>
           </div>
         )}
-        {(!pid || savedPipeline) && (
-          <fieldset disabled={locked} className="min-w-0 space-y-2">
-            <legend className="mb-2 text-sm font-medium leading-none">
-              {tr("createProject.translationMode")}
-            </legend>
-            <div className="inline-flex rounded-lg border p-1">
-              {(["standard", "best_of_three"] as const).map((mode) => (
-                <label
-                  key={mode}
-                  className={cn(
-                    "relative flex cursor-pointer items-center justify-center rounded-md px-4 py-1.5 text-sm transition-colors",
-                    "focus-within:ring-2 focus-within:ring-ring",
-                    displayedMode === mode
-                      ? "bg-primary text-primary-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                    locked && "cursor-default",
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name="translation-mode"
-                    value={mode}
-                    checked={displayedMode === mode}
-                    onChange={() => setTranslationMode(mode)}
-                    // Invisible but covering the option, so it stays clickable and focusable.
-                    className="absolute inset-0 cursor-pointer opacity-0 disabled:cursor-default"
-                  />
-                  {tr(
-                    mode === "standard"
-                      ? "createProject.standardMode"
-                      : "createProject.precisionMode",
-                  )}
-                </label>
-              ))}
-            </div>
-          </fieldset>
-        )}
+        {/* Existing projects keep their directory; this picker never moves them. */}
         {!pid && (
-          <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={prepare}
-              disabled={locked}
-              onChange={(e) => setPrepare(e.target.checked)}
-              className="accent-primary"
-            />
-            {tr("createProject.prepareSource")}
-          </label>
+          <ProjectLocationPicker
+            location={folder}
+            disabled={locked}
+            onChange={setFolder}
+          />
+        )}
+        {(!pid || savedPipeline) && (
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+            <div className="flex items-center gap-2">
+              <Switch
+                id="precision-translation"
+                checked={displayedMode === "three_draft_synthesis"}
+                disabled={locked}
+                onCheckedChange={(checked) =>
+                  setTranslationMode(checked ? "three_draft_synthesis" : "standard")
+                }
+                className="peer"
+              />
+              <Label
+                htmlFor="precision-translation"
+                className="cursor-pointer peer-disabled:cursor-default peer-disabled:opacity-50"
+              >
+                {tr("createProject.precisionMode")}
+              </Label>
+            </div>
+            {!pid && (
+              <div className="flex items-center gap-2">
+                <Switch
+                  id="prepare-source"
+                  checked={prepare}
+                  disabled={locked}
+                  onCheckedChange={setPrepare}
+                  className="peer"
+                />
+                <Label
+                  htmlFor="prepare-source"
+                  className="cursor-pointer peer-disabled:cursor-default peer-disabled:opacity-50"
+                >
+                  {tr("createProject.prepareSource")}
+                </Label>
+              </div>
+            )}
+          </div>
         )}
         {pid && (
           <Link

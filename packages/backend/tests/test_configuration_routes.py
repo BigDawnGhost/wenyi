@@ -35,17 +35,17 @@ def test_precision_project_yaml_validates_mode_and_required_polish():
         "id": "precision-test",
         "source_lang": "en",
         "target_lang": "zh",
-        "config": {"pipeline": {"translation_mode": "best_of_three", "polish": True}},
+        "config": {"pipeline": {"translation_mode": "three_draft_synthesis", "polish": True}},
     }
     valid = effective_config(
         project,
         defaults=defaults,
         state_dir="unused",
-        document={"pipeline": {"translation_mode": "best_of_three", "polish": True}},
+        document={"pipeline": {"translation_mode": "three_draft_synthesis", "polish": True}},
     )
-    assert valid.pipeline.translation_mode == "best_of_three"
+    assert valid.pipeline.translation_mode == "three_draft_synthesis"
     for pipeline in (
-        {"translation_mode": "best_of_three", "polish": False},
+        {"translation_mode": "three_draft_synthesis", "polish": False},
         {"translation_mode": "invalid"},
         {"translation_mode": "standard"},
     ):
@@ -58,27 +58,27 @@ def test_precision_project_yaml_validates_mode_and_required_polish():
         restored = effective_config(
             project, defaults=defaults, state_dir="unused", document=document
         )
-        assert restored.pipeline.translation_mode == "best_of_three"
+        assert restored.pipeline.translation_mode == "three_draft_synthesis"
         assert restored.pipeline.polish is True
 
 
-def test_legacy_quick_project_read_preserves_saved_configuration():
+@pytest.mark.parametrize(
+    "strategy",
+    [
+        {"template": "快速出稿"},
+        {"template": "标准翻译", "steps": {"report": True}},
+    ],
+)
+def test_project_read_does_not_alias_removed_workflow_settings(strategy):
     from copy import deepcopy
 
-    project = {"id": "legacy", "strategy": {"template": "快速出稿"}}
+    project = {"id": "legacy", "strategy": strategy}
     before = deepcopy(project)
-    config = effective_config(
-        project, defaults=Config.from_dict({"llm": {"preset": "fake"}}), state_dir="unused"
-    )
-    assert not any(
-        getattr(config.pipeline, key)
-        for key in ("book_understanding", "polish", "review", "review_autofix")
-    )
+    with pytest.raises(ValueError):
+        effective_config(
+            project, defaults=Config.from_dict({"llm": {"preset": "fake"}}), state_dir="unused"
+        )
     assert project == before
-    project["config"] = {"pipeline": {"polish": True}}
-    assert effective_config(
-        project, defaults=Config.from_dict({"llm": {"preset": "fake"}}), state_dir="unused"
-    ).pipeline.polish
 
 
 def test_workflow_keeps_frozen_quick_snapshot_independent(monkeypatch):

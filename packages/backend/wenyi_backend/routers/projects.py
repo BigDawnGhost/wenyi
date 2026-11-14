@@ -94,6 +94,7 @@ async def create_project(
                 target_lang=project.target_lang,
                 translation_mode=project.translation_mode,
             )
+            config.set_prompt_genre(project.prompt_genre)
             if fmt == "pdf" and project.pdf_backend:
                 config.pipeline.pdf_backend = project.pdf_backend
             current_context().repository.create_project(

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>创建项目 · 布局方案</title>
+  <style>
+    :root { font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans SC", sans-serif; color: #202225; background: #f5f6f8; }
+    * { box-sizing: border-box; }
+    body { max-width: 1000px; margin: 72px auto; padding: 0 28px; }
+    h1 { margin: 0 0 12px; font-size: 28px; font-weight: 600; letter-spacing: -1px; }
+    p { margin: 0; color: #7b8089; }
+    .layouts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; margin-top: 36px; }
+    a { display: block; padding: 25px; border: 1px solid #e1e4e9; border-radius: 12px; color: inherit; background: white; text-decoration: none; transition: transform .15s; }
+    a:hover { transform: translateY(-3px); }
+    a:focus-visible { outline: 2px solid #606772; outline-offset: 4px; }
+    .letter { display: block; margin-bottom: 22px; color: #b4b8c0; font-size: 36px; font-weight: 300; line-height: 1; }
+    h2 { margin: 0 0 9px; font-size: 18px; font-weight: 600; }
+    .open { display: block; margin-top: 24px; font-size: 13px; }
+    .note { margin-top: 28px; font-size: 12px; }
+    @media (max-width: 720px) { .layouts { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>创建项目，三种布局</h1>
+  <p>保留现有功能，只比较信息顺序、空间分配和操作密度。</p>
+  <main class="layouts">
+    <a href="a-compact.html"><span class="letter">A</span><h2>紧凑单栏</h2><p>语言和风格合为一行，目录横排，两个开关并列。最接近现有界面。</p><span class="open">打开独立预览 →</span></a>
+    <a href="b-split.html"><span class="letter">B</span><h2>左右双栏</h2><p>左边放原文和目录，右边填写翻译配置。分工明确，适合桌面宽窗口。</p><span class="open">打开独立预览 →</span></a>
+    <a href="c-source-first.html"><span class="letter">C</span><h2>原文优先</h2><p>先选文件，再按对齐的设置行完成配置。像桌面应用的紧凑属性面板。</p><span class="open">打开独立预览 →</span></a>
+  </main>
+  <p class="note">这些文件可直接用浏览器打开，无需安装依赖；不读取文件内容、不上传文件、不创建项目，也不修改正式界面。</p>
+</body>
+</html>

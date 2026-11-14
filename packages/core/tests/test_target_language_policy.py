@@ -9,6 +9,7 @@ from wenyi_core.i18n.resources import read_text
 
 
 @pytest.mark.parametrize("source,target", [("fr", "zh"), ("fr", "en"), ("en", "ja")])
+@pytest.mark.parametrize("genre", ["literary", "academic"])
 @pytest.mark.parametrize(
     "task,phase",
     [
@@ -20,18 +21,21 @@ from wenyi_core.i18n.resources import read_text
         ("review_fixer_system", "review"),
     ],
 )
-def test_generated_text_uses_target_language_with_narrow_exceptions(task, phase, source, target):
+def test_generated_text_keeps_complete_output_rules_in_every_stage(
+    task, phase, source, target, genre
+):
     config = Config.from_dict(
         {
             "language": {"source": source, "target": target},
             "pipeline": {
                 "terminology_context": True,
                 "translation_mode": (
-                    "best_of_three" if task == "precision_generation_system" else "standard"
+                    "three_draft_synthesis" if task == "precision_generation_system" else "standard"
                 ),
             },
         }
     )
+    config.set_prompt_genre(genre)
     config.freeze_language_policies()
     prompt = render(
         task,
@@ -77,7 +81,7 @@ def test_source_identity_references_remain_original_not_target_renderings():
     assert "Keep quoted original source spellings" in synopsis
 
 
-@pytest.mark.parametrize("mode", ["standard", "best_of_three"])
+@pytest.mark.parametrize("mode", ["standard", "three_draft_synthesis"])
 def test_shared_rule_revision_is_frozen_and_only_invalidates_consuming_tasks(monkeypatch, mode):
     values = {
         "language": {"source": "fr", "target": "zh"},
@@ -97,7 +101,9 @@ def test_shared_rule_revision_is_frozen_and_only_invalidates_consuming_tasks(mon
     tasks = {
         "analysis": "analyzer_system",
         "translation": (
-            "precision_generation_system" if mode == "best_of_three" else "translator_system"
+            "precision_generation_system"
+            if mode == "three_draft_synthesis"
+            else "translator_system"
         ),
         "review": "review_fixer_system",
     }

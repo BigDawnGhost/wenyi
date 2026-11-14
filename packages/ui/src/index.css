@@ -67,7 +67,7 @@
 @layer base {
   * { @apply border-border; }
   body { @apply bg-background text-foreground; font-feature-settings: "rlig" 1, "calt" 1; }
-  /* em-free equivalents of Tailwind preflight (px policy; see docs/design/ui-naming.md) */
+  /* em-free Tailwind preflight equivalents; see docs/development/frontend.md#styling. */
   sub { bottom: -4px; }
   sup { top: 8px; }
   code, kbd, samp, pre { font-size: inherit; }

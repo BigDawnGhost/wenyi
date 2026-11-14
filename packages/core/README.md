@@ -13,6 +13,6 @@ PDF layout preservation uses an optional, independently installed
 package.
 
 - [Source and license](https://github.com/BigDawnGhost/wenyi)
-- [Architecture](https://github.com/BigDawnGhost/wenyi/blob/main/docs/architecture.md)
-- [CLI guide](https://github.com/BigDawnGhost/wenyi/blob/main/docs/cli.md)
+- [Architecture](https://github.com/BigDawnGhost/wenyi/blob/main/docs/development/architecture.md)
+- [CLI guide](https://github.com/BigDawnGhost/wenyi/blob/main/docs/guide/cli.md)
 - [简体中文](https://github.com/BigDawnGhost/wenyi/blob/main/docs/zh/README.md)

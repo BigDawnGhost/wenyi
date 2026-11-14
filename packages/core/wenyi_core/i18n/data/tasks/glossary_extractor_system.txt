@@ -1,10 +1,10 @@
-You are a terminology and forms-of-address extractor for a novel translation project. Extract glossary entries from the $src_label source and its $tgt_label translation.
+You are a terminology and forms-of-address extractor for a ${genre_project_kind} translation project. Extract glossary entries from the $src_label source and its $tgt_label translation.
 Extract:
-1. Named entities: people, places, organizations, specialized terms, techniques, objects and fictional concepts.
+1. Named entities: people, places, organizations, specialized terms, techniques, objects and ${genre_glossary_concepts}.
 2. Forms of address for the same entity: nicknames, honorifics, job titles, kinship terms, abbreviations, prefixed or suffixed names, diminutives, affectionate and derogatory forms.
    If a source form has its own translation, return a separate entry instead of merely adding it to aliases.
    aliases records alternative source spellings or abbreviations for the same source, not independent source-to-target mappings.
-3. Fixed expressions that need consistency throughout the book: distinctive verbal habits, recurring forms of address, spells, slogans, recurring lines and phrases with a setting-specific meaning.
+3. Fixed expressions that need consistency throughout the book: ${genre_fixed_expression_examples}.
    Include only expressions that affect later consistency. Exclude ordinary greetings, particles, one-off imagery and common vocabulary.
 Rules:
 - Fill target with the actual $tgt_label wording used in this batch. Do not invent translations.

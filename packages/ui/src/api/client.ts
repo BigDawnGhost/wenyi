@@ -1,17 +1,14 @@
 import type { components } from "@wenyi/shared-schema";
-import type { desktopComponents } from "@wenyi/shared-schema";
 import { platform, type ProjectSource } from "../platform";
 import type {
   Output, ProjectInput, ExportOptions, Project, ProjectDetail, ChapterSummary,
   ChapterSegments, SegmentRevision, PrecisionDrafts, Term, TermPage, Conflict,
+  ChapterWindow, ReaderSegment, ParagraphUpdate,
   StrategyTemplate, ExportOut, EventOut, JobEnqueued, Capabilities, GlobalConfig,
   GlobalConfigInput, ModelPingResult, ModelListResult, ModelListRequest,
   ProjectConfig, ReviewRun, UploadPreview, AnalysisPayload,
   GlossaryExportFormat,
 } from "./types";
-
-/** The Desktop-only startup repair notice; Web has no catalog to repair. */
-export type RecoveryAnswer = desktopComponents["schemas"]["RecoveryAnswer"];
 
 const request = <T>(path: string, init?: RequestInit) => platform().request<T>(path, init);
 const download = (path: string, fallback: string) => platform().download(path, fallback);
@@ -99,7 +96,6 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ path }),
     }),
-  lastRecovery: () => request<RecoveryAnswer>("/desktop/recovery/last"),
   admitProjectLocation: (path: string) =>
     request<{ path: string }>("/desktop/library/admit", {
       method: "POST",
@@ -177,6 +173,22 @@ export const api = {
 
   getReview: (pid: string, ci: number, signal?: AbortSignal) =>
     request<ChapterSegments>(`/projects/${pid}/review/${ci}`, { signal }),
+  chapterWindow: (
+    pid: string, ci: number, offset: number, limit: number,
+    around?: number, signal?: AbortSignal,
+  ) => {
+    const query = new URLSearchParams({ offset: String(offset), limit: String(limit) });
+    if (around !== undefined) query.set("around", String(around));
+    return request<ChapterWindow>(`/projects/${pid}/chapters/${ci}/window?${query}`, { signal });
+  },
+  chapterUpdates: (
+    pid: string, ci: number, segments: Pick<ReaderSegment, "index" | "revision">[],
+    signal?: AbortSignal,
+  ) => request<ParagraphUpdate[]>(`/projects/${pid}/chapters/${ci}/updates`, {
+    method: "POST", body: JSON.stringify({ segments }), signal,
+  }),
+  chapterIssues: (pid: string, ci: number) =>
+    request<Record<string, unknown>[]>(`/projects/${pid}/chapters/${ci}/issues`),
   updateChapterTitle: (
     pid: string,
     ci: number,

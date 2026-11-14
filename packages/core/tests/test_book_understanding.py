@@ -9,6 +9,7 @@ import pytest
 from wenyi_core.agents.analyzer import Analyzer
 from wenyi_core.agents.synopsis import Synopsizer
 from wenyi_core.config import Config
+from wenyi_core.ingest.tokens import count_tokens
 from wenyi_core.llm.limits import RequestCancelled, RequestStopped
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.document import Chapter, Document, Segment
@@ -104,7 +105,7 @@ def test_synopsis_does_not_swallow_cancellation_or_budget_stop(stop, method):
 def test_reduce_failure_does_not_omit_a_group_and_publish_the_rest():
     client = Mock()
     client.complete.side_effect = ["", "Later chapters.", "Incomplete book synopsis."]
-    result = Synopsizer(client, Config()).book_synopsis(["a" * 7000, "b" * 7000], "")
+    result = Synopsizer(client, Config()).book_synopsis([" a" * 7000, " b" * 7000], "")
     assert result == ""
     assert client.complete.call_count == 1
 
@@ -221,14 +222,154 @@ def test_legacy_truncated_digest_and_unverified_synopsis_are_regenerated(tmp_pat
 def test_chapter_digest_covers_all_blocks_and_merges_in_order():
     agent = Synopsizer(FakeClient(), _selected_config())
     agent._ask_text = Mock(side_effect=["First part.", "Middle part.", "Final part.", "Complete."])
-    source = "a" * 8000 + "b" * 8000 + "LAST-SOURCE-IDENTITY"
+    agent._digest = Mock(wraps=agent._digest)
+    source = " a" * 8000 + " b" * 8000 + "LAST-SOURCE-IDENTITY"
     assert agent.digest_chapter(source) == "Complete."
+    blocks = [call.args[0] for call in agent._digest.call_args_list[:3]]
+    assert "".join(blocks) == source
+    assert all(count_tokens(block) <= 8000 for block in blocks)
     prompts = [call.args[1] for call in agent._ask_text.call_args_list]
-    for block, prompt in zip([source[:8000], source[8000:16000], source[16000:]], prompts):
+    for block, prompt in zip(blocks, prompts):
         assert block in prompt
     assert prompts[3].index("First part.") < prompts[3].index("Middle part.")
     assert prompts[3].index("Middle part.") < prompts[3].index("Final part.")
     assert "original source spelling" in agent._ask_text.call_args.args[0]
+
+
+def test_chapter_digest_budget_counts_tokens_not_characters():
+    agent = Synopsizer(FakeClient(), Config())
+    agent._digest = Mock(return_value="Digest.")
+    source = " word" * 4000
+    assert len(source) > 8000
+    assert count_tokens(source) == 4000
+    assert agent.digest_chapter(source) == "Digest."
+    agent._digest.assert_called_once_with(source)
+
+
+@pytest.mark.parametrize(
+    ("total", "expected"),
+    [
+        (7999, [7999]),
+        (8000, [8000]),
+        (8001, [4000, 4001]),
+        (16000, [8000, 8000]),
+        (16001, [5333, 5334, 5334]),
+    ],
+)
+def test_chapter_digest_balances_token_chunks(total, expected):
+    agent = Synopsizer(FakeClient(), Config())
+    agent._digest = Mock(return_value="Digest.")
+    agent._merge_digests = Mock(return_value="Merged.")
+    source = " x" * total
+    assert count_tokens(source) == total
+    assert agent.digest_chapter(source) == ("Digest." if len(expected) == 1 else "Merged.")
+    chunks = [call.args[0] for call in agent._digest.call_args_list]
+    assert "".join(chunks) == source
+    assert [count_tokens(chunk) for chunk in chunks] == expected
+    assert agent._merge_digests.call_count == (len(expected) > 1)
+
+
+@pytest.mark.parametrize(("budget", "expected"), [(4, [3, 3, 3]), (8, [4, 5]), (16, [9])])
+def test_chapter_digest_uses_configured_source_budget(budget, expected):
+    config = Config.from_dict({"pipeline": {"synopsis_source_tokens": budget}})
+    agent = Synopsizer(FakeClient(), config)
+    agent._digest = Mock(return_value="Digest.")
+    agent._merge_digests = Mock(return_value="Merged.")
+    source = " x" * 9
+    assert agent.digest_chapter(source)
+    chunks = [call.args[0] for call in agent._digest.call_args_list]
+    assert "".join(chunks) == source
+    assert [count_tokens(chunk) for chunk in chunks] == expected
+
+
+@pytest.mark.parametrize(("budget", "calls"), [(8, 3), (16, 1)])
+def test_book_synopsis_uses_configured_reduce_budget_for_groups(budget, calls):
+    config = Config.from_dict({"pipeline": {"synopsis_reduce_tokens": budget}})
+    agent = Synopsizer(FakeClient(), config)
+    agent._synth = Mock(return_value="Summary.")
+    assert agent.book_synopsis([" x" * 5, " y" * 5], "") == "Summary."
+    assert agent._synth.call_count == calls
+
+
+def test_book_synopsis_splits_oversized_digest_by_configured_reduce_budget():
+    config = Config.from_dict({"pipeline": {"synopsis_reduce_tokens": 8}})
+    agent = Synopsizer(FakeClient(), config)
+    agent._synth = Mock(side_effect=["First.", "Second.", "Complete."])
+    digest = " x" * 9
+    assert agent.book_synopsis([digest], "") == "Complete."
+    chunks = [call.args[0][0] for call in agent._synth.call_args_list[:2]]
+    assert "".join(chunks) == digest.strip()
+    assert [count_tokens(chunk) for chunk in chunks] == [4, 5]
+    assert agent._synth.call_args.args[0] == ["First.", "Second."]
+
+
+@pytest.mark.parametrize("method", ["digest_chapter", "book_synopsis"])
+@pytest.mark.parametrize(("budget", "accepted"), [(4, False), (8, True)])
+def test_synopsis_output_limit_uses_configured_reduce_budget(method, budget, accepted):
+    config = Config.from_dict({"pipeline": {"synopsis_reduce_tokens": budget}})
+    agent = Synopsizer(FakeClient(), config)
+    agent._ask_text = Mock(return_value=" x" * 5)
+    args = ("Source.",) if method == "digest_chapter" else (["Digest."], "")
+    assert bool(getattr(agent, method)(*args)) is accepted
+    agent._ask_text.assert_called_once()
+
+
+def test_synopsis_budget_changes_reuse_completed_preparation(tmp_path):
+    service, store, runtime = _service(tmp_path)
+    assert service.ensure_understanding(store) == "Whole-book synopsis."
+    runtime.config.pipeline.synopsis_source_tokens = 16000
+    runtime.config.pipeline.synopsis_reduce_tokens = 24000
+    runtime.synopsizer.reset_mock()
+    assert service.ensure_understanding(store) == "Whole-book synopsis."
+    runtime.synopsizer.digest_chapter.assert_not_called()
+    runtime.synopsizer.book_synopsis.assert_not_called()
+
+
+def test_digest_merge_groups_use_tokens_including_separators():
+    items = [" word" * 4000, " other" * 4000]
+    assert Synopsizer._group(items, 12000) == [items]
+    assert Synopsizer._group(["x", "y"], 2) == [["x"], ["y"]]
+
+
+def test_oversized_book_digest_is_balanced_without_losing_its_ending():
+    agent = Synopsizer(FakeClient(), Config())
+    agent._synth = Mock(side_effect=["First.", "Second.", "Complete."])
+    digest = " x" * 12001
+    assert agent.book_synopsis([digest], "") == "Complete."
+    groups = [call.args[0] for call in agent._synth.call_args_list[:2]]
+    assert [len(group) for group in groups] == [1, 1]
+    chunks = [group[0] for group in groups]
+    assert "".join(chunks) == digest.strip()
+    assert [count_tokens(chunk) for chunk in chunks] == [6000, 6001]
+    assert agent._synth.call_args.args[0] == ["First.", "Second."]
+
+
+@pytest.mark.parametrize("method", ["digest_chapter", "book_synopsis"])
+@pytest.mark.parametrize(
+    ("output", "accepted"),
+    [(" word" * 12000, True), (" word" * 12001, False), ("🙂" * 6500, False)],
+)
+def test_digest_output_limit_is_measured_in_tokens(method, output, accepted):
+    agent = Synopsizer(FakeClient(), Config())
+    agent._ask_text = Mock(return_value=output)
+    args = ("Source.",) if method == "digest_chapter" else (["Digest."], "")
+    result = getattr(agent, method)(*args)
+    assert bool(result) is accepted
+    agent._ask_text.assert_called_once()
+
+
+def test_reduction_progress_uses_tokens_even_when_character_count_grows():
+    agent = Synopsizer(FakeClient(), Config())
+    synthesize = Mock(side_effect=[" word" * 5000, " other" * 5000, "Complete."])
+    assert agent._reduce(["中" * 7000, "文" * 7000], synthesize) == "Complete."
+    assert synthesize.call_count == 3
+
+
+def test_reduction_stops_when_only_character_count_shrinks():
+    agent = Synopsizer(FakeClient(), Config())
+    synthesize = Mock(return_value="中" * 7000)
+    assert agent._reduce([" a" * 7000, " b" * 7000], synthesize) == ""
+    assert synthesize.call_count == 2
 
 
 @pytest.mark.parametrize("responses", [["First.", ""], ["First.", "Last.", ""]])
@@ -236,14 +377,14 @@ def test_chapter_digest_covers_all_blocks_and_merges_in_order():
 def test_chapter_map_or_merge_failure_never_publishes_partial_digest(responses, enabled):
     agent = Synopsizer(FakeClient(), _selected_config() if enabled else Config())
     agent._ask_text = Mock(side_effect=responses)
-    assert agent.digest_chapter("a" * 8000 + "ENDING") == ""
+    assert agent.digest_chapter(" a" * 8000 + "ENDING") == ""
     assert agent._ask_text.call_count == len(responses)
 
 
 def test_chapter_recursive_reduction_preserves_every_group():
     agent = Synopsizer(FakeClient(), _selected_config())
-    agent._ask_text = Mock(side_effect=["A" * 7000, "B" * 7000, "a", "b", "All."])
-    assert agent.digest_chapter("x" * 16000) == "All."
+    agent._ask_text = Mock(side_effect=[" A" * 7000, " B" * 7000, "a", "b", "All."])
+    assert agent.digest_chapter(" x" * 16000) == "All."
     assert agent._ask_text.call_count == 5
     assert "\na\nb" in agent._ask_text.call_args.args[1]
 
@@ -252,8 +393,8 @@ def test_chapter_recursive_reduction_preserves_every_group():
 @pytest.mark.parametrize("enabled", [False, True])
 def test_noncontracting_or_oversized_outputs_stop_without_looping(output_length, enabled):
     agent = Synopsizer(FakeClient(), _selected_config() if enabled else Config())
-    agent._ask_text = Mock(return_value="x" * output_length)
-    assert agent.digest_chapter("a" * 16000) == ""
+    agent._ask_text = Mock(return_value=" x" * output_length)
+    assert agent.digest_chapter(" a" * 16000) == ""
     assert agent._ask_text.call_count <= 4
 
 
@@ -331,9 +472,9 @@ def test_full_coverage_cache_requires_version_and_source_hash(tmp_path, change, 
 def test_short_chapter_does_not_need_an_extra_merge():
     agent = Synopsizer(FakeClient(), Config())
     agent._ask_text = Mock(return_value="Digest.")
-    assert agent.digest_chapter("a" * 8000) == "Digest."
+    assert agent.digest_chapter(" a" * 8000) == "Digest."
     agent._ask_text.assert_called_once()
-    assert "a" * 8000 in agent._ask_text.call_args.args[1]
+    assert " a" * 8000 in agent._ask_text.call_args.args[1]
 
 
 def test_legacy_sampled_cache_is_rebuilt_without_touching_targets_or_terms(tmp_path):
@@ -397,7 +538,7 @@ def test_default_analysis_uses_digests_and_explicit_style_terms():
 def test_synopsis_bounds_style_and_uses_authoritative_glossary(enabled):
     agent = Synopsizer(FakeClient(), _selected_config() if enabled else Config())
     agent._ask_text = Mock(return_value="Synopsis.")
-    style = "Keep a restrained voice.\n" + "x" * 5000 + "STYLE-ENDING"
+    style = "Keep a restrained voice.\n" + " x" * 5000 + "STYLE-ENDING"
     agent.book_synopsis(
         ["Alice arrives."], style, glossary=[GlossaryTerm(source="Alice", target="Current")]
     )
@@ -407,6 +548,21 @@ def test_synopsis_bounds_style_and_uses_authoritative_glossary(enabled):
     assert "Additional style context omitted" in prompt
     assert "authoritative mappings" in prompt
     assert '["Alice", "Current", "term"]' in prompt
+
+
+def test_synopsis_style_and_glossary_budgets_count_tokens_not_characters():
+    agent = Synopsizer(FakeClient(), Config())
+    agent._ask_text = Mock(return_value="Synopsis.")
+    style = " word" * 3000
+    target = " name" * 2000
+    assert len(style) > 4000 and len(target) > 6000
+    agent.book_synopsis(
+        ["Alice arrives."], style, glossary=[GlossaryTerm(source="Alice", target=target)]
+    )
+    prompt = agent._ask_text.call_args.args[1]
+    assert style in prompt
+    assert target in prompt
+    assert "omitted" not in prompt
 
 
 @pytest.mark.parametrize("enabled", [False, True])

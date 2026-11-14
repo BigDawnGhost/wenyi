@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import zipfile
+from dataclasses import dataclass
 
 from bs4 import BeautifulSoup, UnicodeDammit
 from bs4.exceptions import ParserRejectedMarkup
@@ -39,6 +40,14 @@ _XML_ENCODING = re.compile(
     r"(<\?xml[^>]*\bencoding\s*=\s*)(['\"])[^'\"]+\2",
     re.IGNORECASE,
 )
+
+
+@dataclass(frozen=True)
+class EpubPresentation:
+    """Book-wide decisions passed explicitly to independent XHTML render tasks."""
+
+    lang: str
+    force_horizontal: bool
 
 
 def _epub_looks_vertical(zf: zipfile.ZipFile) -> bool:

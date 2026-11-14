@@ -1,8 +1,7 @@
 import { useId, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
-import { Disclosure } from "../../components/ui/disclosure";
 
-/** One settings group: the title column names the group so its controls need no extra prose. */
+/** Full-width settings sections keep their headings above the controls. */
 export function SettingsSection({
   title,
   id,
@@ -23,12 +22,12 @@ export function SettingsSection({
       aria-labelledby={headingId}
       data-slot="settings.section"
       className={cn(
-        "grid min-w-0 grid-cols-[11rem_minmax(0,1fr)] scroll-mt-4 gap-8 border-t py-6 first-of-type:border-t-0 first-of-type:pt-0",
+        "min-w-0 scroll-mt-4 border-t py-6 first-of-type:border-t-0 first-of-type:pt-0",
         className,
       )}
       {...rest}
     >
-      <h2 id={headingId} className="pt-1 text-sm font-semibold">
+      <h2 id={headingId} className="mb-4 text-sm font-semibold">
         {title}
       </h2>
       <div className="min-w-0 space-y-4">{children}</div>
@@ -36,24 +35,17 @@ export function SettingsSection({
   );
 }
 
-/** Dedicated category pages show groups inline; compact project settings may fold them. */
+/** Global and project settings show groups inline without nested cards or folding. */
 export function SettingsGroup({
   title,
   summary,
-  error,
   children,
-  collapsible = false,
 }: {
   title: string;
   summary?: ReactNode;
-  error?: unknown;
   children: ReactNode;
-  collapsible?: boolean;
 }) {
   const headingId = useId();
-  if (collapsible) {
-    return <Disclosure title={title} summary={summary} error={error}>{children}</Disclosure>;
-  }
   return (
     <section aria-labelledby={headingId} className="min-w-0 space-y-4 border-t pt-4">
       <h3 id={headingId} className="text-sm font-medium">

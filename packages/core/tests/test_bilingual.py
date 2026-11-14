@@ -156,7 +156,7 @@ class TestRenderChapterHtmlBilingual(unittest.TestCase):
         self.assertEqual(_required_tag(ruby.find("rt")).get_text(), "かんじ")
         self.assertIn("です", source.get_text())
 
-    def test_non_japanese_source_still_flattens_ruby(self):
+    def test_source_ruby_is_preserved_independently_of_source_language(self):
         title, segments, template = annotate_epub_resource(
             "<html><body><p><ruby>漢字<rt>かんじ</rt></ruby>です</p></body></html>",
             0,
@@ -178,7 +178,8 @@ class TestRenderChapterHtmlBilingual(unittest.TestCase):
         source = _required_tag(soup.find("p", class_="tn-source"))
 
         self.assertEqual(source.get_text(), "漢字です")
-        self.assertIsNone(source.find("ruby"))
+        ruby = _required_tag(source.find("ruby"))
+        self.assertEqual(_required_tag(ruby.find("rt")).get_text(), "かんじ")
 
     def test_preserve_source_style_reuses_block_style_without_dim_class(self):
         ch = _chapter_with_template()

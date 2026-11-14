@@ -88,9 +88,9 @@ for (const locale of ["en", "zh-CN"] as const) {
       await expect(creation).not.toHaveAttribute("aria-describedby");
       await expect(creation.getByLabel(t("createProject.projectName")))
         .toBeVisible();
-      await expect(creation.getByRole("checkbox", { name: t("createProject.prepareSource") }))
+      await expect(creation.getByRole("switch", { name: t("createProject.prepareSource") }))
         .toBeVisible();
-      // Options carry their own names; there is no explanatory prose under them.
+      // Controls carry their own names; there is no explanatory prose under them.
       await expect(creation.locator("p")).toHaveCount(0);
 
       await page.goto(`/projects/${pid}/proofreading/0`);
@@ -226,18 +226,13 @@ for (const locale of ["en", "zh-CN"] as const) {
     }) => {
       for (const path of ["/settings/advanced", `/projects/${pid}/settings`]) {
         await page.goto(path);
-        const standalone = path === "/settings/advanced";
-        const summary = standalone
-          ? page.getByRole("heading", { name: t("settings.advancedYamlConfiguration") })
-          : page.locator("summary").filter({ hasText: t("settings.advancedYamlConfiguration") });
+        const summary = page.getByRole("heading", { name: t("settings.advancedYamlConfiguration") });
         await expect(summary).toHaveText(t("settings.advancedYamlConfiguration"));
-        if (!standalone) await summary.click();
         await page.getByRole("textbox", {
           name: t("settings.advancedYamlConfiguration"),
           exact: true,
         }).fill("{}");
-        if (!standalone) await summary.click();
-        await expect(summary).toContainText(t("settings.unsavedSummary"));
+        await expect(page.getByText(t("settings.unsavedSummary"), { exact: true })).toBeVisible();
         await expect(page.getByRole("button", {
           name: t("settings.validateConfiguration"),
           exact: true,

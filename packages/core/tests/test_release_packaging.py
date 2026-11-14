@@ -8,6 +8,7 @@ import os
 import re
 import stat
 import subprocess
+import sys
 import zipfile
 from pathlib import Path
 
@@ -291,6 +292,28 @@ def test_sidecar_rebuilds_local_packages_instead_of_reusing_cached_wheels(monkey
         assert ("--reinstall-package", package) in set(zip(sync, sync[1:]))
 
 
+def test_sidecar_smoke_test_uses_a_private_user_profile(monkeypatch, tmp_path):
+    sidecar = script("desktop_sidecar")
+    real = tmp_path / "real-profile"
+    monkeypatch.setenv("HOME", str(real))
+    monkeypatch.setenv("USERPROFILE", str(real))
+    monkeypatch.setenv("XDG_DATA_HOME", str(real / "data"))
+    launches = []
+
+    def launch(executable, workspace, env, **kwargs):
+        profile = Path(env["HOME"])
+        assert profile.is_dir() and workspace.parent == profile.parent
+        launches.append(env)
+
+    monkeypatch.setattr(sidecar, "smoke_launch", launch)
+    sidecar.smoke_test(tmp_path / "wenyi-engine")
+    assert len(launches) == 2
+    for env in launches:
+        # The engine resolves the shared catalog from these, so none may name the real one.
+        assert env["HOME"] == env["USERPROFILE"] != str(real)
+        assert "XDG_DATA_HOME" not in env
+
+
 @pytest.mark.parametrize("dockerfile", ["Dockerfile.api", "Dockerfile.api.buildx"])
 def test_web_images_do_not_reuse_cached_local_package_versions(dockerfile):
     text = (ROOT / "docker" / dockerfile).read_text().replace("\\\n", " ")
@@ -319,7 +342,128 @@ def test_workflows_separate_components():
         assert "--clobber" not in text
         assert "tag_name" in text
         assert "tar.gz" not in text
-        assert document["jobs"]["release"]["if"] == "github.event_name == 'release'"
+        expected = "github.event_name == 'release'"
+        if component == "desktop":
+            expected += " || (github.event_name == 'workflow_dispatch' && inputs.publish)"
+        assert document["jobs"]["release"]["if"] == expected
+
+
+@pytest.mark.parametrize(
+    ("tag", "published_stable", "gh_exit_code", "accepted"),
+    [
+        ("v1.5.0", "true", 0, True),
+        ("1.5.0", "true", 0, True),
+        ("", "true", 0, False),
+        ("main", "true", 0, False),
+        ("v1.5.0rc1", "true", 0, False),
+        ("v01.5.0", "true", 0, False),
+        ("v1.5.0", "false", 0, False),
+        ("v1.5.0", "true", 1, False),
+    ],
+)
+def test_desktop_rebuild_preflight_requires_an_existing_stable_release(
+    tag, published_stable, gh_exit_code, accepted
+):
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/desktop.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    preflight = next(
+        step
+        for step in document["jobs"]["plan"]["steps"]
+        if step.get("name") == "Validate published release rebuild"
+    )
+    assert preflight["shell"] == "bash"
+    assert "--json isDraft,isPrerelease" in preflight["run"]
+    bash = "bash"
+    if os.name == "nt":
+        # PATH may resolve bash to the WSL launcher rather than Git for Windows.
+        git_root = Path(git(ROOT, "--exec-path")).parents[2]
+        git_bash = git_root / "bin" / "bash.exe"
+        assert git_bash.is_file(), "Git for Windows Bash is required for workflow checks"
+        bash = str(git_bash)
+    # Override gh in this shell so the actual workflow guard runs entirely offline.
+    fake_gh = 'gh() { printf "%s\\n" "$PUBLISHED_STABLE"; return "$GH_EXIT_CODE"; }\n'
+    shell_script = "printf '%s\\n' workflow-guard-started\n" + fake_gh + preflight["run"]
+    result = subprocess.run(
+        [bash, "-eu", "-c", shell_script],
+        env={
+            **os.environ,
+            "TAG": tag,
+            "PUBLISHED_STABLE": published_stable,
+            "GH_EXIT_CODE": str(gh_exit_code),
+        },
+        text=True,
+        capture_output=True,
+    )
+    # A shell-launch failure must not pass as an expected admission rejection.
+    assert "workflow-guard-started\n" in result.stdout, result.stdout + result.stderr
+    assert (result.returncode == 0) is accepted, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("fails", [False, True])
+@pytest.mark.parametrize("newline", [b"\n", b"\r\n"])
+def test_desktop_backend_suite_restores_tag_after_portable_flag_check(
+    tmp_path, monkeypatch, legacy, fails, newline
+):
+    import yaml
+
+    document = yaml.load(
+        (ROOT / ".github/workflows/desktop.yml").read_text(), Loader=yaml.BaseLoader
+    )
+    step = next(
+        step
+        for step in document["jobs"]["local-package"]["steps"]
+        if step.get("name") == "Desktop backend suite"
+    )
+    assert step["shell"] == "bash"
+    assert step["run"].startswith("uv run --no-sync python - <<'PY'\n")
+    program = step["run"].split("\n", 1)[1].rsplit("\nPY", 1)[0]
+    path = tmp_path / "apps/desktop/backend/tests/test_desktop_entry.py"
+    path.parent.mkdir(parents=True)
+    assertion = (
+        b"assert observed == [1]" if legacy else b"assert len(observed) == 1 and observed[0] != 0"
+    )
+    original = newline.join([b"def check_flag(observed):", b"    " + assertion, b""])
+    path.write_bytes(original)
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    def run(command, *, check):
+        calls.append(command)
+        assert check is True
+        namespace = {}
+        exec(compile(path.read_bytes(), str(path), "exec"), namespace)
+        for value in (1, 4):
+            namespace["check_flag"]([value])
+        for observed in ([], [0], [1, 4]):
+            with pytest.raises(AssertionError):
+                namespace["check_flag"](observed)
+        if fails:
+            raise subprocess.CalledProcessError(1, command)
+
+    monkeypatch.setattr(subprocess, "run", run)
+    if fails:
+        with pytest.raises(subprocess.CalledProcessError):
+            exec(compile(program, "desktop-backend-workflow", "exec"), {})
+    else:
+        exec(compile(program, "desktop-backend-workflow", "exec"), {})
+    assert calls == [
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-q",
+            "-n",
+            "auto",
+            "--dist",
+            "loadgroup",
+            "apps/desktop/backend/tests",
+        ]
+    ]
+    assert path.read_bytes() == original
 
 
 @pytest.mark.parametrize("file", ["tests.yml", "build.yml", "desktop.yml"])

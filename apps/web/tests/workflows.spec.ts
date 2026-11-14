@@ -77,7 +77,7 @@ test("creates a multilingual project and waits for background parsing", async ({
   await expect(create).toBeDisabled();
   expect(created).toBeUndefined();
   await expect(
-    page.getByRole("checkbox", { name: "Prepare before translating" }),
+    page.getByRole("switch", { name: "Prepare before translating" }),
   ).not.toBeChecked();
   const browseFiles = page.getByRole("button", {
     name: "Browse files",
@@ -222,18 +222,14 @@ test("advanced configuration reports validation errors", async ({
   );
   await page.goto(`/projects/${pid}/settings`);
   await expect(
-    page.locator("summary").filter({ hasText: "Saved model routes" }),
+    page.getByRole("heading", { name: "Advanced YAML configuration", exact: true }),
   ).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("settings.png"),
     fullPage: true,
   });
   await page
-    .locator("summary")
-    .filter({ hasText: "Advanced YAML configuration" })
-    .click();
-  await page
-    .getByLabel("Advanced YAML configuration", { exact: true })
+    .getByRole("textbox", { name: "Advanced YAML configuration", exact: true })
     .fill("pipeline:\n  invalid_option: true");
   await page
     .getByRole("button", { name: "Validate configuration", exact: true })

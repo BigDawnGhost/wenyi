@@ -213,31 +213,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/desktop/recovery/last": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Last Recovery
-         * @description What the startup scan decided during this launch.
-         *
-         *     Scoped to one launch on purpose. The next start scans again and reaches its
-         *     own conclusion, so a notice about a folder the person has since acted on
-         *     would be stale -- and a stale notice about a working folder is worse than
-         *     none, because it sends them looking for a problem that is gone.
-         */
-        get: operations["last_recovery_desktop_recovery_last_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -347,28 +322,6 @@ export interface components {
             request: components["schemas"]["ExportRequest"] | null;
             /** Protected Roots */
             protected_roots: string[];
-        };
-        /** RecoveryAnswer */
-        RecoveryAnswer: {
-            /**
-             * Recovered
-             * @default 0
-             */
-            recovered: number;
-            /**
-             * Skipped
-             * @default []
-             */
-            skipped: components["schemas"]["SkippedFolder"][];
-        };
-        /** SkippedFolder */
-        SkippedFolder: {
-            /** Name */
-            name: string;
-            /** Reason */
-            reason: string;
-            /** Message */
-            message: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -773,26 +726,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    last_recovery_desktop_recovery_last_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RecoveryAnswer"];
                 };
             };
         };

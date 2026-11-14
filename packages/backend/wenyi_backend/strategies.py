@@ -64,13 +64,6 @@ STEP_REGISTRY = [
 ]
 _SWITCHES = {"book_understanding", "polish", "annotation_alignment", "review", "review_autofix"}
 _STANDARD = {**dict.fromkeys(sorted(_SWITCHES), True), "punctuation_normalize": True}
-_LEGACY_QUICK_STEPS = {
-    **_STANDARD,
-    "book_understanding": False,
-    "polish": False,
-    "review": False,
-    "review_autofix": False,
-}
 PRESET_TEMPLATES = [
     {
         "name": "标准翻译",
@@ -80,23 +73,6 @@ PRESET_TEMPLATES = [
         "steps": _STANDARD,
     },
 ]
-
-
-def _saved_strategy_to_config(strategy: dict[str, Any], base: Config, **kwargs: Any) -> Config:
-    """Read retired project strategies without exposing them to new requests."""
-    if strategy.get("template") == "快速出稿":
-        strategy = {
-            **strategy,
-            "template": "标准翻译",
-            "steps": strategy.get("steps", _LEGACY_QUICK_STEPS),
-        }
-    if isinstance(strategy.get("steps"), dict) and "report" in strategy["steps"]:
-        # Ignore the retired required step in existing projects without rewriting saved data.
-        strategy = {
-            **strategy,
-            "steps": {key: value for key, value in strategy["steps"].items() if key != "report"},
-        }
-    return strategy_to_config(strategy, base, **kwargs)
 
 
 def builtin_template_definition(name: str) -> dict[str, Any] | None:
@@ -115,7 +91,7 @@ def strategy_to_config(
     *,
     source_lang: str = "auto",
     target_lang: str = "zh",
-    translation_mode: Literal["standard", "best_of_three"] | None = None,
+    translation_mode: Literal["standard", "three_draft_synthesis"] | None = None,
 ) -> Config:
     unknown = set(strategy) - {"template", "steps", "description", "time_factor"}
     if unknown:
@@ -144,11 +120,13 @@ def strategy_to_config(
             raise ValueError(f"Required workflow step cannot be disabled: {key}")
     if translation_mode is not None:
         cfg.pipeline.translation_mode = translation_mode
-        if translation_mode == "best_of_three":
+        if translation_mode == "three_draft_synthesis":
             cfg.pipeline.polish = True
     if not cfg.pipeline.review:
         cfg.pipeline.review_autofix = False
-    return Config.model_validate(cfg.model_dump())
+    validated = Config.model_validate(cfg.model_dump())
+    validated.set_prompt_genre(base.prompt_genre)
+    return validated
 
 
 def workflow_steps(config: Config) -> dict[str, bool]:

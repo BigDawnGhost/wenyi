@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from ...agents.annotation_aligner import AnnotationUnit, target_digest
+from ...alignment import AlignmentUnit, target_digest
 from ...document_styles.docx import (
     merge_align_results,
     needs_alignment,
@@ -99,7 +99,7 @@ class DocxStyleService:
         if not align_items:
             return
 
-        unit = AnnotationUnit(
+        unit = AlignmentUnit(
             unit_id=f"docx-style:ch{ci}:{segment.anchor or segment.index}",
             source=source,
             target=target,

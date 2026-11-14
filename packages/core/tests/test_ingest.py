@@ -720,7 +720,7 @@ class TestEpubIngest(unittest.TestCase):
         self.assertNotIn("epub_annotations", segments[0].meta)
         self.assertNotIn("data-tn-annotation-id", template)
 
-    def test_epub_linked_image_uses_inline_preservation_not_annotation(self):
+    def test_epub_linked_image_uses_protected_object_not_note_annotation(self):
         html = (
             '<html><body><p>See <a href="#full"><img src="thumb.png"/></a> now.</p></body></html>'
         )
@@ -728,7 +728,8 @@ class TestEpubIngest(unittest.TestCase):
         _title, segments, template = annotate_epub_resource(html, 0, "body.xhtml")
 
         self.assertEqual(segments[0].source, "See now.")
-        self.assertNotIn("epub_annotations", segments[0].meta)
+        items = segments[0].meta["epub_annotations"]["items"]
+        self.assertEqual([item["relation"] for item in items], ["inline_object"])
         inline = segments[0].meta["epub_inline"]
         self.assertEqual(inline["nodes"][0]["tag"], "a")
         rendered = BeautifulSoup(template, "html.parser")

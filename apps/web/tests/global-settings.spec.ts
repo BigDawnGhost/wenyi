@@ -19,7 +19,7 @@ test("global workflow has no project precision controls or polishing constraint"
       ...globalConfiguration,
       effective: {
         ...globalConfiguration.effective,
-        pipeline: { ...globalConfiguration.effective.pipeline, translation_mode: "best_of_three", polish: true },
+        pipeline: { ...globalConfiguration.effective.pipeline, translation_mode: "three_draft_synthesis", polish: true },
       },
     },
   });
@@ -28,11 +28,11 @@ test("global workflow has no project precision controls or polishing constraint"
   await expect(page.getByLabel("Translation mode", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Default workflow template", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("option", { name: /Quick draft|快速出稿/ })).toHaveCount(0);
-  await expect(page.getByLabel("Tokens per batch", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Tokens per batch", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Parallel initial drafts (1–3)", { exact: true })).toHaveCount(0);
 });
 
-test("projects only select registered models and operation overrides", async ({
+test("projects select registered tiers without operation controls", async ({
   page,
 }) => {
   let saved = structuredClone(configuration);
@@ -53,19 +53,9 @@ test("projects only select registered models and operation overrides", async ({
   await expect(page.getByLabel("API provider", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Model name", { exact: true })).toHaveCount(0);
   await chooseOption(page.getByLabel("Quality tier"), "editor · second / editor-model");
-  await page
-    .locator("summary")
-    .filter({ hasText: "Models by operation" })
-    .click();
   await expect(
     page.getByLabel("Translate chapters in batches", { exact: true }),
-  ).toHaveText("Quality tier");
-  await page.getByLabel("Translate chapters in batches", { exact: true }).click();
-  await expect(
-    page.getByRole("option", { name: /Follow default tier/ }),
   ).toHaveCount(0);
-  await page.keyboard.press("Escape");
-  await chooseOption(page.getByLabel("Translate chapters in batches", { exact: true }), "editor · second / editor-model");
   await page
     .getByRole("button", { name: "Save configuration", exact: true })
     .click();
@@ -78,9 +68,7 @@ test("projects only select registered models and operation overrides", async ({
     "tiers",
   ]);
   expect(saved.effective.llm.tiers.strong).toBe("editor");
-  expect(saved.effective.llm.routes).toEqual({
-    "translation.body": { model: "editor", fallbacks: [] },
-  });
+  expect(saved.effective.llm.routes).toEqual({});
   await page.reload();
   await expect(page.getByLabel("Quality tier")).toHaveText("editor · second / editor-model");
   await page
