@@ -238,13 +238,18 @@ Before contacting the bridge, Wenyi checks selected pages for image-only content
 If no extractable text layer is found, use MinerU or run OCR first. Chapter grouping
 uses PDF bookmarks, with one chapter when no outline is available.
 
-With a directory-row-capable bridge, aligned numbered contents entries with dot
-leaders and page numbers are translated independently and filled back into their
-original row regions, including entries containing formulas. Ordinary prose line
-wrapping remains reflowable. This conservative detection is not general table or
-contents-column reconstruction. Update both Wenyi and the bridge, then import into
-fresh state to obtain row metadata; existing parsed projects and bridge sessions
-are not automatically migrated.
+With a row-capable bridge, aligned numbered contents entries with dot leaders and
+page numbers, and confidently detected list items with repeated unknown leading
+glyphs, are translated independently and filled back into their original regions.
+The list detector requires at least three matching markers, aligned body starts
+and multiple indented continuation lines; it does not guess a missing Unicode
+mapping or replace unknown characters with bullets. Original marker glyphs and
+complete formula objects remain protected. Ordinary prose wrapping stays
+reflowable. This conservative detection is not general table, bibliography or
+list-layout reconstruction; wrapped list text does not yet gain hanging
+indentation. Update Wenyi and the bridge, then import into fresh state to obtain
+row metadata; existing parsed projects and bridge sessions are not automatically
+migrated.
 
 For translation continuity, only prose units supply preceding/following
 prose context. Explicit headings bound sections; decorations, tables, captions and

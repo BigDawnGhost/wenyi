@@ -111,7 +111,7 @@ class BabeldocBridgeClient:
             )
         if rows and "toc-rows-v1" not in health.get("capabilities", []):
             raise BabeldocBridgeError(
-                "This PDF requires directory row support. Update and restart "
+                "This PDF requires explicit item row support. Update and restart "
                 "wenyi-babeldoc-bridge before exporting."
             )
         connection = resolve_connection(self.base_url)
