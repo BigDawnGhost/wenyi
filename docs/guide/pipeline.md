@@ -98,6 +98,14 @@ its chapter. Fresh Reviewer requests receive the complete final glossary.
 This favors book-wide consistency at the cost of larger prompts. Evidence queries
 and individual Fixers can use relevant subsets.
 
+After EPUB body translation, Wenyi completes the parsed navigation tree and adds its
+source-and-translation pairs to the glossary before final Review, including nested,
+reused and previously saved titles. Existing glossary translations are retained;
+different navigation translations become conflicts for resolution. Review uses these
+mappings to check body headings, visible contents and prose. Publishing its revisions
+requires Autofix. With Review disabled, navigation terms are still saved, but this
+step does not synchronize body text or visible contents during export.
+
 ### Optional whole-book terminology evidence
 
 `pipeline.terminology_context` is an experimental, CLI-only option, off by default.

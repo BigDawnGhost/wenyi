@@ -11,6 +11,7 @@ from ...agents import prompts
 from ...agents.title_translator import TitleOutputError, TitleTranslator
 from ...glossary.store import GlossaryStore
 from ...models.document import Chapter
+from ...models.glossary import GlossaryTerm
 from ...storage.protocol import Storage
 
 
@@ -170,6 +171,31 @@ def title_batches(pending: list[TitleRequest]) -> list[list[TitleRequest]]:
     return batches
 
 
+def _store_navigation_terms(plan: TitlePlan, glossary: Storage | GlossaryStore) -> None:
+    """Publish all saved EPUB navigation pairs, including reused and resumed titles."""
+    if plan.manifest.get("fmt") != "epub" or not plan.entries:
+        return
+    targets = {term.source: term.target for term in glossary.all_terms()}
+    conflicts = {
+        (row["source"], row["existing_target"], row["proposed_target"])
+        for row in glossary.open_conflicts()
+    }
+    for entry in plan.entries:
+        source = _flat(entry.get("title"))
+        translated = entry.get("title_translated")
+        if not isinstance(translated, str) or not translated.strip():
+            continue
+        target = translated.strip()
+        existing = targets.get(source)
+        if existing == target or (source, existing, target) in conflicts:
+            continue
+        result = glossary.upsert_term(GlossaryTerm(source=source, target=target))
+        if result == "conflict":
+            conflicts.add((source, existing, target))
+        else:
+            targets[source] = target
+
+
 class TitleTranslationService:
     """Own title planning, manifest commits and title events under the caller's book lock."""
 
@@ -193,6 +219,7 @@ class TitleTranslationService:
         if plan.changed:
             store.save_manifest(plan.manifest)
         if not plan.pending:
+            _store_navigation_terms(plan, glossary)
             store.log_event("titles_skipped", reason="already_translated_or_reused")
             return
         if progress:
@@ -237,3 +264,5 @@ class TitleTranslationService:
             completed += len(batch)
             if progress:
                 progress(completed, len(plan.pending), "Translating chapter titles")
+        # Commit titles first so an interrupted glossary write can resume without model calls.
+        _store_navigation_terms(plan, glossary)
