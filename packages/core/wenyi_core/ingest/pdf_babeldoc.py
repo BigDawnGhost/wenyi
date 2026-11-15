@@ -311,14 +311,13 @@ def _segment_from_para(index: int, para: dict) -> Segment | None:
                 if item.get("kind") != "formula" or item.get("mode") != "point":
                     raise BabeldocBridgeError("Invalid protected PDF object; update the bridge.")
                 key = f"pdf:{pid}:{item['id']}"
-                # The PDF's extracted spelling is not mathematical evidence.
-                # Keep only an opaque type/identity hint in model context.
+                # Preserve bridge reference data; the shared context layer resolves
+                # missing contents. Frozen glyphs remain the output authority.
                 item.update(
                     relation=OBJECT_RELATION,
                     target_key=key,
                     marker=object_marker(key, source),
                     object_tag="PDF mathematics",
-                    object_source="Original PDF mathematical glyph object",
                 )
                 item.pop("reference_quality", None)
         metadata["pdf_annotations"] = {

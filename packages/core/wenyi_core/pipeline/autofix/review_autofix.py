@@ -134,7 +134,13 @@ class ReviewAutofixService:
             if isinstance(row.get("index"), int)
         ]
         candidates = self._candidates.prepare(
-            chapters, store.load_analysis() or {}, outcome, all_terms, debug, progress=progress
+            chapters,
+            store.load_analysis() or {},
+            outcome,
+            all_terms,
+            debug,
+            progress=progress,
+            annotation_context_registry=store.load_annotation_contexts(),
         )
         index = dict(save_plan(chapters, candidates, inference, debug, outcome))
         self._save_usage_delta(store, debug, scope="review_autofix_agent")

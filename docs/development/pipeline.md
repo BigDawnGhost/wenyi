@@ -111,12 +111,38 @@ an immutable-target locator cannot repair damaged prose. Resume does not repeat
 unusable paid calls; the response must be corrected before it can be aligned.
 Pronunciation-hint cleanup must not remove object markers.
 
+Read-only references are projected by `markup.contexts`, independently of pipeline,
+storage, LLM calls and writers. Format adapters supply `Segment.meta["annotations"]`
+with a logical `source_length` and ordered `items`; the compatibility selector also
+accepts existing `epub_annotations` and `pdf_annotations` without migrating saved
+state. An object item supplies `relation: "inline_object"`, stable `id`/`target_key`,
+`marker`, and clean-source point offsets. Content comes from registered `source_blocks`,
+then embedded `object_source`, with a generic description when neither is available.
+The projection assigns references to continuation slices, deduplicates destinations
+and returns `target_key`, `source`, `marker` and slice-local `source_offset`.
+Notes share the slicing machinery but are not exposed as immutable objects in Review.
+New format adapters can use this contract without adding format branches to model
+workflows; extraction, original-object ownership and restoration remain format-owned.
+
+Translation, polishing, precision, Review and Autofix consume the same projection
+and shared read-only instructions, without reference reliability tiers. Review and
+Autofix receive the registry explicitly from their application services; evidence
+indices do not read storage. References stay separate from editable source/target
+evidence. Review reuse also binds the effective object reference prompts, so changed
+contents or instructions invalidate prior completed results and interrupted traces.
+Unpublished Autofix fixer traces use the same reference check; an already indexed
+publication still resumes its frozen plan without regenerating candidates.
+Review replacements preserve markers already present in the target, but do not
+introduce markers into targets whose format adapter has already consumed them.
+
 BabelDOC adapts `protected: true` PDF annotations to the same transport. The bridge
-owns frozen mathematical glyphs; Core receives only object identities and insertion
-points, never an unverified formula transcription. Unlike EPUB's semantic fallback,
-strict PDF objects retain their markers in formal targets through Review/Autofix;
+owns frozen mathematical glyphs; Core receives object identities, insertion points
+and optional extracted `object_source` text, used like EPUB's original markup
+references. Missing/empty references from older bridges use a generic object
+description. Unlike EPUB's semantic fallback, strict PDF objects retain their
+markers in formal targets through Review/Autofix;
 missing or duplicate markers become pending without a semantic-location request.
-Review evidence hashes still bind the actual saved target, with opaque references
+Review evidence hashes still bind the actual saved target, with object references
 supplied separately. Annotation offsets/digests bind the marker-free text. Export
 resolves markers only on a disposable chapter copy, then remaps clean offsets during
 punctuation normalization. Incomplete objects block export; ordinary styles remain

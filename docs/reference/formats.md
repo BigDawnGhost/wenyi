@@ -258,11 +258,15 @@ Fonts, text expansion and the external engine still limit layout fidelity.
 
 With a `protected-objects-v1` bridge, mathematical expressions and their adjacent
 variables use opaque object markers through translation, polishing, Review and
-Autofix. The bridge keeps original glyphs, fonts and relative geometry; lossy PDF
-Unicode is not supplied as formula context or used to regenerate mathematics.
+Autofix. As with EPUB objects, models receive available object contents as read-only
+context for understanding surrounding prose, while preserving the markers instead
+of rewriting formulas. PDF references use extracted text; the bridge keeps the
+original glyphs, fonts and relative geometry as the sole source for formula output.
 Missing, duplicated or damaged object markers block export instead of silently
 dropping formulas or guessing their positions. Reimport with updated Wenyi and
-bridge versions to enable protection; existing sessions are not upgraded in place.
+bridge versions to obtain protection and formula references; existing projects and
+sessions are not upgraded in place. Older bridges without reference text retain
+object markers but provide only a generic object description.
 Recognition still depends on native formula detection, mathematical character and
 font evidence, and grouping boundaries; verify formula coverage and final layout.
 

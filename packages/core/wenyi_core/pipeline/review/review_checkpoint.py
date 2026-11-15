@@ -167,3 +167,4 @@ class ReviewInputs:
     chapters: list[Chapter]
     analysis: dict[str, Any]
     debug: ReviewRunStore
+    annotation_context_registry: dict[str, Any] | None = None

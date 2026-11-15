@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 from wenyi_core.agents.annotation_aligner import target_digest
+from wenyi_core.agents.precision import PrecisionAgent, PrecisionInputs
+from wenyi_core.agents.reviewer import Reviewer
 from wenyi_core.assemble.export_view import ExportViewStore
 from wenyi_core.assemble.pdf_writer import _assemble_pdf
 from wenyi_core.config import Config
@@ -16,10 +18,12 @@ from wenyi_core.ingest.pdf_babeldoc import (
     annotations_from_store,
 )
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.markup.contexts import annotation_contexts_for_segments
 from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pdf_bridge import BabeldocBridgeClient, BabeldocBridgeError
 from wenyi_core.pipeline.annotate.annotations import AnnotationService
 from wenyi_core.pipeline.run.runtime import PipelineRuntime
+from wenyi_core.pipeline.translate.translation_batch import BatchPlan, TranslationBatchExecutor
 from wenyi_core.review.evidence import BookEvidenceIndex
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
@@ -64,10 +68,9 @@ def test_pdf_protected_objects_use_shared_transport_and_embedded_context():
     assert segment is not None
     saved = segment.meta["pdf_annotations"]["items"][0]
     assert saved["relation"] == "inline_object"
-    contexts = AnnotationService.annotation_contexts_for_segments([segment], None)
+    contexts = annotation_contexts_for_segments([segment], None)
     assert contexts[0][0]["marker"] == saved["marker"]
-    assert contexts[0][0]["source"] == "Original PDF mathematical glyph object"
-    assert "|g|<1" not in str(contexts)
+    assert contexts[0][0]["source"] == "|g|<1"
     assert contexts[0][0]["source_offset"] == "8"
     assert segment.source == "We wish ."
     evidence = BookEvidenceIndex([Chapter(index=0, segments=[segment])], [], {})
@@ -75,7 +78,94 @@ def test_pdf_protected_objects_use_shared_transport_and_embedded_context():
     assert reference is not None
     assert reference.source == segment.source
     assert evidence.object_contexts(0, 0)[0][0]["marker"] == saved["marker"]
-    assert "|g|<1" not in str(evidence.object_contexts(0, 0))
+    assert evidence.object_contexts(0, 0)[0][0]["source"] == "|g|<1"
+
+
+@pytest.mark.parametrize("reference", [{}, {"object_source": ""}, {"object_source": None}])
+def test_pdf_objects_without_reference_text_keep_legacy_transport(reference):
+    segment = _segment_from_para(
+        0,
+        {
+            "id": "0:2",
+            "source": "We wish .",
+            "annotations": [
+                {
+                    "id": "formula:1",
+                    "kind": "formula",
+                    "mode": "point",
+                    "source_start": 8,
+                    "source_end": 8,
+                    "composition_index": 1,
+                    "protected": True,
+                    **reference,
+                }
+            ],
+        },
+    )
+    assert segment is not None
+    contexts = annotation_contexts_for_segments([segment], None)
+    assert contexts[0][0]["source"] == "Original immutable object"
+    assert contexts[0][0]["marker"]
+
+
+@pytest.mark.parametrize("polish", [False, True])
+def test_pdf_formula_context_reaches_translation_precision_and_review(polish):
+    segment = _segment_from_para(
+        0,
+        {
+            "id": "0:2",
+            "source": "We wish .",
+            "annotations": [
+                {
+                    "id": "formula:1",
+                    "kind": "formula",
+                    "mode": "point",
+                    "source_start": 8,
+                    "source_end": 8,
+                    "composition_index": 1,
+                    "protected": True,
+                    "object_source": "|g|<1",
+                }
+            ],
+        },
+    )
+    assert segment is not None
+    contexts = annotation_contexts_for_segments([segment], None)
+    marker = contexts[0][0]["marker"]
+    target = f"我们希望{marker}。"
+
+    def handler(messages, *_):
+        request = "\n".join(message["content"] for message in messages)
+        assert "|g|<1" in request
+        assert marker in request
+        if client.calls[-1]["operation"] == "review.scan":
+            assert "untrusted read-only data" in request
+            assert "No formula transcription is provided" not in request
+            return json.dumps({"reviewed_segments": 1, "complete": True, "issues": []})
+        assert f"We wish {marker}." in request
+        assert "untrusted read-only data" in request
+        return json.dumps({"polished" if len(messages) == 4 else "translations": [target]})
+
+    client = FakeClient(handler=handler)
+    config = Config.from_dict({"llm": {"preset": "fake"}})
+    runtime = PipelineRuntime(config, client)
+    plan = BatchPlan.capture(0, 0, [segment], [], "", "", "", "", contexts, "")
+    result = TranslationBatchExecutor(runtime.translator, runtime.polisher).execute(
+        plan, polish=polish
+    )
+    assert result.targets == (target,)
+    segment.target = result.targets[0]
+    packet = PrecisionAgent(client, config)._packet(
+        PrecisionInputs((segment.source,), (), "", "", "", "", contexts, "")
+    )
+    assert "|g|<1" in packet and marker in packet
+    evidence = BookEvidenceIndex([Chapter(index=0, segments=[segment])], [], {})
+    review = Reviewer(client, config).review_result(
+        [segment.source], [target], object_contexts=evidence.object_contexts(0, 0)
+    )
+    assert review.issues == []
+    assert segment.source == "We wish ."
+    assert "|g|<1" not in segment.target
 
 
 def test_pdf_protected_export_rejects_stale_or_pending_object(project):
