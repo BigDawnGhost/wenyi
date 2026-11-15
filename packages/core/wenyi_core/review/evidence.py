@@ -9,6 +9,7 @@ from threading import Lock
 from typing import Any
 
 from ..glossary.store import GlossaryTerm, source_matches_text, term_match_sources
+from ..markup.contexts import object_contexts_for_segments
 from ..models.document import Chapter
 from .models import SegmentRef, normalize_value
 
@@ -35,6 +36,7 @@ class BookEvidenceIndex:
         *,
         source_lang: str = "auto",
         target_overrides: Mapping[tuple[int, int], str] | None = None,
+        annotation_context_registry: dict[str, Any] | None = None,
     ):
         """Build the read-only whole-book evidence index.
         target_overrides maps chapter.index/text_index pairs to shadow translations visible
@@ -50,28 +52,15 @@ class BookEvidenceIndex:
         overrides = target_overrides if target_overrides is not None else {}
         for chapter in chapters:
             chapter_digests[chapter.index] = str(chapter.meta.get("source_digest", "") or "")
+            contexts = object_contexts_for_segments(
+                chapter.text_segments, annotation_context_registry
+            )
             for text_index, segment in enumerate(chapter.text_segments):
                 position = len(flattened)
                 location = (chapter.index, text_index)
                 baseline_target = segment.target or ""
                 has_override = location in overrides
-                metadata = segment.meta.get("pdf_annotations", {})
-                if not isinstance(metadata, dict):
-                    metadata = {}
-                self._object_contexts[location] = [
-                    {
-                        "target_key": item["target_key"],
-                        "source": item["object_source"],
-                        "source_offset": str(item["source_start"]),
-                        "marker": item["marker"],
-                    }
-                    for item in metadata.get("items", [])
-                    if isinstance(item, dict)
-                    and item.get("protected")
-                    and item.get("object_source")
-                    and item.get("target_key")
-                    and item.get("marker")
-                ]
+                self._object_contexts[location] = contexts[text_index]
                 flattened.append(
                     SegmentRef(
                         global_ordinal=position,

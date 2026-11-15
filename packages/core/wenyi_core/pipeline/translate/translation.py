@@ -19,6 +19,7 @@ from ...agents.glossary_extractor import TranslatedSegmentEvidence
 from ...config import PipelineConfig
 from ...events import ProgressFn
 from ...glossary.store import GlossaryStore
+from ...markup.contexts import annotation_contexts_for_segments
 from ...models.document import Chapter, Segment
 from ...storage.protocol import Storage
 from ...storage.run_store import STATUS_DONE
@@ -247,7 +248,7 @@ class TranslationService:
             return done
         chapter_digest = chapter.meta.get("source_digest", "")
         context_policy = BabeldocContext.for_chapter(chapter)
-        annotation_contexts = self._annotations.annotation_contexts_for_segments(
+        annotation_contexts = annotation_contexts_for_segments(
             text_segs,
             annotation_context_registry,
         )

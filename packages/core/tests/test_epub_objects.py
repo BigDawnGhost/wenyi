@@ -17,6 +17,7 @@ from wenyi_core.config import Config
 from wenyi_core.ingest.epub_contexts import _build_epub_annotation_contexts
 from wenyi_core.ingest.epub_reader import read_epub
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.markup.contexts import annotation_contexts_for_segments
 from wenyi_core.markup.ruby import strip_ruby_markers
 from wenyi_core.markup.segments import annotate_epub_resource
 from wenyi_core.models.document import Chapter, Segment
@@ -53,7 +54,7 @@ def test_math_uses_annotation_context_without_changing_source():
     assert item["mode"] == "point"
     resource = {"href": "chapter.xhtml", "segments": segments, "template": template}
     registry = _build_epub_annotation_contexts([resource], [resource])
-    contexts = AnnotationService.annotation_contexts_for_segments(segments, registry)
+    contexts = annotation_contexts_for_segments(segments, registry)
     assert contexts[0][0]["marker"] == item["marker"]
     assert contexts[0][0]["source_offset"] == str(item["source_start"])
     assert "<msup>" in contexts[0][0]["source"]
@@ -165,7 +166,7 @@ def test_translation_and_polish_receive_object_context_and_preserve_ruby_distinc
 ):
     segments, template, item = parsed()
     registry = registry_for(segments, template)
-    contexts = AnnotationService.annotation_contexts_for_segments(segments, registry)
+    contexts = annotation_contexts_for_segments(segments, registry)
     marker = item["marker"]
 
     def handler(messages, *_):
@@ -204,9 +205,7 @@ def test_translation_and_polish_receive_object_context_and_preserve_ruby_distinc
 
 def test_precision_packet_marks_sources_using_same_annotation_context():
     segments, template, item = parsed()
-    contexts = AnnotationService.annotation_contexts_for_segments(
-        segments, registry_for(segments, template)
-    )
+    contexts = annotation_contexts_for_segments(segments, registry_for(segments, template))
     config = Config.from_dict({"llm": {"preset": "fake"}})
     agent = PrecisionAgent(FakeClient(), config)
     packet = agent._packet(PrecisionInputs((segments[0].source,), (), "", "", "", "", contexts, ""))
@@ -220,7 +219,7 @@ def test_slice_boundaries_receive_each_object_marker_once():
     first = segments[0]
     first.source = "Let "
     pieces = [first, Segment(index=1, source="be positive.", cont=True)]
-    contexts = AnnotationService.annotation_contexts_for_segments(pieces, registry)
+    contexts = annotation_contexts_for_segments(pieces, registry)
     marked = marked_sources([s.source for s in pieces], contexts)
     assert marked == [f"Let {item['marker']}", "be positive."]
 

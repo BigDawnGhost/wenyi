@@ -7,11 +7,12 @@ events and continue.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from ...alignment import AlignmentUnit, TextAligner, target_digest, unresolved_alignment
 from ...alignment.objects import clean_object_markers, resolve_objects
 from ...events import ProgressFn
+from ...markup.contexts import annotation_metadata, reference_source
 from ...markup.objects import (
     OBJECT_RELATION,
     annotation_placements,
@@ -31,15 +32,6 @@ class AnnotationService:
     def __init__(self, runtime: PipelineRuntime, *, aligner: TextAligner | None = None):
         self._runtime = runtime
         self._aligner = aligner
-
-    @staticmethod
-    def annotation_metadata(segment: Segment) -> dict[str, Any] | None:
-        """Select the format-owned metadata consumed by the shared point/range aligner."""
-        for key in ("epub_annotations", "pdf_annotations"):
-            metadata = segment.meta.get(key)
-            if isinstance(metadata, dict):
-                return metadata
-        return None
 
     @staticmethod
     def completed_logical_starts_in_range(
@@ -71,123 +63,6 @@ class AnnotationService:
             position = max(position + 1, logical_end + 1)
         return starts
 
-    @staticmethod
-    def annotation_contexts_for_segments(
-        segments: list[Segment],
-        registry: dict[str, Any] | None,
-    ) -> list[list[dict[str, str]]]:
-        """Assign note/object references to actual translation slices by source offsets.
-        Only the first slice holds EPUB layout metadata. Use its original offsets and
-        cumulative slice boundaries to assign point annotations to one slice and ranges to
-        every intersecting slice. Inject each destination only once per slice.
-        """
-        assigned: list[list[dict[str, str]]] = [[] for _ in segments]
-        raw_contexts = registry.get("contexts") if isinstance(registry, dict) else None
-        if not isinstance(raw_contexts, dict):
-            raw_contexts = {}
-
-        position = 0
-        while position < len(segments):
-            logical_start = position
-            logical_end = logical_start + 1
-            while logical_end < len(segments) and segments[logical_end].cont:
-                logical_end += 1
-            logical_segments = segments[logical_start:logical_end]
-
-            boundaries: list[tuple[int, int]] = []
-            cursor = 0
-            for segment in logical_segments:
-                end = cursor + len(segment.source)
-                boundaries.append((cursor, end))
-                cursor = end
-
-            metadata = AnnotationService.annotation_metadata(logical_segments[0])
-            raw_items = metadata.get("items") if isinstance(metadata, dict) else None
-            items = raw_items if isinstance(raw_items, list) else []
-            source_length = metadata.get("source_length") if isinstance(metadata, dict) else None
-            if items and (
-                not isinstance(source_length, int)
-                or isinstance(source_length, bool)
-                or source_length != cursor
-            ):
-                position = logical_end
-                continue
-            seen_by_piece: list[set[str]] = [set() for _ in logical_segments]
-
-            for raw_item in items:
-                if not isinstance(raw_item, dict) or raw_item.get("relation") not in {
-                    "noteref",
-                    OBJECT_RELATION,
-                }:
-                    continue
-                target_key = raw_item.get("target_key")
-                if not isinstance(target_key, str) or not target_key:
-                    continue
-                record = raw_contexts.get(target_key, {})
-                if not isinstance(record, dict):
-                    record = {}
-                raw_blocks = record.get("source_blocks")
-                blocks = (
-                    [block for block in raw_blocks if isinstance(block, str) and block.strip()]
-                    if isinstance(raw_blocks, list)
-                    else []
-                )
-                if not blocks and raw_item.get("protected") and raw_item.get("object_source"):
-                    blocks = [raw_item["object_source"]]
-                if not blocks:
-                    continue
-                note = {
-                    "target_key": target_key,
-                    "source": "\n\n".join(blocks),
-                }
-
-                start = raw_item.get("source_start")
-                end = raw_item.get("source_end")
-                if (
-                    not isinstance(start, int)
-                    or isinstance(start, bool)
-                    or not isinstance(end, int)
-                    or isinstance(end, bool)
-                    or not 0 <= start <= end <= cursor
-                ):
-                    continue
-
-                piece_indices: list[int]
-                if raw_item.get("mode") == "range" and start < end:
-                    piece_indices = [
-                        index
-                        for index, (piece_start, piece_end) in enumerate(boundaries)
-                        if start < piece_end and end > piece_start
-                    ]
-                else:
-                    # Assign boundary points to the preceding slice; position zero belongs to the first slice.
-                    piece_index = 0
-                    if start > 0:
-                        piece_index = next(
-                            (
-                                index
-                                for index, (_piece_start, piece_end) in enumerate(boundaries)
-                                if start <= piece_end
-                            ),
-                            len(boundaries) - 1,
-                        )
-                    piece_indices = [piece_index]
-
-                for piece_index in piece_indices:
-                    if target_key in seen_by_piece[piece_index]:
-                        continue
-                    seen_by_piece[piece_index].add(target_key)
-                    reference = dict(note)
-                    if raw_item.get("relation") == OBJECT_RELATION:
-                        reference.update(
-                            marker=raw_item["marker"],
-                            source_offset=str(start - boundaries[piece_index][0]),
-                        )
-                    assigned[logical_start + piece_index].append(reference)
-
-            position = logical_end
-        return assigned
-
     def align_segment_annotation(
         self,
         ci: int,
@@ -211,7 +86,7 @@ class AnnotationService:
         while start_position > 0 and segments[start_position].cont:
             start_position -= 1
         segment = segments[start_position]
-        metadata = self.annotation_metadata(segment)
+        metadata = annotation_metadata(segment)
         if not isinstance(metadata, dict):
             return
         raw_items = metadata.get("items")
@@ -319,20 +194,14 @@ class AnnotationService:
                 store.save_chapter(chapter)
             return
         anchor = segment.anchor or f"segment-{segment.index}"
-        if objects:
-            registry = store.load_annotation_contexts() or {}
-            contexts = registry.get("contexts", {})
-            for item in items:
-                reference = contexts.get(item.get("target_key"), {})
-                if item.get("relation") == OBJECT_RELATION and reference.get("source_blocks"):
-                    item["object_source"] = "\n".join(reference["source_blocks"])
+        registry = store.load_annotation_contexts() if objects else None
         align_items = []
         for item in items:
             request = {key: item[key] for key in ("id", "mode", "source_start", "source_end")}
             if item.get("relation") == OBJECT_RELATION:
                 request["object_reference"] = {
                     "kind": item.get("object_tag", ""),
-                    "source": item.get("object_source", ""),
+                    "source": reference_source(item, registry),
                 }
             align_items.append(request)
         unit = AlignmentUnit(
@@ -412,7 +281,7 @@ class AnnotationService:
         for done, ci in enumerate(chapter_indices, 1):
             chapter = store.load_chapter(ci)
             for position, segment in enumerate(chapter.text_segments):
-                metadata = self.annotation_metadata(segment)
+                metadata = annotation_metadata(segment)
                 if segment.cont or not isinstance(metadata, dict):
                     continue
                 if "pdf_annotations" in segment.meta:
