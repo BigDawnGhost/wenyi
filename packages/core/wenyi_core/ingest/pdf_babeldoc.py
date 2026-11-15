@@ -248,19 +248,19 @@ def _chapters_from_paragraphs(
 
 
 def _segments_from_para(index: int, para: dict) -> list[Segment]:
-    """Translate directory rows independently while retaining the original parent ID."""
+    """Translate explicit item rows independently while retaining the original parent ID."""
     rows = para.get("rows")
     if not rows:
         segment = _segment_from_para(index, para)
         return [segment] if segment is not None else []
     source = str(para.get("source") or "")
     if not isinstance(rows, list) or len(rows) < 2:
-        raise BabeldocBridgeError("Invalid BabelDOC directory rows; update the bridge and reparse.")
+        raise BabeldocBridgeError("Invalid BabelDOC item rows; update the bridge and reparse.")
     segments = []
     cursor = 0
     for row_index, row in enumerate(rows):
         if not isinstance(row, dict):
-            raise BabeldocBridgeError("Invalid BabelDOC directory row boundaries.")
+            raise BabeldocBridgeError("Invalid BabelDOC item row boundaries.")
         start, end = row.get("source_start"), row.get("source_end")
         if (
             type(start) is not int
@@ -269,24 +269,24 @@ def _segments_from_para(index: int, para: dict) -> list[Segment]:
             or source[cursor:start].strip()
             or not source[start:end].strip()
         ):
-            raise BabeldocBridgeError("Invalid BabelDOC directory row boundaries.")
+            raise BabeldocBridgeError("Invalid BabelDOC item row boundaries.")
         items = []
         for item in para.get("annotations") or []:
             left, right = item["source_start"], item["source_end"]
             if start <= left <= right <= end:
                 items.append({**item, "source_start": left - start, "source_end": right - start})
             elif left < end and start < right:
-                raise BabeldocBridgeError("BabelDOC annotation crosses a directory row.")
+                raise BabeldocBridgeError("BabelDOC annotation crosses an item row.")
         segment = _segment_from_para(
             index + row_index, {**para, "source": source[start:end], "annotations": items}
         )
         if segment is None:
-            raise BabeldocBridgeError("BabelDOC directory row is missing its parent identity.")
+            raise BabeldocBridgeError("BabelDOC item row is missing its parent identity.")
         segment.meta["babeldoc_row"] = {"index": row_index, "count": len(rows)}
         segments.append(segment)
         cursor = end
     if source[cursor:].strip():
-        raise BabeldocBridgeError("BabelDOC directory rows leave source text uncovered.")
+        raise BabeldocBridgeError("BabelDOC item rows leave source text uncovered.")
     return segments
 
 
@@ -318,7 +318,7 @@ def _segment_from_para(index: int, para: dict) -> Segment | None:
                     relation=OBJECT_RELATION,
                     target_key=key,
                     marker=object_marker(key, source),
-                    object_tag="PDF mathematics",
+                    object_tag="PDF protected object",
                 )
                 item.pop("reference_quality", None)
         metadata["pdf_annotations"] = {
@@ -419,12 +419,10 @@ def _fillback_groups(store) -> dict[str, list[Segment]]:
                 or type(row.get("count")) is not int
                 or row["count"] != len(segments)
             ):
-                raise BabeldocBridgeError(
-                    f"Incomplete or duplicate directory rows for {pid}; reparse."
-                )
+                raise BabeldocBridgeError(f"Incomplete or duplicate item rows for {pid}; reparse.")
             indices.append(row["index"])
         if sorted(indices) != list(range(len(segments))):
-            raise BabeldocBridgeError(f"Incomplete or duplicate directory rows for {pid}; reparse.")
+            raise BabeldocBridgeError(f"Incomplete or duplicate item rows for {pid}; reparse.")
         segments.sort(key=lambda segment: segment.meta["babeldoc_row"]["index"])
     return groups
 
@@ -449,7 +447,7 @@ def rows_from_store(store, translations: dict[str, str]) -> dict[str, list[dict[
             continue
         texts = [_fillback_text(segment) for segment in segments]
         if translations.get(pid) != "\n".join(texts):
-            raise BabeldocBridgeError(f"Directory row text changed during export for {pid}.")
+            raise BabeldocBridgeError(f"Item row text changed during export for {pid}.")
         ranges = []
         cursor = 0
         for text in texts:
