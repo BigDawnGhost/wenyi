@@ -74,6 +74,8 @@ class TestOrchestratorContract(unittest.TestCase):
         orch._preparation = self.preparation
         self.translation = MagicMock(spec=type(orch._translation))
         orch._translation = self.translation
+        self.annotations = MagicMock(spec=type(orch._annotations))
+        orch._annotations = self.annotations
         self.review = MagicMock(spec=type(orch._review))
         orch._review = self.review
         self.review_autofix = MagicMock(spec=type(orch._review_autofix))
@@ -365,10 +367,14 @@ class TestOrchestratorContract(unittest.TestCase):
             calls.append("assemble") or ["out.epub"]
         )
         self.translation.run.side_effect = lambda *a, **k: calls.append("translate") or store
+        self.annotations.repair_fallbacks.side_effect = lambda *a, **k: calls.append("repair")
 
         result = orch.run_steps("novel.txt", {"translate", "review", "assemble"})
 
-        self.assertEqual(calls, ["translate", "review", "assemble"])
+        self.assertEqual(calls, ["translate", "review", "repair", "assemble"])
+        self.annotations.repair_fallbacks.assert_called_once_with(
+            store, progress=None, objects_only=True
+        )
         self.review.session_terms.assert_called_once_with(store)
         self.assertEqual(result["review_result"], {"r": 1})
         self.assertNotIn("report", result)

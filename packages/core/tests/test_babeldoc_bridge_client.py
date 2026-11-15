@@ -13,6 +13,40 @@ from wenyi_core.pdf_bridge.client import BabeldocBridgeClient, BabeldocBridgeErr
 
 
 class BabeldocBridgeClientTests(unittest.TestCase):
+    def test_explicit_omission_requires_capability_and_is_forwarded(self):
+        import tempfile
+
+        client = BabeldocBridgeClient("http://bridge.test")
+        capabilities = ["annotation-best-effort-v1", "protected-objects-v1"]
+        annotations = {
+            "0:0": {
+                "protected_objects": True,
+                "omitted_protected_objects": ["formula:1"],
+                "target_digest": "synthetic",
+                "placements": [],
+            }
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "output.pdf"
+            with (
+                patch.object(client, "health", return_value={"capabilities": capabilities}),
+                patch("wenyi_core.pdf_bridge.client.httpx.post") as post,
+            ):
+                with self.assertRaisesRegex(BabeldocBridgeError, "omission support"):
+                    client.fillback(
+                        "session", {"0:0": "译文"}, out_path=output, annotations=annotations
+                    )
+                post.assert_not_called()
+                capabilities.append("protected-object-omission-v1")
+                post.return_value.status_code = 200
+                post.return_value.content = b"%PDF-synthetic"
+                post.return_value.headers = {}
+                client.fillback(
+                    "session", {"0:0": "译文"}, out_path=output, annotations=annotations
+                )
+                self.assertEqual(post.call_args.kwargs["json"]["annotations"], annotations)
+                self.assertEqual(output.read_bytes(), b"%PDF-synthetic")
+
     def test_protected_objects_require_bridge_capability_before_publication(self):
         import tempfile
 

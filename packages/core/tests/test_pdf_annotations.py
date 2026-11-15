@@ -168,7 +168,7 @@ def test_pdf_formula_context_reaches_translation_precision_and_review(polish):
     assert "|g|<1" not in segment.target
 
 
-def test_pdf_protected_export_rejects_stale_or_pending_object(project):
+def test_pdf_protected_export_explicitly_omits_stale_or_pending_object(project):
     chapter = project.load_chapter(0)
     chapter.segments[0].meta["pdf_annotations"]["items"][0].update(
         kind="formula",
@@ -177,8 +177,10 @@ def test_pdf_protected_export_rejects_stale_or_pending_object(project):
         source_end=0,
     )
     project.save_chapter(chapter)
-    with pytest.raises(BabeldocBridgeError, match="protected"):
-        annotations_from_store(project, {"0:0": chapter.segments[0].target})
+    payload = annotations_from_store(project, {"0:0": chapter.segments[0].target})
+    assert payload["0:0"]["omitted_protected_objects"] == [
+        chapter.segments[0].meta["pdf_annotations"]["items"][0]["id"]
+    ]
 
 
 def test_pdf_markers_survive_alignment_and_export_is_read_only(project):
@@ -223,9 +225,10 @@ def test_pdf_markers_survive_alignment_and_export_is_read_only(project):
     assert project.load_chapter(0).model_dump() == before
     chapter.segments[0].target = "在此我们希望。"
     annotations.align_annotations_after_batch(0, chapter, 0, 1, project)
-    assert chapter.segments[0].meta["pdf_annotations"]["placements"][0]["status"] == "pending"
-    with pytest.raises(BabeldocBridgeError, match="protected"):
-        _fillback_text(chapter.segments[0])
+    # A current clean-text placement is still usable without resending a copied marker.
+    assert chapter.segments[0].meta["pdf_annotations"]["placements"][0]["status"] == "aligned"
+    assert _fillback_text(chapter.segments[0]) == "在此我们希望。"
+    assert not client.calls
 
 
 def test_pdf_export_copy_keeps_marker_order_when_clean_prose_matches_source(project):

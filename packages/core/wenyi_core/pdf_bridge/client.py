@@ -100,6 +100,15 @@ class BabeldocBridgeClient:
                 "This PDF requires protected object support. Update and restart "
                 "wenyi-babeldoc-bridge before exporting."
             )
+        if (
+            annotations
+            and any(value.get("omitted_protected_objects") for value in annotations.values())
+            and "protected-object-omission-v1" not in health.get("capabilities", [])
+        ):
+            raise BabeldocBridgeError(
+                "This PDF requires explicit protected object omission support. Update and "
+                "restart wenyi-babeldoc-bridge before exporting."
+            )
         if rows and "toc-rows-v1" not in health.get("capabilities", []):
             raise BabeldocBridgeError(
                 "This PDF requires directory row support. Update and restart "

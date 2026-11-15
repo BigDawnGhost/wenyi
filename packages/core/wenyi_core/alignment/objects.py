@@ -24,16 +24,12 @@ class ObjectAnchor:
 
 @dataclass(frozen=True)
 class ObjectResolution:
-    """Cleaned slices and direct placements, or unchanged slices when transport is damaged.
-
-    Missing, duplicated or changed complete tokens require semantic alignment.
-    Malformed transport preserves the entire logical response and must not be aligned:
-    an immutable-target aligner cannot repair prose or infer a missing token boundary.
-    """
+    """Cleaned slices, trustworthy direct placements and mechanical transport errors."""
 
     targets: tuple[str, ...]
     placements: tuple[dict[str, Any], ...] = ()
     damaged: bool = False
+    errors: tuple[dict[str, Any], ...] = ()
 
 
 def object_marker(object_id: str, source: str) -> str:
@@ -128,13 +124,32 @@ def resolve_objects(
             raise ValueError("Invalid protected object anchor")
     target = "".join(targets)
     matches, damaged = _scan(target, source)
+    errors: list[dict[str, Any]] = []
+    # Only an exact known token with a missing closer and an unambiguous ID boundary
+    # may be removed. Never guess where arbitrary malformed text ends.
     if damaged:
-        return ObjectResolution(tuple(targets), damaged=True)
+        for anchor in anchors:
+            pattern = re.escape(anchor.marker[:-1]) + r"(?![A-Za-z0-9_.:\-〙])"
+            for match in re.finditer(pattern, target):
+                if match.group() not in source:
+                    matches.append(match)
+                    errors.append({"id": anchor.id, "code": "unclosed_marker"})
+        matches.sort(key=lambda match: match.start())
+        covered = {match.start() for match in matches}
+        for match in re.finditer(OBJECT_PREFIX, target):
+            literal = _OBJECT_MARKER.match(target, match.start())
+            if literal and literal.group() in source:
+                continue
+            if match.start() not in covered:
+                errors.append({"code": "malformed_marker", "target_offset": match.start()})
+    expected = {anchor.marker for anchor in anchors}
     positions: dict[str, list[tuple[int, int]]] = {}
     removed = 0
     for order, match in enumerate(matches):
         positions.setdefault(match.group(), []).append((match.start() - removed, order))
         removed += len(match.group())
+        if match.group() not in expected and _OBJECT_MARKER.fullmatch(match.group()):
+            errors.append({"code": "unknown_marker", "marker": match.group()})
     placements = []
     for source_order, anchor in enumerate(anchors):
         occurrences = positions.get(anchor.marker, [])
@@ -145,6 +160,15 @@ def resolve_objects(
             offset, order = anchor.source_offset, source_order
             method = "unchanged_source"
         else:
+            errors.append(
+                {
+                    "id": anchor.id,
+                    "code": "missing_marker" if not occurrences else "duplicate_marker",
+                    "marker": anchor.marker,
+                    "expected_count": 1,
+                    "actual_count": len(occurrences),
+                }
+            )
             continue
         placements.append(
             {
@@ -157,4 +181,6 @@ def resolve_objects(
                 "method": method,
             }
         )
-    return ObjectResolution(_remove_tokens(targets, matches), tuple(placements))
+    return ObjectResolution(
+        _remove_tokens(targets, matches), tuple(placements), damaged, tuple(errors)
+    )

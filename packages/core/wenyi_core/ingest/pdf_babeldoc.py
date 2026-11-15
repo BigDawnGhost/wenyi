@@ -8,14 +8,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from ..alignment.objects import object_marker, resolve_objects
-from ..markup.objects import OBJECT_RELATION, object_anchors
+from ..alignment.objects import ObjectResolution, object_marker, resolve_objects
+from ..markup.objects import OBJECT_RELATION, export_object_placements, object_anchors
 from ..pdf_bridge import BabeldocBridgeClient, BabeldocBridgeError
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
@@ -436,11 +437,6 @@ def _fillback_text(segment: Segment) -> str:
     items = [item for item in metadata.get("items", []) if item.get("protected")]
     if items and not metadata.get("objects_resolved_for_export"):
         resolved = resolve_objects([text], object_anchors(items), segment.source)
-        if resolved.damaged or len(resolved.placements) != len(items):
-            raise BabeldocBridgeError(
-                "Cannot export protected PDF objects with missing or damaged markers. "
-                "Repair the translation before exporting."
-            )
         return resolved.targets[0]
     return text
 
@@ -495,10 +491,15 @@ def annotations_from_store(store, translations: dict[str, str]) -> dict[str, Any
             continue
         if "babeldoc_row" in segments[0].meta:
             placements = []
+            omitted = []
+            protected = False
             cursor = 0
             for segment in segments:
                 text = _fillback_text(segment)
                 payload = _segment_annotations(segment, text)
+                if payload:
+                    omitted.extend(payload.get("omitted_protected_objects", []))
+                    protected = protected or bool(payload.get("protected_objects"))
                 if (
                     payload
                     and payload["target_digest"] == hashlib.sha256(text.encode()).hexdigest()
@@ -517,6 +518,11 @@ def annotations_from_store(store, translations: dict[str, str]) -> dict[str, Any
                 result[pid] = {
                     "target_digest": hashlib.sha256(translations[pid].encode()).hexdigest(),
                     "placements": placements,
+                    **(
+                        {"protected_objects": True, "omitted_protected_objects": omitted}
+                        if protected
+                        else {}
+                    ),
                 }
         else:
             payload = _segment_annotations(segments[0], translations[pid])
@@ -557,25 +563,25 @@ def _segment_annotations(segment: Segment, text: str) -> dict[str, Any] | None:
         digest = metadata.get("target_digest")
         placements = metadata.get("placements", [])
     if protected:
-        valid = [
-            row["id"]
-            for row in placements
-            if isinstance(row, dict)
-            and row.get("status") == "aligned"
-            and row.get("mode") == "point"
-            and type(row.get("target_start")) is int
-            and row["target_start"] == row.get("target_end")
-            and 0 <= row["target_start"] <= len(text)
-        ]
-        if digest != hashlib.sha256(text.encode()).hexdigest() or any(
-            valid.count(item_id) != 1 for item_id in protected
-        ):
-            raise BabeldocBridgeError(
-                "Cannot export protected PDF objects with stale or incomplete alignment. "
-                "Resume annotation alignment before exporting."
+        resolved = ObjectResolution((text,))
+        if transported and not metadata.get("objects_resolved_for_export"):
+            resolved = resolve_objects(
+                [segment.target or segment.source], object_anchors(items), segment.source
+            )
+        placements = export_object_placements(
+            {**metadata, "target_digest": digest, "placements": placements}, resolved
+        )
+        digest = hashlib.sha256(text.encode()).hexdigest()
+        valid = {row["id"] for row in placements if row.get("status") == "aligned"}
+        omitted = sorted(protected - valid)
+        if omitted:
+            logging.getLogger(__name__).warning(
+                "Omitting protected PDF objects in paragraph %s: %s; inspect this paragraph",
+                segment.meta.get("babeldoc_id", segment.index),
+                ", ".join(omitted),
             )
     return {
         "target_digest": digest,
         "placements": deepcopy(placements),
-        **({"protected_objects": True} if protected else {}),
+        **({"protected_objects": True, "omitted_protected_objects": omitted} if protected else {}),
     }
