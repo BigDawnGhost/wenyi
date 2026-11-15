@@ -89,15 +89,16 @@ Inline MathML and other objects embedded within prose use protected markers such
 `〘object:ID〙`. Their original content is supplied through the same read-only
 annotation-reference context as notes. Unchanged, unique markers locate objects
 without an extra alignment request, preserving their order in the translated text
-even when adjacent. Missing, duplicated or changed but complete markers fall
-back to annotation alignment. If that fails, the object remains pending:
-EPUB/HTML export stops rather than guessing a position from text lengths or moving
-the object to the paragraph end. Resume translation with
-`pipeline.annotation_alignment` enabled to retry pending objects without
-retranslating completed text. Malformed markers, such as a missing closing delimiter,
-are different: the entire paragraph response is preserved unchanged and export is
-blocked. Correct the damaged response before resuming; alignment cannot rewrite it,
-and resume alone does not repeatedly call the model. Export itself never calls the model. Old EPUB
+even when adjacent. With `pipeline.annotation_alignment` enabled, broken markers
+receive one repair attempt using mechanical error details, source text and read-only
+object references. Repair cannot rewrite the translated prose. Unresolved objects
+remain pending and are omitted with warnings in EPUB/HTML export; the prose and
+valid objects remain, without moving failed objects to the paragraph end.
+Inspect these warnings: omitted formulas can change meaning.
+Known unclosed markers are cleaned only where the boundary is unambiguous;
+uncertain fragments remain visible rather than risking deletion of prose.
+Unchanged completed failures are not charged again on resume. Editing the target
+allows another repair attempt. Export itself never calls the model. Old EPUB
 projects acquire the references on translation resume, preserving saved translations.
 Standalone formula blocks and text-free media at paragraph boundaries retain their
 original structural positions.
@@ -262,8 +263,11 @@ Autofix. As with EPUB objects, models receive available object contents as read-
 context for understanding surrounding prose, while preserving the markers instead
 of rewriting formulas. PDF references use extracted text; the bridge keeps the
 original glyphs, fonts and relative geometry as the sole source for formula output.
-Missing, duplicated or damaged object markers block export instead of silently
-dropping formulas or guessing their positions. Reimport with updated Wenyi and
+Missing, duplicated or damaged markers use the same bounded repair as EPUB objects.
+If repair fails, export warns and omits only unresolved objects, retaining the
+translated prose and valid formulas. This requires an updated bridge advertising
+`protected-object-omission-v1`; older bridges must be updated and restarted.
+Inspect omitted formulas before relying on the result. Reimport with updated Wenyi and
 bridge versions to obtain protection and formula references; existing projects and
 sessions are not upgraded in place. Older bridges without reference text retain
 object markers but provide only a generic object description.
@@ -284,8 +288,9 @@ blocking export or replacing the translated body with source text. Conflicting
 legacy formulas or incompatible styles omit only the conflicting items.
 
 Export itself makes no model calls. Resume translation refreshes missing/stale
-alignment after editing saved targets, but does not automatically retry unchanged
-PDF fallback items in a repair pass. CLI logs contain per-kind placement-validation
+alignment after editing saved targets. Special-object repair records completed
+attempts to avoid repeated charges; ordinary PDF fallback items are not automatically
+retried while the target is unchanged. CLI logs contain per-kind placement-validation
 and application rates, skipped counts and reasons; the bridge session's
 `annotation_stats.json` includes per-item IDs. These rates measure validation and
 application, not proven semantic accuracy, and separate translated text from

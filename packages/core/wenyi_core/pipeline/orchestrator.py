@@ -311,6 +311,7 @@ class Orchestrator:
                 review_changes = outcome.changes
                 review_result = outcome.result
                 review_dir = outcome.run_dir
+                self._annotations.repair_fallbacks(store, progress=progress, objects_only=True)
         finally:
             self._runtime.usage.flush(store, scope="pipeline")
 

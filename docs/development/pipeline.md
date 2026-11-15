@@ -104,11 +104,19 @@ whole response before consuming tokens, including tokens crossing slice boundari
 Unique exact copies establish offsets and `target_order`; coincident objects follow
 this target order, not DOM order. Unordered legacy placements retain stable caller
 order without invalidating paid caches. Literal source tokens are never consumed.
-Missing, duplicated or changed complete tokens leave their objects for semantic
-alignment. An unclosed, nested or otherwise malformed token preserves the **entire**
-logical response unchanged, marks its objects pending and skips model alignment:
-an immutable-target locator cannot repair damaged prose. Resume does not repeat
-unusable paid calls; the response must be corrected before it can be aligned.
+Missing, duplicate, unknown and malformed tokens produce mechanical diagnostics.
+Cleanup consumes complete tokens and exact known unclosed tokens only when their ID
+boundary is unambiguous; uncertain fragments remain verbatim rather than consuming prose.
+`alignment.object_repair.repair_object_markers` is the shared bounded repair entry.
+Requests use the existing aligner with `validation_errors`, marked source, immutable
+target and read-only object references. No human semantic diagnosis is added.
+The existing local-patch validator rejects prose changes, ambiguous searches and
+invalid marker counts; the shared entry validates result identity, digest and offsets.
+Successful positions remain cached. `object_repairs` records input digests, mechanical
+errors and outcomes per object; completed failures do not repeat for unchanged inputs.
+Changed prose or object metadata allows a new attempt. Calls use `annotation.align`
+and existing usage accounting. The translation tail and post-Review pass use the
+same service; standalone export never calls a model.
 Pronunciation-hint cleanup must not remove object markers.
 
 Read-only references are projected by `markup.contexts`, independently of pipeline,
@@ -139,20 +147,23 @@ BabelDOC adapts `protected: true` PDF annotations to the same transport. The bri
 owns frozen mathematical glyphs; Core receives object identities, insertion points
 and optional extracted `object_source` text, used like EPUB's original markup
 references. Missing/empty references from older bridges use a generic object
-description. Unlike EPUB's semantic fallback, strict PDF objects retain their
-markers in formal targets through Review/Autofix;
-missing or duplicate markers become pending without a semantic-location request.
+description. PDF objects retain their markers in formal targets through Review/Autofix;
+missing or damaged markers use the same bounded repair as EPUB.
 Review evidence hashes still bind the actual saved target, with object references
 supplied separately. Annotation offsets/digests bind the marker-free text. Export
 resolves markers only on a disposable chapter copy, then remaps clean offsets during
-punctuation normalization. Incomplete objects block export; ordinary styles remain
-best effort. Older PDF sessions require a fresh import rather than an in-place source
+punctuation normalization. Failed objects remain pending in state but do not block
+export: Core warns and sends explicit `omitted_protected_objects` IDs to a bridge
+advertising `protected-object-omission-v1`. The bridge retains valid siblings and
+translated prose, recording omissions without modifying frozen source objects.
+Older PDF sessions require a fresh import rather than an in-place source
 rewrite.
 
 EPUB adapts its `epub_annotations` items and existing annotation-context registry to
-these contracts. Save cleaned slices and digest-bound placements together; damaged
-responses remain verbatim. Pending objects block export rather than receiving note-link
-fallbacks. Translation resume reparses missing EPUB object references under the book
+these contracts. Save safely cleaned slices and digest-bound placements together.
+Pending objects are omitted with warnings during export, not moved to note-link
+fallback positions. An omitted formula can change meaning; inspect the reported
+paragraphs. Translation resume reparses missing EPUB object references under the book
 lock, validates original logical sources before writing, and commits its metadata
 version last, preserving targets, paragraph identities and completion checkpoints.
 

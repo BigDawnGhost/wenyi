@@ -117,7 +117,7 @@ def test_missing_or_duplicate_marker_uses_annotation_alignment(tmp_path, damage)
     assert BeautifulSoup(_render_segments_html(template, saved.segments), "html.parser").math
 
 
-def test_failed_object_alignment_stays_pending_and_blocks_export(tmp_path):
+def test_failed_object_alignment_stays_pending_and_is_omitted_from_export(tmp_path, caplog):
     segments, template, item = parsed()
     segments[0].target = "设为正数。"
     annotations, store, client = service(
@@ -129,8 +129,10 @@ def test_failed_object_alignment_stays_pending_and_blocks_export(tmp_path):
     placement = saved.segments[0].meta["epub_annotations"]["placements"][0]
     assert placement["status"] == "pending"
     assert placement["target_start"] is None
-    with pytest.raises(ValueError, match="pending"):
-        _render_segments_html(template, saved.segments)
+    rendered = BeautifulSoup(_render_segments_html(template, saved.segments), "html.parser")
+    assert rendered.math is None
+    assert "设为正数。" in rendered.get_text()
+    assert "Omitting protected object" in caplog.text
     annotations.align_annotations_after_batch(0, saved, 0, 1, store)
     assert len(client.calls) == 1
 
@@ -235,8 +237,9 @@ def test_disabled_alignment_still_accepts_copied_markers_and_persists_missing_as
     segments[0].target = "假定为正数。"
     annotations.align_annotations_after_batch(0, chapter, 0, 1, store)
     assert segments[0].meta["epub_annotations"]["placements"][0]["status"] == "pending"
-    with pytest.raises(ValueError, match="pending"):
-        _render_segments_html(template, segments)
+    rendered = BeautifulSoup(_render_segments_html(template, segments), "html.parser")
+    assert rendered.math is None
+    assert "假定为正数。" in rendered.get_text()
     assert not client.calls
 
 
@@ -256,7 +259,7 @@ def write_epub(path, html=HTML):
         archive.writestr("chapter.xhtml", html)
 
 
-def test_resume_refreshes_old_project_without_retranslation_and_pending_export_is_atomic(tmp_path):
+def test_resume_refreshes_old_project_and_exports_pending_objects_as_omissions(tmp_path):
     path = tmp_path / "source.epub"
     write_epub(path)
     doc = read_epub(str(path), "en", "zh")
@@ -278,9 +281,11 @@ def test_resume_refreshes_old_project_without_retranslation_and_pending_export_i
     assert saved.segments[0].meta["epub_annotations"]["placements"][0]["status"] == "pending"
     output = tmp_path / "output.epub"
     output.write_bytes(b"existing export")
-    with pytest.raises(ValueError, match="pending"):
-        assemble(store, str(path), str(output), out_format="epub", about_page=False)
-    assert output.read_bytes() == b"existing export"
+    assemble(store, str(path), str(output), out_format="epub", about_page=False)
+    with zipfile.ZipFile(output) as archive:
+        rendered = BeautifulSoup(archive.read("chapter.xhtml"), "html.parser")
+    assert rendered.math is None
+    assert "设为正数。" in rendered.get_text()
     assert len(client.calls) == 1
 
 
@@ -302,9 +307,15 @@ def test_pending_objects_retry_without_retranslating_completed_text(tmp_path):
         )
 
     client.handler = repaired
+    # Completed failures do not recharge unchanged inputs.
+    annotations.repair_fallbacks(store)
+    assert len(client.calls) == 1
+    changed = store.load_chapter(0)
+    changed.segments[0].target = "设为正数！"
+    store.save_chapter(changed)
     annotations.repair_fallbacks(store)
     saved = store.load_chapter(0)
-    assert saved.segments[0].target == "设为正数。"
+    assert saved.segments[0].target == "设为正数！"
     assert saved.segments[0].meta["epub_annotations"]["placements"][0]["status"] == "aligned"
 
 
@@ -355,7 +366,7 @@ def test_literal_marker_text_and_math_ids_are_not_consumed_or_hoisted(tmp_path):
     assert variable["id"] == "variable"
 
 
-def test_damaged_unclosed_marker_cannot_be_approved_by_alignment(tmp_path):
+def test_unclosed_known_marker_is_cleaned_then_repaired_without_rewriting_prose(tmp_path):
     segments, template, item = parsed()
     segments[0].target = f"设{item['marker'][:-1]}为正数。"
 
@@ -368,11 +379,11 @@ def test_damaged_unclosed_marker_cannot_be_approved_by_alignment(tmp_path):
     annotations, store, client = service(tmp_path, handler)
     annotations.align_annotations_after_batch(0, Chapter(index=0, segments=segments), 0, 1, store)
     placement = segments[0].meta["epub_annotations"]["placements"][0]
-    assert placement["status"] == "pending"
-    assert placement["method"] == "damaged_object_marker"
-    with pytest.raises(ValueError, match="pending"):
-        _render_segments_html(template, segments)
-    assert not client.calls
+    assert placement["status"] == "aligned"
+    assert placement["method"] == "llm_local_patch"
+    assert segments[0].target == "设为正数。"
+    assert BeautifulSoup(_render_segments_html(template, segments), "html.parser").math
+    assert len(client.calls) == 1
 
 
 def test_refresh_and_repair_keep_successful_note_placements_without_paying_again(tmp_path):
@@ -438,7 +449,7 @@ def test_old_parsed_cache_is_not_used_to_initialize_object_blind_state(tmp_path)
     assert load_parsed_document(store, str(path), config) is None
 
 
-def test_unclosed_marker_before_valid_marker_preserves_the_entire_saved_response(tmp_path):
+def test_unclosed_marker_failure_does_not_discard_valid_sibling(tmp_path):
     html = HTML.replace(" be positive.", "<math><mi>y</mi></math> be positive.")
     _, segments, template = annotate_epub_resource(html, 0, "chapter.xhtml")
     one, two = segments[0].meta["epub_annotations"]["items"]
@@ -447,23 +458,23 @@ def test_unclosed_marker_before_valid_marker_preserves_the_entire_saved_response
     annotations, store, client = service(tmp_path, lambda *_: '{"abstain":true}')
     annotations.align_annotations_after_batch(0, Chapter(index=0, segments=segments), 0, 1, store)
     saved = store.load_chapter(0)
-    assert saved.segments[0].target == target
+    assert saved.segments[0].target == "令为正数，另令为负数。"
     assert saved.segments[0].target_before_polish == target
-    assert all(
-        row["status"] == "pending" and row["method"] == "damaged_object_marker"
-        for row in saved.segments[0].meta["epub_annotations"]["placements"]
-    )
+    assert [row["status"] for row in saved.segments[0].meta["epub_annotations"]["placements"]] == [
+        "pending",
+        "aligned",
+    ]
     annotations.align_segment_annotation(0, saved, 0, store, retry_fallbacks=True)
-    assert not client.calls
-    with pytest.raises(ValueError, match="correct the saved paragraph"):
-        _render_segments_html(template, saved.segments)
+    assert len(client.calls) == 1
+    rendered = BeautifulSoup(_render_segments_html(template, saved.segments), "html.parser")
+    assert len(rendered.find_all("math")) == 1
     saved.segments[0].target = f"令{one['marker']}为正数，另令{two['marker']}为负数。"
     annotations.align_annotations_after_batch(0, saved, 0, 1, store)
     repaired = store.load_chapter(0)
     assert repaired.segments[0].target == "令为正数，另令为负数。"
     rendered = BeautifulSoup(_render_segments_html(template, repaired.segments), "html.parser")
     assert len(rendered.find_all("math")) == 2
-    assert not client.calls
+    assert len(client.calls) == 1
 
 
 @pytest.mark.parametrize("out_format", ["epub", "html"])
@@ -520,12 +531,6 @@ def test_format_service_adapts_to_an_injected_text_locator(tmp_path):
     class Locator:
         def align_unit(self, unit: AlignmentUnit):
             calls.append(unit)
-            assert all(
-                set(item) <= {"id", "mode", "source_start", "source_end", "object_reference"}
-                for item in unit.items
-            )
-            assert "<msup>" in unit.items[0]["object_reference"]["source"]
-            assert "object_reference" not in unit.items[1]
             return unresolved_alignment(unit)
 
     annotations = AnnotationService(original._runtime, aligner=Locator())
@@ -535,4 +540,50 @@ def test_format_service_adapts_to_an_injected_text_locator(tmp_path):
     assert placements[0]["target_start"] is None
     assert placements[1]["target_start"] == len("设为正数。")
     assert len(calls) == 1
+    assert all(
+        set(item)
+        <= {"id", "mode", "source_start", "source_end", "object_reference", "validation_errors"}
+        for item in calls[0].items
+    )
+    assert "<msup>" in calls[0].items[0]["object_reference"]["source"]
+    assert calls[0].items[0]["validation_errors"][0]["code"] == "missing_marker"
+    assert "object_reference" not in calls[0].items[1]
+    assert not client.calls
+
+
+@pytest.mark.parametrize("out_format", ["epub", "html"])
+@pytest.mark.parametrize("bilingual", [False, True])
+def test_read_only_export_omits_broken_object_but_keeps_valid_sibling(
+    tmp_path, out_format, bilingual, caplog
+):
+    path = tmp_path / "source.epub"
+    write_epub(path, HTML.replace(" be positive.", "<math><mi>y</mi></math> be positive."))
+    doc = read_epub(str(path), "en", "zh")
+    _, store, client = service(tmp_path, lambda *_: pytest.fail("Export must not call a model"))
+    store.save_manifest(store.stage_document(doc))
+    chapter = store.load_chapter(0)
+    one, two = chapter.segments[0].meta["epub_annotations"]["items"]
+    chapter.segments[0].target = f"使用{one['marker'][:-1]}和{two['marker']}。"
+    store.save_chapter(chapter)
+    before = store.load_chapter(0)
+    output = tmp_path / f"output.{out_format}"
+    assemble(
+        store, str(path), str(output), out_format=out_format, bilingual=bilingual, about_page=False
+    )
+    if out_format == "epub":
+        with zipfile.ZipFile(output) as archive:
+            rendered = archive.read("chapter.xhtml").decode()
+    else:
+        rendered = output.read_text()
+    soup = BeautifulSoup(rendered, "html.parser")
+    target = soup.select_one("p:not(.tn-source)")
+    assert target is not None
+    assert target.get_text() == "使用和y。"
+    assert [math.get_text() for math in target.find_all("math")] == ["y"]
+    if bilingual:
+        source = soup.select_one(".tn-source")
+        assert source is not None
+        assert len(source.find_all("math")) == 2
+    assert "Omitting protected object" in caplog.text
+    assert store.load_chapter(0) == before
     assert not client.calls

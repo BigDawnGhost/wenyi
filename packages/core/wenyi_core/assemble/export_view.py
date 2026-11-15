@@ -10,8 +10,11 @@ from collections.abc import Callable
 from types import MappingProxyType
 from typing import Any, TypeAlias
 
+from ..alignment.objects import resolve_objects
 from ..i18n.policy.models import ExportTextInput, ExportTextResult, PolicyContext, PolicyPlan
 from ..i18n.policy.resolver import resolve_policy
+from ..markup.contexts import annotation_metadata
+from ..markup.objects import export_object_placements, object_anchors
 from ..models.document import Chapter
 from ..postprocess.export_text import boundary_map, normalize_chinese, validate_result
 from ..storage.protocol import Storage
@@ -91,27 +94,6 @@ class ExportViewStore(RunStore):
         if ci in self._chapters:
             return self._chapters[ci].model_copy(deep=True)
         chapter = self._store.load_chapter(ci).model_copy(deep=True)
-        # PDF markers stay in formal targets through Review/Autofix. Resolve only
-        # this export copy, before punctuation normalization remaps clean offsets.
-        from ..ingest.pdf_babeldoc import _fillback_text
-
-        for segment in chapter.text_segments:
-            if (
-                segment.target is not None
-                and segment.target.strip()
-                and segment.target != segment.source
-                and any(
-                    item.get("protected")
-                    for item in segment.meta.get("pdf_annotations", {}).get("items", [])
-                )
-            ):
-                segment.target = _fillback_text(segment)
-                segment.meta["pdf_annotations"]["objects_resolved_for_export"] = True
-        operations = [op for op in self.language_policy.operations if op.point == "export.text"]
-        if not operations:
-            self._chapters[ci] = chapter.model_copy(deep=True)
-            return chapter
-
         segments = chapter.text_segments
         ranges = []
         position = 0
@@ -121,6 +103,31 @@ class ExportViewStore(RunStore):
                 end += 1
             ranges.append((position, end))
             position = end
+        # Transport cleanup and omission are read-only export policies for every format.
+        # A standalone export never invokes a model or changes the saved translation.
+        for start, end in ranges:
+            group = segments[start:end]
+            metadata = annotation_metadata(group[0])
+            if not metadata or any(segment.target is None for segment in group):
+                continue
+            source = "".join(segment.source for segment in group)
+            targets = tuple(segment.target or "" for segment in group)
+            if "".join(targets) == source or not "".join(targets).strip():
+                continue
+            anchors = object_anchors(metadata.get("items", []))
+            if not anchors:
+                continue
+            resolved = resolve_objects(targets, anchors, source)
+            metadata["placements"] = export_object_placements(metadata, resolved)
+            metadata["target_digest"] = _target_digest("".join(resolved.targets))
+            metadata["objects_resolved_for_export"] = True
+            for segment, text in zip(group, resolved.targets):
+                segment.target = text
+        operations = [op for op in self.language_policy.operations if op.point == "export.text"]
+        if not operations:
+            self._chapters[ci] = chapter.model_copy(deep=True)
+            return chapter
+
         request = ExportTextInput(
             tuple(segment.index for segment in segments),
             tuple(
@@ -152,6 +159,7 @@ class ExportViewStore(RunStore):
             if before != after:
                 metadata = segments[position].meta
                 _remap_metadata_offsets(metadata.get("epub_annotations"), before, after, mapping)
+                _remap_metadata_offsets(metadata.get("annotations"), before, after, mapping)
                 _remap_metadata_offsets(metadata.get("pdf_annotations"), before, after, mapping)
                 _remap_metadata_offsets(metadata.get("docx_styles"), before, after, mapping)
 
