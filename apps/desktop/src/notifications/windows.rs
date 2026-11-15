@@ -4,6 +4,8 @@
 //! initialized as a multithreaded apartment. Nothing here decides what should be
 //! shown: the notice was validated, deduplicated and localized before it arrived.
 
+use std::path::{Path, PathBuf};
+
 use ::windows::core::HSTRING;
 use ::windows::Data::Xml::Dom::XmlDocument;
 use ::windows::UI::Notifications::{
@@ -12,6 +14,10 @@ use ::windows::UI::Notifications::{
 use tauri::Manager;
 
 use super::{Failure, Presentation, Sink, AUMID};
+
+/// A 64 px logo for toast banners. Embedded so development and installed builds
+/// write the same asset next to their runtime state and reference it by URI.
+const TOAST_ICON: &[u8] = include_bytes!("../../icons/toast.png");
 
 /// Set the process identity before the first window exists.
 ///
@@ -28,44 +34,75 @@ pub fn set_app_user_model_id() {
     register_aumid();
 }
 
+/// Write the embedded logo into the runtime directory and point the app identity
+/// at it. Icon usage is best-effort: a failure leaves the text-only toast.
+fn prepare_icon(workspace: &Path) -> Option<PathBuf> {
+    let directory = crate::paths::runtime_root(workspace);
+    std::fs::create_dir_all(&directory).ok()?;
+    let path = directory.join("toast.png");
+    if std::fs::read(&path).ok().as_deref() != Some(TOAST_ICON) {
+        std::fs::write(&path, TOAST_ICON).ok()?;
+    }
+    register_icon(&path);
+    Some(path)
+}
+
 /// Best-effort per-user registration under HKCU, so an unpackaged build has an
 /// identity that the notification platform can resolve. Failures are harmless:
 /// the explicit process identity still applies.
 fn register_aumid() {
-    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
-    use windows_sys::Win32::System::Registry::{
-        RegCloseKey, RegCreateKeyW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, REG_SZ,
-    };
-
-    let subkey = wide(&format!("Software\\Classes\\AppUserModelId\\{AUMID}"));
-    let mut key: HKEY = std::ptr::null_mut();
-    // SAFETY: both strings are NUL-terminated and outlive the calls.
-    let status = unsafe { RegCreateKeyW(HKEY_CURRENT_USER, subkey.as_ptr(), &mut key) };
-    if status != ERROR_SUCCESS {
+    let Some(key) = open_identity_key() else {
         return;
-    }
+    };
     write_string(key, "DisplayName", "Wenyi Desktop");
     if let Ok(executable) = std::env::current_exe() {
         if let Some(path) = executable.to_str() {
             write_string(key, "IconUri", path);
         }
     }
-    // SAFETY: the handle came from RegCreateKeyW and is not used afterwards.
+    // SAFETY: the handle came from open_identity_key and is not used afterwards.
     unsafe {
-        RegCloseKey(key);
+        windows_sys::Win32::System::Registry::RegCloseKey(key);
     }
 }
 
+fn register_icon(path: &Path) {
+    let Some(key) = open_identity_key() else {
+        return;
+    };
+    write_string(key, "IconUri", &path.to_string_lossy());
+    // SAFETY: the handle came from open_identity_key and is not used afterwards.
+    unsafe {
+        windows_sys::Win32::System::Registry::RegCloseKey(key);
+    }
+}
+
+fn open_identity_key() -> Option<windows_sys::Win32::System::Registry::HKEY> {
+    use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+    use windows_sys::Win32::System::Registry::{RegCreateKeyW, HKEY, HKEY_CURRENT_USER};
+
+    let subkey = wide(&format!("Software\\Classes\\AppUserModelId\\{AUMID}"));
+    let mut key: HKEY = std::ptr::null_mut();
+    // SAFETY: the subkey is NUL-terminated and outlives the call.
+    let status = unsafe { RegCreateKeyW(HKEY_CURRENT_USER, subkey.as_ptr(), &mut key) };
+    if status != ERROR_SUCCESS {
+        return None;
+    }
+    Some(key)
+}
+
 fn write_string(key: windows_sys::Win32::System::Registry::HKEY, name: &str, value: &str) {
+    use windows_sys::Win32::System::Registry::{RegSetValueExW, REG_SZ};
+
     let name = wide(name);
     let value = wide(value);
     // SAFETY: the data buffer is NUL-terminated; the byte length includes it.
     unsafe {
-        windows_sys::Win32::System::Registry::RegSetValueExW(
+        RegSetValueExW(
             key,
             name.as_ptr(),
             0,
-            windows_sys::Win32::System::Registry::REG_SZ,
+            REG_SZ,
             value.as_ptr() as *const u8,
             (value.len() * 2) as u32,
         );
@@ -74,6 +111,22 @@ fn write_string(key: windows_sys::Win32::System::Registry::HKEY, name: &str, val
 
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// Build a file URI for the toast XML. Spaces and URI delimiters must be
+/// percent-encoded; Windows paths use backslashes.
+fn file_uri(path: &Path) -> String {
+    let mut encoded = String::new();
+    for character in path.to_string_lossy().replace('\\', "/").chars() {
+        match character {
+            '%' => encoded.push_str("%25"),
+            ' ' => encoded.push_str("%20"),
+            '#' => encoded.push_str("%23"),
+            '?' => encoded.push_str("%3F"),
+            other => encoded.push(other),
+        }
+    }
+    format!("file:///{}", encoded.trim_start_matches('/'))
 }
 
 /// The language Windows would use for this user, or an empty string.
@@ -94,13 +147,15 @@ pub fn user_locale() -> String {
 pub struct WindowsSink {
     app: tauri::AppHandle,
     initialized: bool,
+    icon: Option<PathBuf>,
 }
 
 impl WindowsSink {
-    pub fn new(app: tauri::AppHandle) -> Self {
+    pub fn new(app: tauri::AppHandle, workspace: &Path) -> Self {
         Self {
             app,
             initialized: false,
+            icon: prepare_icon(workspace),
         }
     }
 
@@ -144,14 +199,25 @@ impl Sink for WindowsSink {
             Ok(_) => return Err(Failure("os_disabled")),
             Err(_) => return Err(Failure("setting_failed")),
         }
+        let icon = self.icon.as_ref().map_or_else(String::new, |path| {
+            format!(
+                "<image placement=\"appLogoOverride\" hint-crop=\"circle\" src=\"{}\"/>",
+                escape(&file_uri(path))
+            )
+        });
         let xml = format!(
             concat!(
                 "<toast activationType=\"foreground\"><visual>",
-                "<binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding>",
-                "</visual></toast>"
+                "<binding template=\"ToastGeneric\"><text>{}</text><text>{}</text>{}</binding>",
+                "</visual>",
+                // Desktop (unpackaged) toasts do not reliably fall back to the
+                // implicit sound, so request the system default explicitly.
+                "<audio src=\"ms-winsoundevent:Notification.Default\"/>",
+                "</toast>"
             ),
             escape(&presentation.title),
-            escape(&presentation.body)
+            escape(&presentation.body),
+            icon
         );
         let document = XmlDocument::new().map_err(|_| Failure("winrt_failed"))?;
         document
@@ -201,4 +267,18 @@ fn escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::file_uri;
+    use std::path::Path;
+
+    #[test]
+    fn file_uri_encodes_backslashes_and_spaces() {
+        assert_eq!(
+            file_uri(Path::new(r"C:\Users\A B\Wenyi\toast.png")),
+            "file:///C:/Users/A%20B/Wenyi/toast.png"
+        );
+    }
 }

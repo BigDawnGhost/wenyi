@@ -190,12 +190,12 @@ impl Sink for NullSink {
 }
 
 #[cfg(windows)]
-fn platform_sink(app: &tauri::AppHandle) -> Box<dyn Sink> {
-    Box::new(windows::WindowsSink::new(app.clone()))
+fn platform_sink(app: &tauri::AppHandle, workspace: &Path) -> Box<dyn Sink> {
+    Box::new(windows::WindowsSink::new(app.clone(), workspace))
 }
 
 #[cfg(not(windows))]
-fn platform_sink(_app: &tauri::AppHandle) -> Box<dyn Sink> {
+fn platform_sink(_app: &tauri::AppHandle, _workspace: &Path) -> Box<dyn Sink> {
     Box::new(NullSink)
 }
 
@@ -224,7 +224,7 @@ pub fn install(app: &tauri::AppHandle, diagnostics: Diagnostics, workspace: &Pat
         Sha256::digest(workspace.to_string_lossy().as_bytes())
     );
     let group = format!("{AUMID}:{}", &identity[..16]);
-    with_sink(platform_sink(app), diagnostics, group, SUPPORTED)
+    with_sink(platform_sink(app, workspace), diagnostics, group, SUPPORTED)
 }
 
 fn with_sink(
@@ -415,19 +415,17 @@ impl Policy {
         let body = match notice.kind {
             Kind::TaskFailed => {
                 let task = task_label(notice.task.unwrap_or(Task::Translation), chinese);
-                let reason = reason_label(notice.reason.unwrap_or(Reason::Unknown), chinese);
                 if chinese {
-                    format!("{task}失败：{reason}")
+                    format!("{task}失败")
                 } else {
-                    format!("{task} failed: {reason}")
+                    format!("{task} failed")
                 }
             }
             Kind::ExportFailed => {
-                let reason = reason_label(notice.reason.unwrap_or(Reason::Unknown), chinese);
                 if chinese {
-                    format!("导出失败：{reason}")
+                    "导出失败".to_string()
                 } else {
-                    format!("Export failed: {reason}")
+                    "Export failed".to_string()
                 }
             }
             Kind::TaskTimeout => {
@@ -604,25 +602,6 @@ fn task_label(task: Task, chinese: bool) -> &'static str {
         (Task::Review, false) => "Review",
         (Task::Export, true) => "导出",
         (Task::Export, false) => "Export",
-    }
-}
-
-fn reason_label(reason: Reason, chinese: bool) -> &'static str {
-    match (reason, chinese) {
-        (Reason::Timeout, true) => "超时",
-        (Reason::Timeout, false) => "timed out",
-        (Reason::Permission, true) => "权限不足",
-        (Reason::Permission, false) => "permission denied",
-        (Reason::Io, true) => "文件读写失败",
-        (Reason::Io, false) => "file access failed",
-        (Reason::Invalid, true) => "输入无效",
-        (Reason::Invalid, false) => "invalid input",
-        (Reason::Dependency, true) => "依赖不可用",
-        (Reason::Dependency, false) => "a dependency is unavailable",
-        (Reason::Interrupted, true) => "已中断",
-        (Reason::Interrupted, false) => "interrupted",
-        (Reason::Unknown, true) => "未知错误",
-        (Reason::Unknown, false) => "an unknown error",
     }
 }
 
