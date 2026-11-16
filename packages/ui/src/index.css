@@ -40,6 +40,9 @@
     /* light: 5% hover, 8% selected */
     --hover: var(--ink) / 0.05;
     --selected: var(--ink) / 0.08;
+    /* Raised surface one alpha step above the page background: group
+       containers, segmented-tab tracks, quiet wells (zcode bg-surface). */
+    --surface: var(--ink) / 0.03;
     /* --accent stays a solid step: one consumer (sidebar nav) still blends it
        with /50, which cannot re-alpha an alpha-bearing value. */
     --accent: 240 4.8% 95.9%;
@@ -107,6 +110,7 @@
     --ink: 255 255 255;
     --hover: var(--ink) / 0.08;
     --selected: var(--ink) / 0.12;
+    --surface: var(--ink) / 0.03;
     --accent: 240 3.7% 15.9%;
     --accent-foreground: 0 0% 98%;
     --text-placeholder: var(--ink) / 0.3;
@@ -298,4 +302,34 @@ details[open] > .disclosure-summary > .disclosure-chevron {
   .dialog-overlay,
   .dialog-content,
   .pop-content { animation: none; }
+}
+
+/* Scrollbars: a quiet pill carved from the hairline color on a transparent
+   track and corner (zcode v3.18.2 recipe; 10px instead of 14px to suit the
+   denser wenyi layout). Firefox gets the thin auto-drawn equivalent. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background: hsl(var(--border));
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:vertical {
+  min-height: 32px;
+}
+::-webkit-scrollbar-thumb:horizontal {
+  min-width: 32px;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }

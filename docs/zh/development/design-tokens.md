@@ -41,6 +41,7 @@ info 与 destructive 分别表达成功、警示、提示与失败/危险状态�
 | `--ink` | - | `hsl(13 13 13)` | `hsl(255 255 255)` |
 | `--hover` | `hover` | `hsl(var(--ink) / 0.05)` | `hsl(var(--ink) / 0.08)` |
 | `--selected` | `selected` | `hsl(var(--ink) / 0.08)` | `hsl(var(--ink) / 0.12)` |
+| `--surface` | `surface` | `hsl(var(--ink) / 0.03)` | `hsl(var(--ink) / 0.03)` |
 | `--text-placeholder` | `placeholder` | `hsl(var(--ink) / 0.35)` | `hsl(var(--ink) / 0.3)` |
 | `--warning-text` | `warning-text` | `hsl(26 90% 37%)` | `hsl(45.9 96.7% 64.5%)` |
 | `--chart-1` | `chart-1` | `hsl(199.4 95.5% 73.9%)` | `hsl(199.4 95.5% 73.9%)` |

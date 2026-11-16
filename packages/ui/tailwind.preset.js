@@ -122,6 +122,7 @@ export default {
         },
         hover: "hsl(var(--hover))",
         selected: "hsl(var(--selected))",
+        surface: "hsl(var(--surface))",
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
