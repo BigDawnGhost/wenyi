@@ -21,7 +21,7 @@
 @layer base {
   :root {
     color-scheme: light;
-    --background: 0 0% 100%;
+    --background: 0 0% 97.3%;
     --foreground: 240 10% 3.9%;
     --card: 0 0% 100%;
     --card-foreground: 240 10% 3.9%;
@@ -31,37 +31,144 @@
     --secondary-foreground: 240 5.9% 10%;
     --muted: 240 4.8% 95.9%;
     --muted-foreground: 240 3.8% 46.1%;
+    /* Ink anchor for alpha-derived interaction surfaces: fixed near-black in
+       the light theme, near-white in dark. Deliberately not var(--foreground),
+       which carries the 240 hue; state surfaces stay neutral so one alpha step
+       weighs the same on every background. Consumed as hsl(var(--hover)) and
+       hsl(var(--selected)). */
+    --ink: 13 13 13;
+    /* light: 5% hover, 8% selected */
+    --hover: var(--ink) / 0.05;
+    --selected: var(--ink) / 0.08;
+    /* Raised surface one alpha step above the page background: group
+       containers, segmented-tab tracks, quiet wells (zcode bg-surface). */
+    --surface: var(--ink) / 0.03;
+    /* --accent stays a solid step: one consumer (sidebar nav) still blends it
+       with /50, which cannot re-alpha an alpha-bearing value. */
     --accent: 240 4.8% 95.9%;
     --accent-foreground: 240 5.9% 10%;
+    /* Third text tier: placeholder and disabled copy sit one step below the
+       secondary text (muted-foreground). */
+    --text-placeholder: var(--ink) / 0.35;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
+    --warning: 26 90% 37%;
+    --warning-foreground: 0 0% 98%;
+    --warning-text: 26 90% 37%;
+    --info: 200 96% 32%;
+    --info-foreground: 0 0% 98%;
+    /* Status labels stay quiet; action and alert colors remain independent. */
+    --status-success: 152 18% 95%;
+    --status-success-foreground: 154 24% 29%;
+    --status-success-border: 152 16% 83%;
+    --status-warning: 38 35% 94%;
+    --status-warning-foreground: 32 45% 30%;
+    --status-warning-border: 38 28% 80%;
+    --status-danger: 4 30% 96%;
+    --status-danger-foreground: 4 38% 39%;
+    --status-danger-border: 4 25% 84%;
+    --status-info: 210 24% 95%;
+    --status-info-foreground: 210 32% 33%;
+    --status-info-border: 210 22% 82%;
+    /* Chart hues retain their meaning; the dark palette reduces saturation and glare. */
+    --chart-track: var(--muted);
+    --chart-1: 199.4 95.5% 73.9%;
+    --chart-2: 37.7 92.1% 50.2%;
+    --chart-3: 200.4 98% 39.4%;
+    --chart-4: 212.7 26.8% 83.9%;
+    --chart-5: 173.4 80.4% 40%;
+    --chart-6: 215.4 16.3% 46.9%;
+    --diff-removed-bg: 0 93.3% 94.1%;
+    --diff-removed-foreground: 0 62.8% 30.6%;
+    --diff-added-bg: 140.6 84.2% 92.5%;
+    --diff-added-foreground: 143.8 61.2% 20.2%;
     --border: 240 5.9% 90%;
+    /* Sub-hairline: about 5.5% ink for high-repetition separators (table rows,
+       group boundaries) so dense lists do not fog up like the standard
+       hairline does. */
+    --border-subtle: var(--ink) / 0.055;
     --input: 240 5.9% 90%;
     --ring: 240 5.9% 10%;
     --radius: 8px;
+    /* Elevation scale: e0 wells, e1-e2 resting surfaces, e3 hover lift, e4
+       floating layers. Consumed through the shadow-eN utilities registered in
+       the shared Tailwind preset; the .dark theme swaps the whole set below. */
+    --shadow-e0: inset 0 1px 2px rgba(24, 26, 32, 0.07), 0 0 0 1px rgba(24, 26, 32, 0.05);
+    --shadow-e1: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 1px 2px rgba(24, 26, 32, 0.04), 0 0 0 1px rgba(24, 26, 32, 0.06);
+    --shadow-e2: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 1px 3px rgba(24, 26, 32, 0.06), 0 0 0 1px rgba(24, 26, 32, 0.07);
+    --shadow-e3: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 8px -2px rgba(24, 26, 32, 0.08), 0 12px 28px -12px rgba(24, 26, 32, 0.14), 0 0 0 1px rgba(24, 26, 32, 0.06);
+    --shadow-e4: 0 8px 16px -4px rgba(24, 26, 32, 0.08), 0 28px 56px -20px rgba(24, 26, 32, 0.22), 0 0 0 1px rgba(24, 26, 32, 0.06);
+    --shadow-focus-ring: 0 0 0 1px hsl(var(--ring));
+    /* Input surfaces keep the quiet well; hover only deepens the well and
+       hairline, never lifts (consumed by .input-quiet below). */
+    --shadow-input-hover: inset 0 1px 2px rgba(24, 26, 32, 0.09), 0 0 0 1px rgba(24, 26, 32, 0.16);
+    --shadow-sidebar: 0 0 0 1px rgba(24, 26, 32, 0.05), 12px 0 32px -20px rgba(24, 26, 32, 0.18);
   }
 }
 
 /* Theme classes are runtime state, not Tailwind content to be purged. */
 .dark {
     color-scheme: dark;
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
+    --background: 0 0% 8.6%;
+    --foreground: 0 0% 74.1%;
+    --card: 0 0% 11.8%;
+    --card-foreground: 0 0% 74.1%;
+    --primary: 0 0% 82%;
+    --primary-foreground: 0 0% 10%;
+    --secondary: 0 0% 15.7%;
+    --secondary-foreground: 0 0% 74.1%;
+    --muted: 0 0% 15.7%;
+    --muted-foreground: 0 0% 55%;
+    --ink: 0 0% 100%;
+    --hover: var(--ink) / 0.08;
+    --selected: var(--ink) / 0.12;
+    --surface: var(--ink) / 0.03;
+    --accent: 0 0% 15.7%;
+    --accent-foreground: 0 0% 74.1%;
+    --text-placeholder: var(--ink) / 0.3;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --warning: 23 82% 31%;
+    --warning-foreground: 0 0% 98%;
+    --warning-text: 38 85% 60%;
+    --info: 201 90% 27%;
+    --info-foreground: 0 0% 98%;
+    --status-success: 154 13% 16%;
+    --status-success-foreground: 152 22% 73%;
+    --status-success-border: 154 14% 28%;
+    --status-warning: 36 18% 16%;
+    --status-warning-foreground: 38 34% 72%;
+    --status-warning-border: 36 20% 28%;
+    --status-danger: 4 18% 18%;
+    --status-danger-foreground: 4 36% 76%;
+    --status-danger-border: 4 22% 32%;
+    --status-info: 210 18% 17%;
+    --status-info-foreground: 210 26% 74%;
+    --status-info-border: 210 20% 30%;
+    --chart-track: 0 0% 20%;
+    --chart-1: 200 28% 62%;
+    --chart-2: 38 42% 59%;
+    --chart-3: 212 38% 55%;
+    --chart-4: 216 12% 56%;
+    --chart-5: 167 32% 49%;
+    --chart-6: 222 14% 61%;
+    --diff-removed-bg: 0 74.7% 15.5%;
+    --diff-removed-foreground: 0 96.3% 89.4%;
+    --diff-added-bg: 144.9 80.4% 10%;
+    --diff-added-foreground: 141 78.9% 85.1%;
+    --border: 0 0% 19.6%;
+    --border-subtle: var(--ink) / 0.065;
+    --input: 0 0% 17.6%;
+    --ring: 0 0% 60%;
+    /* Dark elevations: weaker top highlight, deeper shadows, white hairline. */
+    --shadow-e0: inset 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
+    --shadow-e1: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(255, 255, 255, 0.07);
+    --shadow-e2: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);
+    --shadow-e3: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.09);
+    --shadow-e4: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.09);
+    --shadow-focus-ring: 0 0 0 1px hsl(var(--ring));
+    --shadow-input-hover: inset 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.16);
+    --shadow-sidebar: 0 0 0 1px rgba(255, 255, 255, 0.06), 12px 0 32px -20px rgba(0, 0, 0, 0.5);
 }
 
 @layer base {
@@ -77,19 +184,45 @@
     accent-color: hsl(var(--foreground));
   }
   :where(button, a[href], summary, [role="button"], [role="tab"]) {
-    border-radius: calc(var(--radius) - 2px);
+    border-radius: var(--radius);
   }
-  input[type="checkbox"] { border-radius: 3px; }
+  input[type="checkbox"] { border-radius: 4px; }
   input[type="radio"] { border-radius: 50%; }
 }
 
-/* Focus changes behavior, not decoration; retain ordinary component shadows. */
-body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus,
-body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-visible {
+/* Focus changes behavior, not decoration. Mouse/pointer focus stays quiet.
+   Keyboard focus keeps a visible indicator: the element's stroke recolors to
+   the token ring color — a single 1px line with no halo, no offset ring and
+   no elevation shadow, so it never clips inside overflow-hidden containers
+   and never fights component shadow utilities. */
+body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus:not(:focus-visible) {
   outline: none;
   --tw-ring-offset-shadow: 0 0 #0000;
   --tw-ring-shadow: 0 0 #0000;
   box-shadow: var(--tw-shadow, 0 0 #0000);
+}
+body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-visible {
+  outline: none;
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 #0000;
+  box-shadow: var(--shadow-focus-ring);
+}
+
+/* Input surfaces hover quietly: deepen the well and hairline instead of
+   taking the button lift. Focus on inputs reuses the same input-hover
+   shadow instead of the 1px focus stroke, so keyboard focus reads as the
+   same quiet deepening under the cursor. */
+.input-quiet:hover:not(:disabled):not(:focus-visible) {
+  box-shadow: var(--shadow-input-hover);
+}
+.input-quiet:focus-visible:not(:disabled) {
+  box-shadow: var(--shadow-input-hover);
+}
+
+/* Keep the centered content column steady when the scrollbar appears or
+   disappears while switching pages or tabs. */
+[data-slot="content"] {
+  scrollbar-gutter: stable;
 }
 
 /* Application geometry, independent of the host browser's native widgets. */
@@ -109,7 +242,7 @@ input:is([type="checkbox"], [type="radio"]) {
   background-repeat: no-repeat;
 }
 
-input[type="checkbox"] { border-radius: 3px; }
+input[type="checkbox"] { border-radius: 4px; }
 input[type="radio"] { border-radius: 50%; }
 input:is([type="checkbox"], [type="radio"]):checked {
   border-color: hsl(var(--muted-foreground));
@@ -119,7 +252,7 @@ input[type="checkbox"]:checked {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8 3 3 6-6' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 .dark input[type="checkbox"]:checked {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8 3 3 6-6' fill='none' stroke='%2318181b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8 3 3 6-6' fill='none' stroke='%231a1a1a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 input[type="radio"]:checked {
   background-image: radial-gradient(circle, hsl(var(--background)) 0 3px, transparent 3.5px);
@@ -148,6 +281,7 @@ details[open] > .disclosure-summary > .disclosure-chevron {
 
 /* A quiet visual gate; never delay backend shutdown for an animation. */
 .runtime-placeholder {
+  min-height: 100vh;
   min-height: 100dvh;
   display: grid;
   place-items: center;
@@ -158,14 +292,77 @@ details[open] > .disclosure-summary > .disclosure-chevron {
   min-height: 100%;
   display: grid;
   place-items: center;
-  animation: runtime-enter 180ms ease-out both;
+  animation: page-enter 200ms cubic-bezier(0.05, 0.7, 0.1, 1) both;
+}
+/* Page body entrance: one fade-and-rise for the whole container. No fill
+   forwards, so the settled container never becomes a containing block for
+   in-page fixed elements such as the paragraph menu. */
+.page-enter {
+  animation: page-enter 200ms cubic-bezier(0.05, 0.7, 0.1, 1) backwards;
 }
 @keyframes runtime-enter {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* Dialog entrance: enter-only; exit stays instant (Radix presence). The final
+   frame repeats the utility centering so fill-forwards cannot displace it. */
+.dialog-overlay { animation: overlay-in 200ms cubic-bezier(0.05, 0.7, 0.1, 1) both; }
+.dialog-content { animation: dialog-in 320ms cubic-bezier(0.05, 0.7, 0.1, 1) both; }
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes dialog-in {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+/* Popover and menu entrance for surfaces that are not viewport-centered:
+   select listboxes, auto-margin native dialogs, anchored menus. */
+.pop-content { animation: pop-in 200ms cubic-bezier(0.05, 0.7, 0.1, 1) both; }
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 /* Keep Sonner's viewport-fixed stack and interactive dismissal controls. */
 @media (prefers-reduced-motion: reduce) {
   .runtime-placeholder,
-  .route-placeholder { animation: none; }
+  .route-placeholder,
+  .page-enter,
+  .dialog-overlay,
+  .dialog-content,
+  .pop-content { animation: none; }
+}
+
+/* Scrollbars: a quiet pill carved from the hairline color on a transparent
+   track and corner (zcode v3.18.2 recipe; 10px instead of 14px to suit the
+   denser wenyi layout). Firefox gets the thin auto-drawn equivalent. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 9999px;
+  background: hsl(var(--border));
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:vertical {
+  min-height: 32px;
+}
+::-webkit-scrollbar-thumb:horizontal {
+  min-width: 32px;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }

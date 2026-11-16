@@ -27,6 +27,11 @@ export function registerTests({ projectLocation = false }: { projectLocation?: b
         await page.goto("/projects/new");
         await page.evaluate(dark => document.documentElement.classList.toggle("dark", dark), dark);
         const dialog = page.getByRole("dialog", { name: chinese ? "创建项目" : "Create project", exact: true });
+        await expect(dialog).toBeVisible();
+        // Wait for the actual entrance, not a guessed delay between separate measurements.
+        await dialog.evaluate(async element => {
+          await Promise.all(element.getAnimations().map(animation => animation.finished));
+        });
         const source = await bounds(page.getByLabel(chinese ? "源语言" : "Source language", { exact: true }));
         const target = await bounds(page.getByLabel(chinese ? "目标语言" : "Target language", { exact: true }));
         const style = page.getByLabel(chinese ? "翻译风格" : "Translation style", { exact: true });
@@ -61,7 +66,9 @@ export function registerTests({ projectLocation = false }: { projectLocation?: b
         await expect(prepare).toBeChecked();
         await page.keyboard.press("Enter");
         await expect(prepare).not.toBeChecked();
-        expect((await bounds(dialog)).height).toBeLessThanOrEqual(600);
+        const box = await bounds(dialog);
+        expect(box.y).toBeGreaterThanOrEqual(16);
+        expect(box.y + box.height).toBeLessThanOrEqual(640 - 16);
         expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
         await expect(dialog.getByRole("button", {
           name: chinese ? "创建项目" : "Create project", exact: true,

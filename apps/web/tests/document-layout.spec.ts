@@ -221,18 +221,14 @@ for (const locale of ["en", "zh-CN"] as const) {
           page.getByRole("heading", { level: 1 }),
         );
         await expectNoHorizontalOverflow(row);
-        const sourceBox = await row
-          .locator(":scope > div")
-          .first()
-          .boundingBox();
-        const targetBox = await row
-          .locator(":scope > div")
-          .nth(1)
-          .boundingBox();
-        expect(sourceBox).not.toBeNull();
-        expect(targetBox).not.toBeNull();
-        expect(targetBox!.y).toBe(sourceBox!.y);
-        expect(targetBox!.width).toBeCloseTo(sourceBox!.width, 0);
+        const [sourceBox, targetBox] = await row.evaluate(element =>
+          [...element.children].map(child => {
+            const { y, width } = child.getBoundingClientRect();
+            return { y, width };
+          }),
+        );
+        expect(targetBox.y).toBe(sourceBox.y);
+        expect(targetBox.width).toBeCloseTo(sourceBox.width, 0);
         for (const label of locale === "en"
           ? ["Source", "Translation"]
           : ["原文", "译文"]) {

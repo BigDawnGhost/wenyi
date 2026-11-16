@@ -160,6 +160,12 @@ test("reading and selection do not edit; the context menu copies the selected te
     selection.addRange(range);
   });
   await translation.click({ button: "right" });
+  await expect(page.getByRole("menu")).toBeVisible();
+  // WebKit can clear the document selection when the menu takes keyboard focus.
+  await page.evaluate(() => {
+    window.getSelection()?.removeAllRanges();
+    document.dispatchEvent(new Event("selectionchange"));
+  });
   await page
     .getByRole("menuitem", { name: "Copy selection", exact: true })
     .click();

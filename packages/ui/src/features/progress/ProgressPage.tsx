@@ -2,6 +2,7 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { useI18n } from "../../i18n";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { LoaderCircle, Pause, Play, type LucideIcon } from "lucide-react";
 import { api, isProjectBusy } from "../../api/client";
 import type { ChapterSummary } from "../../api/types";
 import { useProjectQuery } from "../../lib/projectQuery";
@@ -81,34 +82,33 @@ export default function ProgressPage() {
               !paused &&
               project?.status !== "error" &&
               project?.fmt && (
-                <Button
-                  disabled={action.isPending}
+                <TaskControlButton
+                  label={tr("common.startTranslation")}
+                  icon={Play}
+                  pending={action.isPending}
                   onClick={() => action.mutate("translate")}
-                >
-                  {tr("common.startTranslation")}
-                </Button>
+                />
               )}
             {busy && project?.status !== "parsing" && (
-              <Button
-                variant="outline"
-                disabled={action.isPending || project?.status === "pausing"}
+              <TaskControlButton
+                label={tr("progress.pause")}
+                icon={Pause}
+                pending={action.isPending || project?.status === "pausing"}
                 onClick={() => action.mutate("pause")}
-              >
-                {tr("progress.pause")}
-              </Button>
+              />
             )}
             {(paused || project?.status === "error") && (
-              <Button
-                disabled={action.isPending}
+              <TaskControlButton
+                label={tr("progress.resumeTask")}
+                icon={Play}
+                pending={action.isPending}
                 onClick={() => action.mutate("resume")}
-              >
-                {tr("progress.resumeTask")}
-              </Button>
+              />
             )}
           </>
         }
       />
-      <PageContainer className="space-y-4">
+      <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice
           error={
             projectQuery.error ||
@@ -129,7 +129,7 @@ export default function ProgressPage() {
               {done} / {total}
             </div>
             <Progress value={pct} />
-            <div className="border-t pt-4 space-y-3">
+            <div className="pt-4 space-y-3">
               <h3 className="text-sm font-medium">
                 {tr("progress.totalUsageRunTime")}
               </h3>
@@ -145,20 +145,20 @@ export default function ProgressPage() {
           connected={connected}
           busy={busy}
         />
-        <p className="text-xs text-muted-foreground">
-          {tr("progress.progressConnection")}:{" "}
-          {connected ? tr("progress.live") : tr("progress.polling")}
-        </p>
-        {chapters.length > 0 && (
-          <div className="space-y-2">
+        <Card className="flex flex-wrap items-center justify-between gap-2 p-4 text-xs text-muted-foreground">
+          <p>
+            {tr("progress.progressConnection")}:{" "}
+            {connected ? tr("progress.live") : tr("progress.polling")}
+          </p>
+          {chapters.length > 0 && (
             <Link
-              className="text-sm text-primary underline"
+              className="text-xs text-primary underline underline-offset-4"
               to={`/projects/${pid}/contents`}
             >
               {tr("contents.readContentsSource")}
             </Link>
-          </div>
-        )}
+          )}
+        </Card>
         <ChapterTable
           pid={pid}
           chapters={chapters}
@@ -166,6 +166,38 @@ export default function ProgressPage() {
         />
       </PageContainer>
     </>
+  );
+}
+
+function TaskControlButton({
+  label,
+  icon,
+  pending,
+  onClick,
+}: {
+  label: string;
+  icon: LucideIcon;
+  pending: boolean;
+  onClick: () => void;
+}) {
+  const Icon = pending ? LoaderCircle : icon;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="shrink-0 border border-border text-muted-foreground"
+      aria-label={label}
+      title={label}
+      aria-busy={pending || undefined}
+      disabled={pending}
+      onClick={onClick}
+    >
+      <Icon
+        className={pending ? "h-4.5 w-4.5 animate-spin" : "h-4.5 w-4.5"}
+        aria-hidden="true"
+      />
+    </Button>
   );
 }
 
@@ -192,8 +224,8 @@ function ChapterTable({
     <Card>
       <CardContent className="p-0 overflow-x-auto">
         <ErrorNotice error={translate.error} />
-        <table className="w-full min-w-[704px] text-sm">
-          <thead className="border-b text-xs text-muted-foreground">
+        <table className="w-full min-w-176 text-sm">
+          <thead className="border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
             <tr>
               {[
                 tr("common.chapter"),
@@ -204,7 +236,7 @@ function ChapterTable({
               ].map((h) => (
                 <th
                   key={h}
-                  className="whitespace-nowrap text-left p-3 font-medium"
+                  className="whitespace-nowrap text-left px-4 py-3.5 font-medium"
                 >
                   {h}
                 </th>
@@ -213,17 +245,17 @@ function ChapterTable({
           </thead>
           <tbody>
             {chapters.map((c) => (
-              <tr key={c.index} className="border-b last:border-0">
-                <td className="w-full min-w-64 max-w-0 p-3 [overflow-wrap:anywhere]">
+              <tr key={c.index} className="border-b border-black/[0.05] last:border-0 dark:border-white/[0.07]">
+                <td className="w-full min-w-64 max-w-0 px-4 py-3.5 [overflow-wrap:anywhere]">
                   {c.title_translated?.trim() ||
                     c.title.trim() ||
                     tr("common.untitledChapter")}
                 </td>
-                <td className="p-3 tabular-nums">{c.word_count}</td>
-                <td className="p-3">
+                <td className="px-4 py-3.5 tabular-nums">{c.word_count}</td>
+                <td className="px-4 py-3.5">
                   <StatusBadge status={c.status} context="chapter" />
                 </td>
-                <td className="p-3">
+                <td className="px-4 py-3.5">
                   {c.review_issue_count > 0 ? (
                     <Badge variant="warning">
                       {tr("progress.reviewIssueCount", {
@@ -240,7 +272,7 @@ function ChapterTable({
                     </Badge>
                   )}
                 </td>
-                <td className="p-3">
+                <td className="px-4 py-3.5">
                   {c.status !== "done" && (
                     <Button
                       size="sm"

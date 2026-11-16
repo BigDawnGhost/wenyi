@@ -100,7 +100,7 @@ function HistoryEntry({
       <details
         open={expanded}
         onToggle={(event) => setExpanded(event.currentTarget.open)}
-        className="rounded-lg border"
+        className="rounded-xl shadow-e1"
       >
         <summary className="cursor-pointer px-4 py-3 text-sm">
           <span className="font-medium">{label}</span>
@@ -111,7 +111,7 @@ function HistoryEntry({
           </span>
         </summary>
         {expanded && (
-          <div className="space-y-4 border-t p-4">
+          <div className="space-y-4 p-4">
             {notice && (
               <p className="text-xs text-muted-foreground">{notice}</p>
             )}

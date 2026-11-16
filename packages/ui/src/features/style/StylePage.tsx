@@ -95,7 +95,7 @@ export default function StylePage() {
   return (
     <>
       <PageHeader title={tr("common.styleSynopsis")} />
-      <PageContainer>
+      <PageContainer className="mx-auto w-full max-w-5xl">
         <ErrorNotice error={error || save.error} />
         {busy && <ReadOnlyNotice className="mb-4" />}
         <Tabs value={tab} onValueChange={setTab}>
@@ -152,7 +152,7 @@ export default function StylePage() {
                 <Textarea
                   aria-label={tr("style.styleGuide")}
                   disabled={readOnly}
-                  className="min-h-[160px]"
+                  className="min-h-40"
                   value={valueFor("style_guide")}
                   onChange={(e) => editField("style_guide", e.target.value)}
                 />
@@ -183,7 +183,7 @@ export default function StylePage() {
                 <Textarea
                   aria-label={tr("style.wholeBookSynopsis")}
                   disabled={readOnly}
-                  className="min-h-[220px]"
+                  className="min-h-synopsis"
                   value={valueFor("book_synopsis")}
                   onChange={(e) => editField("book_synopsis", e.target.value)}
                 />
@@ -196,14 +196,14 @@ export default function StylePage() {
               <CardContent className="p-0">
                 <div
                   aria-hidden="true"
-                  className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 border-b p-4 text-xs font-medium text-muted-foreground"
+                  className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 border-b border-black/[0.05] p-4 text-xs font-medium tracking-wide text-muted-foreground dark:border-white/[0.07]"
                 >
                   <span>{tr("common.chapter")}</span>
                   <span>{tr("common.summary")}</span>
                 </div>
                 <dl
                   aria-label={tr("style.chapterSummaries")}
-                  className="divide-y text-sm"
+                  className="divide-y divide-black/[0.05] text-sm dark:divide-white/[0.07]"
                 >
                   {digests.map((d) => (
                     <div
@@ -261,46 +261,50 @@ function DigestEditor({
       toast.success(tr("style.chapterSummarySaved"));
     },
   });
-  if (!editing)
-    return (
-      <button
-        disabled={disabled}
-        className="w-full text-left whitespace-pre-wrap [overflow-wrap:anywhere] hover:text-foreground"
-        onClick={() => {
-          setDraft(value);
-          setEditing(true);
-        }}
-      >
-        {value || tr("style.clickToAddASummary")}
-      </button>
-    );
+  // Both states share a container that reserves the editor's height, so
+  // switching to the inline editor never shifts the rows below.
   return (
-    <div className="space-y-2">
-      <ErrorNotice error={save.error} />
-      <Textarea
-        aria-label={tr("style.chapterSummary", { chapter: index + 1 })}
-        className="min-h-32"
-        disabled={disabled || save.isPending}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-      />
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          disabled={disabled || save.isPending}
-          onClick={() => save.mutate()}
+    <div className="min-h-44">
+      {editing ? (
+        <div className="space-y-2">
+          <ErrorNotice error={save.error} />
+          <Textarea
+            aria-label={tr("style.chapterSummary", { chapter: index + 1 })}
+            className="min-h-32"
+            disabled={disabled || save.isPending}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              disabled={disabled || save.isPending}
+              onClick={() => save.mutate()}
+            >
+              {tr("style.saveSummary")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={save.isPending}
+              onClick={() => setEditing(false)}
+            >
+              {tr("common.cancel")}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <button
+          disabled={disabled}
+          className="w-full text-left whitespace-pre-wrap [overflow-wrap:anywhere] hover:text-foreground"
+          onClick={() => {
+            setDraft(value);
+            setEditing(true);
+          }}
         >
-          {tr("style.saveSummary")}
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={save.isPending}
-          onClick={() => setEditing(false)}
-        >
-          {tr("common.cancel")}
-        </Button>
-      </div>
+          {value || tr("style.clickToAddASummary")}
+        </button>
+      )}
     </div>
   );
 }

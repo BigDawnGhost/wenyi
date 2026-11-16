@@ -11,6 +11,7 @@ import { platform } from "../../platform";
 import { LazyBoundary } from "../../routes/LazyBoundary";
 import { ModelConnectivity } from "./ModelConnectivity";
 import { ModelNameField } from "./ModelNameField";
+import { SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
@@ -136,6 +137,7 @@ export function ProviderSettings({
               </Label>
               <Input
                 id={`key-${id}`}
+                className={SETTINGS_CONTROL_CLASSNAME}
                 autoComplete="off"
                 placeholder={tr("providerSettings.leaveBlankForTheProviderDefaultVariable")}
                 value={String(provider.api_key_env || "")}
@@ -146,13 +148,14 @@ export function ProviderSettings({
             </div>
           );
           return (
-            <div key={id} className="space-y-4 rounded-lg border p-4">
+            <div key={id} className="space-y-4 rounded-xl border border-border bg-card p-4">
               <div className="grid grid-cols-2 gap-4">
                 {idField("providers", id)}
                 <div className="min-w-0 space-y-2">
                   <Label htmlFor={`provider-${id}`}>{tr("providerSettings.apiProvider")}</Label>
                   <Select
                     id={`provider-${id}`}
+                    className={SETTINGS_CONTROL_CLASSNAME}
                     value={String(provider.kind)}
                     onValueChange={(value) => {
                       // Protocol-specific options cannot be carried to another adapter.
@@ -186,6 +189,7 @@ export function ProviderSettings({
                   <Label htmlFor={`url-${id}`}>{tr("providerSettings.apiBaseUrl")}</Label>
                   <Input
                     id={`url-${id}`}
+                    className={SETTINGS_CONTROL_CLASSNAME}
                     placeholder={tr("providerSettings.leaveBlankForTheProviderDefaultUrl")}
                     value={String(provider.base_url || "")}
                     onChange={(e) =>
@@ -199,6 +203,7 @@ export function ProviderSettings({
                   </Label>
                   <Input
                     id={`timeout-${id}`}
+                    className={SETTINGS_CONTROL_CLASSNAME}
                     type="number"
                     min={1}
                     value={Number(provider.timeout ?? 600)}
@@ -251,41 +256,44 @@ export function ProviderSettings({
             </Button>
           }
         />
-        {Object.entries(models).map(([id, raw]) => {
-          const model = object(raw);
-          return (
-            <div key={id} className="grid grid-cols-3 gap-4 rounded-lg border p-4">
-              {idField("models", id)}
-              <div className="min-w-0 space-y-2">
-                <Label htmlFor={`connection-${id}`}>{tr("providerSettings.apiConnection")}</Label>
-                <Select
-                  id={`connection-${id}`}
-                  value={String(model.provider)}
-                  onValueChange={(value) =>
-                    update("models", id, { provider: value, options: {} })
+        <div className="rounded-xl border border-border bg-card divide-y divide-border">
+          {Object.entries(models).map(([id, raw]) => {
+            const model = object(raw);
+            return (
+              <div key={id} className="grid grid-cols-3 gap-4 px-4 py-3">
+                {idField("models", id)}
+                <div className="min-w-0 space-y-2">
+                  <Label htmlFor={`connection-${id}`}>{tr("providerSettings.apiConnection")}</Label>
+                  <Select
+                    id={`connection-${id}`}
+                    className={SETTINGS_CONTROL_CLASSNAME}
+                    value={String(model.provider)}
+                    onValueChange={(value) =>
+                      update("models", id, { provider: value, options: {} })
+                    }
+                  >
+                    {Object.keys(providers).map((p) => (
+                      <SelectItem key={p} value={p}>{p}</SelectItem>
+                    ))}
+                  </Select>
+                </div>
+                <ModelNameField
+                  id={`model-${id}`}
+                  value={String(model.model || "")}
+                  connection={String(model.provider)}
+                  provider={
+                    model.provider && String(model.provider) in providers
+                      ? object(providers[String(model.provider)])
+                      : undefined
                   }
-                >
-                  {Object.keys(providers).map((p) => (
-                    <SelectItem key={p} value={p}>{p}</SelectItem>
-                  ))}
-                </Select>
+                  onChange={(value) => update("models", id, { model: value })}
+                />
               </div>
-              <ModelNameField
-                id={`model-${id}`}
-                value={String(model.model || "")}
-                connection={String(model.provider)}
-                provider={
-                  model.provider && String(model.provider) in providers
-                    ? object(providers[String(model.provider)])
-                    : undefined
-                }
-                onChange={(value) => update("models", id, { model: value })}
-              />
-            </div>
-          );
-        })}
+            );
+          })}
+          <ModelConnectivity saved={saved} disabled={disabled} />
+        </div>
       </div>
-      <ModelConnectivity saved={saved} disabled={disabled} />
     </fieldset>
   );
 }

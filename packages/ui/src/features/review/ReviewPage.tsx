@@ -9,6 +9,7 @@ import { useProjectQuery } from "../../lib/projectQuery";
 import { useProjectProgress } from "../../lib/ws";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
 import { Button } from "../../components/ui/button";
+import { Card } from "../../components/ui/card";
 import { Select, SelectItem } from "../../components/ui/select";
 import { StatusBadge } from "../../components/StatusBadge";
 import { ErrorNotice } from "../../components/ui/data";
@@ -147,44 +148,46 @@ function ReviewWorkbench({ pid }: { pid: string }) {
           </>
         }
       />
-      <PageContainer className="space-y-5">
+      <PageContainer className="mx-auto w-full max-w-5xl space-y-5">
         <ErrorNotice error={error || review.error} />
         {historical && (
-          <div className="flex flex-wrap items-center gap-3 text-sm">
+          <Card className="flex flex-wrap items-center gap-3 p-4 text-sm">
             <span className="text-muted-foreground">
               {t("review.viewingHistory")}
             </span>
             <Button variant="outline" onClick={() => setSelected(undefined)}>
               {t("review.latestResult")}
             </Button>
-          </div>
+          </Card>
         )}
         {showActivity && (
           <ReviewActivity pid={pid} status={job!.status} progress={progress} />
         )}
         {!historical && busy && !reviewing && !showActivity && (
-          <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
-            {t("review.waitingTask")}
-            <Link
-              className="underline underline-offset-4"
-              to={`/projects/${pid}`}
-            >
-              {t("review.openOverview")}
-            </Link>
-          </p>
+          <Card className="p-4">
+            <p className="flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
+              {t("review.waitingTask")}
+              <Link
+                className="underline underline-offset-4"
+                to={`/projects/${pid}`}
+              >
+                {t("review.openOverview")}
+              </Link>
+            </p>
+          </Card>
         )}
         {reviewing && (
-          <p role="status" className="text-sm text-muted-foreground">
-            {t("review.generating")}
-          </p>
+          <Card className="p-4">
+            <p role="status" className="text-sm text-muted-foreground">{t("review.generating")}</p>
+          </Card>
         )}
         {loading && !run.data && (
-          <p role="status" className="text-sm text-muted-foreground">
-            {t("progress.loading")}
-          </p>
+          <Card className="p-4">
+            <p role="status" className="text-sm text-muted-foreground">{t("progress.loading")}</p>
+          </Card>
         )}
         {run.data && (
-          <section className="space-y-5 rounded-lg border p-5">
+          <section className="space-y-5 rounded-xl border border-border bg-card p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-medium">
                 {t(
@@ -219,7 +222,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
                   {t("review.noIssues")}
                 </p>
               )}
-            <details className="border-t pt-4">
+            <details className="pt-4">
               <summary className="w-fit cursor-pointer text-xs text-muted-foreground">
                 {t("review.technicalDetails")}
               </summary>
@@ -230,7 +233,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
           </section>
         )}
         {!loading && !error && !run.data && !reviewing && (
-          <div className="space-y-2 rounded-lg border p-5 text-sm text-muted-foreground">
+          <div className="space-y-2 rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
             <p>{t("review.noReviewYet")}</p>
             {!chapters.isPending && !translated && (
               <p>{t("review.wholeBookReviewIsAvailableOnceAll")}</p>

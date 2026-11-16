@@ -10,7 +10,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { StatusBadge } from "../../components/StatusBadge";
 import { Disclosure } from "../../components/ui/disclosure";
-import { Label } from "../../components/ui/form";
+import { Label, Switch } from "../../components/ui/form";
 import { Select, SelectItem } from "../../components/ui/select";
 import { ErrorNotice } from "../../components/ui/data";
 import { Progress } from "../../components/ui/progress";
@@ -101,7 +101,7 @@ export default function ExportPage() {
   return (
     <>
       <PageHeader title={tr("export.exportTranslation")} />
-      <PageContainer className="space-y-4 max-w-4xl">
+      <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice
           error={
             projectError ||
@@ -115,13 +115,15 @@ export default function ExportPage() {
           <CardContent className="p-5 space-y-4">
             <div>
               <Label>{tr("export.outputFormat")}</Label>
-              <div className="grid grid-cols-4 gap-2 mt-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 mt-2">
                 <button
                   onClick={() => setFormat("")}
                   aria-pressed={!fmt}
                   className={cn(
-                    "rounded border p-3 text-left text-sm",
-                    !fmt && "border-muted-foreground bg-accent",
+                    "rounded-lg border p-3 text-left text-sm transition-[background-color,border-color,box-shadow] duration-motion-fast ease-standard focus-visible:outline-none",
+                    !fmt
+                      ? "border-primary/50 bg-accent"
+                      : "border-border hover:border-muted-foreground/40 hover:bg-muted/40",
                   )}
                 >
                   {tr("export.automatic")}
@@ -132,8 +134,10 @@ export default function ExportPage() {
                     onClick={() => setFormat(f)}
                     aria-pressed={fmt === f}
                     className={cn(
-                      "rounded border p-3 text-left text-sm",
-                      fmt === f && "border-muted-foreground bg-accent",
+                      "rounded-lg border p-3 text-left text-sm transition-[background-color,border-color,box-shadow] duration-motion-fast ease-standard focus-visible:outline-none",
+                      fmt === f
+                        ? "border-primary/50 bg-accent"
+                        : "border-border hover:border-muted-foreground/40 hover:bg-muted/40",
                     )}
                   >
                     {f.toUpperCase()}
@@ -168,14 +172,16 @@ export default function ExportPage() {
               <p className="text-sm text-muted-foreground">{tr("export.pdfBilingualLayout")}</p>
             )}
             <Disclosure title={tr("export.advanced")} error={create.error}>
-              <label className="flex gap-2 items-center text-sm">
-                <input
-                  type="checkbox"
+              <div className="flex gap-2 items-center text-sm">
+                <Switch
+                  id="export-punctuation"
                   checked={punctuation}
-                  onChange={(e) => setPunctuation(e.target.checked)}
+                  onCheckedChange={setPunctuation}
                 />
-                {tr("settings.normalizePunctuationOnExport")}
-              </label>
+                <Label htmlFor="export-punctuation" className="cursor-pointer font-normal leading-5">
+                  {tr("settings.normalizePunctuationOnExport")}
+                </Label>
+              </div>
               {bilingual && (
                 <Select
                   aria-label={tr("export.bilingualOrder")}
@@ -195,23 +201,27 @@ export default function ExportPage() {
                   </SelectItem>
                 </Select>
               )}
-              <label className="flex gap-2 items-center text-sm">
-                <input
-                  type="checkbox"
+              <div className="flex gap-2 items-center text-sm">
+                <Switch
+                  id="export-about"
                   checked={about}
-                  onChange={(e) => setAbout(e.target.checked)}
+                  onCheckedChange={setAbout}
                 />
-                {tr("export.includeAnAboutThisTranslationPage")}
-              </label>
+                <Label htmlFor="export-about" className="cursor-pointer font-normal leading-5">
+                  {tr("export.includeAnAboutThisTranslationPage")}
+                </Label>
+              </div>
               {bilingual && !pdf && (
-                <label className="flex gap-2 items-center text-sm">
-                  <input
-                    type="checkbox"
+                <div className="flex gap-2 items-center text-sm">
+                  <Switch
+                    id="export-preserve-style"
                     checked={preserveStyle}
-                    onChange={(e) => setPreserveStyle(e.target.checked)}
+                    onCheckedChange={setPreserveStyle}
                   />
-                  {tr("export.preserveSourceFormattingInBilingualOutput")}
-                </label>
+                  <Label htmlFor="export-preserve-style" className="cursor-pointer font-normal leading-5">
+                    {tr("export.preserveSourceFormattingInBilingualOutput")}
+                  </Label>
+                </div>
               )}
             </Disclosure>
             <Button
@@ -255,7 +265,7 @@ export default function ExportPage() {
               {tr("export.retentionHelp")}
             </p>
             <table className="w-full text-sm">
-              <thead className="border-b text-xs text-muted-foreground">
+              <thead className="border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
                 <tr>
                   {[
                     tr("export.format"),
@@ -264,7 +274,7 @@ export default function ExportPage() {
                     tr("common.status"),
                     tr("common.actions"),
                   ].map((h) => (
-                    <th key={h} className="text-left p-3">
+                    <th key={h} className="text-left px-4 py-3.5">
                       {h}
                     </th>
                   ))}
@@ -272,8 +282,8 @@ export default function ExportPage() {
               </thead>
               <tbody>
                 {exports?.slice(0, 5).map((e) => (
-                  <tr key={e.id} className="border-b last:border-0">
-                    <td className="p-3">
+                  <tr key={e.id} className="border-b border-black/[0.05] last:border-0 dark:border-white/[0.07]">
+                    <td className="px-4 py-3.5">
                       {e.format.toUpperCase()}
                       <div className="text-xs text-muted-foreground mt-1">
                         {e.options?.bilingual
@@ -281,13 +291,13 @@ export default function ExportPage() {
                           : tr("export.monolingual")}
                       </div>
                     </td>
-                    <td className="p-3">
+                    <td className="px-4 py-3.5">
                       {e.created_at
                         ? new Date(e.created_at).toLocaleString(locale)
                         : "—"}
                     </td>
-                    <td className="p-3">{formatBytes(e.size)}</td>
-                    <td className="p-3">
+                    <td className="px-4 py-3.5">{formatBytes(e.size)}</td>
+                    <td className="px-4 py-3.5">
                       <StatusBadge status={e.status} />
                       {e.error && (
                         <p className="mt-1 text-sm text-destructive">
@@ -295,7 +305,7 @@ export default function ExportPage() {
                         </p>
                       )}
                     </td>
-                    <td className="p-3">
+                    <td className="px-4 py-3.5">
                       {e.status === "done" && (
                         <Button
                           variant="outline"

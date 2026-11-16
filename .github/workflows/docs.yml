@@ -48,14 +48,20 @@ jobs:
       - name: Validate and build the documentation site
         run: pnpm docs:build
       - name: Upload the static site
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: >-
+          github.repository == 'BigDawnGhost/wenyi' &&
+          github.event_name != 'pull_request' &&
+          github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs/.vitepress/dist
 
   deploy:
     name: Deploy documentation
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: >-
+      github.repository == 'BigDawnGhost/wenyi' &&
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     timeout-minutes: 10

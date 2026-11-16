@@ -37,7 +37,7 @@ export function ConflictList({
     onError: (e) => toast.error(errorMessage(e, tr)),
   });
   return (
-    <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
+    <Card className="border-warning/40 bg-warning/10">
       <CardContent className="p-4 space-y-2">
         <div className="font-medium text-sm">
           {tr("glossary.conflictCount", { count: conflicts.length })}
@@ -45,7 +45,7 @@ export function ConflictList({
         {conflicts.map((c) => (
           <div
             key={c.id}
-            className="flex flex-wrap items-center gap-3 text-sm border-t pt-2"
+            className="flex flex-wrap items-center gap-3 text-sm border-t border-black/[0.05] pt-2 dark:border-white/[0.07]"
           >
             <span className="font-medium">{c.source}</span>
             <span className="text-muted-foreground">

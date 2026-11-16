@@ -18,6 +18,7 @@ import { MinerUSettings } from "./MinerUSettings";
 import { SettingsActionBar, SettingsGroup, SettingsSection } from "./SettingsSection";
 import { WorkflowSettings, workflowField } from "./WorkflowSettings";
 import { renameRegistryId, type RegistryGroup } from "./registryEdits";
+import { SETTINGS_CONTENT_CLASSNAME } from "./SettingsRow";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
@@ -185,12 +186,12 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
         <ErrorNotice error={t("settings.credentialsFailedNotice")} />
       )}
       {/* Keep controls mounted so category navigation preserves local ID/key drafts. */}
-      <div className="flex-1">
+      <div className={SETTINGS_CONTENT_CLASSNAME}>
         <div hidden={section !== "general"}>
           <LanguageSettings />
         </div>
         <div hidden={section !== "providers"}>
-          <SettingsSection id="provider-models" title={t("settings.sectionProviders")}>
+          <SettingsSection id="provider-models" title={t("settings.sectionProviders")} grouped>
             <ProviderSettings
               key={registryKey}
               config={effective}
@@ -204,7 +205,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
           </SettingsSection>
         </div>
         <div hidden={section !== "defaults"}>
-          <SettingsSection title={t("settings.sectionDefaultModels")}>
+          <SettingsSection title={t("settings.sectionDefaultModels")} grouped>
             <ModelSelection
               llm={llm}
               models={object(llm.models)}
@@ -214,7 +215,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
           </SettingsSection>
         </div>
         <div hidden={section !== "workflow"}>
-          <SettingsSection title={t("settings.sectionWorkflow")}>
+          <SettingsSection title={t("settings.sectionWorkflow")} grouped>
             <WorkflowSettings
               scope="global"
               config={effective}
@@ -234,24 +235,26 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
           </div>
         )}
         <div hidden={section !== "advanced"}>
-          <SettingsSection id="advanced-yaml" title={t("settings.sectionAdvanced")}>
+          <SettingsSection id="advanced-yaml" title={t("settings.sectionAdvanced")} grouped>
             <SettingsGroup
               title={t("settings.advancedYamlConfiguration")}
               summary={yamlDirty ? t("settings.unsavedSummary") : undefined}
             >
-              <Textarea
-                aria-label={t("settings.advancedYamlConfiguration")}
-                spellCheck={false}
-                className="min-h-[420px] font-mono text-xs"
-                value={draft?.yaml || ""}
-                disabled={!draft || pending}
-                onChange={(event) => {
-                  if (draft) {
-                    setDraft({ ...draft, yaml: event.target.value });
-                    setYamlDirty(true);
-                  }
-                }}
-              />
+              <div className="rounded-xl border border-border bg-card p-4">
+                <Textarea
+                  aria-label={t("settings.advancedYamlConfiguration")}
+                  spellCheck={false}
+                  className="min-h-editor font-mono text-xs"
+                  value={draft?.yaml || ""}
+                  disabled={!draft || pending}
+                  onChange={(event) => {
+                    if (draft) {
+                      setDraft({ ...draft, yaml: event.target.value });
+                      setYamlDirty(true);
+                    }
+                  }}
+                />
+              </div>
             </SettingsGroup>
           </SettingsSection>
         </div>
@@ -273,24 +276,26 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
       </div>
       <SettingsActionBar
         notices={
-          <>
-            {yamlDirty && (
-              <Link to="/settings/advanced" state={location.state} className="block text-amber-700 underline underline-offset-4 dark:text-amber-300">
-                {t("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
-              </Link>
-            )}
-            {editingIds && (
-              <Link to="/settings/providers" state={location.state} className="block text-amber-700 underline underline-offset-4 dark:text-amber-300">
-                {t("registry.finishRenaming")}
-              </Link>
-            )}
-            {!yamlDirty && !editingIds && dirty && (
-              <span className="text-muted-foreground">{t("settings.unsavedSummary")}</span>
-            )}
-          </>
+          yamlDirty || editingIds || dirty ? (
+            <>
+              {yamlDirty && (
+                <Link to="/settings/advanced" state={location.state} className="block text-warning-text underline underline-offset-4">
+                  {t("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
+                </Link>
+              )}
+              {editingIds && (
+                <Link to="/settings/providers" state={location.state} className="block text-warning-text underline underline-offset-4">
+                  {t("registry.finishRenaming")}
+                </Link>
+              )}
+              {!yamlDirty && !editingIds && dirty && (
+                <span className="text-muted-foreground">{t("settings.unsavedSummary")}</span>
+              )}
+            </>
+          ) : undefined
         }
       >
-        <Button variant="ghost" disabled={!draft || pending} onClick={() => restore.mutate()}>
+        <Button variant="outline" disabled={!draft || pending} onClick={() => restore.mutate()}>
           {t("settings.restoreDefaults")}
         </Button>
         {section === "advanced" && (

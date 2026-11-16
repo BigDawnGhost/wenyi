@@ -90,12 +90,12 @@ export default function Dashboard() {
           )
         }
       />
-      <PageContainer>
+      <PageContainer className="mx-auto w-full max-w-5xl">
         <ErrorNotice error={error} />
         {importFailure && (
           <div
             role="alert"
-            className="mb-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3 text-sm"
+            className="mb-3 rounded-lg border-l-4 border-l-destructive bg-destructive/10 px-4 py-3 text-sm"
           >
             <p className="font-medium">{tr("dashboard.couldNotImportProject")}</p>
             <p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">
@@ -104,15 +104,34 @@ export default function Dashboard() {
           </div>
         )}
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">
-            {tr("dashboard.loading")}
-          </p>
+          // The skeleton mirrors the loaded card grid so loading keeps the same
+          // geometry and the page does not jump when the projects arrive.
+          <div role="status" aria-label={tr("dashboard.loading")}>
+            <div aria-hidden="true" className="grid grid-cols-3 gap-4">
+              {Array.from({ length: 6 }, (_, skeleton) => (
+                <Card key={skeleton}>
+                  <CardContent className="p-5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <div className="h-6 w-2/3 rounded bg-muted motion-safe:animate-pulse" />
+                        <div className="h-4 w-1/3 rounded bg-muted motion-safe:animate-pulse" />
+                      </div>
+                      <div className="h-7 w-7 shrink-0 rounded bg-muted motion-safe:animate-pulse" />
+                    </div>
+                    <div className="mt-4 h-4 w-1/2 rounded bg-muted motion-safe:animate-pulse" />
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
         ) : !projects?.length ? (
-          <p className="py-24 text-center text-sm text-muted-foreground">
-            {tr("dashboard.noProjectsYet")}
-          </p>
+          <Card>
+            <p className="px-6 py-24 text-center text-sm text-muted-foreground">
+              {tr("dashboard.noProjectsYet")}
+            </p>
+          </Card>
         ) : (
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 gap-4">
             {projects.map((p) => {
               // A project on a drive that is not mounted cannot be opened, so it
               // is shown with what is wrong instead of failing on selection.
@@ -120,17 +139,17 @@ export default function Dashboard() {
               return (
                 <Card
                   key={p.id}
-                  className={`relative h-full transition-colors ${
+                  className={
                     unavailable
-                      ? "opacity-60"
-                      : "hover:border-primary/40"
-                  }`}
+                      ? "relative opacity-60"
+                      : "relative cursor-pointer hover:shadow-e3"
+                  }
                 >
                   {!unavailable && (
                     <Link
                       to={`/projects/${p.id}`}
                       aria-label={tr("dashboard.openProject", { name: p.name })}
-                      className="absolute inset-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      className="absolute inset-0 rounded-xl"
                     />
                   )}
                   <CardContent className="relative pointer-events-none p-5">
@@ -209,7 +228,15 @@ export default function Dashboard() {
                 }
               }}
             >
-              {deleteProject.isPending && <LoaderCircle className="h-4 w-4 animate-spin" />}
+              {/* The fixed icon slot keeps the button's width while pending, so
+                  the footer buttons do not shift when the spinner appears. */}
+              <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+                {deleteProject.isPending ? (
+                  <LoaderCircle className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+              </span>
               {tr("dashboard.deleteAction")}
             </Button>
           </>

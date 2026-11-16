@@ -29,7 +29,7 @@ export interface ActivityServices {
   subscribe: (listener: () => void) => () => void;
 }
 
-type PreferenceKey = "wenyi.locale" | "wenyi.sidebarCollapsed" | "wenyi.lastProject";
+type PreferenceKey = "wenyi.locale" | "wenyi.sidebarCollapsed" | "wenyi.lastProject" | "wenyi.theme";
 export interface PreferenceServices {
   get: (key: PreferenceKey) => string | null;
   set: (key: PreferenceKey, value: string) => void;

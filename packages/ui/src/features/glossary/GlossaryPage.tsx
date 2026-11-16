@@ -8,6 +8,7 @@ import { api, isProjectBusy } from "../../api/client";
 import type { Term } from "../../api/types";
 import { useProjectQuery } from "../../lib/projectQuery";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Card } from "../../components/ui/card";
 import { Input } from "../../components/ui/form";
 import { Select, SelectDismissScope, SelectItem } from "../../components/ui/select";
 import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
@@ -185,10 +186,10 @@ export default function GlossaryPage() {
           />
         }
       />
-      <PageContainer className="space-y-4">
+      <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice error={termsError || conflictsError} />
         {busy && <ReadOnlyNotice />}
-        <div className="flex flex-wrap items-center gap-2">
+        <Card className="flex flex-wrap items-center gap-2 p-4">
           <Input
             placeholder={tr(
               showReading
@@ -203,7 +204,7 @@ export default function GlossaryPage() {
             value={type}
             onValueChange={setType}
             aria-label={tr("common.type")}
-            className="w-[140px] shrink-0"
+            className="w-select shrink-0"
           >
             <SelectItem value="">{tr("glossary.allTypes")}</SelectItem>
             {Object.entries(termTypes()).map(([id, label]) => (
@@ -220,7 +221,7 @@ export default function GlossaryPage() {
               onChange={changePage}
             />
           </div>
-        </div>
+        </Card>
 
         {selected.size > 0 && (
           <SelectionBar

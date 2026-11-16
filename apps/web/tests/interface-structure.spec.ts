@@ -182,8 +182,9 @@ test("folded export options preserve edits and reveal controls after a validatio
   await advanced.click();
   await page.getByLabel("Bilingual order").click();
   await page.getByRole("option", { name: "Source first", exact: true }).click();
-  await page.getByLabel("Normalize punctuation on export").uncheck();
-  await page.getByLabel("Include an “About this translation” page").uncheck();
+  await page.getByRole("switch", { name: "Normalize punctuation on export", exact: true }).uncheck();
+  await page.getByRole("switch", { name: "Include an “About this translation” page", exact: true }).uncheck();
+  await page.getByRole("switch", { name: "Preserve source formatting in bilingual output", exact: true }).check();
   await advanced.click();
   // The folded section shows only its title; edits are verified through the submission.
   await expect(advanced).toHaveText("Layout and advanced options");
@@ -199,5 +200,6 @@ test("folded export options preserve edits and reveal controls after a validatio
     order: "source_first",
     about_page: false,
     punctuation_normalize: false,
+    preserve_source_style: true,
   });
 });

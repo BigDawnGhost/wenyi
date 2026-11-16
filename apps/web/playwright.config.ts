@@ -1,11 +1,42 @@
-import { defineConfig, type Project } from "@playwright/test";
+import { defineConfig, devices, type Project } from "@playwright/test";
 
 // The measurement project owns a single worker and depends on the gate project,
 // so it only belongs in the nightly run: including it in a pull request would
 // serialise the whole suite behind a timing benchmark. PLAYWRIGHT_PERF=1 opts in.
 const perfEnabled = process.env.PLAYWRIGHT_PERF === "1";
 
-const gateProjects: Project[] = [{ name: "web", testIgnore: "**/proofreading-performance.spec.ts" }];
+// PLAYWRIGHT_PROJECTS selects browser projects by name (comma separated),
+// defaulting to Chromium. `web-webkit` proxies the Safari/WKWebView/WebKitGTK engine family
+// that the Chromium project cannot cover; its browser is installed separately
+// with `playwright install webkit`, so it stays out of the default local run.
+const enabledProjects = (process.env.PLAYWRIGHT_PROJECTS ?? "")
+  .split(",")
+  .map((name) => name.trim())
+  .filter(Boolean);
+const selectedProjects = new Set(enabledProjects.length ? enabledProjects : ["web"]);
+// The performance project depends on the Chromium gate even in an explicit browser selection.
+if (perfEnabled) selectedProjects.add("web");
+for (const name of selectedProjects) {
+  if (name !== "web" && name !== "web-webkit") {
+    throw new Error(`Unknown PLAYWRIGHT_PROJECTS entry: ${name}`);
+  }
+}
+
+// The executable override is Chromium-specific and must not leak into WebKit.
+const chromiumUse = {
+  launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
+    ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE }
+    : {},
+};
+
+const gateProjects: Project[] = [
+  { name: "web", testIgnore: "**/proofreading-performance.spec.ts", use: chromiumUse },
+  {
+    name: "web-webkit",
+    testIgnore: "**/proofreading-performance.spec.ts",
+    use: { ...devices["Desktop Safari"] },
+  },
+].filter(project => selectedProjects.has(project.name));
 
 const perfProjects: Project[] = [
   {
@@ -15,6 +46,7 @@ const perfProjects: Project[] = [
     dependencies: ["web"],
     fullyParallel: false,
     workers: 1,
+    use: chromiumUse,
   },
 ];
 
@@ -30,9 +62,6 @@ export default defineConfig({
   use: {
     baseURL: "http://127.0.0.1:4173",
     headless: true,
-    launchOptions: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE
-      ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE }
-      : {},
   },
   webServer: {
     command: "./node_modules/.bin/vite --host 127.0.0.1 --port 4173",

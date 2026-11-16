@@ -8,6 +8,7 @@ import { Input, Label } from "../../components/ui/form";
 import { Button } from "../../components/ui/button";
 import { platform } from "../../platform";
 import { cn } from "../../lib/utils";
+import { SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
 
 type Document = Record<string, unknown>;
 type ListingDraft = {
@@ -105,7 +106,7 @@ export function ModelNameField({
             aria-activedescendant={expanded && active >= 0 ? `${listId}-${active}` : undefined}
             autoComplete="off"
             spellCheck={false}
-            className={cn(listed && "pr-8")}
+            className={cn(SETTINGS_CONTROL_CLASSNAME, listed && "pr-8")}
             value={value}
             onChange={(event) => {
               onChange(event.target.value);
@@ -153,7 +154,7 @@ export function ModelNameField({
               id={listId}
               role="listbox"
               aria-label={t("common.modelName")}
-              className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-md border bg-background p-1 text-sm shadow-lg"
+              className="pop-content absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-xl bg-background p-1 text-sm shadow-e4"
             >
               {shown.map((name, index) => (
                 <li

@@ -46,15 +46,40 @@ export function timeoutForMethod(method: string | undefined): number {
  *
  * `AbortSignal.any` keeps the caller's own cancellation working, which is why
  * this composes signals instead of replacing the one already on the init.
+ * The composed deadline must stay distinguishable from a caller cancel, so the
+ * fallback below aborts with the same `TimeoutError` the native path produces.
  */
 export function withTimeout(
   init: RequestInit | undefined,
   ms: number = timeoutForMethod(init?.method),
 ): RequestInit {
-  const signal = init?.signal
-    ? AbortSignal.any([AbortSignal.timeout(ms), init.signal])
-    : AbortSignal.timeout(ms);
-  return { ...init, signal };
+  if (typeof AbortSignal.any === "function" && typeof AbortSignal.timeout === "function") {
+    const signal = init?.signal
+      ? AbortSignal.any([AbortSignal.timeout(ms), init.signal])
+      : AbortSignal.timeout(ms);
+    return { ...init, signal };
+  }
+  // Engines without `AbortSignal.any` (Safari < 17.4 / WebKitGTK < 2.44) compose
+  // manually. The support baseline (Safari 15.4 / WebKitGTK 2.36) already has
+  // AbortController and abort reasons, so the deadline still surfaces as the
+  // same `TimeoutError` that `isTimeout` translates into `request_timeout`.
+  const controller = new AbortController();
+  const deadline = new DOMException("The operation timed out.", "TimeoutError");
+  const timer = setTimeout(() => controller.abort(deadline), ms);
+  // A pending deadline must not keep Node-based test runs alive after success.
+  (timer as unknown as { unref?: () => void }).unref?.();
+  const caller = init?.signal ?? null;
+  const onCallerAbort = () => {
+    clearTimeout(timer);
+    controller.abort(caller?.reason);
+  };
+  if (caller?.aborted) {
+    clearTimeout(timer);
+    controller.abort(caller.reason);
+  } else if (caller) {
+    caller.addEventListener("abort", onCallerAbort, { once: true });
+  }
+  return { ...init, signal: controller.signal };
 }
 
 /** Whether an abort came from our own deadline rather than from the caller.

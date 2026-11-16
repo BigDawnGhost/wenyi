@@ -66,10 +66,15 @@ test("a narrow computer keeps side-by-side reading with horizontal content scrol
   const main = page.getByRole("main");
   const paragraph = page.locator("#paragraph-0");
   await expect(paragraph).toBeVisible();
-  const source = await paragraph.locator(":scope > div").first().boundingBox();
-  const target = await paragraph.locator(":scope > div").nth(1).boundingBox();
-  expect(target!.y).toBe(source!.y);
-  expect(target!.x).toBeGreaterThan(source!.x);
+  // Read both columns in one browser frame, including during the page entrance.
+  const [source, target] = await paragraph.evaluate(element =>
+    [...element.children].map(child => {
+      const { x, y } = child.getBoundingClientRect();
+      return { x, y };
+    }),
+  );
+  expect(target.y).toBe(source.y);
+  expect(target.x).toBeGreaterThan(source.x);
   expect(await main.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
   await main.evaluate(element => { element.scrollLeft = element.scrollWidth; });
   await paragraph.getByRole("button", { name: "Paragraph actions" }).click();

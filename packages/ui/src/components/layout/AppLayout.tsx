@@ -34,7 +34,7 @@ export function Brand() {
         height={36}
         className="h-9 w-9 shrink-0 object-contain grayscale dark:invert"
       />
-      <span className="brand-wordmark translate-y-0.5 text-[20px] font-normal leading-none tracking-wide">
+      <span className="brand-wordmark translate-y-0.5 text-brand font-normal leading-none tracking-wide">
         {t("appLayout.wenyi")}
       </span>
     </Link>
@@ -143,15 +143,15 @@ export function AppLayout() {
         data-slot="sidebar"
         data-collapsed={collapsed}
         className={cn(
-          "flex min-h-0 shrink-0 flex-col border-r bg-card transition-[width] duration-sidebar ease-sidebar",
+          "flex min-h-0 shrink-0 flex-col bg-card shadow-sidebar transition-[width] duration-sidebar ease-sidebar",
           collapsed ? "w-16" : "w-60",
         )}
       >
         <div
           data-slot="sidebar.logo-row"
           className={cn(
-            "flex min-h-14 shrink-0 items-center justify-between gap-2 pl-5 pr-3 pt-[10px] transition-[padding,gap] duration-sidebar ease-sidebar",
-            collapsed && "gap-0 pl-4 pr-[15px]",
+            "flex min-h-14 shrink-0 items-center justify-between gap-2 pl-5 pr-3 pt-2.5 transition-[padding,gap] duration-sidebar ease-sidebar",
+            collapsed && "gap-0 pl-4 pr-3.75",
           )}
         >
           <div
@@ -263,7 +263,7 @@ export function AppLayout() {
         {/* The route gate keeps the shell mounted while a lazy chunk loads and
             confines route failures to the content area. Preserve desktop columns
             in narrow windows and scroll only this pane (704px content + 48px padding). */}
-        <div className="min-h-full min-w-[752px]">
+        <div className="min-h-full min-w-page">
           <RouteGate>
             <SelectDismissScope dismissKey={`${location.key}:${location.hash}`}>
               <Outlet />
@@ -287,7 +287,7 @@ export function PageHeader({
   return (
     <div
       data-slot="page.header"
-      className="relative flex flex-wrap items-center justify-between gap-4 border-b px-6 py-4"
+      className="relative mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-4 px-8 py-5"
     >
       <div className="flex min-w-0 flex-1 basis-64 flex-wrap items-center gap-x-3 gap-y-1 [overflow-wrap:anywhere]">
         <h1 className="text-lg font-semibold">{title}</h1>
@@ -312,7 +312,7 @@ export function PageContainer({
   className?: string;
 }) {
   return (
-    <div data-slot="page.container" className={cn("p-6", className)}>
+    <div data-slot="page.container" className={cn("page-enter px-8 pb-8 pt-1", className)}>
       {children}
     </div>
   );

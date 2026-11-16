@@ -1,6 +1,6 @@
 import * as React from "react";
 import * as Primitive from "@radix-ui/react-select";
-import { Check, ChevronDown, ChevronUp } from "lucide-react";
+import { Check, ChevronDown } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 // Encode every value, not just "", so application values cannot collide with
@@ -34,13 +34,15 @@ type SelectProps = Omit<
   children: React.ReactNode;
   name?: string;
   required?: boolean;
+  /** Replace the rendered selected value (the first span, still truncated). */
+  valueLabel?: React.ReactNode;
 };
 
 export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
   (
     {
       value, defaultValue = "", onValueChange, children, name, required,
-      disabled, className, form, ...props
+      valueLabel, disabled, className, form, ...props
     },
     ref,
   ) => {
@@ -80,11 +82,11 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
           disabled={disabled}
           form={form}
           className={cn(
-            "flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-1 text-left text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&>span:first-child]:truncate",
+            "flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-lg bg-background px-3.5 py-1 text-left text-sm text-foreground shadow-e0 input-quiet transition-[box-shadow] duration-motion-fast ease-standard focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none [&>span:first-child]:truncate",
             className,
           )}
         >
-          <Primitive.Value />
+          {valueLabel !== undefined ? <span>{valueLabel}</span> : <Primitive.Value />}
           <Primitive.Icon asChild>
             <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
           </Primitive.Icon>
@@ -123,15 +125,9 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
               (controls[index + tabDirection.current] ?? triggerRef.current)?.focus();
               tabDirection.current = 0;
             }}
-            className="z-[100] max-h-[min(320px,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-16px)] overflow-hidden rounded-md border bg-background text-foreground shadow-lg"
+            className="pop-content z-[100] max-h-[min(320px,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-16px)] overflow-hidden rounded-xl bg-background text-foreground shadow-e4"
           >
-            <Primitive.ScrollUpButton className="flex justify-center py-1">
-              <ChevronUp className="h-4 w-4" />
-            </Primitive.ScrollUpButton>
             <Primitive.Viewport className="p-1">{children}</Primitive.Viewport>
-            <Primitive.ScrollDownButton className="flex justify-center py-1">
-              <ChevronDown className="h-4 w-4" />
-            </Primitive.ScrollDownButton>
           </Primitive.Content>
         </Primitive.Portal>
       </Primitive.Root>
@@ -149,7 +145,9 @@ export const SelectItem = React.forwardRef<
     ref={ref}
     value={encode(value)}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-2 pl-8 pr-2 text-sm outline-none [overflow-wrap:anywhere] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      // rounded-lg inside the p-1 viewport stays concentric with the panel's
+      // rounded-xl corners, so highlighted items never clash with the shell.
+      "relative flex cursor-default select-none items-center rounded-lg py-2 pl-8 pr-2 text-sm outline-none [overflow-wrap:anywhere] data-[highlighted]:bg-selected data-[highlighted]:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className,
     )}
   >

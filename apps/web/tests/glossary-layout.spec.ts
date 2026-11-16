@@ -36,7 +36,7 @@ for (const locale of ["en", "zh-CN"] as const) {
       await expect(rows).toHaveCount(1);
       const baseline = await rows.first().boundingBox();
       expect(baseline).not.toBeNull();
-      expect(baseline!.height).toBeLessThanOrEqual(60);
+      expect(baseline!.height).toBeLessThanOrEqual(64);
 
       await chooseOption(filter, locale === "en" ? "All types" : "全部类型");
       await expect(rows).toHaveCount(2);

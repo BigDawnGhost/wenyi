@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useCallback, useEffect, useState, type RefObject } from "react";
 import { api } from "../../api/client";
 import { copyText } from "./clipboard";
 import { toast } from "../../lib/toast";
@@ -21,6 +21,16 @@ function point(node: Node, offset: number): Point | null {
   };
 }
 
+function selectionBounds(container: HTMLDivElement | null): SelectionBounds | null {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  if (!container?.contains(range.commonAncestorContainer)) return null;
+  const start = point(range.startContainer, range.startOffset);
+  const end = point(range.endContainer, range.endOffset);
+  return start && end ? { start, end } : null;
+}
+
 /** Pin selection endpoints, not every row between them. Copy fills any unloaded gap. */
 export function useReaderSelection(
   container: RefObject<HTMLDivElement | null>,
@@ -33,27 +43,13 @@ export function useReaderSelection(
 ) {
   const [bounds, setBounds] = useState<SelectionBounds | null>(null);
   useEffect(() => {
-    const changed = () => {
-      const selection = window.getSelection();
-      if (!selection?.rangeCount || selection.isCollapsed) {
-        setBounds(null);
-        return;
-      }
-      const range = selection.getRangeAt(0);
-      if (!container.current?.contains(range.commonAncestorContainer)) {
-        setBounds(null);
-        return;
-      }
-      const start = point(range.startContainer, range.startOffset);
-      const end = point(range.endContainer, range.endOffset);
-      setBounds(start && end ? { start, end } : null);
-    };
+    const changed = () => setBounds(selectionBounds(container.current));
     document.addEventListener("selectionchange", changed);
     return () => document.removeEventListener("selectionchange", changed);
   }, [container]);
-  const text = async () => {
-    if (!bounds) return window.getSelection()?.toString() || "";
-    const { start, end } = bounds;
+  const readText = useCallback(async (selected: SelectionBounds | null, fallback: string) => {
+    if (!selected) return fallback;
+    const { start, end } = selected;
     const parts: string[] = [];
     for (let offset = start.position; offset <= end.position; offset += 128) {
       const window = await api.chapterWindow(pid, ci, offset, Math.min(128, end.position - offset + 1));
@@ -74,7 +70,13 @@ export function useReaderSelection(
       }
     }
     return parts.join("\n");
-  };
+  }, [pid, ci, sourceOnly, waiting, empty]);
+  const captureText = useCallback(() => {
+    // Snapshot before menu focus clears the DOM selection, but fetch virtual gaps only on copy.
+    const selected = selectionBounds(container.current);
+    const fallback = window.getSelection()?.toString() || "";
+    return () => readText(selected, fallback);
+  }, [container, readText]);
   useEffect(() => {
     const copy = (event: ClipboardEvent) => {
       if (!bounds || document.querySelector('[role="dialog"]')) return;
@@ -88,10 +90,10 @@ export function useReaderSelection(
       }
       if (complete) return;
       event.preventDefault();
-      void text().then(copyText).catch(() => toast.error(failed));
+      void readText(bounds, "").then(copyText).catch(() => toast.error(failed));
     };
     document.addEventListener("copy", copy);
     return () => document.removeEventListener("copy", copy);
   });
-  return { pins: bounds ? [bounds.start.position, bounds.end.position] : [], text };
+  return { pins: bounds ? [bounds.start.position, bounds.end.position] : [], captureText };
 }

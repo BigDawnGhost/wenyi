@@ -6,6 +6,7 @@ import type { Term } from "../../../api/types";
 import { useI18n } from "../../../i18n";
 import { errorMessage } from "../../../lib/error-codes";
 import { toast } from "../../../lib/toast";
+import { cn } from "../../../lib/utils";
 import { Button } from "../../../components/ui/button";
 import { Dialog } from "../../../components/ui/misc";
 import { parseCsv } from "../import";
@@ -229,7 +230,7 @@ export function ImportDialog({
                 key={c.source}
                 className="flex items-center gap-3 rounded border p-2 text-sm"
               >
-                <span className="font-medium min-w-[80px]">{c.source}</span>
+                <span className="font-medium min-w-20">{c.source}</span>
                 <span className="text-muted-foreground">
                   {tr("glossary.current")}
                   {c.existingTarget}
@@ -239,7 +240,7 @@ export function ImportDialog({
                   {c.newTarget}
                 </span>
                 <button
-                  className={`ml-auto rounded px-2 py-0.5 text-xs ${c.decision === "overwrite" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+                  className={cn("ml-auto rounded px-2 py-0.5 text-xs", c.decision === "overwrite" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}
                   onClick={() => toggleConflict(conflictPage * PAGE_SIZE + i)}
                 >
                   {c.decision === "overwrite"

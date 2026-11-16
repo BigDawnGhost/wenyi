@@ -83,7 +83,7 @@ export function Accounting({
           </div>
         ))}
       </dl>
-      <div className="border-t pt-4">
+      <div className="pt-4">
         <h3 className="flex items-center gap-2 text-sm font-medium">
           <BarChart3
             className="h-4 w-4 text-muted-foreground"

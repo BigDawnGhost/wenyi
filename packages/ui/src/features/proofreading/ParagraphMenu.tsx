@@ -88,7 +88,7 @@ export function ParagraphMenu({
       ref={popup}
       role="menu"
       aria-label={t("proofreading.paragraphActions")}
-      className="fixed z-50 w-52 max-w-[calc(100vw-16px)] rounded-lg border bg-background p-1 shadow-lg"
+      className="pop-content fixed z-50 w-52 max-w-[calc(100vw-16px)] rounded-xl bg-background p-1 shadow-e4"
       style={{ left: anchor.x, top: anchor.y }}
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
@@ -128,7 +128,7 @@ export function ParagraphMenu({
         <History className="h-4 w-4" />
         {t("proofreading.precisionDrafts")}
       </button>
-      <div role="separator" className="my-1 border-t" />
+      <div role="separator" className="my-1 border-t border-black/[0.05] dark:border-white/[0.07]" />
       {anchor.selection && (
         <button role="menuitem" className={item} onClick={() => void copy(selectionText ? selectionText() : anchor.selection)}>
           <Copy className="h-4 w-4" />

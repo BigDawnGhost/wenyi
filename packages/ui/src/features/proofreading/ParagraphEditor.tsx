@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { toast } from "../../lib/toast";
+import { cn } from "../../lib/utils";
 import { useI18n } from "../../i18n";
 import { api } from "../../api/client";
 import type { ChapterSegments } from "../../api/types";
@@ -131,7 +132,7 @@ export function ParagraphEditor({
     <dialog
       ref={dialog}
       aria-labelledby="paragraph-editor-title"
-      className="fixed inset-0 m-auto w-[calc(100%-32px)] max-w-6xl max-h-[90dvh] overflow-hidden rounded-xl border bg-background p-0 text-foreground shadow-xl backdrop:bg-black/30 backdrop:backdrop-blur-[2px] open:flex open:flex-col"
+      className="pop-content fixed inset-0 m-auto w-dialog max-w-6xl max-h-dialog overflow-hidden rounded-2xl bg-card p-0 text-foreground shadow-e4 backdrop:bg-black/30 backdrop:backdrop-blur-xs open:flex open:flex-col"
       onCancel={(event) => {
         event.preventDefault();
         close();
@@ -148,7 +149,7 @@ export function ParagraphEditor({
           close();
       }}
     >
-      <header className="shrink-0 space-y-2 border-b p-5 pr-14">
+      <header className="shrink-0 space-y-2 border-b border-black/[0.05] p-5 pr-14 dark:border-white/[0.07]">
         <h2
           ref={heading}
           id="paragraph-editor-title"
@@ -170,7 +171,7 @@ export function ParagraphEditor({
       <div
         role="tablist"
         aria-label={t("proofreading.paragraphEditor")}
-        className="flex shrink-0 gap-5 border-b px-5"
+        className="flex shrink-0 gap-5 border-b border-black/[0.05] px-5 dark:border-white/[0.07]"
       >
         {(["edit", "history", "precision"] as const).map((tab, index, tabs) => (
           <button
@@ -181,7 +182,7 @@ export function ParagraphEditor({
             aria-controls="paragraph-panel"
             aria-selected={view === tab}
             tabIndex={view === tab ? 0 : -1}
-            className={`border-b-2 py-3 text-sm ${view === tab ? "border-foreground font-medium" : "border-transparent text-muted-foreground"}`}
+            className={cn("border-b-2 py-3 text-sm", view === tab ? "border-foreground font-medium" : "border-transparent text-muted-foreground")}
             onClick={() => setView(tab)}
             onKeyDown={(event) => {
               if (
@@ -243,7 +244,7 @@ export function ParagraphEditor({
           </div>
         )}
         <div
-          className={`grid gap-6 ${view !== "precision" ? "grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" : ""}`}
+          className={cn("grid gap-6", view !== "precision" && "grid-cols-[minmax(0,2fr)_minmax(0,3fr)]")}
         >
           <section className="min-w-0 space-y-3">
             <h3 className="text-sm font-medium">{t("common.source")}</h3>
@@ -301,7 +302,7 @@ export function ParagraphEditor({
           </section>
         </div>
       </div>
-      <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t bg-background p-4">
+      <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-black/[0.05] bg-card p-4 dark:border-white/[0.07]">
         {draft !== (baseline ?? "") && (
           <p className="mr-auto text-xs text-muted-foreground">
             {t("proofreading.unsavedChanges")}

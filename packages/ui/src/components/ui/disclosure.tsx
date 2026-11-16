@@ -32,7 +32,7 @@ export function Disclosure({
         if (event.currentTarget.open) setVisited(true);
       }}
       onInvalidCapture={() => setOpen(true)}
-      className={cn("rounded-lg border p-4", className)}
+      className={cn("rounded-xl bg-card p-4 shadow-e1", className)}
     >
       <summary className="disclosure-summary cursor-pointer text-sm font-medium">
         <ChevronRight className="disclosure-chevron" aria-hidden="true" />

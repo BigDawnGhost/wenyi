@@ -29,42 +29,42 @@ function tokenBreakdown(slot: Record<string, unknown>): TokenPart[] {
     {
       label: "accounting.cachedInput",
       value: parts.cachedInput,
-      color: "bg-sky-300",
+      color: "bg-chart-1",
     },
     ...(parts.writtenInput !== 0
       ? [
           {
             label: "accounting.writtenInput" as const,
             value: parts.writtenInput,
-            color: "bg-amber-500",
+            color: "bg-chart-2",
           },
         ]
       : []),
     {
       label: "accounting.uncachedInput",
       value: parts.uncachedInput,
-      color: "bg-sky-600 dark:bg-sky-400",
+      color: "bg-chart-3",
     },
     ...(parts.unknownInput
       ? [
           {
             label: "accounting.unknownInput" as const,
             value: parts.unknownInput,
-            color: "bg-slate-300",
+            color: "bg-chart-4",
           },
         ]
       : []),
     {
       label: "data.outputTokens",
       value: amount(slot.completion_tokens),
-      color: "bg-teal-500 dark:bg-teal-400",
+      color: "bg-chart-5",
     },
     ...(parts.other
       ? [
           {
             label: "accounting.unclassifiedTokens" as const,
             value: parts.other,
-            color: "bg-slate-500",
+            color: "bg-chart-6",
           },
         ]
       : []),
@@ -79,7 +79,7 @@ function TokenBar({ parts, scale }: { parts: TokenPart[]; scale: number }) {
   );
   return (
     <div
-      className="flex h-2.5 overflow-hidden rounded-full bg-muted"
+      className="flex h-2.5 overflow-hidden rounded-full bg-chart-track"
       aria-hidden="true"
     >
       {parts.map(({ label, value, color }) => (
@@ -131,7 +131,7 @@ export default function UsageChart({
             className={cn(
               "min-w-0 flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               key === group
-                ? "bg-background text-foreground shadow-sm"
+                ? "bg-card text-foreground shadow-e1"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >

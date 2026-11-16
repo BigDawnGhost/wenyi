@@ -245,66 +245,70 @@ export default function CreateProjectDialog() {
             project?.error
           }
         />
-        <div className="space-y-2">
-          <Label htmlFor="project-name">{tr("createProject.projectName")}</Label>
-          <Input
-            ref={nameRef}
-            id="project-name"
-            value={name}
-            disabled={locked}
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
-        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,1fr)]">
-          <div className="min-w-0 space-y-2">
-            <Label htmlFor="source-language">{tr("createProject.sourceLanguage")}</Label>
-            <Select
-              id="source-language"
-              value={source}
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="space-y-2">
+            <Label htmlFor="project-name">{tr("createProject.projectName")}</Label>
+            <Input
+              ref={nameRef}
+              id="project-name"
+              value={name}
               disabled={locked}
-              onValueChange={setSource}
-            >
-              <SelectItem value="auto">{tr("progress.detectAutomatically")}</SelectItem>
-              {languages.map((l) => (
-                <SelectItem key={l.code} value={l.code}>
-                  {languageName(l.code, l.name, locale)} ({l.code})
-                </SelectItem>
-              ))}
-            </Select>
+              onChange={(e) => setName(e.target.value)}
+            />
           </div>
-          <ArrowRight
-            className="mb-2.5 h-4 w-4 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <div className="min-w-0 space-y-2">
-            <Label htmlFor="target-language">{tr("createProject.targetLanguage")}</Label>
-            <Select
-              id="target-language"
-              value={target}
-              disabled={locked || !caps}
-              onValueChange={setTarget}
-            >
-              {languages.map((l) => (
-                <SelectItem key={l.code} value={l.code}>
-                  {languageName(l.code, l.name, locale)} ({l.code})
-                </SelectItem>
-              ))}
-            </Select>
-          </div>
-          {(!pid || savedPipeline) && (
-            <div className="col-span-3 min-w-0 space-y-2 sm:col-span-1">
-              <Label htmlFor="prompt-genre">{tr("createProject.promptGenre")}</Label>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,1fr)]">
+            <div className="min-w-0 space-y-2">
+              <Label htmlFor="source-language">{tr("createProject.sourceLanguage")}</Label>
               <Select
-                id="prompt-genre"
-                value={displayedGenre}
+                id="source-language"
+                value={source}
                 disabled={locked}
-                onValueChange={(value) => setPromptGenre(value as typeof promptGenre)}
+                onValueChange={setSource}
               >
-                <SelectItem value="literary">{tr("createProject.literaryGenre")}</SelectItem>
-                <SelectItem value="academic">{tr("createProject.academicGenre")}</SelectItem>
+                <SelectItem value="auto">{tr("progress.detectAutomatically")}</SelectItem>
+                {languages.map((l) => (
+                  <SelectItem key={l.code} value={l.code}>
+                    {languageName(l.code, l.name, locale)} ({l.code})
+                  </SelectItem>
+                ))}
               </Select>
             </div>
-          )}
+            <ArrowRight
+              className="mb-2.5 h-4 w-4 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <div className="min-w-0 space-y-2">
+              <Label htmlFor="target-language">{tr("createProject.targetLanguage")}</Label>
+              <Select
+                id="target-language"
+                value={target}
+                disabled={locked || !caps}
+                onValueChange={setTarget}
+              >
+                {languages.map((l) => (
+                  <SelectItem key={l.code} value={l.code}>
+                    {languageName(l.code, l.name, locale)} ({l.code})
+                  </SelectItem>
+                ))}
+              </Select>
+            </div>
+            {(!pid || savedPipeline) && (
+              <div className="col-span-3 min-w-0 space-y-2 sm:col-span-1">
+                <Label htmlFor="prompt-genre">{tr("createProject.promptGenre")}</Label>
+                <Select
+                  id="prompt-genre"
+                  value={displayedGenre}
+                  disabled={locked}
+                  onValueChange={(value) => setPromptGenre(value as typeof promptGenre)}
+                >
+                  <SelectItem value="literary">{tr("createProject.literaryGenre")}</SelectItem>
+                  <SelectItem value="academic">{tr("createProject.academicGenre")}</SelectItem>
+                </Select>
+              </div>
+            )}
+          </div>
         </div>
         {sameLanguage && (
           <ErrorNotice error={tr("createProject.theSourceAndTargetLanguagesAreThe")} />
@@ -325,18 +329,20 @@ export default function CreateProjectDialog() {
           }}
         />
         {!pid && extension === "pdf" && (
-          <div className="space-y-2">
-            <Label htmlFor="pdf-backend">{tr("settings.pdfParser")}</Label>
-            <Select
-              id="pdf-backend"
-              value={pdfBackend}
-              disabled={locked}
-              onValueChange={(value) => setPdfBackend(value as typeof pdfBackend)}
-            >
-              <SelectItem value="">{tr("createProject.serverDefault")}</SelectItem>
-              <SelectItem value="mineru">MinerU</SelectItem>
-              <SelectItem value="babeldoc">BabelDOC</SelectItem>
-            </Select>
+          <div className="rounded-xl border border-border bg-card p-4">
+            <div className="space-y-2">
+              <Label htmlFor="pdf-backend">{tr("settings.pdfParser")}</Label>
+              <Select
+                id="pdf-backend"
+                value={pdfBackend}
+                disabled={locked}
+                onValueChange={(value) => setPdfBackend(value as typeof pdfBackend)}
+              >
+                <SelectItem value="">{tr("createProject.serverDefault")}</SelectItem>
+                <SelectItem value="mineru">MinerU</SelectItem>
+                <SelectItem value="babeldoc">BabelDOC</SelectItem>
+              </Select>
+            </div>
           </div>
         )}
         {/* Existing projects keep their directory; this picker never moves them. */}

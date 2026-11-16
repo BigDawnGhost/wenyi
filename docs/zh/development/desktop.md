@@ -269,3 +269,45 @@ git diff --check
 诊断隐私测试共用 [Desktop 夹具](../../../apps/desktop/diagnostic-fixtures.json#L1)。
 浏览器 IPC mock 不能验证发行包的系统对话框、托盘、进程所有权或 OS 安装行为；
 各支持目标必须分别验收，缺少的集成服务应单独说明。
+
+## 跨平台样式走查
+
+各发行包使用不同的 WebView 引擎：Windows 为 WebView2（Evergreen，跟随当前
+Chromium），macOS 为 WKWebView（随系统分发，按 Safari 15.4 能力档评估），Linux 为
+WebKitGTK 4.1（随发行版提供，Ubuntu 22.04 与 Debian 12 为 2.36）。CI 已通过可选的
+`web-webkit` Playwright 项目覆盖 WebKit 引擎族（见 [Web 开发](web.md)）；真实
+WebView 行为仍需在打包后或大幅样式改动后，于各支持系统人工走查，窗口约
+1280×800 与 1920×1080 两档：
+
+- [ ] 主布局铺满窗口、不露出底色（`h-dvh`），resize／最大化后仍正确。
+- [ ] 设置页吸底操作栏滚动时保持固定，半透明模糊背景正常。
+- [ ] Dialog 遮罩保留 2px 模糊，内容垂直居中，超高内容在最大高度内滚动。
+- [ ] 原生 `<dialog>` 编辑器（如段落编辑器）可正常打开，Esc／取消不丢失状态，
+  关闭后焦点返还。
+- [ ] checkbox／radio 自绘外观（选中、禁用）在明暗两套主题下正常。
+- [ ] 焦点环仅在键盘聚焦时出现（`:focus-visible`）。
+- [ ] 原生控件配色跟随明暗主题（`color-scheme`）。
+- [ ] 开启 `prefers-reduced-motion` 后，占位动画停止。
+- [ ] 品牌字标字体加载无可见闪替。
+- [ ] Select 弹层不超出窗口边缘。
+
+平台附加项：
+
+- Windows／WebView2：控制台无 CSP 违规，125%／150% 系统缩放下布局不错位。
+- macOS／WKWebView：disclosure 折叠箭头正常旋转，触控板弹性滚动不影响吸底栏。
+- Linux／WebKitGTK：首批请求成功（超时／中止路径必须在该引擎族上可用）；dialog
+  遮罩仍有模糊——退化为纯色说明构建产物丢失了 `-webkit-backdrop-filter` 前缀；
+  WebKit 专属的 disclosure 标记保持隐藏。
+
+## 打包冒烟检查
+
+每次发行对各 OS 安装包（NSIS `.exe`、`.dmg`、AppImage，经 `pnpm desktop:build`
+构建）执行一次；构建本身见[发行](releasing.md)。
+
+1. 安装包可启动，首屏显示 runtime 占位，而非白屏。
+2. 引擎就绪后，在打包环境快速过一遍通用样式走查：字体、视口布局、dialog、主题切换。
+3. 首批网络请求成功（登录、项目列表）；断网时 UI 提示请求超时，而不是挂死。
+4. 原生能力样式正常：诊断页复制按钮给出成功／失败提示，拖放文件显示高亮环，
+   导出打开原生保存对话框。
+5. 未配置发行签名时，更新面板显示手动模式，而不是报错。
+6. 控制台与诊断无 CSP 违规、无 `frontend_render_failed` 事件。

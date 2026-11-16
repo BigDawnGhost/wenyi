@@ -51,6 +51,9 @@ export function registerTests() {
         })).toBeFocused();
         await page.keyboard.press("Enter");
         await expect(style).toHaveText(chinese ? "学术" : "Academic");
+        // Dismissal restores focus asynchronously; do not race it with the next control.
+        await expect(page.getByRole("listbox")).toHaveCount(0);
+        await expect(style).toBeFocused();
         const precisionSwitch = page.getByRole("switch", {
           name: chinese ? "三译合润" : "Three drafts + synthesis", exact: true,
         });

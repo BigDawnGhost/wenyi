@@ -4,7 +4,7 @@
 // default Tailwind scales are re-declared at their exact 16px-root values.
 // Computed pixel results are identical to the rem defaults at a 16px root.
 const spacingKeys = [
-  0, "px", 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14,
+  0, "px", 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 3.75, 4, 4.5, 5, 6, 7, 8, 9, 10, 11, 12, 14,
   16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 72, 80, 96, 112, 128,
   144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 384,
 ];
@@ -58,6 +58,7 @@ export default {
         "7xl": ["72px", { lineHeight: "1" }],
         "8xl": ["96px", { lineHeight: "1" }],
         "9xl": ["128px", { lineHeight: "1" }],
+        brand: "20px",
       },
       maxWidth: {
         xs: "320px",
@@ -72,8 +73,28 @@ export default {
         "6xl": "1152px",
         "7xl": "1280px",
       },
+      width: {
+        select: "140px",
+        dialog: "calc(100% - 32px)",
+      },
+      minWidth: {
+        page: "752px",
+        connectivity: "560px",
+      },
+      minHeight: {
+        dropzone: "88px",
+        editor: "420px",
+        synopsis: "220px",
+      },
+      maxHeight: {
+        dialog: "90dvh",
+      },
+      backdropBlur: {
+        xs: "2px",
+      },
       colors: {
         border: "hsl(var(--border))",
+        subtle: "hsl(var(--border-subtle))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
@@ -94,13 +115,63 @@ export default {
           DEFAULT: "hsl(var(--muted))",
           foreground: "hsl(var(--muted-foreground))",
         },
+        placeholder: "hsl(var(--text-placeholder))",
         accent: {
           DEFAULT: "hsl(var(--accent))",
           foreground: "hsl(var(--accent-foreground))",
         },
+        hover: "hsl(var(--hover))",
+        selected: "hsl(var(--selected))",
+        surface: "hsl(var(--surface))",
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
+        },
+        "status-success": {
+          DEFAULT: "hsl(var(--status-success))",
+          foreground: "hsl(var(--status-success-foreground))",
+          border: "hsl(var(--status-success-border))",
+        },
+        "status-warning": {
+          DEFAULT: "hsl(var(--status-warning))",
+          foreground: "hsl(var(--status-warning-foreground))",
+          border: "hsl(var(--status-warning-border))",
+        },
+        "status-danger": {
+          DEFAULT: "hsl(var(--status-danger))",
+          foreground: "hsl(var(--status-danger-foreground))",
+          border: "hsl(var(--status-danger-border))",
+        },
+        "status-info": {
+          DEFAULT: "hsl(var(--status-info))",
+          foreground: "hsl(var(--status-info-foreground))",
+          border: "hsl(var(--status-info-border))",
+        },
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+          foreground: "hsl(var(--warning-foreground))",
+          text: "hsl(var(--warning-text))",
+        },
+        info: {
+          DEFAULT: "hsl(var(--info))",
+          foreground: "hsl(var(--info-foreground))",
+        },
+        chart: {
+          track: "hsl(var(--chart-track))",
+          1: "hsl(var(--chart-1))",
+          2: "hsl(var(--chart-2))",
+          3: "hsl(var(--chart-3))",
+          4: "hsl(var(--chart-4))",
+          5: "hsl(var(--chart-5))",
+          6: "hsl(var(--chart-6))",
+        },
+        "diff-removed": {
+          DEFAULT: "hsl(var(--diff-removed-bg))",
+          foreground: "hsl(var(--diff-removed-foreground))",
+        },
+        "diff-added": {
+          DEFAULT: "hsl(var(--diff-added-bg))",
+          foreground: "hsl(var(--diff-added-foreground))",
         },
       },
       borderRadius: {
@@ -112,10 +183,27 @@ export default {
         "2xl": "16px",
         "3xl": "24px",
       },
+      // Elevation scale backed by the theme-switching --shadow-* variables in
+      // packages/ui/src/index.css; see docs/development/design-tokens.md.
+      boxShadow: {
+        e0: "var(--shadow-e0)",
+        e1: "var(--shadow-e1)",
+        e2: "var(--shadow-e2)",
+        e3: "var(--shadow-e3)",
+        e4: "var(--shadow-e4)",
+        "focus-ring": "var(--shadow-focus-ring)",
+        sidebar: "var(--shadow-sidebar)",
+      },
       transitionDuration: {
+        "motion-fast": "120ms",
+        "motion-normal": "200ms",
+        "motion-slow": "320ms",
         sidebar: "280ms",
       },
       transitionTimingFunction: {
+        standard: "cubic-bezier(0.2, 0, 0, 1)",
+        decelerate: "cubic-bezier(0.05, 0.7, 0.1, 1)",
+        accelerate: "cubic-bezier(0.3, 0, 0.8, 0.15)",
         sidebar: "cubic-bezier(0.22, 1, 0.36, 1)",
       },
     },
