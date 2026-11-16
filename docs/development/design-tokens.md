@@ -13,11 +13,12 @@ page drifts from them.
 
 Semantic colors are HSL triplets consumed as hsl(var(--token)), so the .dark class swaps
 values without touching utilities. State colors pair a base with a -foreground variant.
-Status labels share muted surfaces, readable text, fine borders and compact rounded corners
-in both themes: status-success uses sage, status-warning amber, status-danger rose and
-status-info blue-gray. Neutral labels reuse secondary, secondary-foreground and border.
-The status palettes are independent of the stronger action and alert colors, so a failed
-status stays quiet without weakening destructive buttons or error notices.
+Light status labels use fresh pastel surfaces, clear colored text and fine tinted borders:
+status-success uses green, status-warning amber, status-danger red and status-info blue.
+Dark status labels keep muted, lower-saturation colors. Both themes use compact rounded
+corners and readable text; neutral labels reuse secondary, secondary-foreground and border.
+The status palettes remain independent of action and alert colors, so adjusting a status
+label does not change destructive buttons or inline error notices.
 Notifications follow the application theme (including system mode) and reuse these status
 palettes; neutral notices use card colors. Chart fills and matching legend markers use
 chart-1 through chart-6 over chart-track, with a lower-saturation dark palette.
@@ -45,18 +46,18 @@ chart-1 through chart-6 over chart-track, with a lower-saturation dark palette.
 | `--border` | `border` | `hsl(240 5.9% 90%)` | `hsl(0 0% 19.6%)` |
 | `--input` | `input` | `hsl(240 5.9% 90%)` | `hsl(0 0% 17.6%)` |
 | `--ring` | `ring` | `hsl(240 5.9% 10%)` | `hsl(0 0% 60%)` |
-| `--status-success` | `status-success` | `hsl(152 18% 95%)` | `hsl(154 13% 16%)` |
-| `--status-success-foreground` | `status-success-foreground` | `hsl(154 24% 29%)` | `hsl(152 22% 73%)` |
-| `--status-success-border` | `status-success-border` | `hsl(152 16% 83%)` | `hsl(154 14% 28%)` |
-| `--status-warning` | `status-warning` | `hsl(38 35% 94%)` | `hsl(36 18% 16%)` |
-| `--status-warning-foreground` | `status-warning-foreground` | `hsl(32 45% 30%)` | `hsl(38 34% 72%)` |
-| `--status-warning-border` | `status-warning-border` | `hsl(38 28% 80%)` | `hsl(36 20% 28%)` |
-| `--status-danger` | `status-danger` | `hsl(4 30% 96%)` | `hsl(4 18% 18%)` |
-| `--status-danger-foreground` | `status-danger-foreground` | `hsl(4 38% 39%)` | `hsl(4 36% 76%)` |
-| `--status-danger-border` | `status-danger-border` | `hsl(4 25% 84%)` | `hsl(4 22% 32%)` |
-| `--status-info` | `status-info` | `hsl(210 24% 95%)` | `hsl(210 18% 17%)` |
-| `--status-info-foreground` | `status-info-foreground` | `hsl(210 32% 33%)` | `hsl(210 26% 74%)` |
-| `--status-info-border` | `status-info-border` | `hsl(210 22% 82%)` | `hsl(210 20% 30%)` |
+| `--status-success` | `status-success` | `hsl(138 76% 97%)` | `hsl(154 13% 16%)` |
+| `--status-success-foreground` | `status-success-foreground` | `hsl(142 72% 29%)` | `hsl(152 22% 73%)` |
+| `--status-success-border` | `status-success-border` | `hsl(141 79% 85%)` | `hsl(154 14% 28%)` |
+| `--status-warning` | `status-warning` | `hsl(48 100% 96%)` | `hsl(36 18% 16%)` |
+| `--status-warning-foreground` | `status-warning-foreground` | `hsl(35 92% 32%)` | `hsl(38 34% 72%)` |
+| `--status-warning-border` | `status-warning-border` | `hsl(45 95% 76%)` | `hsl(36 20% 28%)` |
+| `--status-danger` | `status-danger` | `hsl(0 86% 97%)` | `hsl(4 18% 18%)` |
+| `--status-danger-foreground` | `status-danger-foreground` | `hsl(0 72% 45%)` | `hsl(4 36% 76%)` |
+| `--status-danger-border` | `status-danger-border` | `hsl(0 90% 86%)` | `hsl(4 22% 32%)` |
+| `--status-info` | `status-info` | `hsl(214 100% 97%)` | `hsl(210 18% 17%)` |
+| `--status-info-foreground` | `status-info-foreground` | `hsl(217 80% 42%)` | `hsl(210 26% 74%)` |
+| `--status-info-border` | `status-info-border` | `hsl(214 95% 85%)` | `hsl(210 20% 30%)` |
 | `--ink` | - | `hsl(13 13 13)` | `hsl(0 0% 100%)` |
 | `--hover` | `hover` | `hsl(var(--ink) / 0.05)` | `hsl(var(--ink) / 0.08)` |
 | `--selected` | `selected` | `hsl(var(--ink) / 0.08)` | `hsl(var(--ink) / 0.12)` |

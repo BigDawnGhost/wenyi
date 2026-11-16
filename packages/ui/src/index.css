@@ -57,19 +57,19 @@
     --warning-text: 26 90% 37%;
     --info: 200 96% 32%;
     --info-foreground: 0 0% 98%;
-    /* Status labels stay quiet; action and alert colors remain independent. */
-    --status-success: 152 18% 95%;
-    --status-success-foreground: 154 24% 29%;
-    --status-success-border: 152 16% 83%;
-    --status-warning: 38 35% 94%;
-    --status-warning-foreground: 32 45% 30%;
-    --status-warning-border: 38 28% 80%;
-    --status-danger: 4 30% 96%;
-    --status-danger-foreground: 4 38% 39%;
-    --status-danger-border: 4 25% 84%;
-    --status-info: 210 24% 95%;
-    --status-info-foreground: 210 32% 33%;
-    --status-info-border: 210 22% 82%;
+    /* Light status labels use fresh pastels; action and alert colors stay independent. */
+    --status-success: 138 76% 97%;
+    --status-success-foreground: 142 72% 29%;
+    --status-success-border: 141 79% 85%;
+    --status-warning: 48 100% 96%;
+    --status-warning-foreground: 35 92% 32%;
+    --status-warning-border: 45 95% 76%;
+    --status-danger: 0 86% 97%;
+    --status-danger-foreground: 0 72% 45%;
+    --status-danger-border: 0 90% 86%;
+    --status-info: 214 100% 97%;
+    --status-info-foreground: 217 80% 42%;
+    --status-info-border: 214 95% 85%;
     /* Chart hues retain their meaning; the dark palette reduces saturation and glare. */
     --chart-track: var(--muted);
     --chart-1: 199.4 95.5% 73.9%;

@@ -12,6 +12,7 @@ import { Textarea } from "../../components/ui/form";
 import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
 
 import { ModelSelection } from "./ModelSelection";
+import { ExportSettings } from "./ExportSettings";
 import { SettingsActionBar, SettingsSection } from "./SettingsSection";
 import { WorkflowSettings, workflowField } from "./WorkflowSettings";
 import { SETTINGS_CONTENT_CLASSNAME } from "./SettingsRow";
@@ -116,6 +117,13 @@ export default function SettingsPage() {
           <SettingsSection title={tr("settings.sectionWorkflow")} className="py-0" grouped>
             <WorkflowSettings
               scope="project"
+              config={effective}
+              disabled={formDisabled}
+              onField={setField}
+            />
+          </SettingsSection>
+          <SettingsSection title={tr("settings.sectionExport")} className="py-0" grouped>
+            <ExportSettings
               config={effective}
               disabled={formDisabled}
               onField={setField}

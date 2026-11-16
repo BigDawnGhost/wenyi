@@ -4,8 +4,8 @@ import { fakeApi, pid } from "../../sandbox/fixtures";
 
 /** Whether the Desktop host must keep running this suite as well.
  *
- * Asserts switch and radio geometry plus draft retention at 1x and 1.25x zoom
- * on the shared export page, without invoking the host's export service.
+ * Asserts radio geometry on export and switch geometry plus draft retention in
+ * project settings at 1x and 1.25x zoom, without invoking the host's export service.
  */
 export const desktopHostSensitive = false;
 
@@ -20,17 +20,6 @@ for (const theme of ["light", "dark"]) {
         document.documentElement.classList.toggle("dark", theme === "dark");
         document.documentElement.style.zoom = String(zoom);
       }, { theme, zoom });
-      const summary = page.locator("summary");
-      await expect(summary.locator("svg")).toHaveCount(1);
-      await expect(summary).toHaveCSS("list-style-type", "none");
-      expect(await summary.evaluate(node => getComputedStyle(node, "::marker").content)).toBe('""');
-      await summary.focus();
-      await page.keyboard.press("Enter");
-      const punctuation = page.getByRole("switch", {
-        name: "Normalize punctuation on export", exact: true, includeHidden: true,
-      });
-      await expect(punctuation).toBeVisible();
-      await expect(page.getByRole("checkbox")).toHaveCount(0);
       for (const input of await page.getByRole("radio").all()) {
         await expect(input).toHaveCSS("appearance", "none");
         await expect(input).toHaveCSS("width", "16px");
@@ -45,13 +34,17 @@ for (const theme of ["light", "dark"]) {
         expect(Math.abs(geometry.center)).toBeLessThan(1);
       }
       await page.getByRole("radio", { name: "Bilingual", exact: true }).check();
-      await expect(page.getByRole("switch")).toHaveCount(3);
+      await expect(page.getByRole("switch")).toHaveCount(0);
+      await page.getByRole("link", { name: "Project settings", exact: true }).click();
+      const preferences = page.getByRole("region", { name: "Export preferences", exact: true });
+      await expect(preferences.getByRole("switch")).toHaveCount(3);
+      await expect(page.getByRole("checkbox")).toHaveCount(0);
       for (const [name, checked] of [
         ["Normalize punctuation on export", true],
         ["Include an “About this translation” page", true],
         ["Preserve source formatting in bilingual output", false],
       ] as const) {
-        const control = page.getByRole("switch", { name, exact: true });
+        const control = preferences.getByRole("switch", { name, exact: true });
         await expect(control).toHaveCSS("width", "36px");
         await expect(control).toHaveCSS("height", "20px");
         await expect(control).toBeChecked({ checked });
@@ -64,11 +57,7 @@ for (const theme of ["light", "dark"]) {
         await label.click();
         await expect(control).toBeChecked({ checked: !checked });
       }
-      await summary.click();
-      await expect(punctuation).toBeAttached();
-      await summary.focus();
-      await page.keyboard.press("Space");
-      await expect(punctuation).toBeVisible();
+      const punctuation = preferences.getByRole("switch", { name: "Normalize punctuation on export", exact: true });
       await expect(punctuation).not.toBeChecked();
       await expect(punctuation).toHaveCSS("outline-style", "none");
     });

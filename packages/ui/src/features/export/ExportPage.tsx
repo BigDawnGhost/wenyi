@@ -4,14 +4,12 @@ import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "../../lib/toast";
 import { api } from "../../api/client";
-import type { ExportFormat } from "../../api/types";
+import type { ExportFormat, ExportOptions } from "../../api/types";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { StatusBadge } from "../../components/StatusBadge";
-import { Disclosure } from "../../components/ui/disclosure";
-import { Label, Switch } from "../../components/ui/form";
-import { Select, SelectItem } from "../../components/ui/select";
+import { Label } from "../../components/ui/form";
 import { ErrorNotice } from "../../components/ui/data";
 import { Progress } from "../../components/ui/progress";
 import { cn, formatBytes } from "../../lib/utils";
@@ -29,12 +27,6 @@ export default function ExportPage() {
   });
   const [format, setFormat] = useState<ExportFormat | "">("");
   const [bilingual, setBilingual] = useState(false);
-  const [order, setOrder] = useState<"target_first" | "source_first">(
-    "target_first",
-  );
-  const [about, setAbout] = useState(true);
-  const [punctuation, setPunctuation] = useState(true);
-  const [preserveStyle, setPreserveStyle] = useState(false);
   const { data: project, error: projectError } = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid),
@@ -53,14 +45,6 @@ export default function ExportPage() {
     if (config && !defaultsLoaded) {
       const output = (config.effective.output || {}) as Record<string, unknown>;
       setBilingual(Boolean(output.bilingual));
-      setPunctuation(output.punctuation_normalize !== false);
-      setAbout(output.about_page !== false);
-      setPreserveStyle(Boolean(output.bilingual_preserve_source_style));
-      setOrder(
-        output.bilingual_order === "source_first"
-          ? "source_first"
-          : "target_first",
-      );
       setDefaultsLoaded(true);
     }
   }, [config, defaultsLoaded]);
@@ -69,13 +53,14 @@ export default function ExportPage() {
   const pdf = fmt === "pdf" || (!fmt && project?.fmt === "pdf" && formats.includes("pdf"));
   const create = useMutation({
     mutationFn: async () => {
-      const options = {
+      const output = (config?.effective.output || {}) as Record<string, unknown>;
+      const options: ExportOptions = {
         format: fmt || undefined,
         bilingual,
-        order,
-        about_page: about,
-        preserve_source_style: !pdf && preserveStyle,
-        punctuation_normalize: punctuation,
+        order: output.bilingual_order === "source_first" ? "source_first" : "target_first",
+        about_page: output.about_page !== false,
+        preserve_source_style: !pdf && Boolean(output.bilingual_preserve_source_style),
+        punctuation_normalize: output.punctuation_normalize !== false,
       };
       if (saveExport) {
         const saved = await saveExport(pid, options);
@@ -171,59 +156,6 @@ export default function ExportPage() {
             {bilingual && pdf && (
               <p className="text-sm text-muted-foreground">{tr("export.pdfBilingualLayout")}</p>
             )}
-            <Disclosure title={tr("export.advanced")} error={create.error}>
-              <div className="flex gap-2 items-center text-sm">
-                <Switch
-                  id="export-punctuation"
-                  checked={punctuation}
-                  onCheckedChange={setPunctuation}
-                />
-                <Label htmlFor="export-punctuation" className="cursor-pointer font-normal leading-5">
-                  {tr("settings.normalizePunctuationOnExport")}
-                </Label>
-              </div>
-              {bilingual && (
-                <Select
-                  aria-label={tr("export.bilingualOrder")}
-                  value={order}
-                  onValueChange={(value) =>
-                    setOrder(
-                      value as "target_first" | "source_first",
-                    )
-                  }
-                  className="max-w-40"
-                >
-                  <SelectItem value="target_first">
-                    {tr("export.translationFirst")}
-                  </SelectItem>
-                  <SelectItem value="source_first">
-                    {tr("export.sourceFirst")}
-                  </SelectItem>
-                </Select>
-              )}
-              <div className="flex gap-2 items-center text-sm">
-                <Switch
-                  id="export-about"
-                  checked={about}
-                  onCheckedChange={setAbout}
-                />
-                <Label htmlFor="export-about" className="cursor-pointer font-normal leading-5">
-                  {tr("export.includeAnAboutThisTranslationPage")}
-                </Label>
-              </div>
-              {bilingual && !pdf && (
-                <div className="flex gap-2 items-center text-sm">
-                  <Switch
-                    id="export-preserve-style"
-                    checked={preserveStyle}
-                    onCheckedChange={setPreserveStyle}
-                  />
-                  <Label htmlFor="export-preserve-style" className="cursor-pointer font-normal leading-5">
-                    {tr("export.preserveSourceFormattingInBilingualOutput")}
-                  </Label>
-                </div>
-              )}
-            </Disclosure>
             <Button
               onClick={() => create.mutate()}
               disabled={

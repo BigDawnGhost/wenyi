@@ -1,6 +1,7 @@
 /** Approved host-facing primitives; implementation paths remain private. */
 export { Badge } from "./badge";
 export { Button } from "./button";
+export { Card } from "./card";
 export { ErrorNotice } from "./data";
 export { Label } from "./form";
 export { Dialog } from "./misc";

@@ -91,7 +91,7 @@ const stats = {
 };
 
 for (const theme of ["light", "dark"] as const) {
-  test(`all status badges share quiet, readable labels in ${theme}`, async ({ page }, testInfo) => {
+  test(`all status badges share readable, theme-appropriate colors in ${theme}`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.addInitScript(theme => {
       localStorage.setItem("wenyi.theme", theme);
@@ -104,8 +104,22 @@ for (const theme of ["light", "dark"] as const) {
       { status: "translating", label: "翻译中", tone: "status-info" },
       { status: "ready", label: "已就绪", tone: "secondary" },
     ];
+    const runStates = [
+      { status: "completed", label: "已完成", tone: "status-success" },
+      { status: "interrupted", label: "已中断", tone: "status-warning" },
+      { status: "failed", label: "失败", tone: "status-danger" },
+    ];
     await fakeApi(page, {
-      [`/projects/${pid}/stats`]: stats,
+      [`/projects/${pid}/stats`]: {
+        ...stats,
+        timing: {
+          ...stats.timing,
+          runs: stats.timing.runs.slice(0, 3).map((run, index) => ({
+            ...run,
+            status: runStates[index].status,
+          })),
+        },
+      },
       "/projects": states.map(({ status }, index) => ({
         ...project,
         id: index === 0 ? pid : `status-${status}`,
@@ -123,13 +137,43 @@ for (const theme of ["light", "dark"] as const) {
       await expectTokenColor(badge, "border-top-color",
         state.tone === "secondary" ? "border" : `${state.tone}-border`);
       await expectQuietLabelContrast(badge);
+      if (state.tone !== "secondary") {
+        const colors = await badge.evaluate(element => {
+          const style = getComputedStyle(element);
+          return [style.color, style.backgroundColor, style.borderTopColor].map(color => {
+            const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+            const maximum = Math.max(...channels) / 255;
+            const minimum = Math.min(...channels) / 255;
+            const lightness = (maximum + minimum) / 2;
+            const saturation = maximum === minimum ? 0
+              : (maximum - minimum) / (1 - Math.abs(2 * lightness - 1));
+            return { color, saturation, lightness };
+          });
+        });
+        for (const { color, saturation } of colors) {
+          if (theme === "light") {
+            expect(saturation, `${state.status}: ${color} should not look gray`).toBeGreaterThan(0.65);
+          } else {
+            expect(saturation, `${state.status}: ${color} should stay muted`).toBeLessThan(0.4);
+          }
+        }
+        if (theme === "light") expect(colors[1].lightness).toBeGreaterThanOrEqual(0.95);
+      }
     }
     await page.getByRole("main").locator(".grid").screenshot({
       path: testInfo.outputPath(`status-family-${theme}.png`),
     });
     await page.goto(`/projects/${pid}`);
     const runs = page.getByRole("list", { name: "运行记录", exact: true });
-    await expect(runs.getByText("已完成", { exact: true })).toHaveCount(2);
+    await expect(runs.getByRole("listitem")).toHaveCount(3);
+    for (const state of runStates) {
+      const badge = runs.getByText(state.label, { exact: true });
+      await expectTokenColor(badge, "background-color", state.tone);
+      await expectTokenColor(badge, "color", `${state.tone}-foreground`);
+      await expectTokenColor(badge, "border-top-color", `${state.tone}-border`);
+      await expect(badge).toHaveCSS("border-radius", "6px");
+      await expectQuietLabelContrast(badge);
+    }
     const badges = page.getByText("已完成", { exact: true });
     for (const badge of await badges.all()) {
       await expectTokenColor(badge, "background-color", "status-success");
@@ -139,10 +183,9 @@ for (const theme of ["light", "dark"] as const) {
       await expect(badge).toHaveCSS("border-radius", "6px");
       await expectQuietLabelContrast(badge);
     }
-    const interrupted = runs.getByText("已中断", { exact: true });
-    await expect(interrupted).toHaveCSS("border-radius", "6px");
-    await expectTokenColor(interrupted, "background-color", "status-warning");
-    await expectQuietLabelContrast(interrupted);
+    await page.getByRole("region", { name: "运行记录", exact: true }).screenshot({
+      path: testInfo.outputPath(`run-status-${theme}.png`),
+    });
     await page.screenshot({ path: testInfo.outputPath(`completed-status-${theme}.png`) });
   });
 }

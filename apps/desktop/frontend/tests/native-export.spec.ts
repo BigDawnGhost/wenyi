@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, pid, project } from "../../../../packages/ui/sandbox/fixtures";
+import { configuration, fakeApi, pid, project } from "../../../../packages/ui/sandbox/fixtures";
 import { chooseOption } from "../../../../packages/ui/tests/e2e/select-helper";
 
 const origin = "http://127.0.0.1:19481";
@@ -25,6 +25,13 @@ for (const [babeldoc, order] of [
         fmt: "pdf",
         output_formats: [...project.output_formats, ...(babeldoc ? ["pdf"] : [])],
       },
+      [`/projects/${pid}/config`]: {
+        ...configuration,
+        effective: {
+          ...configuration.effective,
+          output: { bilingual_order: order, bilingual_preserve_source_style: true },
+        },
+      },
     }, origin);
     await page.goto(`/projects/${pid}/export`);
     await expect(page.getByRole("button", { name: "EPUB", exact: true })).toBeVisible();
@@ -36,11 +43,8 @@ for (const [babeldoc, order] of [
     await pdf.click();
     await page.getByRole("radio", { name: "Bilingual", exact: true }).check();
     await expect(page.getByText(/Each PDF page pairs the original and translated pages side by side/)).toBeVisible();
-    await page.getByText("Layout and advanced options", { exact: true }).click();
     await expect(page.getByLabel("PDF export engine")).toHaveCount(0);
-    const bilingualOrder = page.getByLabel("Bilingual order", { exact: true });
-    await expect(bilingualOrder).toHaveText("Translation first");
-    await chooseOption(bilingualOrder, order === "target_first" ? "Translation first" : "Source first");
+    await expect(page.getByLabel("Bilingual order")).toHaveCount(0);
     await page.getByRole("button", { name: "Generate export", exact: true }).click();
     await expect(page.getByText("Saved to /fixture/book.pdf", { exact: true })).toBeVisible();
     const options = await page.evaluate(() =>
@@ -49,6 +53,7 @@ for (const [babeldoc, order] of [
     expect(options.format).toBe("pdf");
     expect(options.bilingual).toBe(true);
     expect(options.order).toBe(order);
+    expect(options.preserve_source_style).toBe(false);
     expect(options).not.toHaveProperty("pdf_engine");
   });
 }
@@ -64,24 +69,35 @@ test("HTML native save preserves the options and reports the HTML path", async (
     };
   });
   await fakeApi(page, {}, origin);
+  let saved = structuredClone(configuration);
+  await page.route(`**/projects/${pid}/config`, async route => {
+    if (route.request().method() === "PUT") {
+      const { yaml } = route.request().postDataJSON();
+      saved = { ...saved, yaml, effective: JSON.parse(yaml) };
+    }
+    await route.fulfill({ json: saved });
+  });
   let browserJobs = 0;
   page.on("request", request => {
     if (request.method() === "POST" && request.url().endsWith("/exports")) browserJobs++;
   });
+  await page.goto(`/projects/${pid}/settings`);
+  await page.getByRole("switch", { name: "Normalize punctuation on export", exact: true }).uncheck();
+  await page.getByRole("switch", { name: "Include an “About this translation” page", exact: true }).uncheck();
+  await chooseOption(page.getByLabel("Bilingual order"), "Source first");
+  await page.getByRole("switch", { name: "Preserve source formatting in bilingual output", exact: true }).check();
+  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+  await expect(page.getByText("Project settings saved", { exact: true })).toBeVisible();
   await page.goto(`/projects/${pid}/export`);
   await page.getByRole("button", { name: "HTML", exact: true }).click();
   await page.getByRole("radio", { name: "Bilingual", exact: true }).check();
-  await page.getByText("Layout and advanced options", { exact: true }).click();
-  await page.getByRole("switch", { name: "Normalize punctuation on export", exact: true }).uncheck();
-  await page.getByRole("switch", { name: "Include an “About this translation” page", exact: true }).uncheck();
-  await page.getByRole("switch", { name: "Preserve source formatting in bilingual output", exact: true }).check();
   await page.getByRole("button", { name: "Generate export", exact: true }).click();
   await expect(page.getByText("Saved to /fixture/book.html", { exact: true })).toBeVisible();
   expect(await page.evaluate(() =>
     (window as unknown as { savedOptions: Record<string, unknown> }).savedOptions,
   )).toMatchObject({
     format: "html", bilingual: true, punctuation_normalize: false,
-    about_page: false, preserve_source_style: true,
+    about_page: false, order: "source_first", preserve_source_style: true,
   });
   expect(browserJobs).toBe(0);
 });
