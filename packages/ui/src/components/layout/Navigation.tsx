@@ -36,7 +36,13 @@ export function SettingsNavigation({ collapsed }: { collapsed: boolean }) {
         <Button
           type="button"
           variant="ghost"
-          className={cn("w-full justify-start gap-2", collapsed && "justify-center px-2")}
+          className={cn(
+            "w-full justify-start gap-2 px-3",
+            // Sidebar links do not use the button press animation; keep the
+            // back control consistent with them.
+            "motion-safe:active:scale-100",
+            collapsed && "justify-center px-2",
+          )}
           aria-label={t("navigation.back")}
           title={collapsed ? t("navigation.back") : undefined}
           onClick={() => navigate(location.state?.settingsReturnTo ?? "/")}
@@ -87,7 +93,7 @@ export function NavigationLink({
           collapsed && "gap-0 px-2",
           isActive
             ? "bg-accent text-accent-foreground font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
-            : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
+            : "text-muted-foreground hover:text-foreground hover:bg-hover",
           className,
         )
       }
@@ -134,7 +140,7 @@ export function ProjectNavigation({
       >
         {name || pid}
       </p>
-      <div className="space-y-1.5">
+      <div className="space-y-1">
         {links.map((entry) => (
           <NavigationLink
             key={entry.to}
@@ -144,7 +150,6 @@ export function ProjectNavigation({
             collapsed={collapsed}
             end={entry.end}
             prefetch={entry.loader}
-            className="py-2.5"
           />
         ))}
       </div>
