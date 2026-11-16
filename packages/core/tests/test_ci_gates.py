@@ -90,6 +90,7 @@ def test_nightly_docker_proxy_images_are_prepared_before_integration():
     ]
 
 
+@pytest.mark.parametrize("repository", ["BigDawnGhost/wenyi", "contributor/wenyi"])
 @pytest.mark.parametrize(
     ("event", "ref", "expected"),
     [
@@ -100,7 +101,7 @@ def test_nightly_docker_proxy_images_are_prepared_before_integration():
         ("push", "refs/heads/docs/local-preview", False),
     ],
 )
-def test_documentation_deploys_only_from_main(event, ref, expected):
+def test_documentation_deploys_only_from_upstream_main(repository, event, ref, expected):
     workflow = yaml.safe_load((ROOT / ".github/workflows/docs.yml").read_text())
     jobs = workflow["jobs"]
     upload = next(
@@ -110,14 +111,11 @@ def test_documentation_deploys_only_from_main(event, ref, expected):
     )
     assert upload["if"] == jobs["deploy"]["if"]
     expression = jobs["deploy"]["if"].replace("&&", "and")
-    assert (
-        eval(
-            expression,
-            {"__builtins__": {}},
-            {"github": SimpleNamespace(event_name=event, ref=ref)},
-        )
-        is expected
-    )
+    assert eval(
+        expression,
+        {"__builtins__": {}},
+        {"github": SimpleNamespace(repository=repository, event_name=event, ref=ref)},
+    ) is (expected and repository == "BigDawnGhost/wenyi")
     assert jobs["deploy"]["needs"] == "build"
 
 
@@ -125,6 +123,7 @@ def test_documentation_build_is_read_only_and_uploads_only_the_static_site():
     workflow = yaml.safe_load((ROOT / ".github/workflows/docs.yml").read_text())
     build = workflow["jobs"]["build"]
     deploy = workflow["jobs"]["deploy"]
+    assert "if" not in build, "Forks and pull requests must still validate the documentation"
     assert workflow["permissions"] == {"contents": "read"}
     assert build.get("permissions", workflow["permissions"]) == {"contents": "read"}
     assert deploy["permissions"] == {
