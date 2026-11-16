@@ -147,7 +147,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
           </>
         }
       />
-      <PageContainer className="mx-auto w-full max-w-4xl space-y-5">
+      <PageContainer className="mx-auto w-full max-w-5xl space-y-5">
         <ErrorNotice error={error || review.error} />
         {historical && (
           <div className="flex flex-wrap items-center gap-3 text-sm">

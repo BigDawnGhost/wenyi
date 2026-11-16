@@ -88,7 +88,7 @@ export default function SettingsPage() {
   return (
     <div className="flex min-h-dvh flex-col">
       <PageHeader title={tr("common.projectSettings")} />
-      <PageContainer className="mx-auto flex w-full max-w-4xl flex-1 flex-col">
+      <PageContainer className="mx-auto flex w-full max-w-5xl flex-1 flex-col">
         <div className={SETTINGS_CONTENT_CLASSNAME}>
           <ErrorNotice error={config.error || configurationError} />
           {busy && <ReadOnlyNotice />}

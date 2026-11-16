@@ -90,7 +90,7 @@ export default function Dashboard() {
           )
         }
       />
-      <PageContainer className="mx-auto w-full max-w-4xl">
+      <PageContainer className="mx-auto w-full max-w-5xl">
         <ErrorNotice error={error} />
         {importFailure && (
           <div
@@ -139,8 +139,8 @@ export default function Dashboard() {
                   key={p.id}
                   className={
                     unavailable
-                      ? "opacity-60"
-                      : "cursor-pointer motion-safe:hover:-translate-y-0.5 hover:shadow-e3"
+                      ? "relative opacity-60"
+                      : "relative cursor-pointer hover:shadow-e3"
                   }
                 >
                   {!unavailable && (

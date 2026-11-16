@@ -12,14 +12,13 @@ const buttonVariants = cva(
       variant: {
         default:
           "bg-gradient-to-b from-primary to-primary/90 text-primary-foreground "
-          + "shadow-[0_1px_2px_rgba(24,26,32,0.20)] hover:shadow-[0_2px_6px_rgba(24,26,32,0.25)] "
-          + "motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0",
+          + "shadow-[0_1px_2px_rgba(24,26,32,0.20)] hover:shadow-[0_2px_6px_rgba(24,26,32,0.25)]",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90 "
-          + "shadow-[0_1px_2px_rgba(24,26,32,0.15)] motion-safe:hover:-translate-y-px",
+          + "shadow-[0_1px_2px_rgba(24,26,32,0.15)]",
         outline:
           "bg-background text-foreground shadow-e2 hover:bg-hover hover:text-foreground "
-          + "hover:shadow-e3 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0",
+          + "hover:shadow-e3",
         secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 shadow-none",
         ghost: "hover:bg-hover hover:text-foreground shadow-none",
         link: "text-primary underline-offset-4 hover:underline shadow-none",

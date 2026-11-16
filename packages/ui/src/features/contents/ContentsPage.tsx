@@ -76,7 +76,7 @@ function ContentsWorkspace({
   return (
     <>
       <PageHeader title={t("contents.title")} />
-      <PageContainer className="mx-auto w-full max-w-4xl space-y-4">
+      <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice error={error} />
         {!initialized ? <ReadOnlyNotice reason="source" /> : busy && <ReadOnlyNotice />}
         <Input

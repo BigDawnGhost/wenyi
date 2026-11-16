@@ -57,7 +57,7 @@ export function ChapterProofreading({
           </Link>}
         </>
       } />
-      <PageContainer className="mx-auto w-full max-w-4xl space-y-4">
+      <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice error={error || chapter.error
           || (!validIndex ? new Error(t("proofreading.invalidChapter")) : undefined)} />
         {sourceOnly ? <ReadOnlyNotice reason="source" /> : busy && <ReadOnlyNotice />}

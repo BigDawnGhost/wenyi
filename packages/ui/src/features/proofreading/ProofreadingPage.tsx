@@ -56,7 +56,7 @@ export default function ProofreadingPage() {
   return (
     <>
       <PageHeader title={t("progress.manualProofreading")} />
-      <PageContainer className="mx-auto w-full max-w-4xl space-y-4">
+      <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice error={project.error || chapters.error} />
         <Card>
           <CardContent className="p-4 space-y-3">

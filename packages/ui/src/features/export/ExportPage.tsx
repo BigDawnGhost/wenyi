@@ -101,7 +101,7 @@ export default function ExportPage() {
   return (
     <>
       <PageHeader title={tr("export.exportTranslation")} />
-      <PageContainer className="mx-auto w-full max-w-4xl space-y-4">
+      <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice
           error={
             projectError ||
@@ -115,13 +115,15 @@ export default function ExportPage() {
           <CardContent className="p-5 space-y-4">
             <div>
               <Label>{tr("export.outputFormat")}</Label>
-              <div className="grid grid-cols-4 gap-2 mt-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 mt-2">
                 <button
                   onClick={() => setFormat("")}
                   aria-pressed={!fmt}
                   className={cn(
-                    "rounded border p-3 text-left text-sm",
-                    !fmt && "border-muted-foreground bg-accent",
+                    "rounded-lg border p-3 text-left text-sm transition-[background-color,border-color,box-shadow] duration-motion-fast ease-standard focus-visible:outline-none",
+                    !fmt
+                      ? "border-primary/50 bg-accent shadow-e1"
+                      : "border-border hover:border-muted-foreground/40 hover:bg-muted/40",
                   )}
                 >
                   {tr("export.automatic")}
@@ -132,8 +134,10 @@ export default function ExportPage() {
                     onClick={() => setFormat(f)}
                     aria-pressed={fmt === f}
                     className={cn(
-                      "rounded border p-3 text-left text-sm",
-                      fmt === f && "border-muted-foreground bg-accent",
+                      "rounded-lg border p-3 text-left text-sm transition-[background-color,border-color,box-shadow] duration-motion-fast ease-standard focus-visible:outline-none",
+                      fmt === f
+                        ? "border-primary/50 bg-accent shadow-e1"
+                        : "border-border hover:border-muted-foreground/40 hover:bg-muted/40",
                     )}
                   >
                     {f.toUpperCase()}

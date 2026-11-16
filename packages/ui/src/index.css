@@ -21,7 +21,7 @@
 @layer base {
   :root {
     color-scheme: light;
-    --background: 240 20% 97%;
+    --background: 0 0% 97.3%;
     --foreground: 240 10% 3.9%;
     --card: 0 0% 100%;
     --card-foreground: 240 10% 3.9%;
@@ -186,10 +186,20 @@ body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-vi
 }
 
 /* Input surfaces hover quietly: deepen the well and hairline instead of
-   taking the button lift. While a focus ring is shown the ring wins, so
-   keyboard focus stays visible under the cursor. */
+   taking the button lift. Focus on inputs reuses the same input-hover
+   shadow instead of the 1px focus stroke, so keyboard focus reads as the
+   same quiet deepening under the cursor. */
 .input-quiet:hover:not(:disabled):not(:focus-visible) {
   box-shadow: var(--shadow-input-hover);
+}
+.input-quiet:focus-visible:not(:disabled) {
+  box-shadow: var(--shadow-input-hover);
+}
+
+/* Keep the centered content column steady when the scrollbar appears or
+   disappears while switching pages or tabs. */
+[data-slot="content"] {
+  scrollbar-gutter: stable;
 }
 
 /* Application geometry, independent of the host browser's native widgets. */

@@ -7,7 +7,7 @@ export const SETTINGS_CONTROL_CLASSNAME = "h-8";
 
 /** Centered reading column that carries the vertical block rhythm on settings pages. */
 export const SETTINGS_CONTENT_CLASSNAME =
-  "mx-auto flex w-full max-w-4xl flex-1 flex-col gap-8";
+  "mx-auto flex w-full max-w-5xl flex-1 flex-col gap-8";
 
 /**
  * One settings row: label plus optional description on the left, control on the
@@ -43,7 +43,7 @@ export function SettingsRow({
             <p className="text-sm leading-6 text-muted-foreground">{description}</p>
           )}
         </div>
-        <div className="flex w-48 shrink-0 items-center justify-end gap-2">{control}</div>
+        <div className="flex w-full max-w-80 shrink-0 items-center justify-end gap-2 sm:w-80">{control}</div>
       </div>
       {detail != null && <div className="mt-3 min-w-0">{detail}</div>}
     </div>

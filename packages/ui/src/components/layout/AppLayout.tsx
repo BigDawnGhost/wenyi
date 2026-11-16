@@ -134,7 +134,7 @@ export function AppLayout() {
               ? { settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }
               : undefined}
           className={slot === "action"
-            ? "w-full border border-border shadow-e1 hover:shadow-e2 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0"
+            ? "w-full border border-border shadow-e1 hover:shadow-e2"
             : undefined}
         />
       ));
@@ -289,7 +289,7 @@ export function PageHeader({
   return (
     <div
       data-slot="page.header"
-      className="relative mx-auto flex w-full max-w-4xl flex-wrap items-center justify-between gap-4 px-8 py-5"
+      className="relative mx-auto flex w-full max-w-5xl flex-wrap items-center justify-between gap-4 px-8 py-5"
     >
       <div className="flex min-w-0 flex-1 basis-64 flex-wrap items-center gap-x-3 gap-y-1 [overflow-wrap:anywhere]">
         <h1 className="text-lg font-semibold">{title}</h1>
@@ -314,7 +314,7 @@ export function PageContainer({
   className?: string;
 }) {
   return (
-    <div data-slot="page.container" className={cn("page-enter px-8 py-7", className)}>
+    <div data-slot="page.container" className={cn("page-enter px-8 pb-8 pt-1", className)}>
       {children}
     </div>
   );
