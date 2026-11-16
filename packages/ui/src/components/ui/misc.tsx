@@ -102,20 +102,24 @@ export function Dialog({
 const TabsCtx = React.createContext<{
   value: string;
   setValue: (v: string) => void;
-}>({ value: "", setValue: () => {} });
+  variant: "default" | "segmented";
+}>({ value: "", setValue: () => {}, variant: "default" });
 export function Tabs({
   value,
   onValueChange,
   children,
   className,
+  variant = "default",
 }: {
   value: string;
   onValueChange: (v: string) => void;
   children: React.ReactNode;
   className?: string;
+  /** "segmented" renders the settings-style pill track (zcode adoption). */
+  variant?: "default" | "segmented";
 }) {
   return (
-    <TabsCtx.Provider value={{ value, setValue: onValueChange }}>
+    <TabsCtx.Provider value={{ value, setValue: onValueChange, variant }}>
       <div className={className}>{children}</div>
     </TabsCtx.Provider>
   );
@@ -127,10 +131,13 @@ export function TabsList({
   children: React.ReactNode;
   className?: string;
 }) {
+  const { variant } = React.useContext(TabsCtx);
   return (
     <div
       className={cn(
-        "inline-flex items-center gap-1 rounded-md bg-muted p-1",
+        variant === "segmented"
+          ? "inline-flex h-8 items-center gap-0.5 rounded-full bg-surface p-0.5"
+          : "inline-flex items-center gap-1 rounded-md bg-muted p-1",
         className,
       )}
     >
@@ -149,12 +156,17 @@ export function TabsTrigger({
 }) {
   const ctx = React.useContext(TabsCtx);
   const active = ctx.value === value;
+  const segmented = ctx.variant === "segmented";
   return (
     <button
       className={cn(
-        "rounded px-3 py-1 text-sm transition-colors",
+        segmented
+          ? "h-7 rounded-full px-2.5 text-sm font-medium transition-colors"
+          : "rounded px-3 py-1 text-sm transition-colors",
         active
-          ? "bg-card shadow-e1 text-foreground"
+          ? segmented
+            ? "bg-background text-foreground"
+            : "bg-card shadow-e1 text-foreground"
           : "text-muted-foreground hover:text-foreground",
         className,
       )}
