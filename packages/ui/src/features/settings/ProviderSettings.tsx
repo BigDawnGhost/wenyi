@@ -148,7 +148,7 @@ export function ProviderSettings({
             </div>
           );
           return (
-            <div key={id} className="space-y-4 rounded-lg border p-4">
+            <div key={id} className="space-y-4 rounded-xl border border-border bg-card p-4">
               <div className="grid grid-cols-2 gap-4">
                 {idField("providers", id)}
                 <div className="min-w-0 space-y-2">
@@ -259,7 +259,7 @@ export function ProviderSettings({
         {Object.entries(models).map(([id, raw]) => {
           const model = object(raw);
           return (
-            <div key={id} className="grid grid-cols-3 gap-4 rounded-lg border p-4">
+            <div key={id} className="grid grid-cols-3 gap-4 rounded-xl border border-border bg-card p-4">
               {idField("models", id)}
               <div className="min-w-0 space-y-2">
                 <Label htmlFor={`connection-${id}`}>{tr("providerSettings.apiConnection")}</Label>

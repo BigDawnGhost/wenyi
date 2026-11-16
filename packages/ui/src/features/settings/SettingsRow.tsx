@@ -12,7 +12,8 @@ export const SETTINGS_CONTENT_CLASSNAME =
 /**
  * One settings row: label plus optional description on the left, control on the
  * right, vertically centered on a 12px rhythm with hairline dividers between
- * sibling rows. Wrap groups of rows in a bare bordered card at the call site.
+ * sibling rows. Rows carry their own horizontal padding; stack them inside a
+ * bordered group card at the call site.
  */
 export function SettingsRow({
   label,
@@ -30,7 +31,7 @@ export function SettingsRow({
   className?: string;
 }) {
   return (
-    <div className={cn("border-t border-subtle py-3 first:border-t-0", className)}>
+    <div className={cn("border-t border-border px-4 py-3 first:border-t-0", className)}>
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
         <div className="min-w-0 flex-1 space-y-1">
           {htmlFor ? (

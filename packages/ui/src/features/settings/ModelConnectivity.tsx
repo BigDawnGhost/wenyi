@@ -65,7 +65,7 @@ export function ModelConnectivity({
     return result.status_code ? `${text} (HTTP ${result.status_code})` : text;
   };
   return (
-    <div className="space-y-3 pt-4">
+    <div className="space-y-3 rounded-xl border border-border bg-card p-4">
       <div className="flex flex-wrap items-center gap-3">
         <Button
           type="button"

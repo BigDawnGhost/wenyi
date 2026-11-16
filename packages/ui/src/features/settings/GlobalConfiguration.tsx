@@ -240,19 +240,21 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
               title={t("settings.advancedYamlConfiguration")}
               summary={yamlDirty ? t("settings.unsavedSummary") : undefined}
             >
-              <Textarea
-                aria-label={t("settings.advancedYamlConfiguration")}
-                spellCheck={false}
-                className="min-h-editor font-mono text-xs"
-                value={draft?.yaml || ""}
-                disabled={!draft || pending}
-                onChange={(event) => {
-                  if (draft) {
-                    setDraft({ ...draft, yaml: event.target.value });
-                    setYamlDirty(true);
-                  }
-                }}
-              />
+              <div className="rounded-xl border border-border bg-card p-4">
+                <Textarea
+                  aria-label={t("settings.advancedYamlConfiguration")}
+                  spellCheck={false}
+                  className="min-h-editor font-mono text-xs"
+                  value={draft?.yaml || ""}
+                  disabled={!draft || pending}
+                  onChange={(event) => {
+                    if (draft) {
+                      setDraft({ ...draft, yaml: event.target.value });
+                      setYamlDirty(true);
+                    }
+                  }}
+                />
+              </div>
             </SettingsGroup>
           </SettingsSection>
         </div>

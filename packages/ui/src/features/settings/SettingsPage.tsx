@@ -123,17 +123,19 @@ export default function SettingsPage() {
             {yamlDirty && (
               <p className="text-sm text-muted-foreground">{tr("settings.unsavedSummary")}</p>
             )}
-            <Textarea
-              aria-label={tr("settings.advancedYamlConfiguration")}
-              spellCheck={false}
-              className="min-h-editor font-mono text-xs"
-              value={draft}
-              disabled={disabled}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                setYamlDirty(true);
-              }}
-            />
+            <div className="rounded-xl border border-border bg-card p-4">
+              <Textarea
+                aria-label={tr("settings.advancedYamlConfiguration")}
+                spellCheck={false}
+                className="min-h-editor font-mono text-xs"
+                value={draft}
+                disabled={disabled}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  setYamlDirty(true);
+                }}
+              />
+            </div>
           </SettingsSection>
         </div>
         <SettingsActionBar
