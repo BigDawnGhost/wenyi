@@ -153,7 +153,7 @@ export function ModelNameField({
               id={listId}
               role="listbox"
               aria-label={t("common.modelName")}
-              className="absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-md border bg-background p-1 text-sm shadow-lg"
+              className="pop-content absolute left-0 right-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-xl bg-background p-1 text-sm shadow-e4"
             >
               {shown.map((name, index) => (
                 <li

@@ -28,7 +28,7 @@ export default function RunTimeChart({
   return (
     <section
       aria-label={t("accounting.runHistory")}
-      className="min-w-0 border-t pt-5 xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0"
+      className="min-w-0 border-t border-black/[0.05] pt-5 xl:border-l xl:border-t-0 xl:pl-6 xl:pt-0 dark:border-white/[0.07]"
     >
       <div className="mb-2 flex items-center justify-between gap-2">
         <h4 className="text-sm font-medium">{t("accounting.runHistory")}</h4>

@@ -45,7 +45,7 @@ export function ConflictList({
         {conflicts.map((c) => (
           <div
             key={c.id}
-            className="flex flex-wrap items-center gap-3 text-sm border-t pt-2"
+            className="flex flex-wrap items-center gap-3 text-sm border-t border-black/[0.05] pt-2 dark:border-white/[0.07]"
           >
             <span className="font-medium">{c.source}</span>
             <span className="text-muted-foreground">

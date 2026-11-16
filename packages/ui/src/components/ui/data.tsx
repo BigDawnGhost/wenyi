@@ -9,7 +9,7 @@ export function ErrorNotice({ error }: { error?: unknown }) {
   return (
     <div
       role="alert"
-      className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+      className="rounded-md border-l-4 border-l-destructive bg-destructive/10 p-3 text-sm text-destructive"
     >
       {errorMessage(error, t)}
     </div>
@@ -73,7 +73,7 @@ export function StructuredData({
     return (
       <div className="space-y-3">
         {value.map((item, i) => (
-          <div key={i} className="rounded border p-3">
+          <div key={i} className="rounded border border-black/[0.05] p-3 dark:border-white/[0.07]">
             <StructuredData value={item} depth={depth + 1} />
           </div>
         ))}
@@ -87,7 +87,7 @@ export function StructuredData({
           className={
             depth < 2
               ? "grid grid-cols-[minmax(100px,180px)_1fr] gap-1"
-              : "space-y-1 border-l pl-3"
+              : "space-y-1 border-l border-black/[0.05] pl-3 dark:border-white/[0.07]"
           }
         >
           <dt className="break-words text-muted-foreground">

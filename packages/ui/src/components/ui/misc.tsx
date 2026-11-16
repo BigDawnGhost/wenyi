@@ -38,11 +38,11 @@ export function Dialog({
       }}
     >
       <Primitive.Portal>
-        <Primitive.Overlay className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px]" />
+        <Primitive.Overlay className="dialog-overlay fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px]" />
         <Primitive.Content
           {...(!description ? { "aria-describedby": undefined } : {})}
           className={cn(
-            "fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-lg border bg-background shadow-lg",
+            "dialog-content fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-card shadow-e4",
             className,
           )}
           onOpenAutoFocus={(event) => {
@@ -70,7 +70,7 @@ export function Dialog({
             )) event.preventDefault();
           }}
         >
-          <div className="shrink-0 border-b px-6 py-4 pr-14">
+          <div className="shrink-0 border-b border-black/[0.04] px-7 py-4 pr-14 dark:border-white/[0.06]">
             <Primitive.Title className="text-lg font-semibold">{title}</Primitive.Title>
             {description && (
               <Primitive.Description className="mt-0.5 text-sm text-muted-foreground">
@@ -88,7 +88,7 @@ export function Dialog({
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-6">{children}</div>
           {footer && (
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t px-6 py-3">
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-black/[0.04] px-7 py-3 dark:border-white/[0.06]">
               {footer}
             </div>
           )}
@@ -154,7 +154,7 @@ export function TabsTrigger({
       className={cn(
         "rounded px-3 py-1 text-sm transition-colors",
         active
-          ? "bg-background shadow text-foreground"
+          ? "bg-card shadow-e1 text-foreground"
           : "text-muted-foreground hover:text-foreground",
         className,
       )}

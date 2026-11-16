@@ -143,7 +143,7 @@ export function AppLayout() {
         data-slot="sidebar"
         data-collapsed={collapsed}
         className={cn(
-          "flex min-h-0 shrink-0 flex-col border-r bg-card transition-[width] duration-sidebar ease-sidebar",
+          "flex min-h-0 shrink-0 flex-col bg-card shadow-sidebar transition-[width] duration-sidebar ease-sidebar",
           collapsed ? "w-16" : "w-60",
         )}
       >
@@ -287,7 +287,7 @@ export function PageHeader({
   return (
     <div
       data-slot="page.header"
-      className="relative flex flex-wrap items-center justify-between gap-4 border-b px-6 py-4"
+      className="relative flex flex-wrap items-center justify-between gap-4 px-8 py-5"
     >
       <div className="flex min-w-0 flex-1 basis-64 flex-wrap items-center gap-x-3 gap-y-1 [overflow-wrap:anywhere]">
         <h1 className="text-lg font-semibold">{title}</h1>
@@ -312,7 +312,7 @@ export function PageContainer({
   className?: string;
 }) {
   return (
-    <div data-slot="page.container" className={cn("p-6", className)}>
+    <div data-slot="page.container" className={cn("page-enter px-8 py-7", className)}>
       {children}
     </div>
   );

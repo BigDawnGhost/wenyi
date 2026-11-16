@@ -88,7 +88,7 @@ export function TranslationDiff({
             aria-pressed={displayedMode === value}
             disabled={value === "changes" && tooLarge}
             onClick={() => setMode(value)}
-            className="rounded-md border px-3 py-1.5 text-sm aria-pressed:bg-muted disabled:opacity-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            className="rounded-md bg-background px-3 py-1.5 text-sm shadow-e2 aria-pressed:bg-muted disabled:opacity-50 disabled:shadow-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
           >
             {t(
               value === "changes"

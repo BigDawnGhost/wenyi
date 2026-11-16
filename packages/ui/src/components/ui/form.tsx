@@ -3,14 +3,14 @@ import { cn } from "../../lib/utils";
 
 export const Input = React.forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
   ({ className, ...p }, ref) => (
-    <input ref={ref} className={cn("flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50", className)} {...p} />
+    <input ref={ref} className={cn("flex h-9 w-full rounded-lg bg-background px-3.5 py-1 text-sm shadow-e0 placeholder:text-muted-foreground transition-[box-shadow] duration-motion-fast ease-standard hover:shadow-e2 focus-visible:outline-none focus-visible:shadow-[var(--shadow-e2),var(--shadow-focus-ring)] disabled:opacity-50 disabled:shadow-none", className)} {...p} />
   )
 );
 Input.displayName = "Input";
 
 export const Textarea = React.forwardRef<HTMLTextAreaElement, React.TextareaHTMLAttributes<HTMLTextAreaElement>>(
   ({ className, ...p }, ref) => (
-    <textarea ref={ref} className={cn("flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50", className)} {...p} />
+    <textarea ref={ref} className={cn("flex min-h-20 w-full rounded-lg bg-background px-3.5 py-2 text-sm shadow-e0 placeholder:text-muted-foreground transition-[box-shadow] duration-motion-fast ease-standard hover:shadow-e2 focus-visible:outline-none focus-visible:shadow-[var(--shadow-e2),var(--shadow-focus-ring)] disabled:opacity-50 disabled:shadow-none", className)} {...p} />
   )
 );
 Textarea.displayName = "Textarea";
@@ -45,7 +45,7 @@ export const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
       <span
         aria-hidden="true"
         className={cn(
-          "block h-4 w-4 rounded-full bg-background shadow-sm transition-transform",
+          "block h-4 w-4 rounded-full bg-background shadow-[0_1px_2px_rgba(24,26,32,0.25)] transition-transform",
           checked ? "translate-x-4" : "translate-x-0",
         )}
       />

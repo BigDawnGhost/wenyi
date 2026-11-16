@@ -22,9 +22,9 @@ const ParagraphRow = memo(function ParagraphRow({
     <div
       id={`paragraph-${segment.index}`}
       tabIndex={-1}
-      className={`grid ${sourceOnly ? "" : "grid-cols-2"} border-b focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30`}
+      className={`grid ${sourceOnly ? "" : "grid-cols-2"} border-b border-black/[0.05] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30 dark:border-white/[0.07]`}
     >
-      <div className="min-w-0 border-r p-4 text-sm">
+      <div className="min-w-0 border-r border-black/[0.05] p-4 text-sm dark:border-white/[0.07]">
         <p data-reader-text="source" className="whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">
           {segment.source}
         </p>
@@ -111,7 +111,7 @@ export function VirtualChapter({
   return (
     <>
       <ErrorNotice error={reader.error} />
-      <div ref={container} className="relative rounded-lg border" data-testid="chapter-reader"
+      <div ref={container} className="relative rounded-xl shadow-e1" data-testid="chapter-reader"
         style={{ height: virtualizer.getTotalSize() }}>
         {virtualRows.map((row) => {
           const segment = reader.rows.get(row.index);
@@ -123,7 +123,7 @@ export function VirtualChapter({
                 <ParagraphRow segment={segment} sourceOnly={sourceOnly}
                   expanded={menu?.index === segment.index} onMenu={setMenu} />
               ) : (
-                <div aria-busy="true" className="border-b p-4 text-sm text-muted-foreground" style={{ height: 160 }}>
+                <div aria-busy="true" className="border-b border-black/[0.05] p-4 text-sm text-muted-foreground dark:border-white/[0.07]" style={{ height: 160 }}>
                   {t("progress.loading")}
                 </div>
               )}

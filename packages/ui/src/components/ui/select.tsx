@@ -80,7 +80,7 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
           disabled={disabled}
           form={form}
           className={cn(
-            "flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-1 text-left text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 [&>span:first-child]:truncate",
+            "flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-lg bg-background px-3.5 py-1 text-left text-sm text-foreground shadow-e0 transition-[box-shadow] duration-motion-fast ease-standard hover:shadow-e2 focus-visible:outline-none focus-visible:shadow-[var(--shadow-e2),var(--shadow-focus-ring)] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none [&>span:first-child]:truncate",
             className,
           )}
         >
@@ -123,7 +123,7 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
               (controls[index + tabDirection.current] ?? triggerRef.current)?.focus();
               tabDirection.current = 0;
             }}
-            className="z-[100] max-h-[min(320px,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-16px)] overflow-hidden rounded-md border bg-background text-foreground shadow-lg"
+            className="pop-content z-[100] max-h-[min(320px,var(--radix-select-content-available-height))] min-w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-16px)] overflow-hidden rounded-xl bg-background text-foreground shadow-e4"
           >
             <Primitive.ScrollUpButton className="flex justify-center py-1">
               <ChevronUp className="h-4 w-4" />

@@ -15,7 +15,8 @@ export function NotificationToaster() {
       icons={{ close: <X className="h-[18px] w-[18px]" aria-hidden="true" /> }}
       toastOptions={{
         classNames: {
-          toast: "min-h-16 items-start gap-3 rounded-xl py-5 pl-4 pr-16 text-sm",
+          toast: "min-h-16 items-start gap-3 rounded-xl py-5 pl-4 pr-16 text-sm "
+            + "shadow-e4 ring-1 ring-black/[0.04] dark:ring-white/[0.08]",
           content: "min-w-0",
           icon: "m-0 h-5 w-5 [&_svg]:m-0",
           // Keep Sonner's dismissal behavior, but move the target inside the card.

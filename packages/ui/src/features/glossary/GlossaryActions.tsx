@@ -53,7 +53,7 @@ export function GlossaryActions({
           {tr("common.export")} <ChevronDown className="h-3 w-3" />
         </Button>
         {menuOpen && (
-          <div className="absolute right-0 top-full z-10 mt-1 w-56 rounded-md border bg-popover p-1 shadow-md">
+          <div className="pop-content absolute right-0 top-full z-10 mt-1 w-56 rounded-xl bg-popover p-1 shadow-e4">
             <button
               className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
               onClick={() => handleExport("csv")}

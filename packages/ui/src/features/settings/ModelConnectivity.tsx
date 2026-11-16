@@ -65,7 +65,7 @@ export function ModelConnectivity({
     return result.status_code ? `${text} (HTTP ${result.status_code})` : text;
   };
   return (
-    <div className="space-y-3 border-t pt-4">
+    <div className="space-y-3 pt-4">
       <div className="flex flex-wrap items-center gap-3">
         <Button
           type="button"
@@ -110,7 +110,7 @@ export function ModelConnectivity({
               </thead>
               <tbody>
                 {results.map((result) => (
-                  <tr key={result.profile} className="border-t align-top">
+                  <tr key={result.profile} className="border-t border-black/[0.05] align-top dark:border-white/[0.07]">
                     <td className="py-2 pr-3 [overflow-wrap:anywhere]">
                       <div className="font-medium">{result.profile}</div>
                       <div className="text-xs text-muted-foreground">{result.model}</div>

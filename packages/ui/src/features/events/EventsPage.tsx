@@ -131,7 +131,7 @@ export default function EventsPage() {
                         <summary className="cursor-pointer break-words">
                           {describe(e)}
                         </summary>
-                        <div className="mt-3 rounded border p-3">
+                        <div className="mt-3 rounded border border-black/[0.05] p-3 dark:border-white/[0.07]">
                           <StructuredData value={e.payload} />
                         </div>
                       </details>

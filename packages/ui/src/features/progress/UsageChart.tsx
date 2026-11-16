@@ -131,7 +131,7 @@ export default function UsageChart({
             className={cn(
               "min-w-0 flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               key === group
-                ? "bg-background text-foreground shadow-sm"
+                ? "bg-card text-foreground shadow-e1"
                 : "text-muted-foreground hover:text-foreground",
             )}
           >

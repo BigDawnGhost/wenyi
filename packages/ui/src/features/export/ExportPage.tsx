@@ -255,7 +255,7 @@ export default function ExportPage() {
               {tr("export.retentionHelp")}
             </p>
             <table className="w-full text-sm">
-              <thead className="border-b text-xs text-muted-foreground">
+              <thead className="border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
                 <tr>
                   {[
                     tr("export.format"),
@@ -264,7 +264,7 @@ export default function ExportPage() {
                     tr("common.status"),
                     tr("common.actions"),
                   ].map((h) => (
-                    <th key={h} className="text-left p-3">
+                    <th key={h} className="text-left px-4 py-3.5">
                       {h}
                     </th>
                   ))}
@@ -272,8 +272,8 @@ export default function ExportPage() {
               </thead>
               <tbody>
                 {exports?.slice(0, 5).map((e) => (
-                  <tr key={e.id} className="border-b last:border-0">
-                    <td className="p-3">
+                  <tr key={e.id} className="border-b border-black/[0.05] last:border-0 dark:border-white/[0.07]">
+                    <td className="px-4 py-3.5">
                       {e.format.toUpperCase()}
                       <div className="text-xs text-muted-foreground mt-1">
                         {e.options?.bilingual
@@ -281,13 +281,13 @@ export default function ExportPage() {
                           : tr("export.monolingual")}
                       </div>
                     </td>
-                    <td className="p-3">
+                    <td className="px-4 py-3.5">
                       {e.created_at
                         ? new Date(e.created_at).toLocaleString(locale)
                         : "—"}
                     </td>
-                    <td className="p-3">{formatBytes(e.size)}</td>
-                    <td className="p-3">
+                    <td className="px-4 py-3.5">{formatBytes(e.size)}</td>
+                    <td className="px-4 py-3.5">
                       <StatusBadge status={e.status} />
                       {e.error && (
                         <p className="mt-1 text-sm text-destructive">
@@ -295,7 +295,7 @@ export default function ExportPage() {
                         </p>
                       )}
                     </td>
-                    <td className="p-3">
+                    <td className="px-4 py-3.5">
                       {e.status === "done" && (
                         <Button
                           variant="outline"

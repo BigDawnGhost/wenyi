@@ -34,13 +34,13 @@ export function ContentsList({
       <CardContent className="p-0">
         <div
           aria-hidden="true"
-          className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_112px] gap-4 border-b px-4 py-3 text-xs text-muted-foreground"
+          className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_112px] gap-4 border-b border-black/[0.05] px-4 py-3 text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]"
         >
           <span>{t("contents.sourceTitle")}</span>
           <span>{t("contents.translatedTitle")}</span>
           <span className="text-right">{t("common.actions")}</span>
         </div>
-        <ul aria-label={t("contents.title")} className="divide-y">
+        <ul aria-label={t("contents.title")} className="divide-y divide-black/[0.05] dark:divide-white/[0.07]">
           {entries.map((entry) => (
             <li
               key={entry.id}

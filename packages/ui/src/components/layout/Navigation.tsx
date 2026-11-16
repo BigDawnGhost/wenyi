@@ -83,10 +83,10 @@ export function NavigationLink({
       onFocus={() => void prefetch?.().catch(() => {})}
       className={({ isActive }) =>
         cn(
-          "flex items-center justify-center gap-2 rounded-md px-3 py-2 text-sm transition-[color,background-color,padding,gap] duration-sidebar ease-sidebar",
+          "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm transition-[color,background-color,padding,gap,box-shadow] duration-sidebar ease-sidebar",
           collapsed && "gap-0 px-2",
           isActive
-            ? "bg-accent text-accent-foreground font-medium"
+            ? "bg-accent text-accent-foreground font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
             : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
           className,
         )

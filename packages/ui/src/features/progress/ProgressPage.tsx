@@ -129,7 +129,7 @@ export default function ProgressPage() {
               {done} / {total}
             </div>
             <Progress value={pct} />
-            <div className="border-t pt-4 space-y-3">
+            <div className="pt-4 space-y-3">
               <h3 className="text-sm font-medium">
                 {tr("progress.totalUsageRunTime")}
               </h3>
@@ -193,7 +193,7 @@ function ChapterTable({
       <CardContent className="p-0 overflow-x-auto">
         <ErrorNotice error={translate.error} />
         <table className="w-full min-w-[704px] text-sm">
-          <thead className="border-b text-xs text-muted-foreground">
+          <thead className="border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
             <tr>
               {[
                 tr("common.chapter"),
@@ -204,7 +204,7 @@ function ChapterTable({
               ].map((h) => (
                 <th
                   key={h}
-                  className="whitespace-nowrap text-left p-3 font-medium"
+                  className="whitespace-nowrap text-left px-4 py-3.5 font-medium"
                 >
                   {h}
                 </th>
@@ -213,17 +213,17 @@ function ChapterTable({
           </thead>
           <tbody>
             {chapters.map((c) => (
-              <tr key={c.index} className="border-b last:border-0">
-                <td className="w-full min-w-64 max-w-0 p-3 [overflow-wrap:anywhere]">
+              <tr key={c.index} className="border-b border-black/[0.05] last:border-0 dark:border-white/[0.07]">
+                <td className="w-full min-w-64 max-w-0 px-4 py-3.5 [overflow-wrap:anywhere]">
                   {c.title_translated?.trim() ||
                     c.title.trim() ||
                     tr("common.untitledChapter")}
                 </td>
-                <td className="p-3 tabular-nums">{c.word_count}</td>
-                <td className="p-3">
+                <td className="px-4 py-3.5 tabular-nums">{c.word_count}</td>
+                <td className="px-4 py-3.5">
                   <StatusBadge status={c.status} context="chapter" />
                 </td>
-                <td className="p-3">
+                <td className="px-4 py-3.5">
                   {c.review_issue_count > 0 ? (
                     <Badge variant="warning">
                       {tr("progress.reviewIssueCount", {
@@ -240,7 +240,7 @@ function ChapterTable({
                     </Badge>
                   )}
                 </td>
-                <td className="p-3">
+                <td className="px-4 py-3.5">
                   {c.status !== "done" && (
                     <Button
                       size="sm"

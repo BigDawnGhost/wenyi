@@ -21,7 +21,7 @@
 @layer base {
   :root {
     color-scheme: light;
-    --background: 0 0% 100%;
+    --background: 240 20% 97%;
     --foreground: 240 10% 3.9%;
     --card: 0 0% 100%;
     --card-foreground: 240 10% 3.9%;
@@ -53,7 +53,7 @@
     --shadow-e2: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 1px 3px rgba(24, 26, 32, 0.06), 0 0 0 1px rgba(24, 26, 32, 0.07);
     --shadow-e3: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 8px -2px rgba(24, 26, 32, 0.08), 0 12px 28px -12px rgba(24, 26, 32, 0.14), 0 0 0 1px rgba(24, 26, 32, 0.06);
     --shadow-e4: 0 8px 16px -4px rgba(24, 26, 32, 0.08), 0 28px 56px -20px rgba(24, 26, 32, 0.22), 0 0 0 1px rgba(24, 26, 32, 0.06);
-    --shadow-focus-ring: 0 0 0 3px hsl(var(--ring) / 0.18);
+    --shadow-focus-ring: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring));
     --shadow-sidebar: 0 0 0 1px rgba(24, 26, 32, 0.05), 12px 0 32px -20px rgba(24, 26, 32, 0.18);
   }
 }
@@ -63,7 +63,7 @@
     color-scheme: dark;
     --background: 240 10% 3.9%;
     --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
+    --card: 240 8% 9%;
     --card-foreground: 0 0% 98%;
     --primary: 0 0% 98%;
     --primary-foreground: 240 5.9% 10%;
@@ -90,7 +90,7 @@
     --shadow-e2: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);
     --shadow-e3: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.09);
     --shadow-e4: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.09);
-    --shadow-focus-ring: 0 0 0 3px hsl(var(--ring) / 0.35);
+    --shadow-focus-ring: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring));
     --shadow-sidebar: 0 0 0 1px rgba(255, 255, 255, 0.06), 12px 0 32px -20px rgba(0, 0, 0, 0.5);
 }
 
@@ -107,9 +107,9 @@
     accent-color: hsl(var(--foreground));
   }
   :where(button, a[href], summary, [role="button"], [role="tab"]) {
-    border-radius: calc(var(--radius) - 2px);
+    border-radius: var(--radius);
   }
-  input[type="checkbox"] { border-radius: 3px; }
+  input[type="checkbox"] { border-radius: 4px; }
   input[type="radio"] { border-radius: 50%; }
 }
 
@@ -149,7 +149,7 @@ input:is([type="checkbox"], [type="radio"]) {
   background-repeat: no-repeat;
 }
 
-input[type="checkbox"] { border-radius: 3px; }
+input[type="checkbox"] { border-radius: 4px; }
 input[type="radio"] { border-radius: 50%; }
 input:is([type="checkbox"], [type="radio"]):checked {
   border-color: hsl(var(--muted-foreground));
@@ -199,14 +199,47 @@ details[open] > .disclosure-summary > .disclosure-chevron {
   min-height: 100%;
   display: grid;
   place-items: center;
-  animation: runtime-enter 180ms ease-out both;
+  animation: page-enter 200ms cubic-bezier(0.05, 0.7, 0.1, 1) both;
+}
+/* Page body entrance: one fade-and-rise for the whole container. No fill
+   forwards, so the settled container never becomes a containing block for
+   in-page fixed elements such as the paragraph menu. */
+.page-enter {
+  animation: page-enter 200ms cubic-bezier(0.05, 0.7, 0.1, 1) backwards;
 }
 @keyframes runtime-enter {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+@keyframes page-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* Dialog entrance: enter-only; exit stays instant (Radix presence). The final
+   frame repeats the utility centering so fill-forwards cannot displace it. */
+.dialog-overlay { animation: overlay-in 200ms cubic-bezier(0.05, 0.7, 0.1, 1) both; }
+.dialog-content { animation: dialog-in 320ms cubic-bezier(0.05, 0.7, 0.1, 1) both; }
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes dialog-in {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+/* Popover and menu entrance for surfaces that are not viewport-centered:
+   select listboxes, auto-margin native dialogs, anchored menus. */
+.pop-content { animation: pop-in 200ms cubic-bezier(0.05, 0.7, 0.1, 1) both; }
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
 /* Keep Sonner's viewport-fixed stack and interactive dismissal controls. */
 @media (prefers-reduced-motion: reduce) {
   .runtime-placeholder,
-  .route-placeholder { animation: none; }
+  .route-placeholder,
+  .page-enter,
+  .dialog-overlay,
+  .dialog-content,
+  .pop-content { animation: none; }
 }

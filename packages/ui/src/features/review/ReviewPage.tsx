@@ -219,7 +219,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
                   {t("review.noIssues")}
                 </p>
               )}
-            <details className="border-t pt-4">
+            <details className="pt-4">
               <summary className="w-fit cursor-pointer text-xs text-muted-foreground">
                 {t("review.technicalDetails")}
               </summary>

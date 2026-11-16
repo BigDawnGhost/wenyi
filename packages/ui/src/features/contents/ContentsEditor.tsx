@@ -50,7 +50,7 @@ export function ContentsEditor({
         {stale && (
           <div
             role="status"
-            className="space-y-2 rounded-lg border bg-muted/50 p-3 text-sm"
+            className="space-y-2 rounded-lg bg-muted/50 p-3 text-sm"
           >
             <p>{t("contents.changedWhileEditing")}</p>
             <Button

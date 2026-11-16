@@ -22,7 +22,7 @@ export function SettingsSection({
       aria-labelledby={headingId}
       data-slot="settings.section"
       className={cn(
-        "min-w-0 scroll-mt-4 border-t py-6 first-of-type:border-t-0 first-of-type:pt-0",
+        "min-w-0 scroll-mt-4 py-8 first-of-type:pt-0",
         className,
       )}
       {...rest}
@@ -47,7 +47,7 @@ export function SettingsGroup({
 }) {
   const headingId = useId();
   return (
-    <section aria-labelledby={headingId} className="min-w-0 space-y-4 border-t pt-4">
+    <section aria-labelledby={headingId} className="min-w-0 space-y-4">
       <h3 id={headingId} className="text-sm font-medium">
         {title}
         {summary != null && (
@@ -90,7 +90,7 @@ export function SettingsActionBar({
   return (
     <div
       data-slot="settings.actions"
-      className="sticky bottom-0 z-10 -mx-6 -mb-6 flex flex-wrap items-center gap-3 border-t bg-background/95 px-6 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80"
+      className="sticky bottom-0 z-10 -mx-8 -mb-7 flex flex-wrap items-center gap-3 border-t border-black/[0.05] bg-background/95 px-8 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 dark:border-white/[0.07]"
     >
       <div className="min-w-0 flex-1 basis-48 space-y-1 text-sm">{notices}</div>
       <div className="flex flex-wrap gap-3">{children}</div>

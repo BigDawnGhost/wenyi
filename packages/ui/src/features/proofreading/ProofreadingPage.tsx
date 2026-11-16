@@ -90,7 +90,7 @@ export default function ProofreadingPage() {
                 </Select>
               </div>
             </div>
-            <ul aria-label={t("proofreading.chapterList")} className="divide-y">
+            <ul aria-label={t("proofreading.chapterList")} className="divide-y divide-black/[0.05] dark:divide-white/[0.07]">
               {filtered?.map((chapter) => (
                 <li key={chapter.index}>
                   <Link
