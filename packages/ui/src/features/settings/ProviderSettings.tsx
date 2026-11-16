@@ -256,41 +256,43 @@ export function ProviderSettings({
             </Button>
           }
         />
-        {Object.entries(models).map(([id, raw]) => {
-          const model = object(raw);
-          return (
-            <div key={id} className="grid grid-cols-3 gap-4 rounded-xl border border-border bg-card p-4">
-              {idField("models", id)}
-              <div className="min-w-0 space-y-2">
-                <Label htmlFor={`connection-${id}`}>{tr("providerSettings.apiConnection")}</Label>
-                <Select
-                  id={`connection-${id}`}
-                  className={SETTINGS_CONTROL_CLASSNAME}
-                  value={String(model.provider)}
-                  onValueChange={(value) =>
-                    update("models", id, { provider: value, options: {} })
+        <div className="overflow-hidden rounded-xl border border-border bg-card divide-y divide-border">
+          {Object.entries(models).map(([id, raw]) => {
+            const model = object(raw);
+            return (
+              <div key={id} className="grid grid-cols-3 gap-4 p-4">
+                {idField("models", id)}
+                <div className="min-w-0 space-y-2">
+                  <Label htmlFor={`connection-${id}`}>{tr("providerSettings.apiConnection")}</Label>
+                  <Select
+                    id={`connection-${id}`}
+                    className={SETTINGS_CONTROL_CLASSNAME}
+                    value={String(model.provider)}
+                    onValueChange={(value) =>
+                      update("models", id, { provider: value, options: {} })
+                    }
+                  >
+                    {Object.keys(providers).map((p) => (
+                      <SelectItem key={p} value={p}>{p}</SelectItem>
+                    ))}
+                  </Select>
+                </div>
+                <ModelNameField
+                  id={`model-${id}`}
+                  value={String(model.model || "")}
+                  connection={String(model.provider)}
+                  provider={
+                    model.provider && String(model.provider) in providers
+                      ? object(providers[String(model.provider)])
+                      : undefined
                   }
-                >
-                  {Object.keys(providers).map((p) => (
-                    <SelectItem key={p} value={p}>{p}</SelectItem>
-                  ))}
-                </Select>
+                  onChange={(value) => update("models", id, { model: value })}
+                />
               </div>
-              <ModelNameField
-                id={`model-${id}`}
-                value={String(model.model || "")}
-                connection={String(model.provider)}
-                provider={
-                  model.provider && String(model.provider) in providers
-                    ? object(providers[String(model.provider)])
-                    : undefined
-                }
-                onChange={(value) => update("models", id, { model: value })}
-              />
-            </div>
-          );
-        })}
-        <ModelConnectivity saved={saved} disabled={disabled} />
+            );
+          })}
+          <ModelConnectivity saved={saved} disabled={disabled} />
+        </div>
       </div>
     </fieldset>
   );
