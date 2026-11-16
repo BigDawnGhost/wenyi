@@ -56,7 +56,7 @@ export default function ProofreadingPage() {
   return (
     <>
       <PageHeader title={t("progress.manualProofreading")} />
-      <PageContainer className="space-y-4">
+      <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice error={project.error || chapters.error} />
         <Card>
           <CardContent className="p-4 space-y-3">
@@ -90,11 +90,11 @@ export default function ProofreadingPage() {
                 </Select>
               </div>
             </div>
-            <ul aria-label={t("proofreading.chapterList")} className="divide-y">
+            <ul aria-label={t("proofreading.chapterList")} className="space-y-0.5 -mb-3">
               {filtered?.map((chapter) => (
                 <li key={chapter.index}>
                   <Link
-                    className="flex items-center justify-between gap-4 py-4 hover:bg-accent rounded"
+                    className="-mx-2 flex items-center justify-between gap-4 rounded-lg px-3 py-3 transition-colors hover:bg-hover"
                     to={`/projects/${pid}/proofreading/${chapter.index}`}
                   >
                     <div className="min-w-0 space-y-1">

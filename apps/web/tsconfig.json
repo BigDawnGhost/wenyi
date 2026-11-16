@@ -20,6 +20,18 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  // One checking program: app source plus the Vite/Playwright configs and the
+  // shared sandbox modules they import, so no composite emit can shadow a
+  // source file (tsc -b stays a pure noEmit check; vite build needs no emit).
+  "include": [
+    "src",
+    "vite.config.ts",
+    "playwright.config.ts",
+    "../../packages/ui/vite.shared.ts",
+    "../../packages/ui/sandbox/fixtures.ts",
+    "../../packages/ui/sandbox/scenarios.ts",
+    "../../packages/ui/sandbox/progress-frames.ts",
+    "../../packages/ui/sandbox/progress-server.ts",
+    "../../packages/ui/sandbox/mock-platform.tsx"
+  ]
 }

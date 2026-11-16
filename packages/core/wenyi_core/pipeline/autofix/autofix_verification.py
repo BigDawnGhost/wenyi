@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable
 from typing import Any
 
+from ...agents.prompts import readonly_object_context
 from ...agents.review_fixer import ProvisionalPatch, ReviewFixer
 from ...agents.review_loop import ReviewAgentLoop
 from ...config import Config
@@ -176,9 +177,15 @@ class AutofixVerification:
             self.all_terms,
             context_source or segment.source,
         )
+        object_contexts = self.evidence.object_contexts(*location)
+        reference_prompt = readonly_object_context(object_contexts)
+        reference_digest = text_hash(reference_prompt) if reference_prompt else None
         trace_path = f"autofix/fixers/ch{location[0]}-text{location[1]}.json"
         existing_trace = self.debug.load_json(trace_path)
-        if isinstance(existing_trace, dict):
+        if (
+            isinstance(existing_trace, dict)
+            and existing_trace.get("object_references_sha256") == reference_digest
+        ):
             cached_patch = existing_trace.get("patch")
             if existing_trace.get("status") == "finished" and isinstance(cached_patch, dict):
                 try:
@@ -222,6 +229,8 @@ class AutofixVerification:
             "segment_ref": segment.ref,
             "status": "running",
         }
+        if reference_digest is not None:
+            trace["object_references_sha256"] = reference_digest
         self.debug.write_json(trace_path, trace)
 
         def record(event: str, data: dict[str, Any]) -> None:
@@ -243,11 +252,7 @@ class AutofixVerification:
                 relevant_glossary=relevant_terms,
                 nearby_pairs=nearby_pairs,
                 trace=record,
-                **(
-                    {"object_contexts": self.evidence.object_contexts(*location)}
-                    if any(self.evidence.object_contexts(*location))
-                    else {}
-                ),
+                **({"object_contexts": object_contexts} if any(object_contexts) else {}),
             )
         except Exception as error:  # noqa: BLE001 - Preserve unchanged issues when final verification fails.
             if is_resumable_provider_interrupt(error):

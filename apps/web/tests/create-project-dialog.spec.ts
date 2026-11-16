@@ -126,8 +126,9 @@ test("direct creation route retains the dashboard and dropdown Escape does not d
   await language.click();
   await expect(page.getByRole("listbox")).toBeVisible();
   await page.keyboard.press("Tab");
-  expect(await dialog.evaluate(element => element.contains(document.activeElement))).toBe(true);
   await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect.poll(() => dialog.evaluate(element => element.contains(document.activeElement)))
+    .toBe(true);
   for (const key of ["Tab", "Shift+Tab"]) {
     for (let index = 0; index < 18; index++) {
       await page.keyboard.press(key);

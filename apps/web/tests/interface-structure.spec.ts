@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
-import { fakeApi, pid, chapter, project } from "../../../packages/ui/sandbox/fixtures";
+import { fakeApi, pid, chapter, project, configuration } from "../../../packages/ui/sandbox/fixtures";
+import { chooseOption } from "../../../packages/ui/tests/e2e/select-helper";
 
 test("chapter rows localize pending status and support search and filtering", async ({
   page,
@@ -159,10 +160,18 @@ test("export history shows only the latest five files", async ({
   await expect(page.locator("tbody tr")).toHaveCount(5);
 });
 
-test("folded export options preserve edits and reveal controls after a validation failure", async ({
+test("export submits saved project preferences and keeps validation failures visible", async ({
   page,
 }) => {
   await fakeApi(page);
+  let saved = structuredClone(configuration);
+  await page.route(`**/api/projects/${pid}/config`, async route => {
+    if (route.request().method() === "PUT") {
+      const { yaml } = route.request().postDataJSON();
+      saved = { ...saved, yaml, effective: JSON.parse(yaml) };
+    }
+    await route.fulfill({ json: saved });
+  });
   let submitted: Record<string, unknown> = {};
   await page.route(`**/api/projects/${pid}/exports`, async (route) => {
     if (route.request().method() === "GET") return route.fulfill({ json: [] });
@@ -172,32 +181,28 @@ test("folded export options preserve edits and reveal controls after a validatio
       json: { detail: "Export validation failed" },
     });
   });
+  await page.goto(`/projects/${pid}/settings`);
+  await page.getByRole("switch", { name: "Normalize punctuation on export", exact: true }).uncheck();
+  await page.getByRole("switch", { name: "Include an “About this translation” page", exact: true }).uncheck();
+  await chooseOption(page.getByLabel("Bilingual order"), "Source first");
+  await page.getByRole("switch", { name: "Preserve source formatting in bilingual output", exact: true }).check();
+  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+  await expect(page.getByText("Project settings saved", { exact: true })).toBeVisible();
   await page.goto(`/projects/${pid}/export`);
   await page.getByRole("button", { name: "EPUB", exact: true }).click();
   await page.getByRole("radio", { name: "Bilingual", exact: true }).check();
-  const advanced = page
-    .locator("summary")
-    .filter({ hasText: "Layout and advanced options" });
-  await expect(page.getByLabel("Bilingual order")).not.toBeVisible();
-  await advanced.click();
-  await page.getByLabel("Bilingual order").click();
-  await page.getByRole("option", { name: "Source first", exact: true }).click();
-  await page.getByLabel("Normalize punctuation on export").uncheck();
-  await page.getByLabel("Include an “About this translation” page").uncheck();
-  await advanced.click();
-  // The folded section shows only its title; edits are verified through the submission.
-  await expect(advanced).toHaveText("Layout and advanced options");
   await page
     .getByRole("button", { name: "Generate export", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText("Export validation failed");
-  await expect(page.getByLabel("Bilingual order")).toBeVisible();
-  await expect(page.getByLabel("Bilingual order")).toHaveText("Source first");
+  await expect(page.getByLabel("Bilingual order")).toHaveCount(0);
+  await expect(page.getByRole("switch")).toHaveCount(0);
   expect(submitted).toMatchObject({
     format: "epub",
     bilingual: true,
     order: "source_first",
     about_page: false,
     punctuation_normalize: false,
+    preserve_source_style: true,
   });
 });

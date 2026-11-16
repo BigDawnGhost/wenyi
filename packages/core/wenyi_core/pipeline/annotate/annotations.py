@@ -7,16 +7,18 @@ events and continue.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import json
+from typing import TYPE_CHECKING
 
 from ...alignment import AlignmentUnit, TextAligner, target_digest, unresolved_alignment
+from ...alignment.object_repair import repair_object_markers
 from ...alignment.objects import clean_object_markers, resolve_objects
 from ...events import ProgressFn
+from ...markup.contexts import annotation_metadata, reference_source
 from ...markup.objects import (
     OBJECT_RELATION,
     annotation_placements,
     object_anchors,
-    pending_object,
 )
 from ...models.document import Chapter, Segment
 from ...storage.protocol import Storage
@@ -31,15 +33,6 @@ class AnnotationService:
     def __init__(self, runtime: PipelineRuntime, *, aligner: TextAligner | None = None):
         self._runtime = runtime
         self._aligner = aligner
-
-    @staticmethod
-    def annotation_metadata(segment: Segment) -> dict[str, Any] | None:
-        """Select the format-owned metadata consumed by the shared point/range aligner."""
-        for key in ("epub_annotations", "pdf_annotations"):
-            metadata = segment.meta.get(key)
-            if isinstance(metadata, dict):
-                return metadata
-        return None
 
     @staticmethod
     def completed_logical_starts_in_range(
@@ -71,123 +64,6 @@ class AnnotationService:
             position = max(position + 1, logical_end + 1)
         return starts
 
-    @staticmethod
-    def annotation_contexts_for_segments(
-        segments: list[Segment],
-        registry: dict[str, Any] | None,
-    ) -> list[list[dict[str, str]]]:
-        """Assign note/object references to actual translation slices by source offsets.
-        Only the first slice holds EPUB layout metadata. Use its original offsets and
-        cumulative slice boundaries to assign point annotations to one slice and ranges to
-        every intersecting slice. Inject each destination only once per slice.
-        """
-        assigned: list[list[dict[str, str]]] = [[] for _ in segments]
-        raw_contexts = registry.get("contexts") if isinstance(registry, dict) else None
-        if not isinstance(raw_contexts, dict):
-            raw_contexts = {}
-
-        position = 0
-        while position < len(segments):
-            logical_start = position
-            logical_end = logical_start + 1
-            while logical_end < len(segments) and segments[logical_end].cont:
-                logical_end += 1
-            logical_segments = segments[logical_start:logical_end]
-
-            boundaries: list[tuple[int, int]] = []
-            cursor = 0
-            for segment in logical_segments:
-                end = cursor + len(segment.source)
-                boundaries.append((cursor, end))
-                cursor = end
-
-            metadata = AnnotationService.annotation_metadata(logical_segments[0])
-            raw_items = metadata.get("items") if isinstance(metadata, dict) else None
-            items = raw_items if isinstance(raw_items, list) else []
-            source_length = metadata.get("source_length") if isinstance(metadata, dict) else None
-            if items and (
-                not isinstance(source_length, int)
-                or isinstance(source_length, bool)
-                or source_length != cursor
-            ):
-                position = logical_end
-                continue
-            seen_by_piece: list[set[str]] = [set() for _ in logical_segments]
-
-            for raw_item in items:
-                if not isinstance(raw_item, dict) or raw_item.get("relation") not in {
-                    "noteref",
-                    OBJECT_RELATION,
-                }:
-                    continue
-                target_key = raw_item.get("target_key")
-                if not isinstance(target_key, str) or not target_key:
-                    continue
-                record = raw_contexts.get(target_key, {})
-                if not isinstance(record, dict):
-                    record = {}
-                raw_blocks = record.get("source_blocks")
-                blocks = (
-                    [block for block in raw_blocks if isinstance(block, str) and block.strip()]
-                    if isinstance(raw_blocks, list)
-                    else []
-                )
-                if not blocks and raw_item.get("protected") and raw_item.get("object_source"):
-                    blocks = [raw_item["object_source"]]
-                if not blocks:
-                    continue
-                note = {
-                    "target_key": target_key,
-                    "source": "\n\n".join(blocks),
-                }
-
-                start = raw_item.get("source_start")
-                end = raw_item.get("source_end")
-                if (
-                    not isinstance(start, int)
-                    or isinstance(start, bool)
-                    or not isinstance(end, int)
-                    or isinstance(end, bool)
-                    or not 0 <= start <= end <= cursor
-                ):
-                    continue
-
-                piece_indices: list[int]
-                if raw_item.get("mode") == "range" and start < end:
-                    piece_indices = [
-                        index
-                        for index, (piece_start, piece_end) in enumerate(boundaries)
-                        if start < piece_end and end > piece_start
-                    ]
-                else:
-                    # Assign boundary points to the preceding slice; position zero belongs to the first slice.
-                    piece_index = 0
-                    if start > 0:
-                        piece_index = next(
-                            (
-                                index
-                                for index, (_piece_start, piece_end) in enumerate(boundaries)
-                                if start <= piece_end
-                            ),
-                            len(boundaries) - 1,
-                        )
-                    piece_indices = [piece_index]
-
-                for piece_index in piece_indices:
-                    if target_key in seen_by_piece[piece_index]:
-                        continue
-                    seen_by_piece[piece_index].add(target_key)
-                    reference = dict(note)
-                    if raw_item.get("relation") == OBJECT_RELATION:
-                        reference.update(
-                            marker=raw_item["marker"],
-                            source_offset=str(start - boundaries[piece_index][0]),
-                        )
-                    assigned[logical_start + piece_index].append(reference)
-
-            position = logical_end
-        return assigned
-
     def align_segment_annotation(
         self,
         ci: int,
@@ -211,7 +87,7 @@ class AnnotationService:
         while start_position > 0 and segments[start_position].cont:
             start_position -= 1
         segment = segments[start_position]
-        metadata = self.annotation_metadata(segment)
+        metadata = annotation_metadata(segment)
         if not isinstance(metadata, dict):
             return
         raw_items = metadata.get("items")
@@ -229,44 +105,14 @@ class AnnotationService:
             for item in raw_items
             if isinstance(item, dict) and item.get("relation") == OBJECT_RELATION
         ]
+        object_ids = {item["id"] for item in objects}
         resolution = resolve_objects(targets, object_anchors(objects), source)
         target = "".join(resolution.targets)
         copied = {row["id"]: row for row in resolution.placements}
-        strict_pdf = "pdf_annotations" in segment.meta and any(
+        keep_pdf_markers = "pdf_annotations" in segment.meta and any(
             item.get("protected") for item in objects
         )
-        if resolution.damaged:
-            # No immutable-target locator can repair broken transport. Preserve the complete
-            # response and stop here, including on resume, rather than paying for unusable offsets.
-            retained = {
-                row["id"]: row
-                for row in metadata.get("placements", [])
-                if isinstance(row, dict) and metadata.get("target_digest") == target_digest(target)
-            }
-            retained.update({item["id"]: pending_object(item, damaged=True) for item in objects})
-            placements = [retained[item["id"]] for item in raw_items if item["id"] in retained]
-            if (
-                metadata.get("target_digest") != target_digest(target)
-                or metadata.get("placements") != placements
-            ):
-                metadata.update(target_digest=target_digest(target), placements=placements)
-                store.save_chapter(chapter)
-                store.log_event(
-                    "annotation_alignment_skipped",
-                    chapter=ci,
-                    segment=segment.index,
-                    reason="damaged_object_marker",
-                    pending_objects=[item["id"] for item in objects],
-                )
-            return
-        if strict_pdf and len(copied) != len(objects):
-            metadata.update(
-                target_digest=target_digest(target),
-                placements=[copied.get(item["id"], pending_object(item)) for item in objects],
-            )
-            store.save_chapter(chapter)
-            return
-        if objects and not strict_pdf:
+        if objects and not keep_pdf_markers:
             before_polish = clean_object_markers(
                 [item.target_before_polish or "" for item in logical_segments], source
             )
@@ -285,33 +131,62 @@ class AnnotationService:
         }
         digest_current = metadata.get("target_digest") == target_digest(target)
         cache_current = digest_current and expected_ids and placement_ids == expected_ids
-        if cache_current and not retry_fallbacks and not copied:
+        if cache_current and not retry_fallbacks and not copied and not objects:
             return
 
         items = tuple(dict(item) for item in raw_items if isinstance(item, dict))
         if retry_fallbacks:
             # Never bless stale offsets or repeat an already successful paid placement.
-            if not cache_current or not isinstance(placements, list):
+            if not objects and (not cache_current or not isinstance(placements, list)):
                 return
             fallback_ids = {
                 str(item.get("id"))
-                for item in placements
+                for item in placements or []
                 if isinstance(item, dict) and item.get("status") in {"fallback", "pending"}
             }
-            items = tuple(item for item in items if str(item.get("id")) in fallback_ids)
+            items = tuple(
+                item
+                for item in items
+                if not cache_current or item["id"] in fallback_ids or item["id"] in object_ids
+            )
         retained = {
             str(item["id"]): dict(item)
             for item in placements or []
             if isinstance(item, dict) and digest_current
         }
         retained.update(copied)
+        global_errors = [error for error in resolution.errors if "id" not in error]
+        if global_errors and metadata.get("object_marker_errors") != global_errors:
+            metadata["object_marker_errors"] = global_errors
+            store.log_event(
+                "object_marker_validation_failed",
+                chapter=ci,
+                segment=segment.index,
+                errors=global_errors,
+            )
+        attempts = metadata.get("object_repairs", {})
+        fingerprints = {
+            item["id"]: target_digest(json.dumps([source, target, item], sort_keys=True))
+            for item in objects
+        }
         items = tuple(
             item
             for item in items
-            if item["id"] not in copied and (retry_fallbacks or item["id"] not in retained)
+            if item["id"] not in copied
+            and (
+                (
+                    retained.get(item["id"], {}).get("status") != "aligned"
+                    and attempts.get(item["id"], {}).get("input_digest") != fingerprints[item["id"]]
+                )
+                if item["id"] in object_ids
+                else (
+                    item["id"] not in retained
+                    or (retry_fallbacks and retained[item["id"]].get("status") != "aligned")
+                )
+            )
         )
         if not items:
-            if copied:
+            if copied or global_errors:
                 metadata["target_digest"] = target_digest(target)
                 metadata["placements"] = [
                     retained[str(item["id"])] for item in raw_items if str(item["id"]) in retained
@@ -319,21 +194,18 @@ class AnnotationService:
                 store.save_chapter(chapter)
             return
         anchor = segment.anchor or f"segment-{segment.index}"
-        if objects:
-            registry = store.load_annotation_contexts() or {}
-            contexts = registry.get("contexts", {})
-            for item in items:
-                reference = contexts.get(item.get("target_key"), {})
-                if item.get("relation") == OBJECT_RELATION and reference.get("source_blocks"):
-                    item["object_source"] = "\n".join(reference["source_blocks"])
+        registry = store.load_annotation_contexts() if objects else None
         align_items = []
         for item in items:
             request = {key: item[key] for key in ("id", "mode", "source_start", "source_end")}
             if item.get("relation") == OBJECT_RELATION:
                 request["object_reference"] = {
-                    "kind": item.get("object_tag", ""),
-                    "source": item.get("object_source", ""),
+                    "kind": item.get("object_tag", item.get("kind", "")),
+                    "source": reference_source(item, registry),
                 }
+                request["validation_errors"] = [
+                    error for error in resolution.errors if error.get("id") in (None, item["id"])
+                ] or [{"code": "unresolved_placement", "id": item["id"]}]
             align_items.append(request)
         unit = AlignmentUnit(
             unit_id=f"ch{ci}:{anchor}",
@@ -356,7 +228,9 @@ class AnnotationService:
         else:
             try:
                 aligner = self._aligner or self._runtime.annotation_aligner
-                result = aligner.align_unit(unit)
+                result = (
+                    repair_object_markers(unit, aligner) if objects else aligner.align_unit(unit)
+                )
             except Exception as error:  # noqa: BLE001 - Preserve completed text and pending objects.
                 store.log_event(
                     "annotation_alignment_failed",
@@ -376,6 +250,38 @@ class AnnotationService:
         metadata["placements"] = [
             retained[str(item["id"])] for item in raw_items if str(item["id"]) in retained
         ]
+        if objects:
+            # A completed failed attempt is resumable too: do not charge repeatedly for
+            # unchanged input. A changed target or object definition permits a new attempt.
+            for request in align_items:
+                if request["id"] not in fingerprints:
+                    continue
+                attempts[request["id"]] = {
+                    "input_digest": fingerprints[request["id"]],
+                    "errors": request["validation_errors"],
+                    "status": retained[request["id"]]["status"],
+                    "reason": (
+                        "disabled"
+                        if not self._runtime.config.pipeline.annotation_alignment
+                        else "aligned"
+                        if retained[request["id"]]["status"] == "aligned"
+                        else next(
+                            (
+                                row.get("error", "repair_unresolved")
+                                for row in result.placements
+                                if row["id"] == request["id"]
+                            ),
+                            "repair_unresolved",
+                        )
+                    ),
+                }
+            if self._runtime.config.pipeline.annotation_alignment:
+                metadata["object_repairs"] = attempts
+            # Preserve deterministic order for coincident objects, including repaired ones.
+            for order, item in enumerate(raw_items):
+                row = retained.get(item["id"])
+                if item["id"] in object_ids and row and row.get("status") == "aligned":
+                    row.setdefault("target_order", len(raw_items) + order)
         # Persist each logical paragraph atomically so interruptions do not repeat paid alignment calls
         # and users can inspect exports before the complete book finishes translating.
         store.save_chapter(chapter)
@@ -391,13 +297,17 @@ class AnnotationService:
             pending_objects=[
                 item["id"] for item in metadata["placements"] if item.get("status") == "pending"
             ],
+            object_repairs=attempts if objects else {},
         )
 
-    def repair_fallbacks(self, store: Storage, *, progress: ProgressFn | None = None) -> None:
+    def repair_fallbacks(
+        self, store: Storage, *, progress: ProgressFn | None = None, objects_only: bool = False
+    ) -> None:
         """Make one separate, resumable pass over fallback annotations, including done chapters.
 
         The caller holds the book lock. Each repaired paragraph is persisted before
-        proceeding; remaining fallbacks wait for a later run rather than looping here.
+        proceeding. Ordinary note fallbacks wait for a later run; completed object
+        attempts require changed input. Neither path loops over failures here.
         """
         if not self._runtime.config.pipeline.annotation_alignment:
             return
@@ -412,8 +322,18 @@ class AnnotationService:
         for done, ci in enumerate(chapter_indices, 1):
             chapter = store.load_chapter(ci)
             for position, segment in enumerate(chapter.text_segments):
-                metadata = self.annotation_metadata(segment)
+                metadata = annotation_metadata(segment)
                 if segment.cont or not isinstance(metadata, dict):
+                    continue
+                if any(
+                    isinstance(item, dict) and item.get("relation") == OBJECT_RELATION
+                    for item in metadata.get("items", [])
+                ):
+                    self.align_segment_annotation(
+                        ci, chapter, position, store, retry_fallbacks=True
+                    )
+                    continue
+                if objects_only:
                     continue
                 if "pdf_annotations" in segment.meta:
                     # PDF export cannot invent formula geometry or use stale positions.
@@ -424,21 +344,6 @@ class AnnotationService:
                     # Unchanged PDF failures are best-effort omissions, not another paid
                     # repair pass. Other annotations in the same paragraph remain usable.
                     continue
-                if any(
-                    isinstance(item, dict) and item.get("relation") == OBJECT_RELATION
-                    for item in metadata.get("items", [])
-                ):
-                    target = "".join(
-                        item.target or "" for item in self._logical_segments(chapter, position)
-                    )
-                    expected = {item["id"] for item in metadata.get("items", [])}
-                    available = {item["id"] for item in metadata.get("placements", [])}
-                    if (
-                        metadata.get("target_digest") != target_digest(target)
-                        or not expected <= available
-                    ):
-                        self.align_segment_annotation(ci, chapter, position, store)
-                        continue
                 placements = metadata.get("placements")
                 if not isinstance(placements, list) or not any(
                     isinstance(item, dict) and item.get("status") in {"fallback", "pending"}

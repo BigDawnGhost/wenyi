@@ -70,38 +70,54 @@ function bindSourceDrop(zone: HTMLElement, callbacks: SourceDropCallbacks) {
   };
 }
 
-export const webPlatform: PlatformServices = {
-  // Preserve browser behavior; native background policy belongs to the Desktop host.
-  activity: { isForeground: () => true, subscribe: () => () => {} },
-  preferences: {
-    get: (key) => localStorage.getItem(key),
-    set: (key, value) => localStorage.setItem(key, value),
-    subscribe: (key, listener) => {
-      const changed = (event: StorageEvent) => {
-        if (event.key === key || event.key === null) listener();
-      };
-      window.addEventListener("storage", changed);
-      return () => window.removeEventListener("storage", changed);
+function createBrowserPlatform(): PlatformServices {
+  return {
+    // Preserve browser behavior; native background policy belongs to the Desktop host.
+    activity: { isForeground: () => true, subscribe: () => () => {} },
+    preferences: {
+      get: (key) => localStorage.getItem(key),
+      set: (key, value) => localStorage.setItem(key, value),
+      subscribe: (key, listener) => {
+        const changed = (event: StorageEvent) => {
+          if (event.key === key || event.key === null) listener();
+        };
+        window.addEventListener("storage", changed);
+        return () => window.removeEventListener("storage", changed);
+      },
     },
-  },
-  request: <T>(path: string, init?: RequestInit) =>
-    sendRequest(() => fetch(`/api${path}`, withTimeout({
-      ...init, headers: requestHeaders(init, authToken()),
-    }))),
-  download,
-  apiBase: () => "/api",
-  setAuthToken: (token) => {
-    if (token) localStorage.setItem("wenyi_token", token);
-    else localStorage.removeItem("wenyi_token");
-  },
-  connectProgress: (project) => {
-    const url = new URL(`/ws/projects/${encodeURIComponent(project)}/progress`, location.origin);
-    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    return new WebSocket(url);
-  },
-  authenticateProgress: (socket) => socket.send(JSON.stringify({ token: authToken() || "" })),
-  progressInterval: (_connected, fallback) => fallback,
-  progressKeys: () => ["project", "chapters", "workflow", "stats"],
-  bindSourceDrop,
-  capabilities: {},
-};
+    request: <T>(path: string, init?: RequestInit) =>
+      sendRequest(() => fetch(`/api${path}`, withTimeout({
+        ...init, headers: requestHeaders(init, authToken()),
+      }))),
+    download,
+    apiBase: () => "/api",
+    setAuthToken: (token) => {
+      if (token) localStorage.setItem("wenyi_token", token);
+      else localStorage.removeItem("wenyi_token");
+    },
+    connectProgress: (project) => {
+      const url = new URL(`/ws/projects/${encodeURIComponent(project)}/progress`, location.origin);
+      url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+      return new WebSocket(url);
+    },
+    authenticateProgress: (socket) => socket.send(JSON.stringify({ token: authToken() || "" })),
+    progressInterval: (_connected, fallback) => fallback,
+    progressKeys: () => ["project", "chapters", "workflow", "stats"],
+    bindSourceDrop,
+    capabilities: {},
+  };
+}
+
+const browserPlatform = createBrowserPlatform();
+
+// Dev-only offline template: with VITE_MOCK_PLATFORM=1 the browser platform is
+// replaced by the shared sandbox adapter (docs/development/web.md). Vite
+// replaces both flags statically, so production builds prune this branch and
+// keep the real transport below.
+let selected: PlatformServices = browserPlatform;
+if (import.meta.env.DEV && import.meta.env.VITE_MOCK_PLATFORM === "1") {
+  const { createMockPlatform } = await import("../../../packages/ui/sandbox/mock-platform");
+  selected = createMockPlatform({ scenario: import.meta.env.VITE_MOCK_SCENARIO });
+}
+
+export const webPlatform: PlatformServices = selected;

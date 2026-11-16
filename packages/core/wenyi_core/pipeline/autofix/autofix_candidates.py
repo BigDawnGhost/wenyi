@@ -34,6 +34,7 @@ class AutofixCandidateService:
         debug: ReviewRunStore,
         *,
         progress: ProgressFn | None = None,
+        annotation_context_registry: dict[str, Any] | None = None,
     ) -> AutofixCandidates:
         chapters_by_index = {chapter.index: chapter for chapter in chapters}
         candidates = AutofixCandidates()
@@ -108,6 +109,7 @@ class AutofixCandidateService:
             analysis,
             source_lang=self.config.source_lang,
             target_overrides=overrides,
+            annotation_context_registry=annotation_context_registry,
         )
         raw_issues = debug.load_json("rounds/final/unresolved_issues.json")
         if not isinstance(raw_issues, list):

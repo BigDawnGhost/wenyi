@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createTranslator } from "../../src/i18n/catalog";
 import { fakeApi, pid, project, workflow } from "../../sandbox/fixtures";
+import { expectTokenColor } from "./color-helper";
 
 
 /** Whether the Desktop host must keep running this suite as well.
@@ -21,6 +22,88 @@ for (const locale of ["en", "zh-CN"] as const) {
       }, locale);
       await fakeApi(page, {}, apiOrigin);
     });
+
+    for (const theme of ["light", "dark"] as const) {
+      test(`task controls stay quiet and keyboard-operable in ${theme}`, async ({ page }, testInfo) => {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.addInitScript(theme => localStorage.setItem("wenyi.theme", theme), theme);
+        const apiBase = apiOrigin ?? "**/api";
+        let status = "ready";
+        await page.route(`${apiBase}/projects/${pid}`, route =>
+          route.fulfill({
+            json: {
+              ...project,
+              name: "尤利西斯",
+              title: "Ulysses",
+              source_lang: "en",
+              target_lang: "zh",
+              status,
+            },
+          }),
+        );
+        const requests: string[] = [];
+        let pendingRequest = Promise.resolve();
+        await page.route(new RegExp(`/projects/${pid}/(translate|pause|resume)$`), async route => {
+          // Web prefixes requests with /api; Desktop addresses its local API directly.
+          requests.push(new URL(route.request().url()).pathname.replace(/^\/api(?=\/)/, ""));
+          await pendingRequest;
+          await route.fulfill({ json: { project_id: pid, task_id: "task-control", message: "Accepted" } });
+        });
+        const header = page.locator('[data-slot="page.header"]');
+        for (const [state, command, label] of [
+          ["ready", "translate", "common.startTranslation"],
+          ["translating", "pause", "progress.pause"],
+          ["paused", "resume", "progress.resumeTask"],
+          ["error", "resume", "progress.resumeTask"],
+        ] as const) {
+          status = state;
+          await page.goto(`/projects/${pid}`);
+          const button = header.getByRole("button", { name: t(label), exact: true });
+          await expect(button).toBeEnabled();
+          await expect(button).toHaveText("");
+          await expect(button).toHaveAttribute("title", t(label));
+          await expect(button).toHaveCSS("width", "36px");
+          await expect(button).toHaveCSS("height", "36px");
+          await expect(button).toHaveCSS("border-top-width", "1px");
+          await expectTokenColor(button, "border-top-color", "border");
+          await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+          await expect(button).toHaveCSS("background-image", "none");
+          await expect(button).toHaveCSS("--tw-shadow", "0 0 #0000");
+          await expectTokenColor(button, "color", "muted-foreground");
+          await expect(button.locator("svg")).toHaveAttribute("aria-hidden", "true");
+          if (locale === "zh-CN" && state !== "error") {
+            await header.screenshot({ path: testInfo.outputPath(`task-control-${state}-${theme}.png`) });
+          }
+          await button.hover();
+          await expectTokenColor(button, "background-color", "hover");
+          await page.mouse.move(0, 0);
+          requests.length = 0;
+          let release!: () => void;
+          pendingRequest = new Promise(resolve => { release = resolve; });
+          try {
+            await button.press("Enter");
+            await expect.poll(() => requests).toEqual([`/projects/${pid}/${command}`]);
+            await expect(button).toBeDisabled();
+            await expect(button).toHaveAttribute("aria-busy", "true");
+            await expect(button.locator("svg")).toHaveClass(/animate-spin/);
+            await page.keyboard.press("Enter");
+            expect(requests).toHaveLength(1);
+          } finally {
+            release();
+          }
+          await expect(button).toBeEnabled();
+          await expect(button).not.toHaveAttribute("aria-busy", "true");
+        }
+        status = "pausing";
+        await page.goto(`/projects/${pid}`);
+        await expect(header.getByRole("button", { name: t("progress.pause"), exact: true }))
+          .toBeDisabled();
+        status = "parsing";
+        await page.goto(`/projects/${pid}`);
+        await expect(page.getByRole("heading", { name: "尤利西斯", exact: true })).toBeVisible();
+        await expect(header.getByRole("button")).toHaveCount(0);
+      });
+    }
 
     for (const status of ["parsing", "uploaded", "preparing", "error"]) {
       test(`${status} projects do not offer source upload before AI preparation`, async ({ page }) => {
@@ -88,9 +171,10 @@ for (const locale of ["en", "zh-CN"] as const) {
       await expect(page.getByRole("columnheader", { name: t("progress.translationStatus") }))
         .toBeVisible();
       expect(reportRequests).toEqual([]);
-      // The workflow and its status are text sections, not bordered containers.
+      // The workflow owns one group-card outline; its status stays an unboxed text row.
+      await expect(panel).toHaveCSS("border-left-width", "1px");
+      await expect(panel.getByRole("status")).toHaveCSS("border-left-width", "0px");
       for (const element of [panel, panel.getByRole("status")]) {
-        await expect(element).toHaveCSS("border-left-width", "0px");
         await expect(element).toHaveCSS("box-shadow", "none");
       }
     });

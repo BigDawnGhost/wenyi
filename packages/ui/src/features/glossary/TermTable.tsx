@@ -74,7 +74,7 @@ export function TermTable({
   return (
     <Card>
       <CardContent className="overflow-x-auto p-0">
-        <table className="w-full min-w-[640px] table-fixed text-sm">
+        <table className="w-full min-w-160 table-fixed text-sm">
           <colgroup>
             <col className="w-10" />
             <col />
@@ -82,9 +82,9 @@ export function TermTable({
             <col className="w-36" />
             <col className="w-24" />
           </colgroup>
-          <thead className="whitespace-nowrap border-b text-xs text-muted-foreground">
+          <thead className="whitespace-nowrap border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
             <tr>
-              <th className="text-left p-3 font-medium">
+              <th className="text-left px-4 py-3.5 font-medium">
                 <input
                   type="checkbox"
                   aria-label={tr("glossary.selectPage")}
@@ -97,16 +97,16 @@ export function TermTable({
                   onChange={onToggleSelectAll}
                 />
               </th>
-              <th className="text-left p-3 font-medium">
+              <th className="text-left px-4 py-3.5 font-medium">
                 {tr("glossary.sourceTerm")}
               </th>
-              <th className="text-left p-3 font-medium">
+              <th className="text-left px-4 py-3.5 font-medium">
                 {tr("glossary.translatedTerm")}
               </th>
-              <th className="text-left p-3 font-medium">
+              <th className="text-left px-4 py-3.5 font-medium">
                 {tr("common.type")}
               </th>
-              <th className="text-right p-3 font-medium">
+              <th className="text-right px-4 py-3.5 font-medium">
                 {tr("common.actions")}
               </th>
             </tr>
@@ -115,31 +115,31 @@ export function TermTable({
             {(terms || []).map((t: Term) => (
               <tr
                 key={t.source}
-                className="border-b last:border-0 hover:bg-muted/40"
+                className="border-b border-black/[0.05] last:border-0 hover:bg-muted/40 dark:border-white/[0.07]"
               >
-                <td className="p-3">
+                <td className="px-4 py-3.5">
                   <input
                     type="checkbox"
                     checked={selected.has(t.source)}
                     onChange={() => onToggleSelect(t.source)}
                   />
                 </td>
-                <td className="p-3 font-medium">
+                <td className="px-4 py-3.5 font-medium">
                   <span className="block truncate" title={t.source}>
                     {t.source}
                   </span>
                 </td>
-                <td className="p-3">
+                <td className="px-4 py-3.5">
                   <span className="block truncate" title={t.target}>
                     {t.target}
                   </span>
                 </td>
-                <td className="p-3">
+                <td className="px-4 py-3.5">
                   <Badge variant="outline">
                     {termTypes()[t.type || ""] || t.type}
                   </Badge>
                 </td>
-                <td className="p-3 text-right">
+                <td className="px-4 py-3.5 text-right">
                   <div className="flex justify-end gap-1">
                     <Button
                       variant="ghost"

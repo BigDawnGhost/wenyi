@@ -368,3 +368,61 @@ Diagnostic privacy tests share [Desktop fixtures](../../apps/desktop/diagnostic-
 Browser IPC mocks do not validate packaged dialogs, tray behavior, process ownership
 or OS-specific installation; perform that acceptance on each supported target and
 report unavailable integration services separately.
+
+## Cross-platform style walkthrough
+
+The packaged targets render with different WebView engines: WebView2 on Windows
+(Evergreen, tracks current Chromium), WKWebView on macOS (ships with the OS;
+plan for the Safari 15.4 capability level) and WebKitGTK 4.1 on Linux
+(distribution-provided; Ubuntu 22.04 and Debian 12 ship 2.36). CI covers the
+WebKit engine family through the opt-in `web-webkit` Playwright project
+(see [Web development](web.md)); real WebView behaviour still needs a manual
+walkthrough on each supported OS after packaging or major style changes, at
+roughly 1280×800 and 1920×1080:
+
+- [ ] The main layout fills the window without leaking background (`h-dvh`) and
+  survives resize and maximize.
+- [ ] The settings sticky action bar stays pinned while scrolling and keeps its
+  translucent blurred background.
+- [ ] Dialog overlays keep the 2px backdrop blur, center their content and
+  scroll tall bodies inside the maximum height.
+- [ ] Native `<dialog>` editors (for example the paragraph editor) open and
+  close on Esc/Cancel without losing state, and return focus on close.
+- [ ] Checkbox and radio controls keep their drawn appearance (checked,
+  disabled) in light and dark themes.
+- [ ] The focus ring appears for keyboard focus only (`:focus-visible`).
+- [ ] Native control colors follow the light/dark theme (`color-scheme`).
+- [ ] With `prefers-reduced-motion` enabled, placeholder animations stop.
+- [ ] The brand wordmark font loads without a visible substitute flash.
+- [ ] Select popovers stay inside the window edge.
+
+Platform additions:
+
+- Windows/WebView2: the console shows no CSP violations, and the layout holds
+  at 125% and 150% system scaling.
+- macOS/WKWebView: disclosure chevrons still rotate, and elastic trackpad
+  scrolling does not dislodge the sticky bar.
+- Linux/WebKitGTK: the first requests succeed (the timeout/abort path must work
+  on this engine family); dialog backdrops still blur — a plain tint means the
+  `-webkit-backdrop-filter` prefix went missing from the build; the WebKit-only
+  disclosure marker stays hidden.
+
+## Packaged build smoke test
+
+Run once per release against each OS installer (NSIS `.exe`, `.dmg`, AppImage)
+built by `pnpm desktop:build`; [Releasing](releasing.md) covers the build
+itself.
+
+1. The installer launches, and the first paint shows the runtime placeholder,
+   not a white screen.
+2. After the engine is ready, repeat the common style walkthrough quickly in
+   the packaged app: fonts, viewport layout, dialogs and theme switching.
+3. The first network requests succeed (sign-in, project list); with the network
+   cut, the UI reports the request timeout instead of hanging.
+4. Native capability styling works: the diagnostics copy button reports
+   success/failure, dragged files show the highlight ring, and exports open the
+   native save dialog.
+5. The update panel shows its manual mode while release signing is not
+   configured, instead of reporting an error.
+6. The console and diagnostics show no CSP violations and no
+   `frontend_render_failed` events.

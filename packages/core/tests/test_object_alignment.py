@@ -33,14 +33,18 @@ def anchors():
         "〘object:a〘object:broken",
     ],
 )
-def test_malformed_transport_is_lossless_at_every_slice_boundary(broken):
+def test_malformed_transport_keeps_prose_and_valid_siblings_at_every_slice_boundary(broken):
     target = f"甲{broken}为正数，另令〘object:b〙为负数。"
+    prefix = f"甲{broken.removeprefix('〘object:a')}为正数，另令"
     for boundary in range(len(target) + 1):
         slices = (target[:boundary], target[boundary:])
         result = resolve_objects(slices, anchors(), "A B")
         assert result.damaged
-        assert result.targets == slices
-        assert result.placements == ()
+        assert "".join(result.targets) == prefix + "为负数。"
+        assert [row["id"] for row in result.placements] == ["b"]
+        assert result.placements[0]["target_start"] == len(prefix)
+        assert any(error["code"] == "unclosed_marker" for error in result.errors)
+        # Without an anchor inventory, generic cleanup cannot prove an unclosed ID.
         assert clean_object_markers(slices, "A B") == slices
 
 

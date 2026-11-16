@@ -68,7 +68,22 @@ pnpm -C apps/web dev
 MOCK_API=1 pnpm -C apps/web dev
 ```
 
-Vite 通过 `packages/ui/sandbox/fixtures.ts` 中与 Playwright 共用的 fixture 应答 `/api`。操作作用于 mock 状态，不接触真实项目。Mock 不提供进度 WebSocket，界面使用 HTTP 后备读取。不设置 `MOCK_API` 时，恢复正常代理开发。
+Vite 通过 `packages/ui/sandbox/fixtures.ts` 中与 Playwright 共用的 fixture 应答 `/api`。操作作用于 mock 状态，不接触真实项目。开发服务器还用同一翻译状态机仿真 `/ws/projects/{pid}/progress` 进度 WebSocket，因此脱机也能看到实时进度。不设置 `MOCK_API` 时，恢复正常代理开发。
+
+`MOCK_SCENARIO=<id>` 选择 `packages/ui/sandbox/scenarios.ts` 中的命名场景，例如 `MOCK_SCENARIO=error500 MOCK_API=1 pnpm -C apps/web dev`。场景可注入 HTTP、网络与延迟故障，调整沙箱状态（翻译中、已暂停、空库），并可让未 mock 的写端点返回 `404` 而非笼统成功。
+
+<a id="offline-platform-mock"></a>
+
+### 脱机平台 Mock
+
+`VITE_MOCK_PLATFORM=1` 将注入的整个平台服务替换为 `packages/ui/sandbox/mock-platform.tsx` 中的共享适配器：传输、进度 socket、偏好、前后台感知、源文件拖放与一组沙箱能力全部在页面内基于同一批 fixture 运行，不依赖开发服务器中间件或后端。通过 `VITE_MOCK_SCENARIO=<id>` 或 URL 参数 `?scenario=<id>` 选择场景。Desktop 使用相同开关：
+
+```bash
+VITE_MOCK_PLATFORM=1 pnpm -C apps/web dev
+VITE_MOCK_PLATFORM=1 pnpm dev:desktop-ui
+```
+
+组件 playground 位于 <http://localhost:5173/sandbox.html>，这是仅开发环境使用的 Vite 入口，在 mock platform 上挂载共享 `App` 并提供场景切换器；生产构建不包含它。
 
 Mock 成功只能证明浏览器行为，不能证明鉴权、存储事务、队列恢复、解析服务可用性或翻译质量。这些保证需对应后端／集成测试验证。界面布局、国际化、共享 fixture、平台隔离和分包体积规范见[前端开发](frontend.md)。
 
@@ -209,7 +224,7 @@ pnpm -C apps/web exec playwright install chromium
 pnpm -C apps/web test:e2e
 ```
 
-Playwright 在回环地址 4173 端口启动 Vite，用 mock HTTP／WebSocket 响应验证浏览器契约，不能代替服务集成测试。共享 UI 变更还需 Desktop typecheck／build／E2E，并在两端构建后运行 `pnpm test:frontend-boundaries`，见[前端开发](frontend.md)。真实模型质量评估与离线／浏览器检查分开报告。
+Playwright 在回环地址 4173 端口启动 Vite，用 mock HTTP／WebSocket 响应验证浏览器契约，不能代替服务集成测试。共享 UI 变更还需 Desktop typecheck／build／E2E，并在两端构建后运行 `pnpm test:frontend-boundaries`，见[前端开发](frontend.md)。WebKit 引擎族由可选的 `web-webkit` 项目覆盖：先用 `pnpm -C apps/web exec playwright install webkit` 安装浏览器，再用 `PLAYWRIGHT_PROJECTS=web-webkit` 选择；CI 中该任务与 Chromium 并行运行。真实模型质量评估与离线／浏览器检查分开报告。
 
 <a id="docker-builds"></a>
 

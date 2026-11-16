@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { fakeApi } from "../../sandbox/fixtures";
 import { chooseOption } from "./select-helper";
+import { expectTokenColor } from "./color-helper";
 
 
 /** Whether the Desktop host must keep running this suite as well.
@@ -12,28 +13,27 @@ export const desktopHostSensitive = false;
 export function registerTests() {
 test("dark OS cannot take over a light language popup", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "dark" });
+  await page.addInitScript(() => localStorage.setItem("wenyi.theme", "light"));
   await fakeApi(page);
   await page.goto("/settings");
-  await page.locator("html").evaluate((element) => {
-    element.classList.remove("dark");
-    element.classList.add("light");
-  });
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
   await page.getByRole("combobox", { name: "Interface language" }).click();
   const list = page.getByRole("listbox");
   await expect(list).toBeVisible();
-  await expect(list).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expectTokenColor(list, "background-color", "background");
   await expect(list.getByRole("option", { name: "English", exact: true })).toBeVisible();
   await expect(list.getByRole("option", { name: "简体中文", exact: true })).toBeVisible();
 });
 
 test("explicit dark theme controls the portalled options", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "light" });
+  await page.addInitScript(() => localStorage.setItem("wenyi.theme", "dark"));
   await fakeApi(page);
   await page.goto("/settings");
-  await page.locator("html").evaluate((element) => element.classList.add("dark"));
+  await expect(page.locator("html")).toHaveClass(/dark/);
   await page.getByLabel("Interface language").click();
-  await expect(page.getByRole("listbox")).toHaveCSS("background-color", "rgb(9, 9, 11)");
-  await expect(page.getByRole("listbox")).toHaveCSS("color", "rgb(250, 250, 250)");
+  await expectTokenColor(page.getByRole("listbox"), "background-color", "background");
+  await expectTokenColor(page.getByRole("listbox"), "color", "foreground");
   await page.keyboard.press("Escape");
   await expect(page.getByLabel("Interface language")).toBeFocused();
 });
@@ -56,7 +56,7 @@ test("keyboard, empty values, disabled options, defaults and actual form values"
   await expect(page.getByRole("option", { name: "全部语言" })).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(page.getByRole("option", { name: "Alpha" })).toBeFocused();
-  await expect(page.getByRole("option", { name: "Alpha" })).toHaveCSS("background-color", "rgb(244, 244, 245)");
+  await expectTokenColor(page.getByRole("option", { name: "Alpha" }), "background-color", "selected");
   await page.keyboard.press("Enter");
   await expect(trigger).toHaveText("Alpha");
   await expect(trigger).toBeFocused();

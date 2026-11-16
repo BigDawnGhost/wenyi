@@ -15,8 +15,10 @@ import os
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
+from ...agents.prompts import readonly_object_context
 from ...events import ProgressFn
 from ...llm.retrying import is_resumable_provider_interrupt
+from ...markup.contexts import object_contexts_for_segments
 from ...models.glossary import GlossaryTerm
 from ...review.evidence import BookEvidenceIndex
 from ...review.models import ReviewOutcome
@@ -149,6 +151,7 @@ class ReviewService:
         if progress:
             progress(0, 0, "Restoring review checkpoint…")
         analysis = store.load_analysis() or {}
+        annotation_context_registry = store.load_annotation_contexts()
         reviewed_content_digest = content_digest(loaded)
         config_snapshot = self._review_config_snapshot()
         # Bind the whole run (including round-scoped fixer traces) to effective guidance.
@@ -160,6 +163,21 @@ class ReviewService:
                 for chapter in loaded
             },
         }
+        # References are not editable evidence, but changing them or their instructions
+        # must invalidate completed reviews and interrupted model traces alike.
+        object_references = [
+            (chapter.index, prompt)
+            for chapter in loaded
+            if (
+                prompt := readonly_object_context(
+                    object_contexts_for_segments(chapter.text_segments, annotation_context_registry)
+                )
+            )
+        ]
+        if object_references:
+            config_snapshot["guidance"]["object_references_sha256"] = hashlib.sha256(
+                json.dumps(object_references, ensure_ascii=False).encode("utf-8")
+            ).hexdigest()
 
         # Reuse completed review results when content, configuration and glossary fingerprints match.
         latest_completed = store.load_latest_review_result()
@@ -213,7 +231,7 @@ class ReviewService:
             reviewed_content_digest=reviewed_content_digest,
         )
 
-        return ReviewInputs(loaded, analysis, debug)
+        return ReviewInputs(loaded, analysis, debug, annotation_context_registry)
 
     def run_session(
         self,
@@ -266,6 +284,7 @@ class ReviewService:
                     analysis,
                     source_lang=self._runtime.config.source_lang,
                     target_overrides=state.target_overrides,
+                    annotation_context_registry=opened.annotation_context_registry,
                 )
                 with debug.round_scope(review_round):
                     debug.log_event(

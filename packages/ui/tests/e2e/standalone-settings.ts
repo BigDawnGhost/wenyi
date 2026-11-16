@@ -1,23 +1,124 @@
 import { expect, test } from "@playwright/test";
 import { configuration, fakeApi, globalConfiguration, pid, project } from "../../sandbox/fixtures";
 import { chooseOption } from "./select-helper";
+import { expectCardSurface, expectTokenColor } from "./color-helper";
 
 
 /** Whether the Desktop host must keep running this suite as well.
  *
- * The Desktop host passes a nine-entry `categories` list that differs from the Web host's six. The extra categories (BabelDOC plugin, Diagnostics and feedback, About) are Desktop-only settings, so the assertions depend on the host argument.
+ * Desktop adds Diagnostics and feedback and About categories; the assertions depend on the host argument.
  */
 export const desktopHostSensitive = true;
 
 export function registerTests({
   categories = {
-    en: ["General", "Models & connections", "Default models", "Workflow", "PDF parsing", "Advanced"],
-    "zh-CN": ["通用", "模型与接口", "默认模型", "翻译流程", "PDF 解析", "高级"],
+    en: ["General", "Models & connections", "Default models", "Workflow", "PDF", "Advanced"],
+    "zh-CN": ["通用", "模型与接口", "默认模型", "翻译流程", "PDF", "高级"],
   },
 }: { categories?: Record<"en" | "zh-CN", string[]> } = {}) {
 test.beforeEach(async ({ page }) => {
   await fakeApi(page);
 });
+
+for (const theme of ["light", "dark"]) {
+  for (const chinese of [false, true]) {
+    test(`settings subsection headings match the API connection heading in ${chinese ? "Chinese" : "English"} in ${theme}`, async ({ page }) => {
+      await page.addInitScript(({ locale, theme }) => {
+        localStorage.setItem("wenyi.locale", locale);
+        localStorage.setItem("wenyi.theme", theme);
+      }, { locale: chinese ? "zh-CN" : "en", theme });
+      const typography = (element: Element) => {
+        const style = getComputedStyle(element);
+        return {
+          family: style.fontFamily,
+          size: style.fontSize,
+          weight: style.fontWeight,
+          lineHeight: style.lineHeight,
+          color: style.color,
+        };
+      };
+      await page.goto("/settings/providers");
+      const reference = await page.getByRole("heading", {
+        name: chinese ? "API 连接" : "Connections", exact: true,
+      }).evaluate(typography);
+      for (const path of ["/settings", "/settings/pdf", "/settings/advanced", `/projects/${pid}/settings`]) {
+        await page.goto(path);
+        const headings = page.locator("main h2:visible, main h3:visible");
+        await expect(headings.first()).toBeVisible();
+        for (const heading of await headings.all()) {
+          expect(await heading.evaluate(typography)).toEqual(reference);
+        }
+      }
+    });
+  }
+}
+
+for (const theme of ["light", "dark"]) {
+  test(`workflow options use labeled switches in ${theme}`, async ({ page }, testInfo) => {
+    await page.addInitScript(theme => localStorage.setItem("wenyi.theme", theme), theme);
+    for (const scope of ["global", "project"]) {
+      await page.goto(scope === "global" ? "/settings/workflow" : `/projects/${pid}/settings`);
+      const main = page.getByRole("main");
+      await expect(main.getByRole("region", { name: "Workflow", exact: true }).getByRole("switch")).toHaveCount(4);
+      await expect(main.getByRole("checkbox")).toHaveCount(0);
+      for (const [key, name] of [
+        ["book_understanding", "Book understanding"],
+        ["polish", "Polishing"],
+        ["review", "Whole-book review"],
+        ["review_autofix", "Apply autofixes to the saved translation after review"],
+      ]) {
+        const control = main.getByRole("switch", { name, exact: true });
+        await expect(control).toBeChecked();
+        await expectTokenColor(control, "background-color", "primary");
+        await control.focus();
+        await page.keyboard.press("Space");
+        await expect(control).not.toBeChecked();
+        await expectTokenColor(control, "background-color", "input");
+        await page.keyboard.press("Enter");
+        await expect(control).toBeChecked();
+        await main.locator(`label[for="pipeline-${key}"]`).click();
+        await expect(control).not.toBeChecked();
+      }
+      await page.screenshot({ path: testInfo.outputPath(`workflow-switches-${scope}-${theme}.png`) });
+      if (scope === "global") {
+        await page.getByRole("link", { name: "Advanced", exact: true }).click();
+      }
+      const yaml = page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true });
+      expect(JSON.parse(await yaml.inputValue()).pipeline).toMatchObject({
+        book_understanding: false, polish: false, review: false, review_autofix: false,
+      });
+    }
+  });
+}
+
+for (const theme of ["light", "dark"]) {
+  test(`every settings category contains its content in panels in ${theme}`, async ({ page }, testInfo) => {
+    await page.addInitScript(theme => localStorage.setItem("wenyi.theme", theme), theme);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto("/settings");
+    const navigation = page.getByRole("navigation", { name: "Settings navigation", exact: true });
+    await expect(navigation.getByRole("link")).toHaveCount(categories.en.length);
+    const paths = await navigation.getByRole("link").evaluateAll(links =>
+      links.map(link => link.getAttribute("href")!),
+    );
+    paths.push(`/projects/${pid}/settings`);
+    for (const path of paths) {
+      await test.step(path, async () => {
+        await page.goto(path);
+        const section = page.locator('[data-slot="settings.section"]:visible');
+        await expect(section).toHaveCount(path.startsWith("/projects/") ? 4 : 1);
+        const content = section.locator('p:visible, input:visible, textarea:visible, a:visible, [role="combobox"]:visible, [role="switch"]:visible');
+        await expectCardSurface(content);
+        await expect.poll(() => page.getByRole("main").evaluate(node =>
+          node.scrollWidth <= node.clientWidth,
+        )).toBe(true);
+        await page.screenshot({
+          path: testInfo.outputPath(`surface-${path.split("/").pop()}-${theme}.png`),
+        });
+      });
+    }
+  });
+}
 
 for (const chinese of [false, true]) {
   test(`settings replaces project navigation and returns to the entry page in ${chinese ? "Chinese" : "English"}`, async ({ page }, testInfo) => {
@@ -57,6 +158,34 @@ test("direct settings links have a safe return destination", async ({ page }) =>
   await expect(page).toHaveURL("/");
 });
 
+test("model suggestions remain pointer-accessible outside the model card", async ({ page }) => {
+  // Leave room below both hosts' forms to isolate card clipping from viewport edges.
+  await page.setViewportSize({ width: 1280, height: 1200 });
+  await page.route("**/settings/models/list", route => route.fulfill({
+    json: {
+      ok: true,
+      models: Array.from({ length: 7 }, (_, index) => `listed-model-${index + 1}`),
+      category: "ok",
+      message: "",
+    },
+  }));
+  await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Fetch models", exact: true }).click();
+  const option = page.getByRole("option", { name: "listed-model-7", exact: true });
+  await expect(option).toBeInViewport();
+  // A locator click scrolls overflow-hidden ancestors programmatically, masking clipping.
+  await expect.poll(() => option.evaluate(node => {
+    const bounds = node.getBoundingClientRect();
+    return node.contains(document.elementFromPoint(
+      bounds.x + bounds.width / 2, bounds.y + bounds.height / 2,
+    ));
+  })).toBe(true);
+  const bounds = (await option.boundingBox())!;
+  await page.mouse.click(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+  await expect(page.getByRole("combobox", { name: "Model name", exact: true }))
+    .toHaveValue("listed-model-7");
+});
+
 test("category history preserves drafts and closes dropdowns", async ({ page }) => {
   await page.goto("/settings/workflow");
   await page.getByLabel("Polishing", { exact: true }).uncheck();
@@ -85,7 +214,7 @@ for (const chinese of [false, true]) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/settings/workflow");
     const main = page.getByRole("main");
-    await expect(main.getByRole("checkbox")).toHaveCount(4);
+    await expect(main.getByRole("switch")).toHaveCount(4);
     const workflow = main.getByRole("region", { name: chinese ? "翻译流程" : "Workflow", exact: true });
     await expect(workflow.getByRole("spinbutton", { includeHidden: true })).toHaveCount(0);
     await expect(page.getByLabel(chinese ? "逐段注释定位" : "Paragraph annotation alignment", { exact: true })).toHaveCount(0);
@@ -121,14 +250,14 @@ for (const chinese of [false, true]) {
     const yaml = page.getByRole("textbox", { name: advancedName, exact: true });
     await expect(yaml).toBeVisible();
     await expect(page.getByRole("link", { name: advancedName, exact: true })).toHaveCount(0);
-    await expect(main.getByRole("combobox")).toHaveCount(3);
-    await expect(main.getByRole("checkbox")).toHaveCount(4);
+    await expect(main.getByRole("combobox")).toHaveCount(4);
+    await expect(main.getByRole("switch")).toHaveCount(7);
     await expect(main.getByRole("spinbutton", { includeHidden: true })).toHaveCount(0);
     await expect(page.getByLabel(chinese ? "分批翻译章节" : "Translate chapters in batches", { exact: true })).toHaveCount(0);
     await expect(main.locator("details, summary")).toHaveCount(0);
     await expect(main.getByRole("table")).toHaveCount(0);
     await expect(main.getByRole("heading", { level: 2 })).toHaveText(
-      chinese ? ["模型", "翻译流程", advancedName] : ["Models", "Workflow", advancedName],
+      chinese ? ["模型", "翻译流程", "导出偏好", advancedName] : ["Models", "Workflow", "Export preferences", advancedName],
     );
     const polish = page.getByLabel(chinese ? "润色" : "Polishing", { exact: true });
     await polish.uncheck();
@@ -148,9 +277,12 @@ for (const chinese of [false, true]) {
       await expect.poll(() => main.evaluate(node => {
         const container = node.querySelector('[data-slot="page.container"]')!;
         const sections = [...node.querySelectorAll('[data-slot="settings.section"]')];
-        return container.getBoundingClientRect().width === node.clientWidth &&
+        const bounds = container.getBoundingClientRect();
+        const pane = node.getBoundingClientRect();
+        return bounds.width === Math.min(node.clientWidth, 1024) &&
+          Math.abs(bounds.left - pane.left - (node.clientWidth - bounds.width) / 2) <= 1 &&
           node.scrollWidth === node.clientWidth &&
-          sections.length === 3 && sections.every(section => {
+          sections.length === 4 && sections.every(section => {
             const heading = section.querySelector(":scope > h2")!.getBoundingClientRect();
             const content = section.querySelector(":scope > div")!.getBoundingClientRect();
             const bounds = section.getBoundingClientRect();
@@ -160,7 +292,7 @@ for (const chinese of [false, true]) {
           });
       })).toBe(true);
     }
-    await main.evaluate(node => node.scrollTo(0, 0));
+    await yaml.scrollIntoViewIfNeeded();
     await expect(yaml).toBeInViewport();
     await page.screenshot({ path: testInfo.outputPath("project-settings-inline-yaml.png") });
     await page.getByRole("button", { name: chinese ? "校验配置" : "Validate configuration", exact: true }).click();
@@ -203,7 +335,7 @@ for (const scope of ["global", "project"] as const) {
       await route.fulfill({ json: { ...saved, yaml, effective: JSON.parse(yaml) } });
     });
     await page.goto(scope === "global" ? "/settings/defaults" : `/projects/${pid}/settings`);
-    await chooseOption(page.getByLabel("Quality tier", { exact: true }), "editor · default / editor-model");
+    await chooseOption(page.getByLabel("Quality tier", { exact: true }), "default / editor-model");
     if (scope === "global") await page.getByRole("link", { name: "Workflow", exact: true }).click();
     await page.getByLabel("Apply autofixes to the saved translation after review", { exact: true }).uncheck();
     await page.getByRole("button", { name: "Save configuration", exact: true }).click();
@@ -274,14 +406,19 @@ test("running projects keep both basic and advanced settings read-only", async (
   await page.goto(`/projects/${pid}/settings`);
   await expect(page.getByText("Read-only while a task runs", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Quality tier", { exact: true })).toBeDisabled();
-  await expect(page.getByLabel("Polishing", { exact: true })).toBeDisabled();
+  const switches = page.getByRole("main").getByRole("switch");
+  await expect(switches).toHaveCount(7);
+  for (const control of await switches.all()) {
+    await expect(control).toBeDisabled();
+  }
+  await expect(page.getByLabel("Bilingual order", { exact: true })).toBeDisabled();
   await expect(page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true })).toBeDisabled();
   for (const name of ["Save configuration", "Restore defaults", "Validate configuration"]) {
     await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
   }
 });
 
-test("category content uses the full pane without a duplicate title column", async ({ page }) => {
+test("category content uses a centered reading column without a duplicate title", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
   await page.goto("/settings/providers");
   for (const category of categories.en) {
@@ -297,7 +434,11 @@ test("category content uses the full pane without a duplicate title column", asy
     })).toBe(true);
     await expect.poll(() => page.getByRole("main").evaluate(node => {
       const container = node.querySelector('[data-slot="page.container"]')!;
-      return container.getBoundingClientRect().width === node.clientWidth;
+      const bounds = container.getBoundingClientRect();
+      const pane = node.getBoundingClientRect();
+      return bounds.width === Math.min(node.clientWidth, 1024) &&
+        Math.abs(bounds.left - pane.left - (node.clientWidth - bounds.width) / 2) <= 1 &&
+        node.scrollWidth === node.clientWidth;
     })).toBe(true);
   }
 });
@@ -343,7 +484,7 @@ for (const chinese of [false, true]) {
   });
 }
 
-test("settings action bars stay flush with the pane bottom throughout scrolling", async ({ page }, testInfo) => {
+test("settings action bars float above the pane bottom throughout scrolling", async ({ page }, testInfo) => {
   const main = page.getByRole("main");
   const actions = page.locator('[data-slot="settings.actions"]');
   for (const path of [
@@ -360,8 +501,12 @@ test("settings action bars stay flush with the pane bottom throughout scrolling"
         }, progress);
         await expect.poll(() => actions.evaluate(node => {
           const pane = node.closest("main")!.getBoundingClientRect();
-          return Math.abs(pane.bottom - node.getBoundingClientRect().bottom);
-        })).toBeLessThanOrEqual(1);
+          return pane.bottom - node.getBoundingClientRect().bottom;
+        })).toBeGreaterThanOrEqual(12);
+        await expect.poll(() => actions.evaluate(node => {
+          const pane = node.closest("main")!.getBoundingClientRect();
+          return pane.bottom - node.getBoundingClientRect().bottom;
+        })).toBeLessThanOrEqual(32);
       }
       const lastControl = page.locator(
         '[data-slot="settings.section"] input:visible, [data-slot="settings.section"] textarea:visible, [data-slot="settings.section"] button:visible, [data-slot="settings.section"] summary:visible, [data-slot="page.container"] a:visible',

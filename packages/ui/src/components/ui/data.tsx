@@ -1,7 +1,9 @@
 import { useI18n, type MessageKey } from "../../i18n";
 import { statusLabel } from "../../i18n/status";
 import { errorMessage } from "../../lib/error-codes";
+import { cn } from "../../lib/utils";
 import { Lock } from "lucide-react";
+import { Card } from "./card";
 export function ErrorNotice({ error }: { error?: unknown }) {
   // The hook runs before the early return so the call order stays stable.
   const { t } = useI18n();
@@ -9,14 +11,14 @@ export function ErrorNotice({ error }: { error?: unknown }) {
   return (
     <div
       role="alert"
-      className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive"
+      className="rounded-md border-l-4 border-l-destructive bg-destructive/10 p-3 text-sm text-destructive"
     >
       {errorMessage(error, t)}
     </div>
   );
 }
 
-/** One consistent line for every page that becomes read-only while a project task runs. */
+/** One consistent notice panel for pages that become read-only during a project task. */
 export function ReadOnlyNotice({
   className,
   reason = "running",
@@ -27,13 +29,13 @@ export function ReadOnlyNotice({
 }) {
   const { t } = useI18n();
   return (
-    <p
+    <Card
       role="status"
-      className={`flex items-center gap-2 text-sm text-muted-foreground ${className ?? ""}`}
+      className={cn("flex items-center gap-2 p-4 text-sm text-muted-foreground", className)}
     >
       <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-      {t(reason === "source" ? "common.readOnlyUntilPrepared" : "common.readOnlyWhileRunning")}
-    </p>
+      <span>{t(reason === "source" ? "common.readOnlyUntilPrepared" : "common.readOnlyWhileRunning")}</span>
+    </Card>
   );
 }
 
@@ -73,7 +75,7 @@ export function StructuredData({
     return (
       <div className="space-y-3">
         {value.map((item, i) => (
-          <div key={i} className="rounded border p-3">
+          <div key={i} className="rounded border border-subtle p-3">
             <StructuredData value={item} depth={depth + 1} />
           </div>
         ))}
@@ -87,7 +89,7 @@ export function StructuredData({
           className={
             depth < 2
               ? "grid grid-cols-[minmax(100px,180px)_1fr] gap-1"
-              : "space-y-1 border-l pl-3"
+              : "space-y-1 border-l border-subtle pl-3"
           }
         >
           <dt className="break-words text-muted-foreground">

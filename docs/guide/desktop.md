@@ -41,7 +41,7 @@ For model registration, fetching names, and **Test connection**, see [Choose mod
 
 ### MinerU PDF parsing key
 
-Under **Settings → PDF parsing**, enter the MinerU key for PDF conversion. It is separate from model API keys.
+Under **Settings → PDF → MinerU PDF parsing**, enter the MinerU key for PDF conversion. It is separate from model API keys.
 
 **Manual MinerU edits save automatically after typing pauses or the field loses focus. There is no Save button.** Clearing the field removes the manual key. Saving uses the system credential store or, with a warning, session-only memory, independently of model/configuration saves.
 
@@ -94,7 +94,7 @@ For a new source file, drag it into **Create project** or use **Browse files**. 
 
 ## Optional BabelDOC plugin
 
-Use **Settings → BabelDOC plugin → Enable and download** for layout-preserving PDF translation. The plugin is off by default and downloads a separate **AGPL-3.0-only** runtime and model/font pack from the official [BabelDOC bridge releases](https://github.com/BigDawnGhost/wenyi-babeldoc-bridge/releases). Ordinary Desktop installation does not download it.
+Use **Settings → PDF → BabelDOC plugin → Enable and download** for layout-preserving PDF translation. MinerU credentials and BabelDOC plugin controls share this PDF page. The plugin is off by default and downloads a separate **AGPL-3.0-only** runtime and model/font pack from the official [BabelDOC bridge releases](https://github.com/BigDawnGhost/wenyi-babeldoc-bridge/releases). Ordinary Desktop installation does not download it.
 
 Wait for **Ready**, then select **BabelDOC** as the parser when creating a PDF project. Enabling the plugin neither changes the default parser from MinerU nor converts existing projects. Only projects parsed with BabelDOC can use layout-preserving PDF export.
 

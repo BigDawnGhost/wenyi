@@ -230,21 +230,33 @@ test("scrolling skips intervening windows and copying fills virtual selection ga
   expect(await page.locator("#paragraph-100").count()).toBe(0);
   expect(offsets.has(96)).toBe(false);
   expect(await page.getByTestId("translation-text").count()).toBeLessThan(100);
-  await page.evaluate(() => {
+  const selectionEnd = await page.evaluate(() => {
     const first = document.querySelector("#paragraph-0 [data-reader-text=target]")!;
-    const last = [...document.querySelectorAll<HTMLElement>("[data-paragraph-position]")]
-      .find(el => Number(el.dataset.paragraphPosition) > 150 && el.querySelector("[data-reader-text=source]"))!
-      .querySelector("[data-reader-text=source]")!;
+    const row = [...document.querySelectorAll<HTMLElement>("[data-paragraph-position]")]
+      .find(el => Number(el.dataset.paragraphPosition) > 150 && el.querySelector("[data-reader-text=target]"))!;
+    const last = row.querySelector("[data-reader-text=target]")!;
     const range = document.createRange();
     range.setStart(first.firstChild!, 0);
     range.setEnd(last.firstChild!, 10);
     const selection = getSelection()!;
     selection.removeAllRanges();
     selection.addRange(range);
+    return Number(row.dataset.paragraphPosition);
   });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
   await page.evaluate(() => document.dispatchEvent(new ClipboardEvent("copy", { cancelable: true })));
   await expect.poll(() => page.evaluate(() => (window as any).__copied || "")).toContain(segments[100].target);
+  const expected = await page.evaluate(() => (window as any).__copied);
+  await page.locator(`#paragraph-${selectionEnd} [data-reader-text=target]`)
+    .dispatchEvent("contextmenu", { clientX: 100, clientY: 100 });
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page.evaluate(() => {
+    getSelection()?.removeAllRanges();
+    document.dispatchEvent(new Event("selectionchange"));
+    (window as any).__copied = "";
+  });
+  await page.getByRole("menuitem", { name: "Copy selection", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as any).__copied)).toBe(expected);
   expect(await page.locator("#paragraph-100").count()).toBe(0);
 });
 }

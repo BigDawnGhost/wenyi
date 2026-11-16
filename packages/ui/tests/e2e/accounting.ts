@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
-import { fakeApi, pid } from "../../sandbox/fixtures";
+import { fakeApi, pid, project } from "../../sandbox/fixtures";
 import { cacheRate, tokenParts, usageRows } from "../../src/features/progress/accountingData";
+import { colorContrast, expectQuietLabelContrast, expectTokenColor } from "./color-helper";
 
 
 /** Whether the Desktop host must keep running this suite as well.
@@ -88,6 +89,160 @@ const stats = {
     })),
   },
 };
+
+for (const theme of ["light", "dark"] as const) {
+  test(`all status badges share readable, theme-appropriate colors in ${theme}`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.addInitScript(theme => {
+      localStorage.setItem("wenyi.theme", theme);
+      localStorage.setItem("wenyi.locale", "zh-CN");
+    }, theme);
+    const states = [
+      { status: "done", label: "已完成", tone: "status-success" },
+      { status: "paused", label: "已暂停", tone: "status-warning" },
+      { status: "error", label: "失败", tone: "status-danger" },
+      { status: "translating", label: "翻译中", tone: "status-info" },
+      { status: "ready", label: "已就绪", tone: "secondary" },
+    ];
+    const runStates = [
+      { status: "completed", label: "已完成", tone: "status-success" },
+      { status: "interrupted", label: "已中断", tone: "status-warning" },
+      { status: "failed", label: "失败", tone: "status-danger" },
+    ];
+    await fakeApi(page, {
+      [`/projects/${pid}/stats`]: {
+        ...stats,
+        timing: {
+          ...stats.timing,
+          runs: stats.timing.runs.slice(0, 3).map((run, index) => ({
+            ...run,
+            status: runStates[index].status,
+          })),
+        },
+      },
+      "/projects": states.map(({ status }, index) => ({
+        ...project,
+        id: index === 0 ? pid : `status-${status}`,
+        name: `样例项目 ${index + 1}`,
+        status,
+      })),
+    });
+    await page.goto("/");
+    for (const state of states) {
+      const badge = page.getByRole("main").getByText(state.label, { exact: true });
+      await expect(badge).toHaveCSS("border-radius", "6px");
+      await expect(badge).toHaveCSS("border-top-width", "1px");
+      await expectTokenColor(badge, "background-color", state.tone);
+      await expectTokenColor(badge, "color", `${state.tone}-foreground`);
+      await expectTokenColor(badge, "border-top-color",
+        state.tone === "secondary" ? "border" : `${state.tone}-border`);
+      await expectQuietLabelContrast(badge);
+      if (state.tone !== "secondary") {
+        const colors = await badge.evaluate(element => {
+          const style = getComputedStyle(element);
+          return [style.color, style.backgroundColor, style.borderTopColor].map(color => {
+            const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+            const maximum = Math.max(...channels) / 255;
+            const minimum = Math.min(...channels) / 255;
+            const lightness = (maximum + minimum) / 2;
+            const saturation = maximum === minimum ? 0
+              : (maximum - minimum) / (1 - Math.abs(2 * lightness - 1));
+            return { color, saturation, lightness };
+          });
+        });
+        for (const { color, saturation } of colors) {
+          if (theme === "light") {
+            expect(saturation, `${state.status}: ${color} should not look gray`).toBeGreaterThan(0.65);
+          } else {
+            expect(saturation, `${state.status}: ${color} should stay muted`).toBeLessThan(0.4);
+          }
+        }
+        if (theme === "light") expect(colors[1].lightness).toBeGreaterThanOrEqual(0.95);
+      }
+    }
+    await page.getByRole("main").locator(".grid").screenshot({
+      path: testInfo.outputPath(`status-family-${theme}.png`),
+    });
+    await page.goto(`/projects/${pid}`);
+    const runs = page.getByRole("list", { name: "运行记录", exact: true });
+    await expect(runs.getByRole("listitem")).toHaveCount(3);
+    for (const state of runStates) {
+      const badge = runs.getByText(state.label, { exact: true });
+      await expectTokenColor(badge, "background-color", state.tone);
+      await expectTokenColor(badge, "color", `${state.tone}-foreground`);
+      await expectTokenColor(badge, "border-top-color", `${state.tone}-border`);
+      await expect(badge).toHaveCSS("border-radius", "6px");
+      await expectQuietLabelContrast(badge);
+    }
+    const badges = page.getByText("已完成", { exact: true });
+    for (const badge of await badges.all()) {
+      await expectTokenColor(badge, "background-color", "status-success");
+      await expectTokenColor(badge, "color", "status-success-foreground");
+      await expectTokenColor(badge, "border-top-color", "status-success-border");
+      await expect(badge).toHaveCSS("border-top-width", "1px");
+      await expect(badge).toHaveCSS("border-radius", "6px");
+      await expectQuietLabelContrast(badge);
+    }
+    await page.getByRole("region", { name: "运行记录", exact: true }).screenshot({
+      path: testInfo.outputPath(`run-status-${theme}.png`),
+    });
+    await page.screenshot({ path: testInfo.outputPath(`completed-status-${theme}.png`) });
+  });
+}
+
+test("all usage series and run bars follow the system theme without changing totals", async ({ page }, info) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.addInitScript(() => localStorage.setItem("wenyi.theme", "system"));
+  const slot = {
+    calls: 1, total_tokens: 10000, prompt_tokens: 6000, completion_tokens: 3000,
+    ...cacheFields(1000, 2000, 500),
+    cache_unknown_tokens: 2500,
+  };
+  await fakeApi(page, {
+    [`/projects/${pid}/stats`]: {
+      ...stats,
+      usage: { totals: slot, by_stage: { "translation.body": slot } },
+    },
+  });
+  await page.goto(`/projects/${pid}`);
+  const accounting = page.getByRole("region", { name: "Total usage & run time" });
+  const row = accounting.getByRole("list", { name: "By stage", exact: true }).getByRole("listitem");
+  const track = row.locator('div[aria-hidden="true"]');
+  const fills = track.locator(":scope > span");
+  const legend = row.locator('span[aria-hidden="true"]');
+  await expect(fills).toHaveCount(6);
+  const lightColors = await fills.evaluateAll(elements =>
+    elements.map(element => getComputedStyle(element).backgroundColor));
+  for (const theme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    await expect(page.locator("html")).toHaveClass(theme === "dark" ? /dark/ : /^(?!.*dark)/);
+    await expectTokenColor(track, "background-color", "chart-track");
+    for (let index = 0; index < 6; index++) {
+      await expectTokenColor(fills.nth(index), "background-color", `chart-${index + 1}`);
+      await expectTokenColor(legend.nth(index), "background-color", `chart-${index + 1}`);
+    }
+    if (theme === "dark") {
+      const background = await track.evaluate(element => getComputedStyle(element).backgroundColor);
+      for (let index = 0; index < 6; index++) {
+        const fill = fills.nth(index);
+        await expect(fill).not.toHaveCSS("background-color", lightColors[index]);
+        const color = await fill.evaluate(element => getComputedStyle(element).backgroundColor);
+        expect(colorContrast(color, background)).toBeGreaterThanOrEqual(3);
+      }
+    }
+    expect(await fills.evaluateAll(elements =>
+      elements.map(element => (element as HTMLElement).style.width)))
+      .toEqual(["10%", "5%", "20%", "25%", "30%", "10%"]);
+    const runTrack = accounting.getByRole("list", { name: "Run history", exact: true })
+      .getByRole("listitem").first().locator('div[aria-hidden="true"]');
+    await expectTokenColor(runTrack, "background-color", "chart-track");
+    await expectTokenColor(runTrack.locator("div"), "background-color", "chart-6");
+    await expect(accounting.locator("dl")).toContainText("10,000");
+    await expect(accounting.locator("dl")).toContainText("1h 30m 0s");
+    await accounting.screenshot({ path: info.outputPath(`accounting-theme-${theme}.png`) });
+  }
+});
 
 test("cache partitions preserve input totals and rates require valid cache tokens", () => {
   for (const [cache, expectedRate, unknown] of [

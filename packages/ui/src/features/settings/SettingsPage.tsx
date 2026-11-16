@@ -12,8 +12,10 @@ import { Textarea } from "../../components/ui/form";
 import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
 
 import { ModelSelection } from "./ModelSelection";
+import { ExportSettings } from "./ExportSettings";
 import { SettingsActionBar, SettingsSection } from "./SettingsSection";
 import { WorkflowSettings, workflowField } from "./WorkflowSettings";
+import { SETTINGS_CONTENT_CLASSNAME } from "./SettingsRow";
 
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;
@@ -87,30 +89,32 @@ export default function SettingsPage() {
   return (
     <div className="flex min-h-dvh flex-col">
       <PageHeader title={tr("common.projectSettings")} />
-      <PageContainer className="flex flex-1 flex-col">
-        <div className="flex-1">
+      <PageContainer className="mx-auto flex w-full max-w-5xl flex-1 flex-col">
+        <div className={SETTINGS_CONTENT_CLASSNAME}>
           <ErrorNotice error={config.error || configurationError} />
-          {busy && <ReadOnlyNotice className="mb-4" />}
-          <SettingsSection title={tr("settings.sectionModels")}>
+          {busy && <ReadOnlyNotice />}
+          <SettingsSection title={tr("settings.sectionModels")} className="py-0" grouped>
             <ModelSelection
               llm={section(effective, "llm")}
               models={config.data?.registered_models || {}}
               disabled={formDisabled}
+              footer={
+                <Link
+                  to="/settings/providers"
+                  state={{ settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }}
+                  className="inline-block text-sm text-muted-foreground underline underline-offset-4"
+                >
+                  {tr("settings.manageGlobalModels")}
+                </Link>
+              }
               onChange={(llm) => {
                 const next = { ...effective, llm };
                 setEffective(next);
                 setDraft(JSON.stringify(next, null, 2));
               }}
             />
-            <Link
-              to="/settings/providers"
-              state={{ settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }}
-              className="inline-block text-sm text-muted-foreground underline underline-offset-4"
-            >
-              {tr("settings.manageGlobalModels")}
-            </Link>
           </SettingsSection>
-          <SettingsSection title={tr("settings.sectionWorkflow")}>
+          <SettingsSection title={tr("settings.sectionWorkflow")} className="py-0" grouped>
             <WorkflowSettings
               scope="project"
               config={effective}
@@ -118,14 +122,21 @@ export default function SettingsPage() {
               onField={setField}
             />
           </SettingsSection>
-          <SettingsSection id="advanced-yaml" title={tr("settings.advancedYamlConfiguration")}>
+          <SettingsSection title={tr("settings.sectionExport")} className="py-0" grouped>
+            <ExportSettings
+              config={effective}
+              disabled={formDisabled}
+              onField={setField}
+            />
+          </SettingsSection>
+          <SettingsSection id="advanced-yaml" title={tr("settings.advancedYamlConfiguration")} className="py-0">
             {yamlDirty && (
               <p className="text-sm text-muted-foreground">{tr("settings.unsavedSummary")}</p>
             )}
             <Textarea
               aria-label={tr("settings.advancedYamlConfiguration")}
               spellCheck={false}
-              className="min-h-[420px] font-mono text-xs"
+              className="min-h-editor font-mono text-xs"
               value={draft}
               disabled={disabled}
               onChange={(e) => {
@@ -140,7 +151,7 @@ export default function SettingsPage() {
             yamlDirty && (
               <a
                 href="#advanced-yaml"
-                className="block text-amber-700 underline underline-offset-4 dark:text-amber-300"
+                className="block text-warning-text underline underline-offset-4"
               >
                 {tr("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
               </a>
@@ -148,7 +159,7 @@ export default function SettingsPage() {
           }
         >
           <Button
-            variant="ghost"
+            variant="outline"
             disabled={disabled}
             onClick={() => restore.mutate()}
           >

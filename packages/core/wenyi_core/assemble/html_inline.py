@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 
 from bs4 import BeautifulSoup
 from bs4.element import ProcessingInstruction, Tag
@@ -185,15 +186,11 @@ def _annotation_restorations(
             and str(method or "").lower() not in rejected
         )
         if item.get("relation") == OBJECT_RELATION and not usable:
-            if method == "damaged_object_marker":
-                raise ValueError(
-                    f"Protected object {annotation_id} is pending because its marker is damaged; "
-                    "correct the saved paragraph response before resuming translation and exporting"
-                )
-            raise ValueError(
-                f"Protected object {annotation_id} has pending or stale alignment; "
-                "run translation again to repair it before exporting"
+            logging.getLogger(__name__).warning(
+                "Omitting protected object %s: pending or stale alignment; inspect this paragraph",
+                annotation_id,
             )
+            continue
         if not usable:
             source_start = item.get("source_start")
             source_end = item.get("source_end")

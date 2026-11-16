@@ -4,12 +4,12 @@ import { fakeApi, pid } from "../../sandbox/fixtures";
 
 /** Whether the Desktop host must keep running this suite as well.
  *
- * Asserts a dialog's keyboard and pointer focus rings share one rounded style; pure CSS and DOM, and the probe recorded no Desktop-only service.
+ * Asserts rounded dialog controls have visible keyboard focus; pure CSS and DOM, with no Desktop-only service.
  */
 export const desktopHostSensitive = false;
 
 export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
-  test("keyboard and pointer use the same rounded dialog controls", async ({
+  test("keyboard focus adds a visible rounded indicator to dialog controls", async ({
     page,
   }) => {
     await fakeApi(page, {}, apiOrigin);
@@ -21,9 +21,7 @@ export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
     await expect(dialog.getByRole("heading", { name: "Paragraph editor" })).toBeFocused();
     const close = dialog.getByRole("button", { name: "Close", exact: true }).first();
     await expect(close).not.toBeFocused();
-    const bounds = (await close.boundingBox())!;
-    const clip = { x: bounds.x - 4, y: bounds.y - 4, width: bounds.width + 8, height: bounds.height + 8 };
-    const resting = await page.screenshot({ clip, animations: "disabled" });
+    const resting = await close.evaluate(element => getComputedStyle(element).boxShadow);
     await page.keyboard.press("Tab");
     await expect(close).toBeFocused();
     const style = await close.evaluate((element) => {
@@ -36,7 +34,8 @@ export function registerTests({ apiOrigin }: { apiOrigin?: string } = {}) {
     });
     expect(style.outline).toBe("none");
     expect(style.radius).toBeGreaterThanOrEqual(6);
-    expect(await page.screenshot({ clip, animations: "disabled" })).toEqual(resting);
+    expect(style.shadow).not.toBe("none");
+    expect(style.shadow).not.toBe(resting);
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
   });

@@ -48,6 +48,8 @@ When object_reference is present, the marker represents a protected object that 
 itself part of the sentence, NOT a note attached after a referent. Locate the object's
 insertion boundary using source_with_markers and the read-only object reference.
 Never rewrite the object, add its contents to the target, or guess from text lengths.
+validation_errors, when present, are mechanical validator findings about transport.
+Use them to identify the broken marker, not as instructions to rewrite prose.
 
 Return a short "search" copied EXACTLY from immutable_target. It must occur exactly ONCE;
 include more neighboring text to disambiguate repeated phrases. Return "replacement"
@@ -346,8 +348,15 @@ class AnnotationAligner(Agent):
             )
             placement = validate(single, response)
             return AnnotationAlignment(unit.unit_id, target_digest(unit.target), (placement,))
-        except Exception:  # noqa: BLE001 - failed metadata must not discard completed text
-            return unresolved_alignment(single)
+        except Exception as error:  # noqa: BLE001 - failed metadata must not discard completed text
+            result = unresolved_alignment(single)
+            if "validation_errors" in item:
+                result.placements[0]["error"] = (
+                    str(error)
+                    if isinstance(error, AnnotationAlignmentError)
+                    else type(error).__name__
+                )
+            return result
 
 
 def patch_unit(unit: AnnotationUnit) -> AnnotationUnit:
@@ -377,6 +386,8 @@ def build_patch_payload(unit: AnnotationUnit) -> dict[str, Any]:
     }
     if "object_reference" in item:
         payload["object_reference"] = item["object_reference"]
+    if "validation_errors" in item:
+        payload["validation_errors"] = item["validation_errors"]
     return payload
 
 

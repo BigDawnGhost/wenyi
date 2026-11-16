@@ -1,7 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Badge, Button } from "@wenyi/ui/primitives";
-import { SettingsSection } from "@wenyi/ui/settings";
+import { Badge, Button, Card } from "@wenyi/ui/primitives";
 import { request } from "./transport";
 import { TransferProgress } from "./TransferProgress";
 import { translateDesktop, useDesktopI18n } from "./i18n";
@@ -73,7 +72,7 @@ export function BabeldocPlugin({ disabled }: { disabled: boolean }) {
   const active = data && (data.updating || !["disabled", "ready", "error"].includes(data.phase));
   const downloading = data?.phase === "runtime" || data?.phase === "models";
   return (
-    <SettingsSection title={t("babeldoc.title")} data-testid="babeldoc-plugin">
+    <Card className="space-y-4 p-4" data-testid="babeldoc-plugin">
       <div className="flex min-h-8 flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3 text-sm">
           {data?.version && <span>{t("babeldoc.version", { version: data.version })}</span>}
@@ -168,6 +167,6 @@ export function BabeldocPlugin({ disabled }: { disabled: boolean }) {
               : data?.error ? t(`babeldoc.${data.error}`) : t("babeldoc.unavailable")}
         </p>
       )}
-    </SettingsSection>
+    </Card>
   );
 }

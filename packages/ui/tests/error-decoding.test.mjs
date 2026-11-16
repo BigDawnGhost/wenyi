@@ -136,6 +136,30 @@ test("an expired deadline aborts the request it bounds", async () => {
   assert.equal(init.signal.reason.name, "TimeoutError");
 });
 
+for (const missing of ["any", "timeout"]) {
+  test(`the deadline fallback preserves cancellation without AbortSignal.${missing}`, async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(AbortSignal, missing);
+    Object.defineProperty(AbortSignal, missing, { configurable: true, value: undefined });
+    try {
+      const caller = new AbortController();
+      const composed = withTimeout({ method: "POST", signal: caller.signal }, 1000);
+      const reason = new DOMException("Caller canceled", "AbortError");
+      caller.abort(reason);
+      assert.equal(composed.signal.aborted, true);
+      assert.equal(composed.signal.reason, reason);
+      assert.equal(composed.method, "POST");
+      const alreadyAborted = withTimeout({ signal: caller.signal }, 1000);
+      assert.equal(alreadyAborted.signal.reason, reason);
+      const deadline = withTimeout(undefined, 5);
+      await new Promise(resolve => setTimeout(resolve, 20));
+      assert.equal(deadline.signal.aborted, true);
+      assert.equal(deadline.signal.reason.name, "TimeoutError");
+    } finally {
+      Object.defineProperty(AbortSignal, missing, descriptor);
+    }
+  });
+}
+
 test("the upload size limit is localized instead of echoing the server text", () => {
   const error = { status: 413, code: "source_too_large", detail: "Source file exceeds the upload size limit" };
   assert.equal(errorMessage(error, translate), "localized:error.sourceTooLarge");

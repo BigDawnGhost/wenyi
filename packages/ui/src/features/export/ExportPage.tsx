@@ -4,14 +4,12 @@ import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "../../lib/toast";
 import { api } from "../../api/client";
-import type { ExportFormat } from "../../api/types";
+import type { ExportFormat, ExportOptions } from "../../api/types";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { StatusBadge } from "../../components/StatusBadge";
-import { Disclosure } from "../../components/ui/disclosure";
 import { Label } from "../../components/ui/form";
-import { Select, SelectItem } from "../../components/ui/select";
 import { ErrorNotice } from "../../components/ui/data";
 import { Progress } from "../../components/ui/progress";
 import { cn, formatBytes } from "../../lib/utils";
@@ -29,12 +27,6 @@ export default function ExportPage() {
   });
   const [format, setFormat] = useState<ExportFormat | "">("");
   const [bilingual, setBilingual] = useState(false);
-  const [order, setOrder] = useState<"target_first" | "source_first">(
-    "target_first",
-  );
-  const [about, setAbout] = useState(true);
-  const [punctuation, setPunctuation] = useState(true);
-  const [preserveStyle, setPreserveStyle] = useState(false);
   const { data: project, error: projectError } = useQuery({
     queryKey: ["project", pid],
     queryFn: () => api.getProject(pid),
@@ -53,14 +45,6 @@ export default function ExportPage() {
     if (config && !defaultsLoaded) {
       const output = (config.effective.output || {}) as Record<string, unknown>;
       setBilingual(Boolean(output.bilingual));
-      setPunctuation(output.punctuation_normalize !== false);
-      setAbout(output.about_page !== false);
-      setPreserveStyle(Boolean(output.bilingual_preserve_source_style));
-      setOrder(
-        output.bilingual_order === "source_first"
-          ? "source_first"
-          : "target_first",
-      );
       setDefaultsLoaded(true);
     }
   }, [config, defaultsLoaded]);
@@ -69,13 +53,14 @@ export default function ExportPage() {
   const pdf = fmt === "pdf" || (!fmt && project?.fmt === "pdf" && formats.includes("pdf"));
   const create = useMutation({
     mutationFn: async () => {
-      const options = {
+      const output = (config?.effective.output || {}) as Record<string, unknown>;
+      const options: ExportOptions = {
         format: fmt || undefined,
         bilingual,
-        order,
-        about_page: about,
-        preserve_source_style: !pdf && preserveStyle,
-        punctuation_normalize: punctuation,
+        order: output.bilingual_order === "source_first" ? "source_first" : "target_first",
+        about_page: output.about_page !== false,
+        preserve_source_style: !pdf && Boolean(output.bilingual_preserve_source_style),
+        punctuation_normalize: output.punctuation_normalize !== false,
       };
       if (saveExport) {
         const saved = await saveExport(pid, options);
@@ -101,7 +86,7 @@ export default function ExportPage() {
   return (
     <>
       <PageHeader title={tr("export.exportTranslation")} />
-      <PageContainer className="space-y-4 max-w-4xl">
+      <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice
           error={
             projectError ||
@@ -115,13 +100,15 @@ export default function ExportPage() {
           <CardContent className="p-5 space-y-4">
             <div>
               <Label>{tr("export.outputFormat")}</Label>
-              <div className="grid grid-cols-4 gap-2 mt-2">
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 mt-2">
                 <button
                   onClick={() => setFormat("")}
                   aria-pressed={!fmt}
                   className={cn(
-                    "rounded border p-3 text-left text-sm",
-                    !fmt && "border-muted-foreground bg-accent",
+                    "rounded-lg border p-3 text-left text-sm transition-[background-color,border-color,box-shadow] duration-motion-fast ease-standard focus-visible:outline-none",
+                    !fmt
+                      ? "border-primary/50 bg-accent"
+                      : "border-border hover:border-muted-foreground/40 hover:bg-muted/40",
                   )}
                 >
                   {tr("export.automatic")}
@@ -132,8 +119,10 @@ export default function ExportPage() {
                     onClick={() => setFormat(f)}
                     aria-pressed={fmt === f}
                     className={cn(
-                      "rounded border p-3 text-left text-sm",
-                      fmt === f && "border-muted-foreground bg-accent",
+                      "rounded-lg border p-3 text-left text-sm transition-[background-color,border-color,box-shadow] duration-motion-fast ease-standard focus-visible:outline-none",
+                      fmt === f
+                        ? "border-primary/50 bg-accent"
+                        : "border-border hover:border-muted-foreground/40 hover:bg-muted/40",
                     )}
                   >
                     {f.toUpperCase()}
@@ -167,53 +156,6 @@ export default function ExportPage() {
             {bilingual && pdf && (
               <p className="text-sm text-muted-foreground">{tr("export.pdfBilingualLayout")}</p>
             )}
-            <Disclosure title={tr("export.advanced")} error={create.error}>
-              <label className="flex gap-2 items-center text-sm">
-                <input
-                  type="checkbox"
-                  checked={punctuation}
-                  onChange={(e) => setPunctuation(e.target.checked)}
-                />
-                {tr("settings.normalizePunctuationOnExport")}
-              </label>
-              {bilingual && (
-                <Select
-                  aria-label={tr("export.bilingualOrder")}
-                  value={order}
-                  onValueChange={(value) =>
-                    setOrder(
-                      value as "target_first" | "source_first",
-                    )
-                  }
-                  className="max-w-40"
-                >
-                  <SelectItem value="target_first">
-                    {tr("export.translationFirst")}
-                  </SelectItem>
-                  <SelectItem value="source_first">
-                    {tr("export.sourceFirst")}
-                  </SelectItem>
-                </Select>
-              )}
-              <label className="flex gap-2 items-center text-sm">
-                <input
-                  type="checkbox"
-                  checked={about}
-                  onChange={(e) => setAbout(e.target.checked)}
-                />
-                {tr("export.includeAnAboutThisTranslationPage")}
-              </label>
-              {bilingual && !pdf && (
-                <label className="flex gap-2 items-center text-sm">
-                  <input
-                    type="checkbox"
-                    checked={preserveStyle}
-                    onChange={(e) => setPreserveStyle(e.target.checked)}
-                  />
-                  {tr("export.preserveSourceFormattingInBilingualOutput")}
-                </label>
-              )}
-            </Disclosure>
             <Button
               onClick={() => create.mutate()}
               disabled={
@@ -255,7 +197,7 @@ export default function ExportPage() {
               {tr("export.retentionHelp")}
             </p>
             <table className="w-full text-sm">
-              <thead className="border-b text-xs text-muted-foreground">
+              <thead className="border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
                 <tr>
                   {[
                     tr("export.format"),
@@ -264,7 +206,7 @@ export default function ExportPage() {
                     tr("common.status"),
                     tr("common.actions"),
                   ].map((h) => (
-                    <th key={h} className="text-left p-3">
+                    <th key={h} className="text-left px-4 py-3.5">
                       {h}
                     </th>
                   ))}
@@ -272,8 +214,8 @@ export default function ExportPage() {
               </thead>
               <tbody>
                 {exports?.slice(0, 5).map((e) => (
-                  <tr key={e.id} className="border-b last:border-0">
-                    <td className="p-3">
+                  <tr key={e.id} className="border-b border-black/[0.05] last:border-0 dark:border-white/[0.07]">
+                    <td className="px-4 py-3.5">
                       {e.format.toUpperCase()}
                       <div className="text-xs text-muted-foreground mt-1">
                         {e.options?.bilingual
@@ -281,13 +223,13 @@ export default function ExportPage() {
                           : tr("export.monolingual")}
                       </div>
                     </td>
-                    <td className="p-3">
+                    <td className="px-4 py-3.5">
                       {e.created_at
                         ? new Date(e.created_at).toLocaleString(locale)
                         : "—"}
                     </td>
-                    <td className="p-3">{formatBytes(e.size)}</td>
-                    <td className="p-3">
+                    <td className="px-4 py-3.5">{formatBytes(e.size)}</td>
+                    <td className="px-4 py-3.5">
                       <StatusBadge status={e.status} />
                       {e.error && (
                         <p className="mt-1 text-sm text-destructive">
@@ -295,7 +237,7 @@ export default function ExportPage() {
                         </p>
                       )}
                     </td>
-                    <td className="p-3">
+                    <td className="px-4 py-3.5">
                       {e.status === "done" && (
                         <Button
                           variant="outline"

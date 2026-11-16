@@ -13,13 +13,13 @@ export const Progress = React.forwardRef<
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={indeterminate ? undefined : pct}
-      className={cn("relative h-2 w-full overflow-hidden rounded-full bg-secondary", className)}
+      className={cn("relative h-2 w-full overflow-hidden rounded-full bg-secondary shadow-e0", className)}
       {...p}
     >
       <div
         className={cn(
-          "h-full rounded-full bg-primary",
-          indeterminate ? "w-1/3 motion-safe:animate-pulse" : "transition-[width] duration-300 motion-reduce:transition-none",
+          "h-full rounded-full bg-gradient-to-r from-primary to-primary/85",
+          indeterminate ? "w-1/3 motion-safe:animate-pulse" : "transition-[width] duration-motion-slow ease-decelerate motion-reduce:transition-none",
         )}
         style={indeterminate ? undefined : { width: `${pct}%` }}
       />

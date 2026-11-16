@@ -5,10 +5,13 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "@wenyi/ui/app";
 import { DocumentLanguage } from "@wenyi/ui/document-language";
 import { configurePlatform } from "@wenyi/ui/platform";
+import { initTheme } from "@wenyi/ui/theme";
 import "@wenyi/ui/styles.css";
 import { webPlatform } from "./platform";
 
 configurePlatform(webPlatform);
+
+initTheme();
 
 const queryClient = new QueryClient({
   defaultOptions: {

@@ -144,8 +144,13 @@ test("update transfers show readable sizes and theme-aware progress", async ({ p
   await expect(section).toContainText("50%");
   await expect(section.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
   await section.screenshot({ path: testInfo.outputPath("update-progress.png") });
+  const fill = section.getByRole("progressbar").locator("div");
+  const lightGradient = await fill.evaluate(element => getComputedStyle(element).backgroundImage);
+  expect(lightGradient).toContain("linear-gradient");
   await page.evaluate(() => document.documentElement.classList.add("dark"));
-  await expect(section.getByRole("progressbar").locator("div")).toHaveCSS("background-color", "rgb(250, 250, 250)");
+  await expect(fill).toHaveCSS("background-image", /linear-gradient/);
+  await expect.poll(() => fill.evaluate(element => getComputedStyle(element).backgroundImage))
+    .not.toBe(lightGradient);
   await section.screenshot({ path: testInfo.outputPath("update-progress-dark.png") });
 });
 

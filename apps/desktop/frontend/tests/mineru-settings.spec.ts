@@ -53,7 +53,7 @@ test("MinerU saves automatically, shows the saved key masked, and environment wi
   await page.getByRole("link", { name: "Advanced", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Advanced YAML configuration" })).toBeVisible();
   await expect(page.getByRole("textbox", { name: "Advanced YAML configuration" })).not.toHaveValue(/fake-mineru/);
-  await page.getByRole("link", { name: "PDF parsing", exact: true }).click();
+  await page.getByRole("link", { name: "PDF", exact: true }).click();
   // Clearing the field removes the key; blur saves without waiting.
   await input.fill("");
   await input.blur();
@@ -155,7 +155,7 @@ test("dirty and pending MinerU writes block signed updates, then release the gua
   const card = page.getByTestId("mineru-settings");
   const install = page.getByRole("button", { name: "Install and restart", exact: true });
   await expect(install).toBeEnabled();
-  await page.getByRole("link", { name: "PDF parsing", exact: true }).click();
+  await page.getByRole("link", { name: "PDF", exact: true }).click();
   await expect(card.getByLabel("MinerU API key", { exact: true })).toHaveValue("fake-mineru-saved");
   await card.getByLabel("MinerU API key", { exact: true }).fill("fake-mineru-dirty");
   await card.getByLabel("MinerU API key", { exact: true }).blur();
@@ -164,14 +164,14 @@ test("dirty and pending MinerU writes block signed updates, then release the gua
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
   // Remounting reloads the saved key; the pending write still blocks installation.
-  await page.getByRole("link", { name: "PDF parsing", exact: true }).click();
+  await page.getByRole("link", { name: "PDF", exact: true }).click();
   await expect(card.getByLabel("MinerU API key", { exact: true })).toHaveValue("fake-mineru-saved");
   await page.getByRole("link", { name: "About", exact: true }).click();
   await expect(install).toBeDisabled();
   release();
   await expect(install).toBeEnabled();
   // Leaving before the autosave delay discards the edit instead of writing it.
-  await page.getByRole("link", { name: "PDF parsing", exact: true }).click();
+  await page.getByRole("link", { name: "PDF", exact: true }).click();
   await card.getByLabel("MinerU API key", { exact: true }).fill("fake-mineru-discard");
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await page.getByRole("link", { name: "Settings", exact: true }).click();
@@ -196,7 +196,7 @@ test("local errors are redacted, never retried automatically, and Chinese deskto
   });
   await page.goto("/settings/mineru");
   const card = page.getByTestId("mineru-settings");
-  await expect(card).toContainText("MinerU PDF 解析");
+  await expect(page.getByRole("heading", { name: "MinerU PDF 解析", exact: true })).toBeVisible();
   await expect(card.getByRole("alert")).toHaveText("无法检查或保存 MinerU 凭据，请重试。");
   await expect(page.getByText("fake-sensitive-vault-message")).toHaveCount(0);
   await page.evaluate(() => {
@@ -235,7 +235,7 @@ test("saving MinerU neither publishes configuration nor discards the model draft
   await page.goto("/settings/providers");
   const model = page.getByLabel("Model name", { exact: true });
   await model.fill("independent-model");
-  await page.getByRole("link", { name: "PDF parsing", exact: true }).click();
+  await page.getByRole("link", { name: "PDF", exact: true }).click();
   const card = page.getByTestId("mineru-settings");
   await card.getByLabel("MinerU API key", { exact: true }).fill("fake-independent-mineru");
   await expect(card.getByRole("status")).toHaveText("MinerU key saved.");

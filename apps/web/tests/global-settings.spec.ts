@@ -52,7 +52,7 @@ test("projects select registered tiers without operation controls", async ({
   ).toHaveCount(0);
   await expect(page.getByLabel("API provider", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Model name", { exact: true })).toHaveCount(0);
-  await chooseOption(page.getByLabel("Quality tier"), "editor · second / editor-model");
+  await chooseOption(page.getByLabel("Quality tier"), "second / editor-model");
   await expect(
     page.getByLabel("Translate chapters in batches", { exact: true }),
   ).toHaveCount(0);
@@ -70,7 +70,7 @@ test("projects select registered tiers without operation controls", async ({
   expect(saved.effective.llm.tiers.strong).toBe("editor");
   expect(saved.effective.llm.routes).toEqual({});
   await page.reload();
-  await expect(page.getByLabel("Quality tier")).toHaveText("editor · second / editor-model");
+  await expect(page.getByLabel("Quality tier")).toHaveText("second / editor-model");
   await page
     .getByRole("link", {
       name: "Manage models in global Settings",
@@ -230,7 +230,7 @@ test("registry IDs can be renamed with references and new registrations removed"
   await page.getByLabel("Model ID", { exact: true }).press("Enter");
   await page.getByRole("link", { name: "Default models", exact: true }).click();
   await expect(page.getByLabel("Quality tier", { exact: true })).toHaveText(
-    "final_model · my_provider / deepseek-flash",
+    "my_provider / deepseek-flash",
   );
   await page.getByRole("link", { name: "Models & connections", exact: true }).click();
   await page

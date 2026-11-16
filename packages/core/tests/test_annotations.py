@@ -2,8 +2,8 @@
 
 import unittest
 
+from wenyi_core.markup.contexts import annotation_contexts_for_segments
 from wenyi_core.models.document import Segment
-from wenyi_core.pipeline.annotate.annotations import AnnotationService
 
 
 class TestAnnotationContexts(unittest.TestCase):
@@ -73,7 +73,7 @@ class TestAnnotationContexts(unittest.TestCase):
             },
         }
 
-        contexts = AnnotationService.annotation_contexts_for_segments(segments, registry)
+        contexts = annotation_contexts_for_segments(segments, registry)
 
         self.assertEqual(
             [item["target_key"] for item in contexts[0]],
@@ -125,7 +125,7 @@ class TestAnnotationContexts(unittest.TestCase):
             },
         }
 
-        contexts = AnnotationService.annotation_contexts_for_segments(segments, registry)
+        contexts = annotation_contexts_for_segments(segments, registry)
 
         self.assertEqual(
             [[item["target_key"] for item in piece] for piece in contexts],
@@ -133,6 +133,6 @@ class TestAnnotationContexts(unittest.TestCase):
         )
         metadata["source_length"] = 5
         self.assertEqual(
-            AnnotationService.annotation_contexts_for_segments(segments, registry),
+            annotation_contexts_for_segments(segments, registry),
             [[], []],
         )

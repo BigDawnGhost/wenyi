@@ -27,7 +27,7 @@ Global **Settings → Models & connections** manages provider connections and re
 3. **Save configuration** before using **Test connection**. The test sends one short live request per saved model and reports connectivity, latency, and failures. **It consumes tokens and may incur provider charges.** Configuration validation and credential-availability checks do not send a model request.
 4. Check the selected tiers and workflow switches before starting. Ordinary controls cover book understanding, polishing, whole-book Review, and Review Autofix.
 
-Use **Advanced YAML configuration** for operation-specific models and fallbacks, token budgets, concurrency, annotation alignment, and parser defaults. In **Project settings**, the editor is shown directly below Workflow; global Settings has an **Advanced** category. PDF parser selection is also available when creating a project.
+Use **Advanced YAML configuration** for operation-specific models and fallbacks, token budgets, concurrency, annotation alignment, and parser defaults. In **Project settings**, the editor is shown below Workflow and Export preferences; global Settings has an **Advanced** category. PDF parser selection is also available when creating a project.
 
 Validate or save edited YAML before returning to ordinary controls; unvalidated YAML disables them. Ordinary edits preserve advanced values already in the draft. **Validate configuration** checks the current draft without sending a model request.
 
@@ -98,6 +98,8 @@ Review may reuse a matching completed result or resume interrupted work. Inspect
 ### Export books
 
 Choose a format and, where supported, monolingual or bilingual output. Export reads a consistent snapshot of **saved** project data, so it can run beside translation; unsaved drafts and changes made after that snapshot are not included.
+
+Configure **Export preferences** in **Settings → General** for global defaults, or in **Project settings** for a project override, then **Save configuration**. These preferences control punctuation normalization, bilingual order, the optional EPUB “About this translation” page, and preservation of source formatting in bilingual output (not used for PDF). The export page uses the project's effective saved preferences; it does not provide separate overrides for an individual export. Existing project overrides take precedence over global defaults.
 
 EPUB, DOCX, HTML, TXT, and Markdown are available for ordinary book projects. **PDF export is only available for projects saved with the BabelDOC parser** and preserves their PDF layout through the bridge. Changing the current default parser does not turn an existing MinerU project into a BabelDOC project. See [format support](../reference/formats.md).
 
