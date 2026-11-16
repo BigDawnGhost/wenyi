@@ -149,7 +149,7 @@ export const SelectItem = React.forwardRef<
     ref={ref}
     value={encode(value)}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm py-2 pl-8 pr-2 text-sm outline-none [overflow-wrap:anywhere] data-[highlighted]:bg-accent data-[highlighted]:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-default select-none items-center rounded-sm py-2 pl-8 pr-2 text-sm outline-none [overflow-wrap:anywhere] data-[highlighted]:bg-selected data-[highlighted]:text-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className,
     )}
   >

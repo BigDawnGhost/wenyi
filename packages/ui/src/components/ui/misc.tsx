@@ -70,7 +70,7 @@ export function Dialog({
             )) event.preventDefault();
           }}
         >
-          <div className="shrink-0 border-b border-black/[0.04] px-7 py-4 pr-14 dark:border-white/[0.06]">
+          <div className="shrink-0 border-b border-subtle px-7 py-4 pr-14">
             <Primitive.Title className="text-lg font-semibold">{title}</Primitive.Title>
             {description && (
               <Primitive.Description className="mt-0.5 text-sm text-muted-foreground">
@@ -81,14 +81,14 @@ export function Dialog({
               type="button"
               disabled={closeDisabled}
               aria-label={t("common.close")}
-              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+              className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
             >
               <X className="h-4 w-4" aria-hidden="true" />
             </Primitive.Close>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-6">{children}</div>
           {footer && (
-            <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-black/[0.04] px-7 py-3 dark:border-white/[0.06]">
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-subtle px-7 py-3">
               {footer}
             </div>
           )}

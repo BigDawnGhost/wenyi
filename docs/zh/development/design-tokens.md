@@ -38,6 +38,10 @@ info 与 destructive 分别表达成功、警示、提示与失败/危险状态�
 | `--border` | `border` | `hsl(240 5.9% 90%)` | `hsl(240 3.7% 15.9%)` |
 | `--input` | `input` | `hsl(240 5.9% 90%)` | `hsl(240 3.7% 15.9%)` |
 | `--ring` | `ring` | `hsl(240 5.9% 10%)` | `hsl(240 4.9% 83.9%)` |
+| `--ink` | - | `hsl(13 13 13)` | `hsl(255 255 255)` |
+| `--hover` | `hover` | `hsl(var(--ink) / 0.05)` | `hsl(var(--ink) / 0.08)` |
+| `--selected` | `selected` | `hsl(var(--ink) / 0.08)` | `hsl(var(--ink) / 0.12)` |
+| `--text-placeholder` | `placeholder` | `hsl(var(--ink) / 0.35)` | `hsl(var(--ink) / 0.3)` |
 | `--warning-text` | `warning-text` | `hsl(26 90% 37%)` | `hsl(45.9 96.7% 64.5%)` |
 | `--chart-1` | `chart-1` | `hsl(199.4 95.5% 73.9%)` | `hsl(199.4 95.5% 73.9%)` |
 | `--chart-2` | `chart-2` | `hsl(37.7 92.1% 50.2%)` | `hsl(37.7 92.1% 50.2%)` |
@@ -49,6 +53,7 @@ info 与 destructive 分别表达成功、警示、提示与失败/危险状态�
 | `--diff-removed-foreground` | `diff-removed-foreground` | `hsl(0 62.8% 30.6%)` | `hsl(0 96.3% 89.4%)` |
 | `--diff-added-bg` | `diff-added` | `hsl(140.6 84.2% 92.5%)` | `hsl(144.9 80.4% 10%)` |
 | `--diff-added-foreground` | `diff-added-foreground` | `hsl(143.8 61.2% 20.2%)` | `hsl(141 78.9% 85.1%)` |
+| `--border-subtle` | `subtle` | `hsl(var(--ink) / 0.055)` | `hsl(var(--ink) / 0.065)` |
 
 ## 间距
 

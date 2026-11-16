@@ -74,7 +74,7 @@ export function StructuredData({
     return (
       <div className="space-y-3">
         {value.map((item, i) => (
-          <div key={i} className="rounded border border-black/[0.05] p-3 dark:border-white/[0.07]">
+          <div key={i} className="rounded border border-subtle p-3">
             <StructuredData value={item} depth={depth + 1} />
           </div>
         ))}
@@ -88,7 +88,7 @@ export function StructuredData({
           className={
             depth < 2
               ? "grid grid-cols-[minmax(100px,180px)_1fr] gap-1"
-              : "space-y-1 border-l border-black/[0.05] pl-3 dark:border-white/[0.07]"
+              : "space-y-1 border-l border-subtle pl-3"
           }
         >
           <dt className="break-words text-muted-foreground">

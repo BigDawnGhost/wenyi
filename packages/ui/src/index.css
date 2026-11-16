@@ -31,8 +31,22 @@
     --secondary-foreground: 240 5.9% 10%;
     --muted: 240 4.8% 95.9%;
     --muted-foreground: 240 3.8% 46.1%;
+    /* Ink anchor for alpha-derived interaction surfaces: fixed near-black in
+       the light theme, near-white in dark. Deliberately not var(--foreground),
+       which carries the 240 hue; state surfaces stay neutral so one alpha step
+       weighs the same on every background. Consumed as hsl(var(--hover)) and
+       hsl(var(--selected)). */
+    --ink: 13 13 13;
+    /* light: 5% hover, 8% selected */
+    --hover: var(--ink) / 0.05;
+    --selected: var(--ink) / 0.08;
+    /* --accent stays a solid step: one consumer (sidebar nav) still blends it
+       with /50, which cannot re-alpha an alpha-bearing value. */
     --accent: 240 4.8% 95.9%;
     --accent-foreground: 240 5.9% 10%;
+    /* Third text tier: placeholder and disabled copy sit one step below the
+       secondary text (muted-foreground). */
+    --text-placeholder: var(--ink) / 0.35;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
     --success: 161 94% 30%;
@@ -54,6 +68,10 @@
     --diff-added-bg: 140.6 84.2% 92.5%;
     --diff-added-foreground: 143.8 61.2% 20.2%;
     --border: 240 5.9% 90%;
+    /* Sub-hairline: about 5.5% ink for high-repetition separators (table rows,
+       group boundaries) so dense lists do not fog up like the standard
+       hairline does. */
+    --border-subtle: var(--ink) / 0.055;
     --input: 240 5.9% 90%;
     --ring: 240 5.9% 10%;
     --radius: 8px;
@@ -86,8 +104,12 @@
     --secondary-foreground: 0 0% 98%;
     --muted: 240 3.7% 15.9%;
     --muted-foreground: 240 5% 64.9%;
+    --ink: 255 255 255;
+    --hover: var(--ink) / 0.08;
+    --selected: var(--ink) / 0.12;
     --accent: 240 3.7% 15.9%;
     --accent-foreground: 0 0% 98%;
+    --text-placeholder: var(--ink) / 0.3;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
     --success: 163 88% 20%;
@@ -108,6 +130,7 @@
     --diff-added-bg: 144.9 80.4% 10%;
     --diff-added-foreground: 141 78.9% 85.1%;
     --border: 240 3.7% 15.9%;
+    --border-subtle: var(--ink) / 0.065;
     --input: 240 3.7% 15.9%;
     --ring: 240 4.9% 83.9%;
     /* Dark elevations: weaker top highlight, deeper shadows, white hairline. */

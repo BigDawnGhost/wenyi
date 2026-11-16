@@ -94,6 +94,7 @@ export default {
       },
       colors: {
         border: "hsl(var(--border))",
+        subtle: "hsl(var(--border-subtle))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",
         background: "hsl(var(--background))",
@@ -114,10 +115,13 @@ export default {
           DEFAULT: "hsl(var(--muted))",
           foreground: "hsl(var(--muted-foreground))",
         },
+        placeholder: "hsl(var(--text-placeholder))",
         accent: {
           DEFAULT: "hsl(var(--accent))",
           foreground: "hsl(var(--accent-foreground))",
         },
+        hover: "hsl(var(--hover))",
+        selected: "hsl(var(--selected))",
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",

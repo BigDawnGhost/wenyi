@@ -18,10 +18,10 @@ const buttonVariants = cva(
           "bg-destructive text-destructive-foreground hover:bg-destructive/90 "
           + "shadow-[0_1px_2px_rgba(24,26,32,0.15)] motion-safe:hover:-translate-y-px",
         outline:
-          "bg-background text-foreground shadow-e2 hover:bg-accent/60 hover:text-accent-foreground "
+          "bg-background text-foreground shadow-e2 hover:bg-hover hover:text-foreground "
           + "hover:shadow-e3 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0",
         secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 shadow-none",
-        ghost: "hover:bg-accent hover:text-accent-foreground shadow-none",
+        ghost: "hover:bg-hover hover:text-foreground shadow-none",
         link: "text-primary underline-offset-4 hover:underline shadow-none",
       },
       size: {
