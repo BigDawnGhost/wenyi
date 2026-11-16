@@ -58,11 +58,14 @@ if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
   });
 }
 
-// Apply the stored preference as early as possible, before React mounts.
-try {
+/**
+ * Apply the stored preference at host startup: call once the host has
+ * configured the platform and before React mounts, so every route renders
+ * with the saved theme instead of waiting for a settings page to mount.
+ * Safe to call more than once; useTheme still owns later switches.
+ */
+export function initTheme(): void {
   getTheme();
-} catch {
-  // Platform not ready at import time; useTheme applies it on first read.
 }
 
 export function setTheme(theme: ThemePreference): void {

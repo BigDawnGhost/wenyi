@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "@wenyi/ui/app";
 import { DocumentLanguage } from "@wenyi/ui/document-language";
 import { configurePlatform } from "@wenyi/ui/platform";
+import { initTheme } from "@wenyi/ui/theme";
 import "@wenyi/ui/styles.css";
 import { useRuntimeStatus } from "./runtime";
 import { useDesktopI18n } from "./i18n";
@@ -50,6 +51,7 @@ async function bootstrap() {
     configurePlatform(desktopPlatform(queryClient));
     configureQueryActivity(queryClient);
   }
+  initTheme();
   // The sandbox never sees a native bootstrap event: the runtime status would
   // stay "pending" forever, so mount the app directly under the mock flag.
   ReactDOM.createRoot(document.getElementById("root")!).render(
