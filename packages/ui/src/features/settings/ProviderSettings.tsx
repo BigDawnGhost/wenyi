@@ -290,8 +290,8 @@ export function ProviderSettings({
             </div>
           );
         })}
+        <ModelConnectivity saved={saved} disabled={disabled} />
       </div>
-      <ModelConnectivity saved={saved} disabled={disabled} />
     </fieldset>
   );
 }

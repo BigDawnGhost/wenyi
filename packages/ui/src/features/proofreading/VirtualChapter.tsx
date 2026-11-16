@@ -112,7 +112,7 @@ export function VirtualChapter({
   return (
     <>
       <ErrorNotice error={reader.error} />
-      <div ref={container} className="relative rounded-xl border border-border bg-card shadow-e1" data-testid="chapter-reader"
+      <div ref={container} className="relative rounded-xl border border-border bg-card" data-testid="chapter-reader"
         style={{ height: virtualizer.getTotalSize() }}>
         {virtualRows.map((row) => {
           const segment = reader.rows.get(row.index);

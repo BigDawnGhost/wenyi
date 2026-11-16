@@ -122,7 +122,7 @@ export default function ExportPage() {
                   className={cn(
                     "rounded-lg border p-3 text-left text-sm transition-[background-color,border-color,box-shadow] duration-motion-fast ease-standard focus-visible:outline-none",
                     !fmt
-                      ? "border-primary/50 bg-accent shadow-e1"
+                      ? "border-primary/50 bg-accent"
                       : "border-border hover:border-muted-foreground/40 hover:bg-muted/40",
                   )}
                 >
@@ -136,7 +136,7 @@ export default function ExportPage() {
                     className={cn(
                       "rounded-lg border p-3 text-left text-sm transition-[background-color,border-color,box-shadow] duration-motion-fast ease-standard focus-visible:outline-none",
                       fmt === f
-                        ? "border-primary/50 bg-accent shadow-e1"
+                        ? "border-primary/50 bg-accent"
                         : "border-border hover:border-muted-foreground/40 hover:bg-muted/40",
                     )}
                   >
