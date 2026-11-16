@@ -48,7 +48,7 @@ export function SettingsGroup({
   const headingId = useId();
   return (
     <section aria-labelledby={headingId} className="min-w-0 space-y-4">
-      <h3 id={headingId} className="text-sm font-medium">
+      <h3 id={headingId} className="text-xs font-medium text-muted-foreground">
         {title}
         {summary != null && (
           <span className="ml-2 font-normal text-muted-foreground">{summary}</span>
