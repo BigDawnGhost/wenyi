@@ -642,6 +642,8 @@ const zhCN = {
   "modelList.failed": "无法获取模型列表。",
   "modelList.notFound": "该接口没有模型列表，请检查接口地址。",
   "modelList.unsupported": "此提供商不支持获取模型列表，请手动填写。",
+  "connectivity.title": "连通性",
+  "connectivity.description": "测试已保存的连接，并查看各模型的状态。",
   "connectivity.test": "测试连接",
   "connectivity.testing": "测试中…",
   "connectivity.elapsed": "已用时 {seconds} 秒",

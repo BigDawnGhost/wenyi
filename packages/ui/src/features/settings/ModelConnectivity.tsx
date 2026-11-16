@@ -66,24 +66,30 @@ export function ModelConnectivity({
   };
   return (
     <div className="space-y-3 p-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={!saved || disabled || ping.isPending}
-          onClick={() => ping.mutate()}
-        >
-          {ping.isPending ? t("connectivity.testing") : t("connectivity.test")}
-        </Button>
-        {ping.isPending && elapsed !== undefined && (
-          <p className="text-xs tabular-nums text-muted-foreground">
-            {t("connectivity.elapsed", { seconds: elapsed })}
-          </p>
-        )}
-        {!saved && (
-          <p className="text-xs text-muted-foreground">{t("connectivity.saveFirst")}</p>
-        )}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0 space-y-1">
+          <p className="text-sm font-medium">{t("connectivity.title")}</p>
+          <p className="text-xs text-muted-foreground">{t("connectivity.description")}</p>
+          {!saved && (
+            <p className="text-xs text-muted-foreground">{t("connectivity.saveFirst")}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          {ping.isPending && elapsed !== undefined && (
+            <p className="text-xs tabular-nums text-muted-foreground">
+              {t("connectivity.elapsed", { seconds: elapsed })}
+            </p>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!saved || disabled || ping.isPending}
+            onClick={() => ping.mutate()}
+          >
+            {ping.isPending ? t("connectivity.testing") : t("connectivity.test")}
+          </Button>
+        </div>
       </div>
       <ErrorNotice error={ping.error} />
       <div role="status" aria-live="polite" className="space-y-2">

@@ -665,6 +665,8 @@ const en = {
   "modelList.failed": "Could not fetch models.",
   "modelList.notFound": "The endpoint has no model list. Check the base URL.",
   "modelList.unsupported": "This provider cannot list models. Enter the name.",
+  "connectivity.title": "Connectivity",
+  "connectivity.description": "Test saved connections and review the status of each model.",
   "connectivity.test": "Test connection",
   "connectivity.testing": "Testing…",
   "connectivity.elapsed": "{seconds} s elapsed",
