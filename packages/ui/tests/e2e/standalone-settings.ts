@@ -365,7 +365,7 @@ test("settings action bars float above the pane bottom throughout scrolling", as
         await expect.poll(() => actions.evaluate(node => {
           const pane = node.closest("main")!.getBoundingClientRect();
           return pane.bottom - node.getBoundingClientRect().bottom;
-        })).toBeLessThanOrEqual(20);
+        })).toBeLessThanOrEqual(32);
       }
       const lastControl = page.locator(
         '[data-slot="settings.section"] input:visible, [data-slot="settings.section"] textarea:visible, [data-slot="settings.section"] button:visible, [data-slot="settings.section"] summary:visible, [data-slot="page.container"] a:visible',

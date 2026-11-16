@@ -90,9 +90,11 @@ export function SettingsActionBar({
   return (
     <div
       data-slot="settings.actions"
-      className="sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card/95 px-4 py-3 shadow-e4 backdrop-blur supports-[backdrop-filter]:bg-card/80"
+      className="-mb-3 sticky bottom-4 z-10 mx-auto flex w-fit max-w-full flex-wrap items-center gap-3 rounded-xl border border-border bg-card/95 px-4 py-3 shadow-e4 backdrop-blur supports-[backdrop-filter]:bg-card/80"
     >
-      <div className="min-w-0 flex-1 basis-48 space-y-1 text-sm">{notices}</div>
+      {notices ? (
+        <div className="min-w-0 max-w-sm space-y-1 text-sm">{notices}</div>
+      ) : null}
       <div className="flex flex-wrap gap-3">{children}</div>
     </div>
   );
