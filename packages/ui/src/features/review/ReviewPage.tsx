@@ -147,7 +147,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
           </>
         }
       />
-      <PageContainer className="space-y-5">
+      <PageContainer className="mx-auto w-full max-w-4xl space-y-5">
         <ErrorNotice error={error || review.error} />
         {historical && (
           <div className="flex flex-wrap items-center gap-3 text-sm">
@@ -184,7 +184,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
           </p>
         )}
         {run.data && (
-          <section className="space-y-5 rounded-lg border p-5">
+          <section className="space-y-5 rounded-xl border border-border bg-card p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-medium">
                 {t(
@@ -230,7 +230,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
           </section>
         )}
         {!loading && !error && !run.data && !reviewing && (
-          <div className="space-y-2 rounded-lg border p-5 text-sm text-muted-foreground">
+          <div className="space-y-2 rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
             <p>{t("review.noReviewYet")}</p>
             {!chapters.isPending && !translated && (
               <p>{t("review.wholeBookReviewIsAvailableOnceAll")}</p>

@@ -101,7 +101,7 @@ export default function ExportPage() {
   return (
     <>
       <PageHeader title={tr("export.exportTranslation")} />
-      <PageContainer className="space-y-4 max-w-4xl">
+      <PageContainer className="mx-auto w-full max-w-4xl space-y-4">
         <ErrorNotice
           error={
             projectError ||

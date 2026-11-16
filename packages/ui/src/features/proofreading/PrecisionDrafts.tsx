@@ -49,7 +49,7 @@ export function PrecisionDrafts({
   if (!data.available)
     return (
       <div className="space-y-3">
-        <p role="status" className="rounded-lg border p-4 text-sm text-muted-foreground">
+        <p role="status" className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
           {t(`proofreading.precisionUnavailable.${data.reason ?? "no_archive"}`)}
         </p>
         <Button variant="outline" disabled={query.isFetching} onClick={() => void query.refetch()}>
@@ -70,7 +70,7 @@ export function PrecisionDrafts({
         {t("proofreading.precisionExplanation")}
       </p>
       {data.candidates.map((candidate) => (
-        <section key={candidate.id} className="min-w-0 space-y-3 rounded-lg border p-4">
+        <section key={candidate.id} className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-4">
           <h3 className="flex flex-wrap items-center gap-2 text-sm font-medium">
             {candidate.id}
             {candidate.id === data.before_polish_candidate && (
@@ -86,7 +86,7 @@ export function PrecisionDrafts({
         <h3 className="text-sm font-medium">{t("proofreading.archivedSynthesis")}</h3>
         {text(data.synthesized_target)}
       </section>
-      <section className="space-y-3 rounded-lg border p-4">
+      <section className="space-y-3 rounded-xl border border-border bg-card p-4">
         <h3 className="text-sm font-medium">{t("proofreading.currentTranslation")}</h3>
         {target !== data.synthesized_target && (
           <p className="text-xs text-muted-foreground">{t("proofreading.currentDiffers")}</p>

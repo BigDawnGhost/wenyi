@@ -55,7 +55,7 @@ export function WorkflowPanel({
     (!!live?.label || workflow.status === "running");
 
   return (
-    <section aria-labelledby={headingId} className="space-y-3 py-2">
+    <section aria-labelledby={headingId} className="space-y-3 rounded-xl border border-border bg-card p-4">
       <h2 id={headingId} className="font-medium">
         {tr("workflowPanel.currentWorkflow")}
       </h2>

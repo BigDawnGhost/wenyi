@@ -90,7 +90,7 @@ export default function Dashboard() {
           )
         }
       />
-      <PageContainer>
+      <PageContainer className="mx-auto w-full max-w-4xl">
         <ErrorNotice error={error} />
         {importFailure && (
           <div

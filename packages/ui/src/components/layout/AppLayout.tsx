@@ -289,7 +289,7 @@ export function PageHeader({
   return (
     <div
       data-slot="page.header"
-      className="relative flex flex-wrap items-center justify-between gap-4 px-8 py-5"
+      className="relative mx-auto flex w-full max-w-4xl flex-wrap items-center justify-between gap-4 px-8 py-5"
     >
       <div className="flex min-w-0 flex-1 basis-64 flex-wrap items-center gap-x-3 gap-y-1 [overflow-wrap:anywhere]">
         <h1 className="text-lg font-semibold">{title}</h1>

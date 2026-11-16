@@ -95,7 +95,7 @@ export default function StylePage() {
   return (
     <>
       <PageHeader title={tr("common.styleSynopsis")} />
-      <PageContainer>
+      <PageContainer className="mx-auto w-full max-w-4xl">
         <ErrorNotice error={error || save.error} />
         {busy && <ReadOnlyNotice className="mb-4" />}
         <Tabs value={tab} onValueChange={setTab}>

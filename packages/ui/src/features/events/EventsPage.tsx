@@ -104,7 +104,7 @@ export default function EventsPage() {
   return (
     <>
       <PageHeader title={tr("common.eventLog")} />
-      <PageContainer>
+      <PageContainer className="mx-auto w-full max-w-4xl">
         <ErrorNotice error={project.error || error} />
         <Card>
           <CardContent className="p-4">

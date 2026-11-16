@@ -46,22 +46,24 @@ export function WorkflowSettings({
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
       {scope === "project" && (
-        <div className="space-y-2">
-          <Label htmlFor="project-prompt-genre">{tr("createProject.promptGenre")}</Label>
-          <Input
-            id="project-prompt-genre"
-            className={SETTINGS_CONTROL_CLASSNAME}
-            readOnly
-            value={tr(
-              section(config, "pipeline").prompt_genre === "academic"
-                ? "createProject.academicGenre"
-                : "createProject.literaryGenre",
-            )}
-            aria-describedby="project-prompt-genre-help"
-          />
-          <p id="project-prompt-genre-help" className="text-xs text-muted-foreground">
-            {tr("settings.promptGenreLocked")}
-          </p>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <div className="space-y-2">
+            <Label htmlFor="project-prompt-genre">{tr("createProject.promptGenre")}</Label>
+            <Input
+              id="project-prompt-genre"
+              className={SETTINGS_CONTROL_CLASSNAME}
+              readOnly
+              value={tr(
+                section(config, "pipeline").prompt_genre === "academic"
+                  ? "createProject.academicGenre"
+                  : "createProject.literaryGenre",
+              )}
+              aria-describedby="project-prompt-genre-help"
+            />
+            <p id="project-prompt-genre-help" className="text-xs text-muted-foreground">
+              {tr("settings.promptGenreLocked")}
+            </p>
+          </div>
         </div>
       )}
       <div className="overflow-hidden rounded-xl border border-border bg-card">

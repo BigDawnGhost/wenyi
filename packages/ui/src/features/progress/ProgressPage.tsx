@@ -108,7 +108,7 @@ export default function ProgressPage() {
           </>
         }
       />
-      <PageContainer className="space-y-4">
+      <PageContainer className="mx-auto w-full max-w-4xl space-y-4">
         <ErrorNotice
           error={
             projectQuery.error ||
