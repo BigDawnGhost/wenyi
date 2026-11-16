@@ -22,11 +22,20 @@ export function ModelSelection({
     const model = object(raw);
     return { id, provider: String(model.provider), model: String(model.model) };
   });
-  const modelOptions = modelEntries.map((entry) => (
-    <SelectItem key={entry.id} value={entry.id}>
-      {entry.id} · {entry.provider} / {entry.model}
-    </SelectItem>
-  ));
+  const labelCounts = new Map<string, number>();
+  for (const entry of modelEntries) {
+    const label = `${entry.provider} / ${entry.model}`;
+    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+  }
+  const modelOptions = modelEntries.map((entry) => {
+    const label = `${entry.provider} / ${entry.model}`;
+    const text = (labelCounts.get(label) ?? 0) > 1 ? `${label} · ${entry.id}` : label;
+    return (
+      <SelectItem key={entry.id} value={entry.id}>
+        {text}
+      </SelectItem>
+    );
+  });
   const tierNames = [
     ["strong", t("providerSettings.qualityTier")],
     ["cheap", t("providerSettings.economyTier")],
