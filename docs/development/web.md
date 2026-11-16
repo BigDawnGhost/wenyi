@@ -226,7 +226,7 @@ pnpm -C apps/web exec playwright install chromium
 pnpm -C apps/web test:e2e
 ```
 
-Playwright starts a loopback Vite server on port 4173 and uses mocked HTTP/WebSocket responses for browser contracts; this does not replace service integration tests. Shared UI changes also require Desktop typecheck/build/E2E, followed by `pnpm test:frontend-boundaries` after both builds; see [frontend development](frontend.md). Report real-model quality evaluation separately from offline and browser checks.
+Playwright starts a loopback Vite server on port 4173 and uses mocked HTTP/WebSocket responses for browser contracts; this does not replace service integration tests. Shared UI changes also require Desktop typecheck/build/E2E, followed by `pnpm test:frontend-boundaries` after both builds; see [frontend development](frontend.md). The WebKit engine family is covered by the opt-in `web-webkit` project: install its browser with `pnpm -C apps/web exec playwright install webkit` and select it with `PLAYWRIGHT_PROJECTS=web-webkit`; CI runs it alongside Chromium in the E2E job. Report real-model quality evaluation separately from offline and browser checks.
 
 <a id="docker-builds"></a>
 

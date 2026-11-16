@@ -224,7 +224,7 @@ pnpm -C apps/web exec playwright install chromium
 pnpm -C apps/web test:e2e
 ```
 
-Playwright 在回环地址 4173 端口启动 Vite，用 mock HTTP／WebSocket 响应验证浏览器契约，不能代替服务集成测试。共享 UI 变更还需 Desktop typecheck／build／E2E，并在两端构建后运行 `pnpm test:frontend-boundaries`，见[前端开发](frontend.md)。真实模型质量评估与离线／浏览器检查分开报告。
+Playwright 在回环地址 4173 端口启动 Vite，用 mock HTTP／WebSocket 响应验证浏览器契约，不能代替服务集成测试。共享 UI 变更还需 Desktop typecheck／build／E2E，并在两端构建后运行 `pnpm test:frontend-boundaries`，见[前端开发](frontend.md)。WebKit 引擎族由可选的 `web-webkit` 项目覆盖：先用 `pnpm -C apps/web exec playwright install webkit` 安装浏览器，再用 `PLAYWRIGHT_PROJECTS=web-webkit` 选择；CI 中该任务与 Chromium 并行运行。真实模型质量评估与离线／浏览器检查分开报告。
 
 <a id="docker-builds"></a>
 

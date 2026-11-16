@@ -312,10 +312,21 @@ jobs:
         include:
           - name: web
             app: apps/web
+            browser: chromium
+            results: apps/web/test-results/
+            report: apps/web/playwright-report/
+          # WebKit proxies the Safari/WKWebView/WebKitGTK engine family for the
+          # web app. Desktop stays on Chromium: its packaged acceptance happens
+          # in the real Tauri WebViews, not in a browser matrix.
+          - name: web-webkit
+            app: apps/web
+            browser: webkit
+            projects: web-webkit
             results: apps/web/test-results/
             report: apps/web/playwright-report/
           - name: desktop
             app: apps/desktop/frontend
+            browser: chromium
             results: apps/desktop/frontend/test-results/
             report: apps/desktop/frontend/playwright-report/
     steps:
@@ -335,16 +346,21 @@ jobs:
         id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-1.63.0-${{ hashFiles('pnpm-lock.yaml') }}
-      - run: pnpm -C apps/web exec playwright install --with-deps chromium
+          # The browser flavour is part of the key so the WebKit entry cannot
+          # restore a cache that only contains Chromium, or vice versa.
+          key: ${{ runner.os }}-playwright-1.63.0-${{ matrix.browser }}-${{ hashFiles('pnpm-lock.yaml') }}
+      - run: pnpm -C apps/web exec playwright install --with-deps ${{ matrix.browser }}
         if: steps.playwright-cache.outputs.cache-hit != 'true'
       - name: Install Playwright system dependencies
-        run: pnpm -C apps/web exec playwright install-deps chromium
+        run: pnpm -C apps/web exec playwright install-deps ${{ matrix.browser }}
       - name: Run the ${{ matrix.name }} specs
         env:
           # Three workers instead of the two a four-core runner derives: the
           # retry-and-report path already catches a flaky pass.
           PLAYWRIGHT_WORKERS: "3"
+          # Selects the WebKit project for the web-webkit entry; the Chromium
+          # entries leave it empty and keep the default project set.
+          PLAYWRIGHT_PROJECTS: ${{ matrix.projects }}
           # The JSON reporter is what the per-spec timing table is built from.
           PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/${{ matrix.name }}-results.json
         run: pnpm -C ${{ matrix.app }} test:e2e --reporter=list --reporter=json
