@@ -65,7 +65,7 @@ export function ModelConnectivity({
     return result.status_code ? `${text} (HTTP ${result.status_code})` : text;
   };
   return (
-    <div className="space-y-3 p-4">
+    <div className="space-y-3 px-4 py-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <p className="text-sm font-medium">{t("connectivity.title")}</p>
