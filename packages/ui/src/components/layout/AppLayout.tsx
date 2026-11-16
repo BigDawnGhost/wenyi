@@ -133,7 +133,9 @@ export function AppLayout() {
             : entry.to === "/settings"
               ? { settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }
               : undefined}
-          className={slot === "action" ? "w-full" : undefined}
+          className={slot === "action"
+            ? "w-full border border-border shadow-e1 hover:shadow-e2 motion-safe:hover:-translate-y-px motion-safe:active:translate-y-0"
+            : undefined}
         />
       ));
 

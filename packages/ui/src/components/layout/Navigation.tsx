@@ -83,7 +83,7 @@ export function NavigationLink({
       onFocus={() => void prefetch?.().catch(() => {})}
       className={({ isActive }) =>
         cn(
-          "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm transition-[color,background-color,padding,gap,box-shadow] duration-sidebar ease-sidebar",
+          "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
           collapsed && "gap-0 px-2",
           isActive
             ? "bg-accent text-accent-foreground font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
@@ -134,7 +134,7 @@ export function ProjectNavigation({
       >
         {name || pid}
       </p>
-      <div>
+      <div className="space-y-1.5">
         {links.map((entry) => (
           <NavigationLink
             key={entry.to}
@@ -144,6 +144,7 @@ export function ProjectNavigation({
             collapsed={collapsed}
             end={entry.end}
             prefetch={entry.loader}
+            className="py-2.5"
           />
         ))}
       </div>
