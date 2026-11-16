@@ -492,6 +492,7 @@ fn cancel_preparation(
     state: &Mutex<State>,
     saves: &Saves,
     closing: &AtomicBool,
+    notifications: &crate::notifications::Center,
 ) -> Result<()> {
     if let Err(error) = cancel_prepare(connection) {
         unavailable(state, closing, CANCELLATION_UNCERTAIN);
@@ -499,6 +500,7 @@ fn cancel_preparation(
     }
     lock(state).closing = false;
     saves.reopen();
+    notifications.arm();
     closing.store(false, Ordering::SeqCst);
     Ok(())
 }
@@ -674,6 +676,10 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
             "Wenyi is busy. Try again when the current task finishes.",
         ));
     }
+    // Own notification admission for the entire update attempt. A cancelled
+    // preparation or a replacement engine restores it without a polling race.
+    let notifications = app.state::<crate::notifications::Center>();
+    notifications.disarm();
     lock(&state).closing = true;
     crate::publish(app, &state);
     let prepared = prepare_engine(&connection).and_then(|()| backup_plan(&connection));
@@ -681,7 +687,8 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
         Ok(plan) => plan,
         Err(error) => {
             // A timed-out response may still have closed admission on the engine.
-            let cancellation = cancel_preparation(&connection, &state, &saves, &engine.closing);
+            let cancellation =
+                cancel_preparation(&connection, &state, &saves, &engine.closing, &notifications);
             crate::publish(app, &state);
             return Err(cancellation.err().unwrap_or(error));
         }
@@ -882,9 +889,16 @@ mod tests {
                     let closing = AtomicBool::new(true);
                     let saves = Saves::default();
                     assert!(saves.close_if_idle());
-                    let result = cancel_preparation(&connection, &state, &saves, &closing);
+                    let notifications = crate::notifications::Center::silent(
+                        crate::diagnostics::Diagnostics::new(None),
+                    );
+                    notifications.arm();
+                    notifications.disarm();
+                    let result =
+                        cancel_preparation(&connection, &state, &saves, &closing, &notifications);
                     assert!(!closing.load(Ordering::SeqCst)); // Explicit Quit stays usable.
                     assert!(!lock(&state).closing);
+                    assert_eq!(notifications.is_armed(), cancel == Some(204));
                     if cancel == Some(204) {
                         assert!(result.is_ok());
                         assert!(lock(&state).connection.is_some());

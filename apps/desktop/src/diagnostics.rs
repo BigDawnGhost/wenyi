@@ -56,6 +56,12 @@ pub enum Event {
     LlmRetryExhausted,
     LlmModelFailover,
     LlmUsage,
+    /// One status notification was handed to the platform.
+    NotificationShown,
+    /// A status notification was suppressed by policy; carries only a reason.
+    NotificationSuppressed,
+    /// A platform notification failed; carries only a bounded classification.
+    NotificationFailed,
     FrontendReady,
     FrontendError,
     FrontendRejection,
@@ -107,7 +113,8 @@ impl Event {
             | LoggerDropped
             | PreviousUnclean
             | LayoutRefused
-            | InstallLocationChanged => "WARN",
+            | InstallLocationChanged
+            | NotificationFailed => "WARN",
             HttpCompleted | LlmRequestStarted | LlmUsage => "DEBUG",
             _ => "INFO",
         }
@@ -170,6 +177,9 @@ impl Event {
                     | NativePanic
                     | LayoutRefused
                     | InstallLocationChanged
+                    | NotificationShown
+                    | NotificationSuppressed
+                    | NotificationFailed
             ),
         }
     }
@@ -267,8 +277,22 @@ fn attributes(input: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
                         | "shutdown_requested"
                         | "forced"
                         | "wait_failed"
+                        | "disabled"
+                        | "disabled_success"
+                        | "unarmed"
+                        | "duplicate"
+                        | "rate_limited"
+                        | "os_disabled"
+                        | "queue_full"
+                        | "invalid_payload"
+                        | "winrt_failed"
+                        | "unavailable"
                 )
-            ),
+            ) || value.as_str().is_some_and(|reason| {
+                crate::notifications::Failure::ALL
+                    .iter()
+                    .any(|failure| failure.reason() == reason)
+            }),
             "exception" | "cause_exception" => matches!(
                 value.as_str(),
                 Some(
@@ -1229,6 +1253,16 @@ mod tests {
                 serde_json::from_value(case["input"].clone()).unwrap();
             assert_eq!(json!(attributes(input)), case["expected"]);
         }
+    }
+
+    #[test]
+    fn notification_failures_keep_only_typed_reasons() {
+        for failure in crate::notifications::Failure::ALL {
+            let input = BTreeMap::from([("reason".into(), json!(failure.reason()))]);
+            assert_eq!(attributes(input.clone()), input);
+        }
+        let input = BTreeMap::from([("reason".into(), json!("private native exception"))]);
+        assert!(attributes(input).is_empty());
     }
 
     #[test]

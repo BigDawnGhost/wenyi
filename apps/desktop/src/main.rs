@@ -13,6 +13,7 @@ mod migration;
 mod mutex;
 mod native_drop;
 mod native_export;
+mod notifications;
 mod paths;
 mod process;
 mod profile;
@@ -86,6 +87,7 @@ fn start_backend(
     recovery: bool,
 ) -> Result<(), &'static str> {
     let diagnostics = app.state::<diagnostics::Diagnostics>();
+    let notifications = app.state::<notifications::Center>();
     let resources = app.path().resource_dir().map_err(|_| {
         process::Failure::Setup("Local resources unavailable.").report(&diagnostics)
     })?;
@@ -104,6 +106,7 @@ fn start_backend(
             engine.workspace.as_deref(),
             &engine.native_owner,
             diagnostics.inner().clone(),
+            notifications.inner(),
         )
         .map_err(|failure| failure.report(&diagnostics))?;
         *owner = Some(backend);
@@ -119,12 +122,14 @@ fn start_backend(
                 diagnostics::Event::EngineReady,
                 serde_json::json!({}),
             );
+            notifications.arm();
             let state = app.state::<Arc<Mutex<State>>>();
             let mut state = lock(&state);
             state.connected(connection);
             Ok(())
         }
         Err(failure) => {
+            notifications.disarm();
             let message = failure.report(&diagnostics);
             let mut owner = lock(&engine.child);
             if let Some(backend) = owner.as_mut() {
@@ -316,6 +321,8 @@ fn main() {
         diagnostics_ui::startup_failure(&diagnostics);
         return;
     }
+    #[cfg(windows)]
+    notifications::set_process_app_user_model_id();
     graphics::configure();
     let state = Arc::new(Mutex::new(State::default()));
     let closing = Arc::new(AtomicBool::new(false));
@@ -331,6 +338,7 @@ fn main() {
     };
     let startup_engine = engine.clone();
     let startup_state = state.clone();
+    let notification_workspace = workspace.clone();
     let tray_available = Arc::new(AtomicBool::new(false));
     let setup_tray = tray_available.clone();
     let app = tauri::Builder::default()
@@ -362,6 +370,8 @@ fn main() {
             diagnostics_ui::desktop_diagnostics_cancel,
             diagnostics_ui::desktop_diagnostics_clear,
             diagnostics_ui::desktop_diagnostics_open,
+            notifications::desktop_notifications_set_locale,
+            notifications::desktop_notifications_permission,
         ])
         .on_window_event(|window, event| {
             // A WebviewWindow's native drops are emitted as window events.
@@ -378,6 +388,15 @@ fn main() {
             let reload_state = startup_state.clone();
             let webview_data = paths::webview(&workspace);
             std::fs::create_dir_all(&webview_data)?;
+            // The center owns policy and the platform sink; the engine and the
+            // tray keep their existing lifecycles. It must be managed before the
+            // engine thread starts, because start_backend reads it from state.
+            let notifications = notifications::install(
+                app.handle(),
+                app.state::<diagnostics::Diagnostics>().inner().clone(),
+                &notification_workspace,
+            );
+            app.manage(notifications);
             // Overlap Python startup with WebView creation. State retains an
             // early ready/error result for the initialization/page-load scripts;
             // the UI still cannot issue requests before the owned engine is ready.
@@ -422,6 +441,8 @@ fn main() {
                 let mut health_ticks = 0;
                 while !monitor_engine.closed.load(Ordering::SeqCst) {
                     // Updates temporarily own closing and can restore this same engine.
+                    // Their owner manages notification admission synchronously;
+                    // this poll must not disarm an engine that just recovered.
                     if monitor_engine.closing.load(Ordering::SeqCst) {
                         reported_exit = false;
                         std::thread::sleep(std::time::Duration::from_millis(250));
@@ -436,6 +457,9 @@ fn main() {
                     }
                     if !reported_exit && lock(&monitor_engine.child).as_mut().is_some_and(|backend| backend.is_ready() && backend.exited()) {
                         reported_exit = true;
+                        let center = monitor_handle.state::<notifications::Center>();
+                        center.engine_stopped();
+                        center.disarm();
                         monitor_handle.state::<diagnostics::Diagnostics>().record(
                             diagnostics::Source::Native, diagnostics::Event::EngineFailed,
                             serde_json::json!({"stage": "running", "reason": "process_exited"}),
@@ -496,6 +520,7 @@ fn main() {
             _ => false,
         };
         if begin_shutdown(requested, &closing) {
+            handle.state::<notifications::Center>().stop();
             handle.state::<native_drop::Grants>().clear();
             handle.state::<native_export::Saves>().close();
             lock(&state).closing = true;

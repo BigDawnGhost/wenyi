@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from wenyi_desktop import notices
 from wenyi_desktop.diagnostics import (
     DiagnosticsMiddleware,
     EngineDiagnostics,
@@ -236,3 +237,75 @@ def test_model_observations_keep_client_scope_across_threads_and_leave_ledger_al
     assert all(row["attributes"]["project_ref"] == reporter.reference("first") for row in rows)
     assert "fake-private-text" not in stream.getvalue()
     assert client.usage_summary() == before
+
+
+def test_status_notices_are_separate_bounded_and_free_of_error_text():
+    stream = io.StringIO()
+    reporter = Reporter(stream)
+    assert reporter.notice(
+        notices.task_notice(
+            "task_failed",
+            project={"id": "abc123", "name": "A\nBook"},
+            run_id="run1",
+            task="translation",
+            reason="io",
+        )
+    )
+    # Missing reason, unknown reason, and unknown fields are dropped.
+    for invalid in (
+        {
+            "kind": "task_failed",
+            "project_id": "abc",
+            "project_name": "Book",
+            "run_id": "r",
+            "task": "translation",
+        },
+        notices.task_notice(
+            "task_failed",
+            project={"id": "abc", "name": "Book"},
+            run_id="r",
+            task="translation",
+            reason="fake-private-reason",
+        ),
+        {
+            "kind": "task_failed",
+            "project_id": "abc",
+            "project_name": "Book",
+            "run_id": "r",
+            "task": "translation",
+            "reason": "io",
+            "error": "fake-private-error",
+        },
+    ):
+        assert not reporter.notice(invalid)
+    reporter.close()
+    lines = [line for line in stream.getvalue().splitlines() if line.startswith("WENYI_NOTICE ")]
+    assert len(lines) == 1
+    payload = json.loads(lines[0].removeprefix("WENYI_NOTICE "))
+    assert payload == {
+        "kind": "task_failed",
+        "project_id": "abc123",
+        "project_name": "A Book",
+        "run_id": "run1",
+        "task": "translation",
+        "reason": "io",
+    }
+    assert "fake-private" not in stream.getvalue()
+
+
+def test_status_notice_wire_format_stays_ascii_and_keeps_the_display_name():
+    stream = io.StringIO()
+    reporter = Reporter(stream)
+    assert reporter.notice(
+        notices.task_notice(
+            "project_completed",
+            project={"id": "abc123", "name": "书名 📚"},
+            run_id="run1",
+            task="translation",
+        )
+    )
+    reporter.close()
+    line = next(line for line in stream.getvalue().splitlines() if line.startswith("WENYI_NOTICE "))
+    # A non-UTF-8 Windows pipe must never see raw non-ASCII bytes on this channel.
+    assert line.isascii()
+    assert json.loads(line.removeprefix("WENYI_NOTICE "))["project_name"] == "书名 📚"

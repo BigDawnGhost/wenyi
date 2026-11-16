@@ -490,6 +490,16 @@ class LocalBackend:
         saved[paths.LAST_LIBRARY_ROOT] = str(root)
         self.save_settings(saved, connection)
 
+    def catalog_project(self, pid: str) -> dict | None:
+        """Read only the catalog row for lightweight status reporting.
+
+        Notifications need the display name and operation status, not the
+        project store. Opening the store on that path would add a lock and an
+        I/O round trip to a task that has just finished, so this accessor stays
+        at the catalog boundary.
+        """
+        return self._get("projects", pid)
+
     def get_project(
         self, pid: str, *, locations: dict[Path, paths.ProjectDirectoryIndex] | None = None
     ) -> dict | None:

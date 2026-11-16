@@ -12,7 +12,9 @@ import { useDesktopI18n } from "./i18n";
 import { desktopPlatform } from "./platform";
 import { configureQueryActivity } from "./activity";
 import { installDiagnostics } from "./diagnostics";
+import { useNotificationLocale } from "./notifications";
 import { DiagnosticExportButton } from "./DesktopDiagnostics";
+import { NotificationPermissionPrompt } from "./DesktopNotifications";
 
 installDiagnostics();
 
@@ -71,6 +73,7 @@ void bootstrap();
 function Bootstrap() {
   const status = useRuntimeStatus();
   const { t } = useDesktopI18n();
+  useNotificationLocale();
   if (status === "pending" || status === "closing")
     return (
       <main
@@ -97,6 +100,9 @@ function Bootstrap() {
       </main>
     );
   return (
-    <App />
+    <>
+      <NotificationPermissionPrompt />
+      <App />
+    </>
   );
 }
