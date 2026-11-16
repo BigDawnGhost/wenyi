@@ -80,7 +80,7 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
           disabled={disabled}
           form={form}
           className={cn(
-            "flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-lg bg-background px-3.5 py-1 text-left text-sm text-foreground shadow-e0 transition-[box-shadow] duration-motion-fast ease-standard hover:shadow-e2 focus-visible:outline-none focus-visible:shadow-[var(--shadow-e2),var(--shadow-focus-ring)] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none [&>span:first-child]:truncate",
+            "flex h-9 w-full min-w-0 items-center justify-between gap-2 rounded-lg bg-background px-3.5 py-1 text-left text-sm text-foreground shadow-e0 input-quiet transition-[box-shadow] duration-motion-fast ease-standard focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none [&>span:first-child]:truncate",
             className,
           )}
         >

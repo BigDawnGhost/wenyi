@@ -65,7 +65,10 @@
     --shadow-e2: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 1px 3px rgba(24, 26, 32, 0.06), 0 0 0 1px rgba(24, 26, 32, 0.07);
     --shadow-e3: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 8px -2px rgba(24, 26, 32, 0.08), 0 12px 28px -12px rgba(24, 26, 32, 0.14), 0 0 0 1px rgba(24, 26, 32, 0.06);
     --shadow-e4: 0 8px 16px -4px rgba(24, 26, 32, 0.08), 0 28px 56px -20px rgba(24, 26, 32, 0.22), 0 0 0 1px rgba(24, 26, 32, 0.06);
-    --shadow-focus-ring: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring));
+    --shadow-focus-ring: 0 0 0 1px hsl(var(--ring));
+    /* Input surfaces keep the quiet well; hover only deepens the well and
+       hairline, never lifts (consumed by .input-quiet below). */
+    --shadow-input-hover: inset 0 1px 2px rgba(24, 26, 32, 0.09), 0 0 0 1px rgba(24, 26, 32, 0.16);
     --shadow-sidebar: 0 0 0 1px rgba(24, 26, 32, 0.05), 12px 0 32px -20px rgba(24, 26, 32, 0.18);
   }
 }
@@ -113,7 +116,8 @@
     --shadow-e2: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);
     --shadow-e3: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.09);
     --shadow-e4: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.09);
-    --shadow-focus-ring: 0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring));
+    --shadow-focus-ring: 0 0 0 1px hsl(var(--ring));
+    --shadow-input-hover: inset 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.16);
     --shadow-sidebar: 0 0 0 1px rgba(255, 255, 255, 0.06), 12px 0 32px -20px rgba(0, 0, 0, 0.5);
 }
 
@@ -136,10 +140,11 @@
   input[type="radio"] { border-radius: 50%; }
 }
 
-/* Focus changes behavior, not decoration; retain ordinary component shadows.
-   Mouse/pointer focus stays quiet. Keyboard focus keeps a visible indicator:
-   a token-colored ring composed into box-shadow, so it never clips inside
-   overflow-hidden containers and never fights component shadow utilities. */
+/* Focus changes behavior, not decoration. Mouse/pointer focus stays quiet.
+   Keyboard focus keeps a visible indicator: the element's stroke recolors to
+   the token ring color — a single 1px line with no halo, no offset ring and
+   no elevation shadow, so it never clips inside overflow-hidden containers
+   and never fights component shadow utilities. */
 body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus:not(:focus-visible) {
   outline: none;
   --tw-ring-offset-shadow: 0 0 #0000;
@@ -150,9 +155,14 @@ body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-vi
   outline: none;
   --tw-ring-offset-shadow: 0 0 #0000;
   --tw-ring-shadow: 0 0 #0000;
-  box-shadow: var(--tw-shadow, 0 0 #0000),
-    0 0 0 2px hsl(var(--background)),
-    0 0 0 4px hsl(var(--ring));
+  box-shadow: var(--shadow-focus-ring);
+}
+
+/* Input surfaces hover quietly: deepen the well and hairline instead of
+   taking the button lift. While a focus ring is shown the ring wins, so
+   keyboard focus stays visible under the cursor. */
+.input-quiet:hover:not(:disabled):not(:focus-visible) {
+  box-shadow: var(--shadow-input-hover);
 }
 
 /* Application geometry, independent of the host browser's native widgets. */
