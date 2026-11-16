@@ -92,54 +92,56 @@ export function ModelConnectivity({
         </div>
       </div>
       <ErrorNotice error={ping.error} />
-      <div role="status" aria-live="polite" className="space-y-2">
-        {results && (
-          <p className="text-sm">
-            {results.length === 0
-              ? t("connectivity.none")
-              : failed
-                ? t("connectivity.someFailed", { failed, total: results.length })
-                : t("connectivity.allPassed", { total: results.length })}
-          </p>
-        )}
-        {results && results.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-connectivity text-sm">
-              <thead className="text-left text-xs text-muted-foreground">
-                <tr>
-                  <th scope="col" className="py-1 pr-3 font-medium">{t("connectivity.model")}</th>
-                  <th scope="col" className="py-1 pr-3 font-medium">{t("providerSettings.apiConnection")}</th>
-                  <th scope="col" className="py-1 pr-3 font-medium">{t("connectivity.status")}</th>
-                  <th scope="col" className="py-1 pr-3 font-medium">{t("connectivity.latency")}</th>
-                  <th scope="col" className="py-1 font-medium">{t("connectivity.detail")}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {results.map((result) => (
-                  <tr key={result.profile} className="border-t border-black/[0.05] align-top dark:border-white/[0.07]">
-                    <td className="py-2 pr-3 [overflow-wrap:anywhere]">
-                      <div className="font-medium">{result.profile}</div>
-                      <div className="text-xs text-muted-foreground">{result.model}</div>
-                    </td>
-                    <td className="py-2 pr-3 [overflow-wrap:anywhere]">
-                      {result.connection} / {result.provider}
-                    </td>
-                    <td className="py-2 pr-3">
-                      <Badge variant={result.ok ? "success" : "destructive"}>
-                        {result.ok ? t("connectivity.passed") : t("connectivity.failed")}
-                      </Badge>
-                    </td>
-                    <td className="py-2 pr-3 whitespace-nowrap">
-                      {result.latency_ms == null ? "—" : `${result.latency_ms} ms`}
-                    </td>
-                    <td className="py-2">{detail(result)}</td>
+      {(results != null || ping.isPending) && (
+        <div role="status" aria-live="polite" className="space-y-2">
+          {results && (
+            <p className="text-sm">
+              {results.length === 0
+                ? t("connectivity.none")
+                : failed
+                  ? t("connectivity.someFailed", { failed, total: results.length })
+                  : t("connectivity.allPassed", { total: results.length })}
+            </p>
+          )}
+          {results && results.length > 0 && (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-connectivity text-sm">
+                <thead className="text-left text-xs text-muted-foreground">
+                  <tr>
+                    <th scope="col" className="py-1 pr-3 font-medium">{t("connectivity.model")}</th>
+                    <th scope="col" className="py-1 pr-3 font-medium">{t("providerSettings.apiConnection")}</th>
+                    <th scope="col" className="py-1 pr-3 font-medium">{t("connectivity.status")}</th>
+                    <th scope="col" className="py-1 pr-3 font-medium">{t("connectivity.latency")}</th>
+                    <th scope="col" className="py-1 font-medium">{t("connectivity.detail")}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+                </thead>
+                <tbody>
+                  {results.map((result) => (
+                    <tr key={result.profile} className="border-t border-black/[0.05] align-top dark:border-white/[0.07]">
+                      <td className="py-2 pr-3 [overflow-wrap:anywhere]">
+                        <div className="font-medium">{result.profile}</div>
+                        <div className="text-xs text-muted-foreground">{result.model}</div>
+                      </td>
+                      <td className="py-2 pr-3 [overflow-wrap:anywhere]">
+                        {result.connection} / {result.provider}
+                      </td>
+                      <td className="py-2 pr-3">
+                        <Badge variant={result.ok ? "success" : "destructive"}>
+                          {result.ok ? t("connectivity.passed") : t("connectivity.failed")}
+                        </Badge>
+                      </td>
+                      <td className="py-2 pr-3 whitespace-nowrap">
+                        {result.latency_ms == null ? "—" : `${result.latency_ms} ms`}
+                      </td>
+                      <td className="py-2">{detail(result)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
