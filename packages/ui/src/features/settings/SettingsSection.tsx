@@ -79,7 +79,7 @@ export function SettingsGroupHeader({
   );
 }
 
-/** Cancel PageContainer's edge padding so scrolling to the end cannot lift the sticky bar. */
+/** Float as a rounded, elevated card above the scrolling content; PageContainer's padding keeps it clear of the pane edges. */
 export function SettingsActionBar({
   notices,
   children,
@@ -90,7 +90,7 @@ export function SettingsActionBar({
   return (
     <div
       data-slot="settings.actions"
-      className="sticky bottom-0 z-10 -mx-8 -mb-7 flex flex-wrap items-center gap-3 border-t border-black/[0.05] bg-background/95 px-8 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 dark:border-white/[0.07]"
+      className="sticky bottom-4 z-10 flex flex-wrap items-center gap-3 rounded-xl border border-border bg-card/95 px-4 py-3 shadow-e4 backdrop-blur supports-[backdrop-filter]:bg-card/80"
     >
       <div className="min-w-0 flex-1 basis-48 space-y-1 text-sm">{notices}</div>
       <div className="flex flex-wrap gap-3">{children}</div>

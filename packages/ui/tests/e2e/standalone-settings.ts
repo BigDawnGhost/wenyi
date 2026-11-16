@@ -343,7 +343,7 @@ for (const chinese of [false, true]) {
   });
 }
 
-test("settings action bars stay flush with the pane bottom throughout scrolling", async ({ page }, testInfo) => {
+test("settings action bars float above the pane bottom throughout scrolling", async ({ page }, testInfo) => {
   const main = page.getByRole("main");
   const actions = page.locator('[data-slot="settings.actions"]');
   for (const path of [
@@ -360,8 +360,12 @@ test("settings action bars stay flush with the pane bottom throughout scrolling"
         }, progress);
         await expect.poll(() => actions.evaluate(node => {
           const pane = node.closest("main")!.getBoundingClientRect();
-          return Math.abs(pane.bottom - node.getBoundingClientRect().bottom);
-        })).toBeLessThanOrEqual(1);
+          return pane.bottom - node.getBoundingClientRect().bottom;
+        })).toBeGreaterThanOrEqual(12);
+        await expect.poll(() => actions.evaluate(node => {
+          const pane = node.closest("main")!.getBoundingClientRect();
+          return pane.bottom - node.getBoundingClientRect().bottom;
+        })).toBeLessThanOrEqual(20);
       }
       const lastControl = page.locator(
         '[data-slot="settings.section"] input:visible, [data-slot="settings.section"] textarea:visible, [data-slot="settings.section"] button:visible, [data-slot="settings.section"] summary:visible, [data-slot="page.container"] a:visible',
