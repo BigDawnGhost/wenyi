@@ -71,8 +71,8 @@ export function TranslationDiff({
   const displayedMode = tooLarge ? "full" : mode;
   const prose =
     "whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]";
-  const removed = "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-200";
-  const added = "bg-green-100 text-green-900 dark:bg-green-950 dark:text-green-200";
+  const removed = "bg-diff-removed text-diff-removed-foreground";
+  const added = "bg-diff-added text-diff-added-foreground";
 
   return (
     <div className="space-y-3" data-testid="translation-diff">

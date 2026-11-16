@@ -37,7 +37,7 @@ export function ConflictList({
     onError: (e) => toast.error(errorMessage(e, tr)),
   });
   return (
-    <Card className="border-amber-300 bg-amber-50 dark:bg-amber-950/20">
+    <Card className="border-warning/40 bg-warning/10">
       <CardContent className="p-4 space-y-2">
         <div className="font-medium text-sm">
           {tr("glossary.conflictCount", { count: conflicts.length })}

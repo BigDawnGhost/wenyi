@@ -1,9 +1,8 @@
-// Style guardrails for the shared frontend (thesis 02, phase 0).
+// Style guardrails for the shared frontend (thesis 02, phase 4).
 //
-// Report-only by default: violations are printed as warnings so the existing
-// backlog keeps passing while the token migration is in progress. Set
-// STYLE_GUARDRAILS=strict to fail on any violation - that is the phase-4 end
-// state once the backlog has been cleaned up.
+// Strict by default: the phase-0/1 migration backlog has been cleared, so any
+// violation now fails this suite. Set STYLE_GUARDRAILS=report to fall back to
+// the warn-only posture while a new migration is in flight.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -45,8 +44,12 @@ const RULES = [
   },
   {
     id: "inline-layout-style",
-    pattern: /style=\{\{[^}]*(?:width|height|margin|padding|gap)\s*:/,
-    hint: "layout values belong in tokens/utilities, not inline styles",
+    // Inline layout style is reserved for runtime values. Dynamic percentages
+    // (progress/token bars) and computed sizes (virtualizer row heights) are
+    // legitimate because their values are only known at render time; only
+    // fixed px/rem/em literals and numeric constants are violations.
+    pattern: /style=\{\{[^}]*(?:width|height|margin|padding|gap)\s*:\s*(?:"[0-9.]+(?:px|rem|em)"|'[0-9.]+(?:px|rem|em)'|[0-9.]+(?:px|rem|em)?\s*[},])/,
+    hint: "fixed layout values belong in tokens/utilities; inline style is for runtime values such as dynamic percentages",
   },
 ];
 
@@ -87,10 +90,10 @@ function format(violations) {
 test("style guardrails inventory", () => {
   const { files, violations } = scan();
   assert.ok(files > 80, "expected to scan the shared frontend sources, found " + files);
-  if (process.env.STYLE_GUARDRAILS === "strict") {
-    assert.equal(violations.length, 0, format(violations));
+  if (process.env.STYLE_GUARDRAILS === "report") {
+    // Escape hatch: surface violations without blocking development.
+    if (violations.length > 0) console.warn(format(violations));
     return;
   }
-  // Phase-0 posture: surface the backlog without blocking development.
-  if (violations.length > 0) console.warn(format(violations));
+  assert.equal(violations.length, 0, format(violations));
 });

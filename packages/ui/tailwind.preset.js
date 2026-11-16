@@ -4,7 +4,7 @@
 // default Tailwind scales are re-declared at their exact 16px-root values.
 // Computed pixel results are identical to the rem defaults at a 16px root.
 const spacingKeys = [
-  0, "px", 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14,
+  0, "px", 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 3.75, 4, 4.5, 5, 6, 7, 8, 9, 10, 11, 12, 14,
   16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64, 72, 80, 96, 112, 128,
   144, 160, 176, 192, 208, 224, 240, 256, 288, 320, 384,
 ];
@@ -58,6 +58,7 @@ export default {
         "7xl": ["72px", { lineHeight: "1" }],
         "8xl": ["96px", { lineHeight: "1" }],
         "9xl": ["128px", { lineHeight: "1" }],
+        brand: "20px",
       },
       maxWidth: {
         xs: "320px",
@@ -71,6 +72,25 @@ export default {
         "5xl": "1024px",
         "6xl": "1152px",
         "7xl": "1280px",
+      },
+      width: {
+        select: "140px",
+        dialog: "calc(100% - 32px)",
+      },
+      minWidth: {
+        page: "752px",
+        connectivity: "560px",
+      },
+      minHeight: {
+        dropzone: "88px",
+        editor: "420px",
+        synopsis: "220px",
+      },
+      maxHeight: {
+        dialog: "90dvh",
+      },
+      backdropBlur: {
+        xs: "2px",
       },
       colors: {
         border: "hsl(var(--border))",
@@ -109,10 +129,27 @@ export default {
         warning: {
           DEFAULT: "hsl(var(--warning))",
           foreground: "hsl(var(--warning-foreground))",
+          text: "hsl(var(--warning-text))",
         },
         info: {
           DEFAULT: "hsl(var(--info))",
           foreground: "hsl(var(--info-foreground))",
+        },
+        chart: {
+          1: "hsl(var(--chart-1))",
+          2: "hsl(var(--chart-2))",
+          3: "hsl(var(--chart-3))",
+          4: "hsl(var(--chart-4))",
+          5: "hsl(var(--chart-5))",
+          6: "hsl(var(--chart-6))",
+        },
+        "diff-removed": {
+          DEFAULT: "hsl(var(--diff-removed-bg))",
+          foreground: "hsl(var(--diff-removed-foreground))",
+        },
+        "diff-added": {
+          DEFAULT: "hsl(var(--diff-added-bg))",
+          foreground: "hsl(var(--diff-added-foreground))",
         },
       },
       borderRadius: {

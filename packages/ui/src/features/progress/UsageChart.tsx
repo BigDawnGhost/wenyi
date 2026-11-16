@@ -29,42 +29,42 @@ function tokenBreakdown(slot: Record<string, unknown>): TokenPart[] {
     {
       label: "accounting.cachedInput",
       value: parts.cachedInput,
-      color: "bg-sky-300",
+      color: "bg-chart-1",
     },
     ...(parts.writtenInput !== 0
       ? [
           {
             label: "accounting.writtenInput" as const,
             value: parts.writtenInput,
-            color: "bg-amber-500",
+            color: "bg-chart-2",
           },
         ]
       : []),
     {
       label: "accounting.uncachedInput",
       value: parts.uncachedInput,
-      color: "bg-sky-600 dark:bg-sky-400",
+      color: "bg-chart-3",
     },
     ...(parts.unknownInput
       ? [
           {
             label: "accounting.unknownInput" as const,
             value: parts.unknownInput,
-            color: "bg-slate-300",
+            color: "bg-chart-4",
           },
         ]
       : []),
     {
       label: "data.outputTokens",
       value: amount(slot.completion_tokens),
-      color: "bg-teal-500 dark:bg-teal-400",
+      color: "bg-chart-5",
     },
     ...(parts.other
       ? [
           {
             label: "accounting.unclassifiedTokens" as const,
             value: parts.other,
-            color: "bg-slate-500",
+            color: "bg-chart-6",
           },
         ]
       : []),

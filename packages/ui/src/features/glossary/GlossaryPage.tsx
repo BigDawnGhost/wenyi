@@ -203,7 +203,7 @@ export default function GlossaryPage() {
             value={type}
             onValueChange={setType}
             aria-label={tr("common.type")}
-            className="w-[140px] shrink-0"
+            className="w-select shrink-0"
           >
             <SelectItem value="">{tr("glossary.allTypes")}</SelectItem>
             {Object.entries(termTypes()).map(([id, label]) => (

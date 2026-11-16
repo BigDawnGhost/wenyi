@@ -56,7 +56,7 @@ export default function RunTimeChart({
                 aria-hidden="true"
               >
                 <div
-                  className="h-full rounded-full bg-slate-500 dark:bg-slate-400"
+                  className="h-full rounded-full bg-chart-6"
                   style={{ width: `${((run.seconds ?? 0) / maximum) * 100}%` }}
                 />
               </div>

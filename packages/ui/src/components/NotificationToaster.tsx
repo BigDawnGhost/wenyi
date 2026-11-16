@@ -12,7 +12,7 @@ export function NotificationToaster() {
       offset={24}
       duration={5000}
       className="pointer-events-auto z-[200]"
-      icons={{ close: <X className="h-[18px] w-[18px]" aria-hidden="true" /> }}
+      icons={{ close: <X className="h-4.5 w-4.5" aria-hidden="true" /> }}
       toastOptions={{
         classNames: {
           toast: "min-h-16 items-start gap-3 rounded-xl py-5 pl-4 pr-16 text-sm "

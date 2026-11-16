@@ -1,6 +1,7 @@
 import { useI18n, type MessageKey } from "../../i18n";
 import { statusLabel } from "../../i18n/status";
 import { errorMessage } from "../../lib/error-codes";
+import { cn } from "../../lib/utils";
 import { Lock } from "lucide-react";
 export function ErrorNotice({ error }: { error?: unknown }) {
   // The hook runs before the early return so the call order stays stable.
@@ -29,7 +30,7 @@ export function ReadOnlyNotice({
   return (
     <p
       role="status"
-      className={`flex items-center gap-2 text-sm text-muted-foreground ${className ?? ""}`}
+      className={cn("flex items-center gap-2 text-sm text-muted-foreground", className)}
     >
       <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       {t(reason === "source" ? "common.readOnlyUntilPrepared" : "common.readOnlyWhileRunning")}

@@ -152,7 +152,7 @@ export default function StylePage() {
                 <Textarea
                   aria-label={tr("style.styleGuide")}
                   disabled={readOnly}
-                  className="min-h-[160px]"
+                  className="min-h-40"
                   value={valueFor("style_guide")}
                   onChange={(e) => editField("style_guide", e.target.value)}
                 />
@@ -183,7 +183,7 @@ export default function StylePage() {
                 <Textarea
                   aria-label={tr("style.wholeBookSynopsis")}
                   disabled={readOnly}
-                  className="min-h-[220px]"
+                  className="min-h-synopsis"
                   value={valueFor("book_synopsis")}
                   onChange={(e) => editField("book_synopsis", e.target.value)}
                 />

@@ -74,7 +74,7 @@ export function TermTable({
   return (
     <Card>
       <CardContent className="overflow-x-auto p-0">
-        <table className="w-full min-w-[640px] table-fixed text-sm">
+        <table className="w-full min-w-160 table-fixed text-sm">
           <colgroup>
             <col className="w-10" />
             <col />

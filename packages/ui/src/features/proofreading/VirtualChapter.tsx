@@ -3,6 +3,7 @@ import { defaultRangeExtractor, useVirtualizer } from "@tanstack/react-virtual";
 import { useSearchParams } from "react-router-dom";
 import type { ChapterWindow, ReaderSegment } from "../../api/types";
 import { useI18n } from "../../i18n";
+import { cn } from "../../lib/utils";
 import { ErrorNotice } from "../../components/ui/data";
 import { ParagraphActions } from "./ParagraphActions";
 import { ParagraphMenu, type ParagraphMenuAnchor } from "./ParagraphMenu";
@@ -22,7 +23,7 @@ const ParagraphRow = memo(function ParagraphRow({
     <div
       id={`paragraph-${segment.index}`}
       tabIndex={-1}
-      className={`grid ${sourceOnly ? "" : "grid-cols-2"} border-b border-black/[0.05] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30 dark:border-white/[0.07]`}
+      className={cn("grid", sourceOnly ? "" : "grid-cols-2", "border-b border-black/[0.05] focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30 dark:border-white/[0.07]")}
     >
       <div className="min-w-0 border-r border-black/[0.05] p-4 text-sm dark:border-white/[0.07]">
         <p data-reader-text="source" className="whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">
@@ -123,7 +124,7 @@ export function VirtualChapter({
                 <ParagraphRow segment={segment} sourceOnly={sourceOnly}
                   expanded={menu?.index === segment.index} onMenu={setMenu} />
               ) : (
-                <div aria-busy="true" className="border-b border-black/[0.05] p-4 text-sm text-muted-foreground dark:border-white/[0.07]" style={{ height: 160 }}>
+                <div aria-busy="true" className="border-b border-black/[0.05] h-40 p-4 text-sm text-muted-foreground dark:border-white/[0.07]">
                   {t("progress.loading")}
                 </div>
               )}

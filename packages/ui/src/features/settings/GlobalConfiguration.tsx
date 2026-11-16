@@ -242,7 +242,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
               <Textarea
                 aria-label={t("settings.advancedYamlConfiguration")}
                 spellCheck={false}
-                className="min-h-[420px] font-mono text-xs"
+                className="min-h-editor font-mono text-xs"
                 value={draft?.yaml || ""}
                 disabled={!draft || pending}
                 onChange={(event) => {
@@ -275,12 +275,12 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
         notices={
           <>
             {yamlDirty && (
-              <Link to="/settings/advanced" state={location.state} className="block text-amber-700 underline underline-offset-4 dark:text-amber-300">
+              <Link to="/settings/advanced" state={location.state} className="block text-warning-text underline underline-offset-4">
                 {t("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
               </Link>
             )}
             {editingIds && (
-              <Link to="/settings/providers" state={location.state} className="block text-amber-700 underline underline-offset-4 dark:text-amber-300">
+              <Link to="/settings/providers" state={location.state} className="block text-warning-text underline underline-offset-4">
                 {t("registry.finishRenaming")}
               </Link>
             )}

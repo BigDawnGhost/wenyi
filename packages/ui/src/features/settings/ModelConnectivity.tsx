@@ -98,7 +98,7 @@ export function ModelConnectivity({
         )}
         {results && results.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[560px] text-sm">
+            <table className="w-full min-w-connectivity text-sm">
               <thead className="text-left text-xs text-muted-foreground">
                 <tr>
                   <th scope="col" className="py-1 pr-3 font-medium">{t("connectivity.model")}</th>

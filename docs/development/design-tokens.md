@@ -18,9 +18,9 @@ informational and failure states.
 
 | CSS variable | Tailwind | Light | Dark |
 | --- | --- | --- | --- |
-| `--background` | `background` | `hsl(0 0% 100%)` | `hsl(240 10% 3.9%)` |
+| `--background` | `background` | `hsl(240 20% 97%)` | `hsl(240 10% 3.9%)` |
 | `--foreground` | `foreground` | `hsl(240 10% 3.9%)` | `hsl(0 0% 98%)` |
-| `--card` | `card` | `hsl(0 0% 100%)` | `hsl(240 10% 3.9%)` |
+| `--card` | `card` | `hsl(0 0% 100%)` | `hsl(240 8% 9%)` |
 | `--card-foreground` | `card-foreground` | `hsl(240 10% 3.9%)` | `hsl(0 0% 98%)` |
 | `--primary` | `primary` | `hsl(240 5.9% 10%)` | `hsl(0 0% 98%)` |
 | `--primary-foreground` | `primary-foreground` | `hsl(0 0% 98%)` | `hsl(240 5.9% 10%)` |
@@ -41,6 +41,17 @@ informational and failure states.
 | `--border` | `border` | `hsl(240 5.9% 90%)` | `hsl(240 3.7% 15.9%)` |
 | `--input` | `input` | `hsl(240 5.9% 90%)` | `hsl(240 3.7% 15.9%)` |
 | `--ring` | `ring` | `hsl(240 5.9% 10%)` | `hsl(240 4.9% 83.9%)` |
+| `--warning-text` | `warning-text` | `hsl(26 90% 37%)` | `hsl(45.9 96.7% 64.5%)` |
+| `--chart-1` | `chart-1` | `hsl(199.4 95.5% 73.9%)` | `hsl(199.4 95.5% 73.9%)` |
+| `--chart-2` | `chart-2` | `hsl(37.7 92.1% 50.2%)` | `hsl(37.7 92.1% 50.2%)` |
+| `--chart-3` | `chart-3` | `hsl(200.4 98% 39.4%)` | `hsl(198.4 93.2% 59.6%)` |
+| `--chart-4` | `chart-4` | `hsl(212.7 26.8% 83.9%)` | `hsl(212.7 26.8% 83.9%)` |
+| `--chart-5` | `chart-5` | `hsl(173.4 80.4% 40%)` | `hsl(172.5 66% 50.4%)` |
+| `--chart-6` | `chart-6` | `hsl(215.4 16.3% 46.9%)` | `hsl(215 20.2% 65.1%)` |
+| `--diff-removed-bg` | `diff-removed` | `hsl(0 93.3% 94.1%)` | `hsl(0 74.7% 15.5%)` |
+| `--diff-removed-foreground` | `diff-removed-foreground` | `hsl(0 62.8% 30.6%)` | `hsl(0 96.3% 89.4%)` |
+| `--diff-added-bg` | `diff-added` | `hsl(140.6 84.2% 92.5%)` | `hsl(144.9 80.4% 10%)` |
+| `--diff-added-foreground` | `diff-added-foreground` | `hsl(143.8 61.2% 20.2%)` | `hsl(141 78.9% 85.1%)` |
 
 ## Spacing
 
@@ -58,7 +69,9 @@ One 4px scale covers spacing, sizing and translation; components pick keys from 
 | `2.5` | `10px` |
 | `3` | `12px` |
 | `3.5` | `14px` |
+| `3.75` | `15px` |
 | `4` | `16px` |
+| `4.5` | `18px` |
 | `5` | `20px` |
 | `6` | `24px` |
 | `7` | `28px` |
@@ -125,7 +138,7 @@ list that flips with the theme.
 | `shadow-e2` | `inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 1px 3px rgba(24, 26, 32, 0.06), 0 0 0 1px rgba(24, 26, 32, 0.07)` | `inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08)` | Interactive controls at rest |
 | `shadow-e3` | `inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 8px -2px rgba(24, 26, 32, 0.08), 0 12px 28px -12px rgba(24, 26, 32, 0.14), 0 0 0 1px rgba(24, 26, 32, 0.06)` | `inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.09)` | Hover lift state |
 | `shadow-e4` | `0 8px 16px -4px rgba(24, 26, 32, 0.08), 0 28px 56px -20px rgba(24, 26, 32, 0.22), 0 0 0 1px rgba(24, 26, 32, 0.06)` | `0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.09)` | Floating layers: dialogs, popovers, toasts |
-| `shadow-focus-ring` | `0 0 0 3px hsl(var(--ring) / 0.18)` | `0 0 0 3px hsl(var(--ring) / 0.35)` | Keyboard focus halo, composed with an elevation |
+| `shadow-focus-ring` | `0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring))` | `0 0 0 2px hsl(var(--background)), 0 0 0 4px hsl(var(--ring))` | Keyboard focus halo, composed with an elevation |
 | `shadow-sidebar` | `0 0 0 1px rgba(24, 26, 32, 0.05), 12px 0 32px -20px rgba(24, 26, 32, 0.18)` | `0 0 0 1px rgba(255, 255, 255, 0.06), 12px 0 32px -20px rgba(0, 0, 0, 0.5)` | Sidebar right edge: hairline plus soft shadow |
 
 ## Motion

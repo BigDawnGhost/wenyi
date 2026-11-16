@@ -125,7 +125,7 @@ export default function SettingsPage() {
             <Textarea
               aria-label={tr("settings.advancedYamlConfiguration")}
               spellCheck={false}
-              className="min-h-[420px] font-mono text-xs"
+              className="min-h-editor font-mono text-xs"
               value={draft}
               disabled={disabled}
               onChange={(e) => {
@@ -140,7 +140,7 @@ export default function SettingsPage() {
             yamlDirty && (
               <a
                 href="#advanced-yaml"
-                className="block text-amber-700 underline underline-offset-4 dark:text-amber-300"
+                className="block text-warning-text underline underline-offset-4"
               >
                 {tr("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
               </a>

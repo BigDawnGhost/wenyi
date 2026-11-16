@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { toast } from "../../lib/toast";
+import { cn } from "../../lib/utils";
 import { useI18n } from "../../i18n";
 import { api } from "../../api/client";
 import type { ChapterSegments } from "../../api/types";
@@ -131,7 +132,7 @@ export function ParagraphEditor({
     <dialog
       ref={dialog}
       aria-labelledby="paragraph-editor-title"
-      className="pop-content fixed inset-0 m-auto w-[calc(100%-32px)] max-w-6xl max-h-[90dvh] overflow-hidden rounded-2xl bg-card p-0 text-foreground shadow-e4 backdrop:bg-black/30 backdrop:backdrop-blur-[2px] open:flex open:flex-col"
+      className="pop-content fixed inset-0 m-auto w-dialog max-w-6xl max-h-dialog overflow-hidden rounded-2xl bg-card p-0 text-foreground shadow-e4 backdrop:bg-black/30 backdrop:backdrop-blur-xs open:flex open:flex-col"
       onCancel={(event) => {
         event.preventDefault();
         close();
@@ -181,7 +182,7 @@ export function ParagraphEditor({
             aria-controls="paragraph-panel"
             aria-selected={view === tab}
             tabIndex={view === tab ? 0 : -1}
-            className={`border-b-2 py-3 text-sm ${view === tab ? "border-foreground font-medium" : "border-transparent text-muted-foreground"}`}
+            className={cn("border-b-2 py-3 text-sm", view === tab ? "border-foreground font-medium" : "border-transparent text-muted-foreground")}
             onClick={() => setView(tab)}
             onKeyDown={(event) => {
               if (
@@ -243,7 +244,7 @@ export function ParagraphEditor({
           </div>
         )}
         <div
-          className={`grid gap-6 ${view !== "precision" ? "grid-cols-[minmax(0,2fr)_minmax(0,3fr)]" : ""}`}
+          className={cn("grid gap-6", view !== "precision" && "grid-cols-[minmax(0,2fr)_minmax(0,3fr)]")}
         >
           <section className="min-w-0 space-y-3">
             <h3 className="text-sm font-medium">{t("common.source")}</h3>

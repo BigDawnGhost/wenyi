@@ -192,7 +192,7 @@ function ChapterTable({
     <Card>
       <CardContent className="p-0 overflow-x-auto">
         <ErrorNotice error={translate.error} />
-        <table className="w-full min-w-[704px] text-sm">
+        <table className="w-full min-w-176 text-sm">
           <thead className="border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
             <tr>
               {[

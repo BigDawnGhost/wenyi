@@ -38,7 +38,7 @@ export function Dialog({
       }}
     >
       <Primitive.Portal>
-        <Primitive.Overlay className="dialog-overlay fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px]" />
+        <Primitive.Overlay className="dialog-overlay fixed inset-0 z-50 bg-black/50 backdrop-blur-xs" />
         <Primitive.Content
           {...(!description ? { "aria-describedby": undefined } : {})}
           className={cn(
