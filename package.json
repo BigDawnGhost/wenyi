@@ -25,5 +25,11 @@
     "github-slugger": "^2.0.0",
     "openapi-typescript": "^7.4.4",
     "vitepress": "^1.6.4"
-  }
+  },
+  "browserslist": [
+    "safari >= 15.4",
+    "chrome >= 106",
+    "firefox >= 104",
+    "not dead"
+  ]
 }

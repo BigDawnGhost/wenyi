@@ -61,6 +61,8 @@ export default defineConfig({
     },
   },
   build: {
+    // Explicit floor for the Tauri WebView baseline (Safari 15.4 / WebKitGTK 2.36).
+    target: "safari15",
     rollupOptions: {
       output: { manualChunks: frontendManualChunks },
     },
