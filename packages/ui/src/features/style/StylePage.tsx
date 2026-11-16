@@ -261,46 +261,50 @@ function DigestEditor({
       toast.success(tr("style.chapterSummarySaved"));
     },
   });
-  if (!editing)
-    return (
-      <button
-        disabled={disabled}
-        className="w-full text-left whitespace-pre-wrap [overflow-wrap:anywhere] hover:text-foreground"
-        onClick={() => {
-          setDraft(value);
-          setEditing(true);
-        }}
-      >
-        {value || tr("style.clickToAddASummary")}
-      </button>
-    );
+  // Both states share a container that reserves the editor's height, so
+  // switching to the inline editor never shifts the rows below.
   return (
-    <div className="space-y-2">
-      <ErrorNotice error={save.error} />
-      <Textarea
-        aria-label={tr("style.chapterSummary", { chapter: index + 1 })}
-        className="min-h-32"
-        disabled={disabled || save.isPending}
-        value={draft}
-        onChange={(e) => setDraft(e.target.value)}
-      />
-      <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          disabled={disabled || save.isPending}
-          onClick={() => save.mutate()}
+    <div className="min-h-44">
+      {editing ? (
+        <div className="space-y-2">
+          <ErrorNotice error={save.error} />
+          <Textarea
+            aria-label={tr("style.chapterSummary", { chapter: index + 1 })}
+            className="min-h-32"
+            disabled={disabled || save.isPending}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <div className="flex flex-wrap gap-2">
+            <Button
+              size="sm"
+              disabled={disabled || save.isPending}
+              onClick={() => save.mutate()}
+            >
+              {tr("style.saveSummary")}
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={save.isPending}
+              onClick={() => setEditing(false)}
+            >
+              {tr("common.cancel")}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <button
+          disabled={disabled}
+          className="w-full text-left whitespace-pre-wrap [overflow-wrap:anywhere] hover:text-foreground"
+          onClick={() => {
+            setDraft(value);
+            setEditing(true);
+          }}
         >
-          {tr("style.saveSummary")}
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={save.isPending}
-          onClick={() => setEditing(false)}
-        >
-          {tr("common.cancel")}
-        </Button>
-      </div>
+          {value || tr("style.clickToAddASummary")}
+        </button>
+      )}
     </div>
   );
 }

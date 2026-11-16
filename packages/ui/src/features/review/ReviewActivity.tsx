@@ -59,12 +59,16 @@ export function ReviewActivity({
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
-          {running && (
-            <Loader2
-              aria-hidden
-              className="h-4 w-4 shrink-0 animate-spin text-muted-foreground"
-            />
-          )}
+          {/* The spinner keeps a fixed 16px slot so the heading does not shift
+              horizontally when a run starts or ends. */}
+          <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+            {running && (
+              <Loader2
+                aria-hidden
+                className="h-4 w-4 animate-spin text-muted-foreground"
+              />
+            )}
+          </span>
           <h2 className="font-medium">
             {phase
               ? t(phase.key, { round: phase.round })

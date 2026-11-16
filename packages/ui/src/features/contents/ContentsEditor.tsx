@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useI18n } from "../../i18n";
 import { Button } from "../../components/ui/button";
 import { Label, Textarea } from "../../components/ui/form";
 import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
+import { Dialog } from "../../components/ui/misc";
 
 export function ContentsEditor({
   source,
@@ -20,7 +20,7 @@ export function ContentsEditor({
   onClose: () => void;
 }) {
   const { t } = useI18n();
-  const dialog = useRef<HTMLDialogElement>(null);
+  const draftField = useRef<HTMLTextAreaElement>(null);
   const [baseline, setBaseline] = useState(target);
   const [draft, setDraft] = useState(target ?? "");
   const save = useMutation({
@@ -28,25 +28,14 @@ export function ContentsEditor({
     onSuccess: onClose,
   });
   const stale = target !== baseline;
-  useEffect(() => {
-    const element = dialog.current!;
-    const previous = document.activeElement;
-    element.showModal();
-    return () => {
-      element.close();
-      if (previous instanceof HTMLElement && previous.isConnected)
-        previous.focus({ preventScroll: true });
-    };
-  }, []);
-  return createPortal(
-    <dialog
-      ref={dialog}
-      aria-labelledby="contents-editor-title"
-      className="fixed inset-0 m-auto max-h-[90dvh] w-[calc(100%-32px)] max-w-2xl overflow-y-auto rounded-xl border bg-background p-5 text-foreground shadow-xl backdrop:bg-black/30 backdrop:backdrop-blur-[2px]"
-      onCancel={(event) => {
-        event.preventDefault();
-        if (!save.isPending) onClose();
-      }}
+  return (
+    <Dialog
+      open
+      onClose={onClose}
+      title={t("contents.editTitle")}
+      closeDisabled={save.isPending}
+      initialFocus={draftField}
+      className="max-w-2xl"
     >
       <form
         className="space-y-5"
@@ -56,9 +45,6 @@ export function ContentsEditor({
             save.mutate();
         }}
       >
-        <h2 id="contents-editor-title" className="text-lg font-medium">
-          {t("contents.editTitle")}
-        </h2>
         <ErrorNotice error={save.error} />
         {readOnly && <ReadOnlyNotice />}
         {stale && (
@@ -94,7 +80,7 @@ export function ContentsEditor({
           </Label>
           <Textarea
             id="contents-title-draft"
-            autoFocus
+            ref={draftField}
             required
             rows={3}
             value={draft}
@@ -125,7 +111,6 @@ export function ContentsEditor({
           </Button>
         </div>
       </form>
-    </dialog>,
-    document.body,
+    </Dialog>
   );
 }
