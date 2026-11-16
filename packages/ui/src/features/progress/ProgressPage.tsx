@@ -145,20 +145,20 @@ export default function ProgressPage() {
           connected={connected}
           busy={busy}
         />
-        <p className="text-xs text-muted-foreground">
-          {tr("progress.progressConnection")}:{" "}
-          {connected ? tr("progress.live") : tr("progress.polling")}
-        </p>
-        {chapters.length > 0 && (
-          <div className="space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+          <p>
+            {tr("progress.progressConnection")}:{" "}
+            {connected ? tr("progress.live") : tr("progress.polling")}
+          </p>
+          {chapters.length > 0 && (
             <Link
-              className="text-sm text-primary underline"
+              className="text-xs text-primary underline underline-offset-4"
               to={`/projects/${pid}/contents`}
             >
               {tr("contents.readContentsSource")}
             </Link>
-          </div>
-        )}
+          )}
+        </div>
         <ChapterTable
           pid={pid}
           chapters={chapters}

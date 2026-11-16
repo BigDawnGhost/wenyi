@@ -97,22 +97,22 @@
 /* Theme classes are runtime state, not Tailwind content to be purged. */
 .dark {
     color-scheme: dark;
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 8% 9%;
-    --card-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --ink: 255 255 255;
+    --background: 0 0% 8.6%;
+    --foreground: 0 0% 74.1%;
+    --card: 0 0% 11.8%;
+    --card-foreground: 0 0% 74.1%;
+    --primary: 0 0% 82%;
+    --primary-foreground: 0 0% 10%;
+    --secondary: 0 0% 15.7%;
+    --secondary-foreground: 0 0% 74.1%;
+    --muted: 0 0% 15.7%;
+    --muted-foreground: 0 0% 55%;
+    --ink: 0 0% 100%;
     --hover: var(--ink) / 0.08;
     --selected: var(--ink) / 0.12;
     --surface: var(--ink) / 0.03;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
+    --accent: 0 0% 15.7%;
+    --accent-foreground: 0 0% 74.1%;
     --text-placeholder: var(--ink) / 0.3;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
@@ -120,7 +120,7 @@
     --success-foreground: 0 0% 98%;
     --warning: 23 82% 31%;
     --warning-foreground: 0 0% 98%;
-    --warning-text: 45.9 96.7% 64.5%;
+    --warning-text: 38 85% 60%;
     --info: 201 90% 27%;
     --info-foreground: 0 0% 98%;
     --chart-1: 199.4 95.5% 73.9%;
@@ -133,10 +133,10 @@
     --diff-removed-foreground: 0 96.3% 89.4%;
     --diff-added-bg: 144.9 80.4% 10%;
     --diff-added-foreground: 141 78.9% 85.1%;
-    --border: 240 3.7% 15.9%;
+    --border: 0 0% 19.6%;
     --border-subtle: var(--ink) / 0.065;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
+    --input: 0 0% 17.6%;
+    --ring: 0 0% 60%;
     /* Dark elevations: weaker top highlight, deeper shadows, white hairline. */
     --shadow-e0: inset 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
     --shadow-e1: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(255, 255, 255, 0.07);
@@ -229,7 +229,7 @@ input[type="checkbox"]:checked {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8 3 3 6-6' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 .dark input[type="checkbox"]:checked {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8 3 3 6-6' fill='none' stroke='%2318181b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8 3 3 6-6' fill='none' stroke='%231a1a1a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 input[type="radio"]:checked {
   background-image: radial-gradient(circle, hsl(var(--background)) 0 3px, transparent 3.5px);

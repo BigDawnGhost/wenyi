@@ -18,18 +18,18 @@ informational and failure states.
 
 | CSS variable | Tailwind | Light | Dark |
 | --- | --- | --- | --- |
-| `--background` | `background` | `hsl(240 20% 97%)` | `hsl(240 10% 3.9%)` |
-| `--foreground` | `foreground` | `hsl(240 10% 3.9%)` | `hsl(0 0% 98%)` |
-| `--card` | `card` | `hsl(0 0% 100%)` | `hsl(240 8% 9%)` |
-| `--card-foreground` | `card-foreground` | `hsl(240 10% 3.9%)` | `hsl(0 0% 98%)` |
-| `--primary` | `primary` | `hsl(240 5.9% 10%)` | `hsl(0 0% 98%)` |
-| `--primary-foreground` | `primary-foreground` | `hsl(0 0% 98%)` | `hsl(240 5.9% 10%)` |
-| `--secondary` | `secondary` | `hsl(240 4.8% 95.9%)` | `hsl(240 3.7% 15.9%)` |
-| `--secondary-foreground` | `secondary-foreground` | `hsl(240 5.9% 10%)` | `hsl(0 0% 98%)` |
-| `--muted` | `muted` | `hsl(240 4.8% 95.9%)` | `hsl(240 3.7% 15.9%)` |
-| `--muted-foreground` | `muted-foreground` | `hsl(240 3.8% 46.1%)` | `hsl(240 5% 64.9%)` |
-| `--accent` | `accent` | `hsl(240 4.8% 95.9%)` | `hsl(240 3.7% 15.9%)` |
-| `--accent-foreground` | `accent-foreground` | `hsl(240 5.9% 10%)` | `hsl(0 0% 98%)` |
+| `--background` | `background` | `hsl(0 0% 97.3%)` | `hsl(0 0% 8.6%)` |
+| `--foreground` | `foreground` | `hsl(240 10% 3.9%)` | `hsl(0 0% 74.1%)` |
+| `--card` | `card` | `hsl(0 0% 100%)` | `hsl(0 0% 11.8%)` |
+| `--card-foreground` | `card-foreground` | `hsl(240 10% 3.9%)` | `hsl(0 0% 74.1%)` |
+| `--primary` | `primary` | `hsl(240 5.9% 10%)` | `hsl(0 0% 82%)` |
+| `--primary-foreground` | `primary-foreground` | `hsl(0 0% 98%)` | `hsl(0 0% 10%)` |
+| `--secondary` | `secondary` | `hsl(240 4.8% 95.9%)` | `hsl(0 0% 15.7%)` |
+| `--secondary-foreground` | `secondary-foreground` | `hsl(240 5.9% 10%)` | `hsl(0 0% 74.1%)` |
+| `--muted` | `muted` | `hsl(240 4.8% 95.9%)` | `hsl(0 0% 15.7%)` |
+| `--muted-foreground` | `muted-foreground` | `hsl(240 3.8% 46.1%)` | `hsl(0 0% 55%)` |
+| `--accent` | `accent` | `hsl(240 4.8% 95.9%)` | `hsl(0 0% 15.7%)` |
+| `--accent-foreground` | `accent-foreground` | `hsl(240 5.9% 10%)` | `hsl(0 0% 74.1%)` |
 | `--destructive` | `destructive` | `hsl(0 84.2% 60.2%)` | `hsl(0 62.8% 30.6%)` |
 | `--destructive-foreground` | `destructive-foreground` | `hsl(0 0% 98%)` | `hsl(0 0% 98%)` |
 | `--success` | `success` | `hsl(161 94% 30%)` | `hsl(163 88% 20%)` |
@@ -38,15 +38,15 @@ informational and failure states.
 | `--warning-foreground` | `warning-foreground` | `hsl(0 0% 98%)` | `hsl(0 0% 98%)` |
 | `--info` | `info` | `hsl(200 96% 32%)` | `hsl(201 90% 27%)` |
 | `--info-foreground` | `info-foreground` | `hsl(0 0% 98%)` | `hsl(0 0% 98%)` |
-| `--border` | `border` | `hsl(240 5.9% 90%)` | `hsl(240 3.7% 15.9%)` |
-| `--input` | `input` | `hsl(240 5.9% 90%)` | `hsl(240 3.7% 15.9%)` |
-| `--ring` | `ring` | `hsl(240 5.9% 10%)` | `hsl(240 4.9% 83.9%)` |
-| `--ink` | - | `hsl(13 13 13)` | `hsl(255 255 255)` |
+| `--border` | `border` | `hsl(240 5.9% 90%)` | `hsl(0 0% 19.6%)` |
+| `--input` | `input` | `hsl(240 5.9% 90%)` | `hsl(0 0% 17.6%)` |
+| `--ring` | `ring` | `hsl(240 5.9% 10%)` | `hsl(0 0% 60%)` |
+| `--ink` | - | `hsl(13 13 13)` | `hsl(0 0% 100%)` |
 | `--hover` | `hover` | `hsl(var(--ink) / 0.05)` | `hsl(var(--ink) / 0.08)` |
 | `--selected` | `selected` | `hsl(var(--ink) / 0.08)` | `hsl(var(--ink) / 0.12)` |
 | `--surface` | `surface` | `hsl(var(--ink) / 0.03)` | `hsl(var(--ink) / 0.03)` |
 | `--text-placeholder` | `placeholder` | `hsl(var(--ink) / 0.35)` | `hsl(var(--ink) / 0.3)` |
-| `--warning-text` | `warning-text` | `hsl(26 90% 37%)` | `hsl(45.9 96.7% 64.5%)` |
+| `--warning-text` | `warning-text` | `hsl(26 90% 37%)` | `hsl(38 85% 60%)` |
 | `--chart-1` | `chart-1` | `hsl(199.4 95.5% 73.9%)` | `hsl(199.4 95.5% 73.9%)` |
 | `--chart-2` | `chart-2` | `hsl(37.7 92.1% 50.2%)` | `hsl(37.7 92.1% 50.2%)` |
 | `--chart-3` | `chart-3` | `hsl(200.4 98% 39.4%)` | `hsl(198.4 93.2% 59.6%)` |
