@@ -64,7 +64,7 @@ export function WorkflowSettings({
           </p>
         </div>
       )}
-      <div className="overflow-hidden rounded-xl border border-border">
+      <div className="overflow-hidden rounded-xl bg-surface border border-subtle">
         {PIPELINE.map(([key, label]) => (
           <SettingsRow
             key={key}

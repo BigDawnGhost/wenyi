@@ -33,7 +33,7 @@ export function ModelSelection({
   ];
   return (
     <fieldset disabled={disabled} className="min-w-0 disabled:opacity-60">
-      <div className="overflow-hidden rounded-xl border border-border">
+      <div className="overflow-hidden rounded-xl bg-surface border border-subtle">
         {tierNames.map(([id, label]) => (
           <SettingsRow
             key={id}
