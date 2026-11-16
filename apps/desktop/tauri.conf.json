@@ -27,6 +27,9 @@
   },
   "bundle": {
     "active": false,
+    "macOS": {
+      "minimumSystemVersion": "10.14"
+    },
     "icon": [
       "../../packages/ui/src/assets/wenyi-emblem.png",
       "icons/icon.ico",

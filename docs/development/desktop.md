@@ -234,6 +234,42 @@ Hiding/minimizing the window is not shutdown. Background activity suppresses per
 UI work while leaving the engine and progress subscription alive. Restoring reconciles
 saved state without discarding editor drafts; ordinary loss of focus is not minimization.
 
+## Native notification contracts
+
+The notification center owns validation, localization, run deduplication, rate limits,
+and startup/shutdown suppression. The platform factory is the sole support decision:
+it returns an optional `Sink`; no adapter means no dispatcher or native effects.
+Adapters do not import task execution or inspect frontend routes. Windows uses WinRT,
+Linux uses freedesktop notifications over the session bus, and macOS uses UserNotifications
+with the installed bundle identity. There are no shell commands or click/deep-link handlers.
+The native host's macOS minimum is explicitly 10.14 in the base Tauri bundle configuration;
+do not advertise 10.13 while linking UserNotifications. Linux desktop-entry and icon hints
+follow Tauri's product-name and main-binary naming, not the macOS/Windows application ID.
+
+All `Sink` methods, including cleanup, run serially on one dedicated dispatcher.
+Availability and delivery never request permission. D-Bus method calls have a one-second
+deadline; macOS settings/delivery callbacks have two-second deadlines. A successful
+`show` means **the OS accepted the request**, not that a user saw it. Do not compensate
+for focus-mode suppression with another alert. Native failures become typed `Failure`
+values; diagnostics retain only their fixed reason codes, never framework error text.
+Failure fallback requests attention without showing/focusing the window; Linux/macOS
+UI work is queued onto the main thread without waiting for it. Every delivery attempt,
+including an unavailable service or permission fallback, consumes the shared rate budget.
+
+The frontend queries permission only after the engine is ready. On macOS, only the
+explicit **Allow notifications** button requests authorization. That IPC uses a separate
+blocking worker with a 90-second callback deadline, leaving both the main thread and
+notification dispatcher free. Dismissal is not persisted as permission; denial is managed
+in system settings. An unbundled macOS development binary reports unavailable instead
+of calling UserNotifications with an invalid bundle identity.
+
+Use an isolated bus for the Linux transport test; it must not deliver to the developer's
+desktop notification service:
+
+```bash
+dbus-run-session -- env WENYI_PRIVATE_NOTIFICATION_BUS=1 cargo test --locked --manifest-path apps/desktop/Cargo.toml private_bus_delivery -- --ignored
+```
+
 ## Diagnostic contracts
 
 Diagnostics are Desktop-owned, best-effort observations, **not project history, a

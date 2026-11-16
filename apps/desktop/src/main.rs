@@ -371,6 +371,7 @@ fn main() {
             diagnostics_ui::desktop_diagnostics_clear,
             diagnostics_ui::desktop_diagnostics_open,
             notifications::desktop_notifications_set_locale,
+            notifications::desktop_notifications_permission,
         ])
         .on_window_event(|window, event| {
             // A WebviewWindow's native drops are emitted as window events.
@@ -440,8 +441,9 @@ fn main() {
                 let mut health_ticks = 0;
                 while !monitor_engine.closed.load(Ordering::SeqCst) {
                     // Updates temporarily own closing and can restore this same engine.
+                    // Their owner manages notification admission synchronously;
+                    // this poll must not disarm an engine that just recovered.
                     if monitor_engine.closing.load(Ordering::SeqCst) {
-                        monitor_handle.state::<notifications::Center>().disarm();
                         reported_exit = false;
                         std::thread::sleep(std::time::Duration::from_millis(250));
                         continue;

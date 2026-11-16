@@ -1,6 +1,13 @@
 import { useI18n } from "@wenyi/ui/i18n";
 
 const en = {
+  "notifications.title": "Desktop status notifications",
+  "notifications.privacy": "Receive task results and local service failure alerts. Notifications may include project names, but never book text or credentials. macOS asks for permission only when you choose Allow notifications.",
+  "notifications.allow": "Allow notifications",
+  "notifications.later": "Not now",
+  "notifications.close": "Close",
+  "notifications.denied": "Notifications are disabled. You can enable Wenyi Desktop in System Settings > Notifications.",
+  "notifications.failed": "Could not request notification permission. Retry or check System Settings > Notifications.",
   "diagnostics.title": "Diagnostics and feedback",
   "diagnostics.export": "Export diagnostic report",
   "diagnostics.privacy": "Logs exclude book text, prompts and credentials. Timing and platform metadata may still identify you. Nothing is uploaded automatically.",
@@ -124,6 +131,13 @@ const en = {
   "credentials.refresh": "Recheck",
 };
 const zhCN: Record<keyof typeof en, string> = {
+  "notifications.title": "桌面状态通知",
+  "notifications.privacy": "接收任务结果及本地服务异常提醒。通知可能包含项目名称，但不含书籍正文或凭据。只有点击“允许通知”后，macOS 才会申请系统权限。",
+  "notifications.allow": "允许通知",
+  "notifications.later": "暂不启用",
+  "notifications.close": "关闭",
+  "notifications.denied": "通知已被禁用。可以在“系统设置 > 通知”中允许 Wenyi Desktop 发送通知。",
+  "notifications.failed": "无法申请通知权限。请重试，或检查“系统设置 > 通知”。",
   "diagnostics.title": "诊断与反馈",
   "diagnostics.export": "导出诊断报告",
   "diagnostics.privacy": "日志不含书籍正文、提示词或凭据。时间和平台信息仍可能具有识别性；不会自动上传。",

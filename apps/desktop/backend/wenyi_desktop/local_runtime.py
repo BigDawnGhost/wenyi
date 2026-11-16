@@ -395,12 +395,20 @@ class LocalRuntime:
                     self.diagnostics, project_ref=values.get("project_id", ""), run_ref=run_id
                 ):
                     emit("task_timeout", kind=name.removeprefix("run_"), category="timeout")
+                job = await asyncio.to_thread(self._durable_job, run_id)
+                was_active = job is not None and job["status"] in {"queued", "running"}
                 self._cancel(task)
                 await asyncio.gather(task, return_exceptions=True)
-                changed = await asyncio.to_thread(
+                stopped = await asyncio.to_thread(
                     self._interrupt, run_id, "Desktop task timed out."
                 )
-                if changed:
+                if not stopped and was_active:
+                    # Cooperative cancellation persists "paused" before the
+                    # interrupt fallback runs. It is still this timeout's stop,
+                    # not a user pause or a task that had already finished.
+                    job = await asyncio.to_thread(self._durable_job, run_id)
+                    stopped = job is not None and job["status"] in {"paused", "interrupted"}
+                if stopped:
                     await self._task_notice("task_timeout", name, values, run_id, "timeout")
             except asyncio.CancelledError:
                 self._cancel(task)

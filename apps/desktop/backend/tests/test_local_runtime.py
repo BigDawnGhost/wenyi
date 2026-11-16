@@ -279,7 +279,20 @@ def test_completion_notice_requires_the_persisted_terminal_status(
     assert notices[0]["project_name"] == "Runtime"
 
 
-def test_timeout_notice_is_sent_only_when_the_interrupt_changed_the_job(catalog, monkeypatch):
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("queued", True),
+        ("running", True),
+        ("done", False),
+        ("error", False),
+        ("paused", False),
+        ("interrupted", False),
+    ],
+)
+def test_timeout_notice_requires_an_active_job_and_a_durable_stop(
+    catalog, monkeypatch, status, expected
+):
     import io
 
     from wenyi_backend.workers import tasks
@@ -290,34 +303,110 @@ def test_timeout_notice_is_sent_only_when_the_interrupt_changed_the_job(catalog,
 
     monkeypatch.setattr(tasks, "run_translation", never_finishes)
 
-    async def run(statuses):
-        stream = io.StringIO()
-        reporter = Reporter(stream)
-        try:
-            runtime = LocalRuntime(catalog, current_context(), diagnostics=reporter)
-            runtime.accepting = True
-            pid = project()
-            assert catalog.create_job(pid, "translation", statuses["run"], run_id=statuses["run"])
-            if statuses["expected"] is None:
-                # A job that already reached a terminal state cannot be interrupted.
-                job = catalog.get_job_by_arq_id(statuses["run"])
-                catalog.set_job_status(job["id"], "done")
-            await runtime._run_job(
-                "run_translation",
-                {"project_id": pid, "run_id": statuses["run"]},
-                statuses["run"],
-                0.01,
-            )
-        finally:
-            reporter.close()
-        return notice_payloads(stream)
+    stream = io.StringIO()
+    reporter = Reporter(stream)
 
-    changed = asyncio.run(run({"run": "timed-out", "expected": "task_timeout"}))
-    assert len(changed) == 1
-    assert changed[0]["kind"] == "task_timeout"
-    assert changed[0]["reason"] == "timeout"
-    unchanged = asyncio.run(run({"run": "already-done", "expected": None}))
-    assert unchanged == []
+    async def run():
+        runtime = LocalRuntime(catalog, current_context(), diagnostics=reporter)
+        runtime.accepting = True
+        pid = project()
+        job = catalog.create_job(pid, "translation", "timed-out", run_id="timed-out")
+        assert job
+        catalog.set_job_status(job, status)
+        await runtime._run_job(
+            "run_translation",
+            {"project_id": pid, "run_id": "timed-out"},
+            "timed-out",
+            0.01,
+        )
+
+    try:
+        asyncio.run(run())
+    finally:
+        reporter.close()
+    payloads = notice_payloads(stream)
+    if expected:
+        assert len(payloads) == 1
+        assert payloads[0]["kind"] == "task_timeout"
+        assert payloads[0]["reason"] == "timeout"
+    else:
+        assert payloads == []
+
+
+@pytest.mark.parametrize("stop", ["timeout", "cancel", "pause"])
+def test_real_workflow_status_notices_follow_the_stop_cause(catalog, monkeypatch, stop):
+    import io
+    import time
+
+    from wenyi_backend.execution import bindings
+    from wenyi_desktop.diagnostics import Reporter
+
+    stream = io.StringIO()
+    reporter = Reporter(stream)
+
+    async def run():
+        context = current_context()
+        runtime = LocalRuntime(catalog, context, diagnostics=reporter)
+        context.telemetry.runtime = runtime
+        started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def operation(request, storage, progress, bind_client, **kwargs):
+            loop.call_soon_threadsafe(started.set)
+            # Keep the real adapter and runner: progress observes their cooperative
+            # stop signal and the runner persists "paused" before returning.
+            for index in range(1000):
+                time.sleep(0.01)
+                progress(index, 1000, "Offline workflow")
+            raise AssertionError("The workflow did not receive its stop signal")
+
+        monkeypatch.setattr(bindings, "run_operation", operation)
+        await runtime.start()
+        task = None
+        try:
+            pid, storage = initialize(catalog)
+            storage.close()
+            catalog.set_project_status(pid, "translating")
+            assert catalog.create_job(pid, "translation", "observed-stop", run_id="observed-stop")
+            task = asyncio.create_task(
+                runtime._run_job(
+                    "run_translation",
+                    {"project_id": pid, "run_id": "observed-stop"},
+                    "observed-stop",
+                    1 if stop == "timeout" else 10,
+                )
+            )
+            await asyncio.wait_for(started.wait(), 3)
+            if stop == "cancel":
+                task.cancel()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            else:
+                if stop == "pause":
+                    catalog.set_project_status(pid, "paused")
+                await asyncio.wait_for(asyncio.shield(task), 3)
+            assert catalog.get_job_by_arq_id("observed-stop")["status"] == "paused"
+            assert catalog.catalog_project(pid)["status"] == "paused"
+            assert runtime.idle
+        finally:
+            if task is not None and not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            await runtime.stop()
+            context.telemetry.runtime = None
+
+    try:
+        asyncio.run(run())
+    finally:
+        reporter.close()
+    payloads = notice_payloads(stream)
+    if stop == "timeout":
+        assert len(payloads) == 1
+        assert payloads[0]["kind"] == "task_timeout"
+        assert payloads[0]["reason"] == "timeout"
+        assert payloads[0]["run_id"] == "observed-stop"
+    else:
+        assert payloads == []
 
 
 @pytest.mark.parametrize("status", ["queued", "running"])

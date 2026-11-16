@@ -9,6 +9,15 @@ function native(): Native | undefined {
   return (window as unknown as { __TAURI_INTERNALS__?: Native }).__TAURI_INTERNALS__;
 }
 
+export type NotificationPermission =
+  | "not_required" | "not_determined" | "granted" | "denied" | "unavailable";
+
+export function notificationPermission(request = false): Promise<NotificationPermission> {
+  const internals = native();
+  if (!internals) return Promise.resolve("not_required");
+  return internals.invoke("desktop_notifications_permission", { request });
+}
+
 /**
  * Keep native notification text in the language the interface currently uses.
  *

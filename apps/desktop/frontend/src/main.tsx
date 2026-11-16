@@ -13,6 +13,7 @@ import { configureQueryActivity } from "./activity";
 import { installDiagnostics } from "./diagnostics";
 import { useNotificationLocale } from "./notifications";
 import { DiagnosticExportButton } from "./DesktopDiagnostics";
+import { NotificationPermissionPrompt } from "./DesktopNotifications";
 
 installDiagnostics();
 
@@ -67,7 +68,10 @@ function Bootstrap() {
       </main>
     );
   return (
-    <App />
+    <>
+      <NotificationPermissionPrompt />
+      <App />
+    </>
   );
 }
 

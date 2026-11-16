@@ -15,7 +15,7 @@ Download a `wenyi-desktop-<version>-<platform>-<arch>` package from [GitHub Rele
 | macOS Apple Silicon | `macos-arm64.dmg` |
 | macOS Intel | `macos-x64.dmg` |
 
-Packages are distributed directly, without an outer ZIP. Allow an AppImage to execute in its file permissions before opening it. Choose the macOS package for your processor; there is no universal package. Check the release notes for platform requirements and signing status.
+Packages are distributed directly, without an outer ZIP. Allow an AppImage to execute in its file permissions before opening it. Choose the macOS package for your processor; there is no universal package. The native macOS host requires 10.14 or later for UserNotifications (Apple Silicon requires macOS 11 or later). Check the release notes for any higher bundled-runtime requirements and signing status.
 
 Keep the program installation separate from your documents. The Windows installer defaults to `%LOCALAPPDATA%\Programs\Wenyi Desktop`; changing this location does not move your data. It refuses unsafe or unrelated occupied folders, including locations overlapping Wenyi's data directories. Choose a dedicated empty program folder or the existing Wenyi installation.
 
@@ -137,15 +137,16 @@ Both options apply only to `%LOCALAPPDATA%\Wenyi\Desktop`; custom data roots, ex
 
 If a previous instance is still closing, wait for it to finish rather than trying to bypass its lock.
 
-## Status notifications (Windows)
+## Status notifications
 
-Windows builds show a system notification when a task fails, times out, or the local engine stops unexpectedly. Translation preparation reaching `prepared` and a book reaching `done` also produce a completion notification. Notifications are enabled by default; this version has no notification settings section.
+Windows, Linux, and macOS builds can show a system notification when a task fails, times out, or the local engine stops unexpectedly. Translation preparation reaching `prepared` and a book reaching `done` also produce a completion notification. Notifications are enabled by default in Wenyi; this version has no notification settings section.
 
 - A notification shows the project's display name and a short, localized status such as "Translation failed" or "Export failed". It never contains the specific failure reason, error text, file paths, chapter text, or credentials. The project name can therefore appear in the system notification center and, if your system allows it, on the lock screen. The full error remains on the project page.
 - Notifications do not depend on whether the window is hidden or focused. Pausing, cancelling, quitting, updating, or a failed startup does not notify. Repeated terminal signals for one run do not stack.
-- Clicking a notification restores the existing window through the same single-instance path as reopening the application; it does not open a second window.
-- If notifications are disabled in Windows or cannot be shown, Wenyi flashes the taskbar button when the main window exists. Tasks are never delayed or changed, and tray state is not modified.
-- Linux and macOS builds do not show status notifications yet.
+- Notifications show status only, with no application-defined click action or project navigation. Do not rely on clicking one to restore the window; use **Show Wenyi**, the macOS Dock, or reopen the executable/shortcut.
+- Linux requires a session D-Bus notification service, such as the one provided by your desktop environment. macOS notifications require the installed `.app` bundle and system permission. After startup, **Allow notifications** opens the macOS permission request; **Not now** leaves permission unchanged and offers it again on the next launch or reload. Task completion never opens a permission prompt. If permission is denied, enable Wenyi Desktop in **System Settings → Notifications**.
+- When permission or the notification service is unavailable, Wenyi makes a best-effort attention request: taskbar flashing on Windows/Linux or a Dock bounce on macOS. It does not show or focus the window, change tray state, or alter task results.
+- OS acceptance does not guarantee a visible banner or sound. Focus modes, notification settings, and Linux compositor support still apply; silence after acceptance does not trigger a second alert.
 
 ## Diagnostics and feedback
 

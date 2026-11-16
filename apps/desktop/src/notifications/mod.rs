@@ -4,9 +4,13 @@
 //! but on a separate line type: a notice carries a project display name, which
 //! must not enter the diagnostic persistence boundary. This module validates the
 //! notice again, applies the policy, and hands one localized presentation to a
-//! platform sink. Windows owns the first sink; every other platform keeps the
-//! empty implementation and changes no existing behaviour.
+//! platform sink. Platform selection is the only source of support information;
+//! permission prompts and native event-loop requirements stay outside policy.
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "macos")]
+mod macos;
 #[cfg(windows)]
 mod windows;
 
@@ -20,22 +24,20 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
 use crate::diagnostics::{Diagnostics, Event, Source};
 
-/// Application identity shared by the process, its shortcuts and its toasts.
-pub const AUMID: &str = "org.wenyi.desktop";
+/// Stable application identity, independent of the platform's registration scheme.
+pub const APP_ID: &str = "org.wenyi.desktop";
 const QUEUE: usize = 32;
 const MAX_NOTICE: usize = 2048;
 const DEDUPE: Duration = Duration::from_secs(600);
 const DEDUPE_LIMIT: usize = 512;
 const RATE_WINDOW: Duration = Duration::from_secs(60);
 const RATE_LIMIT: usize = 5;
-/// Notifications are delivered only where a platform sink exists.
-const SUPPORTED: bool = cfg!(windows);
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -159,50 +161,129 @@ pub struct Presentation {
 }
 
 /// A bounded platform failure classification; never carries user text.
-#[derive(Debug, PartialEq, Eq)]
-pub struct Failure(pub &'static str);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Failure {
+    Unavailable,
+    PermissionRequired,
+    PermissionDenied,
+    OsDisabled,
+    DeliveryFailed,
+    TimedOut,
+}
 
-/// The only port a platform has to implement.
+impl Failure {
+    pub const ALL: [Self; 6] = [
+        Self::Unavailable,
+        Self::PermissionRequired,
+        Self::PermissionDenied,
+        Self::OsDisabled,
+        Self::DeliveryFailed,
+        Self::TimedOut,
+    ];
+
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::PermissionRequired => "permission_required",
+            Self::PermissionDenied => "permission_denied",
+            Self::OsDisabled => "os_disabled",
+            Self::DeliveryFailed => "delivery_failed",
+            Self::TimedOut => "delivery_timeout",
+        }
+    }
+
+    pub fn suppressed(self) -> bool {
+        matches!(
+            self,
+            Self::Unavailable
+                | Self::PermissionRequired
+                | Self::PermissionDenied
+                | Self::OsDisabled
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub enum Permission {
+    NotRequired,
+    NotDetermined,
+    Granted,
+    Denied,
+    Unavailable,
+}
+
+/// Platform port, owned and called serially by one dedicated dispatcher thread.
+///
+/// Neither availability checks nor delivery may prompt for permission. Native
+/// I/O and completion waits must have deadlines; permission requests have a
+/// separate, explicit user action. `show(Ok)` means the OS accepted the request,
+/// never that it displayed a banner (focus modes and user settings still apply).
+/// Adapters marshal UI work to the main thread without waiting for that thread.
+/// No callback may log payloads or alter task state.
 pub trait Sink: Send + 'static {
     /// Why this platform cannot show a notification right now, if it cannot.
     fn available(&mut self) -> Result<(), Failure>;
-    /// Show one already-localized notification.
+    /// Submit a localized notification and await bounded acknowledgement.
     fn show(&mut self, presentation: &Presentation) -> Result<(), Failure>;
-    /// Best-effort tray/taskbar fallback after a failed or unavailable toast.
+    /// Best-effort attention request, without showing/focusing the window.
     fn fallback(&mut self, presentation: &Presentation);
     /// Release platform resources on shutdown.
     fn shutdown(&mut self);
 }
 
-#[cfg(any(not(windows), test))]
+#[cfg(test)]
 struct NullSink;
 
-#[cfg(any(not(windows), test))]
+#[cfg(test)]
 impl Sink for NullSink {
     fn available(&mut self) -> Result<(), Failure> {
-        Err(Failure("unavailable"))
+        Err(Failure::Unavailable)
     }
     fn show(&mut self, _presentation: &Presentation) -> Result<(), Failure> {
-        Err(Failure("unavailable"))
+        Err(Failure::Unavailable)
     }
     fn fallback(&mut self, _presentation: &Presentation) {}
     fn shutdown(&mut self) {}
 }
 
 #[cfg(windows)]
-fn platform_sink(app: &tauri::AppHandle, workspace: &Path) -> Box<dyn Sink> {
-    Box::new(windows::WindowsSink::new(app.clone(), workspace))
+fn platform_sink(app: &tauri::AppHandle, workspace: &Path) -> Option<Box<dyn Sink>> {
+    Some(Box::new(windows::WindowsSink::new(app.clone(), workspace)))
 }
 
-#[cfg(not(windows))]
-fn platform_sink(_app: &tauri::AppHandle, _workspace: &Path) -> Box<dyn Sink> {
-    Box::new(NullSink)
+#[cfg(target_os = "linux")]
+fn platform_sink(app: &tauri::AppHandle, _workspace: &Path) -> Option<Box<dyn Sink>> {
+    Some(Box::new(linux::LinuxSink::new(app.clone())))
+}
+
+#[cfg(target_os = "macos")]
+fn platform_sink(app: &tauri::AppHandle, _workspace: &Path) -> Option<Box<dyn Sink>> {
+    Some(Box::new(macos::MacosSink::new(app.clone())))
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+fn platform_sink(_app: &tauri::AppHandle, _workspace: &Path) -> Option<Box<dyn Sink>> {
+    None
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn request_attention(app: &tauri::AppHandle) {
+    use tauri::Manager;
+
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(window) = handle.get_webview_window("main") {
+            let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
+        }
+    });
 }
 
 /// One notification center per process: policy, dedupe, rate limit and delivery.
 #[derive(Clone)]
 pub struct Center {
-    sender: mpsc::SyncSender<Command>,
+    sender: Option<mpsc::SyncSender<Command>>,
     armed: Arc<AtomicBool>,
     session: Arc<AtomicU64>,
     stopping: Arc<AtomicBool>,
@@ -223,36 +304,27 @@ pub fn install(app: &tauri::AppHandle, diagnostics: Diagnostics, workspace: &Pat
         "{:x}",
         Sha256::digest(workspace.to_string_lossy().as_bytes())
     );
-    let group = format!("{AUMID}:{}", &identity[..16]);
-    with_sink(platform_sink(app, workspace), diagnostics, group, SUPPORTED)
+    let group = format!("{APP_ID}:{}", &identity[..16]);
+    with_sink(platform_sink(app, workspace), diagnostics, group)
 }
 
-fn with_sink(
-    sink: Box<dyn Sink>,
-    diagnostics: Diagnostics,
-    group: String,
-    supported: bool,
-) -> Center {
-    let (sender, receiver) = mpsc::sync_channel(QUEUE);
+fn with_sink(sink: Option<Box<dyn Sink>>, diagnostics: Diagnostics, group: String) -> Center {
     let armed = Arc::new(AtomicBool::new(false));
     let session = Arc::new(AtomicU64::new(0));
     let stopping = Arc::new(AtomicBool::new(false));
-    let worker = Worker {
-        receiver,
-        armed: armed.clone(),
-        stopping: stopping.clone(),
-        sink,
-        diagnostics: diagnostics.clone(),
-        policy: Policy::new(group),
-        supported,
-    };
-    if supported {
+    let sender = sink.map(|sink| {
+        let (sender, receiver) = mpsc::sync_channel(QUEUE);
+        let worker = Worker {
+            receiver,
+            armed: armed.clone(),
+            stopping: stopping.clone(),
+            sink,
+            diagnostics: diagnostics.clone(),
+            policy: Policy::new(group),
+        };
         std::thread::spawn(move || worker.run());
-    } else {
-        // No platform sink exists, so there is nothing to poll for. Dropping the
-        // worker closes the channel; senders already treat that as a drop.
-        drop(worker);
-    }
+        sender
+    });
     Center {
         sender,
         armed,
@@ -315,17 +387,21 @@ impl Center {
         // A full queue must not lose the stop: the flag ends the worker on its
         // next poll even when this wake-up command cannot be queued.
         self.stopping.store(true, Ordering::SeqCst);
-        let _ = self.sender.try_send(Command::Stop);
+        if let Some(sender) = &self.sender {
+            let _ = sender.try_send(Command::Stop);
+        }
     }
 
     fn send(&self, command: Command) {
-        if self.sender.try_send(command).is_err() {
-            self.suppressed("queue_full");
+        if let Some(sender) = &self.sender {
+            if sender.try_send(command).is_err() {
+                self.suppressed("queue_full");
+            }
         }
     }
 
     fn suppressed(&self, reason: &'static str) {
-        if SUPPORTED {
+        if self.sender.is_some() {
             self.diagnostics.record(
                 Source::Native,
                 Event::NotificationSuppressed,
@@ -336,7 +412,12 @@ impl Center {
 
     #[cfg(test)]
     pub(crate) fn silent(diagnostics: Diagnostics) -> Self {
-        with_sink(Box::new(NullSink), diagnostics, "test".into(), true)
+        with_sink(Some(Box::new(NullSink)), diagnostics, "test".into())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_armed(&self) -> bool {
+        self.armed.load(Ordering::SeqCst)
     }
 }
 
@@ -364,12 +445,44 @@ pub fn desktop_notifications_set_locale(
     Ok(())
 }
 
+/// Permission queries never prompt; only the UI's explicit button sends request=true.
+#[tauri::command]
+pub async fn desktop_notifications_permission(
+    window: tauri::WebviewWindow,
+    request: bool,
+) -> Result<Permission, crate::ipc_error::IpcError> {
+    if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
+        return Err(crate::ipc_error::IpcError::new(
+            "notifications_untrusted_window",
+            "Desktop notifications are unavailable.",
+        ));
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "macos")]
+        {
+            macos::permission(request)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = request;
+            Permission::NotRequired
+        }
+    })
+    .await
+    .map_err(|_| {
+        crate::ipc_error::IpcError::new(
+            "notifications_unavailable",
+            "Desktop notifications are unavailable.",
+        )
+    })
+}
+
 struct Policy {
     enabled: bool,
     success_enabled: bool,
     locale: String,
     seen: HashMap<String, Instant>,
-    shown: Vec<Instant>,
+    attempts: Vec<Instant>,
     group: String,
 }
 
@@ -380,7 +493,7 @@ impl Policy {
             success_enabled: true,
             locale: default_locale(),
             seen: HashMap::new(),
-            shown: Vec::new(),
+            attempts: Vec::new(),
             group,
         }
     }
@@ -401,9 +514,9 @@ impl Policy {
     }
 
     fn allow_rate(&mut self, now: Instant) -> bool {
-        self.shown
-            .retain(|shown| now.duration_since(*shown) < RATE_WINDOW);
-        self.shown.len() < RATE_LIMIT
+        self.attempts
+            .retain(|attempt| now.duration_since(*attempt) < RATE_WINDOW);
+        self.attempts.len() < RATE_LIMIT
     }
 
     fn presentation(&self, notice: &Notice) -> Presentation {
@@ -482,7 +595,6 @@ struct Worker {
     sink: Box<dyn Sink>,
     diagnostics: Diagnostics,
     policy: Policy,
-    supported: bool,
 }
 
 impl Worker {
@@ -525,9 +637,6 @@ impl Worker {
     }
 
     fn handle(&mut self, notice: Notice, key: String, armed: bool) {
-        if !self.supported {
-            return;
-        }
         if !armed {
             self.suppress("unarmed");
             return;
@@ -547,35 +656,40 @@ impl Worker {
             return;
         }
         let presentation = self.policy.presentation(&notice);
-        if let Err(failure) = self.sink.available() {
-            self.policy.seen.insert(key, now);
-            self.suppress(failure.0);
-            self.sink.fallback(&presentation);
-            return;
-        }
         if !self.policy.allow_rate(now) {
             self.suppress("rate_limited");
             return;
         }
+        // Every alert attempt consumes the budget, including attention fallback.
+        // Missing permission or a broken service must not bypass rate limiting.
         self.policy.seen.insert(key, now);
+        self.policy.attempts.push(now);
+        if let Err(failure) = self.sink.available() {
+            self.failed(failure);
+            self.sink.fallback(&presentation);
+            return;
+        }
         match self.sink.show(&presentation) {
             Ok(()) => {
-                self.policy.shown.push(now);
                 self.diagnostics
                     .record(Source::Native, Event::NotificationShown, json!({}));
             }
-            Err(Failure("os_disabled")) => {
-                self.suppress("os_disabled");
-                self.sink.fallback(&presentation);
-            }
             Err(failure) => {
-                self.diagnostics.record(
-                    Source::Native,
-                    Event::NotificationFailed,
-                    json!({ "reason": failure.0 }),
-                );
+                self.failed(failure);
                 self.sink.fallback(&presentation);
             }
+        }
+    }
+
+    fn failed(&self, failure: Failure) {
+        if failure.suppressed() {
+            self.suppress(failure.reason());
+        } else {
+            self.diagnostics.record(
+                Source::Native,
+                Event::NotificationFailed,
+                json!({ "reason": failure.reason() }),
+            );
         }
     }
 
@@ -615,6 +729,11 @@ fn default_locale() -> String {
             return "zh-CN".to_string();
         }
     }
+    #[cfg(target_os = "macos")]
+    {
+        return macos::user_locale();
+    }
+    #[cfg(not(target_os = "macos"))]
     "en".to_string()
 }
 
@@ -639,7 +758,25 @@ mod tests {
     }
 
     fn center(sink: Recording) -> Center {
-        with_sink(Box::new(sink), Diagnostics::new(None), "test".into(), true)
+        with_sink(Some(Box::new(sink)), Diagnostics::new(None), "test".into())
+    }
+
+    #[test]
+    fn missing_adapter_is_inert_without_a_second_support_flag() {
+        let center = with_sink(None, Diagnostics::new(None), "test".into());
+        assert!(center.sender.is_none());
+        center.arm();
+        center.submit_payload("invalid");
+        center.engine_stopped();
+        center.stop();
+    }
+
+    #[test]
+    fn native_identity_and_macos_minimum_match_the_bundle() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../../tauri.conf.json")).unwrap();
+        assert_eq!(config["identifier"], APP_ID);
+        assert_eq!(config["bundle"]["macOS"]["minimumSystemVersion"], "10.14");
     }
 
     fn failed_notice(run: &str) -> Notice {
@@ -733,7 +870,7 @@ mod tests {
 
     impl Sink for Unavailable {
         fn available(&mut self) -> Result<(), Failure> {
-            Err(Failure("os_disabled"))
+            Err(Failure::OsDisabled)
         }
         fn show(&mut self, _presentation: &Presentation) -> Result<(), Failure> {
             *self.shown.lock().unwrap() += 1;
@@ -752,10 +889,9 @@ mod tests {
             fallbacks: Arc::new(Mutex::new(0)),
         };
         let center = with_sink(
-            Box::new(sink.clone()),
+            Some(Box::new(sink.clone())),
             Diagnostics::new(None),
             "test".into(),
-            true,
         );
         center.arm();
         center.send(Command::Notice(failed_notice("run")));
@@ -778,5 +914,83 @@ mod tests {
         wait_for(&shown, RATE_LIMIT);
         std::thread::sleep(Duration::from_millis(50));
         assert_eq!(shown.0.lock().unwrap().len(), RATE_LIMIT);
+    }
+
+    #[test]
+    fn unavailable_notifications_cannot_bypass_the_attention_rate_limit() {
+        let sink = Unavailable {
+            shown: Arc::new(Mutex::new(0)),
+            fallbacks: Arc::new(Mutex::new(0)),
+        };
+        let center = with_sink(
+            Some(Box::new(sink.clone())),
+            Diagnostics::new(None),
+            "test".into(),
+        );
+        center.arm();
+        for index in 0..RATE_LIMIT + 1 {
+            center.send(Command::Notice(failed_notice(&format!("run-{index}"))));
+        }
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while *sink.fallbacks.lock().unwrap() < RATE_LIMIT && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(*sink.fallbacks.lock().unwrap(), RATE_LIMIT);
+        assert_eq!(*sink.shown.lock().unwrap(), 0);
+        center.stop();
+    }
+
+    #[test]
+    fn delivery_failure_and_shutdown_stay_on_the_dispatcher() {
+        #[derive(Clone, Default)]
+        struct Probe(Arc<Mutex<Vec<(&'static str, std::thread::ThreadId)>>>);
+        impl Probe {
+            fn record(&self, event: &'static str) {
+                self.0
+                    .lock()
+                    .unwrap()
+                    .push((event, std::thread::current().id()));
+            }
+        }
+        impl Sink for Probe {
+            fn available(&mut self) -> Result<(), Failure> {
+                self.record("available");
+                Ok(())
+            }
+            fn show(&mut self, _: &Presentation) -> Result<(), Failure> {
+                self.record("show");
+                Err(Failure::DeliveryFailed)
+            }
+            fn fallback(&mut self, _: &Presentation) {
+                self.record("fallback");
+            }
+            fn shutdown(&mut self) {
+                self.record("shutdown");
+            }
+        }
+        let probe = Probe::default();
+        let center = with_sink(
+            Some(Box::new(probe.clone())),
+            Diagnostics::new(None),
+            "test".into(),
+        );
+        center.arm();
+        center.send(Command::Notice(failed_notice("failed")));
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while probe.0.lock().unwrap().len() < 3 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        center.stop();
+        while probe.0.lock().unwrap().len() < 4 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let events = probe.0.lock().unwrap();
+        assert_eq!(
+            events.iter().map(|event| event.0).collect::<Vec<_>>(),
+            vec!["available", "show", "fallback", "shutdown"]
+        );
+        assert!(events.iter().all(|event| event.1 == events[0].1));
+        assert_ne!(events[0].1, std::thread::current().id());
     }
 }

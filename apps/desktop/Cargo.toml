@@ -33,6 +33,12 @@ libc = "0.2"
 dbus = "0.9"
 gtk = "0.18"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = "0.6"
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSLocale", "NSString", "NSArray", "NSObject", "NSError"] }
+objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationSettings", "UNNotificationSound", "UNNotificationTrigger"] }
+
 [target.'cfg(windows)'.dependencies]
 # Windows uses the system TLS stack (schannel), so the build never enters the
 # cc-rs path that produces D8050 under the local MSVC toolchain. `native-tls`

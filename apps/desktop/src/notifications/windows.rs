@@ -13,7 +13,9 @@ use ::windows::UI::Notifications::{
 };
 use tauri::Manager;
 
-use super::{Failure, Presentation, Sink, AUMID};
+use super::{Failure, Presentation, Sink, APP_ID};
+
+const AUMID: &str = APP_ID;
 
 /// A 64 px logo for toast banners. Embedded so development and installed builds
 /// write the same asset next to their runtime state and reference it by URI.
@@ -159,20 +161,24 @@ impl WindowsSink {
         }
     }
 
-    fn initialize(&mut self) {
+    fn initialize(&mut self) -> Result<(), Failure> {
         if self.initialized {
-            return;
+            return Ok(());
         }
-        self.initialized = true;
         // SAFETY: initializing this dedicated thread's apartment has no other
         // preconditions. A failure leaves WinRT unavailable, which the callers
         // report as a bounded delivery classification.
-        unsafe {
+        let result = unsafe {
             windows_sys::Win32::System::Com::CoInitializeEx(
                 std::ptr::null(),
                 windows_sys::Win32::System::Com::COINIT_MULTITHREADED as u32,
-            );
+            )
+        };
+        if result < 0 {
+            return Err(Failure::Unavailable);
         }
+        self.initialized = true;
+        Ok(())
     }
 
     fn notifier() -> ::windows::core::Result<ToastNotifier> {
@@ -182,22 +188,22 @@ impl WindowsSink {
 
 impl Sink for WindowsSink {
     fn available(&mut self) -> Result<(), Failure> {
-        self.initialize();
-        let notifier = Self::notifier().map_err(|_| Failure("notifier_failed"))?;
+        self.initialize()?;
+        let notifier = Self::notifier().map_err(|_| Failure::Unavailable)?;
         match notifier.Setting() {
             Ok(NotificationSetting::Enabled) => Ok(()),
-            Ok(_) => Err(Failure("os_disabled")),
-            Err(_) => Err(Failure("setting_failed")),
+            Ok(_) => Err(Failure::OsDisabled),
+            Err(_) => Err(Failure::Unavailable),
         }
     }
 
     fn show(&mut self, presentation: &Presentation) -> Result<(), Failure> {
-        self.initialize();
-        let notifier = Self::notifier().map_err(|_| Failure("notifier_failed"))?;
+        self.initialize()?;
+        let notifier = Self::notifier().map_err(|_| Failure::Unavailable)?;
         match notifier.Setting() {
             Ok(NotificationSetting::Enabled) => {}
-            Ok(_) => return Err(Failure("os_disabled")),
-            Err(_) => return Err(Failure("setting_failed")),
+            Ok(_) => return Err(Failure::OsDisabled),
+            Err(_) => return Err(Failure::Unavailable),
         }
         let icon = self.icon.as_ref().map_or_else(String::new, |path| {
             format!(
@@ -219,19 +225,19 @@ impl Sink for WindowsSink {
             escape(&presentation.body),
             icon
         );
-        let document = XmlDocument::new().map_err(|_| Failure("winrt_failed"))?;
+        let document = XmlDocument::new().map_err(|_| Failure::DeliveryFailed)?;
         document
             .LoadXml(&HSTRING::from(xml))
-            .map_err(|_| Failure("winrt_failed"))?;
+            .map_err(|_| Failure::DeliveryFailed)?;
         let toast = ToastNotification::CreateToastNotification(&document)
-            .map_err(|_| Failure("winrt_failed"))?;
+            .map_err(|_| Failure::DeliveryFailed)?;
         toast
             .SetTag(&HSTRING::from(presentation.tag.as_str()))
-            .map_err(|_| Failure("winrt_failed"))?;
+            .map_err(|_| Failure::DeliveryFailed)?;
         toast
             .SetGroup(&HSTRING::from(presentation.group.as_str()))
-            .map_err(|_| Failure("winrt_failed"))?;
-        notifier.Show(&toast).map_err(|_| Failure("winrt_failed"))
+            .map_err(|_| Failure::DeliveryFailed)?;
+        notifier.Show(&toast).map_err(|_| Failure::DeliveryFailed)
     }
 
     fn fallback(&mut self, _presentation: &Presentation) {
@@ -255,7 +261,13 @@ impl Sink for WindowsSink {
         }
     }
 
-    fn shutdown(&mut self) {}
+    fn shutdown(&mut self) {
+        if self.initialized {
+            // SAFETY: balances this dispatcher's successful CoInitializeEx call.
+            unsafe { windows_sys::Win32::System::Com::CoUninitialize() };
+            self.initialized = false;
+        }
+    }
 }
 
 /// Escape text for the toast XML. Tag and group go through WinRT setters, so
