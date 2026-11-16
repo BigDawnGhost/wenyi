@@ -13,8 +13,9 @@ import { ErrorNotice } from "../../components/ui/data";
 import { Textarea } from "../../components/ui/form";
 import { LanguageSettings } from "./LanguageSettings";
 import { ModelSelection } from "./ModelSelection";
+import { ExportSettings } from "./ExportSettings";
 import { ProviderSettings } from "./ProviderSettings";
-import { MinerUSettings } from "./MinerUSettings";
+import { PdfSettings } from "./PdfSettings";
 import { SettingsActionBar, SettingsGroup, SettingsSection } from "./SettingsSection";
 import { WorkflowSettings, workflowField } from "./WorkflowSettings";
 import { renameRegistryId, type RegistryGroup } from "./registryEdits";
@@ -33,7 +34,6 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
   const useCredentialsPending = credentials?.usePending ?? noPendingCredentials;
   const credentialsPending = useCredentialsPending();
   const Updates = platform().capabilities.updates?.Section;
-  const Plugins = platform().capabilities.plugins?.Section;
   const Diagnostics = platform().capabilities.diagnostics?.Section;
   const mutations = useIsMutating();
   const [installing, setInstalling] = useState(false);
@@ -189,6 +189,13 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
       <div className={SETTINGS_CONTENT_CLASSNAME}>
         <div hidden={section !== "general"}>
           <LanguageSettings />
+          <SettingsGroup title={t("settings.sectionExport")}>
+            <ExportSettings
+              config={effective}
+              disabled={disabled}
+              onField={(group, key, value) => change(workflowField(effective, group, key, value))}
+            />
+          </SettingsGroup>
         </div>
         <div hidden={section !== "providers"}>
           <SettingsSection id="provider-models" title={t("settings.sectionProviders")} grouped>
@@ -224,16 +231,9 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
             />
           </SettingsSection>
         </div>
-        <div hidden={section !== "mineru"}>
-          <MinerUSettings />
+        <div hidden={section !== "pdf"}>
+          <PdfSettings disabled={installing} />
         </div>
-        {Plugins && (
-          <div hidden={section !== "plugins"}>
-            <LazyBoundary>
-              <Plugins disabled={installing} />
-            </LazyBoundary>
-          </div>
-        )}
         <div hidden={section !== "advanced"}>
           <SettingsSection id="advanced-yaml" title={t("settings.sectionAdvanced")} grouped>
             <SettingsGroup

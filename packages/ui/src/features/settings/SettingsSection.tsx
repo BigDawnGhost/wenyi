@@ -2,6 +2,8 @@ import { useId, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 import { Card } from "../../components/ui/card";
 
+const SETTINGS_HEADING_CLASSNAME = "text-sm font-medium";
+
 /** Sections provide a panel by default; grouped sections own their child panels. */
 export function SettingsSection({
   title,
@@ -31,7 +33,7 @@ export function SettingsSection({
       )}
       {...rest}
     >
-      <h2 id={headingId} className="mb-4 text-sm font-semibold">
+      <h2 id={headingId} className={cn("mb-4", SETTINGS_HEADING_CLASSNAME)}>
         {title}
       </h2>
       <Content className={cn("min-w-0 space-y-4", !grouped && "p-4")}>
@@ -54,7 +56,7 @@ export function SettingsGroup({
   const headingId = useId();
   return (
     <section aria-labelledby={headingId} className="min-w-0 space-y-4">
-      <h3 id={headingId} className="text-xs font-medium text-muted-foreground">
+      <h3 id={headingId} className={SETTINGS_HEADING_CLASSNAME}>
         {title}
         {summary != null && (
           <span className="ml-2 font-normal text-muted-foreground">{summary}</span>
@@ -77,7 +79,7 @@ export function SettingsGroupHeader({
 }) {
   return (
     <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
-      <h3 id={id} className="text-sm font-medium">
+      <h3 id={id} className={SETTINGS_HEADING_CLASSNAME}>
         {title}
       </h3>
       {action}

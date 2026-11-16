@@ -13,7 +13,6 @@ import {
   ListChecks,
   ListTree,
   Plug,
-  Puzzle,
   ScrollText,
   Settings,
   Settings2,
@@ -98,15 +97,21 @@ export const routeEntries: RouteEntry[] = [
 ];
 
 export type SettingsSectionId =
-  | "general" | "providers" | "defaults" | "workflow" | "mineru"
-  | "plugins" | "advanced" | "diagnostics" | "updates";
+  | "general" | "providers" | "defaults" | "workflow" | "pdf"
+  | "advanced" | "diagnostics" | "updates";
+
+export const settingsSectionAliases = new Map<string, SettingsSectionId>([
+  ["general", "general"],
+  ["mineru", "pdf"],
+  ["plugins", "pdf"],
+]);
 
 type SettingsNavEntry = {
   id: SettingsSectionId;
   icon: LucideIcon;
 } & (
   | { label: MessageKey; capability?: never }
-  | { label?: never; capability: "plugins" | "diagnostics" | "updates" }
+  | { label?: never; capability: "diagnostics" | "updates" }
 );
 
 const settingsSections: SettingsNavEntry[] = [
@@ -114,8 +119,7 @@ const settingsSections: SettingsNavEntry[] = [
   { id: "providers", label: "settings.sectionProviders", icon: Plug },
   { id: "defaults", label: "settings.sectionDefaultModels", icon: Sparkles },
   { id: "workflow", label: "settings.sectionWorkflow", icon: Workflow },
-  { id: "mineru", label: "settings.sectionPdf", icon: FileScan },
-  { id: "plugins", icon: Puzzle, capability: "plugins" },
+  { id: "pdf", label: "settings.sectionPdf", icon: FileScan },
   { id: "advanced", label: "settings.sectionAdvanced", icon: Code },
   { id: "diagnostics", icon: Activity, capability: "diagnostics" },
   { id: "updates", icon: Info, capability: "updates" },

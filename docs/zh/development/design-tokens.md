@@ -10,11 +10,11 @@ variant 消费两者。本页由上述来源生成；当本页与源不一致时
 ## 颜色
 
 语义色是 HSL 三元组，以 hsl(var(--token)) 消费；.dark 类直接更换取值，工具类保持不变。
-状态色以基础色搭配 -foreground 变体。所有状态标签在明暗主题下均使用低饱和底色、
-清晰文字、细描边与紧凑小圆角：status-success 用灰绿，status-warning 用灰琥珀，
-status-danger 用灰红，status-info 用灰蓝；中性标签复用 secondary、secondary-foreground
-和 border。状态配色独立于较强的操作与警示色，使失败标签更柔和，但不削弱删除按钮
-与错误提示的警示性。
+状态色以基础色搭配 -foreground 变体。亮色主题的状态标签使用清新的浅色底、清晰彩色文字
+与浅色细描边：status-success 用绿色，status-warning 用琥珀色，status-danger 用红色，
+status-info 用蓝色。暗色主题保留柔和、低饱和的配色。两种主题均使用紧凑小圆角和清晰文字；
+中性标签复用 secondary、secondary-foreground 和 border。状态配色独立于操作与警示色，
+调整状态标签不会改变删除按钮或内联错误提示。
 弹窗通知跟随应用主题（包括跟随系统）并复用状态配色，普通通知使用卡片色。
 统计条与对应图例使用 chart-1 至 chart-6，轨道使用 chart-track；暗色主题采用更低饱和的色板。
 
@@ -41,18 +41,18 @@ status-danger 用灰红，status-info 用灰蓝；中性标签复用 secondary�
 | `--border` | `border` | `hsl(240 5.9% 90%)` | `hsl(0 0% 19.6%)` |
 | `--input` | `input` | `hsl(240 5.9% 90%)` | `hsl(0 0% 17.6%)` |
 | `--ring` | `ring` | `hsl(240 5.9% 10%)` | `hsl(0 0% 60%)` |
-| `--status-success` | `status-success` | `hsl(152 18% 95%)` | `hsl(154 13% 16%)` |
-| `--status-success-foreground` | `status-success-foreground` | `hsl(154 24% 29%)` | `hsl(152 22% 73%)` |
-| `--status-success-border` | `status-success-border` | `hsl(152 16% 83%)` | `hsl(154 14% 28%)` |
-| `--status-warning` | `status-warning` | `hsl(38 35% 94%)` | `hsl(36 18% 16%)` |
-| `--status-warning-foreground` | `status-warning-foreground` | `hsl(32 45% 30%)` | `hsl(38 34% 72%)` |
-| `--status-warning-border` | `status-warning-border` | `hsl(38 28% 80%)` | `hsl(36 20% 28%)` |
-| `--status-danger` | `status-danger` | `hsl(4 30% 96%)` | `hsl(4 18% 18%)` |
-| `--status-danger-foreground` | `status-danger-foreground` | `hsl(4 38% 39%)` | `hsl(4 36% 76%)` |
-| `--status-danger-border` | `status-danger-border` | `hsl(4 25% 84%)` | `hsl(4 22% 32%)` |
-| `--status-info` | `status-info` | `hsl(210 24% 95%)` | `hsl(210 18% 17%)` |
-| `--status-info-foreground` | `status-info-foreground` | `hsl(210 32% 33%)` | `hsl(210 26% 74%)` |
-| `--status-info-border` | `status-info-border` | `hsl(210 22% 82%)` | `hsl(210 20% 30%)` |
+| `--status-success` | `status-success` | `hsl(138 76% 97%)` | `hsl(154 13% 16%)` |
+| `--status-success-foreground` | `status-success-foreground` | `hsl(142 72% 29%)` | `hsl(152 22% 73%)` |
+| `--status-success-border` | `status-success-border` | `hsl(141 79% 85%)` | `hsl(154 14% 28%)` |
+| `--status-warning` | `status-warning` | `hsl(48 100% 96%)` | `hsl(36 18% 16%)` |
+| `--status-warning-foreground` | `status-warning-foreground` | `hsl(35 92% 32%)` | `hsl(38 34% 72%)` |
+| `--status-warning-border` | `status-warning-border` | `hsl(45 95% 76%)` | `hsl(36 20% 28%)` |
+| `--status-danger` | `status-danger` | `hsl(0 86% 97%)` | `hsl(4 18% 18%)` |
+| `--status-danger-foreground` | `status-danger-foreground` | `hsl(0 72% 45%)` | `hsl(4 36% 76%)` |
+| `--status-danger-border` | `status-danger-border` | `hsl(0 90% 86%)` | `hsl(4 22% 32%)` |
+| `--status-info` | `status-info` | `hsl(214 100% 97%)` | `hsl(210 18% 17%)` |
+| `--status-info-foreground` | `status-info-foreground` | `hsl(217 80% 42%)` | `hsl(210 26% 74%)` |
+| `--status-info-border` | `status-info-border` | `hsl(214 95% 85%)` | `hsl(210 20% 30%)` |
 | `--ink` | - | `hsl(13 13 13)` | `hsl(0 0% 100%)` |
 | `--hover` | `hover` | `hsl(var(--ink) / 0.05)` | `hsl(var(--ink) / 0.08)` |
 | `--selected` | `selected` | `hsl(var(--ink) / 0.08)` | `hsl(var(--ink) / 0.12)` |

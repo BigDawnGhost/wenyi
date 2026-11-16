@@ -6,14 +6,14 @@ import { expectCardSurface, expectTokenColor } from "./color-helper";
 
 /** Whether the Desktop host must keep running this suite as well.
  *
- * The Desktop host passes a nine-entry `categories` list that differs from the Web host's six. The extra categories (BabelDOC plugin, Diagnostics and feedback, About) are Desktop-only settings, so the assertions depend on the host argument.
+ * Desktop adds Diagnostics and feedback and About categories; the assertions depend on the host argument.
  */
 export const desktopHostSensitive = true;
 
 export function registerTests({
   categories = {
-    en: ["General", "Models & connections", "Default models", "Workflow", "PDF parsing", "Advanced"],
-    "zh-CN": ["通用", "模型与接口", "默认模型", "翻译流程", "PDF 解析", "高级"],
+    en: ["General", "Models & connections", "Default models", "Workflow", "PDF", "Advanced"],
+    "zh-CN": ["通用", "模型与接口", "默认模型", "翻译流程", "PDF", "高级"],
   },
 }: { categories?: Record<"en" | "zh-CN", string[]> } = {}) {
 test.beforeEach(async ({ page }) => {
@@ -21,12 +21,45 @@ test.beforeEach(async ({ page }) => {
 });
 
 for (const theme of ["light", "dark"]) {
+  for (const chinese of [false, true]) {
+    test(`settings subsection headings match the API connection heading in ${chinese ? "Chinese" : "English"} in ${theme}`, async ({ page }) => {
+      await page.addInitScript(({ locale, theme }) => {
+        localStorage.setItem("wenyi.locale", locale);
+        localStorage.setItem("wenyi.theme", theme);
+      }, { locale: chinese ? "zh-CN" : "en", theme });
+      const typography = (element: Element) => {
+        const style = getComputedStyle(element);
+        return {
+          family: style.fontFamily,
+          size: style.fontSize,
+          weight: style.fontWeight,
+          lineHeight: style.lineHeight,
+          color: style.color,
+        };
+      };
+      await page.goto("/settings/providers");
+      const reference = await page.getByRole("heading", {
+        name: chinese ? "API 连接" : "Connections", exact: true,
+      }).evaluate(typography);
+      for (const path of ["/settings", "/settings/pdf", "/settings/advanced", `/projects/${pid}/settings`]) {
+        await page.goto(path);
+        const headings = page.locator("main h2:visible, main h3:visible");
+        await expect(headings.first()).toBeVisible();
+        for (const heading of await headings.all()) {
+          expect(await heading.evaluate(typography)).toEqual(reference);
+        }
+      }
+    });
+  }
+}
+
+for (const theme of ["light", "dark"]) {
   test(`workflow options use labeled switches in ${theme}`, async ({ page }, testInfo) => {
     await page.addInitScript(theme => localStorage.setItem("wenyi.theme", theme), theme);
     for (const scope of ["global", "project"]) {
       await page.goto(scope === "global" ? "/settings/workflow" : `/projects/${pid}/settings`);
       const main = page.getByRole("main");
-      await expect(main.getByRole("switch")).toHaveCount(4);
+      await expect(main.getByRole("region", { name: "Workflow", exact: true }).getByRole("switch")).toHaveCount(4);
       await expect(main.getByRole("checkbox")).toHaveCount(0);
       for (const [key, name] of [
         ["book_understanding", "Book understanding"],
@@ -73,7 +106,7 @@ for (const theme of ["light", "dark"]) {
       await test.step(path, async () => {
         await page.goto(path);
         const section = page.locator('[data-slot="settings.section"]:visible');
-        await expect(section).toHaveCount(path.startsWith("/projects/") ? 3 : 1);
+        await expect(section).toHaveCount(path.startsWith("/projects/") ? 4 : 1);
         const content = section.locator('p:visible, input:visible, textarea:visible, a:visible, [role="combobox"]:visible, [role="switch"]:visible');
         await expectCardSurface(content);
         await expect.poll(() => page.getByRole("main").evaluate(node =>
@@ -217,14 +250,14 @@ for (const chinese of [false, true]) {
     const yaml = page.getByRole("textbox", { name: advancedName, exact: true });
     await expect(yaml).toBeVisible();
     await expect(page.getByRole("link", { name: advancedName, exact: true })).toHaveCount(0);
-    await expect(main.getByRole("combobox")).toHaveCount(3);
-    await expect(main.getByRole("switch")).toHaveCount(4);
+    await expect(main.getByRole("combobox")).toHaveCount(4);
+    await expect(main.getByRole("switch")).toHaveCount(7);
     await expect(main.getByRole("spinbutton", { includeHidden: true })).toHaveCount(0);
     await expect(page.getByLabel(chinese ? "分批翻译章节" : "Translate chapters in batches", { exact: true })).toHaveCount(0);
     await expect(main.locator("details, summary")).toHaveCount(0);
     await expect(main.getByRole("table")).toHaveCount(0);
     await expect(main.getByRole("heading", { level: 2 })).toHaveText(
-      chinese ? ["模型", "翻译流程", advancedName] : ["Models", "Workflow", advancedName],
+      chinese ? ["模型", "翻译流程", "导出偏好", advancedName] : ["Models", "Workflow", "Export preferences", advancedName],
     );
     const polish = page.getByLabel(chinese ? "润色" : "Polishing", { exact: true });
     await polish.uncheck();
@@ -249,7 +282,7 @@ for (const chinese of [false, true]) {
         return bounds.width === Math.min(node.clientWidth, 1024) &&
           Math.abs(bounds.left - pane.left - (node.clientWidth - bounds.width) / 2) <= 1 &&
           node.scrollWidth === node.clientWidth &&
-          sections.length === 3 && sections.every(section => {
+          sections.length === 4 && sections.every(section => {
             const heading = section.querySelector(":scope > h2")!.getBoundingClientRect();
             const content = section.querySelector(":scope > div")!.getBoundingClientRect();
             const bounds = section.getBoundingClientRect();
@@ -259,7 +292,7 @@ for (const chinese of [false, true]) {
           });
       })).toBe(true);
     }
-    await main.evaluate(node => node.scrollTo(0, 0));
+    await yaml.scrollIntoViewIfNeeded();
     await expect(yaml).toBeInViewport();
     await page.screenshot({ path: testInfo.outputPath("project-settings-inline-yaml.png") });
     await page.getByRole("button", { name: chinese ? "校验配置" : "Validate configuration", exact: true }).click();
@@ -374,11 +407,11 @@ test("running projects keep both basic and advanced settings read-only", async (
   await expect(page.getByText("Read-only while a task runs", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Quality tier", { exact: true })).toBeDisabled();
   const switches = page.getByRole("main").getByRole("switch");
-  await expect(switches).toHaveCount(4);
+  await expect(switches).toHaveCount(7);
   for (const control of await switches.all()) {
     await expect(control).toBeDisabled();
-    await expect(control).toBeChecked();
   }
+  await expect(page.getByLabel("Bilingual order", { exact: true })).toBeDisabled();
   await expect(page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true })).toBeDisabled();
   for (const name of ["Save configuration", "Restore defaults", "Validate configuration"]) {
     await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();

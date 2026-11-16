@@ -157,13 +157,15 @@ const en = {
   "export.monolingual": "Monolingual",
   "export.bilingual": "Bilingual",
   "export.pdfBilingualLayout": "Each PDF page pairs the original and translated pages side by side at their original size; the version selected first is on the left.",
-  "export.bilingualOrder": "Bilingual order",
-  "export.translationFirst": "Translation first",
-  "export.sourceFirst": "Source first",
-  "export.includeAnAboutThisTranslationPage":
+  "settings.bilingualOrder": "Bilingual order",
+  "settings.translationFirst": "Translation first",
+  "settings.sourceFirst": "Source first",
+  "settings.includeAnAboutThisTranslationPage":
     "Include an “About this translation” page",
-  "export.preserveSourceFormattingInBilingualOutput":
+  "settings.aboutPageHelp": "Applies to EPUB exports only.",
+  "settings.preserveSourceFormattingInBilingualOutput":
     "Preserve source formatting in bilingual output",
+  "settings.preserveSourceStyleHelp": "Not used for PDF exports.",
   "common.submitting": "Submitting…",
   "export.generateExport": "Generate export",
   "export.saving": "Saving the export…",
@@ -612,7 +614,6 @@ const en = {
   "review.runCount": "{count} runs",
   "review.latestResult": "Latest result",
   "review.viewingHistory": "Viewing an earlier review",
-  "export.advanced": "Layout and advanced options",
   "navigation.global": "Global navigation",
   "navigation.settings": "Settings navigation",
   "navigation.back": "Back",
@@ -638,7 +639,8 @@ const en = {
   "settings.sectionDefaultModels": "Default models",
   "settings.sectionModels": "Models",
   "settings.sectionWorkflow": "Workflow",
-  "settings.sectionPdf": "PDF parsing",
+  "settings.sectionExport": "Export preferences",
+  "settings.sectionPdf": "PDF",
   "settings.sectionAdvanced": "Advanced",
   "settings.credentialsFailed": "Configuration saved, but an API key could not be saved. Save again to retry.",
   "settings.credentialsFailedNotice": "Some API keys are still unsaved. They stay only for this session until you save the configuration successfully.",

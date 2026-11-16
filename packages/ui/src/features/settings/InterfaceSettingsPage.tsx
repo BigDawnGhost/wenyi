@@ -1,17 +1,18 @@
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
 import { useI18n } from "../../i18n";
 import { Navigate, useLocation, useParams } from "react-router-dom";
-import { availableSettingsSections } from "../../routes/manifest";
+import { availableSettingsSections, settingsPath, settingsSectionAliases } from "../../routes/manifest";
 import { GlobalConfiguration } from "./GlobalConfiguration";
 
 export default function InterfaceSettingsPage() {
   const { t, locale } = useI18n();
   const { section = "general" } = useParams();
   const location = useLocation();
-  const active = availableSettingsSections(locale, t).find((entry) => entry.id === section);
+  const alias = settingsSectionAliases.get(section);
+  const active = availableSettingsSections(locale, t).find((entry) => entry.id === (alias ?? section));
 
-  if (!active || location.pathname === "/settings/general") {
-    return <Navigate to="/settings" replace state={location.state} />;
+  if (!active || (alias && location.pathname !== settingsPath(alias))) {
+    return <Navigate to={active ? settingsPath(active.id) : "/settings"} replace state={location.state} />;
   }
 
   return (

@@ -5,10 +5,12 @@ type UploadResponse = { status?: number; json: unknown };
 type UploadHandler = (form: FormData) => UploadResponse | Promise<UploadResponse>;
 
 export const test = base.extend<{ captureUpload: (handler: UploadHandler) => Promise<void> }>({
-  captureUpload: async ({ page }, use) => {
+  captureUpload: async ({ page, baseURL }, use) => {
+    if (!baseURL) throw new Error("Upload fixture requires a baseURL");
+    const origin = new URL(baseURL).origin;
     let handler: UploadHandler | undefined;
     const server = createServer(async (request, response) => {
-      response.setHeader("access-control-allow-origin", "http://127.0.0.1:4173");
+      response.setHeader("access-control-allow-origin", origin);
       try {
         const chunks: Buffer[] = [];
         for await (const chunk of request) chunks.push(Buffer.from(chunk));

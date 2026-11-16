@@ -253,10 +253,8 @@ for (const locale of ["en", "zh-CN"] as const) {
       name: chinese ? "双语版" : "Bilingual",
       exact: true,
     }).check();
-    await page.getByText(
-      chinese ? "排版与高级选项" : "Layout and advanced options",
-      { exact: true },
-    ).click();
+    await expect(page.getByText(chinese ? "排版与高级选项" : "Layout and advanced options", { exact: true })).toHaveCount(0);
+    await page.goto(`/projects/${pid}/settings`);
     const bilingualOrder = page.getByLabel(chinese ? "双语顺序" : "Bilingual order");
     await expect(bilingualOrder).toHaveText(chinese ? "译文在前" : "Translation first");
     await chooseOption(bilingualOrder, chinese ? "原文在前" : "Source first");

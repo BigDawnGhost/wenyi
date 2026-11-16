@@ -41,7 +41,7 @@ Windows 安装器应以普通用户运行，不要选择**以管理员身份运�
 
 ### MinerU PDF 解析密钥
 
-在**设置 → PDF 解析**中填写用于 PDF 转换的 MinerU 密钥，它与模型 API 密钥独立。
+在**设置 → PDF → MinerU PDF 解析**中填写用于 PDF 转换的 MinerU 密钥，它与模型 API 密钥独立。
 
 **手动 MinerU 密钥在输入停顿或离开输入框时自动保存，没有保存按钮。** 清空输入框即移除手动密钥。保存独立于模型／配置保存，优先使用系统凭据库，不可用时仅存于当前会话并提示。
 
@@ -94,7 +94,7 @@ Desktop 使用一个与程序目录分离的**数据根目录**：
 
 ## 可选 BabelDOC 插件
 
-使用**设置 → BabelDOC 插件 → 启用并下载**，可进行保留版式的 PDF 翻译。插件默认关闭，从官方 [BabelDOC bridge 发行版](https://github.com/BigDawnGhost/wenyi-babeldoc-bridge/releases)下载独立的 **AGPL-3.0-only** 运行环境及模型／字体包；普通 Desktop 安装不会下载它。
+使用**设置 → PDF → BabelDOC 插件 → 启用并下载**，可进行保留版式的 PDF 翻译。MinerU 凭据与 BabelDOC 插件控件共用此 PDF 页面。插件默认关闭，从官方 [BabelDOC bridge 发行版](https://github.com/BigDawnGhost/wenyi-babeldoc-bridge/releases)下载独立的 **AGPL-3.0-only** 运行环境及模型／字体包；普通 Desktop 安装不会下载它。
 
 等待**已就绪**后，在创建 PDF 项目时选择 **BabelDOC** 解析器。启用插件不会把默认解析器从 MinerU 自动切换，也不转换已有项目。只有经 BabelDOC 解析的项目支持保留版式的 PDF 导出。
 
