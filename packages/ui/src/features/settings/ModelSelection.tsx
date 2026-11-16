@@ -1,6 +1,6 @@
-import { Label } from "../../components/ui/form";
 import { Select, SelectItem } from "../../components/ui/select";
 import { useI18n } from "../../i18n";
+import { SettingsRow, SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
@@ -32,24 +32,29 @@ export function ModelSelection({
     ["fast", t("providerSettings.fastTier")],
   ];
   return (
-    <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
-      <div className="grid grid-cols-3 gap-3">
+    <fieldset disabled={disabled} className="min-w-0 disabled:opacity-60">
+      <div className="overflow-hidden rounded-xl border border-border">
         {tierNames.map(([id, label]) => (
-          <div key={id} className="min-w-0">
-            <Label htmlFor={`tier-${id}`}>{label}</Label>
-            <Select
-              id={`tier-${id}`}
-              value={String(tiers[id] || "")}
-              onValueChange={(value) =>
-                onChange({
-                  ...llm,
-                  tiers: { ...tiers, [id]: value },
-                })
-              }
-            >
-              {modelOptions}
-            </Select>
-          </div>
+          <SettingsRow
+            key={id}
+            label={label}
+            htmlFor={`tier-${id}`}
+            control={
+              <Select
+                id={`tier-${id}`}
+                className={SETTINGS_CONTROL_CLASSNAME}
+                value={String(tiers[id] || "")}
+                onValueChange={(value) =>
+                  onChange({
+                    ...llm,
+                    tiers: { ...tiers, [id]: value },
+                  })
+                }
+              >
+                {modelOptions}
+              </Select>
+            }
+          />
         ))}
       </div>
     </fieldset>

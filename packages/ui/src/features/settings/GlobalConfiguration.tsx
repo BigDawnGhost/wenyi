@@ -18,6 +18,7 @@ import { MinerUSettings } from "./MinerUSettings";
 import { SettingsActionBar, SettingsGroup, SettingsSection } from "./SettingsSection";
 import { WorkflowSettings, workflowField } from "./WorkflowSettings";
 import { renameRegistryId, type RegistryGroup } from "./registryEdits";
+import { SETTINGS_CONTENT_CLASSNAME } from "./SettingsRow";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
@@ -185,7 +186,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
         <ErrorNotice error={t("settings.credentialsFailedNotice")} />
       )}
       {/* Keep controls mounted so category navigation preserves local ID/key drafts. */}
-      <div className="flex-1">
+      <div className={SETTINGS_CONTENT_CLASSNAME}>
         <div hidden={section !== "general"}>
           <LanguageSettings />
         </div>
@@ -273,24 +274,26 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
       </div>
       <SettingsActionBar
         notices={
-          <>
-            {yamlDirty && (
-              <Link to="/settings/advanced" state={location.state} className="block text-warning-text underline underline-offset-4">
-                {t("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
-              </Link>
-            )}
-            {editingIds && (
-              <Link to="/settings/providers" state={location.state} className="block text-warning-text underline underline-offset-4">
-                {t("registry.finishRenaming")}
-              </Link>
-            )}
-            {!yamlDirty && !editingIds && dirty && (
-              <span className="text-muted-foreground">{t("settings.unsavedSummary")}</span>
-            )}
-          </>
+          yamlDirty || editingIds || dirty ? (
+            <>
+              {yamlDirty && (
+                <Link to="/settings/advanced" state={location.state} className="block text-warning-text underline underline-offset-4">
+                  {t("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
+                </Link>
+              )}
+              {editingIds && (
+                <Link to="/settings/providers" state={location.state} className="block text-warning-text underline underline-offset-4">
+                  {t("registry.finishRenaming")}
+                </Link>
+              )}
+              {!yamlDirty && !editingIds && dirty && (
+                <span className="text-muted-foreground">{t("settings.unsavedSummary")}</span>
+              )}
+            </>
+          ) : undefined
         }
       >
-        <Button variant="ghost" disabled={!draft || pending} onClick={() => restore.mutate()}>
+        <Button variant="outline" disabled={!draft || pending} onClick={() => restore.mutate()}>
           {t("settings.restoreDefaults")}
         </Button>
         {section === "advanced" && (

@@ -14,6 +14,7 @@ import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
 import { ModelSelection } from "./ModelSelection";
 import { SettingsActionBar, SettingsSection } from "./SettingsSection";
 import { WorkflowSettings, workflowField } from "./WorkflowSettings";
+import { SETTINGS_CONTENT_CLASSNAME } from "./SettingsRow";
 
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;
@@ -88,10 +89,10 @@ export default function SettingsPage() {
     <div className="flex min-h-dvh flex-col">
       <PageHeader title={tr("common.projectSettings")} />
       <PageContainer className="flex flex-1 flex-col">
-        <div className="flex-1">
+        <div className={SETTINGS_CONTENT_CLASSNAME}>
           <ErrorNotice error={config.error || configurationError} />
-          {busy && <ReadOnlyNotice className="mb-4" />}
-          <SettingsSection title={tr("settings.sectionModels")}>
+          {busy && <ReadOnlyNotice />}
+          <SettingsSection title={tr("settings.sectionModels")} className="py-0">
             <ModelSelection
               llm={section(effective, "llm")}
               models={config.data?.registered_models || {}}
@@ -110,7 +111,7 @@ export default function SettingsPage() {
               {tr("settings.manageGlobalModels")}
             </Link>
           </SettingsSection>
-          <SettingsSection title={tr("settings.sectionWorkflow")}>
+          <SettingsSection title={tr("settings.sectionWorkflow")} className="py-0">
             <WorkflowSettings
               scope="project"
               config={effective}
@@ -118,7 +119,7 @@ export default function SettingsPage() {
               onField={setField}
             />
           </SettingsSection>
-          <SettingsSection id="advanced-yaml" title={tr("settings.advancedYamlConfiguration")}>
+          <SettingsSection id="advanced-yaml" title={tr("settings.advancedYamlConfiguration")} className="py-0">
             {yamlDirty && (
               <p className="text-sm text-muted-foreground">{tr("settings.unsavedSummary")}</p>
             )}
@@ -148,7 +149,7 @@ export default function SettingsPage() {
           }
         >
           <Button
-            variant="ghost"
+            variant="outline"
             disabled={disabled}
             onClick={() => restore.mutate()}
           >

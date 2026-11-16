@@ -3,6 +3,7 @@ import { Select, SelectItem } from "../../components/ui/select";
 import { locales, useI18n } from "../../i18n";
 import { isLocale } from "../../i18n/catalog";
 import { SettingsSection } from "./SettingsSection";
+import { SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
 
 export function LanguageSettings() {
   const { locale, setLocale, t } = useI18n();
@@ -12,6 +13,7 @@ export function LanguageSettings() {
         <Label htmlFor="interface-language">{t("settings.interfaceLanguage")}</Label>
         <Select
           id="interface-language"
+          className={SETTINGS_CONTROL_CLASSNAME}
           value={locale}
           onValueChange={(value) => {
             if (isLocale(value)) setLocale(value);

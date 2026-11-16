@@ -11,6 +11,7 @@ import { platform } from "../../platform";
 import { LazyBoundary } from "../../routes/LazyBoundary";
 import { ModelConnectivity } from "./ModelConnectivity";
 import { ModelNameField } from "./ModelNameField";
+import { SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
@@ -136,6 +137,7 @@ export function ProviderSettings({
               </Label>
               <Input
                 id={`key-${id}`}
+                className={SETTINGS_CONTROL_CLASSNAME}
                 autoComplete="off"
                 placeholder={tr("providerSettings.leaveBlankForTheProviderDefaultVariable")}
                 value={String(provider.api_key_env || "")}
@@ -153,6 +155,7 @@ export function ProviderSettings({
                   <Label htmlFor={`provider-${id}`}>{tr("providerSettings.apiProvider")}</Label>
                   <Select
                     id={`provider-${id}`}
+                    className={SETTINGS_CONTROL_CLASSNAME}
                     value={String(provider.kind)}
                     onValueChange={(value) => {
                       // Protocol-specific options cannot be carried to another adapter.
@@ -186,6 +189,7 @@ export function ProviderSettings({
                   <Label htmlFor={`url-${id}`}>{tr("providerSettings.apiBaseUrl")}</Label>
                   <Input
                     id={`url-${id}`}
+                    className={SETTINGS_CONTROL_CLASSNAME}
                     placeholder={tr("providerSettings.leaveBlankForTheProviderDefaultUrl")}
                     value={String(provider.base_url || "")}
                     onChange={(e) =>
@@ -199,6 +203,7 @@ export function ProviderSettings({
                   </Label>
                   <Input
                     id={`timeout-${id}`}
+                    className={SETTINGS_CONTROL_CLASSNAME}
                     type="number"
                     min={1}
                     value={Number(provider.timeout ?? 600)}
@@ -260,6 +265,7 @@ export function ProviderSettings({
                 <Label htmlFor={`connection-${id}`}>{tr("providerSettings.apiConnection")}</Label>
                 <Select
                   id={`connection-${id}`}
+                  className={SETTINGS_CONTROL_CLASSNAME}
                   value={String(model.provider)}
                   onValueChange={(value) =>
                     update("models", id, { provider: value, options: {} })

@@ -1,6 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Input, Label } from "../../components/ui/form";
 import { useI18n } from "../../i18n";
+import { cn } from "../../lib/utils";
+import { SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
 import type { RegistryGroup } from "./registryEdits";
 
 /** Registry ID input; edits apply on Enter or blur, Escape restores the saved ID. */
@@ -49,7 +51,7 @@ export function RegistryIdField({
       <div className="flex gap-1">
         <Input
           id={`registry-${key}`}
-          className="min-w-0"
+          className={cn(SETTINGS_CONTROL_CLASSNAME, "min-w-0")}
           value={draft}
           aria-invalid={!!error}
           aria-describedby={error ? `error-${key}` : undefined}

@@ -8,6 +8,7 @@ import { Input, Label } from "../../components/ui/form";
 import { Button } from "../../components/ui/button";
 import { platform } from "../../platform";
 import { cn } from "../../lib/utils";
+import { SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
 
 type Document = Record<string, unknown>;
 type ListingDraft = {
@@ -105,7 +106,7 @@ export function ModelNameField({
             aria-activedescendant={expanded && active >= 0 ? `${listId}-${active}` : undefined}
             autoComplete="off"
             spellCheck={false}
-            className={cn(listed && "pr-8")}
+            className={cn(SETTINGS_CONTROL_CLASSNAME, listed && "pr-8")}
             value={value}
             onChange={(event) => {
               onChange(event.target.value);
