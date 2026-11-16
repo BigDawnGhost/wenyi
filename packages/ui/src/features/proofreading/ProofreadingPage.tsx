@@ -90,11 +90,11 @@ export default function ProofreadingPage() {
                 </Select>
               </div>
             </div>
-            <ul aria-label={t("proofreading.chapterList")} className="divide-y divide-black/[0.05] dark:divide-white/[0.07]">
+            <ul aria-label={t("proofreading.chapterList")} className="space-y-0.5 -mb-3">
               {filtered?.map((chapter) => (
                 <li key={chapter.index}>
                   <Link
-                    className="flex items-center justify-between gap-4 py-4 hover:bg-accent rounded"
+                    className="-mx-2 flex items-center justify-between gap-4 rounded-lg px-3 py-3 transition-colors hover:bg-hover"
                     to={`/projects/${pid}/proofreading/${chapter.index}`}
                   >
                     <div className="min-w-0 space-y-1">
