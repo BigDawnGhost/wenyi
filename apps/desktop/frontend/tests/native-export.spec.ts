@@ -70,11 +70,19 @@ test("HTML native save preserves the options and reports the HTML path", async (
   });
   await page.goto(`/projects/${pid}/export`);
   await page.getByRole("button", { name: "HTML", exact: true }).click();
+  await page.getByRole("radio", { name: "Bilingual", exact: true }).check();
+  await page.getByText("Layout and advanced options", { exact: true }).click();
+  await page.getByRole("switch", { name: "Normalize punctuation on export", exact: true }).uncheck();
+  await page.getByRole("switch", { name: "Include an “About this translation” page", exact: true }).uncheck();
+  await page.getByRole("switch", { name: "Preserve source formatting in bilingual output", exact: true }).check();
   await page.getByRole("button", { name: "Generate export", exact: true }).click();
   await expect(page.getByText("Saved to /fixture/book.html", { exact: true })).toBeVisible();
   expect(await page.evaluate(() =>
-    (window as unknown as { savedOptions: { format: string } }).savedOptions.format,
-  )).toBe("html");
+    (window as unknown as { savedOptions: Record<string, unknown> }).savedOptions,
+  )).toMatchObject({
+    format: "html", bilingual: true, punctuation_normalize: false,
+    about_page: false, preserve_source_style: true,
+  });
   expect(browserJobs).toBe(0);
 });
 

@@ -256,7 +256,7 @@ export function ProviderSettings({
             </Button>
           }
         />
-        <div className="overflow-hidden rounded-xl border border-border bg-card divide-y divide-border">
+        <div className="rounded-xl border border-border bg-card divide-y divide-border">
           {Object.entries(models).map(([id, raw]) => {
             const model = object(raw);
             return (

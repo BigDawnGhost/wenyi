@@ -10,8 +10,13 @@ variant 消费两者。本页由上述来源生成；当本页与源不一致时
 ## 颜色
 
 语义色是 HSL 三元组，以 hsl(var(--token)) 消费；.dark 类直接更换取值，工具类保持不变。
-状态色成对使用：基础色搭配 -foreground 变体，用于实色底上的前景内容。success、warning、
-info 与 destructive 分别表达成功、警示、提示与失败/危险状态。
+状态色以基础色搭配 -foreground 变体。所有状态标签在明暗主题下均使用低饱和底色、
+清晰文字、细描边与紧凑小圆角：status-success 用灰绿，status-warning 用灰琥珀，
+status-danger 用灰红，status-info 用灰蓝；中性标签复用 secondary、secondary-foreground
+和 border。状态配色独立于较强的操作与警示色，使失败标签更柔和，但不削弱删除按钮
+与错误提示的警示性。
+弹窗通知跟随应用主题（包括跟随系统）并复用状态配色，普通通知使用卡片色。
+统计条与对应图例使用 chart-1 至 chart-6，轨道使用 chart-track；暗色主题采用更低饱和的色板。
 
 | CSS 变量 | Tailwind | 亮色 | 暗色 |
 | --- | --- | --- | --- |
@@ -29,8 +34,6 @@ info 与 destructive 分别表达成功、警示、提示与失败/危险状态�
 | `--accent-foreground` | `accent-foreground` | `hsl(240 5.9% 10%)` | `hsl(0 0% 74.1%)` |
 | `--destructive` | `destructive` | `hsl(0 84.2% 60.2%)` | `hsl(0 62.8% 30.6%)` |
 | `--destructive-foreground` | `destructive-foreground` | `hsl(0 0% 98%)` | `hsl(0 0% 98%)` |
-| `--success` | `success` | `hsl(161 94% 30%)` | `hsl(163 88% 20%)` |
-| `--success-foreground` | `success-foreground` | `hsl(0 0% 98%)` | `hsl(0 0% 98%)` |
 | `--warning` | `warning` | `hsl(26 90% 37%)` | `hsl(23 82% 31%)` |
 | `--warning-foreground` | `warning-foreground` | `hsl(0 0% 98%)` | `hsl(0 0% 98%)` |
 | `--info` | `info` | `hsl(200 96% 32%)` | `hsl(201 90% 27%)` |
@@ -38,18 +41,31 @@ info 与 destructive 分别表达成功、警示、提示与失败/危险状态�
 | `--border` | `border` | `hsl(240 5.9% 90%)` | `hsl(0 0% 19.6%)` |
 | `--input` | `input` | `hsl(240 5.9% 90%)` | `hsl(0 0% 17.6%)` |
 | `--ring` | `ring` | `hsl(240 5.9% 10%)` | `hsl(0 0% 60%)` |
+| `--status-success` | `status-success` | `hsl(152 18% 95%)` | `hsl(154 13% 16%)` |
+| `--status-success-foreground` | `status-success-foreground` | `hsl(154 24% 29%)` | `hsl(152 22% 73%)` |
+| `--status-success-border` | `status-success-border` | `hsl(152 16% 83%)` | `hsl(154 14% 28%)` |
+| `--status-warning` | `status-warning` | `hsl(38 35% 94%)` | `hsl(36 18% 16%)` |
+| `--status-warning-foreground` | `status-warning-foreground` | `hsl(32 45% 30%)` | `hsl(38 34% 72%)` |
+| `--status-warning-border` | `status-warning-border` | `hsl(38 28% 80%)` | `hsl(36 20% 28%)` |
+| `--status-danger` | `status-danger` | `hsl(4 30% 96%)` | `hsl(4 18% 18%)` |
+| `--status-danger-foreground` | `status-danger-foreground` | `hsl(4 38% 39%)` | `hsl(4 36% 76%)` |
+| `--status-danger-border` | `status-danger-border` | `hsl(4 25% 84%)` | `hsl(4 22% 32%)` |
+| `--status-info` | `status-info` | `hsl(210 24% 95%)` | `hsl(210 18% 17%)` |
+| `--status-info-foreground` | `status-info-foreground` | `hsl(210 32% 33%)` | `hsl(210 26% 74%)` |
+| `--status-info-border` | `status-info-border` | `hsl(210 22% 82%)` | `hsl(210 20% 30%)` |
 | `--ink` | - | `hsl(13 13 13)` | `hsl(0 0% 100%)` |
 | `--hover` | `hover` | `hsl(var(--ink) / 0.05)` | `hsl(var(--ink) / 0.08)` |
 | `--selected` | `selected` | `hsl(var(--ink) / 0.08)` | `hsl(var(--ink) / 0.12)` |
 | `--surface` | `surface` | `hsl(var(--ink) / 0.03)` | `hsl(var(--ink) / 0.03)` |
 | `--text-placeholder` | `placeholder` | `hsl(var(--ink) / 0.35)` | `hsl(var(--ink) / 0.3)` |
 | `--warning-text` | `warning-text` | `hsl(26 90% 37%)` | `hsl(38 85% 60%)` |
-| `--chart-1` | `chart-1` | `hsl(199.4 95.5% 73.9%)` | `hsl(199.4 95.5% 73.9%)` |
-| `--chart-2` | `chart-2` | `hsl(37.7 92.1% 50.2%)` | `hsl(37.7 92.1% 50.2%)` |
-| `--chart-3` | `chart-3` | `hsl(200.4 98% 39.4%)` | `hsl(198.4 93.2% 59.6%)` |
-| `--chart-4` | `chart-4` | `hsl(212.7 26.8% 83.9%)` | `hsl(212.7 26.8% 83.9%)` |
-| `--chart-5` | `chart-5` | `hsl(173.4 80.4% 40%)` | `hsl(172.5 66% 50.4%)` |
-| `--chart-6` | `chart-6` | `hsl(215.4 16.3% 46.9%)` | `hsl(215 20.2% 65.1%)` |
+| `--chart-track` | `chart-track` | `hsl(var(--muted))` | `hsl(0 0% 20%)` |
+| `--chart-1` | `chart-1` | `hsl(199.4 95.5% 73.9%)` | `hsl(200 28% 62%)` |
+| `--chart-2` | `chart-2` | `hsl(37.7 92.1% 50.2%)` | `hsl(38 42% 59%)` |
+| `--chart-3` | `chart-3` | `hsl(200.4 98% 39.4%)` | `hsl(212 38% 55%)` |
+| `--chart-4` | `chart-4` | `hsl(212.7 26.8% 83.9%)` | `hsl(216 12% 56%)` |
+| `--chart-5` | `chart-5` | `hsl(173.4 80.4% 40%)` | `hsl(167 32% 49%)` |
+| `--chart-6` | `chart-6` | `hsl(215.4 16.3% 46.9%)` | `hsl(222 14% 61%)` |
 | `--diff-removed-bg` | `diff-removed` | `hsl(0 93.3% 94.1%)` | `hsl(0 74.7% 15.5%)` |
 | `--diff-removed-foreground` | `diff-removed-foreground` | `hsl(0 62.8% 30.6%)` | `hsl(0 96.3% 89.4%)` |
 | `--diff-added-bg` | `diff-added` | `hsl(140.6 84.2% 92.5%)` | `hsl(144.9 80.4% 10%)` |
@@ -165,7 +181,7 @@ hover 与按压反馈用 standard，侧栏保留专属节奏。
 ## 用法约定
 
 - 仅用 px：间距、字号与几何一律使用 px，不使用 em/rem。
-- 组件只用语义工具类（如 bg-success、text-warning、border-info）；原始 Tailwind 色板类
+- 组件只用语义工具类（如 bg-status-success、text-warning-text）；原始 Tailwind 色板类
   属于样式护栏违规。
 - 需要叠加海拔与焦点光环时，使用列出变量的任意值，例如
   shadow-[var(--shadow-e2),var(--shadow-focus-ring)]。

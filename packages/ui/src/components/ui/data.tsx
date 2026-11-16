@@ -3,6 +3,7 @@ import { statusLabel } from "../../i18n/status";
 import { errorMessage } from "../../lib/error-codes";
 import { cn } from "../../lib/utils";
 import { Lock } from "lucide-react";
+import { Card } from "./card";
 export function ErrorNotice({ error }: { error?: unknown }) {
   // The hook runs before the early return so the call order stays stable.
   const { t } = useI18n();
@@ -17,7 +18,7 @@ export function ErrorNotice({ error }: { error?: unknown }) {
   );
 }
 
-/** One consistent line for every page that becomes read-only while a project task runs. */
+/** One consistent notice panel for pages that become read-only during a project task. */
 export function ReadOnlyNotice({
   className,
   reason = "running",
@@ -28,13 +29,13 @@ export function ReadOnlyNotice({
 }) {
   const { t } = useI18n();
   return (
-    <p
+    <Card
       role="status"
-      className={cn("flex items-center gap-2 text-sm text-muted-foreground", className)}
+      className={cn("flex items-center gap-2 p-4 text-sm text-muted-foreground", className)}
     >
       <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-      {t(reason === "source" ? "common.readOnlyUntilPrepared" : "common.readOnlyWhileRunning")}
-    </p>
+      <span>{t(reason === "source" ? "common.readOnlyUntilPrepared" : "common.readOnlyWhileRunning")}</span>
+    </Card>
   );
 }
 

@@ -127,9 +127,25 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
-        success: {
-          DEFAULT: "hsl(var(--success))",
-          foreground: "hsl(var(--success-foreground))",
+        "status-success": {
+          DEFAULT: "hsl(var(--status-success))",
+          foreground: "hsl(var(--status-success-foreground))",
+          border: "hsl(var(--status-success-border))",
+        },
+        "status-warning": {
+          DEFAULT: "hsl(var(--status-warning))",
+          foreground: "hsl(var(--status-warning-foreground))",
+          border: "hsl(var(--status-warning-border))",
+        },
+        "status-danger": {
+          DEFAULT: "hsl(var(--status-danger))",
+          foreground: "hsl(var(--status-danger-foreground))",
+          border: "hsl(var(--status-danger-border))",
+        },
+        "status-info": {
+          DEFAULT: "hsl(var(--status-info))",
+          foreground: "hsl(var(--status-info-foreground))",
+          border: "hsl(var(--status-info-border))",
         },
         warning: {
           DEFAULT: "hsl(var(--warning))",
@@ -141,6 +157,7 @@ export default {
           foreground: "hsl(var(--info-foreground))",
         },
         chart: {
+          track: "hsl(var(--chart-track))",
           1: "hsl(var(--chart-1))",
           2: "hsl(var(--chart-2))",
           3: "hsl(var(--chart-3))",

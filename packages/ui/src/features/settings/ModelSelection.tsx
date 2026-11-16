@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { Select, SelectItem } from "../../components/ui/select";
 import { useI18n } from "../../i18n";
 import { SettingsRow, SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
@@ -10,11 +11,13 @@ export function ModelSelection({
   models,
   disabled,
   onChange,
+  footer,
 }: {
   llm: Document;
   models: Document;
   disabled: boolean;
   onChange: (llm: Document) => void;
+  footer?: ReactNode;
 }) {
   const { t } = useI18n();
   const tiers = object(llm.tiers);
@@ -71,6 +74,7 @@ export function ModelSelection({
             />
           );
         })}
+        {footer && <div className="border-t border-border px-4 py-3">{footer}</div>}
       </div>
     </fieldset>
   );

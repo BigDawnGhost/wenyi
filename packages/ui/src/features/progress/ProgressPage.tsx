@@ -2,6 +2,7 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { useI18n } from "../../i18n";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { LoaderCircle, Pause, Play, type LucideIcon } from "lucide-react";
 import { api, isProjectBusy } from "../../api/client";
 import type { ChapterSummary } from "../../api/types";
 import { useProjectQuery } from "../../lib/projectQuery";
@@ -81,29 +82,28 @@ export default function ProgressPage() {
               !paused &&
               project?.status !== "error" &&
               project?.fmt && (
-                <Button
-                  disabled={action.isPending}
+                <TaskControlButton
+                  label={tr("common.startTranslation")}
+                  icon={Play}
+                  pending={action.isPending}
                   onClick={() => action.mutate("translate")}
-                >
-                  {tr("common.startTranslation")}
-                </Button>
+                />
               )}
             {busy && project?.status !== "parsing" && (
-              <Button
-                variant="outline"
-                disabled={action.isPending || project?.status === "pausing"}
+              <TaskControlButton
+                label={tr("progress.pause")}
+                icon={Pause}
+                pending={action.isPending || project?.status === "pausing"}
                 onClick={() => action.mutate("pause")}
-              >
-                {tr("progress.pause")}
-              </Button>
+              />
             )}
             {(paused || project?.status === "error") && (
-              <Button
-                disabled={action.isPending}
+              <TaskControlButton
+                label={tr("progress.resumeTask")}
+                icon={Play}
+                pending={action.isPending}
                 onClick={() => action.mutate("resume")}
-              >
-                {tr("progress.resumeTask")}
-              </Button>
+              />
             )}
           </>
         }
@@ -145,7 +145,7 @@ export default function ProgressPage() {
           connected={connected}
           busy={busy}
         />
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <Card className="flex flex-wrap items-center justify-between gap-2 p-4 text-xs text-muted-foreground">
           <p>
             {tr("progress.progressConnection")}:{" "}
             {connected ? tr("progress.live") : tr("progress.polling")}
@@ -158,7 +158,7 @@ export default function ProgressPage() {
               {tr("contents.readContentsSource")}
             </Link>
           )}
-        </div>
+        </Card>
         <ChapterTable
           pid={pid}
           chapters={chapters}
@@ -166,6 +166,38 @@ export default function ProgressPage() {
         />
       </PageContainer>
     </>
+  );
+}
+
+function TaskControlButton({
+  label,
+  icon,
+  pending,
+  onClick,
+}: {
+  label: string;
+  icon: LucideIcon;
+  pending: boolean;
+  onClick: () => void;
+}) {
+  const Icon = pending ? LoaderCircle : icon;
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon"
+      className="shrink-0 border border-border text-muted-foreground"
+      aria-label={label}
+      title={label}
+      aria-busy={pending || undefined}
+      disabled={pending}
+      onClick={onClick}
+    >
+      <Icon
+        className={pending ? "h-4.5 w-4.5 animate-spin" : "h-4.5 w-4.5"}
+        aria-hidden="true"
+      />
+    </Button>
   );
 }
 

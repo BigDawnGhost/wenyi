@@ -10,7 +10,7 @@ import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { StatusBadge } from "../../components/StatusBadge";
 import { Disclosure } from "../../components/ui/disclosure";
-import { Label } from "../../components/ui/form";
+import { Label, Switch } from "../../components/ui/form";
 import { Select, SelectItem } from "../../components/ui/select";
 import { ErrorNotice } from "../../components/ui/data";
 import { Progress } from "../../components/ui/progress";
@@ -172,14 +172,16 @@ export default function ExportPage() {
               <p className="text-sm text-muted-foreground">{tr("export.pdfBilingualLayout")}</p>
             )}
             <Disclosure title={tr("export.advanced")} error={create.error}>
-              <label className="flex gap-2 items-center text-sm">
-                <input
-                  type="checkbox"
+              <div className="flex gap-2 items-center text-sm">
+                <Switch
+                  id="export-punctuation"
                   checked={punctuation}
-                  onChange={(e) => setPunctuation(e.target.checked)}
+                  onCheckedChange={setPunctuation}
                 />
-                {tr("settings.normalizePunctuationOnExport")}
-              </label>
+                <Label htmlFor="export-punctuation" className="cursor-pointer font-normal leading-5">
+                  {tr("settings.normalizePunctuationOnExport")}
+                </Label>
+              </div>
               {bilingual && (
                 <Select
                   aria-label={tr("export.bilingualOrder")}
@@ -199,23 +201,27 @@ export default function ExportPage() {
                   </SelectItem>
                 </Select>
               )}
-              <label className="flex gap-2 items-center text-sm">
-                <input
-                  type="checkbox"
+              <div className="flex gap-2 items-center text-sm">
+                <Switch
+                  id="export-about"
                   checked={about}
-                  onChange={(e) => setAbout(e.target.checked)}
+                  onCheckedChange={setAbout}
                 />
-                {tr("export.includeAnAboutThisTranslationPage")}
-              </label>
+                <Label htmlFor="export-about" className="cursor-pointer font-normal leading-5">
+                  {tr("export.includeAnAboutThisTranslationPage")}
+                </Label>
+              </div>
               {bilingual && !pdf && (
-                <label className="flex gap-2 items-center text-sm">
-                  <input
-                    type="checkbox"
+                <div className="flex gap-2 items-center text-sm">
+                  <Switch
+                    id="export-preserve-style"
                     checked={preserveStyle}
-                    onChange={(e) => setPreserveStyle(e.target.checked)}
+                    onCheckedChange={setPreserveStyle}
                   />
-                  {tr("export.preserveSourceFormattingInBilingualOutput")}
-                </label>
+                  <Label htmlFor="export-preserve-style" className="cursor-pointer font-normal leading-5">
+                    {tr("export.preserveSourceFormattingInBilingualOutput")}
+                  </Label>
+                </div>
               )}
             </Disclosure>
             <Button

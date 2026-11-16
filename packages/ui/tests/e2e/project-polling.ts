@@ -222,18 +222,24 @@ test("the dashboard does not poll when every project is complete or paused", asy
 });
 
 test("leaving a chapter cancels its unused in-flight content request", async ({ page }) => {
+  await page.addInitScript(() => {
+    const signals: AbortSignal[] = [];
+    Object.defineProperty(window, "chapterSignals", { value: signals });
+    const original = window.fetch;
+    window.fetch = (input, init) => {
+      const url = input instanceof Request ? input.url : String(input);
+      if (url.includes("/chapters/0/window?") && init?.signal) signals.push(init.signal);
+      return original(input, init);
+    };
+  });
   await fakeApi(page, {
     [`/projects/${pid}/review/1`]: {
       index: 1, title: "Next chapter", review_issues: [],
       segments: [{ index: 0, source: "Next source", target: "Next translation", kind: "text" }],
     },
   });
-  let aborted = 0;
   let release!: () => void;
   const delayed = new Promise<void>(resolve => { release = resolve; });
-  page.on("requestfailed", request => {
-    if (request.url().includes(`/chapters/0/window?`)) aborted++;
-  });
   await mockChapter(page, 0, async () => {
     await delayed;
     return { index: 0, title: "Old chapter", segments: [], review_issues: [] };
@@ -242,10 +248,16 @@ test("leaving a chapter cancels its unused in-flight content request", async ({ 
     await page.goto(`/projects/${pid}/proofreading/0`);
     const next = page.getByRole("link", { name: "Next chapter", exact: true });
     await expect(next).toBeVisible();
-    const before = aborted;
+    // Observe the application's fetch signal, not engine-specific requestfailed delivery
+    // for an intercepted request whose mock response is still held.
+    await expect.poll(() => page.evaluate(() =>
+      (window as unknown as { chapterSignals: AbortSignal[] }).chapterSignals
+        .some(signal => !signal.aborted))).toBe(true);
     await next.click();
     await expect(page.getByTestId("translation-text")).toHaveText("Next translation");
-    await expect.poll(() => aborted).toBeGreaterThan(before);
+    await expect.poll(() => page.evaluate(() =>
+      (window as unknown as { chapterSignals: AbortSignal[] }).chapterSignals
+        .every(signal => signal.aborted))).toBe(true);
   } finally {
     release();
   }

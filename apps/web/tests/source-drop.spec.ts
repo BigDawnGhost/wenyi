@@ -1,5 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { fakeApi, pid, project } from "../../../packages/ui/sandbox/fixtures";
+import { test } from "./upload-fixture";
 
 async function fileTransfer(
   page: Page,
@@ -21,6 +22,7 @@ async function fileTransfer(
 for (const chinese of [false, true]) {
   test(`dropping a source uses the existing upload flow in ${chinese ? "Chinese" : "English"}`, async ({
     page,
+    captureUpload,
   }, testInfo) => {
     await page.addInitScript(
       (locale) => localStorage.setItem("wenyi.locale", locale),
@@ -32,27 +34,17 @@ for (const chinese of [false, true]) {
       content: string;
       project: Record<string, unknown>;
     }[] = [];
-    await page.route("**/api/projects", async (route) => {
-      // The sidebar also reads the project list from this path.
-      if (route.request().method() !== "POST") return route.fallback();
-      const form = await new Response(
-        new Uint8Array(route.request().postDataBuffer()!),
-        {
-          headers: {
-            "content-type": route.request().headers()["content-type"],
-          },
-        },
-      ).formData();
+    await captureUpload(async form => {
       const file = form.get("file") as File;
       uploads.push({
         name: file.name,
         content: await file.text(),
         project: JSON.parse(String(form.get("project"))),
       });
-      await route.fulfill({
+      return {
         status: 503,
         json: { detail: "Upload unavailable" },
-      });
+      };
     });
     await page.goto("/projects/new");
     await page

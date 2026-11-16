@@ -79,7 +79,7 @@ function TokenBar({ parts, scale }: { parts: TokenPart[]; scale: number }) {
   );
   return (
     <div
-      className="flex h-2.5 overflow-hidden rounded-full bg-muted"
+      className="flex h-2.5 overflow-hidden rounded-full bg-chart-track"
       aria-hidden="true"
     >
       {parts.map(({ label, value, color }) => (

@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
+import { test } from "./upload-fixture";
 
 import {
   fakeApi,
@@ -13,6 +14,7 @@ import {
 
 test("creates a multilingual project and waits for background parsing", async ({
   page,
+  captureUpload,
 }, testInfo) => {
   await fakeApi(page);
   let status = "parsing";
@@ -29,21 +31,14 @@ test("creates a multilingual project and waits for background parsing", async ({
   );
   let created: Record<string, unknown> | undefined;
   let uploaded = false;
-  await page.route("**/api/projects", async (r) => {
-    if (r.request().method() !== "POST") return r.fallback();
-    const form = await new Response(
-      new Uint8Array(r.request().postDataBuffer()!),
-      {
-        headers: { "content-type": r.request().headers()["content-type"] },
-      },
-    ).formData();
+  await captureUpload(async form => {
     created = JSON.parse(String(form.get("project")));
     const source = form.get("file") as File;
     uploaded =
       source.name === "test.docx" && (await source.text()) === "fixture";
-    await r.fulfill({
+    return {
       json: { ...project, fmt: "docx", status: "parsing", initialized: false },
-    });
+    };
   });
   await page.route(`**/api/projects/${pid}/preview`, async (r) =>
     r.fulfill({

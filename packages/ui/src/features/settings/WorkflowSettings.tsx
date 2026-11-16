@@ -1,5 +1,5 @@
 import { useI18n } from "../../i18n";
-import { Input, Label } from "../../components/ui/form";
+import { Input, Label, Switch } from "../../components/ui/form";
 import { SettingsRow, SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
 
 const section = (config: Record<string, unknown>, key: string) =>
@@ -73,12 +73,11 @@ export function WorkflowSettings({
             label={label}
             htmlFor={`pipeline-${key}`}
             control={
-              <input
-                type="checkbox"
+              <Switch
                 id={`pipeline-${key}`}
-                disabled={key === "polish" && precision}
+                disabled={disabled || (key === "polish" && precision)}
                 checked={Boolean(section(config, "pipeline")[key])}
-                onChange={(e) => onField("pipeline", key, e.target.checked)}
+                onCheckedChange={(checked) => onField("pipeline", key, checked)}
               />
             }
           />

@@ -52,7 +52,7 @@ export default function RunTimeChart({
                 </span>
               </div>
               <div
-                className="h-1.5 overflow-hidden rounded-full bg-muted"
+                className="h-1.5 overflow-hidden rounded-full bg-chart-track"
                 aria-hidden="true"
               >
                 <div

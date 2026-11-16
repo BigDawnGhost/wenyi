@@ -133,9 +133,7 @@ export function AppLayout() {
             : entry.to === "/settings"
               ? { settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }
               : undefined}
-          className={slot === "action"
-            ? "w-full border border-border hover:shadow-e2"
-            : undefined}
+          className={slot === "action" ? "w-full" : undefined}
         />
       ));
 

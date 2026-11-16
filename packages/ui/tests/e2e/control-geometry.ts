@@ -4,7 +4,8 @@ import { fakeApi, pid } from "../../sandbox/fixtures";
 
 /** Whether the Desktop host must keep running this suite as well.
  *
- * Asserts checkbox and radio geometry plus draft retention at 1x and 1.25x zoom on the export page. The probe run recorded only `preferences`, `request` and no Desktop-only service, so both hosts exercise the same code.
+ * Asserts switch and radio geometry plus draft retention at 1x and 1.25x zoom
+ * on the shared export page, without invoking the host's export service.
  */
 export const desktopHostSensitive = false;
 
@@ -25,9 +26,12 @@ for (const theme of ["light", "dark"]) {
       expect(await summary.evaluate(node => getComputedStyle(node, "::marker").content)).toBe('""');
       await summary.focus();
       await page.keyboard.press("Enter");
-      const checkbox = page.locator('input[type="checkbox"]').first();
-      await expect(checkbox).toBeVisible();
-      for (const input of await page.locator('input[type="radio"], input[type="checkbox"]').all()) {
+      const punctuation = page.getByRole("switch", {
+        name: "Normalize punctuation on export", exact: true, includeHidden: true,
+      });
+      await expect(punctuation).toBeVisible();
+      await expect(page.getByRole("checkbox")).toHaveCount(0);
+      for (const input of await page.getByRole("radio").all()) {
         await expect(input).toHaveCSS("appearance", "none");
         await expect(input).toHaveCSS("width", "16px");
         await expect(input).toHaveCSS("height", "16px");
@@ -40,14 +44,33 @@ for (const theme of ["light", "dark"]) {
         expect(geometry.size).toBeCloseTo(16 * zoom);
         expect(Math.abs(geometry.center)).toBeLessThan(1);
       }
-      await checkbox.uncheck();
+      await page.getByRole("radio", { name: "Bilingual", exact: true }).check();
+      await expect(page.getByRole("switch")).toHaveCount(3);
+      for (const [name, checked] of [
+        ["Normalize punctuation on export", true],
+        ["Include an “About this translation” page", true],
+        ["Preserve source formatting in bilingual output", false],
+      ] as const) {
+        const control = page.getByRole("switch", { name, exact: true });
+        await expect(control).toHaveCSS("width", "36px");
+        await expect(control).toHaveCSS("height", "20px");
+        await expect(control).toBeChecked({ checked });
+        await control.focus();
+        await page.keyboard.press("Space");
+        await expect(control).toBeChecked({ checked: !checked });
+        await page.keyboard.press("Enter");
+        await expect(control).toBeChecked({ checked });
+        const label = page.locator(`label[for="${await control.getAttribute("id")}"]`);
+        await label.click();
+        await expect(control).toBeChecked({ checked: !checked });
+      }
       await summary.click();
-      await expect(checkbox).toBeAttached();
+      await expect(punctuation).toBeAttached();
       await summary.focus();
       await page.keyboard.press("Space");
-      await expect(checkbox).toBeVisible();
-      await expect(checkbox).not.toBeChecked();
-      await expect(checkbox).toHaveCSS("outline-style", "none");
+      await expect(punctuation).toBeVisible();
+      await expect(punctuation).not.toBeChecked();
+      await expect(punctuation).toHaveCSS("outline-style", "none");
     });
   }
 }

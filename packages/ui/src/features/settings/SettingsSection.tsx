@@ -1,21 +1,25 @@
 import { useId, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
+import { Card } from "../../components/ui/card";
 
-/** Full-width settings sections keep their headings above the controls. */
+/** Sections provide a panel by default; grouped sections own their child panels. */
 export function SettingsSection({
   title,
   id,
   children,
   className,
+  grouped = false,
   ...rest
 }: {
   title: string;
   id?: string;
   children: ReactNode;
   className?: string;
+  grouped?: boolean;
   "data-testid"?: string;
 }) {
   const headingId = useId();
+  const Content = grouped ? "div" : Card;
   return (
     <section
       id={id}
@@ -30,7 +34,9 @@ export function SettingsSection({
       <h2 id={headingId} className="mb-4 text-sm font-semibold">
         {title}
       </h2>
-      <div className="min-w-0 space-y-4">{children}</div>
+      <Content className={cn("min-w-0 space-y-4", !grouped && "p-4")}>
+        {children}
+      </Content>
     </section>
   );
 }

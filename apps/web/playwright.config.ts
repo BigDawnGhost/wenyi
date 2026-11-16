@@ -5,14 +5,22 @@ import { defineConfig, devices, type Project } from "@playwright/test";
 // serialise the whole suite behind a timing benchmark. PLAYWRIGHT_PERF=1 opts in.
 const perfEnabled = process.env.PLAYWRIGHT_PERF === "1";
 
-// PLAYWRIGHT_PROJECTS opts in to extra browser projects by name (comma
-// separated). `web-webkit` proxies the Safari/WKWebView/WebKitGTK engine family
+// PLAYWRIGHT_PROJECTS selects browser projects by name (comma separated),
+// defaulting to Chromium. `web-webkit` proxies the Safari/WKWebView/WebKitGTK engine family
 // that the Chromium project cannot cover; its browser is installed separately
 // with `playwright install webkit`, so it stays out of the default local run.
 const enabledProjects = (process.env.PLAYWRIGHT_PROJECTS ?? "")
   .split(",")
   .map((name) => name.trim())
   .filter(Boolean);
+const selectedProjects = new Set(enabledProjects.length ? enabledProjects : ["web"]);
+// The performance project depends on the Chromium gate even in an explicit browser selection.
+if (perfEnabled) selectedProjects.add("web");
+for (const name of selectedProjects) {
+  if (name !== "web" && name !== "web-webkit") {
+    throw new Error(`Unknown PLAYWRIGHT_PROJECTS entry: ${name}`);
+  }
+}
 
 // The executable override is Chromium-specific and must not leak into WebKit.
 const chromiumUse = {
@@ -23,16 +31,12 @@ const chromiumUse = {
 
 const gateProjects: Project[] = [
   { name: "web", testIgnore: "**/proofreading-performance.spec.ts", use: chromiumUse },
-  ...(enabledProjects.includes("web-webkit")
-    ? [
-        {
-          name: "web-webkit",
-          testIgnore: "**/proofreading-performance.spec.ts",
-          use: { ...devices["Desktop Safari"] },
-        },
-      ]
-    : []),
-];
+  {
+    name: "web-webkit",
+    testIgnore: "**/proofreading-performance.spec.ts",
+    use: { ...devices["Desktop Safari"] },
+  },
+].filter(project => selectedProjects.has(project.name));
 
 const perfProjects: Project[] = [
   {

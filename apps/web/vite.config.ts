@@ -13,15 +13,15 @@ import { matchFault, pickScenario } from "../../packages/ui/sandbox/scenarios";
 // packages/ui/sandbox/scenarios.ts. Without the variables the proxy to the
 // real API is untouched.
 const sandbox = createSandboxState();
+const mockApiEnabled = process.env.MOCK_API === "1" || process.env.MOCK_API === "true";
 
 function mockApi(): Plugin {
-  const enabled = process.env.MOCK_API === "1" || process.env.MOCK_API === "true";
   const scenario = pickScenario(process.env.MOCK_SCENARIO);
-  console.log("[mock-api] enabled =", enabled, "scenario =", scenario.id);
+  console.log("[mock-api] enabled =", mockApiEnabled, "scenario =", scenario.id);
   return {
     name: "mock-api",
     configureServer(server) {
-      if (!enabled) return;
+      if (!mockApiEnabled) return;
       scenario.seed?.(sandbox);
       if (server.httpServer) attachProgressServer(server.httpServer, sandbox);
       server.middlewares.use("/api", (req, res) => {
@@ -98,7 +98,9 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    proxy: {
+    // Upgrade listeners cannot short-circuit one another: the mock socket must
+    // never share /ws with the real backend proxy.
+    proxy: mockApiEnabled ? undefined : {
       "/api": { target: "http://localhost:8000", changeOrigin: true, rewrite: (p) => p.replace(/^\/api/, "") },
       "/ws": { target: "ws://localhost:8000", ws: true },
     },

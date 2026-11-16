@@ -54,13 +54,18 @@ export function VirtualChapter({
   const container = useRef<HTMLDivElement>(null);
   const [scroller, setScroller] = useState<HTMLElement | null>(null);
   const [margin, setMargin] = useState(0);
-  const [menu, setMenu] = useState<ParagraphMenuAnchor | null>(null);
+  const [menu, setMenu] = useState<
+    (ParagraphMenuAnchor & { selectionText: () => Promise<string> }) | null
+  >(null);
   const closeMenu = useCallback(() => setMenu(null), []);
   const [editor, setEditor] = useState<{
     segment: ReaderSegment; view: "edit" | "history" | "precision";
   } | null>(null);
   const selection = useReaderSelection(container, pid, ci, sourceOnly,
     t("proofreading.waitingForTranslation"), t("review.emptyTranslation"), t("proofreading.copyFailed"));
+  const openMenu = useCallback((anchor: ParagraphMenuAnchor) => {
+    setMenu({ ...anchor, selectionText: selection.captureText() });
+  }, [selection.captureText]);
   const pinKey = selection.pins.join(",");
   const virtualizer = useVirtualizer({
     count: initial.total,
@@ -122,7 +127,7 @@ export function VirtualChapter({
               style={{ transform: `translateY(${row.start - margin}px)` }}>
               {segment ? (
                 <ParagraphRow segment={segment} sourceOnly={sourceOnly}
-                  expanded={menu?.index === segment.index} onMenu={setMenu} />
+                  expanded={menu?.index === segment.index} onMenu={openMenu} />
               ) : (
                 <div aria-busy="true" className="border-b border-black/[0.05] h-40 p-4 text-sm text-muted-foreground dark:border-white/[0.07]">
                   {t("progress.loading")}
@@ -135,7 +140,7 @@ export function VirtualChapter({
       {!sourceOnly && menu && menuSegment && (
         <ParagraphMenu anchor={menu} source={menuSegment.source} target={menuSegment.target}
           disabled={readOnly || !!reader.error} onOpen={openEditor} onClose={closeMenu}
-          selectionText={selection.text} />
+          selectionText={menu.selectionText} />
       )}
       {!sourceOnly && editor && active && (
         <ParagraphEditor key={active.index} pid={pid} chapterIndex={ci} segment={active}

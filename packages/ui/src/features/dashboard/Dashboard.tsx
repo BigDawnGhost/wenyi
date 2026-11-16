@@ -125,9 +125,11 @@ export default function Dashboard() {
             </div>
           </div>
         ) : !projects?.length ? (
-          <p className="py-24 text-center text-sm text-muted-foreground">
-            {tr("dashboard.noProjectsYet")}
-          </p>
+          <Card>
+            <p className="px-6 py-24 text-center text-sm text-muted-foreground">
+              {tr("dashboard.noProjectsYet")}
+            </p>
+          </Card>
         ) : (
           <div className="grid grid-cols-3 gap-4">
             {projects.map((p) => {

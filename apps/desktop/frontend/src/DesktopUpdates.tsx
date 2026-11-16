@@ -85,7 +85,7 @@ export function DesktopUpdates({ blocked, onInstalling }: {
   }
   const failure = error || data?.error || (status.error ? "unavailable" : undefined);
   return (
-    <SettingsSection title={t("updates.title")} data-testid="desktop-updates" className="first-of-type:border-t first-of-type:pt-6">
+    <SettingsSection title={t("updates.title")} data-testid="desktop-updates">
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <p className="font-medium">{t("updates.currentVersion", { version: data?.currentVersion || "—" })}</p>
           {data?.version && <p className="text-muted-foreground">{t("updates.version", { version: data.version })}</p>}

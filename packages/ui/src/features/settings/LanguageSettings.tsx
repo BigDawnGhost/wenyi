@@ -9,7 +9,7 @@ export function LanguageSettings() {
   const { locale, setLocale, t } = useI18n();
   const { theme, setTheme } = useTheme();
   return (
-    <SettingsSection title={t("settings.sectionGeneral")}>
+    <SettingsSection title={t("settings.sectionGeneral")} grouped>
       <div className="overflow-hidden rounded-xl border border-border bg-card">
         <SettingsRow
           label={t("settings.interfaceLanguage")}

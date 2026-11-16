@@ -41,8 +41,12 @@ for (const [key, value] of Object.entries(preset.theme.extend.colors)) {
 const colorOrder = [
   "background", "foreground", "card", "card-foreground", "primary", "primary-foreground",
   "secondary", "secondary-foreground", "muted", "muted-foreground", "accent", "accent-foreground",
-  "destructive", "destructive-foreground", "success", "success-foreground",
+  "destructive", "destructive-foreground",
   "warning", "warning-foreground", "info", "info-foreground", "border", "input", "ring",
+  "status-success", "status-success-foreground", "status-success-border",
+  "status-warning", "status-warning-foreground", "status-warning-border",
+  "status-danger", "status-danger-foreground", "status-danger-border",
+  "status-info", "status-info-foreground", "status-info-border",
 ];
 const colorVariables = colorOrder.map((name) => "--" + name);
 for (const name of Object.keys(light)) {
@@ -157,9 +161,15 @@ const english = {
     heading: "## Colors",
     intro: [
       "Semantic colors are HSL triplets consumed as hsl(var(--token)), so the .dark class swaps",
-      "values without touching utilities. State colors pair a base with a -foreground variant for",
-      "content on solid fills: success, warning and info join destructive for positive, cautionary,",
-      "informational and failure states.",
+      "values without touching utilities. State colors pair a base with a -foreground variant.",
+      "Status labels share muted surfaces, readable text, fine borders and compact rounded corners",
+      "in both themes: status-success uses sage, status-warning amber, status-danger rose and",
+      "status-info blue-gray. Neutral labels reuse secondary, secondary-foreground and border.",
+      "The status palettes are independent of the stronger action and alert colors, so a failed",
+      "status stays quiet without weakening destructive buttons or error notices.",
+      "Notifications follow the application theme (including system mode) and reuse these status",
+      "palettes; neutral notices use card colors. Chart fills and matching legend markers use",
+      "chart-1 through chart-6 over chart-track, with a lower-saturation dark palette.",
     ],
     headers: ["CSS variable", "Tailwind", "Light", "Dark"],
   },
@@ -220,8 +230,8 @@ const english = {
     heading: "## Usage conventions",
     bullets: [
       "- Pixel-only: spacing, typography and geometry speak px; never em or rem.",
-      "- Components use semantic utilities such as bg-success, text-warning and border-info; raw",
-      "  Tailwind palette classes are a guardrail violation.",
+      "- Components use semantic utilities such as bg-status-success and text-warning-text;",
+      "  raw Tailwind palette classes are a guardrail violation.",
       "- Combine elevation with the focus halo through an arbitrary value listing the variables,",
       "  for example shadow-[var(--shadow-e2),var(--shadow-focus-ring)].",
       "- Never use transition-all; transition only transform, opacity, box-shadow, background-color",
@@ -249,8 +259,13 @@ const chinese = {
     heading: "## 颜色",
     intro: [
       "语义色是 HSL 三元组，以 hsl(var(--token)) 消费；.dark 类直接更换取值，工具类保持不变。",
-      "状态色成对使用：基础色搭配 -foreground 变体，用于实色底上的前景内容。success、warning、",
-      "info 与 destructive 分别表达成功、警示、提示与失败/危险状态。",
+      "状态色以基础色搭配 -foreground 变体。所有状态标签在明暗主题下均使用低饱和底色、",
+      "清晰文字、细描边与紧凑小圆角：status-success 用灰绿，status-warning 用灰琥珀，",
+      "status-danger 用灰红，status-info 用灰蓝；中性标签复用 secondary、secondary-foreground",
+      "和 border。状态配色独立于较强的操作与警示色，使失败标签更柔和，但不削弱删除按钮",
+      "与错误提示的警示性。",
+      "弹窗通知跟随应用主题（包括跟随系统）并复用状态配色，普通通知使用卡片色。",
+      "统计条与对应图例使用 chart-1 至 chart-6，轨道使用 chart-track；暗色主题采用更低饱和的色板。",
     ],
     headers: ["CSS 变量", "Tailwind", "亮色", "暗色"],
   },
@@ -306,7 +321,7 @@ const chinese = {
     heading: "## 用法约定",
     bullets: [
       "- 仅用 px：间距、字号与几何一律使用 px，不使用 em/rem。",
-      "- 组件只用语义工具类（如 bg-success、text-warning、border-info）；原始 Tailwind 色板类",
+      "- 组件只用语义工具类（如 bg-status-success、text-warning-text）；原始 Tailwind 色板类",
       "  属于样式护栏违规。",
       "- 需要叠加海拔与焦点光环时，使用列出变量的任意值，例如",
       "  shadow-[var(--shadow-e2),var(--shadow-focus-ring)]。",

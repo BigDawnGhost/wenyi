@@ -191,7 +191,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
           <LanguageSettings />
         </div>
         <div hidden={section !== "providers"}>
-          <SettingsSection id="provider-models" title={t("settings.sectionProviders")}>
+          <SettingsSection id="provider-models" title={t("settings.sectionProviders")} grouped>
             <ProviderSettings
               key={registryKey}
               config={effective}
@@ -205,7 +205,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
           </SettingsSection>
         </div>
         <div hidden={section !== "defaults"}>
-          <SettingsSection title={t("settings.sectionDefaultModels")}>
+          <SettingsSection title={t("settings.sectionDefaultModels")} grouped>
             <ModelSelection
               llm={llm}
               models={object(llm.models)}
@@ -215,7 +215,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
           </SettingsSection>
         </div>
         <div hidden={section !== "workflow"}>
-          <SettingsSection title={t("settings.sectionWorkflow")}>
+          <SettingsSection title={t("settings.sectionWorkflow")} grouped>
             <WorkflowSettings
               scope="global"
               config={effective}
@@ -235,7 +235,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
           </div>
         )}
         <div hidden={section !== "advanced"}>
-          <SettingsSection id="advanced-yaml" title={t("settings.sectionAdvanced")}>
+          <SettingsSection id="advanced-yaml" title={t("settings.sectionAdvanced")} grouped>
             <SettingsGroup
               title={t("settings.advancedYamlConfiguration")}
               summary={yamlDirty ? t("settings.unsavedSummary") : undefined}

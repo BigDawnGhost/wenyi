@@ -28,6 +28,8 @@ explore/
 *.html
 !/apps/web/tests/select-harness.html
 !/apps/desktop/frontend/tests/select-harness.html
+!/apps/web/tests/notifications-harness.html
+!/apps/desktop/frontend/tests/notifications-harness.html
 !/apps/web/sandbox.html
 *.srt
 *.docx

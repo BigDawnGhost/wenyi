@@ -9,6 +9,7 @@ export interface FaultRule {
   method?: string;
   /** Prefix string or regular expression tested against the decoded path. */
   path: string | RegExp;
+  /** Omitted kinds are HTTP faults; normalized by matchFault for every host. */
   kind?: "http" | "network" | "delay";
   status?: number;
   body?: unknown;
@@ -165,7 +166,7 @@ export function matchFault(scenario: Scenario, method: string, path: string): Fa
     if (fault.method && fault.method.toUpperCase() !== method.toUpperCase()) continue;
     const matched =
       typeof fault.path === "string" ? path.startsWith(fault.path) : fault.path.test(path);
-    if (matched) return fault;
+    if (matched) return { ...fault, kind: fault.kind ?? "http" };
   }
   return null;
 }

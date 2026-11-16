@@ -7,6 +7,7 @@ import { api, isProjectBusy } from "../../api/client";
 import type { ChapterSummary } from "../../api/types";
 import { useProjectQuery } from "../../lib/projectQuery";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
+import { Card } from "../../components/ui/card";
 import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
 import { Input } from "../../components/ui/form";
 import { ContentsEditor } from "./ContentsEditor";
@@ -79,17 +80,19 @@ function ContentsWorkspace({
       <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice error={error} />
         {!initialized ? <ReadOnlyNotice reason="source" /> : busy && <ReadOnlyNotice />}
-        <Input
-          aria-label={t("contents.search")}
-          placeholder={t("contents.search")}
-          className="max-w-md"
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-        />
+        <Card className="p-4">
+          <Input
+            aria-label={t("contents.search")}
+            placeholder={t("contents.search")}
+            className="max-w-md"
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+          />
+        </Card>
         {loading ? (
-          <p className="text-sm text-muted-foreground">
-            {t("progress.loading")}
-          </p>
+          <Card className="p-4">
+            <p className="text-sm text-muted-foreground">{t("progress.loading")}</p>
+          </Card>
         ) : (
           <ContentsList
             pid={pid}

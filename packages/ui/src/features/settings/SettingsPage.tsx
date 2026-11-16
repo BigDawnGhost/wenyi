@@ -92,26 +92,28 @@ export default function SettingsPage() {
         <div className={SETTINGS_CONTENT_CLASSNAME}>
           <ErrorNotice error={config.error || configurationError} />
           {busy && <ReadOnlyNotice />}
-          <SettingsSection title={tr("settings.sectionModels")} className="py-0">
+          <SettingsSection title={tr("settings.sectionModels")} className="py-0" grouped>
             <ModelSelection
               llm={section(effective, "llm")}
               models={config.data?.registered_models || {}}
               disabled={formDisabled}
+              footer={
+                <Link
+                  to="/settings/providers"
+                  state={{ settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }}
+                  className="inline-block text-sm text-muted-foreground underline underline-offset-4"
+                >
+                  {tr("settings.manageGlobalModels")}
+                </Link>
+              }
               onChange={(llm) => {
                 const next = { ...effective, llm };
                 setEffective(next);
                 setDraft(JSON.stringify(next, null, 2));
               }}
             />
-            <Link
-              to="/settings/providers"
-              state={{ settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }}
-              className="inline-block text-sm text-muted-foreground underline underline-offset-4"
-            >
-              {tr("settings.manageGlobalModels")}
-            </Link>
           </SettingsSection>
-          <SettingsSection title={tr("settings.sectionWorkflow")} className="py-0">
+          <SettingsSection title={tr("settings.sectionWorkflow")} className="py-0" grouped>
             <WorkflowSettings
               scope="project"
               config={effective}
@@ -123,19 +125,17 @@ export default function SettingsPage() {
             {yamlDirty && (
               <p className="text-sm text-muted-foreground">{tr("settings.unsavedSummary")}</p>
             )}
-            <div className="rounded-xl border border-border bg-card p-4">
-              <Textarea
-                aria-label={tr("settings.advancedYamlConfiguration")}
-                spellCheck={false}
-                className="min-h-editor font-mono text-xs"
-                value={draft}
-                disabled={disabled}
-                onChange={(e) => {
-                  setDraft(e.target.value);
-                  setYamlDirty(true);
-                }}
-              />
-            </div>
+            <Textarea
+              aria-label={tr("settings.advancedYamlConfiguration")}
+              spellCheck={false}
+              className="min-h-editor font-mono text-xs"
+              value={draft}
+              disabled={disabled}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                setYamlDirty(true);
+              }}
+            />
           </SettingsSection>
         </div>
         <SettingsActionBar

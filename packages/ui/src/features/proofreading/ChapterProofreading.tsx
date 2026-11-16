@@ -5,6 +5,7 @@ import { api } from "../../api/client";
 import type { ChapterSummary } from "../../api/types";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
 import { Button } from "../../components/ui/button";
+import { Card } from "../../components/ui/card";
 import { ErrorNotice, ReadOnlyNotice, StructuredData } from "../../components/ui/data";
 import { Disclosure } from "../../components/ui/disclosure";
 import { VirtualChapter } from "./VirtualChapter";
@@ -62,12 +63,14 @@ export function ChapterProofreading({
           || (!validIndex ? new Error(t("proofreading.invalidChapter")) : undefined)} />
         {sourceOnly ? <ReadOnlyNotice reason="source" /> : busy && <ReadOnlyNotice />}
         {!sourceOnly && chapter.data && (
-          <p className="text-sm text-muted-foreground">
-            {t("proofreading.savedParagraphs", {
-              done: summary ? summary.target_word_count : chapter.data.saved_count,
-              total: chapter.data.total,
-            })}
-          </p>
+          <Card className="p-4">
+            <p className="text-sm text-muted-foreground">
+              {t("proofreading.savedParagraphs", {
+                done: summary ? summary.target_word_count : chapter.data.saved_count,
+                total: chapter.data.total,
+              })}
+            </p>
+          </Card>
         )}
         {chapter.data && (
           <VirtualChapter pid={pid} ci={index} initial={chapter.data} sourceOnly={sourceOnly}

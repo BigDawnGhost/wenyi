@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi, pid, project, resolveFixture } from "../../sandbox/fixtures";
+import { expectCardSurface } from "./color-helper";
 
 
 /** Whether the Desktop host must keep running this suite as well.
@@ -10,6 +11,28 @@ export const desktopHostSensitive = true;
 
 /** Hosts register these checks after installing their own bootstrap hooks. */
 export function registerShellTests({ apiOrigin }: { apiOrigin?: string } = {}) {
+  for (const theme of ["light", "dark"]) {
+    test(`workspace controls and empty states have panel surfaces in ${theme}`, async ({ page }) => {
+      await page.addInitScript(theme => localStorage.setItem("wenyi.theme", theme), theme);
+      await fakeApi(page, { "/projects": [] }, apiOrigin);
+      await page.goto("/");
+      await expectCardSurface(page.getByText("No projects yet.", { exact: true }));
+      for (const feature of ["glossary", "contents"]) {
+        await page.goto(`/projects/${pid}/${feature}`);
+        await expectCardSurface(page.getByRole("main").getByRole("textbox").first());
+      }
+      await page.goto(`/projects/${pid}`);
+      await expectCardSurface(page.getByText(/^Progress connection:/));
+      await page.goto(`/projects/${pid}/proofreading/0`);
+      await expectCardSurface(page.getByRole("main").getByText(/^\d+ \/ \d+ paragraphs saved$/));
+      await page.route(`**/projects/${pid}`, route => route.fulfill({
+        json: { ...project, status: "translating" },
+      }));
+      await page.goto(`/projects/${pid}/glossary`);
+      await expectCardSurface(page.getByText("Read-only while a task runs", { exact: true }));
+    });
+  }
+
   test("shared sandbox project details preserve the metadata from the project list", () => {
     const projects = resolveFixture("GET", "/projects").json as Array<typeof project>;
     for (const summary of projects) {
@@ -99,16 +122,32 @@ export function registerShellTests({ apiOrigin }: { apiOrigin?: string } = {}) {
     }
   });
 
-  test("create project sidebar entry keeps a hairline outline when expanded and collapsed", async ({ page }) => {
-    await fakeApi(page, {}, apiOrigin);
-    await page.goto("/");
-    const create = page.getByRole("link", { name: "Create project", exact: true });
-    await expect(create).toBeVisible();
-    await expect(create).toHaveCSS("border-width", "1px");
-    await page.getByRole("button", { name: "Collapse sidebar", exact: true }).click();
-    await expect(create).toBeVisible();
-    await expect(create).toHaveCSS("border-width", "1px");
-  });
+  for (const theme of ["light", "dark"]) {
+    test(`create project sidebar entry stays borderless with keyboard focus in ${theme}`, async ({ page }) => {
+      await page.addInitScript(theme => localStorage.setItem("wenyi.theme", theme), theme);
+      await fakeApi(page, {}, apiOrigin);
+      await page.goto("/");
+      const create = page.getByRole("link", { name: "Create project", exact: true });
+      for (const collapsed of [false, true]) {
+        const toggle = page.getByRole("button", { name: "Collapse sidebar", exact: true });
+        if (collapsed) await toggle.click();
+        await page.mouse.move(0, 0);
+        await expect(create).toBeVisible();
+        await expect(create).toHaveCSS("border-width", "0px");
+        await expect(create).toHaveCSS("box-shadow", "none");
+        await create.hover();
+        await expect(create).toHaveCSS("border-width", "0px");
+        await expect(create).toHaveCSS("box-shadow", "none");
+        await page.mouse.move(0, 0);
+        await page.getByRole("button", {
+          name: collapsed ? "Expand sidebar" : "Collapse sidebar", exact: true,
+        }).focus();
+        await page.keyboard.press("Tab");
+        await expect(create).toBeFocused();
+        await expect(create).not.toHaveCSS("box-shadow", "none");
+      }
+    });
+  }
 
   test("creation closes back to the originating project and restores sidebar focus", async ({ page }) => {
     await fakeApi(
