@@ -34,13 +34,15 @@ type SelectProps = Omit<
   children: React.ReactNode;
   name?: string;
   required?: boolean;
+  /** Replace the rendered selected value (the first span, still truncated). */
+  valueLabel?: React.ReactNode;
 };
 
 export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
   (
     {
       value, defaultValue = "", onValueChange, children, name, required,
-      disabled, className, form, ...props
+      valueLabel, disabled, className, form, ...props
     },
     ref,
   ) => {
@@ -84,7 +86,7 @@ export const Select = React.forwardRef<HTMLButtonElement, SelectProps>(
             className,
           )}
         >
-          <Primitive.Value />
+          {valueLabel !== undefined ? <span>{valueLabel}</span> : <Primitive.Value />}
           <Primitive.Icon asChild>
             <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
           </Primitive.Icon>

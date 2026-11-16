@@ -18,14 +18,15 @@ export function ModelSelection({
 }) {
   const { t } = useI18n();
   const tiers = object(llm.tiers);
-  const modelOptions = Object.entries(models).map(([id, raw]) => {
+  const modelEntries = Object.entries(models).map(([id, raw]) => {
     const model = object(raw);
-    return (
-      <SelectItem key={id} value={id}>
-        {id} · {String(model.provider)} / {String(model.model)}
-      </SelectItem>
-    );
+    return { id, provider: String(model.provider), model: String(model.model) };
   });
+  const modelOptions = modelEntries.map((entry) => (
+    <SelectItem key={entry.id} value={entry.id}>
+      {entry.id} · {entry.provider} / {entry.model}
+    </SelectItem>
+  ));
   const tierNames = [
     ["strong", t("providerSettings.qualityTier")],
     ["cheap", t("providerSettings.economyTier")],
@@ -34,28 +35,33 @@ export function ModelSelection({
   return (
     <fieldset disabled={disabled} className="min-w-0 disabled:opacity-60">
       <div className="overflow-hidden rounded-xl border border-border bg-card">
-        {tierNames.map(([id, label]) => (
-          <SettingsRow
-            key={id}
-            label={label}
-            htmlFor={`tier-${id}`}
-            control={
-              <Select
-                id={`tier-${id}`}
-                className={SETTINGS_CONTROL_CLASSNAME}
-                value={String(tiers[id] || "")}
-                onValueChange={(value) =>
-                  onChange({
-                    ...llm,
-                    tiers: { ...tiers, [id]: value },
-                  })
-                }
-              >
-                {modelOptions}
-              </Select>
-            }
-          />
-        ))}
+        {tierNames.map(([id, label]) => {
+          const tierValue = String(tiers[id] || "");
+          const selected = modelEntries.find((entry) => entry.id === tierValue);
+          return (
+            <SettingsRow
+              key={id}
+              label={label}
+              htmlFor={`tier-${id}`}
+              control={
+                <Select
+                  id={`tier-${id}`}
+                  className={SETTINGS_CONTROL_CLASSNAME}
+                  value={tierValue}
+                  valueLabel={selected ? `${selected.provider} / ${selected.model}` : undefined}
+                  onValueChange={(value) =>
+                    onChange({
+                      ...llm,
+                      tiers: { ...tiers, [id]: value },
+                    })
+                  }
+                >
+                  {modelOptions}
+                </Select>
+              }
+            />
+          );
+        })}
       </div>
     </fieldset>
   );
