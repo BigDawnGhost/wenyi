@@ -35,10 +35,26 @@
     --accent-foreground: 240 5.9% 10%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 0 0% 98%;
+    --success: 161 94% 30%;
+    --success-foreground: 0 0% 98%;
+    --warning: 26 90% 37%;
+    --warning-foreground: 0 0% 98%;
+    --info: 200 96% 32%;
+    --info-foreground: 0 0% 98%;
     --border: 240 5.9% 90%;
     --input: 240 5.9% 90%;
     --ring: 240 5.9% 10%;
     --radius: 8px;
+    /* Elevation scale: e0 wells, e1-e2 resting surfaces, e3 hover lift, e4
+       floating layers. Consumed through the shadow-eN utilities registered in
+       the shared Tailwind preset; the .dark theme swaps the whole set below. */
+    --shadow-e0: inset 0 1px 2px rgba(24, 26, 32, 0.07), 0 0 0 1px rgba(24, 26, 32, 0.05);
+    --shadow-e1: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 1px 2px rgba(24, 26, 32, 0.04), 0 0 0 1px rgba(24, 26, 32, 0.06);
+    --shadow-e2: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 1px 3px rgba(24, 26, 32, 0.06), 0 0 0 1px rgba(24, 26, 32, 0.07);
+    --shadow-e3: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 8px -2px rgba(24, 26, 32, 0.08), 0 12px 28px -12px rgba(24, 26, 32, 0.14), 0 0 0 1px rgba(24, 26, 32, 0.06);
+    --shadow-e4: 0 8px 16px -4px rgba(24, 26, 32, 0.08), 0 28px 56px -20px rgba(24, 26, 32, 0.22), 0 0 0 1px rgba(24, 26, 32, 0.06);
+    --shadow-focus-ring: 0 0 0 3px hsl(var(--ring) / 0.18);
+    --shadow-sidebar: 0 0 0 1px rgba(24, 26, 32, 0.05), 12px 0 32px -20px rgba(24, 26, 32, 0.18);
   }
 }
 
@@ -59,9 +75,23 @@
     --accent-foreground: 0 0% 98%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
+    --success: 163 88% 20%;
+    --success-foreground: 0 0% 98%;
+    --warning: 23 82% 31%;
+    --warning-foreground: 0 0% 98%;
+    --info: 201 90% 27%;
+    --info-foreground: 0 0% 98%;
     --border: 240 3.7% 15.9%;
     --input: 240 3.7% 15.9%;
     --ring: 240 4.9% 83.9%;
+    /* Dark elevations: weaker top highlight, deeper shadows, white hairline. */
+    --shadow-e0: inset 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
+    --shadow-e1: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(255, 255, 255, 0.07);
+    --shadow-e2: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);
+    --shadow-e3: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.09);
+    --shadow-e4: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.09);
+    --shadow-focus-ring: 0 0 0 3px hsl(var(--ring) / 0.35);
+    --shadow-sidebar: 0 0 0 1px rgba(255, 255, 255, 0.06), 12px 0 32px -20px rgba(0, 0, 0, 0.5);
 }
 
 @layer base {
@@ -83,13 +113,23 @@
   input[type="radio"] { border-radius: 50%; }
 }
 
-/* Focus changes behavior, not decoration; retain ordinary component shadows. */
-body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus,
-body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-visible {
+/* Focus changes behavior, not decoration; retain ordinary component shadows.
+   Mouse/pointer focus stays quiet. Keyboard focus keeps a visible indicator:
+   a token-colored ring composed into box-shadow, so it never clips inside
+   overflow-hidden containers and never fights component shadow utilities. */
+body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus:not(:focus-visible) {
   outline: none;
   --tw-ring-offset-shadow: 0 0 #0000;
   --tw-ring-shadow: 0 0 #0000;
   box-shadow: var(--tw-shadow, 0 0 #0000);
+}
+body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-visible {
+  outline: none;
+  --tw-ring-offset-shadow: 0 0 #0000;
+  --tw-ring-shadow: 0 0 #0000;
+  box-shadow: var(--tw-shadow, 0 0 #0000),
+    0 0 0 2px hsl(var(--background)),
+    0 0 0 4px hsl(var(--ring));
 }
 
 /* Application geometry, independent of the host browser's native widgets. */
@@ -148,6 +188,7 @@ details[open] > .disclosure-summary > .disclosure-chevron {
 
 /* A quiet visual gate; never delay backend shutdown for an animation. */
 .runtime-placeholder {
+  min-height: 100vh;
   min-height: 100dvh;
   display: grid;
   place-items: center;

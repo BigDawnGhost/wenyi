@@ -18,6 +18,8 @@
     "dev:worker": "uv run arq wenyi_api.workers.WorkerSettings",
     "gen:schema": "node scripts/contract/schema.mjs --write",
     "check:schema": "node scripts/contract/schema.mjs --check",
+    "gen:tokens": "node scripts/style/tokens.mjs --write",
+    "check:tokens": "node scripts/style/tokens.mjs --check",
     "build": "pnpm build:web"
   },
   "devDependencies": {

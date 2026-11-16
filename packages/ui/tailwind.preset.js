@@ -102,6 +102,18 @@ export default {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        success: {
+          DEFAULT: "hsl(var(--success))",
+          foreground: "hsl(var(--success-foreground))",
+        },
+        warning: {
+          DEFAULT: "hsl(var(--warning))",
+          foreground: "hsl(var(--warning-foreground))",
+        },
+        info: {
+          DEFAULT: "hsl(var(--info))",
+          foreground: "hsl(var(--info-foreground))",
+        },
       },
       borderRadius: {
         DEFAULT: "4px",
@@ -112,10 +124,27 @@ export default {
         "2xl": "16px",
         "3xl": "24px",
       },
+      // Elevation scale backed by the theme-switching --shadow-* variables in
+      // packages/ui/src/index.css; see docs/development/design-tokens.md.
+      boxShadow: {
+        e0: "var(--shadow-e0)",
+        e1: "var(--shadow-e1)",
+        e2: "var(--shadow-e2)",
+        e3: "var(--shadow-e3)",
+        e4: "var(--shadow-e4)",
+        "focus-ring": "var(--shadow-focus-ring)",
+        sidebar: "var(--shadow-sidebar)",
+      },
       transitionDuration: {
+        "motion-fast": "120ms",
+        "motion-normal": "200ms",
+        "motion-slow": "320ms",
         sidebar: "280ms",
       },
       transitionTimingFunction: {
+        standard: "cubic-bezier(0.2, 0, 0, 1)",
+        decelerate: "cubic-bezier(0.05, 0.7, 0.1, 1)",
+        accelerate: "cubic-bezier(0.3, 0, 0.8, 0.15)",
         sidebar: "cubic-bezier(0.22, 1, 0.36, 1)",
       },
     },

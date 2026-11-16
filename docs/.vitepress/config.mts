@@ -39,6 +39,7 @@ const sidebar: DefaultTheme.SidebarItem[] = [
     items: [
       { text: 'Overview', link: '/development/' },
       { text: 'Architecture', link: '/development/architecture' },
+      { text: 'Design tokens', link: '/development/design-tokens' },
       { text: 'Pipeline contracts', link: '/development/pipeline' },
       { text: 'Web development', link: '/development/web' },
       { text: 'Desktop development', link: '/development/desktop' },
@@ -89,6 +90,7 @@ const zhSidebar: DefaultTheme.SidebarItem[] = [
     items: [
       { text: '开发入口', link: '/zh/development/' },
       { text: '架构与模块边界', link: '/zh/development/architecture' },
+      { text: '设计令牌', link: '/zh/development/design-tokens' },
       { text: '流程开发契约', link: '/zh/development/pipeline' },
       { text: 'Web 开发', link: '/zh/development/web' },
       { text: 'Desktop 开发', link: '/zh/development/desktop' },
