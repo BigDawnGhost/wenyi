@@ -33,8 +33,38 @@ export const queryClient = new QueryClient({
     queries: { staleTime: 5_000, refetchOnWindowFocus: false, retry: 1 },
   },
 });
-configurePlatform(desktopPlatform(queryClient));
-configureQueryActivity(queryClient);
+
+// Dev-only offline template: with VITE_MOCK_PLATFORM=1 the shared sandbox
+// adapter replaces the native platform wiring so the Desktop shell runs
+// offline (docs/development/web.md). Vite replaces both flags statically, so
+// production builds prune this branch and keep the native path below.
+const mockPlatform =
+  import.meta.env.DEV && import.meta.env.VITE_MOCK_PLATFORM === "1";
+
+async function bootstrap() {
+  if (mockPlatform) {
+    const { installMockPlatform } =
+      await import("../../../../packages/ui/sandbox/mock-platform");
+    installMockPlatform({ scenario: import.meta.env.VITE_MOCK_SCENARIO });
+  } else {
+    configurePlatform(desktopPlatform(queryClient));
+    configureQueryActivity(queryClient);
+  }
+  // The sandbox never sees a native bootstrap event: the runtime status would
+  // stay "pending" forever, so mount the app directly under the mock flag.
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <DocumentLanguage />
+          {mockPlatform ? <App /> : <Bootstrap />}
+        </BrowserRouter>
+      </QueryClientProvider>
+    </React.StrictMode>,
+  );
+}
+
+void bootstrap();
 
 function Bootstrap() {
   const status = useRuntimeStatus();
@@ -68,14 +98,3 @@ function Bootstrap() {
     <App />
   );
 }
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <DocumentLanguage />
-        <Bootstrap />
-      </BrowserRouter>
-    </QueryClientProvider>
-  </React.StrictMode>,
-);

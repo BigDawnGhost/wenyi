@@ -1,4 +1,6 @@
 import type { Page } from "@playwright/test";
+import type { desktopComponents } from "@wenyi/shared-schema";
+import type { Output } from "../src/api/types";
 
 export const pid = "book-1";
 export const project = {
@@ -9,12 +11,19 @@ export const project = {
   source_lang: "ja",
   target_lang: "en",
   status: "done",
+  error: null,
+  initialized: true,
+  strategy: null,
+  created_at: "2026-10-05T08:00:00Z",
+  available: true,
+  source_changed: false,
+  book_title: null,
   chapter_count: 3,
   total_word_count: 24,
   done_chapters: 3,
-  initialized: true,
+  source_meta: {},
   output_formats: ["epub", "txt", "html", "markdown", "docx"],
-};
+} satisfies Output<"ProjectDetail">;
 // Specs build their own chapter variants from this base; keep it free of
 // presentation-only fields so overrides stay fully deterministic.
 // Extra sandbox projects so sidebar recall/switching can be exercised by
@@ -54,12 +63,13 @@ const extraProjects = [
 export const chapter = {
   index: 0,
   title: "Chapter One",
+  title_translated: null,
   status: "done",
   word_count: 12,
   target_word_count: 12,
   review_issue_count: 0,
   review_status: "pending",
-};
+} satisfies Output<"ChapterSummary">;
 const chapters = [
   { ...chapter, title_translated: "Chapter One: Departure" },
   {
@@ -82,12 +92,13 @@ const chapters = [
     review_issue_count: 0,
     review_status: "pending",
   },
-];
+] satisfies Output<"ChapterSummary">[];
 export const workflow = {
   source: "snapshot",
   kind: "translation",
   status: "done",
   run_id: "run-a",
+  review_id: null,
   stages: [
     { id: "book_understanding", label: "全书理解与结构解析", enabled: true },
     { id: "translation", label: "分批翻译章节", enabled: true },
@@ -97,7 +108,7 @@ export const workflow = {
     { id: "annotation_alignment", label: "注释与排版对齐", enabled: false },
   ],
   progress: null,
-};
+} satisfies Output<"WorkflowOut">;
 export const effective = {
   language: { source: "ja", target: "en" },
   llm: {
@@ -133,13 +144,13 @@ export const configuration = {
   registered_models: effective.llm.models,
   routes: [{ operation: "translate", model: "model-a" }],
   editable: true,
-};
+} satisfies Output<"ProjectConfigOut">;
 export const globalConfiguration = {
   yaml: JSON.stringify(effective, null, 2),
   effective,
   default_template: "标准翻译",
   revision: 0,
-};
+} satisfies Output<"GlobalConfigOut">;
 export const capabilities = {
   languages: [
     { code: "zh", name: "中文" },
@@ -160,7 +171,7 @@ export const capabilities = {
       description: "Translate paragraphs",
     },
   ],
-};
+} satisfies Output<"Capabilities">;
 export const preview = {
   title: "Source preview",
   fmt: "epub",
@@ -172,7 +183,7 @@ export const preview = {
     { index: 1, title: "Two", word_count: 400 },
     { index: 2, title: "Three", word_count: 400 },
   ],
-};
+} satisfies Output<"UploadPreview">;
 
 function tableData(): Record<string, unknown> {
   return {
@@ -183,15 +194,16 @@ function tableData(): Record<string, unknown> {
     "/desktop/external-credentials/mineru": {
       mode: "manual", storage: null, available: false, environment: "MINERU_API_KEY",
       system_storage_available: false, requires_key: true,
-    },
+    } satisfies Required<desktopComponents["schemas"]["MinerUCredentialStatus"]>,
     "/strategies/templates": [
       {
         name: "标准翻译",
         description: "完整流程",
+        time_factor: 1,
         recommended: true,
         steps: {},
       },
-    ],
+    ] satisfies Output<"StrategyTemplateOut">[],
     "/projects": [project, ...extraProjects],
     [`/projects/${pid}`]: project,
     [`/projects/${pid}/chapters`]: chapters,
@@ -244,7 +256,7 @@ function tableData(): Record<string, unknown> {
             "抵达沉眠钟楼，遥真以钟舌敲钟，地脉归位。代价生效：他忘记旅伴的名字，却在听到钟声时无意识地叫出钟守的名字。",
         },
       ],
-    },
+    } satisfies Output<"AnalysisOut">,
     [`/projects/${pid}/stats`]: {
       usage: {
         schema_version: 2,
@@ -319,7 +331,8 @@ function tableData(): Record<string, unknown> {
           },
         ],
       },
-    },
+      live: null,
+    } satisfies Output<"ProjectStats">,
     [`/projects/${pid}/workflow`]: workflow,
     [`/projects/${pid}/exports`]: [],
     [`/projects/${pid}/events`]: [],
@@ -327,16 +340,19 @@ function tableData(): Record<string, unknown> {
     [`/projects/${pid}/review/0`]: {
       index: 0,
       title: "Chapter One",
+      title_translated: null,
       segments: [
         {
           index: 0,
           source: "原文第一段",
           target: "Original translation",
+          target_before_polish: null,
+          anchor: null,
           kind: "text",
         },
       ],
       review_issues: [],
-    },
+    } satisfies Output<"ChapterSegments">,
   };
 }
 
@@ -357,9 +373,9 @@ export function createSandboxState(): SandboxState {
   return { runs: {} };
 }
 
-const RUN_MS = 15_000;
+export const RUN_MS = 15_000;
 
-function runRatio(run?: { startedAt: number | null; pausedAt: number | null }): number | null {
+export function runRatio(run?: { startedAt: number | null; pausedAt: number | null }): number | null {
   if (!run?.startedAt) return null;
   return Math.min(1, ((run.pausedAt ?? Date.now()) - run.startedAt) / RUN_MS);
 }
@@ -470,6 +486,9 @@ function familyFixture(path: string): FixtureResponse | null {
  * - Other methods: per-test overrides, then mutation rules (create project,
  *   glossary import), then the table (save/validate respond with stored
  *   state), then a generic success so action buttons can complete.
+ *
+ * `options.unknownWrite = "notFound"` replaces that generic success with a
+ * 404 so the offline template can surface unmocked write endpoints.
  */
 export function resolveFixture(
   method: string,
@@ -477,6 +496,7 @@ export function resolveFixture(
   rawBody?: string,
   overrides: Record<string, unknown> = {},
   sandbox?: SandboxState,
+  options?: { unknownWrite?: "ok" | "notFound" },
 ): FixtureResponse {
   const path = rawPath.replace(/^\/api/, "").split("?")[0];
   const verb = method.toUpperCase();
@@ -551,6 +571,8 @@ export function resolveFixture(
   const family = familyFixture(path);
   if (family) return family;
   const project_id = path.match(/^\/projects\/([^/]+)/)?.[1];
+  if (options?.unknownWrite === "notFound")
+    return { status: 404, json: { detail: `Unexpected endpoint ${path}` } };
   return {
     status: 200,
     json: { ok: true, message: "mock", job_id: "mock-job", task_id: "mock-job", project_id },

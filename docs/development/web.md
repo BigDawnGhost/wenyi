@@ -70,7 +70,22 @@ To inspect the browser UI without API, database, worker, or model services:
 MOCK_API=1 pnpm -C apps/web dev
 ```
 
-Vite answers `/api` with the shared fixtures in `packages/ui/sandbox/fixtures.ts`, also used by the Playwright suites. Actions operate on mock state, not real projects. The mock does not supply the progress WebSocket; the UI uses its HTTP fallback. Leave `MOCK_API` unset for normal proxied development.
+Vite answers `/api` with the shared fixtures in `packages/ui/sandbox/fixtures.ts`, also used by the Playwright suites. Actions operate on mock state, not real projects. The dev server also simulates the progress WebSocket on `/ws/projects/{pid}/progress` with the same translation state machine, so live progress works without a backend. Leave `MOCK_API` unset for normal proxied development.
+
+`MOCK_SCENARIO=<id>` selects a scenario from `packages/ui/sandbox/scenarios.ts`, for example `MOCK_SCENARIO=error500 MOCK_API=1 pnpm -C apps/web dev`. Scenarios inject HTTP, network, and delay faults, adjust the sandbox state (translating, paused, empty), and can make unmocked write endpoints answer `404` instead of a generic success.
+
+<a id="offline-platform-mock"></a>
+
+### Offline platform mock
+
+`VITE_MOCK_PLATFORM=1` replaces the whole injected platform services object with the shared adapter in `packages/ui/sandbox/mock-platform.tsx`: transport, progress socket, preferences, activity, source drop, and a sandbox capability set run in-page against the same fixtures — no dev-server middleware or backend involved. Select a scenario with `VITE_MOCK_SCENARIO=<id>` or a `?scenario=<id>` URL parameter. Desktop accepts the same flags:
+
+```bash
+VITE_MOCK_PLATFORM=1 pnpm -C apps/web dev
+VITE_MOCK_PLATFORM=1 pnpm dev:desktop-ui
+```
+
+The component playground lives at <http://localhost:5173/sandbox.html>, a dev-only Vite entry that mounts the shared `App` on the mock platform with a scenario switcher. It is never part of production builds.
 
 Mock success demonstrates browser behavior, not authentication, storage transactions, queue recovery, parser availability, or translation quality. Use the appropriate backend/integration tests for those guarantees. UI layout, localization, shared fixtures, platform isolation, and chunk-size rules are covered in [frontend development](frontend.md).
 
