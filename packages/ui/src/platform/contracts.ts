@@ -73,6 +73,8 @@ export interface LibraryServices {
 
 export interface OptionalCapabilities {
   library?: LibraryServices;
+  /** Host-owned rows inside General settings; absent hosts render no controls. */
+  generalSettings?: ComponentType;
   diagnostics?: {
     label: (locale: string) => string;
     Section: ComponentType;

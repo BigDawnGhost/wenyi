@@ -2,12 +2,14 @@ import { Select, SelectItem } from "../../components/ui/select";
 import { locales, useI18n } from "../../i18n";
 import { isLocale } from "../../i18n/catalog";
 import { isThemePreference, useTheme } from "../../theme";
+import { platform } from "../../platform";
 import { SettingsSection } from "./SettingsSection";
 import { SettingsRow, SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
 
 export function LanguageSettings() {
   const { locale, setLocale, t } = useI18n();
   const { theme, setTheme } = useTheme();
+  const GeneralSettings = platform().capabilities.generalSettings;
   return (
     <SettingsSection title={t("settings.sectionGeneral")} grouped>
       <div className="overflow-hidden rounded-xl border border-border bg-card">
@@ -49,6 +51,7 @@ export function LanguageSettings() {
             </Select>
           }
         />
+        {GeneralSettings && <GeneralSettings />}
       </div>
     </SettingsSection>
   );

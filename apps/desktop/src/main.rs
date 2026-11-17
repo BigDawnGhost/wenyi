@@ -372,6 +372,8 @@ fn main() {
             diagnostics_ui::desktop_diagnostics_open,
             notifications::desktop_notifications_set_locale,
             notifications::desktop_notifications_permission,
+            notifications::desktop_notifications_enabled,
+            notifications::desktop_notifications_set_enabled,
         ])
         .on_window_event(|window, event| {
             // A WebviewWindow's native drops are emitted as window events.

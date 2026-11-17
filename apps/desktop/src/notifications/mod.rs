@@ -14,6 +14,8 @@ mod macos;
 #[cfg(windows)]
 mod windows;
 
+mod preferences;
+
 use std::{
     collections::HashMap,
     path::Path,
@@ -274,6 +276,14 @@ fn request_attention(app: &tauri::AppHandle) {
 
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
+        if !handle
+            .state::<Center>()
+            .preferences
+            .enabled
+            .load(Ordering::SeqCst)
+        {
+            return;
+        }
         if let Some(window) = handle.get_webview_window("main") {
             let _ = window.request_user_attention(Some(tauri::UserAttentionType::Informational));
         }
@@ -288,13 +298,13 @@ pub struct Center {
     session: Arc<AtomicU64>,
     stopping: Arc<AtomicBool>,
     diagnostics: Diagnostics,
+    preferences: Arc<preferences::Preferences>,
 }
 
 enum Command {
     Notice(Notice),
     EngineStopped(u64),
     Locale(String),
-    Enabled(bool),
     Success(bool),
     Stop,
 }
@@ -305,10 +315,26 @@ pub fn install(app: &tauri::AppHandle, diagnostics: Diagnostics, workspace: &Pat
         Sha256::digest(workspace.to_string_lossy().as_bytes())
     );
     let group = format!("{APP_ID}:{}", &identity[..16]);
-    with_sink(platform_sink(app, workspace), diagnostics, group)
+    with_preferences(
+        platform_sink(app, workspace),
+        diagnostics,
+        group,
+        preferences::Preferences::new(workspace),
+    )
 }
 
+#[cfg(test)]
 fn with_sink(sink: Option<Box<dyn Sink>>, diagnostics: Diagnostics, group: String) -> Center {
+    with_preferences(sink, diagnostics, group, preferences::Preferences::memory())
+}
+
+fn with_preferences(
+    sink: Option<Box<dyn Sink>>,
+    diagnostics: Diagnostics,
+    group: String,
+    preferences: preferences::Preferences,
+) -> Center {
+    let preferences = Arc::new(preferences);
     let armed = Arc::new(AtomicBool::new(false));
     let session = Arc::new(AtomicU64::new(0));
     let stopping = Arc::new(AtomicBool::new(false));
@@ -318,6 +344,7 @@ fn with_sink(sink: Option<Box<dyn Sink>>, diagnostics: Diagnostics, group: Strin
             receiver,
             armed: armed.clone(),
             stopping: stopping.clone(),
+            enabled: preferences.enabled.clone(),
             sink,
             diagnostics: diagnostics.clone(),
             policy: Policy::new(group),
@@ -331,6 +358,7 @@ fn with_sink(sink: Option<Box<dyn Sink>>, diagnostics: Diagnostics, group: Strin
         session,
         stopping,
         diagnostics,
+        preferences,
     }
 }
 
@@ -348,11 +376,17 @@ impl Center {
 
     /// Report one unexpected engine exit as a single notice.
     pub fn engine_stopped(&self) {
-        self.send(Command::EngineStopped(self.session.load(Ordering::SeqCst)));
+        if self.preferences.enabled.load(Ordering::SeqCst) {
+            self.send(Command::EngineStopped(self.session.load(Ordering::SeqCst)));
+        }
     }
 
     /// Validate and queue one protocol payload.
     pub fn submit_payload(&self, payload: &str) {
+        if !self.preferences.enabled.load(Ordering::SeqCst) {
+            self.suppressed("disabled");
+            return;
+        }
         match Notice::parse(payload) {
             Some(notice) => self.send(Command::Notice(notice)),
             None => self.suppressed("invalid_payload"),
@@ -369,10 +403,9 @@ impl Center {
         self.send(Command::Locale(locale.to_string()));
     }
 
-    /// Reserved for the settings interface that a later batch adds.
-    #[allow(dead_code)]
-    pub fn set_enabled(&self, enabled: bool) {
-        self.send(Command::Enabled(enabled));
+    /// Persist before confirming a change; admission never depends on queue capacity.
+    fn set_enabled(&self, enabled: bool) -> std::io::Result<bool> {
+        self.preferences.save(enabled)
     }
 
     /// Reserved for the settings interface that a later batch adds.
@@ -451,11 +484,21 @@ pub async fn desktop_notifications_permission(
     window: tauri::WebviewWindow,
     request: bool,
 ) -> Result<Permission, crate::ipc_error::IpcError> {
+    use tauri::Manager;
+
     if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
         return Err(crate::ipc_error::IpcError::new(
             "notifications_untrusted_window",
             "Desktop notifications are unavailable.",
         ));
+    }
+    if !window
+        .state::<Center>()
+        .preferences
+        .enabled
+        .load(Ordering::SeqCst)
+    {
+        return Ok(Permission::Unavailable);
     }
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(target_os = "macos")]
@@ -477,8 +520,51 @@ pub async fn desktop_notifications_permission(
     })
 }
 
-struct Policy {
+/// Native UI preferences are separate from translation configuration and OS consent.
+#[tauri::command]
+pub async fn desktop_notifications_enabled(
+    window: tauri::WebviewWindow,
+) -> Result<bool, crate::ipc_error::IpcError> {
+    notification_preference(window, None).await
+}
+
+#[tauri::command]
+pub async fn desktop_notifications_set_enabled(
+    window: tauri::WebviewWindow,
     enabled: bool,
+) -> Result<bool, crate::ipc_error::IpcError> {
+    notification_preference(window, Some(enabled)).await
+}
+
+async fn notification_preference(
+    window: tauri::WebviewWindow,
+    enabled: Option<bool>,
+) -> Result<bool, crate::ipc_error::IpcError> {
+    use tauri::Manager;
+
+    if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
+        return Err(crate::ipc_error::IpcError::new(
+            "notifications_untrusted_window",
+            "Desktop notifications are unavailable.",
+        ));
+    }
+    let center = window.state::<Center>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || match enabled {
+        Some(enabled) => center.set_enabled(enabled),
+        None => center.preferences.read(),
+    })
+    .await
+    .ok()
+    .and_then(Result::ok)
+    .ok_or_else(|| {
+        crate::ipc_error::IpcError::new(
+            "notifications_settings_unavailable",
+            "Notification settings could not be read or saved. Please retry.",
+        )
+    })
+}
+
+struct Policy {
     success_enabled: bool,
     locale: String,
     seen: HashMap<String, Instant>,
@@ -489,7 +575,6 @@ struct Policy {
 impl Policy {
     fn new(group: String) -> Self {
         Self {
-            enabled: true,
             success_enabled: true,
             locale: default_locale(),
             seen: HashMap::new(),
@@ -592,6 +677,7 @@ struct Worker {
     receiver: mpsc::Receiver<Command>,
     armed: Arc<AtomicBool>,
     stopping: Arc<AtomicBool>,
+    enabled: Arc<AtomicBool>,
     sink: Box<dyn Sink>,
     diagnostics: Diagnostics,
     policy: Policy,
@@ -626,7 +712,6 @@ impl Worker {
                     );
                 }
                 Ok(Command::Locale(locale)) => self.policy.locale = locale,
-                Ok(Command::Enabled(enabled)) => self.policy.enabled = enabled,
                 Ok(Command::Success(enabled)) => self.policy.success_enabled = enabled,
                 Ok(Command::Stop) => break,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -641,7 +726,7 @@ impl Worker {
             self.suppress("unarmed");
             return;
         }
-        if !self.policy.enabled {
+        if !self.enabled.load(Ordering::SeqCst) {
             self.suppress("disabled");
             return;
         }
@@ -666,7 +751,14 @@ impl Worker {
         self.policy.attempts.push(now);
         if let Err(failure) = self.sink.available() {
             self.failed(failure);
-            self.sink.fallback(&presentation);
+            if self.enabled.load(Ordering::SeqCst) {
+                self.sink.fallback(&presentation);
+            }
+            return;
+        }
+        // Availability can block on the OS while the user disables notifications.
+        if !self.enabled.load(Ordering::SeqCst) {
+            self.suppress("disabled");
             return;
         }
         match self.sink.show(&presentation) {
@@ -676,7 +768,9 @@ impl Worker {
             }
             Err(failure) => {
                 self.failed(failure);
-                self.sink.fallback(&presentation);
+                if self.enabled.load(Ordering::SeqCst) {
+                    self.sink.fallback(&presentation);
+                }
             }
         }
     }
@@ -901,6 +995,95 @@ mod tests {
         }
         assert_eq!(*sink.fallbacks.lock().unwrap(), 1);
         assert_eq!(*sink.shown.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn disabling_a_full_queue_suppresses_pending_delivery_and_attention() {
+        struct Blocked {
+            entered: mpsc::Sender<()>,
+            release: mpsc::Receiver<()>,
+            stopped: mpsc::Sender<()>,
+            effects: Arc<AtomicU64>,
+            available: bool,
+        }
+        impl Sink for Blocked {
+            fn available(&mut self) -> Result<(), Failure> {
+                self.entered.send(()).unwrap();
+                self.release.recv_timeout(Duration::from_secs(2)).unwrap();
+                if self.available {
+                    Ok(())
+                } else {
+                    Err(Failure::Unavailable)
+                }
+            }
+            fn show(&mut self, _: &Presentation) -> Result<(), Failure> {
+                self.effects.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+            fn fallback(&mut self, _: &Presentation) {
+                self.effects.fetch_add(1, Ordering::SeqCst);
+            }
+            fn shutdown(&mut self) {
+                self.stopped.send(()).unwrap();
+            }
+        }
+        for available in [true, false] {
+            let (entered, started) = mpsc::channel();
+            let (release, waiting) = mpsc::channel();
+            let (stopped, finished) = mpsc::channel();
+            let effects = Arc::new(AtomicU64::new(0));
+            let center = with_sink(
+                Some(Box::new(Blocked {
+                    entered,
+                    release: waiting,
+                    stopped,
+                    effects: effects.clone(),
+                    available,
+                })),
+                Diagnostics::new(None),
+                "test".into(),
+            );
+            center.arm();
+            center.send(Command::Notice(failed_notice("in-flight")));
+            started.recv_timeout(Duration::from_secs(2)).unwrap();
+            for index in 0..QUEUE {
+                center.send(Command::Notice(failed_notice(&format!("queued-{index}"))));
+            }
+            assert!(matches!(
+                center.sender.as_ref().unwrap().try_send(Command::Stop),
+                Err(mpsc::TrySendError::Full(_))
+            ));
+            assert!(!center.set_enabled(false).unwrap());
+            release.send(()).unwrap();
+            // A blocking Stop follows all pending notices, proving they were suppressed.
+            center.sender.as_ref().unwrap().send(Command::Stop).unwrap();
+            finished.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(effects.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[test]
+    fn disabled_startup_drops_task_and_engine_notices_without_replaying_on_enable() {
+        let preferences = preferences::Preferences::memory();
+        preferences.save(false).unwrap();
+        let shown = Recording::default();
+        let center = with_preferences(
+            Some(Box::new(shown.clone())),
+            Diagnostics::new(None),
+            "test".into(),
+            preferences,
+        );
+        center.arm();
+        center.submit_payload(
+            r#"{"kind":"task_failed","project_id":"abc","project_name":"Book","run_id":"disabled","task":"translation","reason":"io"}"#,
+        );
+        center.engine_stopped();
+        assert!(center.set_enabled(true).unwrap());
+        center.send(Command::Notice(failed_notice("enabled")));
+        wait_for(&shown, 1);
+        assert_eq!(shown.0.lock().unwrap().len(), 1);
+        assert_eq!(shown.0.lock().unwrap()[0].tag, "run:enabled");
+        center.stop();
     }
 
     #[test]

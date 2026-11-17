@@ -16,6 +16,7 @@ import { library } from "./library";
 import { DesktopDiagnostics, DiagnosticExportButton } from "./DesktopDiagnostics";
 import { reportDiagnostic } from "./diagnostics";
 import { translateDesktop } from "./i18n";
+import { NotificationSettings } from "./DesktopNotifications";
 
 const loadDesktopCredential = () => import("./DesktopCredential");
 const DesktopCredential = lazy(() =>
@@ -72,6 +73,7 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
     progressKeys: (kind) => progressKeys[kind] || ["workflow"],
     bindSourceDrop,
     capabilities: {
+      generalSettings: NotificationSettings,
       diagnostics: {
         label: (locale) => translateDesktop(locale, "diagnostics.title"),
         Section: DesktopDiagnostics,

@@ -14,6 +14,24 @@ test("Web keeps environment-variable-only settings", async ({ page }) => {
   await expect(page.getByLabel("API key", { exact: true })).toHaveCount(0);
 });
 
+for (const locale of ["en", "zh-CN"]) {
+  test(`Web General excludes native notification settings in ${locale}`, async ({ page }) => {
+    await page.addInitScript(locale => {
+      localStorage.setItem("wenyi.locale", locale);
+      Object.assign(window, {
+        __TAURI_INTERNALS__: {
+          invoke: () => { throw new Error("Web must not call native commands"); },
+        },
+      });
+    }, locale);
+    await fakeApi(page);
+    await page.goto("/settings");
+    await expect(page.getByLabel(locale === "en" ? "Interface language" : "界面语言")).toBeVisible();
+    await expect(page.getByRole("switch", { name: /Status notifications|状态通知/ })).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: /Desktop status notifications|桌面状态通知/ })).toHaveCount(0);
+  });
+}
+
 test("Web history retains browser download", async ({ page }) => {
   await fakeApi(page, {
     [`/projects/${pid}/exports`]: [
