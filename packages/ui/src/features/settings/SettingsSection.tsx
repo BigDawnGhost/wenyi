@@ -2,6 +2,8 @@ import { useId, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 import { Card } from "../../components/ui/card";
 
+export { SettingsRow } from "./SettingsRow";
+
 const SETTINGS_HEADING_CLASSNAME = "text-sm font-medium";
 
 /** Sections provide a panel by default; grouped sections own their child panels. */

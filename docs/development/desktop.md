@@ -256,7 +256,16 @@ Failure fallback requests attention without showing/focusing the window; Linux/m
 UI work is queued onto the main thread without waiting for it. Every delivery attempt,
 including an unavailable service or permission fallback, consumes the shared rate budget.
 
-The frontend queries permission only after the engine is ready. On macOS, only the
+The native host owns the single enabled preference in `<data-root>/runtime/notifications.json`,
+separate from translation YAML and browser storage. Missing preferences default to enabled;
+unreadable or invalid preferences fail closed and expose a generic, retryable settings error.
+The host loads the preference before starting the engine. The Desktop-only General settings row
+saves immediately through trusted IPC, publishing a same-directory temporary file atomically
+before changing the shared flag. The flag is not a dispatcher command, so a full queue cannot
+drop a disable request. Queued deliveries and main-thread attention callbacks recheck it;
+notifications already accepted by the OS are not recalled.
+
+The frontend queries permission only while notifications are enabled and the engine is ready. On macOS, only the
 explicit **Allow notifications** button requests authorization. That IPC uses a separate
 blocking worker with a 90-second callback deadline, leaving both the main thread and
 notification dispatcher free. Dismissal is not persisted as permission; denial is managed

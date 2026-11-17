@@ -3,7 +3,7 @@ export { Badge } from "./badge";
 export { Button } from "./button";
 export { Card } from "./card";
 export { ErrorNotice } from "./data";
-export { Label } from "./form";
+export { Label, Switch } from "./form";
 export { Dialog } from "./misc";
 export { PasswordInput } from "./password-input";
 export { Progress } from "./progress";

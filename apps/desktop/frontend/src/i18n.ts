@@ -1,6 +1,11 @@
 import { useI18n } from "@wenyi/ui/i18n";
 
 const en = {
+  "notifications.setting": "Status notifications",
+  "notifications.settingHelp": "Show task results and failure alerts. Turning this off also disables taskbar flashing and Dock attention. Changes are saved automatically.",
+  "notifications.loadFailed": "Could not read notification settings. Please retry.",
+  "notifications.saveFailed": "Could not save notification settings. Your previous choice is unchanged. Please retry.",
+  "notifications.retry": "Retry",
   "notifications.title": "Desktop status notifications",
   "notifications.privacy": "Receive task results and local service failure alerts. Notifications may include project names, but never book text or credentials. macOS asks for permission only when you choose Allow notifications.",
   "notifications.allow": "Allow notifications",
@@ -131,6 +136,11 @@ const en = {
   "credentials.refresh": "Recheck",
 };
 const zhCN: Record<keyof typeof en, string> = {
+  "notifications.setting": "状态通知",
+  "notifications.settingHelp": "显示任务结果及异常提醒。关闭后也不再闪烁任务栏或跳动 Dock 图标。更改自动保存。",
+  "notifications.loadFailed": "无法读取通知设置，请重试。",
+  "notifications.saveFailed": "无法保存通知设置，原有选择未改变，请重试。",
+  "notifications.retry": "重试",
   "notifications.title": "桌面状态通知",
   "notifications.privacy": "接收任务结果及本地服务异常提醒。通知可能包含项目名称，但不含书籍正文或凭据。只有点击“允许通知”后，macOS 才会申请系统权限。",
   "notifications.allow": "允许通知",

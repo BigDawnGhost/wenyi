@@ -13,6 +13,7 @@ async function setup(page: Page, permission = "not_determined", answer = "grante
       notificationRequests: requests,
       __TAURI_INTERNALS__: {
         invoke: async (command: string, args: Record<string, unknown>) => {
+          if (command === "desktop_notifications_enabled") return true;
           if (command !== "desktop_notifications_permission") return null;
           requests.push(args.request === true);
           return args.request ? answer : permission;

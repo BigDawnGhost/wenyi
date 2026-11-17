@@ -139,13 +139,15 @@ If a previous instance is still closing, wait for it to finish rather than tryin
 
 ## Status notifications
 
-Windows, Linux, and macOS builds can show a system notification when a task fails, times out, or the local engine stops unexpectedly. Translation preparation reaching `prepared` and a book reaching `done` also produce a completion notification. Notifications are enabled by default in Wenyi; this version has no notification settings section.
+Windows, Linux, and macOS builds can show a system notification when a task fails, times out, or the local engine stops unexpectedly. Translation preparation reaching `prepared` and a book reaching `done` also produce a completion notification.
+
+**Settings → General → Status notifications** is the single switch for all these notifications and taskbar flashing / Dock bouncing. It is enabled by default. Changes save immediately and survive a restart for the current Desktop data directory. Turning it off also stops notification permission prompts; it does not remove notifications already accepted by the operating system.
 
 - A notification shows the project's display name and a short, localized status such as "Translation failed" or "Export failed". It never contains the specific failure reason, error text, file paths, chapter text, or credentials. The project name can therefore appear in the system notification center and, if your system allows it, on the lock screen. The full error remains on the project page.
 - Notifications do not depend on whether the window is hidden or focused. Pausing, cancelling, quitting, updating, or a failed startup does not notify. Repeated terminal signals for one run do not stack.
 - Notifications show status only, with no application-defined click action or project navigation. Do not rely on clicking one to restore the window; use **Show Wenyi**, the macOS Dock, or reopen the executable/shortcut.
 - Linux requires a session D-Bus notification service, such as the one provided by your desktop environment. macOS notifications require the installed `.app` bundle and system permission. After startup, **Allow notifications** opens the macOS permission request; **Not now** leaves permission unchanged and offers it again on the next launch or reload. Task completion never opens a permission prompt. If permission is denied, enable Wenyi Desktop in **System Settings → Notifications**.
-- When permission or the notification service is unavailable, Wenyi makes a best-effort attention request: taskbar flashing on Windows/Linux or a Dock bounce on macOS. It does not show or focus the window, change tray state, or alter task results.
+- When status notifications are enabled but permission or the notification service is unavailable, Wenyi makes a best-effort attention request: taskbar flashing on Windows/Linux or a Dock bounce on macOS. It does not show or focus the window, change tray state, or alter task results.
 - OS acceptance does not guarantee a visible banner or sound. Focus modes, notification settings, and Linux compositor support still apply; silence after acceptance does not trigger a second alert.
 
 ## Diagnostics and feedback
