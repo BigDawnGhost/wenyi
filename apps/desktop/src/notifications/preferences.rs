@@ -72,7 +72,8 @@ impl Preferences {
             root.create_dir_all("runtime")?;
             let directory = root.open_dir_nofollow("runtime")?;
             let mut random = [0; 16];
-            getrandom::fill(&mut random).map_err(io::Error::other)?;
+            getrandom::fill(&mut random)
+                .map_err(|_| io::Error::other("Secure randomness unavailable."))?;
             let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
             let temporary = format!(".notifications-{suffix}.tmp");
             let mut options = OpenOptions::new();
