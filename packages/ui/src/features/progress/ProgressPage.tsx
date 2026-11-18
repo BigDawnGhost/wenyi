@@ -2,7 +2,7 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { useI18n } from "../../i18n";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, Pause, Play, type LucideIcon } from "lucide-react";
+import { Pause, Play, type LucideIcon } from "lucide-react";
 import { api, isProjectBusy } from "../../api/client";
 import type { ChapterSummary } from "../../api/types";
 import { useProjectQuery } from "../../lib/projectQuery";
@@ -191,13 +191,13 @@ function TaskControlButton({
   pending: boolean;
   onClick: () => void;
 }) {
-  const Icon = pending ? LoaderCircle : icon;
+  const Idle = icon;
   return (
     <Button
       type="button"
       variant="ghost"
       size="icon"
-      className="shrink-0 border border-border text-muted-foreground"
+      className="relative shrink-0 border border-border text-muted-foreground"
       aria-label={label}
       title={label}
       aria-busy={pending || undefined}
@@ -206,10 +206,10 @@ function TaskControlButton({
       // at the corner of the header. The ref guard stops the second press instead.
       onClick={() => { if (!pending) onClick(); }}
     >
-      <Icon
-        className={pending ? "h-4 w-4 animate-spin" : "h-4 w-4"}
-        aria-hidden="true"
-      />
+      {/* Play or pause, nothing else. A spinner in between added a third glyph —
+          one that also animates — for the length of the request, so the control
+          flickered through a state the role never has. */}
+      <Idle className="h-4 w-4" aria-hidden="true" />
     </Button>
   );
 }
