@@ -95,7 +95,7 @@ export default function Dashboard() {
         {importFailure && (
           <div
             role="alert"
-            className="mb-3 rounded-lg border-l-4 border-l-destructive bg-destructive/10 px-4 py-3 text-sm"
+            className="mb-3 rounded-md border-l-4 border-l-destructive bg-destructive/10 p-3 text-sm text-destructive"
           >
             <p className="font-medium">{tr("dashboard.couldNotImportProject")}</p>
             <p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">

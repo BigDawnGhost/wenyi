@@ -240,7 +240,7 @@ export function ImportDialog({
                   {c.newTarget}
                 </span>
                 <button
-                  className={cn("ml-auto rounded px-2 py-0.5 text-xs", c.decision === "overwrite" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}
+                  className={cn("ml-auto rounded-md border px-2 py-0.5 text-xs font-medium", c.decision === "overwrite" ? "border-transparent bg-primary text-primary-foreground" : "border-border bg-secondary text-secondary-foreground")}
                   onClick={() => toggleConflict(conflictPage * PAGE_SIZE + i)}
                 >
                   {c.decision === "overwrite"
