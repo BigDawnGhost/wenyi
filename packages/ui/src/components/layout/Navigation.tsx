@@ -2,7 +2,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, type LucideIcon } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/utils";
-import { Button } from "../ui/button";
+import { Button, buttonVariants, type ButtonVariant } from "../ui/button";
 import {
   availableSettingsSections, isVisibleFor, navEntries, navPath, settingsPath,
 } from "../../routes/manifest";
@@ -66,6 +66,7 @@ export function NavigationLink({
   id,
   state,
   centered = false,
+  variant,
 }: {
   to: string;
   icon: LucideIcon;
@@ -74,6 +75,12 @@ export function NavigationLink({
   collapsed?: boolean;
   /** Centre icon and label as a unit, for entries rendered as buttons. */
   centered?: boolean;
+  /**
+   * Render as a real button of this variant rather than a sidebar row. The
+   * classes come from buttonVariants, so hover, pressed and focus behave
+   * exactly as they do on a <Button>; re-deriving them here would drift.
+   */
+  variant?: ButtonVariant;
   /** Chunk loader warmed on hover/focus so the first click renders instantly. */
   prefetch?: () => Promise<unknown>;
   /** Extra classes merged last (e.g. the sidebar's primary-action slot). */
@@ -90,19 +97,24 @@ export function NavigationLink({
       title={collapsed ? label : undefined}
       onPointerEnter={() => void prefetch?.().catch(() => {})}
       onFocus={() => void prefetch?.().catch(() => {})}
-      // Optical centring: a thin line icon carries less visual weight than the
-      // dense label beside it, so a geometrically centred pair reads as pushed
-      // right. Shifting the inner padding, rather than the row, moves the icon
-      // and label left while the button box stays exactly where it was.
-      style={centered ? { paddingLeft: 9, paddingRight: 15 } : undefined}
       className={({ isActive }) =>
         cn(
           "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
           collapsed && "gap-0 px-2",
 
-          isActive
-            ? "bg-accent text-accent-foreground font-medium shadow-raised active:shadow-pressed"
-            : "text-muted-foreground hover:text-foreground hover:bg-hover",
+          variant
+            ? cn(
+                buttonVariants({ variant }),
+                "w-full",
+                // The label collapses to zero width but still occupies a gap,
+                // which pushes the lone icon off centre. Drop both the gap and
+                // the wide horizontal padding so the icon sits in the middle of
+                // the narrow button.
+                collapsed && "gap-0 px-2",
+              )
+            : isActive
+              ? "bg-accent text-accent-foreground font-medium shadow-raised active:shadow-pressed"
+              : "text-muted-foreground hover:text-foreground hover:bg-hover",
           className,
         )
       }
