@@ -260,6 +260,91 @@ body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-vi
   box-shadow: var(--shadow-input-hover);
 }
 
+/* Floating action bar, built in three layers so each optical property is
+   tunable on its own instead of fighting inside one backdrop-filter:
+
+     ::before  frost  — samples the page, blurs and saturates it into the
+                       colour wash. Nothing crisp lives here.
+     children  content — buttons and labels, painted above the frost so
+                       they keep their native subpixel rendering.
+     ::after   sheen  — the specular highlight that reads as thickness.
+
+   The parent must not create a backdrop root (no isolation, filter,
+   transform or opacity), or the frost would sample its own stacking
+   context and come out empty. */
+/* No `position` here: the bar is already `sticky`, which is a positioned
+   element and therefore its own containing block, so the absolutely
+   positioned layers anchor to it. Declaring `relative` would override
+   the utility and drop the bar out of the sticky flow. */
+.glass-bar {
+  border: 1px solid rgba(24, 26, 32, 0.10);
+  box-shadow:
+    0 12px 36px -6px rgba(15, 23, 42, 0.16),
+    0 2px 8px rgba(15, 23, 42, 0.07),
+    inset 0 1px 1px rgba(255, 255, 255, 0.75),
+    inset 0 -1px 2px rgba(15, 23, 42, 0.07);
+}
+/* Frost: the only layer that touches the backdrop. A Gaussian blur is what
+   produces the colour wash; it averages the sampled pixels, so the pane
+   reads as translucent glass rather than a window. Keep the tint thin so
+   the wash comes from the blur, not from a flat white layer. */
+.glass-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  background-image: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.16),
+    rgba(255, 255, 255, 0.04) 52%,
+    rgba(255, 255, 255, 0.11)
+  );
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+}
+/* Sheen: a specular pass above the content, so it never dulls the text. */
+.glass-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(
+    158deg,
+    rgba(255, 255, 255, 0.42),
+    rgba(255, 255, 255, 0) 38%
+  );
+}
+.glass-bar > * {
+  position: relative;
+  z-index: 1;
+}
+.dark .glass-bar {
+  border-color: rgba(255, 255, 255, 0.10);
+  box-shadow:
+    0 12px 36px -6px rgba(0, 0, 0, 0.55),
+    0 2px 8px rgba(0, 0, 0, 0.40),
+    inset 0 1px 1px rgba(255, 255, 255, 0.10),
+    inset 0 -1px 2px rgba(0, 0, 0, 0.35);
+}
+.dark .glass-bar::before {
+  background-image: linear-gradient(
+    135deg,
+    rgba(40, 40, 40, 0.30),
+    rgba(24, 24, 24, 0.12) 52%,
+    rgba(34, 34, 34, 0.24)
+  );
+}
+.dark .glass-bar::after {
+  background: linear-gradient(
+    158deg,
+    rgba(255, 255, 255, 0.10),
+    rgba(255, 255, 255, 0) 34%
+  );
+}
+
 /* Keep the centered content column steady when the scrollbar appears or
    disappears while switching pages or tabs. */
 [data-slot="content"] {

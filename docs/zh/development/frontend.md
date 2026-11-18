@@ -155,6 +155,7 @@ px，而非 rem/em。视口约束可用视口单位；相对尺寸、动态进�
 | `runtime-placeholder` | Desktop 运行时 pending/closing 门 |
 | `route-placeholder` | 安静的内容区路由门 |
 | `disclosure-summary`、`disclosure-chevron` | 原生折叠详情样式 |
+| `glass-bar` | 悬浮操作栏的玻璃底：半透明底色加背景模糊 |
 
 这些是编写约定，不代表每个依赖或已有 arbitrary utility 都已完全采用 px。
 两端保持共享主题 token 及减少动态效果行为，不通过把样式复制到 app 绕过共享规则。

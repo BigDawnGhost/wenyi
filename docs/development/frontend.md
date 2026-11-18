@@ -189,6 +189,7 @@ shared [stylesheet](../../packages/ui/src/index.css#L15):
 | `runtime-placeholder` | Desktop runtime pending/closing gate |
 | `route-placeholder` | Quiet in-content route gate |
 | `disclosure-summary`, `disclosure-chevron` | Native disclosure styling |
+| `glass-bar` | Floating action bar glass: translucent tint plus backdrop blur |
 
 These are authoring conventions, not a claim that every dependency or older
 arbitrary utility is px-only. Keep shared theme tokens and reduced-motion behavior
