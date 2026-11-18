@@ -42,7 +42,7 @@ class AssemblyService:
         from ...assemble.writer_common import bilingual_out_path
 
         if progress:
-            progress(0, 0, "Assembling translation…")
+            progress(0, 0, "progress.stage.assembling")
         out_cfg = self._runtime.config.output
         do_mono, do_bilingual = out_cfg.mono, out_cfg.bilingual
         if not do_mono and not do_bilingual:

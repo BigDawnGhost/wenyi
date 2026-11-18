@@ -55,10 +55,12 @@ class ReviewRoundService:
         """Review and arbitrate one immutable whole-book shadow snapshot."""
         total = sum(len(chapter.text_segments) for chapter in loaded)
         done = 0
+        # A stable key plus the round, so the client renders the number in the
+        # reader's language instead of receiving a sentence baked here.
         review_label = (
-            f"Whole-book review R{review_round}"
+            "progress.stage.reviewRound1"
             if review_round == 1
-            else f"Blind whole-book review R{review_round}"
+            else f"progress.stage.reviewRound:{review_round}"
         )
         if progress:
             progress(0, total, review_label)
@@ -103,7 +105,7 @@ class ReviewRoundService:
         conflict_groups = build_conflict_groups(pre_arbitration_issues)
         arbitrations: list[dict[str, Any]] = []
         if conflict_groups and self._config.pipeline.review_conflict_arbitration:
-            arbitration_label = f"Conflict arbitration R{review_round}"
+            arbitration_label = f"progress.stage.arbitration:{review_round}"
             arbitration_total = len(conflict_groups)
             if progress:
                 progress(0, arbitration_total, arbitration_label)
@@ -268,7 +270,7 @@ class ReviewRoundService:
         jobs = sorted(grouped.items())
         if not jobs:
             return [], skipped
-        fix_label = f"Shadow revision R{fix_round}"
+        fix_label = f"progress.stage.shadowRevision:{fix_round}"
         fix_total = len(jobs)
         if progress:
             progress(0, fix_total, fix_label)

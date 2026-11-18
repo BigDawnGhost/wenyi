@@ -40,13 +40,13 @@ def parse_source(
     project = services.projects.get_project(pid)
     if project is None:
         raise ValueError(f"Project not found: {pid}")
-    progress(0, 1, "解析原文")
+    progress(0, 1, "progress.stage.parsing")
     doc = parse_document(
         storage, source, config, mineru_token_resolver=services.mineru_token_resolver
     )
     preview = book_preview(doc, project["fmt"])
     storage.write_artifact("preview.json", preview)
-    progress(1, 1, "原文预览已就绪")
+    progress(1, 1, "progress.stage.parsed")
     return "uploaded"
 
 
