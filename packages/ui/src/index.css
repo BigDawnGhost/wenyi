@@ -352,9 +352,13 @@ body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-vi
    movement. Only opacity and transform animate: the bar is horizontally
    centred by layout, so transform is free, and neither property triggers
    a relayout. */
+/* Movement only, no opacity. A translucent element forces the browser to skip
+   or defer its own backdrop-filter, so a fade-in shows the bar unfrosted until
+   the last frame and the glass then pops in. Rising from below keeps the same
+   entrance without ever leaving the element opaque. */
 @keyframes bar-enter {
-  from { opacity: 0; transform: translateY(14px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { transform: translateY(14px); }
+  to { transform: translateY(0); }
 }
 .dark .glass-bar {
   box-shadow:
