@@ -353,7 +353,7 @@ body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-vi
    centred by layout, so transform is free, and neither property triggers
    a relayout. */
 @keyframes bar-enter {
-  from { opacity: 0; transform: translateY(6px); }
+  from { opacity: 0; transform: translateY(14px); }
   to { opacity: 1; transform: translateY(0); }
 }
 .dark .glass-bar {
@@ -528,4 +528,16 @@ details[open] > .disclosure-summary > .disclosure-chevron {
 }
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/* A pressed button scales to 0.98. The glyph inside travels with that scale,
+   so a centred button — whose content sits half a button in from the edge —
+   moves its icon by about a pixel on the way down and again on the way back,
+   which reads as the icon shivering. Scaling the content by the inverse keeps
+   it fixed on screen while the button itself still narrows. */
+.press-static-content {
+  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+.group:active .press-static-content {
+  transform: scale(1.020408);
 }
