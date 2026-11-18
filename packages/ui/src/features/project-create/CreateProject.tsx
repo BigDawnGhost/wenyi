@@ -173,11 +173,11 @@ export default function CreateProjectDialog() {
   // Closing never cancels a request that is already in flight. The dialog is
   // only a view of it, so dismissing stays available and the result still
   // arrives in the query cache; `mounted` below decides whether to redirect.
-  const close = () => {
-    if (location.state?.fromAppNavigation || location.state?.fromProjectList)
-      navigate(-1);
-    else navigate("/", { replace: true });
-  };
+  // Dismissing lands on the project list, which is what the dialog was already
+  // showing behind itself. Going back instead would return to whatever page the
+  // button was pressed from, so the list the user had just been looking at would
+  // disappear under them.
+  const close = () => navigate("/", { replace: true });
 
   const languages = (caps?.languages || []).filter((l) => l.code !== "auto");
   const createDisabled =
