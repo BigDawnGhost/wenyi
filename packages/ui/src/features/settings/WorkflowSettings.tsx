@@ -28,12 +28,17 @@ export function WorkflowSettings({
   scope,
   disabled,
   onField,
+  part = "all",
 }: {
   config: Record<string, unknown>;
   scope: "global" | "project";
   disabled: boolean;
   onField: (group: string, key: string, value: unknown) => void;
+  /** Project settings split style and pipeline into two sections of their own. */
+  part?: "all" | "translation-style" | "pipeline";
 }) {
+  const showStyle = scope === "project" && part !== "pipeline";
+  const showPipeline = part !== "translation-style";
   const { t: tr } = useI18n();
   const precision =
     scope === "project" &&
@@ -47,10 +52,10 @@ export function WorkflowSettings({
 
   return (
     <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-50">
-      {scope === "project" && (
+      {showStyle && (
         <div className={cn(cardSurface, "p-4")}>
           <div className="space-y-2">
-            <Label htmlFor="project-prompt-genre">{tr("createProject.promptGenre")}</Label>
+            <Label htmlFor="project-prompt-genre">{tr("settings.currentStyle")}</Label>
             <Input
               id="project-prompt-genre"
               className={SETTINGS_CONTROL_CLASSNAME}
@@ -68,7 +73,7 @@ export function WorkflowSettings({
           </div>
         </div>
       )}
-      <div className={cn(cardSurface, "overflow-hidden")}>
+      {showPipeline && <div className={cn(cardSurface, "overflow-hidden")}>
         {PIPELINE.map(([key, label]) => (
           <SettingsRow
             key={key}
@@ -84,7 +89,7 @@ export function WorkflowSettings({
             }
           />
         ))}
-      </div>
+      </div>}
     </fieldset>
   );
 }
