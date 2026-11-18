@@ -75,33 +75,24 @@ export function NotificationToaster() {
   // toast hovering well above the corner for no reason.
   const barVisible = useActionBarPresence();
   const sidebarWidth = useSidebarWidth();
-  // Three behaviours Sonner decides internally rather than from its props.
-  // They are published as a style element because the values have to match
-  // Sonner's own timers and layout variables, not the design scale.
+  // Sonner hard-codes two behaviours that its props do not cover, both of which
+  // put it out of step with the rest of the app. Publish them as a style element:
+  // the values have to match Sonner's own timers and layout variables rather than
+  // the design scale, and a utility class would be generated per build.
   useEffect(() => {
     const tag = document.createElement("style");
     tag.dataset.sonnerExit = "";
-    // Sonner opens the stack on hover by switching each toast to a different
-    // layout, so the swept-back ones jump to full height and a new offset. On a
-    // bottom-anchored stack that throws them up the screen, and a toast
-    // dismissed meanwhile animates against a layout that is still moving. Pin
-    // the expanded state to the resting layout so hovering changes nothing.
+    // Sonner hard-codes a 400ms transition on every toast, which is twice the
+    // app's own pace (200ms standard, 320ms for dialogs). Its enter, shift and
+    // exit then run on that one number: slowing the whole stack, and giving the
+    // dismissal a lift-and-collapse that the unmount timer interrupts part-way.
+    // Bring the duration onto the same scale and make the exit a fade in place,
+    // so leaving costs the same beat as everything else.
     tag.textContent = [
-      "[data-sonner-toast]{transition-duration:180ms,180ms,180ms,150ms}",
-      "[data-sonner-toast][data-expanded='true'][data-front='false']{" +
-        "--scale:calc(var(--toasts-before) * 0.05 + 1);" +
-        "--y:translateY(calc(var(--lift-amount) * var(--toasts-before)))" +
-        " scale(calc(-1 * var(--scale)));" +
-        "height:var(--front-toast-height)}",
-      "[data-sonner-toast][data-expanded='true'][data-front='false']" +
-        "[data-styled='true'] > *{opacity:0}",
-      // Exit as a fade in place. Sonner slides a dismissed toast off in its
-      // lift direction while collapsing its height, and the two run on
-      // different clocks, so the box was seen shrinking and drifting before it
-      // vanished. Holding position and height leaves only the opacity change.
+      "[data-sonner-toast]{transition-duration:200ms,200ms,200ms,200ms}",
       "[data-sonner-toast][data-removed='true']{--y:none;" +
         "height:var(--initial-height);" +
-        "transition:opacity 180ms ease-out}",
+        "transition:opacity 200ms ease-out}",
     ].join("");
     document.head.append(tag);
     return () => tag.remove();
