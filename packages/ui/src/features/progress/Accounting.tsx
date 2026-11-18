@@ -5,9 +5,7 @@ import {
   Layers,
   MessagesSquare,
 } from "lucide-react";
-import { lazy } from "react";
 import { useI18n } from "../../i18n";
-import { LazyBoundary } from "../../routes/LazyBoundary";
 import {
   amount,
   cacheRate,
@@ -17,8 +15,11 @@ import {
 } from "./accountingData";
 import { useLiveTiming } from "./useLiveTiming";
 
-const UsageChart = lazy(() => import("./UsageChart"));
-const RunTimeChart = lazy(() => import("./RunTimeChart"));
+// Imported directly. They were split into their own chunks, but this section sits
+// inside the progress route, which is already loaded, so the split only bought a
+// loading line that appeared and was immediately replaced by the charts.
+import UsageChart from "./UsageChart";
+import RunTimeChart from "./RunTimeChart";
 
 export function Accounting({
   value,
@@ -91,18 +92,10 @@ export function Accounting({
           />
           {t("accounting.details")}
         </h3>
-        <LazyBoundary
-          fallback={
-            <p className="mt-5 text-sm text-muted-foreground">
-              {t("progress.loading")}
-            </p>
-          }
-        >
-          <div className="mt-5 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-            <UsageChart usage={usage} />
-            <RunTimeChart timing={timing} />
-          </div>
-        </LazyBoundary>
+        <div className="mt-5 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <UsageChart usage={usage} />
+          <RunTimeChart timing={timing} />
+        </div>
       </div>
     </section>
   );
