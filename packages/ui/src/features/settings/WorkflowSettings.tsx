@@ -1,6 +1,6 @@
 import { useI18n } from "../../i18n";
-import { Input, Label, Switch } from "../../components/ui/form";
-import { SettingsRow, SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
+import { Label, Switch } from "../../components/ui/form";
+import { SettingsRow } from "./SettingsRow";
 import { cardSurface } from "../../components/ui/card";
 import { cn } from "../../lib/utils";
 
@@ -55,18 +55,23 @@ export function WorkflowSettings({
       {showStyle && (
         <div className={cn(cardSurface, "p-4")}>
           <div className="space-y-2">
-            <Label htmlFor="project-prompt-genre">{tr("settings.currentStyle")}</Label>
-            <Input
+            <Label id="project-prompt-genre-label">{tr("settings.currentStyle")}</Label>
+            {/* A value, not a field. It is fixed at creation, so an input here
+                offered an editable-looking box that ignored every hover and every
+                keystroke; presenting it as plain text says the same thing without
+                promising interaction. */}
+            <p
               id="project-prompt-genre"
-              className={SETTINGS_CONTROL_CLASSNAME}
-              readOnly
-              value={tr(
+              aria-labelledby="project-prompt-genre-label"
+              aria-describedby="project-prompt-genre-help"
+              className="cursor-not-allowed rounded-lg bg-surface px-3.5 py-2 text-sm text-muted-foreground"
+            >
+              {tr(
                 section(config, "pipeline").prompt_genre === "academic"
                   ? "createProject.academicGenre"
                   : "createProject.literaryGenre",
               )}
-              aria-describedby="project-prompt-genre-help"
-            />
+            </p>
             <p id="project-prompt-genre-help" className="text-xs text-muted-foreground">
               {tr("settings.promptGenreLocked")}
             </p>
