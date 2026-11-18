@@ -194,7 +194,7 @@ function TaskControlButton({
       onClick={onClick}
     >
       <Icon
-        className={pending ? "h-4.5 w-4.5 animate-spin" : "h-4.5 w-4.5"}
+        className={pending ? "h-4 w-4 animate-spin" : "h-4 w-4"}
         aria-hidden="true"
       />
     </Button>

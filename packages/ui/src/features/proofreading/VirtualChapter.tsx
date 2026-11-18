@@ -23,7 +23,7 @@ const ParagraphRow = memo(function ParagraphRow({
     <div
       id={`paragraph-${segment.index}`}
       tabIndex={-1}
-      className={cn("grid", sourceOnly ? "" : "grid-cols-2", "border-b border-subtle focus:outline-none focus:ring-2 focus:ring-inset focus:ring-ring/30 focus:bg-muted/30")}
+      className={cn("grid", sourceOnly ? "" : "grid-cols-2", "border-b border-subtle")}
     >
       <div className="min-w-0 border-r border-subtle p-4 text-sm">
         <p data-reader-text="source" className="whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">

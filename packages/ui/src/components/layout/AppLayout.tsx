@@ -25,7 +25,7 @@ export function Brand() {
   return (
     <Link
       to="/"
-      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md"
     >
       <img
         src={emblemUrl}
