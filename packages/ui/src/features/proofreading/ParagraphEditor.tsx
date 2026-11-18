@@ -162,7 +162,7 @@ export function ParagraphEditor({
           type="button"
           aria-label={t("common.close")}
           disabled={save.isPending}
-          className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
           onClick={close}
         >
           <X className="h-4 w-4" />
@@ -226,7 +226,7 @@ export function ParagraphEditor({
         {stale && (
           <div
             role="status"
-            className="mb-4 space-y-2 rounded-lg border bg-muted/50 p-3 text-sm"
+            className="mb-4 space-y-2 rounded-lg border bg-surface p-3 text-sm"
           >
             <p>{t("proofreading.changedWhileEditing")}</p>
             <Button

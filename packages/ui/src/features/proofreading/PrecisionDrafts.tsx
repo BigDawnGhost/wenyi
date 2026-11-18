@@ -66,7 +66,7 @@ export function PrecisionDrafts({
   );
   return (
     <div className="space-y-4">
-      <p className="rounded-lg bg-muted/50 p-3 text-sm">
+      <p className="rounded-lg bg-surface p-3 text-sm">
         {t("proofreading.precisionExplanation")}
       </p>
       {data.candidates.map((candidate) => (
@@ -82,7 +82,7 @@ export function PrecisionDrafts({
           {text(candidate.target)}
         </section>
       ))}
-      <section className="space-y-3 rounded-lg border bg-muted/30 p-4">
+      <section className="space-y-3 rounded-lg border bg-surface p-4">
         <h3 className="text-sm font-medium">{t("proofreading.archivedSynthesis")}</h3>
         {text(data.synthesized_target)}
       </section>

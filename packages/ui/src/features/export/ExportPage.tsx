@@ -108,7 +108,7 @@ export default function ExportPage() {
                     "rounded-lg border p-3 text-left text-sm transition-[background-color,border-color,box-shadow] duration-motion-fast ease-standard focus-visible:outline-none",
                     !fmt
                       ? "border-primary/50 bg-accent"
-                      : "border-border hover:border-muted-foreground/40 hover:bg-muted/40",
+                      : "border-border hover:border-muted-foreground/40 hover:bg-hover",
                   )}
                 >
                   {tr("export.automatic")}
@@ -122,7 +122,7 @@ export default function ExportPage() {
                       "rounded-lg border p-3 text-left text-sm transition-[background-color,border-color,box-shadow] duration-motion-fast ease-standard focus-visible:outline-none",
                       fmt === f
                         ? "border-primary/50 bg-accent"
-                        : "border-border hover:border-muted-foreground/40 hover:bg-muted/40",
+                        : "border-border hover:border-muted-foreground/40 hover:bg-hover",
                     )}
                   >
                     {f.toUpperCase()}

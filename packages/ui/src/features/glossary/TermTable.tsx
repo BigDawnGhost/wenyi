@@ -115,7 +115,7 @@ export function TermTable({
             {(terms || []).map((t: Term) => (
               <tr
                 key={t.source}
-                className="border-b border-subtle last:border-0 hover:bg-muted/40"
+                className="border-b border-subtle last:border-0 transition-colors hover:bg-hover"
               >
                 <td className="px-4 py-3.5">
                   <input
