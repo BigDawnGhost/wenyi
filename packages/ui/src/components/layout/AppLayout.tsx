@@ -128,12 +128,15 @@ export function AppLayout() {
           end={entry.end}
           prefetch={entry.loader}
           id={slot === "action" ? "create-project-trigger" : undefined}
+          centered={slot === "action"}
           state={slot === "action"
             ? { fromAppNavigation: true }
             : entry.to === "/settings"
               ? { settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }
               : undefined}
-          className={slot === "action" ? "w-full" : undefined}
+          className={slot === "action"
+            ? "w-full bg-primary font-medium text-primary-foreground shadow-raised-invert hover:bg-primary-hover hover:text-primary-foreground active:bg-primary active:shadow-pressed-invert"
+            : undefined}
         />
       ));
 
@@ -203,7 +206,7 @@ export function AppLayout() {
               <div
                 data-slot="sidebar.action"
                 className={cn(
-                  "shrink-0 px-3 pt-3 pb-1 transition-[padding] duration-sidebar ease-sidebar",
+                  "shrink-0 p-3 transition-[padding] duration-sidebar ease-sidebar",
                   collapsed && "p-2",
                 )}
               >

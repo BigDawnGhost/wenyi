@@ -65,12 +65,15 @@ export function NavigationLink({
   className,
   id,
   state,
+  centered = false,
 }: {
   to: string;
   icon: LucideIcon;
   label: string;
   end?: boolean;
   collapsed?: boolean;
+  /** Centre icon and label as a unit, for entries rendered as buttons. */
+  centered?: boolean;
   /** Chunk loader warmed on hover/focus so the first click renders instantly. */
   prefetch?: () => Promise<unknown>;
   /** Extra classes merged last (e.g. the sidebar's primary-action slot). */
@@ -87,10 +90,16 @@ export function NavigationLink({
       title={collapsed ? label : undefined}
       onPointerEnter={() => void prefetch?.().catch(() => {})}
       onFocus={() => void prefetch?.().catch(() => {})}
+      // Optical centring: a thin line icon carries less visual weight than the
+      // dense label beside it, so a geometrically centred pair reads as pushed
+      // right. Shifting the inner padding, rather than the row, moves the icon
+      // and label left while the button box stays exactly where it was.
+      style={centered ? { paddingLeft: 9, paddingRight: 15 } : undefined}
       className={({ isActive }) =>
         cn(
           "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
           collapsed && "gap-0 px-2",
+
           isActive
             ? "bg-accent text-accent-foreground font-medium shadow-raised active:shadow-pressed"
             : "text-muted-foreground hover:text-foreground hover:bg-hover",
@@ -101,7 +110,11 @@ export function NavigationLink({
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
       <span
         className={cn(
-          "min-w-0 max-w-48 flex-1 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-sidebar ease-sidebar",
+          "min-w-0 max-w-48 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-sidebar ease-sidebar",
+          // flex-1 makes the label absorb the row's spare width, which is what
+          // pushes nav labels to the left. A centred entry lets the icon and
+          // label shrink-wrap so justify-center has slack to distribute.
+          !centered && "flex-1",
           collapsed && "max-w-0 -translate-x-2 opacity-0",
         )}
       >
