@@ -94,7 +94,7 @@ export default function ProofreadingPage() {
               {filtered?.map((chapter) => (
                 <li key={chapter.index}>
                   <Link
-                    className="-mx-4 flex items-center justify-between gap-4 rounded-lg px-4 py-3 transition-colors hover:bg-hover"
+                    className="flex items-center justify-between gap-4 rounded-lg px-4 py-3 transition-colors hover:bg-hover"
                     to={`/projects/${pid}/proofreading/${chapter.index}`}
                   >
                     <div className="min-w-0 space-y-1">
