@@ -123,8 +123,11 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
     },
   });
   const error = save.error || validate.error || restore.error;
-  const pending = save.isPending || validate.isPending || restore.isPending || installing;
-  const disabled = !draft || yamlDirty || pending;
+  // Installing a credential is a state the page is in, so it disables the form.
+  // A request in flight is not: disabling for it applied the disabled face to
+  // every control and stripped the hover state from the button being pressed.
+  const pending = save.isPending || validate.isPending || restore.isPending;
+  const disabled = !draft || yamlDirty || installing;
   const effective = draft?.effective || {};
   const llm = object(effective.llm);
   // Until the first load completes there is no draft to compare against, so
@@ -306,20 +309,30 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
           ) : undefined
         }
       >
-        <Button variant="outline" disabled={!draft || pending} onClick={() => restore.mutate()}>
+        <Button
+          variant="outline"
+          disabled={!draft}
+          aria-busy={restore.isPending || undefined}
+          onClick={() => { if (!pending) restore.mutate(); }}
+        >
           {t("settings.restoreDefaults")}
         </Button>
         {section === "advanced" && (
           <Button
             variant="outline"
-            disabled={!draft || pending || editingIds}
-            onClick={() => validate.mutate()}
+            disabled={!draft || editingIds}
+            aria-busy={validate.isPending || undefined}
+            onClick={() => { if (!pending) validate.mutate(); }}
           >
             {t("settings.validateConfiguration")}
           </Button>
         )}
-        <Button disabled={!draft || pending || editingIds} onClick={() => save.mutate()}>
-          {pending ? t("common.saving") : t("settings.saveConfiguration")}
+        <Button
+          disabled={!draft || editingIds}
+          aria-busy={save.isPending || undefined}
+          onClick={() => { if (!pending) save.mutate(); }}
+        >
+          {t("settings.saveConfiguration")}
         </Button>
       </SettingsActionBar>
     </>

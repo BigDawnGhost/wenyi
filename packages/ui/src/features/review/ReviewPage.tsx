@@ -139,12 +139,10 @@ function ReviewWorkbench({ pid }: { pid: string }) {
               !loading &&
               !error && (
                 <Button
-                  disabled={review.isPending}
-                  onClick={() => review.mutate()}
+                  aria-busy={review.isPending || undefined}
+                  onClick={() => { if (!review.isPending) review.mutate(); }}
                 >
-                  {review.isPending
-                    ? t("common.submitting")
-                    : t("review.runWholeBookReview")}
+                  {t("review.runWholeBookReview")}
                 </Button>
               )}
           </>

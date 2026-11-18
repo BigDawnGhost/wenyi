@@ -290,9 +290,9 @@ function ChapterTable({
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={busy || translate.isPending}
+                      disabled={busy}
                       aria-busy={translate.isPending || undefined}
-                      onClick={() => translate.mutate(c.index)}
+                      onClick={() => { if (!translate.isPending) translate.mutate(c.index); }}
                     >
                       {tr("progress.translateChapter")}
                     </Button>

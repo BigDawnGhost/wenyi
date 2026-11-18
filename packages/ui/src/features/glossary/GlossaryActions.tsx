@@ -46,7 +46,7 @@ export function GlossaryActions({
       <div className="relative" ref={containerRef} onBlur={onBlur}>
         <Button
           variant="outline"
-          disabled={exportGlossary.isPending}
+          aria-busy={exportGlossary.isPending || undefined}
           onClick={onToggleMenu}
         >
           <Download className="h-4 w-4" />

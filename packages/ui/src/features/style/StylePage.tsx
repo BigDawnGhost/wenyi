@@ -278,16 +278,16 @@ function DigestEditor({
           <div className="flex flex-wrap gap-2">
             <Button
               size="sm"
-              disabled={disabled || save.isPending}
-              onClick={() => save.mutate()}
+              disabled={disabled}
+              aria-busy={save.isPending || undefined}
+              onClick={() => { if (!save.isPending) save.mutate(); }}
             >
               {tr("style.saveSummary")}
             </Button>
             <Button
               size="sm"
               variant="ghost"
-              disabled={save.isPending}
-              onClick={() => setEditing(false)}
+              onClick={() => { if (!save.isPending) setEditing(false); }}
             >
               {tr("common.cancel")}
             </Button>
