@@ -73,7 +73,7 @@ export function ContentsList({
                     title={t(
                       sourceOnly ? "contents.readSource" : "contents.openChapter",
                     )}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent"
                   >
                     <BookOpen className="h-4 w-4" aria-hidden="true" />
                   </Link>

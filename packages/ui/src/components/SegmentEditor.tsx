@@ -62,7 +62,7 @@ export function SegmentEditor({
       ) : (
         <button
           disabled={disabled}
-          className="text-left w-full whitespace-pre-wrap min-h-10 rounded hover:bg-muted disabled:cursor-default"
+          className="text-left w-full whitespace-pre-wrap min-h-10 rounded hover:bg-muted disabled:cursor-not-allowed"
           onClick={() => {
             setDraft(value);
             save.reset();

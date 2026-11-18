@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useForeground } from "../../lib/runtime";
 import type { ProgressMessage } from "../../lib/ws";
@@ -63,7 +63,7 @@ export function ReviewActivity({
               horizontally when a run starts or ends. */}
           <span className="flex h-4 w-4 shrink-0 items-center justify-center">
             {running && (
-              <Loader2
+              <LoaderCircle
                 aria-hidden
                 className="h-4 w-4 animate-spin text-muted-foreground"
               />

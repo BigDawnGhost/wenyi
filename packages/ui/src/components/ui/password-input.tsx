@@ -37,7 +37,7 @@ export const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputPro
             if (!visible) onReveal?.();
             setVisible((value) => !value);
           }}
-          className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-lg text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+          className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-lg text-muted-foreground hover:text-foreground focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50"
         >
           {visible
             ? <EyeOff className="h-4 w-4" aria-hidden="true" />

@@ -61,7 +61,7 @@ export function ParagraphActions({
         aria-label={t("proofreading.paragraphActions")}
         aria-haspopup="menu"
         aria-expanded={expanded}
-        className="absolute right-2 top-3 rounded p-1 text-muted-foreground opacity-0 hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring group-hover:opacity-100 group-focus-within:opacity-100"
+        className="absolute right-2 top-3 rounded p-1 text-muted-foreground opacity-0 hover:bg-accent group-hover:opacity-100 group-focus-within:opacity-100"
         onClick={(event) => show(event.currentTarget)}
         onKeyDown={(event) => {
           if (

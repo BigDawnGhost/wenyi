@@ -1,6 +1,6 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronDown, Loader2, RefreshCw } from "lucide-react";
+import { Check, ChevronDown, LoaderCircle, RefreshCw } from "lucide-react";
 import { api } from "../../api/client";
 import type { ModelListResult } from "../../api/types";
 import { useI18n, type MessageKey } from "../../i18n";
@@ -190,7 +190,7 @@ export function ModelNameField({
           onClick={() => fetch.mutate({ connection, provider, signature })}
         >
           {fetch.isPending
-            ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
             : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
         </Button>
       </div>
