@@ -554,6 +554,22 @@ export function resolveFixture(
     return { status: 404, json: { detail: `Unexpected endpoint ${path}` } };
   }
   if (path in overrides) return { status: 200, json: overrides[path] };
+  // Save and validate must echo the submitted document. The table stores one
+  // static configuration, so returning it here would replace the caller's
+  // draft with the fixture and make the page look as if it reloaded.
+  if (verb !== "GET" && /\/config(\/validate)?$/.test(path)) {
+    const submitted = JSON.parse(rawBody || "{}") as { yaml?: string };
+    const base = data[path.replace(/\/validate$/, "")] as typeof configuration | undefined;
+    if (submitted.yaml && base) {
+      return { status: 200, json: { ...base, yaml: submitted.yaml } };
+    }
+  }
+  if (verb !== "GET" && path === "/settings/validate") {
+    const submitted = JSON.parse(rawBody || "{}") as { yaml?: string };
+    if (submitted.yaml) {
+      return { status: 200, json: { ...globalConfiguration, yaml: submitted.yaml } };
+    }
+  }
   if (verb === "POST" && path.endsWith("/glossary/terms/lookup")) {
     const sources = new Set((JSON.parse(rawBody || "{}") as { sources?: string[] }).sources);
     const terms = data[path.replace(/\/lookup$/, "")] as { source: string }[] || [];
