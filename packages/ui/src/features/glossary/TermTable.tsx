@@ -82,7 +82,7 @@ export function TermTable({
             <col className="w-36" />
             <col className="w-24" />
           </colgroup>
-          <thead className="whitespace-nowrap border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
+          <thead className="whitespace-nowrap border-b border-subtle text-xs tracking-wide text-muted-foreground">
             <tr>
               <th className="text-left px-4 py-3.5 font-medium">
                 <input
@@ -115,7 +115,7 @@ export function TermTable({
             {(terms || []).map((t: Term) => (
               <tr
                 key={t.source}
-                className="border-b border-black/[0.05] last:border-0 hover:bg-muted/40 dark:border-white/[0.07]"
+                className="border-b border-subtle last:border-0 hover:bg-muted/40"
               >
                 <td className="px-4 py-3.5">
                   <input

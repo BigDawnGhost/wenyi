@@ -149,7 +149,7 @@ export function ParagraphEditor({
           close();
       }}
     >
-      <header className="shrink-0 space-y-2 border-b border-black/[0.05] p-5 pr-14 dark:border-white/[0.07]">
+      <header className="shrink-0 space-y-2 border-b border-subtle p-5 pr-14">
         <h2
           ref={heading}
           id="paragraph-editor-title"
@@ -171,7 +171,7 @@ export function ParagraphEditor({
       <div
         role="tablist"
         aria-label={t("proofreading.paragraphEditor")}
-        className="flex shrink-0 gap-5 border-b border-black/[0.05] px-5 dark:border-white/[0.07]"
+        className="flex shrink-0 gap-5 border-b border-subtle px-5"
       >
         {(["edit", "history", "precision"] as const).map((tab, index, tabs) => (
           <button
@@ -302,7 +302,7 @@ export function ParagraphEditor({
           </section>
         </div>
       </div>
-      <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-black/[0.05] bg-card p-4 dark:border-white/[0.07]">
+      <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-subtle bg-card p-4">
         {draft !== (baseline ?? "") && (
           <p className="mr-auto text-xs text-muted-foreground">
             {t("proofreading.unsavedChanges")}

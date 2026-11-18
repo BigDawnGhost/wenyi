@@ -196,14 +196,14 @@ export default function StylePage() {
               <CardContent className="p-0">
                 <div
                   aria-hidden="true"
-                  className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 border-b border-black/[0.05] p-4 text-xs font-medium tracking-wide text-muted-foreground dark:border-white/[0.07]"
+                  className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-4 border-b border-subtle p-4 text-xs font-medium tracking-wide text-muted-foreground"
                 >
                   <span>{tr("common.chapter")}</span>
                   <span>{tr("common.summary")}</span>
                 </div>
                 <dl
                   aria-label={tr("style.chapterSummaries")}
-                  className="divide-y divide-black/[0.05] text-sm dark:divide-white/[0.07]"
+                  className="divide-y divide-subtle text-sm"
                 >
                   {digests.map((d) => (
                     <div

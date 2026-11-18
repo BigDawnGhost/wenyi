@@ -197,7 +197,7 @@ export default function ExportPage() {
               {tr("export.retentionHelp")}
             </p>
             <table className="w-full text-sm">
-              <thead className="border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
+              <thead className="border-b border-subtle text-xs tracking-wide text-muted-foreground">
                 <tr>
                   {[
                     tr("export.format"),
@@ -214,7 +214,7 @@ export default function ExportPage() {
               </thead>
               <tbody>
                 {exports?.slice(0, 5).map((e) => (
-                  <tr key={e.id} className="border-b border-black/[0.05] last:border-0 dark:border-white/[0.07]">
+                  <tr key={e.id} className="border-b border-subtle last:border-0">
                     <td className="px-4 py-3.5">
                       {e.format.toUpperCase()}
                       <div className="text-xs text-muted-foreground mt-1">

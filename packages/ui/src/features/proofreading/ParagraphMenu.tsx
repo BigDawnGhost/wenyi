@@ -128,7 +128,7 @@ export function ParagraphMenu({
         <History className="h-4 w-4" />
         {t("proofreading.precisionDrafts")}
       </button>
-      <div role="separator" className="my-1 border-t border-black/[0.05] dark:border-white/[0.07]" />
+      <div role="separator" className="my-1 border-t border-subtle" />
       {anchor.selection && (
         <button role="menuitem" className={item} onClick={() => void copy(selectionText ? selectionText() : anchor.selection)}>
           <Copy className="h-4 w-4" />

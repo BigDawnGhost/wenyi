@@ -225,7 +225,7 @@ function ChapterTable({
       <CardContent className="p-0 overflow-x-auto">
         <ErrorNotice error={translate.error} />
         <table className="w-full min-w-176 text-sm">
-          <thead className="border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
+          <thead className="border-b border-subtle text-xs tracking-wide text-muted-foreground">
             <tr>
               {[
                 tr("common.chapter"),
@@ -245,7 +245,7 @@ function ChapterTable({
           </thead>
           <tbody>
             {chapters.map((c) => (
-              <tr key={c.index} className="border-b border-black/[0.05] last:border-0 dark:border-white/[0.07]">
+              <tr key={c.index} className="border-b border-subtle last:border-0">
                 <td className="w-full min-w-64 max-w-0 px-4 py-3.5 [overflow-wrap:anywhere]">
                   {c.title_translated?.trim() ||
                     c.title.trim() ||
