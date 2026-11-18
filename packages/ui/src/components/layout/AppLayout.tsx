@@ -129,14 +129,15 @@ export function AppLayout() {
           prefetch={entry.loader}
           id={slot === "action" ? "create-project-trigger" : undefined}
           centered={slot === "action"}
+          // The primary-action entry is a button, so it takes the button's own
+          // variant classes instead of a private copy of the same look.
+          variant={slot === "action" ? "default" : undefined}
           state={slot === "action"
             ? { fromAppNavigation: true }
             : entry.to === "/settings"
               ? { settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }
               : undefined}
-          className={slot === "action"
-            ? "w-full bg-primary font-medium text-primary-foreground shadow-raised-invert hover:bg-primary-hover hover:text-primary-foreground active:bg-primary active:shadow-pressed-invert"
-            : undefined}
+          className={slot === "action" ? "w-full" : undefined}
         />
       ));
 
