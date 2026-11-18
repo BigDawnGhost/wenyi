@@ -101,9 +101,22 @@ export default function SettingsPage() {
     setYamlText(undefined);
   };
   const configurationError = save.error || validate.error || restore.error;
-  const pending = save.isPending || validate.isPending || restore.isPending;
-  const disabled = busy || !loaded || pending;
-  const formDisabled = disabled || yamlDirty;
+  // Two different questions, kept apart. Whether the document can be edited at all
+  // (busy project, not loaded yet, unvalidated YAML) is a property of the form.
+  // Whether a request is in flight is a property of the buttons: disabling the
+  // whole form for the length of a save or a restore applied the disabled style to
+  // every control at once, and the page blinked.
+  const formDisabled = busy || !loaded || yamlDirty;
+  const actionsBusy = save.isPending || validate.isPending || restore.isPending;
+  // A ref, because state only catches up on the next render: clicking twice within
+  // one frame would otherwise read the same stale value twice and fire both.
+  const inFlight = useRef(false);
+  inFlight.current = actionsBusy;
+  const guard = (run: () => void) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    run();
+  };
   return (
     <div className="flex min-h-dvh flex-col">
       <PageHeader title={tr("common.projectSettings")} />
@@ -165,7 +178,7 @@ export default function SettingsPage() {
               spellCheck={false}
               className="min-h-editor font-mono text-xs"
               value={yaml}
-              disabled={disabled}
+              disabled={formDisabled}
               onChange={(e) => setYamlText(e.target.value)}
             />
           </SettingsSection>
@@ -190,23 +203,29 @@ export default function SettingsPage() {
       >
         <Button
           variant="outline"
-          disabled={disabled}
-          onClick={() => restore.mutate()}
+          disabled={formDisabled}
+          aria-busy={restore.isPending || undefined}
+          onClick={() => guard(() => restore.mutate())}
         >
           {tr("settings.restoreDefaults")}
         </Button>
+        {/* One label each. The outcome already arrives as a notification, so
+            rewording the button while the request runs only made the bar, which
+            centres on its own content, shift under the cursor. */}
         <Button
           variant="outline"
-          disabled={disabled}
-          onClick={() => validate.mutate()}
+          disabled={formDisabled}
+          aria-busy={validate.isPending || undefined}
+          onClick={() => guard(() => validate.mutate())}
         >
-          {validate.isPending ? tr("settings.validating") : tr("settings.validateConfiguration")}
+          {tr("settings.validateConfiguration")}
         </Button>
         <Button
-          disabled={disabled}
-          onClick={() => save.mutate()}
+          disabled={formDisabled}
+          aria-busy={save.isPending || undefined}
+          onClick={() => guard(() => save.mutate())}
         >
-          {save.isPending ? tr("common.saving") : tr("settings.saveConfiguration")}
+          {tr("settings.saveConfiguration")}
         </Button>
       </SettingsActionBar>
     </div>
