@@ -24,8 +24,11 @@ status-info 用蓝色。暗色主题保留柔和、低饱和的配色。两种�
 | `--foreground` | `foreground` | `oklch(0.1405 0.0044 285.82)` | `oklch(0.7982 0 0)` |
 | `--card` | `card` | `oklch(1 0 0)` | `oklch(0.2354 0 0)` |
 | `--card-foreground` | `card-foreground` | `oklch(0.1405 0.0044 285.82)` | `oklch(0.7982 0 0)` |
+| `--card-hover` | `card-hover` | `oklch(0.955 0 0)` | `oklch(0.296 0 0)` |
 | `--primary` | `primary` | `oklch(0.2103 0.0059 285.88)` | `oklch(0.861 0 0)` |
 | `--primary-foreground` | `primary-foreground` | `oklch(0.9848 0 0)` | `oklch(0.2156 0 0)` |
+| `--primary-hover` | `primary-hover` | `oklch(0.305 0.0059 285.88)` | `oklch(0.8 0 0)` |
+| `--secondary-hover` | `secondary-hover` | `oklch(0.94 0.0013 286.38)` | `oklch(0.33 0 0)` |
 | `--secondary` | `secondary` | `oklch(0.9676 0.0013 286.38)` | `oklch(0.277 0 0)` |
 | `--secondary-foreground` | `secondary-foreground` | `oklch(0.2103 0.0059 285.88)` | `oklch(0.7982 0 0)` |
 | `--muted` | `muted` | `oklch(0.9676 0.0013 286.38)` | `oklch(0.277 0 0)` |
@@ -156,6 +159,12 @@ status-info 用蓝色。暗色主题保留柔和、低饱和的配色。两种�
 | `shadow-e3` | `inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 8px -2px rgba(24, 26, 32, 0.08), 0 12px 28px -12px rgba(24, 26, 32, 0.14), 0 0 0 1px rgba(24, 26, 32, 0.06)` | `inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.09)` | hover 抬升态 |
 | `shadow-e4` | `0 8px 16px -4px rgba(24, 26, 32, 0.08), 0 28px 56px -20px rgba(24, 26, 32, 0.22), 0 0 0 1px rgba(24, 26, 32, 0.06)` | `0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.09)` | 浮层：对话框、弹出层、toast |
 | `shadow-focus-ring` | `0 0 0 1px oklch(var(--ring))` | `0 0 0 1px oklch(var(--ring))` | 键盘焦点光环，可与海拔叠加 |
+| `shadow-raised` | `inset 0 1px 0 rgba(255, 255, 255, 1), 0 -1px 3px -1px rgba(24, 26, 32, 0.16), 0 1px 2px rgba(24, 26, 32, 0.07), 0 3px 6px -3px rgba(24, 26, 32, 0.14)` | `inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.40)` | 实体按键静置态 |
+| `shadow-raised-hover` | `inset 0 1px 0 rgba(255, 255, 255, 1), 0 -1px 4px -1px rgba(24, 26, 32, 0.20), 0 2px 4px rgba(24, 26, 32, 0.09), 0 5px 10px -4px rgba(24, 26, 32, 0.18)` | `inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0, 0, 0, 0.42), 0 6px 16px rgba(0, 0, 0, 0.45)` | 实体按键悬停态 |
+| `shadow-pressed` | `inset 0 2px 4px rgba(24, 26, 32, 0.14), inset 0 -1px 0 rgba(255, 255, 255, 0.55), 0 1px 1px rgba(24, 26, 32, 0.05)` | `inset 0 2px 5px rgba(0, 0, 0, 0.50), inset 0 -1px 0 rgba(255, 255, 255, 0.04)` | 按压下沉态 |
+| `shadow-raised-invert` | `inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 -1px 0 rgba(0, 0, 0, 0.30), 0 1px 2px rgba(24, 26, 32, 0.28), 0 3px 7px -3px rgba(24, 26, 32, 0.22)` | `inset 0 1px 0 rgba(255, 255, 255, 1), inset 0 -1px 0 rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.45), 0 4px 10px -4px rgba(0, 0, 0, 0.50)` | 实心键静置态（取自相反极） |
+| `shadow-raised-invert-hover` | `inset 0 1px 0 rgba(255, 255, 255, 0.21), inset 0 -1px 0 rgba(0, 0, 0, 0.34), 0 2px 4px rgba(24, 26, 32, 0.32), 0 6px 14px -5px rgba(24, 26, 32, 0.30)` | `inset 0 1px 0 rgba(255, 255, 255, 1), inset 0 -1px 0 rgba(0, 0, 0, 0.20), 0 2px 6px rgba(0, 0, 0, 0.50), 0 8px 20px -6px rgba(0, 0, 0, 0.60)` | 实心键悬停态 |
+| `shadow-pressed-invert` | `inset 0 2px 5px rgba(0, 0, 0, 0.45), inset 0 -1px 0 rgba(255, 255, 255, 0.08)` | `inset 0 2px 5px rgba(0, 0, 0, 0.32), inset 0 -1px 0 rgba(255, 255, 255, 0.60)` | 实心键按压态 |
 | `shadow-input-hover` | `inset 0 1px 2px rgba(24, 26, 32, 0.09), 0 0 0 1px rgba(24, 26, 32, 0.16)` | `inset 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.16)` |  |
 | `shadow-sidebar` | `0 0 0 1px rgba(24, 26, 32, 0.05), 12px 0 32px -20px rgba(24, 26, 32, 0.18)` | `0 0 0 1px rgba(255, 255, 255, 0.06), 12px 0 32px -20px rgba(0, 0, 0, 0.5)` | 侧栏右缘：发丝线加柔影 |
 

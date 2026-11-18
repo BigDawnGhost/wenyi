@@ -39,7 +39,8 @@ for (const [key, value] of Object.entries(preset.theme.extend.colors)) {
 }
 
 const colorOrder = [
-  "background", "foreground", "card", "card-foreground", "primary", "primary-foreground",
+  "background", "foreground", "card", "card-foreground", "card-hover", "primary",
+  "primary-foreground", "primary-hover", "secondary-hover",
   "secondary", "secondary-foreground", "muted", "muted-foreground", "accent", "accent-foreground",
   "destructive", "destructive-foreground",
   "warning", "warning-foreground", "info", "info-foreground", "border", "input", "ring",
@@ -203,6 +204,12 @@ const english = {
       "--shadow-e4": "Floating layers: dialogs, popovers, toasts",
       "--shadow-focus-ring": "Keyboard focus halo, composed with an elevation",
       "--shadow-sidebar": "Sidebar right edge: hairline plus soft shadow",
+      "--shadow-raised": "Raised control key at rest",
+      "--shadow-raised-hover": "Raised control key under the cursor",
+      "--shadow-pressed": "Control sunk into the surface while pressed",
+      "--shadow-raised-invert": "Filled key at rest, depth from the opposite pole",
+      "--shadow-raised-invert-hover": "Filled key under the cursor",
+      "--shadow-pressed-invert": "Filled key pressed",
     },
   },
   motion: {
@@ -295,6 +302,12 @@ const chinese = {
       "--shadow-e4": "浮层：对话框、弹出层、toast",
       "--shadow-focus-ring": "键盘焦点光环，可与海拔叠加",
       "--shadow-sidebar": "侧栏右缘：发丝线加柔影",
+      "--shadow-raised": "实体按键静置态",
+      "--shadow-raised-hover": "实体按键悬停态",
+      "--shadow-pressed": "按压下沉态",
+      "--shadow-raised-invert": "实心键静置态（取自相反极）",
+      "--shadow-raised-invert-hover": "实心键悬停态",
+      "--shadow-pressed-invert": "实心键按压态",
     },
   },
   motion: {

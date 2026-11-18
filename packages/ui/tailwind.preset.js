@@ -102,10 +102,12 @@ export default {
         primary: {
           DEFAULT: "oklch(var(--primary) / <alpha-value>)",
           foreground: "oklch(var(--primary-foreground) / <alpha-value>)",
+          hover: "oklch(var(--primary-hover) / <alpha-value>)",
         },
         secondary: {
           DEFAULT: "oklch(var(--secondary) / <alpha-value>)",
           foreground: "oklch(var(--secondary-foreground) / <alpha-value>)",
+          hover: "oklch(var(--secondary-hover) / <alpha-value>)",
         },
         destructive: {
           DEFAULT: "oklch(var(--destructive) / <alpha-value>)",
@@ -126,6 +128,7 @@ export default {
         card: {
           DEFAULT: "oklch(var(--card) / <alpha-value>)",
           foreground: "oklch(var(--card-foreground) / <alpha-value>)",
+          hover: "oklch(var(--card-hover) / <alpha-value>)",
         },
         "status-success": {
           DEFAULT: "oklch(var(--status-success) / <alpha-value>)",
@@ -193,6 +196,12 @@ export default {
         e4: "var(--shadow-e4)",
         "focus-ring": "var(--shadow-focus-ring)",
         sidebar: "var(--shadow-sidebar)",
+        raised: "var(--shadow-raised)",
+        "raised-hover": "var(--shadow-raised-hover)",
+        pressed: "var(--shadow-pressed)",
+        "raised-invert": "var(--shadow-raised-invert)",
+        "raised-invert-hover": "var(--shadow-raised-invert-hover)",
+        "pressed-invert": "var(--shadow-pressed-invert)",
       },
       transitionDuration: {
         "motion-fast": "120ms",

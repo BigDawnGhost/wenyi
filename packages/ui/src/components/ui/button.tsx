@@ -10,16 +10,26 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
+        // Inverted key: hover steps the face toward neutral gray so it reads the
+        // same as the surface states. That direction is lighter in the light
+        // theme and darker in the dark theme, which is what --primary-hover
+        // encodes per theme; keep both values opaque.
         default:
-          "bg-gradient-to-b from-primary to-primary/90 text-primary-foreground "
-          + "shadow-[0_1px_2px_rgba(24,26,32,0.20)] hover:shadow-[0_2px_6px_rgba(24,26,32,0.25)]",
+          "bg-primary text-primary-foreground hover:bg-primary-hover active:bg-primary-hover "
+          + "shadow-raised-invert hover:shadow-raised-invert-hover active:shadow-pressed-invert",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90 "
-          + "shadow-[0_1px_2px_rgba(24,26,32,0.15)]",
+          + "shadow-raised-invert hover:shadow-raised-invert-hover active:shadow-pressed-invert",
+        // Same physical key in both themes, described only by shadow: a top
+        // highlight plus soft shadows on both sides of the edge, because a
+        // highlight alone vanishes on white and the key fuses with the page.
+        // The face stays opaque; hover never re-alphaes it.
         outline:
-          "bg-card text-foreground shadow-e2 hover:bg-hover hover:text-foreground "
-          + "hover:shadow-e3",
-        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 shadow-none",
+          "bg-card text-foreground hover:bg-card-hover hover:text-foreground "
+          + "shadow-raised hover:shadow-raised-hover active:shadow-pressed active:text-foreground",
+        secondary:
+          "bg-secondary text-secondary-foreground hover:bg-secondary-hover hover:text-secondary-foreground "
+          + "shadow-raised hover:shadow-raised-hover active:shadow-pressed",
         ghost: "hover:bg-hover hover:text-foreground shadow-none",
         link: "text-primary underline-offset-4 hover:underline shadow-none",
       },

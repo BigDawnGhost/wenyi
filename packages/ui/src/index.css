@@ -25,10 +25,25 @@
     --foreground: 0.1405 0.0044 285.82;
     --card: 1 0 0;
     --card-foreground: 0.1405 0.0044 285.82;
+    /* Control hover faces. Every face steps toward mid gray, so the visible
+       direction follows the face's own lightness instead of a fixed sign:
+       a white key darkens in the light theme, a dark key lightens in the
+       dark theme. These stay opaque on purpose; an alpha step would let
+       whatever sits behind the control show through the key. */
+    --card-hover: 0.955 0 0;
     --primary: 0.2103 0.0059 285.88;
     --primary-foreground: 0.9848 0 0;
+    /* Hover for the inverted (primary) button. The button face sits at the
+       opposite pole from the page, so its hover has to express the same thing
+       every other surface state does: a step toward neutral gray, not a step
+       in a fixed lightness direction. That makes the sign theme-dependent:
+       light theme lightens the near-black face, dark theme darkens the
+       near-white face. A single-direction value is wrong in one theme by
+       construction, so both values stay opaque and are tuned per theme. */
+    --primary-hover: 0.305 0.0059 285.88;
     --secondary: 0.9676 0.0013 286.38;
     --secondary-foreground: 0.2103 0.0059 285.88;
+    --secondary-hover: 0.94 0.0013 286.38;
     --muted: 0.9676 0.0013 286.38;
     --muted-foreground: 0.5519 0.0137 285.94;
     /* Ink anchor for alpha-derived interaction surfaces: fixed near-black in
@@ -99,6 +114,21 @@
     --shadow-e3: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 8px -2px rgba(24, 26, 32, 0.08), 0 12px 28px -12px rgba(24, 26, 32, 0.14), 0 0 0 1px rgba(24, 26, 32, 0.06);
     --shadow-e4: 0 8px 16px -4px rgba(24, 26, 32, 0.08), 0 28px 56px -20px rgba(24, 26, 32, 0.22), 0 0 0 1px rgba(24, 26, 32, 0.06);
     --shadow-focus-ring: 0 0 0 1px oklch(var(--ring));
+    /* Input surfaces keep the quiet well; hover only deepens the well and
+       hairline, never lifts (consumed by .input-quiet below). */
+    /* Raised control key: one physical object in both themes. The top edge
+       spreads a soft shadow because a highlight alone is invisible on white,
+       so the key would fuse with the page; the close shadow and the bottom
+       inner lip carry the depth. Pressed sinks into the surface instead. */
+    --shadow-raised: inset 0 1px 0 rgba(255, 255, 255, 1), 0 -1px 3px -1px rgba(24, 26, 32, 0.16), 0 1px 2px rgba(24, 26, 32, 0.07), 0 3px 6px -3px rgba(24, 26, 32, 0.14);
+    --shadow-raised-hover: inset 0 1px 0 rgba(255, 255, 255, 1), 0 -1px 4px -1px rgba(24, 26, 32, 0.20), 0 2px 4px rgba(24, 26, 32, 0.09), 0 5px 10px -4px rgba(24, 26, 32, 0.18);
+    --shadow-pressed: inset 0 2px 4px rgba(24, 26, 32, 0.14), inset 0 -1px 0 rgba(255, 255, 255, 0.55), 0 1px 1px rgba(24, 26, 32, 0.05);
+    /* Solid filled keys (primary, destructive) sit at the pole opposite the
+       page, so they read depth with the other theme's recipe: a faint top
+       highlight, a dark bottom lip and a contact shadow under the slab. */
+    --shadow-raised-invert: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 -1px 0 rgba(0, 0, 0, 0.30), 0 1px 2px rgba(24, 26, 32, 0.28), 0 3px 7px -3px rgba(24, 26, 32, 0.22);
+    --shadow-raised-invert-hover: inset 0 1px 0 rgba(255, 255, 255, 0.21), inset 0 -1px 0 rgba(0, 0, 0, 0.34), 0 2px 4px rgba(24, 26, 32, 0.32), 0 6px 14px -5px rgba(24, 26, 32, 0.30);
+    --shadow-pressed-invert: inset 0 2px 5px rgba(0, 0, 0, 0.45), inset 0 -1px 0 rgba(255, 255, 255, 0.08);
     --shadow-input-hover: inset 0 1px 2px rgba(24, 26, 32, 0.09), 0 0 0 1px rgba(24, 26, 32, 0.16);
     --shadow-sidebar: 0 0 0 1px rgba(24, 26, 32, 0.05), 12px 0 32px -20px rgba(24, 26, 32, 0.18);
   }
@@ -111,10 +141,14 @@
     --foreground: 0.7982 0 0;
     --card: 0.2354 0 0;
     --card-foreground: 0.7982 0 0;
+    --card-hover: 0.296 0 0;
     --primary: 0.861 0 0;
     --primary-foreground: 0.2156 0 0;
+    /* Opposite sign on purpose: see the light-theme note above. */
+    --primary-hover: 0.8 0 0;
     --secondary: 0.277 0 0;
     --secondary-foreground: 0.7982 0 0;
+    --secondary-hover: 0.33 0 0;
     --muted: 0.277 0 0;
     --muted-foreground: 0.6409 0 0;
     --ink: 1 0 0;
@@ -165,6 +199,15 @@
     --shadow-e3: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.09);
     --shadow-e4: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.09);
     --shadow-focus-ring: 0 0 0 1px oklch(var(--ring));
+    --shadow-raised: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.40);
+    --shadow-raised-hover: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0, 0, 0, 0.42), 0 6px 16px rgba(0, 0, 0, 0.45);
+    --shadow-pressed: inset 0 2px 5px rgba(0, 0, 0, 0.50), inset 0 -1px 0 rgba(255, 255, 255, 0.04);
+    /* Dark theme: the inverted key is near-white on a dark bar, so it borrows
+       the light theme's recipe, with black contact shadows that still read
+       against the dark surface. */
+    --shadow-raised-invert: inset 0 1px 0 rgba(255, 255, 255, 1), inset 0 -1px 0 rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.45), 0 4px 10px -4px rgba(0, 0, 0, 0.50);
+    --shadow-raised-invert-hover: inset 0 1px 0 rgba(255, 255, 255, 1), inset 0 -1px 0 rgba(0, 0, 0, 0.20), 0 2px 6px rgba(0, 0, 0, 0.50), 0 8px 20px -6px rgba(0, 0, 0, 0.60);
+    --shadow-pressed-invert: inset 0 2px 5px rgba(0, 0, 0, 0.32), inset 0 -1px 0 rgba(255, 255, 255, 0.60);
     --shadow-input-hover: inset 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.16);
     --shadow-sidebar: 0 0 0 1px rgba(255, 255, 255, 0.06), 12px 0 32px -20px rgba(0, 0, 0, 0.5);
 }
