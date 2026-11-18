@@ -93,15 +93,12 @@ export default function Dashboard() {
       <PageContainer className="mx-auto w-full max-w-5xl">
         <ErrorNotice error={error} />
         {importFailure && (
-          <div
-            role="alert"
-            className="mb-3 rounded-md border-l-4 border-l-destructive bg-destructive/10 p-3 text-sm text-destructive"
-          >
+          <ErrorNotice className="mb-3">
             <p className="font-medium">{tr("dashboard.couldNotImportProject")}</p>
             <p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">
               {importFailure}
             </p>
-          </div>
+          </ErrorNotice>
         )}
         {isLoading ? (
           // The skeleton mirrors the loaded card grid so loading keeps the same
