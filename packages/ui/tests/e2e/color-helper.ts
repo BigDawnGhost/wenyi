@@ -8,7 +8,7 @@ export async function expectTokenColor(
 ) {
   const expected = await locator.evaluate((element, token) => {
     const probe = document.createElement("span");
-    probe.style.color = `hsl(var(--${token}))`;
+    probe.style.color = `oklch(var(--${token}))`;
     element.append(probe);
     const color = getComputedStyle(probe).color;
     probe.remove();
@@ -36,7 +36,7 @@ export async function expectQuietLabelContrast(locator: Locator) {
   const colors = await locator.evaluate(element => {
     const style = getComputedStyle(element);
     const probe = document.createElement("span");
-    probe.style.color = "hsl(var(--card))";
+    probe.style.color = "oklch(var(--card))";
     element.append(probe);
     const card = getComputedStyle(probe).color;
     probe.remove();
@@ -52,7 +52,7 @@ export async function expectCardSurface(locator: Locator) {
   // Inspect one DOM snapshot: async status messages may appear or disappear together.
   const uncovered = await locator.evaluateAll(elements => elements.filter(element => {
     const probe = document.createElement("span");
-    probe.style.color = "hsl(var(--card))";
+    probe.style.color = "oklch(var(--card))";
     element.parentElement!.append(probe);
     const card = getComputedStyle(probe).color;
     probe.remove();

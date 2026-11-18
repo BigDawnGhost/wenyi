@@ -70,8 +70,8 @@ function colorTable(headers) {
   const rows = colorVariables.map((variable) => [
     code(variable),
     classByVariable.has(variable) ? code(classByVariable.get(variable)) : "-",
-    code("hsl(" + light[variable] + ")"),
-    code("hsl(" + (dark[variable] ?? light[variable]) + ")"),
+    code("oklch(" + light[variable] + ")"),
+    code("oklch(" + (dark[variable] ?? light[variable]) + ")"),
   ]);
   return markdownTable(headers, rows);
 }
@@ -160,7 +160,7 @@ const english = {
   colors: {
     heading: "## Colors",
     intro: [
-      "Semantic colors are HSL triplets consumed as hsl(var(--token)), so the .dark class swaps",
+      "Semantic colors are OKLCH channel triplets consumed as oklch(var(--token)); the .dark class swaps",
       "values without touching utilities. State colors pair a base with a -foreground variant.",
       "Light status labels use fresh pastel surfaces, clear colored text and fine tinted borders:",
       "status-success uses green, status-warning amber, status-danger red and status-info blue.",
@@ -259,7 +259,7 @@ const chinese = {
   colors: {
     heading: "## 颜色",
     intro: [
-      "语义色是 HSL 三元组，以 hsl(var(--token)) 消费；.dark 类直接更换取值，工具类保持不变。",
+      "语义色是 OKLCH 通道三元组，以 oklch(var(--token)) 消费；.dark 类直接更换取值，工具类保持不变。",
       "状态色以基础色搭配 -foreground 变体。亮色主题的状态标签使用清新的浅色底、清晰彩色文字",
       "与浅色细描边：status-success 用绿色，status-warning 用琥珀色，status-danger 用红色，",
       "status-info 用蓝色。暗色主题保留柔和、低饱和的配色。两种主题均使用紧凑小圆角和清晰文字；",

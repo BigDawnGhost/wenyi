@@ -6,21 +6,21 @@ import { useTheme } from "../theme";
 
 // Bridge Sonner's palette to the same semantic colors as the shared status labels.
 const notificationColors = {
-  "--normal-bg": "hsl(var(--card))",
-  "--normal-border": "hsl(var(--border))",
-  "--normal-text": "hsl(var(--card-foreground))",
-  "--success-bg": "hsl(var(--status-success))",
-  "--success-border": "hsl(var(--status-success-border))",
-  "--success-text": "hsl(var(--status-success-foreground))",
-  "--error-bg": "hsl(var(--status-danger))",
-  "--error-border": "hsl(var(--status-danger-border))",
-  "--error-text": "hsl(var(--status-danger-foreground))",
-  "--warning-bg": "hsl(var(--status-warning))",
-  "--warning-border": "hsl(var(--status-warning-border))",
-  "--warning-text": "hsl(var(--status-warning-foreground))",
-  "--info-bg": "hsl(var(--status-info))",
-  "--info-border": "hsl(var(--status-info-border))",
-  "--info-text": "hsl(var(--status-info-foreground))",
+  "--normal-bg": "oklch(var(--card))",
+  "--normal-border": "oklch(var(--border))",
+  "--normal-text": "oklch(var(--card-foreground))",
+  "--success-bg": "oklch(var(--status-success))",
+  "--success-border": "oklch(var(--status-success-border))",
+  "--success-text": "oklch(var(--status-success-foreground))",
+  "--error-bg": "oklch(var(--status-danger))",
+  "--error-border": "oklch(var(--status-danger-border))",
+  "--error-text": "oklch(var(--status-danger-foreground))",
+  "--warning-bg": "oklch(var(--status-warning))",
+  "--warning-border": "oklch(var(--status-warning-border))",
+  "--warning-text": "oklch(var(--status-warning-foreground))",
+  "--info-bg": "oklch(var(--status-info))",
+  "--info-border": "oklch(var(--status-info-border))",
+  "--info-text": "oklch(var(--status-info-foreground))",
 } as CSSProperties;
 
 /** Mount once in the shared shell, outside the scrolling route content. */

@@ -9,7 +9,7 @@ variant 消费两者。本页由上述来源生成；当本页与源不一致时
 
 ## 颜色
 
-语义色是 HSL 三元组，以 hsl(var(--token)) 消费；.dark 类直接更换取值，工具类保持不变。
+语义色是 OKLCH 通道三元组，以 oklch(var(--token)) 消费；.dark 类直接更换取值，工具类保持不变。
 状态色以基础色搭配 -foreground 变体。亮色主题的状态标签使用清新的浅色底、清晰彩色文字
 与浅色细描边：status-success 用绿色，status-warning 用琥珀色，status-danger 用红色，
 status-info 用蓝色。暗色主题保留柔和、低饱和的配色。两种主题均使用紧凑小圆角和清晰文字；
@@ -20,57 +20,57 @@ status-info 用蓝色。暗色主题保留柔和、低饱和的配色。两种�
 
 | CSS 变量 | Tailwind | 亮色 | 暗色 |
 | --- | --- | --- | --- |
-| `--background` | `background` | `hsl(0 0% 97.3%)` | `hsl(0 0% 8.6%)` |
-| `--foreground` | `foreground` | `hsl(240 10% 3.9%)` | `hsl(0 0% 74.1%)` |
-| `--card` | `card` | `hsl(0 0% 100%)` | `hsl(0 0% 11.8%)` |
-| `--card-foreground` | `card-foreground` | `hsl(240 10% 3.9%)` | `hsl(0 0% 74.1%)` |
-| `--primary` | `primary` | `hsl(240 5.9% 10%)` | `hsl(0 0% 82%)` |
-| `--primary-foreground` | `primary-foreground` | `hsl(0 0% 98%)` | `hsl(0 0% 10%)` |
-| `--secondary` | `secondary` | `hsl(240 4.8% 95.9%)` | `hsl(0 0% 15.7%)` |
-| `--secondary-foreground` | `secondary-foreground` | `hsl(240 5.9% 10%)` | `hsl(0 0% 74.1%)` |
-| `--muted` | `muted` | `hsl(240 4.8% 95.9%)` | `hsl(0 0% 15.7%)` |
-| `--muted-foreground` | `muted-foreground` | `hsl(240 3.8% 46.1%)` | `hsl(0 0% 55%)` |
-| `--accent` | `accent` | `hsl(240 4.8% 95.9%)` | `hsl(0 0% 15.7%)` |
-| `--accent-foreground` | `accent-foreground` | `hsl(240 5.9% 10%)` | `hsl(0 0% 74.1%)` |
-| `--destructive` | `destructive` | `hsl(0 84.2% 60.2%)` | `hsl(0 62.8% 30.6%)` |
-| `--destructive-foreground` | `destructive-foreground` | `hsl(0 0% 98%)` | `hsl(0 0% 98%)` |
-| `--warning` | `warning` | `hsl(26 90% 37%)` | `hsl(23 82% 31%)` |
-| `--warning-foreground` | `warning-foreground` | `hsl(0 0% 98%)` | `hsl(0 0% 98%)` |
-| `--info` | `info` | `hsl(200 96% 32%)` | `hsl(201 90% 27%)` |
-| `--info-foreground` | `info-foreground` | `hsl(0 0% 98%)` | `hsl(0 0% 98%)` |
-| `--border` | `border` | `hsl(240 5.9% 90%)` | `hsl(0 0% 19.6%)` |
-| `--input` | `input` | `hsl(240 5.9% 90%)` | `hsl(0 0% 17.6%)` |
-| `--ring` | `ring` | `hsl(240 5.9% 10%)` | `hsl(0 0% 60%)` |
-| `--status-success` | `status-success` | `hsl(138 76% 97%)` | `hsl(154 13% 16%)` |
-| `--status-success-foreground` | `status-success-foreground` | `hsl(142 72% 29%)` | `hsl(152 22% 73%)` |
-| `--status-success-border` | `status-success-border` | `hsl(141 79% 85%)` | `hsl(154 14% 28%)` |
-| `--status-warning` | `status-warning` | `hsl(48 100% 96%)` | `hsl(36 18% 16%)` |
-| `--status-warning-foreground` | `status-warning-foreground` | `hsl(35 92% 32%)` | `hsl(38 34% 72%)` |
-| `--status-warning-border` | `status-warning-border` | `hsl(45 95% 76%)` | `hsl(36 20% 28%)` |
-| `--status-danger` | `status-danger` | `hsl(0 86% 97%)` | `hsl(4 18% 18%)` |
-| `--status-danger-foreground` | `status-danger-foreground` | `hsl(0 72% 45%)` | `hsl(4 36% 76%)` |
-| `--status-danger-border` | `status-danger-border` | `hsl(0 90% 86%)` | `hsl(4 22% 32%)` |
-| `--status-info` | `status-info` | `hsl(214 100% 97%)` | `hsl(210 18% 17%)` |
-| `--status-info-foreground` | `status-info-foreground` | `hsl(217 80% 42%)` | `hsl(210 26% 74%)` |
-| `--status-info-border` | `status-info-border` | `hsl(214 95% 85%)` | `hsl(210 20% 30%)` |
-| `--ink` | - | `hsl(13 13 13)` | `hsl(0 0% 100%)` |
-| `--hover` | `hover` | `hsl(var(--ink) / 0.05)` | `hsl(var(--ink) / 0.08)` |
-| `--selected` | `selected` | `hsl(var(--ink) / 0.08)` | `hsl(var(--ink) / 0.12)` |
-| `--surface` | `surface` | `hsl(var(--ink) / 0.03)` | `hsl(var(--ink) / 0.03)` |
-| `--text-placeholder` | `placeholder` | `hsl(var(--ink) / 0.35)` | `hsl(var(--ink) / 0.3)` |
-| `--warning-text` | `warning-text` | `hsl(26 90% 37%)` | `hsl(38 85% 60%)` |
-| `--chart-track` | `chart-track` | `hsl(var(--muted))` | `hsl(0 0% 20%)` |
-| `--chart-1` | `chart-1` | `hsl(199.4 95.5% 73.9%)` | `hsl(200 28% 62%)` |
-| `--chart-2` | `chart-2` | `hsl(37.7 92.1% 50.2%)` | `hsl(38 42% 59%)` |
-| `--chart-3` | `chart-3` | `hsl(200.4 98% 39.4%)` | `hsl(212 38% 55%)` |
-| `--chart-4` | `chart-4` | `hsl(212.7 26.8% 83.9%)` | `hsl(216 12% 56%)` |
-| `--chart-5` | `chart-5` | `hsl(173.4 80.4% 40%)` | `hsl(167 32% 49%)` |
-| `--chart-6` | `chart-6` | `hsl(215.4 16.3% 46.9%)` | `hsl(222 14% 61%)` |
-| `--diff-removed-bg` | `diff-removed` | `hsl(0 93.3% 94.1%)` | `hsl(0 74.7% 15.5%)` |
-| `--diff-removed-foreground` | `diff-removed-foreground` | `hsl(0 62.8% 30.6%)` | `hsl(0 96.3% 89.4%)` |
-| `--diff-added-bg` | `diff-added` | `hsl(140.6 84.2% 92.5%)` | `hsl(144.9 80.4% 10%)` |
-| `--diff-added-foreground` | `diff-added-foreground` | `hsl(143.8 61.2% 20.2%)` | `hsl(141 78.9% 85.1%)` |
-| `--border-subtle` | `subtle` | `hsl(var(--ink) / 0.055)` | `hsl(var(--ink) / 0.065)` |
+| `--background` | `background` | `oklch(0.9795 0 0)` | `oklch(0.1999 0 0)` |
+| `--foreground` | `foreground` | `oklch(0.1405 0.0044 285.82)` | `oklch(0.7982 0 0)` |
+| `--card` | `card` | `oklch(1 0 0)` | `oklch(0.2354 0 0)` |
+| `--card-foreground` | `card-foreground` | `oklch(0.1405 0.0044 285.82)` | `oklch(0.7982 0 0)` |
+| `--primary` | `primary` | `oklch(0.2103 0.0059 285.88)` | `oklch(0.861 0 0)` |
+| `--primary-foreground` | `primary-foreground` | `oklch(0.9848 0 0)` | `oklch(0.2156 0 0)` |
+| `--secondary` | `secondary` | `oklch(0.9676 0.0013 286.38)` | `oklch(0.277 0 0)` |
+| `--secondary-foreground` | `secondary-foreground` | `oklch(0.2103 0.0059 285.88)` | `oklch(0.7982 0 0)` |
+| `--muted` | `muted` | `oklch(0.9676 0.0013 286.38)` | `oklch(0.277 0 0)` |
+| `--muted-foreground` | `muted-foreground` | `oklch(0.5519 0.0137 285.94)` | `oklch(0.6409 0 0)` |
+| `--accent` | `accent` | `oklch(0.9676 0.0013 286.38)` | `oklch(0.277 0 0)` |
+| `--accent-foreground` | `accent-foreground` | `oklch(0.2103 0.0059 285.88)` | `oklch(0.7982 0 0)` |
+| `--destructive` | `destructive` | `oklch(0.6368 0.2078 25.33)` | `oklch(0.3959 0.1331 25.72)` |
+| `--destructive-foreground` | `destructive-foreground` | `oklch(0.9848 0 0)` | `oklch(0.9848 0 0)` |
+| `--warning` | `warning` | `oklch(0.5542 0.1447 49.16)` | `oklch(0.4697 0.1224 46.71)` |
+| `--warning-foreground` | `warning-foreground` | `oklch(0.9848 0 0)` | `oklch(0.9848 0 0)` |
+| `--info` | `info` | `oklch(0.5061 0.1156 240.36)` | `oklch(0.438 0.0988 240.83)` |
+| `--info-foreground` | `info-foreground` | `oklch(0.9848 0 0)` | `oklch(0.9848 0 0)` |
+| `--border` | `border` | `oklch(0.9197 0.004 286.32)` | `oklch(0.3171 0 0)` |
+| `--input` | `input` | `oklch(0.9197 0.004 286.32)` | `oklch(0.2967 0 0)` |
+| `--ring` | `ring` | `oklch(0.2103 0.0059 285.88)` | `oklch(0.683 0 0)` |
+| `--status-success` | `status-success` | `oklch(0.9836 0.0162 155.55)` | `oklch(0.29 0.0168 167)` |
+| `--status-success-foreground` | `status-success-foreground` | `oklch(0.5248 0.1373 149.83)` | `oklch(0.8104 0.0381 165.56)` |
+| `--status-success-border` | `status-success-border` | `oklch(0.9246 0.0811 155.98)` | `oklch(0.4167 0.0287 166.64)` |
+| `--status-warning` | `status-warning` | `oklch(0.9866 0.0218 95.28)` | `oklch(0.2896 0.0176 77.93)` |
+| `--status-warning-foreground` | `status-warning-foreground` | `oklch(0.5407 0.1186 65.54)` | `oklch(0.8087 0.0462 81.33)` |
+| `--status-warning-border` | `status-warning-border` | `oklch(0.9089 0.1116 91.59)` | `oklch(0.4166 0.0311 77.76)` |
+| `--status-danger` | `status-danger` | `oklch(0.9678 0.0142 17.4)` | `oklch(0.2895 0.0235 23.3)` |
+| `--status-danger-foreground` | `status-danger-foreground` | `oklch(0.5314 0.1989 27.39)` | `oklch(0.789 0.0484 23)` |
+| `--status-danger-border` | `status-danger-border` | `oklch(0.8513 0.0746 18.73)` | `oklch(0.4166 0.0472 23.82)` |
+| `--status-info` | `status-info` | `oklch(0.9716 0.0136 255.03)` | `oklch(0.2864 0.0181 248.46)` |
+| `--status-info-foreground` | `status-info-foreground` | `oklch(0.484 0.178 260.15)` | `oklch(0.7897 0.031 248.22)` |
+| `--status-info-border` | `status-info-border` | `oklch(0.8605 0.0668 255.25)` | `oklch(0.4114 0.0323 248.62)` |
+| `--ink` | - | `oklch(0.16 0 0)` | `oklch(1 0 0)` |
+| `--hover` | `hover` | `oklch(var(--ink) / 0.05)` | `oklch(var(--ink) / 0.08)` |
+| `--selected` | `selected` | `oklch(var(--ink) / 0.08)` | `oklch(var(--ink) / 0.12)` |
+| `--surface` | `surface` | `oklch(var(--ink) / 0.03)` | `oklch(var(--ink) / 0.03)` |
+| `--text-placeholder` | `placeholder` | `oklch(var(--ink) / 0.35)` | `oklch(var(--ink) / 0.3)` |
+| `--warning-text` | `warning-text` | `oklch(0.5542 0.1447 49.16)` | `oklch(0.7984 0.1424 77.38)` |
+| `--chart-track` | `chart-track` | `oklch(var(--muted))` | `oklch(0.3211 0 0)` |
+| `--chart-1` | `chart-1` | `oklch(0.8273 0.1014 230.38)` | `oklch(0.7084 0.0475 229.87)` |
+| `--chart-2` | `chart-2` | `oklch(0.7686 0.1646 70.11)` | `oklch(0.729 0.0823 80.55)` |
+| `--chart-3` | `chart-3` | `oklch(0.5875 0.1388 241.95)` | `oklch(0.6203 0.0841 252.43)` |
+| `--chart-4` | `chart-4` | `oklch(0.8688 0.0198 252.85)` | `oklch(0.6371 0.0273 258.37)` |
+| `--chart-5` | `chart-5` | `oklch(0.7038 0.123 182.48)` | `oklch(0.6658 0.0835 177.72)` |
+| `--chart-6` | `chart-6` | `oklch(0.5547 0.0407 257.44)` | `oklch(0.6728 0.0304 267.1)` |
+| `--diff-removed-bg` | `diff-removed` | `oklch(0.9355 0.031 17.72)` | `oklch(0.2576 0.0886 26.05)` |
+| `--diff-removed-foreground` | `diff-removed-foreground` | `oklch(0.3959 0.1331 25.72)` | `oklch(0.8844 0.0593 18.34)` |
+| `--diff-added-bg` | `diff-added` | `oklch(0.9622 0.0437 156.72)` | `oklch(0.2664 0.0628 152.95)` |
+| `--diff-added-foreground` | `diff-added-foreground` | `oklch(0.3926 0.0897 152.53)` | `oklch(0.925 0.0805 156)` |
+| `--border-subtle` | `subtle` | `oklch(var(--ink) / 0.055)` | `oklch(var(--ink) / 0.065)` |
 
 ## 间距
 
@@ -155,7 +155,7 @@ status-info 用蓝色。暗色主题保留柔和、低饱和的配色。两种�
 | `shadow-e2` | `inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 1px 3px rgba(24, 26, 32, 0.06), 0 0 0 1px rgba(24, 26, 32, 0.07)` | `inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08)` | 交互控件静置态 |
 | `shadow-e3` | `inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 8px -2px rgba(24, 26, 32, 0.08), 0 12px 28px -12px rgba(24, 26, 32, 0.14), 0 0 0 1px rgba(24, 26, 32, 0.06)` | `inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.09)` | hover 抬升态 |
 | `shadow-e4` | `0 8px 16px -4px rgba(24, 26, 32, 0.08), 0 28px 56px -20px rgba(24, 26, 32, 0.22), 0 0 0 1px rgba(24, 26, 32, 0.06)` | `0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.09)` | 浮层：对话框、弹出层、toast |
-| `shadow-focus-ring` | `0 0 0 1px hsl(var(--ring))` | `0 0 0 1px hsl(var(--ring))` | 键盘焦点光环，可与海拔叠加 |
+| `shadow-focus-ring` | `0 0 0 1px oklch(var(--ring))` | `0 0 0 1px oklch(var(--ring))` | 键盘焦点光环，可与海拔叠加 |
 | `shadow-input-hover` | `inset 0 1px 2px rgba(24, 26, 32, 0.09), 0 0 0 1px rgba(24, 26, 32, 0.16)` | `inset 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.16)` |  |
 | `shadow-sidebar` | `0 0 0 1px rgba(24, 26, 32, 0.05), 12px 0 32px -20px rgba(24, 26, 32, 0.18)` | `0 0 0 1px rgba(255, 255, 255, 0.06), 12px 0 32px -20px rgba(0, 0, 0, 0.5)` | 侧栏右缘：发丝线加柔影 |
 
