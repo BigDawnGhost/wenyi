@@ -14,7 +14,7 @@ import { Dialog, EmptyState } from "../../components/ui/misc";
 import { api, isProjectBusy } from "../../api/client";
 import type { Project } from "../../api/types";
 import { platform } from "../../platform";
-import { FolderPlus, LoaderCircle, Trash2 } from "lucide-react";
+import { FolderPlus, Trash2 } from "lucide-react";
 
 export default function Dashboard() {
   const { t: tr, locale } = useI18n();
@@ -77,14 +77,12 @@ export default function Dashboard() {
           library && (
             <Button
               variant="outline"
-              disabled={importProject.isPending}
-              onClick={() => importProject.mutate()}
+              aria-busy={importProject.isPending || undefined}
+              onClick={() => { if (!importProject.isPending) importProject.mutate(); }}
             >
-              {importProject.isPending ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-              ) : (
-                <FolderPlus className="h-4 w-4" />
-              )}
+              {/* The glyph stays: a spinner swapped in for the duration replaced it
+                  and rotated, which the control never does otherwise. */}
+              <FolderPlus className="h-4 w-4" />
               {tr("dashboard.importProject")}
             </Button>
           )
@@ -168,15 +166,13 @@ export default function Dashboard() {
                             name: p.name,
                           })}
                           title={tr("dashboard.deleteAction")}
-                          disabled={deleteProject.isPending}
+                          aria-busy={
+                            deleteProject.isPending && deleteProject.variables?.id === p.id
+                              || undefined
+                          }
                           onClick={() => setPendingDelete(p)}
                         >
-                          {deleteProject.isPending &&
-                          deleteProject.variables?.id === p.id ? (
-                            <LoaderCircle className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>
@@ -212,26 +208,21 @@ export default function Dashboard() {
             >
               {/* Dismissing the dialog does not stop a delete that is already
                   running, so the label must not promise that it does. */}
-              {tr(deleteProject.isPending ? "common.close" : "common.cancel")}
+              {tr("common.cancel")}
             </Button>
             <Button
               variant="destructive"
-              disabled={deleteProject.isPending || !pendingDelete}
+              disabled={!pendingDelete}
+              aria-busy={deleteProject.isPending || undefined}
               onClick={() => {
                 if (pendingDelete && !deleteProject.isPending) {
                   deleteProject.mutate(pendingDelete);
                 }
               }}
             >
-              {/* The fixed icon slot keeps the button's width while pending, so
-                  the footer buttons do not shift when the spinner appears. */}
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                {deleteProject.isPending ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4" />
-                )}
-              </span>
+              {/* The icon stays put while the deletion runs; swapping in a spinner
+                  replaced the glyph and rotated it, which the footer never does. */}
+              <Trash2 className="h-4 w-4 shrink-0" />
               {tr("dashboard.deleteAction")}
             </Button>
           </>

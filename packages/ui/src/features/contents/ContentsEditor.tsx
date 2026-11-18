@@ -107,7 +107,7 @@ export function ContentsEditor({
               draft.trim() === (baseline ?? "")
             }
           >
-            {save.isPending ? t("common.saving") : t("common.save")}
+            {t("common.save")}
           </Button>
         </div>
       </form>

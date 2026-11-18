@@ -313,10 +313,11 @@ export function ParagraphEditor({
         </Button>
         {view === "edit" && (
           <Button
-            disabled={disabled || stale || draft === (baseline ?? "")}
-            onClick={() => save.mutate()}
+            disabled={disabled || stale || draft === (baseline ?? "") || save.isPending}
+            aria-busy={save.isPending || undefined}
+            onClick={() => { if (!save.isPending) save.mutate(); }}
           >
-            {save.isPending ? t("common.saving") : t("review.saveTranslation")}
+            {t("review.saveTranslation")}
           </Button>
         )}
       </footer>

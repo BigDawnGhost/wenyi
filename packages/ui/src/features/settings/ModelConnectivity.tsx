@@ -84,10 +84,11 @@ export function ModelConnectivity({
             type="button"
             variant="outline"
             size="sm"
-            disabled={!saved || disabled || ping.isPending}
-            onClick={() => ping.mutate()}
+            disabled={!saved || disabled}
+            aria-busy={ping.isPending || undefined}
+            onClick={() => { if (!ping.isPending) ping.mutate(); }}
           >
-            {ping.isPending ? t("connectivity.testing") : t("connectivity.test")}
+            {t("connectivity.test")}
           </Button>
         </div>
       </div>

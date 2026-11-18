@@ -193,18 +193,19 @@ export default function CreateProjectDialog() {
       <Link to={`/projects/${pid}`}>
         <Button variant="outline">{tr("createProject.openProject")}</Button>
       </Link>
-      {interrupted ? (
-        <Button onClick={() => resume.mutate()} disabled={resume.isPending}>
-          {tr("progress.resumeTask")}
-        </Button>
-      ) : (
-        <Button
-          onClick={() => start.mutate()}
-          disabled={!preview || busy || start.isPending}
-        >
-          {start.isPending ? tr("createProject.starting") : tr("common.startTranslation")}
-        </Button>
-      )}
+      {/* One button whose role depends on the project state, rather than two that
+          take turns being mounted: swapping the element under a cursor that has
+          not moved re-mounts it without its hover state. */}
+      <Button
+        onClick={() => {
+          if (interrupted && !resume.isPending) resume.mutate();
+          if (!interrupted && !start.isPending) start.mutate();
+        }}
+        disabled={!interrupted && (!preview || busy)}
+        aria-busy={(interrupted ? resume.isPending : start.isPending) || undefined}
+      >
+        {tr(interrupted ? "progress.resumeTask" : "common.startTranslation")}
+      </Button>
     </>
   ) : (
     <>
@@ -214,10 +215,14 @@ export default function CreateProjectDialog() {
         </p>
       )}
       <Button variant="outline" onClick={close}>
-        {tr(pending ? "common.close" : "common.cancel")}
+        {tr("common.cancel")}
       </Button>
-      <Button onClick={() => create.mutate()} disabled={createDisabled}>
-        {create.isPending ? tr("createProject.uploading") : tr("common.createProject")}
+      <Button
+        onClick={() => { if (!create.isPending) create.mutate(); }}
+        disabled={createDisabled}
+        aria-busy={create.isPending || undefined}
+      >
+        {tr("common.createProject")}
       </Button>
     </>
   );
