@@ -100,7 +100,7 @@ export function SettingsActionBar({
   return (
     <div
       data-slot="settings.actions"
-      className="glass-bar -mb-3 sticky bottom-4 z-10 mx-auto flex w-fit max-w-full flex-wrap items-center gap-3 rounded-3xl px-4 py-3"
+      className="glass-bar -mb-3 sticky bottom-4 z-10 mx-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-5 rounded-3xl px-7 py-3"
     >
       {notices ? (
         <div className="min-w-0 max-w-sm space-y-1 text-sm">{notices}</div>
