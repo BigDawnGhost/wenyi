@@ -14,6 +14,7 @@ import { cn } from "../../lib/utils";
 import { Select, SelectItem } from "../../components/ui/select";
 import { StatusBadge } from "../../components/StatusBadge";
 import { ErrorNotice } from "../../components/ui/data";
+import { EmptyState } from "../../components/ui/misc";
 import { ReviewIssues } from "./ReviewIssues";
 import { ReviewActivity } from "./ReviewActivity";
 import { reviewPhase, reviewProgress } from "./reviewData";
@@ -219,9 +220,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
             {!items.length &&
               status === "completed" &&
               (!reviewing || previousResults) && (
-                <p className="text-sm text-muted-foreground">
-                  {t("review.noIssues")}
-                </p>
+                <EmptyState>{t("review.noIssues")}</EmptyState>
               )}
             <details className="pt-4">
               <summary className="w-fit cursor-pointer text-xs text-muted-foreground">

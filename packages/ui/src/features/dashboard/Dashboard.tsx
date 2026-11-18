@@ -10,7 +10,7 @@ import { Button } from "../../components/ui/button";
 import { LazyBoundary } from "../../routes/LazyBoundary";
 import { Card, CardContent } from "../../components/ui/card";
 import { ErrorNotice } from "../../components/ui/data";
-import { Dialog } from "../../components/ui/misc";
+import { Dialog, EmptyState } from "../../components/ui/misc";
 import { api, isProjectBusy } from "../../api/client";
 import type { Project } from "../../api/types";
 import { platform } from "../../platform";
@@ -126,9 +126,7 @@ export default function Dashboard() {
           </div>
         ) : !projects?.length ? (
           <Card>
-            <p className="px-6 py-24 text-center text-sm text-muted-foreground">
-              {tr("dashboard.noProjectsYet")}
-            </p>
+            <EmptyState className="py-24">{tr("dashboard.noProjectsYet")}</EmptyState>
           </Card>
         ) : (
           <div className="grid grid-cols-3 gap-4">

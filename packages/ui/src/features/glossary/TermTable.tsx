@@ -3,6 +3,7 @@ import { useI18n } from "../../i18n";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Badge } from "../../components/ui/badge";
+import { EmptyState } from "../../components/ui/misc";
 import { Eye, Pencil, Trash2 } from "lucide-react";
 import { PAGE_SIZE, termTypes } from "./termTypes";
 
@@ -168,15 +169,14 @@ export function TermTable({
             ))}
             {terms && terms.length === 0 && (
               <tr>
-                <td
-                  colSpan={5}
-                  className="p-8 text-center text-muted-foreground text-sm"
-                >
-                  {tr(
-                    searchQuery || type
-                      ? "glossary.noMatchingTerms"
-                      : "glossary.noTermsYetTermsAreExtractedDuring",
-                  )}
+                <td colSpan={5}>
+                  <EmptyState>
+                    {tr(
+                      searchQuery || type
+                        ? "glossary.noMatchingTerms"
+                        : "glossary.noTermsYetTermsAreExtractedDuring",
+                    )}
+                  </EmptyState>
                 </td>
               </tr>
             )}
