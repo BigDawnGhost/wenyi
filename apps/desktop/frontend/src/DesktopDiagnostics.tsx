@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Dialog } from "@wenyi/ui/primitives";
+import { Button, Dialog, Select, SelectItem } from "@wenyi/ui/primitives";
 import { SettingsSection } from "@wenyi/ui/settings";
 import { useDesktopI18n } from "./i18n";
 import { diagnosticCommand, type DiagnosticStatus } from "./diagnostics";
@@ -27,14 +27,13 @@ export function DiagnosticExportButton() {
     <Dialog open={open} onClose={() => setOpen(false)} closeDisabled={busy}
       title={t("diagnostics.export")} description={t("diagnostics.privacy")}>
       <div className="space-y-4">
-        <label className="block text-sm">
+        <label className="block space-y-1.5 text-sm">
           {t("diagnostics.range")}
-          <select className="ml-3 rounded border bg-background p-2" value={range}
-            disabled={busy} onChange={event => setRange(event.target.value)}>
-            <option value="day">{t("diagnostics.day")}</option>
-            <option value="session">{t("diagnostics.session")}</option>
-            <option value="week">{t("diagnostics.week")}</option>
-          </select>
+          <Select value={range} disabled={busy} onValueChange={setRange}>
+            <SelectItem value="day">{t("diagnostics.day")}</SelectItem>
+            <SelectItem value="session">{t("diagnostics.session")}</SelectItem>
+            <SelectItem value="week">{t("diagnostics.week")}</SelectItem>
+          </Select>
         </label>
         <p className="text-sm">{t("diagnostics.contents")}</p>
         <p className="text-sm text-muted-foreground">{t("diagnostics.partial")}</p>
