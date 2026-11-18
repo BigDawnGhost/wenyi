@@ -47,16 +47,34 @@ export function NotificationToaster() {
   // there does the stack need to clear it; elsewhere the offset would leave a
   // toast hovering well above the corner for no reason.
   const barVisible = useActionBarPresence();
-  // Sonner dismisses a toast, then unmounts it on a timer that is shorter than
-  // its own 400ms exit transition, so the movement is cut off part-way and
-  // reads as a frozen frame. Publish a shorter duration for the toast body via
-  // a style element: the utility that would express this is generated per
-  // build, and this value has to match Sonner's timer, not the design scale.
+  // Three behaviours Sonner decides internally rather than from its props.
+  // They are published as a style element because the values have to match
+  // Sonner's own timers and layout variables, not the design scale.
   useEffect(() => {
     const tag = document.createElement("style");
     tag.dataset.sonnerExit = "";
-    tag.textContent =
-      "[data-sonner-toast]{transition-duration:180ms,180ms,180ms,150ms}";
+    // Sonner opens the stack on hover by switching each toast to a different
+    // layout, so the swept-back ones jump to full height and a new offset. On a
+    // bottom-anchored stack that throws them up the screen, and a toast
+    // dismissed meanwhile animates against a layout that is still moving. Pin
+    // the expanded state to the resting layout so hovering changes nothing.
+    tag.textContent = [
+      "[data-sonner-toast]{transition-duration:180ms,180ms,180ms,150ms}",
+      "[data-sonner-toast][data-expanded='true'][data-front='false']{" +
+        "--scale:calc(var(--toasts-before) * 0.05 + 1);" +
+        "--y:translateY(calc(var(--lift-amount) * var(--toasts-before)))" +
+        " scale(calc(-1 * var(--scale)));" +
+        "height:var(--front-toast-height)}",
+      "[data-sonner-toast][data-expanded='true'][data-front='false']" +
+        "[data-styled='true'] > *{opacity:0}",
+      // Exit as a fade in place. Sonner slides a dismissed toast off in its
+      // lift direction while collapsing its height, and the two run on
+      // different clocks, so the box was seen shrinking and drifting before it
+      // vanished. Holding position and height leaves only the opacity change.
+      "[data-sonner-toast][data-removed='true']{--y:none;" +
+        "height:var(--initial-height);" +
+        "transition:opacity 180ms ease-out}",
+    ].join("");
     document.head.append(tag);
     return () => tag.remove();
   }, []);
@@ -72,8 +90,9 @@ export function NotificationToaster() {
       // it is not, the stack sits at the ordinary corner distance.
       position="bottom-center"
       offset={barVisible ? 92 : 24}
-      duration={5000}
+
       className="pointer-events-auto z-[200]"
+      duration={5000}
       icons={{ close: <X className="h-4 w-4" aria-hidden="true" /> }}
       toastOptions={{
         classNames: {
