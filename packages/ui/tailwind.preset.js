@@ -103,11 +103,13 @@ export default {
           DEFAULT: "oklch(var(--primary) / <alpha-value>)",
           foreground: "oklch(var(--primary-foreground) / <alpha-value>)",
           hover: "oklch(var(--primary-hover) / <alpha-value>)",
+          pressed: "oklch(var(--primary-pressed) / <alpha-value>)",
         },
         secondary: {
           DEFAULT: "oklch(var(--secondary) / <alpha-value>)",
           foreground: "oklch(var(--secondary-foreground) / <alpha-value>)",
           hover: "oklch(var(--secondary-hover) / <alpha-value>)",
+          pressed: "oklch(var(--secondary-pressed) / <alpha-value>)",
         },
         destructive: {
           DEFAULT: "oklch(var(--destructive) / <alpha-value>)",
@@ -129,6 +131,11 @@ export default {
           DEFAULT: "oklch(var(--card) / <alpha-value>)",
           foreground: "oklch(var(--card-foreground) / <alpha-value>)",
           hover: "oklch(var(--card-hover) / <alpha-value>)",
+          pressed: "oklch(var(--card-pressed) / <alpha-value>)",
+        },
+        popover: {
+          DEFAULT: "oklch(var(--popover) / <alpha-value>)",
+          foreground: "oklch(var(--popover-foreground) / <alpha-value>)",
         },
         "status-success": {
           DEFAULT: "oklch(var(--status-success) / <alpha-value>)",

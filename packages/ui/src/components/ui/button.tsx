@@ -14,8 +14,11 @@ const buttonVariants = cva(
         // same as the surface states. That direction is lighter in the light
         // theme and darker in the dark theme, which is what --primary-hover
         // encodes per theme; keep both values opaque.
+        // active: returns to the resting face. Hover lightened it; holding the
+        // key down should read as the face settling back and sinking, not as
+        // staying lit while it depresses.
         default:
-          "bg-primary text-primary-foreground hover:bg-primary-hover active:bg-primary-hover "
+          "bg-primary text-primary-foreground hover:bg-primary-hover active:!bg-primary-pressed "
           + "shadow-raised-invert hover:shadow-raised-invert-hover active:shadow-pressed-invert",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90 "
@@ -25,10 +28,10 @@ const buttonVariants = cva(
         // highlight alone vanishes on white and the key fuses with the page.
         // The face stays opaque; hover never re-alphaes it.
         outline:
-          "bg-card text-foreground hover:bg-card-hover hover:text-foreground "
+          "bg-card text-foreground hover:bg-card-hover hover:text-foreground active:!bg-card-pressed "
           + "shadow-raised hover:shadow-raised-hover active:shadow-pressed active:text-foreground",
         secondary:
-          "bg-secondary text-secondary-foreground hover:bg-secondary-hover hover:text-secondary-foreground "
+          "bg-secondary text-secondary-foreground hover:bg-secondary-hover hover:text-secondary-foreground active:!bg-secondary-pressed "
           + "shadow-raised hover:shadow-raised-hover active:shadow-pressed",
         ghost: "hover:bg-hover hover:text-foreground shadow-none",
         link: "text-primary underline-offset-4 hover:underline shadow-none",
