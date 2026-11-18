@@ -1,9 +1,14 @@
 import * as React from "react";
 import { cn } from "../../lib/utils";
 
+/** Group-card surface, shared by <Card> and by elements that need their own
+ *  semantics (a <section> with aria-labelledby, a <p role="status">). */
+export const cardSurface =
+  "rounded-xl border border-border bg-card text-card-foreground transition-[transform,box-shadow] duration-motion-normal ease-standard";
+
 export const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElement>>(
   ({ className, ...p }, ref) => (
-    <div data-slot="card" ref={ref} className={cn("rounded-xl border border-border bg-card text-card-foreground transition-[transform,box-shadow] duration-motion-normal ease-standard", className)} {...p} />
+    <div data-slot="card" ref={ref} className={cn(cardSurface, className)} {...p} />
   )
 );
 Card.displayName = "Card";

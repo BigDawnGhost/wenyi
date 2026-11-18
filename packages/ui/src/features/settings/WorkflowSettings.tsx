@@ -1,6 +1,8 @@
 import { useI18n } from "../../i18n";
 import { Input, Label, Switch } from "../../components/ui/form";
 import { SettingsRow, SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;
@@ -44,9 +46,9 @@ export function WorkflowSettings({
   ];
 
   return (
-    <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-60">
+    <fieldset disabled={disabled} className="min-w-0 space-y-4 disabled:opacity-50">
       {scope === "project" && (
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className={cn(cardSurface, "p-4")}>
           <div className="space-y-2">
             <Label htmlFor="project-prompt-genre">{tr("createProject.promptGenre")}</Label>
             <Input
@@ -66,7 +68,7 @@ export function WorkflowSettings({
           </div>
         </div>
       )}
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
+      <div className={cn(cardSurface, "overflow-hidden")}>
         {PIPELINE.map(([key, label]) => (
           <SettingsRow
             key={key}

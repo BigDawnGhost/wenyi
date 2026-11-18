@@ -8,6 +8,8 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { Progress } from "../../components/ui/progress";
 import { formatDuration } from "../progress/accountingData";
 import { reviewPhase } from "./reviewData";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 
 export function ReviewActivity({
   pid,
@@ -55,7 +57,7 @@ export function ReviewActivity({
   return (
     <section
       aria-label={t("review.currentRun")}
-      className="space-y-4 rounded-xl border border-border bg-card p-5"
+      className={cn(cardSurface, "space-y-4 p-5")}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">

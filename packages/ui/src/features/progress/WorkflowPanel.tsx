@@ -5,6 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { ProgressMessage } from "../../lib/ws";
 import { ErrorNotice } from "../../components/ui/data";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 import { progressInterval } from "../../lib/runtime";
 
 export function WorkflowPanel({
@@ -55,7 +57,7 @@ export function WorkflowPanel({
     (!!live?.label || workflow.status === "running");
 
   return (
-    <section aria-labelledby={headingId} className="space-y-3 rounded-xl border border-border bg-card p-4">
+    <section aria-labelledby={headingId} className={cn(cardSurface, "space-y-3 p-4")}>
       <h2 id={headingId} className="font-medium">
         {tr("workflowPanel.currentWorkflow")}
       </h2>

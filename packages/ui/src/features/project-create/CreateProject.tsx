@@ -12,6 +12,8 @@ import { ErrorNotice } from "../../components/ui/data";
 import { api, isProjectBusy } from "../../api/client";
 import type { ProjectInput } from "../../api/types";
 import { SourcePreview } from "./SourcePreview";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 import { SourceFilePicker } from "./SourceFilePicker";
 import { ProjectLocationPicker } from "./ProjectLocationPicker";
 import { releaseSource, type ProjectSource } from "../../platform";
@@ -245,7 +247,7 @@ export default function CreateProjectDialog() {
             project?.error
           }
         />
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className={cn(cardSurface, "p-4")}>
           <div className="space-y-2">
             <Label htmlFor="project-name">{tr("createProject.projectName")}</Label>
             <Input
@@ -257,7 +259,7 @@ export default function CreateProjectDialog() {
             />
           </div>
         </div>
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className={cn(cardSurface, "p-4")}>
           <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,1fr)]">
             <div className="min-w-0 space-y-2">
               <Label htmlFor="source-language">{tr("createProject.sourceLanguage")}</Label>
@@ -329,7 +331,7 @@ export default function CreateProjectDialog() {
           }}
         />
         {!pid && extension === "pdf" && (
-          <div className="rounded-xl border border-border bg-card p-4">
+          <div className={cn(cardSurface, "p-4")}>
             <div className="space-y-2">
               <Label htmlFor="pdf-backend">{tr("settings.pdfParser")}</Label>
               <Select

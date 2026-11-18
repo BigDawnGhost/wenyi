@@ -9,7 +9,8 @@ import { useProjectQuery } from "../../lib/projectQuery";
 import { useProjectProgress } from "../../lib/ws";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
 import { Button } from "../../components/ui/button";
-import { Card } from "../../components/ui/card";
+import { Card, cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 import { Select, SelectItem } from "../../components/ui/select";
 import { StatusBadge } from "../../components/StatusBadge";
 import { ErrorNotice } from "../../components/ui/data";
@@ -187,7 +188,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
           </Card>
         )}
         {run.data && (
-          <section className="space-y-5 rounded-xl border border-border bg-card p-5">
+          <section className={cn(cardSurface, "space-y-5 p-5")}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-medium">
                 {t(
@@ -233,7 +234,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
           </section>
         )}
         {!loading && !error && !run.data && !reviewing && (
-          <div className="space-y-2 rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
+          <div className={cn(cardSurface, "space-y-2 p-5 text-sm text-muted-foreground")}>
             <p>{t("review.noReviewYet")}</p>
             {!chapters.isPending && !translated && (
               <p>{t("review.wholeBookReviewIsAvailableOnceAll")}</p>

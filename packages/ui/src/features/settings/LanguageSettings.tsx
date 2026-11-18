@@ -5,6 +5,8 @@ import { isThemePreference, useTheme } from "../../theme";
 import { platform } from "../../platform";
 import { SettingsSection } from "./SettingsSection";
 import { SettingsRow, SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 
 export function LanguageSettings() {
   const { locale, setLocale, t } = useI18n();
@@ -12,7 +14,7 @@ export function LanguageSettings() {
   const GeneralSettings = platform().capabilities.generalSettings;
   return (
     <SettingsSection title={t("settings.sectionGeneral")} grouped>
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
+      <div className={cn(cardSurface, "overflow-hidden")}>
         <SettingsRow
           label={t("settings.interfaceLanguage")}
           htmlFor="interface-language"

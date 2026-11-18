@@ -12,6 +12,8 @@ import { Button } from "../../components/ui/button";
 import { ErrorNotice } from "../../components/ui/data";
 import { Textarea } from "../../components/ui/form";
 import { LanguageSettings } from "./LanguageSettings";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 import { ModelSelection } from "./ModelSelection";
 import { ExportSettings } from "./ExportSettings";
 import { ProviderSettings } from "./ProviderSettings";
@@ -240,7 +242,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
               title={t("settings.advancedYamlConfiguration")}
               summary={yamlDirty ? t("settings.unsavedSummary") : undefined}
             >
-              <div className="rounded-xl border border-border bg-card p-4">
+              <div className={cn(cardSurface, "p-4")}>
                 <Textarea
                   aria-label={t("settings.advancedYamlConfiguration")}
                   spellCheck={false}
