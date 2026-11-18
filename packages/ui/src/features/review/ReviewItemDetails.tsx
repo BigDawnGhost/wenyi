@@ -66,7 +66,7 @@ export function ReviewItemDetails({
             const after = published ? publication.target : record.after;
             const reason = publication.reason || record.reason;
             return (
-              <div key={index} className="space-y-3 rounded-md border p-3">
+              <div key={index} className="space-y-3 rounded-md border border-subtle p-3">
                 <Badge
                   variant={
                     applied ? "success" : failed ? "destructive" : "secondary"

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "../../i18n";
 import { api } from "../../api/client";
 import { ErrorNotice } from "../../components/ui/data";
+import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { cardSurface } from "../../components/ui/card";
 import { cn } from "../../lib/utils";
@@ -76,9 +77,7 @@ export function PrecisionDrafts({
           <h3 className="flex flex-wrap items-center gap-2 text-sm font-medium">
             {candidate.id}
             {candidate.id === data.before_polish_candidate && (
-              <span className="rounded bg-muted px-2 py-1 text-xs">
-                {t("proofreading.beforePolishComparison")}
-              </span>
+              <Badge variant="secondary">{t("proofreading.beforePolishComparison")}</Badge>
             )}
           </h3>
           {text(candidate.target)}
