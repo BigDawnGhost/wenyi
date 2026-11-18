@@ -89,11 +89,11 @@ export default function SettingsPage() {
   return (
     <div className="flex min-h-dvh flex-col">
       <PageHeader title={tr("common.projectSettings")} />
-      <PageContainer className="mx-auto flex w-full max-w-5xl flex-1 flex-col">
+      <PageContainer className="mx-auto flex w-full max-w-5xl flex-1 flex-col pb-24">
         <div className={SETTINGS_CONTENT_CLASSNAME}>
           <ErrorNotice error={config.error || configurationError} />
           {busy && <ReadOnlyNotice />}
-          <SettingsSection title={tr("settings.sectionModels")} className="py-0" grouped>
+          <SettingsSection title={tr("settings.sectionDefaultModels")} className="py-0" grouped>
             <ModelSelection
               llm={section(effective, "llm")}
               models={config.data?.registered_models || {}}
@@ -114,12 +114,22 @@ export default function SettingsPage() {
               }}
             />
           </SettingsSection>
+          <SettingsSection title={tr("settings.sectionTranslationStyle")} className="py-0" grouped>
+            <WorkflowSettings
+              scope="project"
+              config={effective}
+              disabled={formDisabled}
+              onField={setField}
+              part="translation-style"
+            />
+          </SettingsSection>
           <SettingsSection title={tr("settings.sectionWorkflow")} className="py-0" grouped>
             <WorkflowSettings
               scope="project"
               config={effective}
               disabled={formDisabled}
               onField={setField}
+              part="pipeline"
             />
           </SettingsSection>
           <SettingsSection title={tr("settings.sectionExport")} className="py-0" grouped>
@@ -146,40 +156,45 @@ export default function SettingsPage() {
             />
           </SettingsSection>
         </div>
-        <SettingsActionBar
-          notices={
-            yamlDirty && (
-              <a
-                href="#advanced-yaml"
-                className="block text-warning-text underline underline-offset-4"
-              >
-                {tr("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
-              </a>
-            )
-          }
-        >
-          <Button
-            variant="outline"
-            disabled={disabled}
-            onClick={() => restore.mutate()}
-          >
-            {tr("settings.restoreDefaults")}
-          </Button>
-          <Button
-            variant="outline"
-            disabled={disabled}
-            onClick={() => validate.mutate()}
-          >
-            {validate.isPending ? tr("settings.validating") : tr("settings.validateConfiguration")}
-          </Button>
-          <Button
-            disabled={disabled}
-            onClick={() => save.mutate()}
-          >
-            {save.isPending ? tr("common.saving") : tr("settings.saveConfiguration")}
-          </Button>
-        </SettingsActionBar>
       </PageContainer>
+      {/* Outside PageContainer on purpose: that container runs a transform
+          animation on entry, and a transformed ancestor becomes the
+          containing block of fixed descendants. Nested inside, the bar was
+          positioned against the animating page column for the length of the
+          animation, which read as a sideways jump. */}
+      <SettingsActionBar
+        notices={
+          yamlDirty && (
+            <a
+              href="#advanced-yaml"
+              className="block text-warning-text underline underline-offset-4"
+            >
+              {tr("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
+            </a>
+          )
+        }
+      >
+        <Button
+          variant="outline"
+          disabled={disabled}
+          onClick={() => restore.mutate()}
+        >
+          {tr("settings.restoreDefaults")}
+        </Button>
+        <Button
+          variant="outline"
+          disabled={disabled}
+          onClick={() => validate.mutate()}
+        >
+          {validate.isPending ? tr("settings.validating") : tr("settings.validateConfiguration")}
+        </Button>
+        <Button
+          disabled={disabled}
+          onClick={() => save.mutate()}
+        >
+          {save.isPending ? tr("common.saving") : tr("settings.saveConfiguration")}
+        </Button>
+      </SettingsActionBar>
     </div>
   );
 }

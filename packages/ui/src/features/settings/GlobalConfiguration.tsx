@@ -127,8 +127,13 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
   const disabled = !draft || yamlDirty || pending;
   const effective = draft?.effective || {};
   const llm = object(effective.llm);
-  const configSaved = !!draft && draft.yaml === query.data?.yaml;
-  const dirty = !configSaved || uncommitted || yamlDirty || credentialsPending;
+  // Until the first load completes there is no draft to compare against, so
+  // every derivation would read as "unsaved". Reporting that for one frame
+  // both flashes the unsaved notice and, because the notice widens the action
+  // bar, shifts the bar sideways before the load settles.
+  const loaded = !!draft;
+  const configSaved = loaded && draft.yaml === query.data?.yaml;
+  const dirty = (loaded && !configSaved) || uncommitted || yamlDirty || credentialsPending;
   const change = (next: Document) => {
     if (draft)
       setDraft({

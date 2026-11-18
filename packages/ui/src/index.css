@@ -345,6 +345,17 @@ body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-vi
   position: relative;
   z-index: 1;
 }
+
+/* The bar mounts with the page but floats above the content, so it would
+   otherwise appear fully formed while the page beneath is still fading in.
+   Same duration and curve as the page entrance so the two read as one
+   movement. Only opacity and transform animate: the bar is horizontally
+   centred by layout, so transform is free, and neither property triggers
+   a relayout. */
+@keyframes bar-enter {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 .dark .glass-bar {
   box-shadow:
     0 12px 36px -6px rgba(0, 0, 0, 0.55),
@@ -443,9 +454,14 @@ details[open] > .disclosure-summary > .disclosure-chevron {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+/* Opacity only. A transform here would make every page container the
+   containing block for fixed descendants while the animation runs, so any
+   fixed element inside the page (the settings action bar) would position
+   itself against the animating column instead of the viewport and jump for
+   the length of the entrance. */
 @keyframes page-enter {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 /* Dialog entrance: enter-only; exit stays instant (Radix presence). The final
    frame repeats the utility centering so fill-forwards cannot displace it:

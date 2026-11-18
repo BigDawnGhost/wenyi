@@ -1,5 +1,5 @@
 import { useI18n } from "../../i18n";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Link, Outlet, useLocation, useMatch, useParams } from "react-router-dom";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -140,8 +140,16 @@ export function AppLayout() {
         />
       ));
 
+  // The floating action bar is fixed to the viewport, so it needs the sidebar's
+  // width to centre on the content pane rather than the window. Publish it as a
+  // rendered style, not from an effect: an effect lands one commit later, which
+  // is exactly the frame in which the bar would be positioned with a stale
+  // width and visibly jump.
   return (
-    <div className="flex h-dvh w-full overflow-hidden">
+    <div
+      className="flex h-dvh w-full overflow-hidden"
+      style={{ "--sidebar-w": collapsed ? "64px" : "240px" } as CSSProperties}
+    >
       <aside
         data-slot="sidebar"
         data-collapsed={collapsed}
