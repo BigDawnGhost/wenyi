@@ -53,21 +53,21 @@ export function GlossaryActions({
           {tr("common.export")} <ChevronDown className="h-3 w-3" />
         </Button>
         {menuOpen && (
-          <div className="pop-content absolute right-0 top-full z-10 mt-1 w-56 rounded-xl bg-popover p-1 shadow-e4">
+          <div className="pop-content absolute right-0 top-full z-10 mt-1 w-56 rounded-xl bg-popover p-1 text-popover-foreground shadow-e4">
             <button
-              className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+              className="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors duration-75 hover:bg-hover"
               onClick={() => handleExport("csv")}
             >
               {tr("glossary.csvFile")}
             </button>
             <button
-              className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+              className="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors duration-75 hover:bg-hover"
               onClick={() => handleExport("json")}
             >
               {tr("glossary.jsonFile")}
             </button>
             <button
-              className="w-full rounded-sm px-2 py-1.5 text-left text-sm hover:bg-accent"
+              className="w-full rounded-lg px-3 py-2 text-left text-sm transition-colors duration-75 hover:bg-hover"
               onClick={() => handleExport("apkg")}
             >
               {tr("glossary.ankiDeck")}

@@ -92,7 +92,7 @@ export function NavigationLink({
           "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
           collapsed && "gap-0 px-2",
           isActive
-            ? "bg-accent text-accent-foreground font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+            ? "bg-accent text-accent-foreground font-medium shadow-raised active:shadow-pressed"
             : "text-muted-foreground hover:text-foreground hover:bg-hover",
           className,
         )
