@@ -25,12 +25,17 @@
     --foreground: 0.1405 0.0044 285.82;
     --card: 1 0 0;
     --card-foreground: 0.1405 0.0044 285.82;
+    /* Popover surfaces float above the page, so they take the page-opposite
+       pole: white on the light theme, the raised card step on the dark one. */
+    --popover: 1 0 0;
+    --popover-foreground: 0.1405 0.0044 285.82;
     /* Control hover faces. Every face steps toward mid gray, so the visible
        direction follows the face's own lightness instead of a fixed sign:
        a white key darkens in the light theme, a dark key lightens in the
        dark theme. These stay opaque on purpose; an alpha step would let
        whatever sits behind the control show through the key. */
-    --card-hover: 0.955 0 0;
+    --card-hover: 0.972 0 0;
+    --card-pressed: var(--card);
     --primary: 0.2103 0.0059 285.88;
     --primary-foreground: 0.9848 0 0;
     /* Hover for the inverted (primary) button. The button face sits at the
@@ -43,7 +48,8 @@
     --primary-hover: 0.305 0.0059 285.88;
     --secondary: 0.9676 0.0013 286.38;
     --secondary-foreground: 0.2103 0.0059 285.88;
-    --secondary-hover: 0.94 0.0013 286.38;
+    --secondary-hover: 0.953 0.0013 286.38;
+    --secondary-pressed: var(--secondary);
     --muted: 0.9676 0.0013 286.38;
     --muted-foreground: 0.5519 0.0137 285.94;
     /* Ink anchor for alpha-derived interaction surfaces: fixed near-black in
@@ -60,7 +66,10 @@
     --surface: var(--ink) / 0.03;
     /* --accent stays a solid step: one consumer (sidebar nav) still blends it
        with /50, which cannot re-alpha an alpha-bearing value. */
-    --accent: 0.9676 0.0013 286.38;
+    /* Selected surfaces share the control hover step, so a selected row and a
+       hovered key sit at the same height above the page instead of the row
+       reading darker than the key it sits next to. */
+    --accent: 0.972 0 0;
     --accent-foreground: 0.2103 0.0059 285.88;
     /* Third text tier: placeholder and disabled copy sit one step below the
        secondary text (muted-foreground). */
@@ -128,7 +137,17 @@
        highlight, a dark bottom lip and a contact shadow under the slab. */
     --shadow-raised-invert: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 -1px 0 rgba(0, 0, 0, 0.30), 0 1px 2px rgba(24, 26, 32, 0.28), 0 3px 7px -3px rgba(24, 26, 32, 0.22);
     --shadow-raised-invert-hover: inset 0 1px 0 rgba(255, 255, 255, 0.21), inset 0 -1px 0 rgba(0, 0, 0, 0.34), 0 2px 4px rgba(24, 26, 32, 0.32), 0 6px 14px -5px rgba(24, 26, 32, 0.30);
-    --shadow-pressed-invert: inset 0 2px 5px rgba(0, 0, 0, 0.45), inset 0 -1px 0 rgba(255, 255, 255, 0.08);
+    /* Light theme's inverted key is a dark slab. A black inner shadow barely
+       reads on a face that is already near-black, so the sink is carried by
+       a deep, wide inset plus a bright bottom lip that catches light where
+       the face turns under. The pressed face returns to the resting plate;
+       hover is the lit state, press is not. */
+    --primary-pressed: var(--primary);
+    --shadow-pressed-invert:
+      inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      inset 0 4px 10px -1px rgba(0, 0, 0, 0.95),
+      inset 0 10px 18px -8px rgba(0, 0, 0, 0.85),
+      inset 0 -2px 0 rgba(255, 255, 255, 0.22);
     --shadow-input-hover: inset 0 1px 2px rgba(24, 26, 32, 0.09), 0 0 0 1px rgba(24, 26, 32, 0.16);
     --shadow-sidebar: 0 0 0 1px rgba(24, 26, 32, 0.05), 12px 0 32px -20px rgba(24, 26, 32, 0.18);
   }
@@ -141,21 +160,28 @@
     --foreground: 0.7982 0 0;
     --card: 0.2354 0 0;
     --card-foreground: 0.7982 0 0;
+    --popover: 0.277 0 0;
+    --popover-foreground: 0.7982 0 0;
     --card-hover: 0.296 0 0;
+    --card-pressed: var(--card);
     --primary: 0.861 0 0;
     --primary-foreground: 0.2156 0 0;
-    /* Opposite sign on purpose: see the light-theme note above. */
-    --primary-hover: 0.8 0 0;
+    /* The dark theme's inverted key is a light slab. It rests on the darker
+       step and brightens under the cursor, so the hover reads as the same
+       gesture the light theme makes: the slab gains light rather than
+       losing it. */
+    --primary-hover: 0.9255 0 0;
     --secondary: 0.277 0 0;
     --secondary-foreground: 0.7982 0 0;
     --secondary-hover: 0.33 0 0;
+    --secondary-pressed: var(--secondary);
     --muted: 0.277 0 0;
     --muted-foreground: 0.6409 0 0;
     --ink: 1 0 0;
     --hover: var(--ink) / 0.08;
     --selected: var(--ink) / 0.12;
     --surface: var(--ink) / 0.03;
-    --accent: 0.277 0 0;
+    --accent: 0.296 0 0;
     --accent-foreground: 0.7982 0 0;
     --text-placeholder: var(--ink) / 0.3;
     --destructive: 0.3959 0.1331 25.72;
@@ -201,13 +227,19 @@
     --shadow-focus-ring: 0 0 0 1px oklch(var(--ring));
     --shadow-raised: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.40);
     --shadow-raised-hover: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0, 0, 0, 0.42), 0 6px 16px rgba(0, 0, 0, 0.45);
-    --shadow-pressed: inset 0 2px 5px rgba(0, 0, 0, 0.50), inset 0 -1px 0 rgba(255, 255, 255, 0.04);
+    --shadow-pressed: inset 0 3px 7px rgba(0, 0, 0, 0.62), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
     /* Dark theme: the inverted key is near-white on a dark bar, so it borrows
        the light theme's recipe, with black contact shadows that still read
        against the dark surface. */
     --shadow-raised-invert: inset 0 1px 0 rgba(255, 255, 255, 1), inset 0 -1px 0 rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.45), 0 4px 10px -4px rgba(0, 0, 0, 0.50);
     --shadow-raised-invert-hover: inset 0 1px 0 rgba(255, 255, 255, 1), inset 0 -1px 0 rgba(0, 0, 0, 0.20), 0 2px 6px rgba(0, 0, 0, 0.50), 0 8px 20px -6px rgba(0, 0, 0, 0.60);
-    --shadow-pressed-invert: inset 0 2px 5px rgba(0, 0, 0, 0.32), inset 0 -1px 0 rgba(255, 255, 255, 0.60);
+    /* The dark theme's inverted key is a light slab, so a black inner shade
+       would be invisible against it: the sink has to come from a mid-gray
+       shade plus a white bottom lip, which is how a light key recesses. */
+    --primary-pressed: var(--primary);
+    --card-pressed: var(--card);
+    --secondary-pressed: var(--secondary);
+    --shadow-pressed-invert: inset 0 3px 7px rgba(0, 0, 0, 0.30), inset 0 -1px 0 rgba(255, 255, 255, 0.90);
     --shadow-input-hover: inset 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.16);
     --shadow-sidebar: 0 0 0 1px rgba(255, 255, 255, 0.06), 12px 0 32px -20px rgba(0, 0, 0, 0.5);
 }
@@ -277,33 +309,29 @@ body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-vi
    positioned layers anchor to it. Declaring `relative` would override
    the utility and drop the bar out of the sticky flow. */
 .glass-bar {
-  border: 1px solid rgba(24, 26, 32, 0.10);
   box-shadow:
     0 12px 36px -6px rgba(15, 23, 42, 0.16),
-    0 2px 8px rgba(15, 23, 42, 0.07),
-    inset 0 1px 1px rgba(255, 255, 255, 0.75),
-    inset 0 -1px 2px rgba(15, 23, 42, 0.07);
+    0 2px 8px rgba(15, 23, 42, 0.07);
 }
-/* Frost: the only layer that touches the backdrop. A Gaussian blur is what
-   produces the colour wash; it averages the sampled pixels, so the pane
-   reads as translucent glass rather than a window. Keep the tint thin so
-   the wash comes from the blur, not from a flat white layer. */
+/* Frost: the pane is one flat tint over a blurred backdrop, nothing else.
+   The border lives on this layer rather than on the container so it gets
+   the same backdrop treatment; a border on the parent would paint a crisp
+   line over a blurred surface, which reads as a separate outline floating
+   above the glass instead of the glass edge itself. */
 .glass-bar::before {
   content: "";
   position: absolute;
   inset: 0;
   z-index: 0;
+  box-sizing: border-box;
+  border: 1px solid rgba(24, 26, 32, 0.10);
   border-radius: inherit;
-  background-image: linear-gradient(
-    135deg,
-    rgba(255, 255, 255, 0.16),
-    rgba(255, 255, 255, 0.04) 52%,
-    rgba(255, 255, 255, 0.11)
-  );
+  background-color: rgba(255, 255, 255, 0.22);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
   backdrop-filter: blur(20px) saturate(180%);
 }
-/* Sheen: a specular pass above the content, so it never dulls the text. */
+/* Sheen: a 1px inner hairline on the top edge only. It reads as the lip of
+   a physical pane without adding a gradient across the face. */
 .glass-bar::after {
   content: "";
   position: absolute;
@@ -311,38 +339,23 @@ body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-vi
   z-index: 2;
   border-radius: inherit;
   pointer-events: none;
-  background: linear-gradient(
-    158deg,
-    rgba(255, 255, 255, 0.42),
-    rgba(255, 255, 255, 0) 38%
-  );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
 }
 .glass-bar > * {
   position: relative;
   z-index: 1;
 }
 .dark .glass-bar {
-  border-color: rgba(255, 255, 255, 0.10);
   box-shadow:
     0 12px 36px -6px rgba(0, 0, 0, 0.55),
-    0 2px 8px rgba(0, 0, 0, 0.40),
-    inset 0 1px 1px rgba(255, 255, 255, 0.10),
-    inset 0 -1px 2px rgba(0, 0, 0, 0.35);
+    0 2px 8px rgba(0, 0, 0, 0.40);
 }
 .dark .glass-bar::before {
-  background-image: linear-gradient(
-    135deg,
-    rgba(40, 40, 40, 0.30),
-    rgba(24, 24, 24, 0.12) 52%,
-    rgba(34, 34, 34, 0.24)
-  );
+  border-color: rgba(255, 255, 255, 0.10);
+  background-color: rgba(38, 38, 38, 0.26);
 }
 .dark .glass-bar::after {
-  background: linear-gradient(
-    158deg,
-    rgba(255, 255, 255, 0.10),
-    rgba(255, 255, 255, 0) 34%
-  );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
 
 /* Keep the centered content column steady when the scrollbar appears or
@@ -435,16 +448,22 @@ details[open] > .disclosure-summary > .disclosure-chevron {
   to { opacity: 1; transform: translateY(0); }
 }
 /* Dialog entrance: enter-only; exit stays instant (Radix presence). The final
-   frame repeats the utility centering so fill-forwards cannot displace it. */
+   frame repeats the utility centering so fill-forwards cannot displace it:
+   the animation owns transform, so a settled dialog must land on the same
+   translate the utility set up. */
 .dialog-overlay { animation: overlay-in 200ms cubic-bezier(0.05, 0.7, 0.1, 1) both; }
 .dialog-content { animation: dialog-in 320ms cubic-bezier(0.05, 0.7, 0.1, 1) both; }
 @keyframes overlay-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+/* The final frame rounds the vertical offset to whole pixels: a -50%
+   translate of an odd-height panel lands on a half pixel, which pushes
+   every glyph inside through the antialiaser and makes settled text look
+   soft. round() resolves it at runtime, where the height is known. */
 @keyframes dialog-in {
   from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to { opacity: 1; transform: translate(-50%, round(nearest, -50%, 1px)) scale(1); }
 }
 /* Popover and menu entrance for surfaces that are not viewport-centered:
    select listboxes, auto-margin native dialogs, anchored menus. */
