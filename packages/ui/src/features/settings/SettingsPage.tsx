@@ -20,16 +20,32 @@ import { SETTINGS_CONTENT_CLASSNAME } from "./SettingsRow";
 const section = (config: Record<string, unknown>, key: string) =>
   (config[key] || {}) as Record<string, unknown>;
 
+/**
+ * Whether two configurations are the same document. Save and validate answer with
+ * a freshly built object every time, so identity says nothing; comparing the
+ * serialized form is enough here and avoids walking two trees.
+ */
+const sameConfig = (a: Record<string, unknown>, b: Record<string, unknown>) =>
+  a === b || JSON.stringify(a) === JSON.stringify(b);
+
 export default function SettingsPage() {
   const { t: tr } = useI18n();
   const { pid = "" } = useParams();
   const location = useLocation();
   const qc = useQueryClient();
-  const [draft, setDraft] = useState("");
+  // `effective` is the single source of truth for every field. The YAML editor
+  // is a second view of the same document, not the state: keeping the serialized
+  // string as the store meant every toggle had to re-stringify the whole config
+  // and hand the form a brand-new object, so one switch re-rendered the page.
   const [effective, setEffective] = useState<Record<string, unknown>>({});
+  // Only the text the user typed into the YAML editor, or undefined when the
+  // editor is simply showing the serialized form. Everything else reads through
+  // yaml below.
+  const [yamlText, setYamlText] = useState<string | undefined>(undefined);
   const [loadedPid, setLoadedPid] = useState<string | null>(null);
   const loaded = loadedPid === pid;
-  const [yamlDirty, setYamlDirty] = useState(false);
+  const yamlDirty = yamlText !== undefined;
+  const yaml = yamlText ?? JSON.stringify(effective, null, 2);
   const config = useQuery({
     queryKey: ["config", pid],
     queryFn: () => api.getConfig(pid),
@@ -39,9 +55,11 @@ export default function SettingsPage() {
     // Responses from a save/validate started under the previous project must never
     // overwrite this project's draft and re-enable the form (audit Y-2/F-1).
     if (pidRef.current !== forPid) return;
-    setDraft(value.yaml);
-    setEffective(value.effective);
-    setYamlDirty(false);
+    // Skip the write when the server echoed what is already on screen. It hands
+    // back a fresh object every time, so setting it unconditionally replaced the
+    // form state and re-rendered every control for no change at all.
+    setEffective((current) => (sameConfig(current, value.effective) ? current : value.effective));
+    setYamlText(undefined);
     setLoadedPid(forPid);
   };
   useEffect(() => {
@@ -53,7 +71,7 @@ export default function SettingsPage() {
     validate.reset();
   }, [pid]);
   const save = useMutation({
-    mutationFn: () => api.saveConfig(pid, draft),
+    mutationFn: () => api.saveConfig(pid, yaml),
     onSuccess: (value) => {
       apply(value, pid);
       qc.invalidateQueries({ queryKey: ["config", pid] });
@@ -61,7 +79,7 @@ export default function SettingsPage() {
     },
   });
   const validate = useMutation({
-    mutationFn: () => api.validateConfig(pid, draft),
+    mutationFn: () => api.validateConfig(pid, yaml),
     onSuccess: (value) => {
       apply(value, pid);
       toast.success(tr("settings.configurationIsValidButNotSavedYet"));
@@ -78,9 +96,9 @@ export default function SettingsPage() {
     isProjectBusy(project?.status) ||
     (!project && config.data?.editable === false);
   const setField = (group: string, key: string, value: unknown) => {
-    const next = workflowField(effective, group, key, value);
-    setEffective(next);
-    setDraft(JSON.stringify(next, null, 2));
+    setEffective((current) => workflowField(current, group, key, value));
+    // Editing a field invalidates whatever the YAML editor was showing.
+    setYamlText(undefined);
   };
   const configurationError = save.error || validate.error || restore.error;
   const pending = save.isPending || validate.isPending || restore.isPending;
@@ -108,9 +126,8 @@ export default function SettingsPage() {
                 </Link>
               }
               onChange={(llm) => {
-                const next = { ...effective, llm };
-                setEffective(next);
-                setDraft(JSON.stringify(next, null, 2));
+                setEffective((current) => ({ ...current, llm }));
+                setYamlText(undefined);
               }}
             />
           </SettingsSection>
@@ -147,12 +164,9 @@ export default function SettingsPage() {
               aria-label={tr("settings.advancedYamlConfiguration")}
               spellCheck={false}
               className="min-h-editor font-mono text-xs"
-              value={draft}
+              value={yaml}
               disabled={disabled}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                setYamlDirty(true);
-              }}
+              onChange={(e) => setYamlText(e.target.value)}
             />
           </SettingsSection>
         </div>
