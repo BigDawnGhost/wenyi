@@ -42,7 +42,7 @@ export function Dialog({
         <Primitive.Content
           {...(!description ? { "aria-describedby": undefined } : {})}
           className={cn(
-            "dialog-content fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-card shadow-e4",
+            "dialog-content fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-[round(nearest,50%,1px)] flex-col overflow-hidden rounded-2xl bg-card shadow-e4",
             className,
           )}
           onOpenAutoFocus={(event) => {
