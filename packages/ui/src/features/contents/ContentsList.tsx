@@ -81,7 +81,6 @@ export function ContentsList({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8"
                   aria-label={t("contents.editTitle")}
                   title={t("contents.editTitle")}
                   disabled={readOnly}

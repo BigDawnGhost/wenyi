@@ -145,7 +145,6 @@ export function TermTable({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8"
                       aria-label={tr(readOnly ? "glossary.termDetails" : "glossary.editTerm")}
                       onClick={() => onEdit(t)}
                     >
@@ -156,7 +155,6 @@ export function TermTable({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8"
                       disabled={readOnly}
                       aria-label={tr("glossary.deleteTerm")}
                       onClick={() => onDelete(t.source)}
