@@ -163,7 +163,7 @@ export function ModelNameField({
                   role="option"
                   aria-selected={name === value}
                   className={cn(
-                    "flex cursor-pointer items-center justify-between gap-2 rounded px-2 py-1.5 [overflow-wrap:anywhere]",
+                    "flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-1.5 [overflow-wrap:anywhere]",
                     index === active && "bg-accent text-accent-foreground",
                   )}
                   onMouseDown={(event) => {

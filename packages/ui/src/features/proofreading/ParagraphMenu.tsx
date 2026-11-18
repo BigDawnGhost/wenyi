@@ -82,7 +82,7 @@ export function ParagraphMenu({
     onOpen(anchor.index, view);
   };
   const item =
-    "flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm hover:bg-hover focus:bg-hover focus:outline-none disabled:opacity-40";
+    "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-hover focus:bg-hover focus:outline-none disabled:opacity-40";
   return createPortal(
     <div
       ref={popup}

@@ -4,6 +4,7 @@ import { useSearchParams } from "react-router-dom";
 import type { ChapterWindow, ReaderSegment } from "../../api/types";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/utils";
+import { cardSurface } from "../../components/ui/card";
 import { ErrorNotice } from "../../components/ui/data";
 import { ParagraphActions } from "./ParagraphActions";
 import { ParagraphMenu, type ParagraphMenuAnchor } from "./ParagraphMenu";
@@ -117,7 +118,7 @@ export function VirtualChapter({
   return (
     <>
       <ErrorNotice error={reader.error} />
-      <div ref={container} className="relative rounded-xl border border-border bg-card" data-testid="chapter-reader"
+      <div ref={container} className={cn("relative", cardSurface)} data-testid="chapter-reader"
         style={{ height: virtualizer.getTotalSize() }}>
         {virtualRows.map((row) => {
           const segment = reader.rows.get(row.index);
