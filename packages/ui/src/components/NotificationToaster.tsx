@@ -89,7 +89,6 @@ export function NotificationToaster() {
     // Bring the duration onto the same scale and make the exit a fade in place,
     // so leaving costs the same beat as everything else.
     tag.textContent = [
-      "[data-sonner-toast]{transition-duration:200ms,200ms,200ms,200ms}",
       "[data-sonner-toast][data-removed='true']{--y:none;" +
         "height:var(--initial-height);" +
         "transition:opacity 200ms ease-out}",
@@ -116,8 +115,12 @@ export function NotificationToaster() {
       // it is not, the stack sits at the ordinary corner distance.
       position="bottom-center"
       offset={barVisible ? 92 : 24}
-
-      className="pointer-events-auto z-[200]"
+      // Cap the stack. Pinned above the action bar, every extra toast grows the
+      // fan the stack opens into, and repeating an action that reports each time
+      // fills the whole column. Three is the shape Sonner is designed around.
+      visibleToasts={3}
+      // Gaps in the stack should not swallow clicks aimed at the page beneath.
+      className="pointer-events-none z-[200]"
       duration={5000}
       icons={{ close: <X className="h-4 w-4" aria-hidden="true" /> }}
       toastOptions={{
@@ -125,12 +128,12 @@ export function NotificationToaster() {
           // Sonner removes a dismissed toast on a fixed timer, so a long
           // transition gets cut off mid-flight and reads as a frozen frame
           // followed by a pop. Keep the movement inside that window.
-          toast: "min-h-16 items-start gap-3 rounded-xl py-5 pl-4 pr-16 text-sm "
+          toast: "pointer-events-none min-h-16 items-start gap-3 rounded-xl py-5 pl-4 pr-16 text-sm "
             + "shadow-e4",
           content: "min-w-0",
           icon: "m-0 h-5 w-5 [&_svg]:m-0",
           // Keep Sonner's dismissal behavior, but move the target inside the card.
-          closeButton: "left-auto right-2.5 top-2.5 h-11 w-11 transform-none rounded-lg border-0 "
+          closeButton: "pointer-events-auto left-auto right-2.5 top-2.5 h-11 w-11 transform-none rounded-lg border-0 "
             + "!bg-transparent !text-inherit hover:!bg-hover focus-visible:!bg-hover active:!bg-selected",
         },
       }}
