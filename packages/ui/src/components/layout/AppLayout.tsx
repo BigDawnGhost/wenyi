@@ -173,7 +173,11 @@ export function AppLayout() {
             )}
           >
             {settings
-              ? <span className="text-lg font-semibold">{tr("settings.title")}</span>
+              // nowrap matters more for CJK than for Latin text: a single Latin
+              // word cannot break, so it simply clips, but every CJK character is
+              // its own break opportunity, so the label would turn into a vertical
+              // stack as the container collapses.
+              ? <span className="whitespace-nowrap text-lg font-semibold">{tr("settings.title")}</span>
               : <Brand />}
           </div>
           <Button
@@ -215,8 +219,11 @@ export function AppLayout() {
               <div
                 data-slot="sidebar.action"
                 className={cn(
-                  "shrink-0 p-3 transition-[padding] duration-sidebar ease-sidebar",
-                  collapsed && "p-2",
+                  // Only the horizontal inset changes when the sidebar narrows:
+                  // the vertical rhythm stays put so the group does not shift
+                  // relative to the rows below it.
+                  "shrink-0 px-3 py-3 transition-[padding] duration-sidebar ease-sidebar",
+                  collapsed && "px-2",
                 )}
               >
                 {renderGlobal("action")}
@@ -226,7 +233,7 @@ export function AppLayout() {
                 aria-label={tr("navigation.global")}
                 className={cn(
                   "shrink-0 space-y-1 px-3 py-1 transition-[padding] duration-sidebar ease-sidebar",
-                  collapsed && "p-2",
+                  collapsed && "px-2",
                 )}
               >
                 {renderGlobal("panel")}

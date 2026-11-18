@@ -99,13 +99,21 @@ export function NavigationLink({
       onFocus={() => void prefetch?.().catch(() => {})}
       className={({ isActive }) =>
         cn(
-          "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
+          "group flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
           collapsed && "gap-0 px-2",
 
           variant
             ? cn(
                 buttonVariants({ variant }),
                 "w-full",
+                "transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
+                "transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
+                // buttonVariants brings its own transition list, and that list
+                // replaces the row's: without padding and gap here they snap to
+                // their collapsed values while the width is still animating, so
+                // the icon is centred against a button that has not shrunk yet and
+                // lurches outward before coming back. Transition them together.
+                "transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
                 // The label collapses to zero width but still occupies a gap,
                 // which pushes the lone icon off centre. Drop both the gap and
                 // the wide horizontal padding so the icon sits in the middle of
@@ -123,6 +131,9 @@ export function NavigationLink({
       <span
         className={cn(
           "min-w-0 max-w-48 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-sidebar ease-sidebar",
+          // The primary action is white on a dark face, so a label that lingers
+          // while its box narrows reads as the text being crushed. Fading it
+          // ahead of the width makes it simply disappear.
           // flex-1 makes the label absorb the row's spare width, which is what
           // pushes nav labels to the left. A centred entry lets the icon and
           // label shrink-wrap so justify-center has slack to distribute.
