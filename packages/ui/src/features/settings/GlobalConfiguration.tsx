@@ -215,22 +215,26 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
         </div>
         <div hidden={section !== "defaults"}>
           <SettingsSection title={t("settings.sectionDefaultModels")} grouped>
-            <ModelSelection
-              llm={llm}
-              models={object(llm.models)}
-              disabled={disabled}
-              onChange={changeLlm}
-            />
+            <SettingsGroup title={t("settings.modelTiers")}>
+              <ModelSelection
+                llm={llm}
+                models={object(llm.models)}
+                disabled={disabled}
+                onChange={changeLlm}
+              />
+            </SettingsGroup>
           </SettingsSection>
         </div>
         <div hidden={section !== "workflow"}>
           <SettingsSection title={t("settings.sectionWorkflow")} grouped>
-            <WorkflowSettings
-              scope="global"
-              config={effective}
-              disabled={disabled}
-              onField={(group, key, value) => change(workflowField(effective, group, key, value))}
-            />
+            <SettingsGroup title={t("settings.pipelineSteps")}>
+              <WorkflowSettings
+                scope="global"
+                config={effective}
+                disabled={disabled}
+                onField={(group, key, value) => change(workflowField(effective, group, key, value))}
+              />
+            </SettingsGroup>
           </SettingsSection>
         </div>
         <div hidden={section !== "pdf"}>
