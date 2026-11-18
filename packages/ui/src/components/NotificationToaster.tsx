@@ -28,6 +28,33 @@ const notificationColors = {
  * rendered by the page rather than by the shell, so presence is observed in
  * the document instead of passed down through context.
  */
+/**
+ * Live width of the sidebar, or 0 when there is none. The toaster is portalled
+ * to document.body, which is outside the shell element that carries
+ * --sidebar-w, so reading that variable here would only ever return the
+ * fallback. Measure the element instead and follow it frame by frame, which also
+ * keeps the stack centred while the sidebar animates its own width.
+ */
+function useSidebarWidth() {
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    let frame = 0;
+    let last = -1;
+    const step = () => {
+      const aside = document.querySelector("aside");
+      const next = aside ? Math.round(aside.getBoundingClientRect().width) : 0;
+      if (next !== last) {
+        last = next;
+        setWidth(next);
+      }
+      frame = requestAnimationFrame(step);
+    };
+    step();
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return width;
+}
+
 function useActionBarPresence() {
   const [present, setPresent] = useState(false);
   useEffect(() => {
@@ -47,6 +74,7 @@ export function NotificationToaster() {
   // there does the stack need to clear it; elsewhere the offset would leave a
   // toast hovering well above the corner for no reason.
   const barVisible = useActionBarPresence();
+  const sidebarWidth = useSidebarWidth();
   // Three behaviours Sonner decides internally rather than from its props.
   // They are published as a style element because the values have to match
   // Sonner's own timers and layout variables, not the design scale.
@@ -81,7 +109,14 @@ export function NotificationToaster() {
   return createPortal(
     <Toaster
       theme={theme}
-      style={{ ...notificationColors, left: "calc(50% + var(--sidebar-w, 240px) / 2)" }}
+      style={{
+        ...notificationColors,
+        // Centred on the content pane, not the viewport: the pane starts after the
+        // sidebar, so the stack shifts by half the measured width. The width is
+        // sampled every frame, so the stack follows the sidebar as it animates
+        // instead of arriving ahead of it.
+        left: `calc(50% + ${sidebarWidth / 2}px)`,
+      }}
       richColors
       closeButton
       // Lower centre, sharing a centre line with the floating action bar: the bar

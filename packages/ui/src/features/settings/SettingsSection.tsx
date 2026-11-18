@@ -120,6 +120,13 @@ export function SettingsActionBar({
         // competing resolvers and the shell can briefly collapse.
         left: "var(--sidebar-w, 240px)",
         right: 0,
+        // The sidebar animates its own width while --sidebar-w switches in one
+        // step, so without a matching transition here the bar jumps to the new
+        // inset while the pane is still sliding underneath it. Same duration and
+        // curve as the sidebar, so the two stay locked together.
+        // 280ms cubic-bezier(0.22, 1, 0.36, 1): the sidebar's own duration-sidebar
+        // and ease-sidebar values, spelled out because this is an inline style.
+        transition: "left 280ms cubic-bezier(0.22, 1, 0.36, 1)",
         display: "flex",
         justifyContent: "center",
         pointerEvents: "none",
@@ -135,7 +142,7 @@ export function SettingsActionBar({
           position: "relative",
           width: "max-content",
           maxWidth: "calc(100% - 32px)",
-          animation: "bar-enter 200ms cubic-bezier(0.05, 0.7, 0.1, 1) backwards",
+          animation: "bar-enter 220ms cubic-bezier(0.05, 0.7, 0.1, 1) backwards",
         }}
       >
         {notices ? (
