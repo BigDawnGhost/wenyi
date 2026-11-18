@@ -78,7 +78,7 @@ export function SourceFilePicker({
     >
       <div
         className={cn(
-          "flex min-h-dropzone flex-wrap items-center gap-3 rounded-lg border border-dashed bg-muted/20 p-4 transition-colors",
+          "flex min-h-dropzone flex-wrap items-center gap-3 rounded-lg border border-dashed bg-surface p-4 transition-colors",
           dragging && !disabled && "border-foreground bg-muted",
           filename && "border-solid",
         )}

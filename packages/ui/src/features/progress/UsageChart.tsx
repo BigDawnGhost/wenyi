@@ -118,7 +118,7 @@ export default function UsageChart({
       className="min-w-0 space-y-5"
     >
       <div
-        className="flex flex-wrap gap-1 rounded-lg bg-muted/60 p-1"
+        className="flex flex-wrap gap-1 rounded-lg bg-surface p-1"
         role="group"
         aria-label={t("accounting.groupBy")}
       >
