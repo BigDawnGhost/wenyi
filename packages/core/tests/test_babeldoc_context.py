@@ -24,12 +24,12 @@ def store(request, tmp_path):
     storage.close()
 
 
-def _segment(index, source, label):
+def _segment(index, source, label, *, page=0):
     return Segment(
         index=index,
         source=source,
         kind="heading" if label == "title" else "text",
-        meta={"babeldoc_id": f"0:{index}", "layout_label": label},
+        meta={"babeldoc_id": f"{page}:{index}", "layout_label": label, "page": page},
     )
 
 
@@ -118,6 +118,67 @@ def test_body_context_skips_layout_units_without_dropping_them(store, monkeypatc
     ]
     assert all(segment.target is not None for segment in saved.segments)
     assert store.read_artifact("context.json") is None
+
+
+@pytest.mark.parametrize(
+    "previous,reference,remainder",
+    [
+        ("They used a simple regres-", "sion method for the output.", " Another sentence."),
+        ("The results are shown below.", "Table 2 summarizes the results.", " Another sentence."),
+        ("结果见下文。", "表 2 汇总了实验结果。", "后文有进一步说明。"),
+    ],
+)
+def test_page_opening_caption_supplements_the_next_body_reference(
+    store, monkeypatch, previous, reference, remainder
+):
+    segments = [
+        _segment(102, previous, "plain text", page=3),
+        _segment(103, "Page footer", "abandon", page=3),
+        _segment(1, reference + remainder, "table_caption", page=4),
+        _segment(2, "Model", "fallback_line", page=4),
+        _segment(3, "Evaluation results by model", "table", page=4),
+        _segment(44, "We use the training set.", "plain text", page=4),
+    ]
+    _initialize(store, segments)
+    orchestrator = Orchestrator(_config(), client=FakeClient(handler=routing_handler))
+    plans = _record_plans(orchestrator, monkeypatch)
+    orchestrator._translation.run(store, book_synopsis="")
+
+    assert plans[0].next_source == f"{reference}\n\n{segments[-1].source}"
+    assert plans[2].next_source == plans[2].context == ""
+    assert [plan.sources for plan in plans] == [(segment.source,) for segment in segments]
+    saved = store.load_chapter(0).segments
+    assert [(s.index, s.source, s.meta) for s in saved] == [
+        (s.index, s.source, s.meta) for s in segments
+    ]
+
+
+def test_page_opening_caption_does_not_pull_body_across_a_heading():
+    segments = [
+        _segment(0, "The results are shown below.", "plain text"),
+        _segment(0, "Table 2 summarizes the results.", "table_caption", page=1),
+        _segment(1, "Discussion", "title", page=1),
+        _segment(2, "The next section explains the results.", "plain text", page=1),
+    ]
+    policy = BabeldocContext.for_chapter(Chapter(index=0, segments=segments))
+    assert policy is not None
+    assert policy.next_source(segments, 1) == segments[1].source
+
+
+@pytest.mark.parametrize("page,prefix", [(0, None), (2, None), (1, "Model")])
+def test_caption_lookahead_does_not_pick_captions_outside_the_next_page_opening(page, prefix):
+    segments = [_segment(0, "The results are shown below.", "plain text")]
+    if prefix is not None:
+        segments.append(_segment(1, prefix, "fallback_line", page=page))
+    segments.extend(
+        [
+            _segment(2, "Table 2 summarizes the results.", "table_caption", page=page),
+            _segment(3, "Next body paragraph.", "plain text", page=page),
+        ]
+    )
+    policy = BabeldocContext.for_chapter(Chapter(index=0, segments=segments))
+    assert policy is not None
+    assert policy.next_source(segments, 1) == segments[-1].source
 
 
 def test_policy_uses_heading_ranges_not_whole_toc_pages():
