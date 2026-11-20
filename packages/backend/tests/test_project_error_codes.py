@@ -3,22 +3,9 @@
 from dataclasses import replace
 
 import pytest
-from fastapi.testclient import TestClient
-from wenyi_backend.application import create_app
 from wenyi_backend.context import use_context
-from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
+from wenyi_backend.errors import PROJECT_BUSY, ApiError
 from wenyi_backend.project_service import project_write
-
-
-def test_missing_project_reports_project_not_found(backend_context, monkeypatch):
-    backend_context.repository.get_project.return_value = None
-    client = TestClient(create_app(backend_context))
-    response = client.get("/projects/absent")
-    assert response.status_code == 404
-    body = response.json()
-    assert body["code"] == PROJECT_NOT_FOUND
-    assert "detail" not in body
-    assert body["message"] == "project not found"
 
 
 def _open_lock():

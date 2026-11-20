@@ -20,70 +20,7 @@ test.beforeEach(async ({ page }) => {
   }, origin);
 });
 
-for (const locale of ["en", "zh-CN"] as const) {
-  for (const status of [
-    "parsing", "queued", "preparing", "translating",
-    "reviewing", "autofixing", "postprocessing", "pausing",
-  ]) {
-    test(`Desktop glossary details remain readable while ${status} in ${locale}`, async ({ page }) => {
-      const chinese = locale === "zh-CN";
-      await page.addInitScript(
-        value => localStorage.setItem("wenyi.locale", value),
-        locale,
-      );
-      await fakeApi(page, {
-        [`/projects/${pid}`]: { ...project, status },
-        [`/projects/${pid}/glossary/terms`]: [term],
-      }, origin);
-      const writes: string[] = [];
-      page.on("request", request => {
-        if (request.url().includes("/glossary/") && request.method() !== "GET")
-          writes.push(request.method());
-      });
-      await page.goto(`/projects/${pid}/glossary`);
-      await expect(page.getByRole("button", {
-        name: chinese ? "添加术语" : "Add term", exact: true,
-      })).toBeDisabled();
-      await expect(page.getByRole("button", {
-        name: chinese ? "导入" : "Import", exact: true,
-      })).toBeDisabled();
-      await expect(page.getByRole("button", {
-        name: chinese ? "删除术语" : "Delete term", exact: true,
-      })).toBeDisabled();
-
-      await page.getByRole("button", {
-        name: chinese ? "术语详情" : "Term details", exact: true,
-      }).click();
-      const details = page.getByRole("dialog", {
-        name: chinese ? "术语详情" : "Term details", exact: true,
-      });
-      await expect(details).toBeVisible();
-      const textboxes = details.getByRole("textbox");
-      await expect(textboxes).toHaveCount(5);
-      for (const [index, value] of [
-        term.source, term.target, term.reading, term.aliases.join(", "), term.note,
-      ].entries()) {
-        const field = textboxes.nth(index);
-        await expect(field).toHaveValue(value);
-        await expect(field).not.toBeEditable();
-        await expect(field).toBeEnabled();
-      }
-      await expect(details.getByRole("combobox", {
-        name: chinese ? "类型" : "Type", exact: true,
-      })).toBeDisabled();
-      await expect(details.getByRole("combobox", {
-        name: chinese ? "性别" : "Gender", exact: true,
-      })).toBeDisabled();
-      await expect(details.getByRole("button", {
-        name: chinese ? "保存" : "Save", exact: true,
-      })).toHaveCount(0);
-      await page.keyboard.press("Escape");
-      await expect(details).toHaveCount(0);
-      expect(writes).toEqual([]);
-    });
-  }
-}
-
+// Web covers each busy status in both locales; Desktop exercises live status changes.
 test("Desktop open glossary details become editable when the task stops", async ({ page }) => {
   await page.clock.install();
   const saved = { ...project, status: "translating" };

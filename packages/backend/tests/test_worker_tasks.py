@@ -293,10 +293,11 @@ def test_export_cancellation_waits_for_render_to_finish(monkeypatch):
         task = asyncio.create_task(
             tasks.run_export({"backend": current_context()}, project_id="p", export_id=1, fmt="txt")
         )
-        await asyncio.to_thread(started.wait, 3)
+        assert await asyncio.to_thread(started.wait, 2)
         task.cancel()
         await asyncio.sleep(0)
-        assert not task.done()
+        await asyncio.sleep(0)
+        assert not task.done(), "Cancelled coroutine must retain its worker slot while render lives"
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await task

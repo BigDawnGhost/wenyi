@@ -293,16 +293,6 @@ jobs:
       - run: pnpm -C apps/web build
       - run: pnpm -C apps/desktop/frontend build
       - run: pnpm test:frontend-boundaries
-      # The browser specs need the built frontends and the installed browsers,
-      # so this job hands both over instead of rebuilding them twice.
-      - uses: actions/upload-artifact@v6
-        with:
-          name: web-dist
-          path: |
-            apps/web/dist/
-            apps/desktop/frontend/dist/
-          if-no-files-found: error
-          retention-days: 1
 
   e2e:
     needs: [changes, contract, web]
@@ -317,7 +307,7 @@ jobs:
        needs.changes.outputs.force == 'true' ||
        needs.contract.outputs.changed == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 60 || 30 }}
     # Both ends go in one matrix so they run side by side: the wall clock is the
     # slower of the two suites instead of their sum. The matrix values are kept
     # out of the name so the check reads `e2e (web)` rather than every field.
@@ -355,20 +345,13 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v7
-        with:
-          name: web-dist
       - uses: actions/cache@v5
-        id: playwright-cache
         with:
           path: ~/.cache/ms-playwright
           # The browser flavour is part of the key so the WebKit entry cannot
           # restore a cache that only contains Chromium, or vice versa.
           key: ${{ runner.os }}-playwright-1.63.0-${{ matrix.browser }}-${{ hashFiles('pnpm-lock.yaml') }}
       - run: pnpm -C apps/web exec playwright install --with-deps ${{ matrix.browser }}
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-      - name: Install Playwright system dependencies
-        run: pnpm -C apps/web exec playwright install-deps ${{ matrix.browser }}
       - name: Run the ${{ matrix.name }} specs
         env:
           # Three workers instead of the two a four-core runner derives: the
@@ -377,13 +360,12 @@ jobs:
           # Selects the WebKit project for the web-webkit entry; the Chromium
           # entries leave it empty and keep the default project set.
           PLAYWRIGHT_PROJECTS: ${{ matrix.projects }}
+          # The performance projects depend on their host's functional gate. Enable
+          # them in the same invocation so that gate only runs once per host.
+          PLAYWRIGHT_PERF: ${{ matrix.browser == 'chromium' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && '1' || '0' }}
           # The JSON reporter is what the per-spec timing table is built from.
           PLAYWRIGHT_JSON_OUTPUT_NAME: ${{ runner.temp }}/${{ matrix.name }}-results.json
-        run: pnpm -C ${{ matrix.app }} test:e2e --reporter=list --reporter=json
-      - name: Record the spec overlap once
-        if: always() && matrix.name == 'web'
-        run: |
-          python3 scripts/dev/e2e_spec_inventory.py >> "$GITHUB_STEP_SUMMARY"
+        run: pnpm -C ${{ matrix.app }} test:e2e --reporter=list,json
       - name: Record per-spec durations
         if: always()
         run: |
@@ -408,50 +390,4 @@ jobs:
           path: |
             ${{ matrix.results }}
             ${{ matrix.report }}
-          if-no-files-found: ignore
-  nightly:
-    # Not gated on the filter: a scheduled run is always the full sweep. This is
-    # the safety net T-35 traded the unconditional push run for: everything the
-    # filtered run skips, once a day, on the same commit.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 9
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm -C apps/web build
-      - run: pnpm -C apps/desktop/frontend build
-      - uses: actions/cache@v5
-        id: playwright-cache
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-1.63.0-${{ hashFiles('pnpm-lock.yaml') }}
-      - run: pnpm -C apps/web exec playwright install --with-deps chromium
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-      - name: Install Playwright system dependencies
-        run: pnpm -C apps/web exec playwright install-deps chromium
-      - name: Web end-to-end specs including the performance measurement
-        env:
-          PLAYWRIGHT_PERF: "1"
-          PLAYWRIGHT_WORKERS: "3"
-        run: pnpm -C apps/web test:e2e
-      - name: Desktop end-to-end specs including the performance measurement
-        env:
-          PLAYWRIGHT_PERF: "1"
-          PLAYWRIGHT_WORKERS: "3"
-        run: pnpm -C apps/desktop/frontend test:e2e
-      - uses: actions/upload-artifact@v6
-        if: failure()
-        with:
-          name: playwright-nightly-results
-          path: |
-            apps/web/test-results/
-            apps/desktop/frontend/test-results/
           if-no-files-found: ignore
