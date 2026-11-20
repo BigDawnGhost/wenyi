@@ -17,17 +17,27 @@ export async function expectTokenColor(
   await expect(locator).toHaveCSS(property, expected);
 }
 
-/** WCAG contrast for the sRGB colors returned by getComputedStyle. */
-export function colorContrast(first: string, second: string): number {
-  const luminance = (color: string) => {
-    const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(Number).map(value => {
+/** Let the browser convert CSS colors (including OKLCH) to rendered sRGB. */
+export async function colorContrast(locator: Locator, first: string, second: string) {
+  const pixels = await locator.evaluate((element, colors) => {
+    const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true })!;
+    return colors.map(color => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = color === "color" || color === "background-color"
+        ? getComputedStyle(element).getPropertyValue(color)
+        : color;
+      context.fillRect(0, 0, 1, 1);
+      return Array.from(context.getImageData(0, 0, 1, 1).data.slice(0, 3));
+    });
+  }, [first, second]);
+  const luminance = (rgb: number[]) => {
+    const channels = rgb.map(value => {
       const srgb = value / 255;
       return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4;
     });
     return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
   };
-  const a = luminance(first);
-  const b = luminance(second);
+  const [a, b] = pixels.map(luminance);
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 }
 
@@ -42,8 +52,8 @@ export async function expectQuietLabelContrast(locator: Locator) {
     probe.remove();
     return { text: style.color, background: style.backgroundColor, card };
   });
-  expect(colorContrast(colors.text, colors.background)).toBeGreaterThanOrEqual(4.5);
-  expect(colorContrast(colors.background, colors.card)).toBeLessThan(1.5);
+  expect(await colorContrast(locator, colors.text, colors.background)).toBeGreaterThanOrEqual(4.5);
+  expect(await colorContrast(locator, colors.background, colors.card)).toBeLessThan(1.5);
 }
 
 /** Content needs a themed panel, not merely an input's own background. */

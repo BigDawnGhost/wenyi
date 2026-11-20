@@ -24,37 +24,26 @@ const notificationColors = {
 } as CSSProperties;
 
 /**
- * True while a page is showing the floating settings action bar. The bar is
- * rendered by the page rather than by the shell, so presence is observed in
- * the document instead of passed down through context.
- */
-/**
  * Live width of the sidebar, or 0 when there is none. The toaster is portalled
  * to document.body, which is outside the shell element that carries
- * --sidebar-w, so reading that variable here would only ever return the
- * fallback. Measure the element instead and follow it frame by frame, which also
- * keeps the stack centred while the sidebar animates its own width.
+ * --sidebar-w. Observe the element's actual width to follow the animation
+ * without scheduling work while the sidebar is still.
  */
 function useSidebarWidth() {
   const [width, setWidth] = useState(0);
   useEffect(() => {
-    let frame = 0;
-    let last = -1;
-    const step = () => {
-      const aside = document.querySelector("aside");
-      const next = aside ? Math.round(aside.getBoundingClientRect().width) : 0;
-      if (next !== last) {
-        last = next;
-        setWidth(next);
-      }
-      frame = requestAnimationFrame(step);
-    };
-    step();
-    return () => cancelAnimationFrame(frame);
+    const aside = document.querySelector('[data-slot="sidebar"]');
+    if (!aside) return;
+    const read = () => setWidth(aside.getBoundingClientRect().width);
+    const observer = new ResizeObserver(read);
+    read();
+    observer.observe(aside, { box: "border-box" });
+    return () => observer.disconnect();
   }, []);
   return width;
 }
 
+/** The action bar is rendered by its page, not by the shell. */
 function useActionBarPresence() {
   const [present, setPresent] = useState(false);
   useEffect(() => {
@@ -102,9 +91,8 @@ export function NotificationToaster() {
       style={{
         ...notificationColors,
         // Centred on the content pane, not the viewport: the pane starts after the
-        // sidebar, so the stack shifts by half the measured width. The width is
-        // sampled every frame, so the stack follows the sidebar as it animates
-        // instead of arriving ahead of it.
+        // sidebar, so the stack shifts by half the measured width, including
+        // while the sidebar animates.
         left: `calc(50% + ${sidebarWidth / 2}px)`,
       }}
       richColors

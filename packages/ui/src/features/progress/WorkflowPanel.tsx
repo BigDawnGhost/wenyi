@@ -45,13 +45,17 @@ export function WorkflowPanel({
     typeof cached?.updated_at === "string" &&
     !!msg?.updated_at &&
     Date.parse(cached.updated_at) > Date.parse(msg.updated_at);
-  const live =
+  const stage =
     msg?.run_id &&
     msg.run_id === workflow?.run_id &&
     msg.label &&
     !cachedIsNewer
       ? msg
       : cached;
+  const active = workflow?.status === "running";
+  const live = active || workflow?.status === "paused" || workflow?.status === "error"
+    ? stage
+    : null;
 
   return (
     <section aria-labelledby={headingId} className={cn(cardSurface, "space-y-3 p-4")}>
@@ -81,7 +85,7 @@ export function WorkflowPanel({
               <span className="min-w-0 [overflow-wrap:anywhere]">
                 {live?.label
                   ? workflowStageLabel(String(live.label), String(live.label), tr)
-                  : tr("workflowPanel.waitingForProgressUpdates")}
+                  : active ? tr("workflowPanel.waitingForProgressUpdates") : null}
               </span>
               {!!live?.label && Number(live.total) > 0 && (
                 <span className="shrink-0 tabular-nums text-muted-foreground">

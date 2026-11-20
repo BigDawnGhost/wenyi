@@ -28,6 +28,8 @@ const section = (config: Record<string, unknown>, key: string) =>
 const sameConfig = (a: Record<string, unknown>, b: Record<string, unknown>) =>
   a === b || JSON.stringify(a) === JSON.stringify(b);
 
+type ConfigRequest = { pid: string; yaml: string; revision: number };
+
 export default function SettingsPage() {
   const { t: tr } = useI18n();
   const { pid = "" } = useParams();
@@ -51,6 +53,9 @@ export default function SettingsPage() {
     queryFn: () => api.getConfig(pid),
   });
   const { data: project } = useProjectQuery(pid);
+  const revision = useRef(0);
+  const pidRef = useRef(pid);
+  pidRef.current = pid;
   const apply = (value: ProjectConfig, forPid: string) => {
     // Responses from a save/validate started under the previous project must never
     // overwrite this project's draft and re-enable the form (audit Y-2/F-1).
@@ -65,30 +70,33 @@ export default function SettingsPage() {
   useEffect(() => {
     if (config.data && !loaded) apply(config.data, pid);
   }, [config.data, loaded, pid]);
-  const pidRef = useRef(pid);
-  pidRef.current = pid;
   useEffect(() => {
     validate.reset();
   }, [pid]);
+  const snapshot = (): ConfigRequest => ({ pid, yaml, revision: revision.current });
+  const applyResponse = (value: ProjectConfig, request: ConfigRequest) => {
+    // The form stays editable during requests. Do not erase newer local edits.
+    if (request.revision === revision.current) apply(value, request.pid);
+  };
   const save = useMutation({
-    mutationFn: () => api.saveConfig(pid, yaml),
-    onSuccess: (value) => {
-      apply(value, pid);
-      qc.invalidateQueries({ queryKey: ["config", pid] });
+    mutationFn: (request: ConfigRequest) => api.saveConfig(request.pid, request.yaml),
+    onSuccess: (value, request) => {
+      applyResponse(value, request);
+      qc.invalidateQueries({ queryKey: ["config", request.pid] });
       toast.success(tr("settings.projectSettingsSaved"));
     },
   });
   const validate = useMutation({
-    mutationFn: () => api.validateConfig(pid, yaml),
-    onSuccess: (value) => {
-      apply(value, pid);
+    mutationFn: (request: ConfigRequest) => api.validateConfig(request.pid, request.yaml),
+    onSuccess: (value, request) => {
+      applyResponse(value, request);
       toast.success(tr("settings.configurationIsValidButNotSavedYet"));
     },
   });
   const restore = useMutation({
-    mutationFn: () => api.getProjectDefaults(pid),
-    onSuccess: (value) => {
-      apply(value, pid);
+    mutationFn: (request: ConfigRequest) => api.getProjectDefaults(request.pid),
+    onSuccess: (value, request) => {
+      applyResponse(value, request);
       toast.success(tr("settings.defaultsLoaded"));
     },
   });
@@ -96,6 +104,7 @@ export default function SettingsPage() {
     isProjectBusy(project?.status) ||
     (!project && config.data?.editable === false);
   const setField = (group: string, key: string, value: unknown) => {
+    revision.current++;
     setEffective((current) => workflowField(current, group, key, value));
     // Editing a field invalidates whatever the YAML editor was showing.
     setYamlText(undefined);
@@ -106,7 +115,8 @@ export default function SettingsPage() {
   // Whether a request is in flight is a property of the buttons: disabling the
   // whole form for the length of a save or a restore applied the disabled style to
   // every control at once, and the page blinked.
-  const formDisabled = busy || !loaded || yamlDirty;
+  const readOnly = busy || !loaded;
+  const formDisabled = readOnly || yamlDirty;
   const actionsBusy = save.isPending || validate.isPending || restore.isPending;
   // A ref, because state only catches up on the next render: clicking twice within
   // one frame would otherwise read the same stale value twice and fire both.
@@ -139,6 +149,7 @@ export default function SettingsPage() {
                 </Link>
               }
               onChange={(llm) => {
+                revision.current++;
                 setEffective((current) => ({ ...current, llm }));
                 setYamlText(undefined);
               }}
@@ -178,8 +189,11 @@ export default function SettingsPage() {
               spellCheck={false}
               className="min-h-editor font-mono text-xs"
               value={yaml}
-              disabled={formDisabled}
-              onChange={(e) => setYamlText(e.target.value)}
+              disabled={readOnly}
+              onChange={(e) => {
+                revision.current++;
+                setYamlText(e.target.value);
+              }}
             />
           </SettingsSection>
         </div>
@@ -203,9 +217,9 @@ export default function SettingsPage() {
       >
         <Button
           variant="outline"
-          disabled={formDisabled}
+          disabled={readOnly}
           aria-busy={restore.isPending || undefined}
-          onClick={() => guard(() => restore.mutate())}
+          onClick={() => guard(() => restore.mutate(snapshot()))}
         >
           {tr("settings.restoreDefaults")}
         </Button>
@@ -214,16 +228,16 @@ export default function SettingsPage() {
             centres on its own content, shift under the cursor. */}
         <Button
           variant="outline"
-          disabled={formDisabled}
+          disabled={readOnly}
           aria-busy={validate.isPending || undefined}
-          onClick={() => guard(() => validate.mutate())}
+          onClick={() => guard(() => validate.mutate(snapshot()))}
         >
           {tr("settings.validateConfiguration")}
         </Button>
         <Button
-          disabled={formDisabled}
+          disabled={readOnly}
           aria-busy={save.isPending || undefined}
-          onClick={() => guard(() => save.mutate())}
+          onClick={() => guard(() => save.mutate(snapshot()))}
         >
           {tr("settings.saveConfiguration")}
         </Button>

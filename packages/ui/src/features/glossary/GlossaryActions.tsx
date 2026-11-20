@@ -38,6 +38,7 @@ export function GlossaryActions({
     onError: (error) => toast.error(errorMessage(error, tr)),
   });
   const handleExport = (fmt: GlossaryExportFormat) => {
+    if (exportGlossary.isPending) return;
     onCloseMenu();
     exportGlossary.mutate(fmt);
   };
@@ -47,7 +48,7 @@ export function GlossaryActions({
         <Button
           variant="outline"
           aria-busy={exportGlossary.isPending || undefined}
-          onClick={onToggleMenu}
+          onClick={() => { if (!exportGlossary.isPending) onToggleMenu(); }}
         >
           <Download className="h-4 w-4" />
           {tr("common.export")} <ChevronDown className="h-3 w-3" />
