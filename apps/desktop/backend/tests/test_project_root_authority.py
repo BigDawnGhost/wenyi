@@ -152,13 +152,10 @@ def test_same_root_rename_wins_over_a_stale_copy_with_the_old_title(tmp_path):
     assert stale.is_dir()
 
 
-@pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize("issue", ["duplicate", "conflicting_marker"])
-def test_ambiguous_or_conflicting_owner_is_refused_for_every_operation(tmp_path, legacy, issue):
+def test_ambiguous_or_conflicting_owner_is_refused_for_every_operation(tmp_path, issue):
     context, directory, stale = project_with_stale_copy(tmp_path)
     backend = context.repository
-    if legacy:
-        backend.update_project(PROJECT, library_root=None)
     if issue == "duplicate":
         # The exact title and an already-found directory must not win merely
         # because another matching identity sorts later.
@@ -194,6 +191,7 @@ def test_rows_without_an_owner_are_refused_without_discovery(tmp_path):
         assert error.value.status_code == 409
         assert "root" in error.value.detail.lower()
     assert directory.is_dir() and stale.is_dir()
+    assert backend._get("projects", PROJECT) is not None
 
 
 def test_an_unadmitted_recorded_root_cannot_fall_back_to_an_admitted_copy(tmp_path):

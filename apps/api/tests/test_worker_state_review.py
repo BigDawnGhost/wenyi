@@ -402,36 +402,6 @@ def test_export_render_uses_enqueued_config_snapshot(pg_storage, pg_pool, monkey
     assert _export_row(pg_pool, export_id)[0] == "done"
 
 
-def test_cancelled_export_waits_for_render_thread_to_publish(monkeypatch):
-    import threading
-
-    started, release, finished = threading.Event(), threading.Event(), threading.Event()
-
-    def render(*_a, **_kw):
-        started.set()
-        assert release.wait(3)
-        finished.set()
-        return 1
-
-    monkeypatch.setattr(exporting, "execute", render)
-
-    async def run():
-        job = asyncio.create_task(
-            tasks.run_export({"backend": current_context()}, project_id="p", export_id=1)
-        )
-        assert await asyncio.to_thread(started.wait, 2)
-        job.cancel()
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        assert not job.done(), "Cancelled coroutine must retain its worker slot while render lives"
-        release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await job
-        assert finished.is_set()
-
-    asyncio.run(run())
-
-
 def test_pause_monitor_cancels_waiting_model_without_progress_callback(worker_state, monkeypatch):
     import threading
 

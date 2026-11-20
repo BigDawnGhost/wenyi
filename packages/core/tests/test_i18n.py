@@ -22,7 +22,9 @@ from wenyi_core.i18n.languages import (
     supported_languages,
     validate_run_languages,
 )
-from wenyi_core.i18n.prompts import render, template
+from wenyi_core.i18n.policy.models import PolicyContext
+from wenyi_core.i18n.policy.resolver import resolve_policy
+from wenyi_core.i18n.prompts import render
 from wenyi_core.i18n.resources import read_text
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
@@ -39,12 +41,26 @@ def test_non_chinese_translation_has_no_chinese_target_instruction():
     assert "按中文" not in system
 
 
-def test_language_tags_preserve_script_and_region():
-    assert normalize_language("zh-Hant") == "zh-Hant"
-    assert normalize_language("en_US") == "en-US"
-    assert normalize_language("not-a-language") == ""
-    assert _epub_lang("en_US") == "en-US"
-    assert _epub_lang("zh-TW") == "zh-Hant"
+@pytest.mark.parametrize(
+    "tag,target,other",
+    [
+        ("zh-Hans", "zh", "zh-Hant"),
+        ("zh-TW", "zh-Hant", "zh"),
+        ("en_US", "en-US", "en-GB"),
+        ("en-GB", "en-GB", "en-US"),
+    ],
+)
+def test_language_tags_preserve_script_and_region(tag, target, other):
+    assert normalize_language(tag) == normalize_language(target) == target
+    assert _epub_lang(tag) == ("zh-Hans" if target == "zh" else target)
+
+    system = render("translator_system", src="ja", tgt=tag)
+    expected, alternate = profile(target), profile(other)
+    assert expected["target_guidance"] in system
+    assert alternate["target_guidance"] not in system
+    assert expected["punctuation_rule"] in system
+    if target in {"zh", "zh-Hant"}:
+        assert alternate["punctuation_rule"] not in system
 
 
 def test_vietnamese_profile_aliases_and_prompts():
@@ -68,6 +84,7 @@ def test_vietnamese_profile_aliases_and_prompts():
 
 
 def test_unknown_target_is_rejected_before_work():
+    assert normalize_language("not-a-language") == ""
     with pytest.raises(ValueError, match="Unsupported"):
         Config.from_dict({"language": {"target": "not-a-language"}})
 
@@ -217,15 +234,27 @@ def test_direct_translation_polishing_review_and_resume(source, target):
 @pytest.mark.parametrize("target", supported_languages())
 def test_every_profile_renders_all_tasks_without_missing_fields(target):
     root = Path(__file__).resolve().parents[1] / "wenyi_core/i18n/data/tasks"
-    for path in root.glob("*.txt"):
-        name = path.stem
-        variables = {}
-        for match in template(name).pattern.finditer(template(name).template):
-            key = match.group("named") or match.group("braced")
-            if key:
-                variables[key] = "fixture"
-        rendered = render(name, src="en", tgt=target, **variables)
-        assert "$tgt_label" not in rendered
+    paths = sorted(root.glob("*.txt"))
+    assert paths
+    # Fill only caller inputs. Inferring fixtures from placeholders would hide missing policy rules.
+    variables = dict.fromkeys(
+        """
+        analysis annotation_contexts before_hash book_synopsis candidates_json chapter
+        chapter_digest conflict_json context current_target digests glossary issue_ids_json
+        issues_json last_index max_evidence_rounds n n_minus_1 nearby_pairs next_source
+        numbered_target numbered_titles packet pairs sample segment_ref source style target task
+        """.split(),
+        "fixture",
+    )
+    numbered_source = '[0] ${tgt_label} ${genre_source_text} $n {"translations": []}'
+    plan = resolve_policy(PolicyContext("en", target))
+    for path in paths:
+        rendered = render(
+            path.stem, src="en", tgt=target, plan=plan, numbered_source=numbered_source, **variables
+        )
+        assert "$tgt_label" not in rendered, path.name
+        if path.stem == "translator_user":
+            assert numbered_source in rendered
     for name in (
         "translator_system",
         "polisher_system",
