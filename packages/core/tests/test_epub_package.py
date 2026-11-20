@@ -7,6 +7,7 @@ import os
 import zipfile
 from dataclasses import replace
 from pathlib import Path
+from typing import Literal
 from urllib.parse import unquote
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_STORED, ZipFile
@@ -108,8 +109,10 @@ def test_about_page_is_written_in_the_only_epub_archive(tmp_path, monkeypatch, f
     publishes = []
 
     class TrackedZip(ZipFile):
-        def __init__(self, file, mode="r", *args, **kwargs):
-            super().__init__(file, mode, *args, **kwargs)
+        def __init__(
+            self, file: str | Path, mode: Literal["r", "w"] = "r", compression: int = ZIP_STORED
+        ):
+            super().__init__(file, mode, compression)
             opens.append((Path(file), mode, self))
 
     original_replace = os.replace
@@ -133,8 +136,8 @@ def test_about_page_is_written_in_the_only_epub_archive(tmp_path, monkeypatch, f
         str(output),
         out_format="epub",
         bilingual=True,
+        about_page=enabled,
         language_policy=plan,
-        **({} if enabled else {"about_page": False}),
     )
 
     assert len(publishes) == 1
