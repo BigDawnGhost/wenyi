@@ -127,14 +127,25 @@ async def create_project(
 @router.get("/{pid}", response_model=ProjectDetail)
 def get_project(pid: str) -> dict:
     project = require_project(pid)
-    summaries = chapter_summaries(project)
-    manifest = {}
-    if project.get("initialized"):
-        storage = read_storage_for(pid)
-        try:
+    storage = read_storage_for(pid)
+    try:
+        if project.get("initialized"):
             manifest = storage.load_manifest()
-        finally:
-            storage.close()
+        else:
+            document = parsed_source(project, storage)
+            if document is None:
+                return {**project, "output_formats": []}
+            preview = book_preview(document, document.fmt)
+            return {
+                **project,
+                "chapter_count": preview["chapter_count"],
+                "total_word_count": preview["total_word_count"],
+                "done_chapters": 0,
+                "output_formats": output_formats({"meta": document.meta}),
+            }
+    finally:
+        storage.close()
+    summaries = chapter_summaries(project)
     project.update(
         chapter_count=len(summaries),
         total_word_count=sum(ch["word_count"] for ch in summaries),

@@ -17,6 +17,8 @@ deploy/.env
 .scratch
 .delta
 apps/desktop/target
+packages/core/rust/target
+packages/core/wenyi_core/markup/_epub_native.*
 apps/desktop/sidecar
 **/test-results
 **/playwright-report

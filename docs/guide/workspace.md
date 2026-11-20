@@ -99,6 +99,8 @@ Review may reuse a matching completed result or resume interrupted work. Inspect
 
 Choose a format and, where supported, monolingual or bilingual output. Export reads a consistent snapshot of **saved** project data, so it can run beside translation; unsaved drafts and changes made after that snapshot are not included.
 
+You can export as soon as source parsing finishes. Before translation preparation, the book contains the parsed original; exporting does not start translation or require a translation model. Once translation state exists, exports use its saved translations and fall back to the source for untranslated passages.
+
 Configure **Export preferences** in **Settings → General** for global defaults, or in **Project settings** for a project override, then **Save configuration**. These preferences control punctuation normalization, bilingual order, the optional EPUB “About this translation” page, and preservation of source formatting in bilingual output (not used for PDF). The export page uses the project's effective saved preferences; it does not provide separate overrides for an individual export. Existing project overrides take precedence over global defaults.
 
 EPUB, DOCX, HTML, TXT, and Markdown are available for ordinary book projects. **PDF export is only available for projects saved with the BabelDOC parser** and preserves their PDF layout through the bridge. Changing the current default parser does not turn an existing MinerU project into a BabelDOC project. See [format support](../reference/formats.md).

@@ -3,6 +3,8 @@ name = "wenyi-core"
 dynamic = ["version"]
 description = "Shared translation engine for multilingual long-form documents."
 readme = "README.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.10"
 dependencies = [
     "openai>=1.40",
@@ -15,7 +17,6 @@ dependencies = [
     "pypdf>=6.14.2",
     "google-genai>=2.13.0",
     "json-repair>=0.61,<1",
-    "python-docx>=1.2.0",
     "tiktoken>=0.14.0",
 ]
 
@@ -24,7 +25,7 @@ Repository = "https://github.com/BigDawnGhost/wenyi"
 Documentation = "https://github.com/BigDawnGhost/wenyi/blob/main/docs/development/architecture.md"
 
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling>=1.27", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
@@ -35,3 +36,15 @@ root = "../.."
 
 [tool.hatch.build.targets.wheel]
 packages = ["wenyi_core"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/wenyi_core",
+    "/rust/Cargo.toml",
+    "/rust/Cargo.lock",
+    "/rust/build.rs",
+    "/rust/src",
+    "/hatch_build.py",
+]
+
+[tool.hatch.build.targets.wheel.hooks.custom]

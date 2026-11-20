@@ -1,7 +1,7 @@
 """PDF ingest via external BabelDOC bridge (HTTP only).
 
 Builds a Wenyi Document whose segments carry ``meta.babeldoc_id`` for fillback.
-Chapters are split by the PDF outline (TOC bookmarks) via pypdf.
+Chapters are split by the PDF outline (TOC bookmarks).
 """
 
 from __future__ import annotations
@@ -11,7 +11,10 @@ import json
 import logging
 import os
 import re
+from bisect import bisect_right
 from copy import deepcopy
+from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 
@@ -104,40 +107,86 @@ def _is_image_only_pdf(path: str | Path, *, pages: str | None = None) -> bool:
     Detection failures deliberately fall through to BabelDOC, which remains the
     authority for parsing unusual or damaged PDFs.
     """
-    try:
-        from pypdf import PdfReader
-
-        reader = PdfReader(str(path))
-        indices = _selected_page_indices(pages, len(reader.pages))
-        if not indices:
-            return False
-
-        found_image = False
-        for index in indices:
-            page = reader.pages[index]
-            text = page.extract_text() or ""
-            if text.strip():
-                return False
-            found_image = found_image or _page_has_image(page)
-        return found_image
-    except Exception:
-        return False
+    return _PdfInspection(path).is_image_only(pages)
 
 
 def toc_chapter_starts(pdf_path: str | Path) -> list[tuple[int, str]]:
     """Read PDF bookmarks and return ``(0-based page, title)`` chapter starts.
 
-    Prefer level-2 entries when present (e.g. CHAPTER under PART); otherwise
-    level-1. Same page keeps the deeper title. Uses pypdf only, without importing BabelDOC.
+    Keep the top two levels (e.g. CHAPTER under PART). Same page keeps the
+    deeper title, or the last title at the same depth.
     """
-    try:
-        from pypdf import PdfReader
-    except ImportError as error:
-        raise BabeldocBridgeError(
-            "Reading the PDF TOC requires pypdf, a declared dependency. Run uv sync first."
-        ) from error
+    return _PdfInspection(pdf_path).chapter_starts()
 
-    reader = PdfReader(str(pdf_path))
+
+def _open_native_pdf(path: str) -> Any:
+    try:
+        from ..markup._epub_native import PdfInspection
+
+        return PdfInspection(path)
+    except (ImportError, OSError, ValueError):
+        return None
+
+
+class _PdfInspection:
+    """Parse locally once per backend, with pypdf as a lazy compatibility path."""
+
+    def __init__(self, path: str | Path):
+        self.path = str(path)
+        self._native = _open_native_pdf(self.path)
+
+    @cached_property
+    def _pypdf(self) -> tuple[Any, Exception | None]:
+        # Reuse the compatibility reader for outlines when preflight needed it.
+        self._native = None
+        try:
+            from pypdf import PdfReader
+        except ImportError as error:
+            failure = BabeldocBridgeError(
+                "Reading the PDF TOC requires pypdf, a declared dependency. Run uv sync first."
+            )
+            failure.__cause__ = error.with_traceback(None)
+            return None, failure
+
+        try:
+            return PdfReader(self.path), None
+        except Exception as error:
+            # Don't reopen a PDF that failed preflight while looking for bookmarks.
+            return None, error.with_traceback(None)
+
+    def is_image_only(self, pages: str | None) -> bool:
+        try:
+            if (native := self._native) is not None:
+                result = native.image_only(_selected_page_indices(pages, native.page_count))
+                if result is not None:
+                    return result
+
+            reader, error = self._pypdf
+            if error is not None:
+                return False
+
+            found_image = False
+            for index in _selected_page_indices(pages, len(reader.pages)):
+                page = reader.pages[index]
+                if (page.extract_text() or "").strip():
+                    return False
+                found_image = found_image or _page_has_image(page)
+            return found_image
+        except Exception:
+            return False
+
+    def chapter_starts(self) -> list[tuple[int, str]]:
+        if self._native is not None:
+            entries = self._native.outline()
+            if entries is not None:
+                return _chapter_starts_from_outline(entries)
+        reader, error = self._pypdf
+        if error is not None:
+            raise error
+        return _chapter_starts_from_outline(_pypdf_outline(reader))
+
+
+def _pypdf_outline(reader: Any) -> list[tuple[int, str, int]]:
     flat: list[tuple[int, str, int]] = []  # depth, title, page0
 
     def walk(items, depth: int) -> None:
@@ -154,18 +203,16 @@ def toc_chapter_starts(pdf_path: str | Path) -> list[tuple[int, str]]:
                 continue
             if not isinstance(page0, int) or page0 < 0:
                 continue
-            flat.append((depth, title.strip(), page0))
+            flat.append((depth, title, page0))
 
     walk(reader.outline, 0)
-    if not flat:
-        return []
+    return flat
 
-    # pypdf nesting: top entries depth 0; prefer depth<=1 when subsections exist.
-    has_level1 = any(depth >= 1 for depth, _t, _p in flat)
-    max_depth = 1 if has_level1 else 0
+
+def _chapter_starts_from_outline(flat: list[tuple[int, str, int]]) -> list[tuple[int, str]]:
     by_page: dict[int, tuple[int, str]] = {}
     for depth, title, page0 in flat:
-        if depth > max_depth:
+        if depth > 1 or not (title := title.strip()):
             continue
         previous = by_page.get(page0)
         if previous is None or depth >= previous[0]:
@@ -185,17 +232,6 @@ def _paragraph_page(para: dict) -> int | None:
     return None
 
 
-def _assign_chapter_index(page: int, starts: list[tuple[int, str]]) -> int:
-    """Latest TOC start with start_page <= page; 0 if before first bookmark."""
-    index = 0
-    for i, (start_page, _title) in enumerate(starts):
-        if page >= start_page:
-            index = i
-        else:
-            break
-    return index
-
-
 def _chapters_from_paragraphs(
     paragraphs: list[dict],
     *,
@@ -210,15 +246,14 @@ def _chapters_from_paragraphs(
             segment.index = i
         return [Chapter(index=0, title=book_title, segments=segments, meta={BABELDOC_META: True})]
 
+    start_pages = [page for page, _title in toc_starts]
     buckets: list[list[Segment]] = [[] for _ in toc_starts]
     # Paras before the first TOC page still go into chapter 0.
     for para in paragraphs:
         if not isinstance(para, dict):
             continue
         page = _paragraph_page(para)
-        if page is None:
-            page = toc_starts[0][0]
-        chapter_i = _assign_chapter_index(page, toc_starts)
+        chapter_i = 0 if page is None else max(0, bisect_right(start_pages, page) - 1)
         buckets[chapter_i].extend(_segments_from_para(len(buckets[chapter_i]), para))
 
     chapters: list[Chapter] = []
@@ -344,7 +379,8 @@ def read_pdf_babeldoc(
     timeout: float = 600.0,
 ) -> Document:
     """Call bridge ``/extract`` and map paragraphs into TOC-based chapters."""
-    if _is_image_only_pdf(path, pages=pages):
+    inspection = _PdfInspection(path)
+    if inspection.is_image_only(pages):
         raise BabeldocBridgeError(
             "BabelDOC found only scanned images with no extractable text layer on the selected PDF pages. "
             "Use the MinerU backend (pipeline.pdf_backend: mineru), "
@@ -368,7 +404,7 @@ def read_pdf_babeldoc(
 
     title = Path(path).stem
     try:
-        toc_starts = toc_chapter_starts(path)
+        toc_starts = inspection.chapter_starts()
     except BabeldocBridgeError:
         toc_starts = []
     except Exception:
@@ -398,10 +434,21 @@ def read_pdf_babeldoc(
     )
 
 
-def _fillback_groups(store) -> dict[str, list[Segment]]:
+@dataclass
+class _FillbackParagraph:
+    """Saved rows in bridge order. Resolve protected objects once per export."""
+
+    segments: list[Segment]
+
+    @cached_property
+    def texts(self) -> list[str]:
+        return [_fillback_text(segment) for segment in self.segments]
+
+
+def _fillback_groups(store, manifest: dict) -> dict[str, _FillbackParagraph]:
     """Recover stable row order and reject missing/duplicated row checkpoints."""
     groups: dict[str, list[Segment]] = {}
-    for info in store.load_manifest().get("chapters") or []:
+    for info in manifest.get("chapters") or []:
         for segment in store.load_chapter(info["index"]).segments:
             pid = str(segment.meta.get(BABELDOC_ID_META) or "")
             if pid:
@@ -424,7 +471,7 @@ def _fillback_groups(store) -> dict[str, list[Segment]]:
         if sorted(indices) != list(range(len(segments))):
             raise BabeldocBridgeError(f"Incomplete or duplicate item rows for {pid}; reparse.")
         segments.sort(key=lambda segment: segment.meta["babeldoc_row"]["index"])
-    return groups
+    return {pid: _FillbackParagraph(segments) for pid, segments in groups.items()}
 
 
 def _fillback_text(segment: Segment) -> str:
@@ -441,11 +488,17 @@ def _fillback_text(segment: Segment) -> str:
 
 def rows_from_store(store, translations: dict[str, str]) -> dict[str, list[dict[str, int]]]:
     """Export explicit target ranges, independent of newlines inside a translated row."""
+    return _row_ranges(_fillback_groups(store, store.load_manifest()), translations)
+
+
+def _row_ranges(
+    groups: dict[str, _FillbackParagraph], translations: dict[str, str]
+) -> dict[str, list[dict[str, int]]]:
     result = {}
-    for pid, segments in _fillback_groups(store).items():
-        if "babeldoc_row" not in segments[0].meta:
+    for pid, paragraph in groups.items():
+        if "babeldoc_row" not in paragraph.segments[0].meta:
             continue
-        texts = [_fillback_text(segment) for segment in segments]
+        texts = paragraph.texts
         if translations.get(pid) != "\n".join(texts):
             raise BabeldocBridgeError(f"Item row text changed during export for {pid}.")
         ranges = []
@@ -460,6 +513,11 @@ def rows_from_store(store, translations: dict[str, str]) -> dict[str, list[dict[
 def translations_from_store(store) -> tuple[str, str, dict[str, str]]:
     """Collect fillback text, falling back to source for blank targets without saving it."""
     manifest = store.load_manifest()
+    session_id, bridge_url = _session_identity(manifest)
+    return session_id, bridge_url, _translations(_fillback_groups(store, manifest))
+
+
+def _session_identity(manifest: dict) -> tuple[str, str]:
     meta = manifest.get("meta") if isinstance(manifest.get("meta"), dict) else {}
     session_id = meta.get("babeldoc_session_id")
     bridge_url = meta.get("babeldoc_bridge_url")
@@ -468,32 +526,41 @@ def translations_from_store(store) -> tuple[str, str, dict[str, str]]:
             "State lacks babeldoc_session_id / babeldoc_bridge_url. "
             "Parse again with pdf_backend=babeldoc and keep the bridge process running."
         )
+    return str(session_id), str(bridge_url)
 
+
+def _translations(groups: dict[str, _FillbackParagraph]) -> dict[str, str]:
     mapping: dict[str, str] = {}
-    for pid, segments in _fillback_groups(store).items():
-        text = "\n".join(_fillback_text(segment) for segment in segments)
+    for pid, paragraph in groups.items():
+        text = "\n".join(paragraph.texts)
         if text.strip():
             mapping[pid] = text
     if not mapping:
         raise BabeldocBridgeError(
             "No translated paragraphs with babeldoc_id are available for backfill"
         )
-    return str(session_id), str(bridge_url), mapping
+    return mapping
 
 
 def annotations_from_store(store, translations: dict[str, str]) -> dict[str, Any]:
     """Forward cached positions for per-item validation, without model calls or state changes."""
+    return _annotations(_fillback_groups(store, store.load_manifest()), translations)
+
+
+def _annotations(
+    groups: dict[str, _FillbackParagraph], translations: dict[str, str]
+) -> dict[str, Any]:
     result: dict[str, Any] = {}
-    for pid, segments in _fillback_groups(store).items():
+    for pid, paragraph in groups.items():
         if pid not in translations:
             continue
+        segments = paragraph.segments
         if "babeldoc_row" in segments[0].meta:
             placements = []
             omitted = []
             protected = False
             cursor = 0
-            for segment in segments:
-                text = _fillback_text(segment)
+            for segment, text in zip(segments, paragraph.texts, strict=True):
                 payload = _segment_annotations(segment, text)
                 if payload:
                     omitted.extend(payload.get("omitted_protected_objects", []))
@@ -527,6 +594,20 @@ def annotations_from_store(store, translations: dict[str, str]) -> dict[str, Any
             if payload is not None:
                 result[pid] = payload
     return result
+
+
+def fillback_from_store(store) -> tuple[str, str, dict[str, str], dict[str, Any]]:
+    """Project all HTTP fields from the same resolved texts, reading each chapter once."""
+    manifest = store.load_manifest()
+    session_id, bridge_url = _session_identity(manifest)
+    groups = _fillback_groups(store, manifest)
+    translations = _translations(groups)
+    options = {}
+    if annotations := _annotations(groups, translations):
+        options["annotations"] = annotations
+    if rows := _row_ranges(groups, translations):
+        options["rows"] = rows
+    return session_id, bridge_url, translations, options
 
 
 def _segment_annotations(segment: Segment, text: str) -> dict[str, Any] | None:

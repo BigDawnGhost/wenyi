@@ -47,7 +47,8 @@ def pdf_bytes(
                     f"BT /F1 12 Tf 60 80 Td ({label}) Tj ET\n"
                 ).encode("ascii")
             )
-            page[NameObject("/Contents")] = content
+            # A PDF stream must be an indirect object.
+            page[NameObject("/Contents")] = writer._add_object(content)
             if cropbox is not None:
                 page.cropbox = RectangleObject(cropbox)
             if rotation:
@@ -56,3 +57,16 @@ def pdf_bytes(
         output = BytesIO()
         writer.write(output)
         return output.getvalue()
+
+
+def text_positions(page):
+    positions = {}
+
+    def locate(operator, operands, cm, tm):
+        if operator == b"Tj":
+            text = operands[0]
+            label = text.decode("ascii") if isinstance(text, bytes) else str(text)
+            positions[label] = tm[4] * cm[0] + tm[5] * cm[2] + cm[4]
+
+    page.extract_text(visitor_operand_before=locate)
+    return positions

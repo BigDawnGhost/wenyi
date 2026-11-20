@@ -10,6 +10,7 @@ from __future__ import annotations
 from bs4 import BeautifulSoup
 from bs4.element import Comment, Doctype, NavigableString, PageElement, ProcessingInstruction, Tag
 
+from wenyi_core.markup import _epub_native
 from wenyi_core.markup.annotations import _annotation_roots, _is_text_string
 from wenyi_core.markup.contracts import (
     _ATOMIC_INLINE_TAGS,
@@ -238,58 +239,48 @@ def html_visible_text(element: Tag) -> str:
 
 
 def html_translation_targets(soup: BeautifulSoup) -> list[Tag]:
-    """Group consecutive inline prose without stranding a container's own text."""
-
-    def boundary(element: Tag) -> bool:
-        return (
-            html_is_protected(element) or _is_block(element) or element.name in _ATOMIC_INLINE_TAGS
-        )
-
-    has_barrier: set[int] = set()
-    for element in reversed(soup.find_all(True)):
-        if any(
-            isinstance(child, Tag)
-            and not (element.name == "ruby" and child.name in {"rt", "rp"})
-            and (boundary(child) or id(child) in has_barrier)
-            for child in element.children
-        ):
-            has_barrier.add(id(element))
+    """Plan prose regions in Rust using facts about the tolerant parser's actual tree."""
+    nodes = [soup, *soup.descendants]
+    indices = {id(node): index for index, node in enumerate(nodes)}
+    topology = []
+    for node in nodes[1:]:
+        parent = node.parent
+        parent_index = indices[id(parent)]
+        if isinstance(node, Tag):
+            protected = html_is_protected(node)
+            atomic = node.name in _ATOMIC_INLINE_TAGS
+            boundary = protected or atomic or _is_block(node)
+            topology.append(
+                (
+                    parent_index,
+                    boundary,
+                    not (protected or atomic or node.name == "br"),
+                    isinstance(parent, Tag) and parent.name == "ruby" and node.name in {"rt", "rp"},
+                )
+            )
+        else:
+            topology.append((parent_index, False, False, False))
 
     targets: list[Tag] = []
-
-    def walk(parent: Tag) -> None:
-        run: list[PageElement] = []
-
-        def flush() -> None:
-            if not run:
-                return
-            has_text = any(
-                child.get_text(strip=True) if isinstance(child, Tag) else str(child).strip()
-                for child in run
-                if isinstance(child, Tag) or _is_text_string(child)
-            )
-            if has_text:
-                if parent is not soup and len(run) == len(parent.contents):
-                    targets.append(parent)
-                else:
-                    wrapper = soup.new_tag("span")
-                    wrapper[LINE_WRAPPER_ATTR] = "true"
-                    run[0].insert_before(wrapper)
-                    for child in run:
-                        wrapper.append(child.extract())
-                    targets.append(wrapper)
-            run.clear()
-
-        for child in list(parent.children):
-            if isinstance(child, Tag) and (boundary(child) or id(child) in has_barrier):
-                flush()
-                if not html_is_protected(child) and child.name not in _ATOMIC_INLINE_TAGS | {"br"}:
-                    walk(child)
-            else:
-                run.append(child)
-        flush()
-
-    walk(soup)
+    for parent_index, whole_parent, run in _epub_native.html_regions(topology):
+        children = [nodes[index] for index in run]
+        if not any(
+            child.get_text(strip=True) if isinstance(child, Tag) else child.strip()
+            for child in children
+            if isinstance(child, Tag) or _is_text_string(child)
+        ):
+            continue
+        if whole_parent:
+            parent = nodes[parent_index]
+            assert isinstance(parent, Tag)
+            targets.append(parent)
+        else:
+            wrapper = soup.new_tag("span")
+            wrapper[LINE_WRAPPER_ATTR] = "true"
+            children[0].insert_before(wrapper)
+            for child in children:
+                wrapper.append(child.extract())
+            targets.append(wrapper)
     return targets
 
 

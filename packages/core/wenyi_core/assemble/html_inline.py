@@ -6,7 +6,7 @@ import hashlib
 import logging
 
 from bs4 import BeautifulSoup
-from bs4.element import ProcessingInstruction, Tag
+from bs4.element import NavigableString, ProcessingInstruction, Tag
 
 from wenyi_core.alignment import coincident_point_order
 from wenyi_core.markup.contracts import (
@@ -374,6 +374,15 @@ def _replace_block_content(
     meta: dict[str, object],
 ) -> None:
     """Replace block content and restore inline nodes and navigable annotation links."""
+    if (
+        not meta
+        and not el.has_attr(ANNOTATION_ID_ATTR)
+        and all(type(child) is NavigableString for child in el.contents)
+    ):
+        el.clear()
+        _append_text_with_breaks(soup, el, text)
+        return
+
     # List items may use the a element itself as a translation block. Preserve its shell and extract
     # any sup/sub annotation markers first so clear() cannot delete them.
     self_markers: list[Tag] = []

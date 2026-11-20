@@ -14,15 +14,26 @@ on:
     branches: [main]
     paths:
       - .github/workflows/publish-pypi.yml
+      - LICENSE
       - pyproject.toml
       - uv.lock
+      - packages/core/LICENSE
+      - packages/core/THIRD_PARTY_NOTICES.md
       - packages/core/pyproject.toml
       - packages/core/README.md
+      - packages/core/hatch_build.py
+      - packages/core/rust/**
+      - packages/cli/LICENSE
       - packages/cli/pyproject.toml
       - packages/cli/README.md
       - packages/core/tests/test_release_packaging.py
+      - packages/core/tests/test_distribution_licenses.py
+      - packages/core/tests/test_core_native_notices.py
+      - scripts/release/core_native_notices.py
+      - scripts/release/core_native_notices.toml
       - scripts/release/release_version.py
       - scripts/release/check_wheel_resources.py
+      - scripts/release/smoke_document_formats.py
 
 permissions:
   contents: read
@@ -44,6 +55,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           version: "0.13.7"
@@ -56,8 +68,11 @@ jobs:
             python scripts/release/release_version.py --github-output "$GITHUB_OUTPUT"
       - name: Check packaging contracts
         run: |
+          cargo fetch --locked --manifest-path packages/core/rust/Cargo.toml
+          python scripts/release/core_native_notices.py --check
           uv sync --locked --group dev
-          uv run --no-sync pytest -q -n auto packages/core/tests/test_release_packaging.py
+          uv run --no-sync pytest -q -n auto packages/core/tests/test_release_packaging.py \
+            packages/core/tests/test_distribution_licenses.py packages/core/tests/test_core_native_notices.py
       - name: Build Core and CLI distributions
         run: |
           uv build --no-sources --package wenyi-core --out-dir dist/pypi
@@ -82,14 +97,24 @@ jobs:
           import os
           from importlib.metadata import version
 
+          from wenyi_core.markup._epub_native import (
+              append_about, export, generate, html_present, ingest, parse_docx,
+              pdf_write_spreads, render_html_bodies, write_docx,
+          )
+          if not all(callable(operation) for operation in (
+              append_about, export, generate, html_present, ingest, parse_docx,
+              pdf_write_spreads, render_html_bodies, write_docx,
+          )):
+              raise SystemExit("Native document engine unavailable")
           for package in ("wenyi-core", "wenyi-cli"):
               actual = version(package)
               if actual != os.environ["EXPECTED_VERSION"]:
                   raise SystemExit(f"{package}: unexpected version {actual}")
-          for module in ("babeldoc", "wenyi_babeldoc_bridge", "wenyi_api", "wenyi_desktop"):
+          for module in ("babeldoc", "wenyi_babeldoc_bridge", "wenyi_api", "wenyi_desktop", "docx"):
               if importlib.util.find_spec(module) is not None:
                   raise SystemExit(f"Unexpected CLI dependency: {module}")
           PY
+            "$environment/bin/python" -I scripts/release/smoke_document_formats.py
             (
               cd "$RUNNER_TEMP"
               "$environment/bin/wenyi" --version
@@ -101,13 +126,84 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: pypi-distributions
+          # The host Core wheel is for smoke testing; cibuildwheel builds the
+          # portable Core wheels that actually go to PyPI.
+          path: |
+            dist/pypi/*.tar.gz
+            dist/pypi/wenyi_cli-*.whl
+          if-no-files-found: error
+          retention-days: 14
+
+  wheels:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, arch: x86_64 }
+          - { runner: ubuntu-24.04-arm, arch: aarch64 }
+          - { runner: windows-2022, arch: AMD64 }
+          - { runner: macos-15-intel, arch: x86_64 }
+          - { runner: macos-15, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      # Validate the repaired wheel against the same texts as the producer.
+      # cibuildwheel still builds the verified sdist, never this checkout.
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: pypi-distributions
           path: dist/pypi/
+      - name: Locate the verified Core source distribution
+        id: core
+        shell: bash
+        run: |
+          set -eu
+          set -- dist/pypi/wenyi_core-*.tar.gz
+          test "$#" -eq 1 && test -f "$1"
+          echo "sdist=$1" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pypa/cibuildwheel@v3.3
+        with:
+          package-dir: ${{ steps.core.outputs.sdist }}
+        env:
+          CIBW_BUILD: cp310-*
+          CIBW_SKIP: "*-musllinux_*"
+          CIBW_ARCHS: ${{ matrix.arch }}
+          CIBW_BEFORE_ALL_LINUX: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          CIBW_ENVIRONMENT_LINUX: 'PATH="$HOME/.cargo/bin:$PATH"'
+          CIBW_ENVIRONMENT_MACOS: 'MACOSX_DEPLOYMENT_TARGET="13.0"'
+          CIBW_TEST_COMMAND: >-
+            python -c "from pathlib import Path; from tempfile import TemporaryDirectory;
+            from wenyi_core.markup._epub_native import
+            append_about, export, html_present, parse_docx, pdf_write_spreads, render_html_bodies, write_docx;
+            from wenyi_core.assemble.epub_package import EpubChapter, EpubTocEntry, write_epub;
+            from wenyi_core.ingest.epub_reader import read_epub;
+            tmp = TemporaryDirectory(); path = Path(tmp.name) / 'native.epub';
+            write_epub(path, title='Native EPUB', lang='en', resources=[],
+            chapters=[EpubChapter('chapter.xhtml', 'Chapter', '<html><body><p>Native text</p></body></html>')],
+            toc=[EpubTocEntry('chapter.xhtml', 'Chapter')]);
+            assert read_epub(path, 'en', 'zh').chapters[-1].segments[-1].source == 'Native text';
+            tmp.cleanup()"
+      - name: Inspect the portable wheel before upload
+        run: python scripts/release/check_wheel_resources.py wheelhouse
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-core-${{ matrix.runner }}
+          path: wheelhouse/wenyi_core-*.whl
           if-no-files-found: error
           retention-days: 14
 
   publish-core:
     if: github.event_name == 'release' && github.repository == 'BigDawnGhost/wenyi'
-    needs: build
+    needs: [build, wheels]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:
@@ -118,7 +214,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: pypi-distributions
+          pattern: pypi-*
+          merge-multiple: true
           path: dist/pypi/
       - uses: astral-sh/setup-uv@v9.0.0
         with:

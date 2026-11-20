@@ -1,0 +1,3 @@
+# Published license materials are compared byte-for-byte, including on Windows.
+LICENSE text eol=lf
+THIRD_PARTY_NOTICES.md text eol=lf

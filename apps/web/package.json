@@ -1,6 +1,7 @@
 {
   "name": "@wenyi/web",
   "private": true,
+  "license": "GPL-3.0-only",
   "description": "Web interface for Wenyi's multilingual translation workflows.",
   "type": "module",
   "scripts": {

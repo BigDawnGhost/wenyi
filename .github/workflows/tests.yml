@@ -97,6 +97,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
@@ -116,11 +117,23 @@ jobs:
           uv sync --locked --all-packages --group dev --quiet
           uv run --no-sync python scripts/contract/openapi_snapshot.py > "$RUNNER_TEMP/head.json"
           # The workspace is installed in editable mode, so the base tree only
-          # needs to win on PYTHONPATH: no second resolve, no second install.
+          # needs to win on PYTHONPATH. Build its own native extension when
+          # present; changing the Rust/Python interface must not affect the base.
           git worktree add --detach "$RUNNER_TEMP/base" "$base"
-          PYTHONPATH="$RUNNER_TEMP/base/packages/core:$RUNNER_TEMP/base/packages/backend" \
-            uv run --no-sync python "$RUNNER_TEMP/base/scripts/contract/openapi_snapshot.py" \
-            > "$RUNNER_TEMP/base.json"
+          if test -f "$RUNNER_TEMP/base/packages/core/hatch_build.py"; then
+            (
+              cd "$RUNNER_TEMP/base"
+              UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/base-venv" \
+                uv sync --locked --all-packages --group dev --quiet
+              UV_PROJECT_ENVIRONMENT="$RUNNER_TEMP/base-venv" \
+                uv run --no-sync python scripts/contract/openapi_snapshot.py \
+                > "$RUNNER_TEMP/base.json"
+            )
+          else
+            PYTHONPATH="$RUNNER_TEMP/base/packages/core:$RUNNER_TEMP/base/packages/backend" \
+              uv run --no-sync python "$RUNNER_TEMP/base/scripts/contract/openapi_snapshot.py" \
+              > "$RUNNER_TEMP/base.json"
+          fi
           git worktree remove --force "$RUNNER_TEMP/base"
           if cmp -s "$RUNNER_TEMP/base.json" "$RUNNER_TEMP/head.json"; then
             echo "The HTTP contract is unchanged."
@@ -172,6 +185,7 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
+      - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
@@ -186,7 +200,6 @@ jobs:
           uv run --no-sync wenyi --help
       - name: Install workspace
         run: uv sync --locked --all-packages --group dev --python ${{ matrix.python-version }}
-      - uses: dtolnay/rust-toolchain@stable
       - name: Build and test the wenyi-locks native library
         # The lock contract tests exercise both backends; without the crate the
         # rust parameter would silently skip and the native path would go untested.
@@ -195,6 +208,8 @@ jobs:
         run: |
           cargo build --release -p wenyi-locks
           cargo test -p wenyi-locks
+      - name: Test the native EPUB engine
+        run: cargo test --locked --manifest-path packages/core/rust/Cargo.toml
       - name: Prepare token-budget vocabulary
         run: uv run --no-sync python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"
       - name: Python style
@@ -263,6 +278,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true

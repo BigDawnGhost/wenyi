@@ -4,6 +4,22 @@ import { chooseOption } from "../../../../packages/ui/tests/e2e/select-helper";
 
 const origin = "http://127.0.0.1:19481";
 
+test("a parsed project can save a book without translation preparation", async ({ page }) => {
+  await fakeApi(page, {
+    [`/projects/${pid}`]: { ...project, fmt: "epub", status: "uploaded", initialized: false },
+  }, origin);
+  await page.addInitScript(() => {
+    window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
+    window.__TAURI_INTERNALS__ = {
+      invoke: () => Promise.resolve({ path: "/fixture/source.epub" } as never),
+    };
+  });
+  await page.goto(`/projects/${pid}/export`);
+  await expect(page.getByRole("button", { name: "EPUB", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Generate export" }).click();
+  await expect(page.getByText("Saved to /fixture/source.epub", { exact: true })).toBeVisible();
+});
+
 for (const [babeldoc, order] of [
   [false, "target_first"],
   [true, "target_first"],

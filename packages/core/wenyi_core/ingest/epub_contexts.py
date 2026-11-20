@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import Tag
 
-from wenyi_core.markup.anchors import fragment_nodes, resolve_epub_href, scope_segment_anchors
+from wenyi_core.markup.anchors import index_fragment_nodes, resolve_epub_href, scope_segment_anchors
 from wenyi_core.markup.annotations import _note_context_scope
 from wenyi_core.markup.contracts import ANNOTATION_ID_ATTR, ANNOTATION_META_KEY, INLINE_ID_ATTR
+from wenyi_core.markup.epub_dom import parse_epub_dom
 from wenyi_core.markup.objects import OBJECT_RELATION
 from wenyi_core.models.document import Segment
-from wenyi_core.resource_pool import ResourcePool
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,8 @@ class _ResolvedContext:
 
 def _resolve_resource_contexts(task: _ContextTask) -> list[_ResolvedContext]:
     """Parse one target without mutating any referring Segment or annotation."""
-    soup = BeautifulSoup(task.template, "html.parser")
+    soup = parse_epub_dom(task.template)
+    fragments = index_fragment_nodes(soup)
     object_nodes: dict[str, list[Tag]] = {}
     for node in soup.find_all(True, attrs={ANNOTATION_ID_ATTR: True}):
         object_nodes.setdefault(str(node[ANNOTATION_ID_ATTR]), []).append(node)
@@ -68,7 +69,7 @@ def _resolve_resource_contexts(task: _ContextTask) -> list[_ResolvedContext]:
                     )
                 )
             continue
-        nodes = fragment_nodes(soup, reference.fragment)
+        nodes = fragments.get(reference.fragment, [])
         if len(nodes) != 1:
             # Duplicate id/name values make reference ownership ambiguous.
             continue
@@ -99,8 +100,6 @@ def _resolve_resource_contexts(task: _ContextTask) -> list[_ResolvedContext]:
 def _build_epub_annotation_contexts(
     reference_resources: list[dict[str, object]],
     lookup_resources: list[dict[str, object]],
-    *,
-    pool: ResourcePool | None = None,
 ) -> dict[str, object]:
     """Group by target XHTML; publish relation changes and contexts in reference order."""
     lookup = {
@@ -172,11 +171,7 @@ def _build_epub_annotation_contexts(
         }
         tasks.append(_ContextTask(href, template, sources, refs))
 
-    batches = (
-        pool.map(_resolve_resource_contexts, tasks)
-        if pool is not None
-        else map(_resolve_resource_contexts, tasks)
-    )
+    batches = map(_resolve_resource_contexts, tasks)
     results = sorted(
         (result for batch in batches for result in batch), key=lambda result: result.ordinal
     )

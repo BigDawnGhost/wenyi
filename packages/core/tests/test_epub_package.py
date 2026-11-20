@@ -289,14 +289,12 @@ def test_xml_entities_are_not_loaded_from_the_filesystem(tmp_path):
 def test_write_failure_preserves_existing_export_and_cleans_temporary_file(tmp_path, monkeypatch):
     output = tmp_path / "book.epub"
     output.write_bytes(b"previous export")
-    original_write = ZipFile.writestr
 
-    def failing_write(archive, name, *args, **kwargs):
-        if name == "EPUB/ch0.xhtml":
-            raise OSError("disk full")
-        return original_write(archive, name, *args, **kwargs)
+    def failing_write(temporary, _state, _assets):
+        temporary.write_bytes(b"incomplete native output")
+        raise OSError("disk full")
 
-    monkeypatch.setattr(ZipFile, "writestr", failing_write)
+    monkeypatch.setattr("wenyi_core.assemble.epub_package._epub_native.generate", failing_write)
     with pytest.raises(OSError, match="disk full"):
         _write(output)
     assert output.read_bytes() == b"previous export"

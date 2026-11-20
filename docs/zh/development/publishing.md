@@ -56,12 +56,34 @@ PyPI 不允许两个待定项目共用完全相同的 Owner、仓库、工作流
    填入已存在的标签，验证构建；这一步不会上传。
 4. 打开 **Releases → Draft a new release**，选择该标签，发布 Release。
    只保存草稿不会触发上传；预发布标签也应在 GitHub 标记为预发布。
-5. 打开对应 Actions 运行，确认 `build`、`publish-core` 和 `publish-cli` 都成功。
+5. 打开对应 Actions 运行，确认 `build`、`wheels`、`publish-core` 和 `publish-cli` 都成功。
    现有 CLI/Desktop 可执行文件打包工作流仍独立运行。
 
 构建作业会检查标签、检出提交和版本一致性、打包契约、严格分发元数据，以及语言和提示词
 资源。随后分别将 wheel 与源码分发包安装到干净的 Python 3.12 环境，检查安装版本和
-依赖隔离，并执行 CLI 帮助、版本及语言列表冒烟。这些检查不调用模型，也不翻译 PDF。
+依赖隔离，并执行 CLI 冒烟测试。另用合成文档验证已安装的 Markdown → DOCX → HTML
+→ EPUB → TXT 转换链路和原生双语 PDF 拼版，不调用模型或 PDF 服务。
+
+Core 将原生文档引擎打包为私有 PyO3 扩展。`wheels` 作业构建并验证 CPython 3.10+ 稳定 ABI
+wheel，覆盖 glibc Linux（x86-64 和 ARM64）、macOS 13+（Intel 和 Apple Silicon）及
+Windows x64。安装匹配的 wheel 不需要 Rust；从源码分发包构建需要 Cargo 和链接器。
+CLI 仍发布纯 Python wheel。
+
+Wenyi 自有代码使用 SPDX 标识 `GPL-3.0-only`。各包目录的 `LICENSE` 应与根目录原文一致，
+以便源码包脱离仓库也能构建，包括在 Windows 上构建。Core 另附 `THIRD_PARTY_NOTICES.md`，
+保留锁定的原生依赖各自的许可证和版权声明。修改 `packages/core/rust/Cargo.lock` 后运行：
+
+```sh
+cargo fetch --locked --manifest-path packages/core/rust/Cargo.toml
+python scripts/release/core_native_notices.py  # Python 3.11+
+python scripts/release/core_native_notices.py --check
+```
+
+CI 检查 Core 和 CLI 的分发包（含修复后的平台 wheel）的许可元数据，并将正文与仓库逐字节比对。
+自有代码与 Cargo 依赖的许可材料位于 `.dist-info/licenses/`；CLI 发行 ZIP 也将它们放在可执行文件旁。
+二进制 wheel 另将构建工具链的标准库许可材料放在 `wenyi_core/_licenses/rust-std/`。官方 rustup
+工具链自带这些文件；若发行版单独打包，请将 `WENYI_RUST_LICENSE_DIR` 指向与编译器版本匹配的
+`share/doc/rust` 对应目录。平台 wheel 修复工具若加入未经许可检查的动态库，CI 会阻止上传。
 
 只有独立的 `publish-core` 和 `publish-cli` 作业获得 `id-token: write`。
 每个作业下载已经验证的产物，不检出或执行仓库构建代码，通过各自的环境身份只上传对应包。

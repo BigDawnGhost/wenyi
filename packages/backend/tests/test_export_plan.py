@@ -38,10 +38,14 @@ def test_pdf_export_requires_saved_babeldoc_metadata(source_format, meta):
     assert error.value.status_code == 422
 
 
-def test_plan_requires_initialization():
+def test_plan_requires_a_parse_not_translation_initialization():
     with pytest.raises(HTTPException) as error:
-        export_plan.resolve_export({"initialized": False, "fmt": "txt"}, {}, ExportRequest())
+        export_plan.resolve_export({"initialized": False, "fmt": "txt"}, None, ExportRequest())
     assert error.value.status_code == 409
+    fmt, _ = export_plan.resolve_export(
+        {"initialized": False, "fmt": "txt"}, {"fmt": "txt", "meta": {}}, ExportRequest()
+    )
+    assert fmt == "epub"
 
 
 @pytest.mark.parametrize("meta", [{"pdf_export": "babeldoc"}, {"babeldoc": True}])

@@ -2,6 +2,8 @@
 name = "wenyi"
 dynamic = ["version"]
 description = "Wenyi workspace for multilingual long-form translation."
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = ["wenyi-cli"]
 
@@ -20,7 +22,7 @@ wenyi-desktop = { workspace = true }
 
 # Resolve dynamic workspace metadata without installing a root package.
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling>=1.27", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]
@@ -30,13 +32,14 @@ source = "vcs"
 bypass-selection = true
 
 [tool.hatch.build.targets.sdist]
-only-include = ["pyproject.toml"]
+only-include = ["pyproject.toml", "LICENSE"]
 
 [dependency-groups]
 dev = [
     "hatch-vcs>=0.5", # Exercise the same tag-derived versioning used by package builds.
     "httpx2>=2.13", # Starlette's TestClient HTTP transport.
     "pre-commit>=3.7",
+    "python-docx>=1.2.0", # Independent DOCX fixtures and output checks.
     "ruff>=0.6",
     "pytest>=8",
     "pytest-rerunfailures>=14",

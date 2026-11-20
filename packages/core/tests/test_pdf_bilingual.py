@@ -8,13 +8,14 @@ from typing import cast
 import pytest
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import ArrayObject, DictionaryObject
+from wenyi_core.assemble import pdf_writer
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pdf_bridge import BabeldocBridgeError
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
 
-from tests.pdf_fixtures import pdf_bytes
+from tests.pdf_fixtures import pdf_bytes, text_positions
 
 
 @pytest.fixture(params=[FileStorage, SqliteStorage])
@@ -66,19 +67,22 @@ def pdf_project(tmp_path, monkeypatch, request):
         store.close()
 
 
-def _text_positions(page):
-    positions = {}
+@pytest.fixture
+def native_spreads(monkeypatch):
+    """Verify native coverage instead of silently passing through the old writer."""
+    compose = pdf_writer._epub_native.pdf_write_spreads
 
-    def locate(operator, operands, cm, tm):
-        if operator == b"Tj":
-            text = operands[0]
-            label = text.decode("ascii") if isinstance(text, bytes) else str(text)
-            positions[label] = tm[4] * cm[0] + tm[5] * cm[2] + cm[4]
+    def require_native(*args):
+        assert compose(*args) is None
 
-    page.extract_text(visitor_operand_before=locate)
-    return positions
+    def unexpected_python_parse(*args):
+        pytest.fail("Native composition must not parse the input PDFs in pypdf")
+
+    monkeypatch.setattr(pdf_writer._epub_native, "pdf_write_spreads", require_native)
+    monkeypatch.setattr(pdf_writer, "PdfReader", unexpected_python_parse)
 
 
+@pytest.mark.usefixtures("native_spreads")
 @pytest.mark.parametrize("order", [None, "target_first", "source_first"])
 def test_pdf_bilingual_places_the_first_version_on_the_left(pdf_project, order):
     store, source, _, calls = pdf_project
@@ -92,9 +96,13 @@ def test_pdf_bilingual_places_the_first_version_on_the_left(pdf_project, order):
     assert len(reader.pages) == 2
     for page, number in zip(reader.pages, ["one", "two"]):
         assert tuple(page.mediabox) == (0, 0, 400, 300)
-        assert f"Source {number}" in page.extract_text()
-        assert f"Target {number}" in page.extract_text()
-        positions = _text_positions(page)
+        left, right = f"Source {number}", f"Target {number}"
+        if order != "source_first":
+            left, right = right, left
+        assert page.extract_text() == left + " " + right
+        words = page.extract_text(extraction_mode="layout").split()
+        assert words == (left + " " + right).split()
+        positions = text_positions(page)
         source_x, target_x = (60, 260) if order == "source_first" else (260, 60)
         assert positions[f"Source {number}"] == pytest.approx(source_x)
         assert positions[f"Target {number}"] == pytest.approx(target_x)
@@ -116,6 +124,7 @@ def _replace_source(store, source, content, *, pages=None):
     store.save_manifest(manifest)
 
 
+@pytest.mark.usefixtures("native_spreads")
 def test_pdf_pairs_the_saved_noncontiguous_page_selection(pdf_project):
     store, source, response, _ = pdf_project
     _replace_source(store, source, pdf_bytes([f"Source {i}" for i in range(1, 6)]), pages="2,4-5")
@@ -128,6 +137,7 @@ def test_pdf_pairs_the_saved_noncontiguous_page_selection(pdf_project):
         assert f"Target {index}" in page.extract_text()
 
 
+@pytest.mark.usefixtures("native_spreads")
 @pytest.mark.parametrize("order", ["target_first", "source_first"])
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 def test_pdf_respects_visible_crop_rotation_units_and_unequal_sizes(pdf_project, rotation, order):
@@ -143,7 +153,7 @@ def test_pdf_respects_visible_crop_rotation_units_and_unequal_sizes(pdf_project,
     assert page.rotation == 0
     assert "Original" in page.extract_text()
     assert "Translated" in page.extract_text()
-    positions = _text_positions(page)
+    positions = text_positions(page)
     source_x = {0: 80, 90: 100, 180: 240, 270: 340}[rotation]
     if order == "target_first":
         source_x += 240
@@ -153,6 +163,7 @@ def test_pdf_respects_visible_crop_rotation_units_and_unequal_sizes(pdf_project,
     assert source.read_bytes() == original
 
 
+@pytest.mark.usefixtures("native_spreads")
 @pytest.mark.parametrize("order", ["target_first", "source_first"])
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
 def test_pdf_transforms_link_rectangles_and_quads_with_visible_pages(pdf_project, rotation, order):
@@ -225,8 +236,40 @@ def test_pdf_source_mismatch_fails_before_bridge_request(pdf_project):
     assert calls == []
 
 
+def test_pdf_empty_saved_page_selection_fails_before_bridge_request(pdf_project):
+    store, source, _, calls = pdf_project
+    _replace_source(store, source, source.read_bytes(), pages="3-4")
+    with pytest.raises(BabeldocBridgeError, match="page selection contains no PDF pages"):
+        assemble(store, str(source), bilingual=True)
+    assert calls == []
+
+
+def test_pdf_inconsistent_source_count_uses_compatibility_page_selection(pdf_project, monkeypatch):
+    from pypdf.generic import NameObject, NumberObject
+
+    store, source, response, calls = pdf_project
+    with PdfWriter() as writer, BytesIO() as malformed:
+        writer.append(PdfReader(source))
+        writer.pages[0]["/Parent"][NameObject("/Count")] = NumberObject(1)
+        writer.write(malformed)
+        _replace_source(store, source, malformed.getvalue(), pages="2")
+    response["content"] = pdf_bytes(["Target two"])
+
+    def unexpected_native_write(*args):
+        pytest.fail("Native composition must decline an inconsistent page tree")
+
+    monkeypatch.setattr(pdf_writer._epub_native, "pdf_write_spreads", unexpected_native_write)
+    output = PdfReader(assemble(store, str(source), bilingual=True))
+    assert len(calls) == 1 and len(output.pages) == 1
+    assert output.pages[0].extract_text() == "Target two Source two"
+    assert " ".join(output.pages[0].extract_text(extraction_mode="layout").split()) == (
+        "Target two Source two"
+    )
+
+
+@pytest.mark.usefixtures("native_spreads")
 @pytest.mark.parametrize("order", ["target_first", "source_first"])
-@pytest.mark.parametrize("destination_kind", ["direct", "action", "named"])
+@pytest.mark.parametrize("destination_kind", ["direct", "action", "named", "named_tree"])
 def test_pdf_bilingual_links_target_spread_pages_on_the_correct_side(
     pdf_project, destination_kind, order
 ):
@@ -244,7 +287,7 @@ def test_pdf_bilingual_links_target_spread_pages_on_the_correct_side(
             annotation = writer.add_annotation(
                 0, Link(rect=(60, 75, 100, 90), target_page_index=destination, fit=Fit.xyz(60, 90))
             )
-            if destination_kind == "named":
+            if destination_kind in ("named", "named_tree"):
                 named = writer.add_named_destination("reference", destination)
                 assert named is not None
                 named_destination = cast(DictionaryObject, named.get_object())
@@ -258,6 +301,10 @@ def test_pdf_bilingual_links_target_spread_pages_on_the_correct_side(
                     ]
                 )
                 annotation[NameObject("/Dest")] = TextStringObject("reference")
+                if destination_kind == "named_tree":
+                    tree = writer.root_object["/Names"]["/Dests"]
+                    leaf = DictionaryObject({NameObject("/Names"): tree.pop("/Names")})
+                    tree[NameObject("/Kids")] = ArrayObject([writer._add_object(leaf)])
             elif destination_kind == "action":
                 annotation.pop("/Dest")
                 annotation[NameObject("/A")] = writer._add_object(
@@ -307,16 +354,23 @@ def test_pdf_bilingual_links_target_spread_pages_on_the_correct_side(
     )
 
 
-def test_pdf_composition_failure_preserves_previous_output(pdf_project, monkeypatch):
+@pytest.mark.parametrize("use_legacy", [False, True])
+def test_pdf_composition_failure_preserves_previous_output(pdf_project, monkeypatch, use_legacy):
     store, source, _, _ = pdf_project
     output = source.parent / "edition.pdf"
     output.write_bytes(b"previous complete edition")
 
-    def fail(self, path):
+    def fail(path):
         Path(path).write_bytes(b"partial")
         raise OSError("synthetic write failure")
 
-    monkeypatch.setattr(PdfWriter, "write", fail)
+    if use_legacy:
+        monkeypatch.setattr(pdf_writer._epub_native, "pdf_write_spreads", lambda *args: "fallback")
+        monkeypatch.setattr(PdfWriter, "write", lambda self, path: fail(path))
+    else:
+        monkeypatch.setattr(
+            pdf_writer._epub_native, "pdf_write_spreads", lambda source, path, *args: fail(path)
+        )
     with pytest.raises(BabeldocBridgeError, match="write failure"):
         assemble(store, str(source), out_path=str(output), bilingual=True)
     assert output.read_bytes() == b"previous complete edition"

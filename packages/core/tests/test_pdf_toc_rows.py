@@ -120,6 +120,27 @@ def test_fillback_reassembles_rows_and_offsets_annotations_after_resume():
     assert third.target is None
 
 
+def test_pdf_export_projects_fillback_payload_from_one_chapter_read(tmp_path):
+    from wenyi_core.assemble.pdf_writer import _assemble_pdf
+    from wenyi_core.ingest.pdf_babeldoc import rows_from_store
+
+    store, chapter = row_store()
+    chapter.segments[0].target = "第一行\n续行🧪"
+    expected = translations_from_store(store)[2]
+    rows = rows_from_store(store, expected)
+    annotations = annotations_from_store(store, expected)
+    before = chapter.model_dump()
+    store.load_chapter = Mock(return_value=chapter)
+    out = str(tmp_path / "book.pdf")
+    with patch.object(BabeldocBridgeClient, "fillback", return_value=out) as bridge:
+        assert _assemble_pdf(store, "unused.pdf", out, timeout=5) == out
+    bridge.assert_called_once_with(
+        "session", expected, out_path=out, rows=rows, annotations=annotations
+    )
+    store.load_chapter.assert_called_once_with(0)
+    assert chapter.model_dump() == before
+
+
 @pytest.mark.parametrize("corruption", ["missing", "duplicate", "null", "index_type", "count_type"])
 def test_missing_or_duplicate_saved_rows_are_not_silently_overwritten(corruption):
     store, chapter = row_store()
@@ -177,10 +198,12 @@ def test_http_client_requires_row_capability_and_forwards_ranges(tmp_path):
     with patch.object(client, "health", return_value={"capabilities": []}):
         with pytest.raises(BabeldocBridgeError, match="row"):
             client.fillback("session", {"0:11": "text"}, out_path=tmp_path / "out.pdf", rows=rows)
-    response = Mock(status_code=200, content=b"%PDF", headers={})
+    response = Mock(status_code=200, headers={})
+    response.iter_bytes.return_value = [b"%PDF"]
     with (
         patch.object(client, "health", return_value={"capabilities": ["toc-rows-v1"]}),
-        patch("wenyi_core.pdf_bridge.client.httpx.post", return_value=response) as post,
+        patch("wenyi_core.pdf_bridge.client.httpx.stream") as stream,
     ):
+        stream.return_value.__enter__.return_value = response
         client.fillback("session", {"0:11": "text"}, out_path=tmp_path / "out.pdf", rows=rows)
-    assert post.call_args.kwargs["json"]["rows"] == rows
+    assert stream.call_args.kwargs["json"]["rows"] == rows

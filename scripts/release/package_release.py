@@ -35,6 +35,11 @@ def cli_archive(binary: Path, destination: Path) -> None:
     info.compress_type = zipfile.ZIP_DEFLATED
     info.file_size = binary.stat().st_size
     with zipfile.ZipFile(destination, "w") as archive:
+        root = Path(__file__).resolve().parents[2]
+        for material in (root / "LICENSE", root / "packages/core/THIRD_PARTY_NOTICES.md"):
+            archive.writestr(
+                material.name, material.read_bytes(), compress_type=zipfile.ZIP_DEFLATED
+            )
         with binary.open("rb") as source, archive.open(info, "w") as target:
             shutil.copyfileobj(source, target, length=1024 * 1024)
 

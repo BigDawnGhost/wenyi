@@ -63,14 +63,45 @@ Do not add it as a dependency of the [GPLv3-licensed](../../LICENSE) CLI/Core pa
 4. In **Releases → Draft a new release**, select that tag and publish the release.
    Saving a draft does not trigger an upload. A prerelease tag should also be
    marked as a GitHub prerelease.
-5. Open the resulting Actions run. `build`, `publish-core`, and `publish-cli` must succeed.
+5. Open the resulting Actions run. `build`, `wheels`, `publish-core`, and `publish-cli` must succeed.
    The existing CLI/Desktop binary workflows run separately.
 
 The build job checks tag/checkout/version consistency, packaging contracts,
 strict distribution metadata, and bundled language/prompt resources. It installs
 the wheels and source distributions into separate clean Python 3.12 environments,
-checks installed versions and dependency isolation, and runs CLI help/version/
-language-list smoke tests. These checks do not call a model or translate a PDF.
+checks installed versions and dependency isolation, and runs CLI smoke tests.
+A synthetic Markdown → DOCX → HTML → EPUB → TXT round trip exercises the installed
+document adapters. A separate PDF fixture checks native bilingual spread assembly
+without a model or a PDF service.
+
+Core bundles its native document engines as a private PyO3 extension. The `wheels`
+job builds and smoke-tests CPython 3.10+ stable-ABI wheels for glibc Linux
+(x86-64 and ARM64), macOS 13+ (Intel and Apple Silicon), and Windows x64.
+Installing a matching wheel does not require Rust; building from the source
+distribution requires Cargo and a linker.
+CLI remains a pure-Python wheel.
+
+Wenyi's own code uses the SPDX expression `GPL-3.0-only`. Keep the package-local
+`LICENSE` files identical to the repository license so each sdist can build on
+its own, including on Windows. Core also distributes `THIRD_PARTY_NOTICES.md`
+for its locked native dependencies under their original licenses. After changing
+`packages/core/rust/Cargo.lock`, run:
+
+```sh
+cargo fetch --locked --manifest-path packages/core/rust/Cargo.toml
+python scripts/release/core_native_notices.py  # Python 3.11+
+python scripts/release/core_native_notices.py --check
+```
+
+CI compares the license metadata and file contents in the Core and CLI
+distributions, including repaired platform wheels, against the checkout.
+The first-party and Cargo dependency texts are under `.dist-info/licenses/`;
+the CLI release ZIP also includes them beside the executable. Binary wheels
+also carry the building toolchain's standard-library notices in
+`wenyi_core/_licenses/rust-std/`. Official rustup toolchains supply them; if a
+distributor packages them separately, point `WENYI_RUST_LICENSE_DIR` at that
+compiler version's `share/doc/rust` equivalent. CI stops if wheel repair adds
+a shared library that has not been reviewed for distribution.
 
 Only the separate `publish-core` and `publish-cli` jobs receive `id-token: write`.
 Each downloads the verified artifacts without checking out or executing

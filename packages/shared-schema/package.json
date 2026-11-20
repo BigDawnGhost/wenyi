@@ -2,6 +2,7 @@
   "name": "@wenyi/shared-schema",
   "description": "Shared API types for the Wenyi web interface.",
   "private": true,
+  "license": "GPL-3.0-only",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts"

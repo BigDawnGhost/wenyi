@@ -1,4 +1,4 @@
-"""EPUB spawn equivalence, cross-resource barriers and atomic error publication."""
+"""EPUB native worker ordering, cross-resource links and atomic error publication."""
 
 from __future__ import annotations
 
@@ -7,28 +7,23 @@ import runpy
 import sys
 import types
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
-from wenyi_core import resource_pool
-from wenyi_core.assemble import epub_resources
-from wenyi_core.assemble.epub_presentation import EpubPresentation, _rewrite_html_document
-from wenyi_core.assemble.epub_resources import _render_epub_resources
+from wenyi_core.assemble import epub_native
+from wenyi_core.assemble.epub_presentation import _rewrite_html_document
 from wenyi_core.assemble.writer import assemble
-from wenyi_core.ingest import epub_reader
-from wenyi_core.ingest.epub_contexts import _build_epub_annotation_contexts
 from wenyi_core.ingest.epub_reader import read_epub
 from wenyi_core.markup.contracts import ANNOTATION_META_KEY
-from wenyi_core.models.document import Segment
-from wenyi_core.resource_pool import ResourcePool
 from wenyi_core.storage.file import FileStorage
 
 
 def _write_epub(path: Path) -> None:
     """Include multi-file chapters, a spine NAV, an auxiliary note and empty image page."""
-    names = ["nav.xhtml", *[f"page{i}.xhtml" for i in range(8)], "image.xhtml", "notes.xhtml"]
+    names = ["nav.xhtml", *[f"page{i}.xhtml" for i in range(12)], "image.xhtml", "notes.xhtml"]
     manifest = "".join(
         f'<item id="r{i}" href="{name}" media-type="application/xhtml+xml"'
         + (' properties="nav"' if i == 0 else "")
@@ -56,7 +51,7 @@ def _write_epub(path: Path) -> None:
             '<li><a href="page4.xhtml#chapter4">Part two</a></li>'
             "</ol></nav></body></html>",
         )
-        for i in range(8):
+        for i in range(12):
             archive.writestr(
                 f"page{i}.xhtml",
                 "<html><head><title>Resource</title></head><body>"
@@ -65,7 +60,7 @@ def _write_epub(path: Path) -> None:
                 f'<sup id="ref{i}"><a epub:type="noteref" href="notes.xhtml#note">1</a></sup>'
                 '<img src="image.png"/></p>'
                 "<p>First line<br/>Second line <ruby>字<rt>じ</rt></ruby></p>"
-                f'<p><a href="page{(i + 1) % 8}.xhtml#body{(i + 1) % 8}">Next page</a></p>'
+                f'<p><a href="page{(i + 1) % 12}.xhtml#body{(i + 1) % 12}">Next page</a></p>'
                 "</body></html>",
             )
         archive.writestr(
@@ -87,98 +82,15 @@ def _archive_members(path: Path) -> list[tuple[str, int, bytes]]:
         ]
 
 
-def test_pool_budget_counts_only_processed_xhtml_not_binary_assets(tmp_path, monkeypatch):
-    path = tmp_path / "source.epub"
-    _write_epub(path)
-    with zipfile.ZipFile(path, "a") as archive:
-        archive.writestr("large-image.png", b"x" * (3 * 1024 * 1024))
-    budgets = []
-
-    def pool(count, size):
-        budgets.append((count, size))
-        return ResourcePool(0, 0)
-
-    monkeypatch.setattr(epub_reader, "ResourcePool", pool)
-    monkeypatch.setattr(epub_resources, "ResourcePool", pool)
-    document = read_epub(str(path), "en", "zh")
-    with zipfile.ZipFile(path) as archive:
-        _render_epub_resources(
-            archive,
-            document.chapters,
-            document.meta,
-            book_title=document.title,
-            bilingual=False,
-            order="target_first",
-            preserve_source_style=False,
-            source_lang="en",
-        )
-        xhtml_bytes = sum(
-            info.file_size for info in archive.infolist() if info.filename.endswith(".xhtml")
-        )
-        active = {
-            segment.resource_href
-            for chapter in document.chapters
-            for segment in chapter.segments
-            if segment.resource_href
-        }
-        assert budgets == [
-            (11, xhtml_bytes),
-            (len(active), sum(archive.getinfo(href).file_size for href in active)),
-        ]
-        assert all(size < 2 * 1024 * 1024 for _, size in budgets)
-
-
-def test_context_merge_keeps_reference_order_and_deduplicates_targets():
-    keys = ["b.xhtml#b1", "a.xhtml#a1", "b.xhtml#b2", "b.xhtml#b1", "b.xhtml#duplicate"]
-    items = [{"raw_href": key, "target_key": key, "relation": "internal_link"} for key in keys]
-    body = {
-        "href": "body.xhtml",
-        "segments": [
-            Segment(
-                index=0,
-                source="Body",
-                anchor="body0",
-                resource_href="body.xhtml",
-                meta={ANNOTATION_META_KEY: {"items": items}},
-            )
-        ],
-    }
-    targets = []
-    for index, (href, fragments) in enumerate(
-        [
-            ("a.xhtml", ["a1"]),
-            ("b.xhtml", ["b1", "b2", "duplicate", "duplicate"]),
-        ]
-    ):
-        html = (
-            "<html><body>"
-            + "".join(
-                f'<aside epub:type="footnote" id="{fragment}"><p>{fragment} explanation.</p></aside>'
-                for fragment in fragments
-            )
-            + "</body></html>"
-        )
-        targets.append(
-            epub_reader._read_resource(
-                epub_reader._ResourceTask(index, href, html.encode(), "", False, True)
-            )
-        )
-    result = _build_epub_annotation_contexts([body], targets)
-    contexts = result["contexts"]
-    assert isinstance(contexts, dict)
-    assert list(contexts) == keys[:3]
-    assert [item["relation"] for item in items] == ["noteref"] * 4 + ["internal_link"]
-
-
-def test_spawned_parse_and_exports_match_serial_without_mutating_state(tmp_path, monkeypatch):
+def test_concurrent_native_parse_and_exports_are_deterministic(tmp_path):
     path = tmp_path / "source.epub"
     _write_epub(path)
     original = path.read_bytes()
-    monkeypatch.setattr(resource_pool, "_worker_count", lambda *_: 1)
     serial = read_epub(str(path), "ja", "zh")
-    monkeypatch.setattr(resource_pool, "_worker_count", lambda *_: 6)
-    parallel = read_epub(str(path), "ja", "zh")
-    assert parallel.model_dump() == serial.model_dump()
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        copies = list(pool.map(lambda _: read_epub(str(path), "ja", "zh"), range(3)))
+    for parallel in copies:
+        assert parallel.model_dump() == serial.model_dump()
     assert list(parallel.meta["epub_annotation_contexts"]["contexts"]) == ["notes.xhtml#note"]
     relations = [
         item["relation"]
@@ -205,35 +117,36 @@ def test_spawned_parse_and_exports_match_serial_without_mutating_state(tmp_path,
         before = {p.name: p.read_bytes() for p in chapters_dir.glob("*.json")}
         for bilingual in (False, True):
             for fmt in ("epub", "html"):
-                outputs = []
-                for workers in (1, 6):
-                    monkeypatch.setattr(resource_pool, "_worker_count", lambda *_, n=workers: n)
-                    output = tmp_path / f"{fmt}-{bilingual}-{workers}.{fmt}"
-                    assemble(store, str(path), str(output), out_format=fmt, bilingual=bilingual)
-                    outputs.append(
-                        _archive_members(output) if fmt == "epub" else output.read_bytes()
-                    )
-                assert outputs[0] == outputs[1]
+
+                def export(number):
+                    # Each export opens an independent connection to the same saved state.
+                    with closing(FileStorage(store.run_dir)) as reader:
+                        output = tmp_path / f"{fmt}-{bilingual}-{number}.{fmt}"
+                        assemble(
+                            reader, str(path), str(output), out_format=fmt, bilingual=bilingual
+                        )
+                        return _archive_members(output) if fmt == "epub" else output.read_bytes()
+
+                with ThreadPoolExecutor(max_workers=2) as pool:
+                    left, right = pool.map(export, range(2))
+                assert left == right
         assert before == {p.name: p.read_bytes() for p in chapters_dir.glob("*.json")}
     assert path.read_bytes() == original
 
 
-def test_spawned_export_failure_preserves_existing_output_and_releases_pool(tmp_path, monkeypatch):
+def test_native_export_failure_preserves_existing_output(tmp_path):
     path = tmp_path / "source.epub"
     _write_epub(path)
     document = read_epub(str(path), "en", "zh")
     document.chapters[0].segments[0].source = "Source state was replaced"
     output = tmp_path / "existing.epub"
     output.write_bytes(b"previous valid export")
-    monkeypatch.setattr(resource_pool, "_worker_count", lambda *_: 6)
     with closing(FileStorage(str(tmp_path / "state"))) as store:
         store.save_manifest(store.stage_document(document))
         with pytest.raises(ValueError, match="content changed"):
             assemble(store, str(path), str(output))
     assert output.read_bytes() == b"previous valid export"
     assert not list(tmp_path.glob(".*.tmp"))
-    assert resource_pool._POOL_ADMISSION.acquire(blocking=False)
-    resource_pool._POOL_ADMISSION.release()
 
 
 def test_fused_presentation_is_identical_to_final_writer_rewrite(tmp_path):
@@ -245,9 +158,9 @@ def test_fused_presentation_is_identical_to_final_writer_rewrite(tmp_path):
             segment.target = "译文：" + segment.source
     # TOC paths can also be supplied by saved entries; this is not the annotation skip set.
     document.meta["toc_paths"] = []
-    with zipfile.ZipFile(path) as archive:
-        plain = _render_epub_resources(
-            archive,
+
+    def render(**presentation):
+        options = epub_native.options(
             document.chapters,
             document.meta,
             book_title=document.title,
@@ -255,18 +168,12 @@ def test_fused_presentation_is_identical_to_final_writer_rewrite(tmp_path):
             order="source_first",
             preserve_source_style=True,
             source_lang="ja",
+            **presentation,
         )
-        fused = _render_epub_resources(
-            archive,
-            document.chapters,
-            document.meta,
-            book_title=document.title,
-            bilingual=True,
-            order="source_first",
-            preserve_source_style=True,
-            source_lang="ja",
-            presentation=EpubPresentation("zh-Hans", True),
-        )
+        return epub_native.render_resources(path, options)
+
+    plain = render()
+    fused = render(target_lang="zh-Hans", horizontal=True)
     from wenyi_core.assemble.epub_navigation import _is_nav, _rewrite_toc
 
     for href, html in plain.items():

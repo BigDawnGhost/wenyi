@@ -123,6 +123,43 @@ def test_upload_parse_preview_and_workflow_use_sqlite(desktop):
     store.close()
 
 
+def test_export_after_parse_uses_original_without_initializing(desktop):
+    client, backend, fake = desktop
+    pid = upload(client)
+    plan = client.post(f"/desktop/projects/{pid}/exports/plan", json={"format": "epub"})
+    assert plan.status_code == 200, plan.text
+    assert backend.list_exports(pid) == []
+    created = client.post(f"/projects/{pid}/exports", json=plan.json()["request"])
+    assert created.status_code == 200, created.text
+    assert wait_job(created.json()["job_id"])["status"] == "done"
+    content = client.get(f"/desktop/projects/{pid}/exports/{created.json()['export_id']}/content")
+    assert content.status_code == 200
+    with ZipFile(BytesIO(content.content)) as archive:
+        chapter = next(name for name in archive.namelist() if name.endswith("/ch0.xhtml"))
+        assert "A short paragraph." in archive.read(chapter).decode()
+    assert not backend.get_project(pid)["initialized"]
+    assert not fake.calls
+
+
+def test_missing_or_stale_parse_does_not_queue_an_empty_export(desktop):
+    client, backend, _ = desktop
+    pid = upload(client)
+    store = backend.storage_for(pid)
+    try:
+        parsed = store.read_artifact("parsed_document.json")
+        store.write_artifact("parsed_document.json", {**parsed, "source_sha256": "0" * 64})
+        for _ in range(2):
+            assert not client.get(f"/projects/{pid}").json()["output_formats"]
+            for url in (f"/desktop/projects/{pid}/exports/plan", f"/projects/{pid}/exports"):
+                response = client.post(url, json={})
+                assert response.status_code == 409
+                assert response.json()["code"] == "source_not_ready"
+            store.delete_artifact("parsed_document.json")
+        assert not backend.list_exports(pid)
+    finally:
+        store.close()
+
+
 def test_parse_completion_waits_for_run_lock_release(desktop, monkeypatch):
     client, backend, _ = desktop
     releasing, release = threading.Event(), threading.Event()
