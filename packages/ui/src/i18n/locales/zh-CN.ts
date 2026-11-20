@@ -237,7 +237,9 @@ const zhCN = {
   "glossary.couldNotImportTerms": "导入失败：{error}",
   "glossary.importTerms": "导入术语",
   "glossary.importTermsFromCsvOrJsonCsv":
-    "CSV / JSON；CSV 需包含 source、target 列头。",
+    "支持 CSV 或 JSON，最大 {limit} MiB。CSV 需包含 source、target 列头。",
+  "glossary.importFileTooLarge": "文件超过 {limit} MiB，请选择较小的文件。",
+  "glossary.importRequestTooLarge": "解析后的术语表超过 {limit} MiB，未导入任何术语。",
   "glossary.chooseFile": "选择文件",
   "glossary.imported": "导入：",
   "glossary.overwrite": "覆盖",

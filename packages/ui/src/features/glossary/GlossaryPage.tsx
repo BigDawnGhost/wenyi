@@ -280,13 +280,11 @@ export default function GlossaryPage() {
               }}
             />
             <ImportDialog
+              key={pid}
               pid={pid}
               open={importOpen}
               onClose={() => setImportOpen(false)}
-              onSaved={() => {
-                invalidate();
-                setImportOpen(false);
-              }}
+              onChanged={invalidate}
             />
           </>
         )}

@@ -3454,6 +3454,20 @@ export interface operations {
                     };
                 };
             };
+            /** @description Glossary import request exceeds 5 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @constant */
+                        code: "glossary_import_too_large";
+                        message: string;
+                        request_id?: string;
+                    };
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {

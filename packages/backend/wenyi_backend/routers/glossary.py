@@ -4,15 +4,19 @@ from __future__ import annotations
 
 import csv
 import io
+from collections.abc import Awaitable, Callable
 from contextlib import closing
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, Response
+from fastapi.routing import APIRoute
+from starlette.types import Message as ASGIMessage
 from wenyi_core.glossary.anki import export_anki_glossary
 from wenyi_core.i18n.metadata import normalize_term_type
 from wenyi_core.models.glossary import GlossaryTerm
 
 from ..context import current_context
+from ..errors import GLOSSARY_IMPORT_TOO_LARGE, ApiError
 from ..schemas import (
     ConflictOut,
     GlossaryExportFormat,
@@ -27,6 +31,35 @@ from ..schemas import (
 from .dependencies import project_write, read_storage_for, require_project, storage_for
 
 router = APIRouter(prefix="/projects/{pid}/glossary", tags=["glossary"])
+
+MAX_GLOSSARY_IMPORT_MIB = 5
+MAX_GLOSSARY_IMPORT_BYTES = MAX_GLOSSARY_IMPORT_MIB * 1024 * 1024
+
+
+class GlossaryImportRoute(APIRoute):
+    """Bound the actual request body before FastAPI buffers it or takes a write lock."""
+
+    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+        handler = super().get_route_handler()
+
+        async def handle(request: Request) -> Response:
+            size = 0
+
+            async def receive() -> ASGIMessage:
+                nonlocal size
+                message = await request.receive()
+                size += len(message.get("body", b""))
+                if size > MAX_GLOSSARY_IMPORT_BYTES:
+                    raise ApiError(
+                        GLOSSARY_IMPORT_TOO_LARGE,
+                        413,
+                        f"Glossary import request exceeds {MAX_GLOSSARY_IMPORT_MIB} MiB",
+                    )
+                return message
+
+            return await handler(Request(request.scope, receive))
+
+        return handle
 
 
 def _term(body: TermIn) -> GlossaryTerm:
@@ -200,7 +233,6 @@ def export_glossary(pid: str, format: GlossaryExportFormat = "json"):
     )
 
 
-@router.post("/import")
 def import_glossary(pid: str, body: GlossaryImport) -> dict:
     terms = [_term(item) for item in body.terms]
     with project_write(pid) as (_project, storage):
@@ -210,3 +242,29 @@ def import_glossary(pid: str, body: GlossaryImport) -> dict:
                 conflicts += storage.upsert_term(term) == "conflict"
             storage.log_event("glossary_imported", count=len(terms), conflicts=conflicts)
     return {"imported": len(terms), "conflicts": conflicts}
+
+
+router.add_api_route(
+    "/import",
+    import_glossary,
+    methods=["POST"],
+    responses={
+        413: {
+            "description": f"Glossary import request exceeds {MAX_GLOSSARY_IMPORT_MIB} MiB",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["code", "message"],
+                        "properties": {
+                            "code": {"type": "string", "const": GLOSSARY_IMPORT_TOO_LARGE},
+                            "message": {"type": "string"},
+                            "request_id": {"type": "string"},
+                        },
+                    },
+                },
+            },
+        },
+    },
+    route_class_override=GlossaryImportRoute,
+)
