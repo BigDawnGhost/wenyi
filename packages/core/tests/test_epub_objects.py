@@ -497,7 +497,6 @@ def test_adjacent_object_order_survives_save_resume_and_export(tmp_path, out_for
         str(output),
         out_format=out_format,
         bilingual=bilingual,
-        punctuation_normalize=True,
         about_page=False,
     )
     if out_format == "epub":

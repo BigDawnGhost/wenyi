@@ -21,17 +21,6 @@ export function ExportSettings({
     <fieldset disabled={disabled} className="min-w-0 disabled:opacity-50">
       <div className={cn(cardSurface, "overflow-hidden")}>
         <SettingsRow
-          label={t("settings.normalizePunctuationOnExport")}
-          htmlFor="output-punctuation-normalize"
-          control={
-            <Switch
-              id="output-punctuation-normalize"
-              checked={output.punctuation_normalize !== false}
-              onCheckedChange={(checked) => onField("output", "punctuation_normalize", checked)}
-            />
-          }
-        />
-        <SettingsRow
           label={t("settings.bilingualOrder")}
           htmlFor="output-bilingual-order"
           control={

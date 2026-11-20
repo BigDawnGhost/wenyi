@@ -23,7 +23,7 @@ from wenyi_core.storage.run_store import ExportSnapshotStore, source_sha256
 
 
 @pytest.mark.parametrize("fmt", ["epub", "pdf"])
-def test_previously_queued_exports_drop_retired_renderer_option(monkeypatch, fmt):
+def test_previously_queued_exports_drop_retired_options(monkeypatch, fmt):
     closed = []
     context = replace(
         current_context(),
@@ -38,10 +38,25 @@ def test_previously_queued_exports_drop_retired_renderer_option(monkeypatch, fmt
         return "complete-output"
 
     monkeypatch.setattr(bindings, "render_export", render)
-    request = ExportRequest("p", 7, options={"fmt": fmt, "pdf_engine": "retired-engine"})
+    request = ExportRequest(
+        "p", 7, options={"fmt": fmt, "pdf_engine": "retired-engine", "punctuation_normalize": True}
+    )
     assert exporting.execute(request, bindings.export_dependencies(context)) == 7
     assert rendered == [("p", 7, None, fmt)]
     assert closed == ["p"]
+
+
+def test_previously_queued_jobs_keep_other_frozen_config_settings():
+    context = current_context()
+    snapshot = {"output": {"punctuation_normalize": True, "bilingual_order": "source_first"}}
+    context.repository.get_project.return_value = {"id": "p"}
+    context.repository.get_job_by_arq_id.return_value = {"params": {"config_snapshot": snapshot}}
+
+    config = bindings.build_config_for(context, "p", "queued")
+
+    assert config.output.bilingual_order == "source_first"
+    assert "punctuation_normalize" not in config.output.model_dump()
+    assert snapshot["output"]["punctuation_normalize"] is True
 
 
 @pytest.mark.parametrize("order", ["target_first", "source_first"])

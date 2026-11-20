@@ -74,6 +74,19 @@ def test_startup_backs_up_global_and_project_settings_once(saved_catalog):
         assert connection.execute("SELECT count(*) FROM configuration_backups").fetchone()[0] == 2
 
 
+def test_new_catalog_loads_legacy_bootstrap_defaults_without_rewriting_yaml(tmp_path):
+    seed = tmp_path / "config.yaml"
+    original = "output: {punctuation_normalize: true, bilingual_order: source_first}\n"
+    seed.write_text(original, encoding="utf-8")
+
+    backend = LocalBackend(tmp_path / "workspace", str(seed))
+    output = backend.defaults().output
+
+    assert output.bilingual_order == "source_first"
+    assert "punctuation_normalize" not in output.model_dump()
+    assert seed.read_text(encoding="utf-8") == original
+
+
 @pytest.mark.parametrize("failure", ["backup", "replacement"])
 @pytest.mark.parametrize("scope", ["global", "project"])
 def test_backup_and_replacement_roll_back_together(saved_catalog, failure, scope):

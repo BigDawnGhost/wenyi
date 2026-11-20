@@ -203,8 +203,8 @@ separate project/state directory for intentional fresh translations or compariso
 
 ## Re-export without translating again
 
-`wenyi assemble` renders saved state **without translation-model calls**. Use it for
-another format, bilingual order, source styling, or export-only punctuation changes.
+`wenyi assemble` renders saved state **without translation-model calls**. Use it to change
+the output format, bilingual order, or source styling.
 It does not rerun preparation, polishing, Review, or annotation repair.
 
 An export uses one consistent snapshot of the saved book.

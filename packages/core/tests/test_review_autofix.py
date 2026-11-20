@@ -76,7 +76,7 @@ def _agent_final(user: str) -> str:
 
 
 class TestReviewAutofix(unittest.TestCase):
-    def test_export_punctuation_setting_does_not_rewrite_autofix_target(self):
+    def test_publishes_autofix_target_as_proposed(self):
         with tempfile.TemporaryDirectory() as directory:
             store = _store(directory)
             outcome = _outcome(
@@ -92,7 +92,6 @@ class TestReviewAutofix(unittest.TestCase):
                 ],
             )
             config = _config(str(Path(directory, "state")))
-            config.output.punctuation_normalize = True
 
             fixed = Orchestrator(config, client=FakeClient())._review_autofix.run(
                 store, outcome, []

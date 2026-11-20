@@ -92,6 +92,15 @@ def test_valid_saved_workflow_selections_are_not_rewritten(strategy):
     assert strategy == before
 
 
+def test_saved_workflow_drops_retired_export_step_without_resetting_other_steps():
+    original = {"steps": {"polish": False, "punctuation_normalize": True}}
+    result = rebuild_strategy(original)
+    assert result.document == {"steps": {"polish": False}}
+    assert result.removed == ("strategy.steps.punctuation_normalize",)
+    assert original["steps"]["punctuation_normalize"] is True
+    assert not rebuild_strategy(result.document).changed
+
+
 @pytest.mark.parametrize(
     "strategy",
     [

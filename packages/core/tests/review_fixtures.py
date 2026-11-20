@@ -70,7 +70,6 @@ def autofix_config(state_dir: str) -> Config:
                 "review_autofix": True,
                 "review_concurrency": 1,
             },
-            "output": {"punctuation_normalize": False},
             "paths": {"state_dir": state_dir},
         }
     )

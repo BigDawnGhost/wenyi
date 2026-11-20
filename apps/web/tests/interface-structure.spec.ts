@@ -182,7 +182,6 @@ test("export submits saved project preferences and keeps validation failures vis
     });
   });
   await page.goto(`/projects/${pid}/settings`);
-  await page.getByRole("switch", { name: "Normalize punctuation on export", exact: true }).uncheck();
   await page.getByRole("switch", { name: "Include an “About this translation” page", exact: true }).uncheck();
   await chooseOption(page.getByLabel("Bilingual order"), "Source first");
   await page.getByRole("switch", { name: "Preserve source formatting in bilingual output", exact: true }).check();
@@ -197,12 +196,11 @@ test("export submits saved project preferences and keeps validation failures vis
   await expect(page.getByRole("alert")).toContainText("Export validation failed");
   await expect(page.getByLabel("Bilingual order")).toHaveCount(0);
   await expect(page.getByRole("switch")).toHaveCount(0);
-  expect(submitted).toMatchObject({
+  expect(submitted).toEqual({
     format: "epub",
     bilingual: true,
     order: "source_first",
     about_page: false,
-    punctuation_normalize: false,
     preserve_source_style: true,
   });
 });

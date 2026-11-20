@@ -533,7 +533,6 @@ const en = {
   "settings.tokensPerParagraph": "Tokens per paragraph",
   "settings.reviewConcurrency": "Review concurrency",
   "settings.pdfParser": "PDF parser",
-  "settings.normalizePunctuationOnExport": "Normalize punctuation on export",
   "settings.advancedYamlConfiguration": "Advanced YAML configuration",
   "settings.validating": "Validating…",
   "settings.validateConfiguration": "Validate configuration",

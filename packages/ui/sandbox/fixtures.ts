@@ -134,7 +134,7 @@ export const effective = {
     review_concurrency: 4,
     pdf_backend: "mineru",
   },
-  output: { punctuation_normalize: true },
+  output: { about_page: true },
 };
 export const projectEffective = {
   ...effective,

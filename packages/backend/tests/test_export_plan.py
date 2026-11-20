@@ -57,9 +57,12 @@ def test_babeldoc_pdf_export_needs_no_local_rendering_engine(meta):
     assert "pdf_engine" not in options
 
 
-def test_removed_pdf_engine_request_field_is_rejected():
-    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
-        ExportRequest.model_validate({"format": "pdf", "pdf_engine": "removed-engine"})
+@pytest.mark.parametrize(
+    "retired", [{"pdf_engine": "removed-engine"}, {"punctuation_normalize": True}]
+)
+def test_retired_export_request_fields_are_rejected(retired):
+    with pytest.raises(ValidationError, match=next(iter(retired))):
+        ExportRequest.model_validate({"format": "pdf", **retired})
 
 
 @pytest.mark.parametrize(

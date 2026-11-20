@@ -24,7 +24,6 @@ export function registerTests() {
   }
   for (const chinese of [false, true]) {
     const language = chinese ? "Chinese" : "English";
-    const punctuationName = chinese ? "导出时规范标点" : "Normalize punctuation on export";
     const aboutName = chinese ? "附加“关于此翻译”说明页" : "Include an “About this translation” page";
     const saveName = chinese ? "保存配置" : "Save configuration";
     const preferencesName = chinese ? "导出偏好" : "Export preferences";
@@ -48,15 +47,13 @@ export function registerTests() {
       });
       await page.goto("/settings");
       const preferences = page.getByRole("region", { name: preferencesName, exact: true });
-      const punctuation = preferences.getByRole("switch", { name: punctuationName, exact: true });
       const about = preferences.getByRole("switch", { name: aboutName, exact: true });
       const order = preferences.getByRole("combobox", { name: orderName, exact: true });
       const style = preferences.getByRole("switch", { name: styleName, exact: true });
-      await expect(punctuation).toBeChecked();
+      await expect(preferences.getByRole("switch")).toHaveCount(2);
       await expect(about).toBeChecked();
       await expect(order).toHaveText(targetFirst);
       await expect(style).not.toBeChecked();
-      await punctuation.uncheck();
       await about.uncheck();
       await chooseOption(order, sourceFirst);
       await style.check();
@@ -65,35 +62,30 @@ export function registerTests() {
       expect(JSON.parse(await yaml.inputValue())).toMatchObject({
         ...globalConfiguration.effective,
         output: {
-          punctuation_normalize: false, about_page: false,
+          about_page: false,
           bilingual_order: "source_first", bilingual_preserve_source_style: true,
         },
       });
       await yaml.fill(`${await yaml.inputValue()}\n# unvalidated draft`);
       await page.getByRole("link", { name: chinese ? "通用" : "General", exact: true }).click();
-      await expect(punctuation).toBeDisabled();
       await expect(about).toBeDisabled();
       await expect(order).toBeDisabled();
       await expect(style).toBeDisabled();
       await page.reload();
-      await expect(punctuation).toBeChecked();
       await expect(about).toBeChecked();
       expect(writes).toBe(0);
-      await punctuation.uncheck();
       await about.uncheck();
       await chooseOption(order, sourceFirst);
       await style.check();
       await page.getByRole("button", { name: saveName, exact: true }).click();
       await expect(page.getByText(chinese ? "总设置已保存" : "Global settings saved", { exact: true })).toBeVisible();
       await page.reload();
-      await expect(punctuation).not.toBeChecked();
       await expect(about).not.toBeChecked();
       await expect(order).toHaveText(sourceFirst);
       await expect(style).toBeChecked();
       expect(writes).toBe(1);
       await preferences.screenshot({ path: testInfo.outputPath(`general-export-preferences-${language}.png`) });
       await page.goto(`/projects/${pid}/settings`);
-      await expect(page.getByRole("switch", { name: punctuationName, exact: true })).toBeChecked();
       await expect(page.getByRole("switch", { name: aboutName, exact: true })).toBeChecked();
       await expect(page.getByRole("combobox", { name: orderName, exact: true })).toHaveText(targetFirst);
       await expect(page.getByRole("switch", { name: styleName, exact: true })).not.toBeChecked();
@@ -104,7 +96,6 @@ export function registerTests() {
       const initial = {
         ...configuration.effective,
         output: {
-          punctuation_normalize: false,
           about_page: false,
           bilingual: true,
           bilingual_order: "source_first",
@@ -122,26 +113,23 @@ export function registerTests() {
       });
       await page.goto(`/projects/${pid}/settings`);
       const preferences = page.getByRole("region", { name: preferencesName, exact: true });
-      const punctuation = preferences.getByRole("switch", { name: punctuationName, exact: true });
       const about = preferences.getByRole("switch", { name: aboutName, exact: true });
       const order = preferences.getByRole("combobox", { name: orderName, exact: true });
       const style = preferences.getByRole("switch", { name: styleName, exact: true });
-      await expect(punctuation).not.toBeChecked();
+      await expect(preferences.getByRole("switch")).toHaveCount(2);
       await expect(about).not.toBeChecked();
       await expect(order).toHaveText(sourceFirst);
       await expect(style).toBeChecked();
-      await punctuation.check();
       await about.check();
       await chooseOption(order, targetFirst);
       await style.uncheck();
       await page.getByRole("button", { name: saveName, exact: true }).click();
       await expect(page.getByText(chinese ? "项目配置已保存" : "Project settings saved", { exact: true })).toBeVisible();
       expect(saved.effective.output).toEqual({
-        ...initial.output, punctuation_normalize: true, about_page: true,
+        ...initial.output, about_page: true,
         bilingual_order: "target_first", bilingual_preserve_source_style: false,
       });
       await page.reload();
-      await expect(punctuation).toBeChecked();
       await expect(about).toBeChecked();
       await expect(order).toHaveText(targetFirst);
       await expect(style).not.toBeChecked();
@@ -150,7 +138,6 @@ export function registerTests() {
         json: { ...project, status: "translating" },
       }));
       await page.reload();
-      await expect(punctuation).toBeDisabled();
       await expect(about).toBeDisabled();
       await expect(order).toBeDisabled();
       await expect(style).toBeDisabled();
@@ -161,7 +148,6 @@ export function registerTests() {
       await fakeApi(page);
       await page.goto(`/projects/${pid}/export`);
       await expect(page.getByRole("button", { name: chinese ? "生成导出文件" : "Generate export", exact: true })).toBeEnabled();
-      await expect(page.getByRole("switch", { name: punctuationName, exact: true, includeHidden: true })).toHaveCount(0);
       await expect(page.getByRole("switch", { name: aboutName, exact: true, includeHidden: true })).toHaveCount(0);
       const advanced = page.getByText(chinese ? "排版与高级选项" : "Layout and advanced options", { exact: true });
       await expect(advanced).toHaveCount(0);
