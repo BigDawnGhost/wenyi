@@ -7,12 +7,15 @@ entire paragraphs from being omitted.
 
 from __future__ import annotations
 
+import json
+
 from ..alignment.objects import marked_sources
 from ..llm.json_parser import JsonParseError
 from ..llm.retrying import TruncatedResponseError
 from ..models.glossary import GlossaryTerm
 from . import prompts
 from .base import Agent, Messages
+from .note_tools import batch_note_tools
 
 
 class AlignmentError(Exception):
@@ -130,9 +133,7 @@ class Translator(Agent):
                 glossary_terms,
                 source_lang=self.src,
                 genre=self.language_policy.context.genre,
-                note_source="\n".join(sources)
-                if self.config.pipeline.terminology_context
-                else None,
+                note_source="\n".join(sources) if self.config.pipeline.use_glossary_notes else None,
             ),
             annotation_contexts=prompts.render_annotation_contexts(
                 annotation_contexts or [[] for _ in sources]
@@ -144,6 +145,13 @@ class Translator(Agent):
             numbered_source=prompts.numbered(model_sources),
             next_source=prompts.render_source_reference(next_source),
         )
+        tools = (
+            batch_note_tools(glossary_terms, "\n".join(sources))
+            if self.config.pipeline.glossary_note_workers
+            else None
+        )
+        if tools is not None:
+            user += "\n" + self.render("glossary_note_lookup")
         messages: Messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -152,6 +160,22 @@ class Translator(Agent):
         # successful responses enter alignment recovery, avoiding duplicate retries for 401/403/5xx errors.
         try:
             data, raw = self._complete_json_turn(messages, operation="translation.body")
+            if tools is not None and isinstance(data, dict) and set(data) == {"read_note"}:
+                try:
+                    page = tools.call("read_note", data["read_note"])
+                except ValueError as error:
+                    raise AlignmentError("Invalid read_note request") from error
+                messages.extend(
+                    [
+                        {"role": "assistant", "content": raw},
+                        {
+                            "role": "user",
+                            "content": json.dumps({"note_evidence": page}, ensure_ascii=False)
+                            + "\nNow return only the requested translations.",
+                        },
+                    ]
+                )
+                data, raw = self._complete_json_turn(messages, operation="translation.body")
         except TruncatedResponseError as error:
             raise AlignmentError(
                 "The translation response reached the output token limit"

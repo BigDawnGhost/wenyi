@@ -50,7 +50,7 @@ pipeline:
   polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
   translation_mode: standard # standard | three_draft_synthesis; three_draft_synthesis requires polish
   rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)
-  terminology_context: false # CLI-only experimental whole-book terminology evidence
+  glossary_note_workers: 0 # Incremental evidence notes: 0 disables, 1-16 workers per batch
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
   # Prescan content budgets in cl100k_base tokens; prompt/context overhead is additional.
@@ -114,6 +114,18 @@ class PipelineConfig(BaseModel):
             raise ValueError("three_draft_synthesis translation mode requires pipeline.polish=true")
         return self
 
+    @model_validator(mode="before")
+    @classmethod
+    def retire_terminology_context(cls, raw: Any) -> Any:
+        # Older default YAML explicitly disabled the removed pretranslation experiment.
+        if isinstance(raw, dict) and "terminology_context" in raw:
+            if raw["terminology_context"] is not False:
+                raise ValueError(
+                    "pipeline.terminology_context has been removed; use glossary_note_workers for incremental notes"
+                )
+            return {key: value for key, value in raw.items() if key != "terminology_context"}
+        return raw
+
     review: bool = True
     # Additional structural retries for standard translation and precision generation/synthesis.
     align_retry_limit: int = 2
@@ -121,8 +133,13 @@ class PipelineConfig(BaseModel):
         True  # Polish the full translation with the strong tier by default; disable to save cost
     )
     rolling_context_tokens: int = Field(default=512, ge=0)
-    # Experimental evidence production requires the CLI prepare/translate entrypoint.
-    terminology_context: bool = False
+    # Note generation requires an opted-in workflow runner.
+    glossary_note_workers: int = Field(default=0, ge=0, le=16)
+
+    @property
+    def use_glossary_notes(self) -> bool:
+        return self.glossary_note_workers > 0
+
     # Prescan for a synopsis and chapter digests; disable to save prescan cost.
     book_understanding: bool = True
     prescan_concurrency: int = (
@@ -280,35 +297,30 @@ class Config(BaseModel):
             order=self.output.bilingual_order,
             preserve_source_style=self.output.bilingual_preserve_source_style,
             about_page=self.output.about_page,
-            terminology_context=self.pipeline.terminology_context,
             genre=self._prompt_genre,
         )
         return resolve_policy(context)
 
     def _policy_tasks(self, phase: Phase) -> tuple[str, ...]:
-        terminology = (
-            ("terminology_discover", "terminology_evidence", "terminology_merge")
-            if self.pipeline.terminology_context
-            else ()
-        )
         if phase == "analysis":
             return (
                 ("analyzer", "chapter_digest", "book_synopsis")
                 if self.pipeline.book_understanding
                 else ("analyzer",)
-            ) + terminology
+            )
         if phase == "translation":
+            notes = ("glossary_note",) if self.pipeline.glossary_note_workers else ()
             if self.pipeline.translation_mode == "three_draft_synthesis":
                 return (
                     "precision",
                     "title_translator",
                     "glossary_extractor",
                     "glossary_history",
-                ) + terminology
+                ) + notes
             return (
                 ("translator", "title_translator", "glossary_extractor", "glossary_history")
                 + (("polisher",) if self.pipeline.polish else ())
-                + terminology
+                + notes
             )
         if phase == "review":
             groups = ["reviewer"]

@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from ...agents.glossary_extractor import TranslatedSegmentEvidence
+from ...agents.glossary_note import GlossaryNoteAgent
 from ...config import PipelineConfig
 from ...events import ProgressFn
 from ...glossary.store import GlossaryStore
@@ -26,8 +27,8 @@ from ...storage.run_store import STATUS_DONE
 from ..annotate.docx_styles import DocxStyleService
 from .babeldoc_context import BabeldocContext
 from .context import render_recent_translations
+from .glossary_notes import GlossaryNotes
 from .precision import PrecisionBatchExecutor, PrecisionError
-from .terminology import TerminologyService
 from .title_translation import TitleTranslationService
 from .translation_batch import BatchPlan, BatchResult, TranslationBatchExecutor, resume_batches
 
@@ -68,7 +69,7 @@ class TranslationService:
         The caller restores languages, validates only_chapter and prepares the synopsis.
         This method performs body and title translation with restored context.
         """
-        self._runtime.require_terminology_context_access()
+        self._runtime.require_glossary_note_access()
         PipelineConfig.model_validate(self._runtime.config.pipeline.model_dump())
         manifest = store.load_manifest()
         glossary = store
@@ -85,16 +86,6 @@ class TranslationService:
         total, done = self.progress_counts(store, progress_chapters)
         translation_history, source_corpus = self.load_translation_inputs(store)
         annotation_context_registry = store.load_annotation_contexts()
-        policy = self._runtime.config.language_policy("translation")
-        terminology = (
-            TerminologyService.for_store(
-                store,
-                self._runtime.terminology_agent,
-                checkpoint_usage=lambda: self._runtime.usage.flush(store, scope="terminology"),
-            )
-            if policy.enabled("terminology.context")
-            else None
-        )
         store.log_event(
             "translate_run_started",
             only_chapter=only_chapter,
@@ -117,7 +108,6 @@ class TranslationService:
                     done=done,
                     total=total,
                     allow_empty_translations=allow_empty_translations,
-                    terminology=terminology,
                 )
                 self._runtime.usage.flush(store, scope="chapter")
             # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
@@ -232,7 +222,6 @@ class TranslationService:
         done: int = 0,
         total: int = 0,
         allow_empty_translations: bool = False,
-        terminology: TerminologyService | None = None,
     ) -> int:
         """Translate, polish, extract and persist one chapter; return the updated
         completed-paragraph count.
@@ -240,7 +229,6 @@ class TranslationService:
         with store.state_lock():
             chapter = store.load_chapter(ci)
             self._precision.recover_publications(store, chapter)
-        analysis = store.load_analysis()
         text_segs = chapter.text_segments
         if not text_segs:
             store.set_chapter_status(ci, STATUS_DONE)
@@ -254,6 +242,16 @@ class TranslationService:
         )
 
         batches = self._chapter_batches(chapter)
+        notes = (
+            GlossaryNotes(
+                GlossaryNoteAgent(self._runtime.client, self._runtime.config),
+                store,
+                translation_history,
+            )
+            if self._runtime.config.pipeline.glossary_note_workers
+            else None
+        )
+        covered_notes: set[str] = set()
         label = self.chapter_progress_label(chapter.title, ci)
         # Preparation often ends with a parsing label, but resume may first restore glossary terms.
         # Refresh at chapter start so the whole model call is not incorrectly labeled as source parsing.
@@ -299,9 +297,12 @@ class TranslationService:
                         b,
                         translation_history,
                         source_corpus,
-                        terminology=terminology,
+                        admission=notes,
                     )
                     glossary_checkpoints.add(glossary_key)
+                    term_snapshot_stale = True
+                if notes is not None:
+                    covered_notes.update(notes.maintain(ci, batch_start, b))
                     term_snapshot_stale = True
                 store.log_event(
                     "batch_skipped",
@@ -320,28 +321,9 @@ class TranslationService:
                     progress(done, total, label)
                 continue
 
-            if terminology is not None:
-                terminology.prepare_batch(
-                    ci,
-                    b,
-                    extractor=self._runtime.extractor,
-                    history=translation_history.values(),
-                    before=(ci, batch_start),
-                )
-                term_snapshot_stale = True
             if term_snapshot_stale:
                 term_snapshot = glossary.all_terms()
                 term_snapshot_stale = False
-            batch_style = (
-                self._runtime.analyzer.style_brief(
-                    analysis,
-                    terms=term_snapshot
-                    if self._runtime.config.pipeline.terminology_context
-                    else None,
-                )
-                if analysis is not None
-                else style
-            )
 
             next_index = batch_start + len(b)
             body_context = context_policy is None or context_policy.body[batch_start]
@@ -361,7 +343,7 @@ class TranslationService:
                 b,
                 term_snapshot,
                 ctx_text,
-                batch_style,
+                style,
                 book_synopsis if body_context else "",
                 chapter_digest if body_context else "",
                 annotation_contexts[batch_start : batch_start + len(b)],
@@ -425,8 +407,10 @@ class TranslationService:
                 b,
                 translation_history,
                 source_corpus,
-                terminology=terminology,
+                admission=notes,
             )
+            if notes is not None:
+                covered_notes.update(notes.maintain(ci, batch_start, b))
             self.update_translation_history(translation_history, ci, batch_start, b)
             glossary_checkpoints.add(glossary_key)
             # The glossary may have changed; refresh before the next real translation, not after the final batch.
@@ -444,8 +428,10 @@ class TranslationService:
             history=translation_history.values(),
             before=(ci, len(text_segs)),
             source_corpus=source_corpus,
-            **({"admit": terminology.admit} if terminology is not None else {}),
+            **({"admit": notes.admit} if notes is not None else {}),
         )
+        if notes is not None:
+            notes.maintain(ci, 0, text_segs, exclude=covered_notes)
         store.log_event(
             "chapter_glossary_extracted",
             chapter=ci,
@@ -536,7 +522,7 @@ class TranslationService:
         translation_history: dict[tuple[int, int], TranslatedSegmentEvidence],
         source_corpus: str,
         *,
-        terminology: TerminologyService | None = None,
+        admission: GlossaryNotes | None = None,
     ) -> dict[str, int]:
         """Extract terms immediately after translating or resuming a batch for use by later
         chapter batches.
@@ -551,7 +537,7 @@ class TranslationService:
             history=translation_history.values(),
             before=(chapter, start_index),
             source_corpus=source_corpus,
-            **({"admit": terminology.admit} if terminology is not None else {}),
+            **({"admit": admission.admit} if admission is not None else {}),
         )
         store.log_event(
             "batch_glossary_extracted",

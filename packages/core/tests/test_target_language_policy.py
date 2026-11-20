@@ -28,7 +28,7 @@ def test_generated_text_keeps_complete_output_rules_in_every_stage(
         {
             "language": {"source": source, "target": target},
             "pipeline": {
-                "terminology_context": True,
+                "glossary_note_workers": 1,
                 "translation_mode": (
                     "three_draft_synthesis" if task == "precision_generation_system" else "standard"
                 ),
@@ -60,7 +60,6 @@ def test_generated_text_keeps_complete_output_rules_in_every_stage(
         "book_synopsis_system",
         "glossary_extractor_system",
         "glossary_history_system",
-        "terminology_discover_system",
         "reviewer_system",
         "review_agent_system",
         "review_arbiter_system",
@@ -73,7 +72,7 @@ def test_output_rule_does_not_change_preparation_extraction_or_review_decisions(
 
 def test_source_identity_references_remain_original_not_target_renderings():
     analyzer = render("analyzer_system", src="fr", tgt="zh")
-    assert "Preserve source exactly in its original language" in analyzer
+    assert '"source":"Exact source spelling for identification only"' in analyzer
     assert "do not propose translated names" in analyzer
     digest = render("chapter_digest_system", src="fr", tgt="zh")
     assert "quote character and terminology identities in their original source spelling" in digest
@@ -85,7 +84,7 @@ def test_source_identity_references_remain_original_not_target_renderings():
 def test_shared_rule_revision_is_frozen_and_only_invalidates_consuming_tasks(monkeypatch, mode):
     values = {
         "language": {"source": "fr", "target": "zh"},
-        "pipeline": {"translation_mode": mode, "terminology_context": True},
+        "pipeline": {"translation_mode": mode, "glossary_note_workers": 1},
         "output": {"about_page": False},
     }
     original = Config.from_dict(values)
@@ -118,7 +117,7 @@ def test_shared_rule_revision_is_frozen_and_only_invalidates_consuming_tasks(mon
         assert revised.language_policy("analysis").task_fingerprint(task) == before[
             "analysis"
         ].task_fingerprint(task)
-    for task in ("glossary_extractor", "glossary_history", "terminology_discover"):
+    for task in ("glossary_extractor", "glossary_history", "glossary_note"):
         assert revised.language_policy().task_fingerprint(task) == before[
             "translation"
         ].task_fingerprint(task)

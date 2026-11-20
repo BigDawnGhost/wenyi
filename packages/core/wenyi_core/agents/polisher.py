@@ -38,14 +38,8 @@ class Polisher(Agent):
                 source_lang=self.src,
                 genre=self.language_policy.context.genre,
                 note_source=(
-                    "\n".join(sources or []) if self.config.pipeline.terminology_context else None
+                    "\n".join(sources or []) if self.config.pipeline.use_glossary_notes else None
                 ),
-            ),
-            source_context=(
-                "[Current source paragraphs: reference only, not additional output items]\n"
-                + prompts.numbered(sources)
-                if sources and self.config.pipeline.terminology_context
-                else ""
             ),
             style=style or "(none)",
             n=n,

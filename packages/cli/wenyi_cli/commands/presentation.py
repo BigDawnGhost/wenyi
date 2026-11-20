@@ -100,6 +100,10 @@ def print_review_summary(console: Console, review_result: dict[str, Any], run_di
         console.print(
             "Review produced recommendations only; formal chapter translations are unchanged."
         )
+    if summary.get("glossary_alert_count"):
+        console.print(
+            f"Glossary notes to check: {summary['glossary_alert_count']} (rounds/final/glossary_alerts.json)"
+        )
     console.print(f"Review directory: {run_dir}")
 
 
@@ -114,6 +118,10 @@ def print_review_details(
         f"issues: {review_summary.get('issue_count', 0)}, "
         f"suggested changes: {review_summary.get('change_count', 0)}."
     )
+    if review_summary.get("glossary_alert_count"):
+        console.print(
+            f"Glossary notes to check: {review_summary['glossary_alert_count']} (rounds/final/glossary_alerts.json)"
+        )
     console.print(f"Review directory: {run_dir}")
 
 

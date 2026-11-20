@@ -236,25 +236,28 @@ still necessary. Web/Desktop creation-time choices are covered in the
 
 <a id="terminology-context"></a>
 
-### Experimental terminology evidence
+### Incremental glossary notes
 
-Set `pipeline.terminology_context: true` to enable CLI-only whole-book source
-evidence for person entries. Inspect its routes before using it:
-
-```bash
-wenyi models explain --operation terminology.evidence
-wenyi models check --for translate
-wenyi translate book.epub
-```
-
-This adds person discovery and evidence work to pending translation batches;
-`prepare` still does not extract or seed terms. Other term types keep ordinary
-posttranslation extraction. Existing authoritative names and protected manual
-fields are retained. The feature adds context, model calls, and initial latency;
-it is off by default and is not a per-occurrence word-sense system.
-Review may consume saved notes but does not produce this evidence.
-See [context and glossary](pipeline.md#context-and-glossary) before enabling it
-for a long book.
+For incremental notes, set `pipeline.glossary_note_workers: 4`. Run `wenyi translate book.epub` as usual. After each
+translated batch the `glossary.note` workers maintain matching entries in parallel,
+without reading future chapters. The next batch waits for publication. Each new fact
+cites source slices (`c<chapter>:s<paragraph>:<start>-<end>`, zero-based, end exclusive).
+A correction names the earlier fact, explains the contradiction and cites new evidence;
+an unrelated fact remains active. Workers can reopen earlier slices cited by this term.
+Translation sees current facts for matched terms and contexts, not superseded decisions;
+standard translation can request a page of history. Kinship that depends on the speaker
+or addressee belongs in the named person's evidence, not a required mapping for every
+occurrence of the expression. Existing glossary mappings are not automatically removed.
+If a note response is unreadable or a proposed condition is absent from its cited text,
+the worker has one repair turn. Unsupported facts are recorded as not adopted; valid
+siblings survive and translation continues. Resuming the same batch skips these decisions;
+later batches can contribute new evidence. Provider, quota and storage failures still stop the run.
+Review checks each paragraph against the stored mapping and applicable saved notes, even
+when note generation is off. A source-supported text error can enter the revision workflow;
+a discrepancy in the glossary itself goes to `rounds/final/glossary_alerts.json` in the
+Review directory for human inspection. Such alerts never authorize Autofix or edit the glossary.
+The workers never resolve mapping conflicts or revise saved paragraphs. Compare usage for `glossary.note` and `translation.body`
+before increasing concurrency: parallel calls are not cheaper calls.
 
 <a id="resume"></a>
 

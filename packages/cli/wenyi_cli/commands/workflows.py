@@ -176,7 +176,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             config.pipeline.review = False
         context().validate_api_configuration(config, "translate")
         require_input_file(input_path, console=console)
-        orch = Orchestrator(config, allow_terminology_context=True)
+        orch = Orchestrator(config, allow_glossary_notes=True)
 
         with (
             orch.client.interrupt_scope(),
@@ -242,7 +242,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             config = context().load_config()
             context().validate_api_configuration(config, "prepare")
             require_input_file(input_path, console=console)
-            orch = Orchestrator(config, allow_terminology_context=True)
+            orch = Orchestrator(config, allow_glossary_notes=True)
             with (
                 orch.client.interrupt_scope(),
                 Progress(

@@ -117,7 +117,7 @@ class PreparationService:
         PDF state follows the filename, allowing manifest checks before repeated external
         conversion. Cache the initial converted HTML within that state directory.
         """
-        self._runtime.require_terminology_context_access()
+        self._runtime.require_glossary_note_access()
         if self._runtime.storage is not None:
             store = self._runtime.storage
             source_hash = source_sha256(input_path)
@@ -306,7 +306,7 @@ class PreparationService:
         manifest = store.load_manifest()
         self._runtime.apply_manifest_languages(manifest)
         if phase == "translation":
-            self._runtime.require_terminology_context_access()
+            self._runtime.require_glossary_note_access()
         if phase == "translation" and translation_revision(store, self._runtime.config):
             self._rebuild_analysis(store, manifest)
         return manifest

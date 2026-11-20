@@ -1511,6 +1511,11 @@ export interface components {
              */
             translation_mode: "standard" | "three_draft_synthesis";
             /**
+             * Glossary Notes
+             * @default false
+             */
+            glossary_notes: boolean;
+            /**
              * Prompt Genre
              * @default literary
              * @enum {string}

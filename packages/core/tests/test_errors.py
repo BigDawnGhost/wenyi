@@ -90,10 +90,6 @@ def test_agent_errors_join_the_shared_base_but_keep_their_parents():
     from wenyi_core.agents.review_actions import ReviewLoopProtocolError
     from wenyi_core.agents.review_fixer import ReviewFixerProtocolError
     from wenyi_core.agents.reviewer import ReviewOutputError
-    from wenyi_core.agents.terminology import (
-        TerminologyKnowledgeError,
-        TerminologyReferenceError,
-    )
     from wenyi_core.agents.title_translator import TitleOutputError
 
     value_errors = [
@@ -102,8 +98,6 @@ def test_agent_errors_join_the_shared_base_but_keep_their_parents():
         ReviewLoopProtocolError,
         ReviewFixerProtocolError,
         ReviewOutputError,
-        TerminologyKnowledgeError,
-        TerminologyReferenceError,
     ]
     for error_type in value_errors:
         assert issubclass(error_type, WenyiError), error_type

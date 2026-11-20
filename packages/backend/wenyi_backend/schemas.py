@@ -22,6 +22,7 @@ class ProjectCreate(RequestModel):
     prepare: bool = False
     pdf_backend: Literal["mineru", "babeldoc"] | None = None
     translation_mode: Literal["standard", "three_draft_synthesis"] = "standard"
+    glossary_notes: bool = Field(default=False, strict=True)
     prompt_genre: Genre = DEFAULT_GENRE
     #: Where the project directory is created, when the host lets a person choose.
     #:

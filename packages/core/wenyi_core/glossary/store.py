@@ -161,6 +161,22 @@ def term_match_sources(term: GlossaryTerm) -> list[str]:
     return [term.source, *term.aliases]
 
 
+def trusted_match_sources(term: GlossaryTerm, all_terms: list[GlossaryTerm]) -> list[str]:
+    """For note citations, use aliases only when no other glossary identity claims them."""
+    canonical = _match_text(term.source).strip()
+    claimed = {
+        _match_text(key).strip()
+        for other in all_terms
+        if _match_text(other.source).strip() != canonical
+        for key in [other.source, *other.aliases]
+    }
+    return [
+        key
+        for key in dict.fromkeys(term_match_sources(term))
+        if key == term.source or (term.status == "ok" and _match_text(key).strip() not in claimed)
+    ]
+
+
 def _source_occurrence_spans(source: str, normalized_text: str) -> list[tuple[int, int]]:
     """Return nonoverlapping source-term spans in normalized text."""
     key = _match_text(source).strip()
