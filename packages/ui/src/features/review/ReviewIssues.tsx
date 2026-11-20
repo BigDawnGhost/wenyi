@@ -85,7 +85,7 @@ export function ReviewIssues({
           </Select>
         </div>
       </div>
-      <ul aria-label={t("common.reviewIssues")} className="divide-y divide-black/[0.05] border-y border-black/[0.05] dark:divide-white/[0.07] dark:border-white/[0.07]">
+      <ul aria-label={t("common.reviewIssues")} className="divide-y divide-subtle border-y border-subtle">
         {filtered.map((item) => {
           const state = itemStatuses[item.status || "pending"];
           return (

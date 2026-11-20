@@ -2,6 +2,8 @@ import { Switch } from "../../components/ui/form";
 import { Select, SelectItem } from "../../components/ui/select";
 import { useI18n } from "../../i18n";
 import { SettingsRow, SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 
 export function ExportSettings({
   config,
@@ -16,8 +18,8 @@ export function ExportSettings({
   const output = (config.output || {}) as Record<string, unknown>;
 
   return (
-    <fieldset disabled={disabled} className="min-w-0 disabled:opacity-60">
-      <div className="overflow-hidden rounded-xl border border-border bg-card">
+    <fieldset disabled={disabled} className="min-w-0 disabled:opacity-50">
+      <div className={cn(cardSurface, "overflow-hidden")}>
         <SettingsRow
           label={t("settings.normalizePunctuationOnExport")}
           htmlFor="output-punctuation-normalize"

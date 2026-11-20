@@ -141,15 +141,15 @@ class ReviewService:
 
         chapter_rows = manifest.get("chapters", [])
         if progress:
-            progress(0, len(chapter_rows), "Loading review chapters")
+            progress(0, len(chapter_rows), "progress.stage.reviewChapters")
         loaded = []
         for position, item in enumerate(chapter_rows, start=1):
             loaded.append(store.load_chapter(item["index"]))
             if progress:
-                progress(position, len(chapter_rows), "Loading review chapters")
+                progress(position, len(chapter_rows), "progress.stage.reviewChapters")
         total = sum(len(chapter.text_segments) for chapter in loaded)
         if progress:
-            progress(0, 0, "Restoring review checkpoint…")
+            progress(0, 0, "progress.stage.reviewCheckpoint")
         analysis = store.load_analysis() or {}
         annotation_context_registry = store.load_annotation_contexts()
         reviewed_content_digest = content_digest(loaded)
@@ -276,7 +276,7 @@ class ReviewService:
         try:
             for review_round in range(start_round, max_review_rounds + 1):
                 if progress:
-                    progress(0, 0, f"Preparing review R{review_round}…")
+                    progress(0, 0, f"progress.stage.reviewPrepare:{review_round}")
                 overlay_digest = review_overlay_digest(loaded, state.target_overrides)
                 evidence = BookEvidenceIndex(
                     loaded,

@@ -37,13 +37,16 @@ for (const format of ["csv", "json", "apkg"] as const) {
       command: "native_glossary_save", args: { projectId: pid, format },
     }]);
     const button = page.getByRole("button", { name: "Export", exact: true });
-    await expect(button).toBeDisabled();
+    await expect(button).toHaveAttribute("aria-busy", "true");
+    await expect(button).toBeEnabled();
+    await button.click();
+    await expect(page.getByRole("button", { name: label, exact: true })).toHaveCount(0);
     await page.evaluate(format => {
       (window as unknown as { finishGlossarySave: (value: unknown) => void })
         .finishGlossarySave({ path: `/fixture/术语.${format}` });
     }, format);
     await expect(page.getByText(`Saved to /fixture/术语.${format}`, { exact: true })).toBeVisible();
-    await expect(button).toBeEnabled();
+    await expect(button).not.toHaveAttribute("aria-busy", "true");
     expect(browserDownloads).toEqual([]);
   });
 }
@@ -54,22 +57,22 @@ for (const structured of [false, true]) {
     const button = page.getByRole("button", { name: "Export", exact: true });
     await button.click();
     await page.getByRole("button", { name: "Anki deck (.apkg)", exact: true }).click();
-    await expect(button).toBeDisabled();
+    await expect(button).toHaveAttribute("aria-busy", "true");
     await page.evaluate(() => {
       (window as unknown as { finishGlossarySave: (value: unknown) => void }).finishGlossarySave(null);
     });
-    await expect(button).toBeEnabled();
+    await expect(button).not.toHaveAttribute("aria-busy", "true");
     await expect(page.getByText(/^Saved to /)).toHaveCount(0);
     await button.click();
     await page.getByRole("button", { name: "Anki deck (.apkg)", exact: true }).click();
-    await expect(button).toBeDisabled();
+    await expect(button).toHaveAttribute("aria-busy", "true");
     await page.evaluate(structured => {
       const message = "The destination is read-only.";
       (window as unknown as { failGlossarySave: (reason: unknown) => void })
         .failGlossarySave(structured ? { code: "export_write_failed", message } : message);
     }, structured);
     await expect(page.getByText("The destination is read-only.", { exact: true })).toBeVisible();
-    await expect(button).toBeEnabled();
+    await expect(button).not.toHaveAttribute("aria-busy", "true");
   });
 }
 
@@ -85,7 +88,8 @@ test("glossary saving reports completion after navigating to another page", asyn
   await page.goto(`/projects/${pid}/glossary`);
   await page.getByRole("button", { name: "Export", exact: true }).click();
   await page.getByRole("button", { name: "JSON file", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Export", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Export", exact: true }))
+    .toHaveAttribute("aria-busy", "true");
   await page.getByRole("link", { name: "Translation overview", exact: true }).click();
   await page.evaluate(() => {
     (window as unknown as { finishGlossarySave: (value: unknown) => void })

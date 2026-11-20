@@ -82,7 +82,7 @@ Restore a consistent set of catalog and project files, not a lone older database
 
 ## Import existing projects
 
-Use **Import existing project** on the project list for a Desktop project directory moved on this computer or copied from another computer. This is different from selecting a source book in **Create project**, and is not a CLI/Web migration tool.
+Use **Import existing project** below the project cards in **My projects** for a Desktop project directory moved on this computer or copied from another computer. This is different from selecting a source book in **Create project**, and is not a CLI/Web migration tool.
 
 Import accepts only **current-format Desktop projects**. It checks saved state, project identity, and the original file before accepting the folder. Old or missing project markers, missing `state.sqlite3`, unreadable metadata, an ambiguous original, a checksum mismatch, or a damaged/conflicting marker are refused. Restore the matching original rather than attaching saved translations to changed source text. Already registered project identities are not imported again.
 

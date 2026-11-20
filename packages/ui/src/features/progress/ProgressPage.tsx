@@ -2,7 +2,7 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { useI18n } from "../../i18n";
 import { useParams, Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LoaderCircle, Pause, Play, type LucideIcon } from "lucide-react";
+import { Pause, Play, type LucideIcon } from "lucide-react";
 import { api, isProjectBusy } from "../../api/client";
 import type { ChapterSummary } from "../../api/types";
 import { useProjectQuery } from "../../lib/projectQuery";
@@ -65,6 +65,31 @@ export default function ProgressPage() {
     project?.total_word_count ||
     0;
   const paused = project?.status === "paused";
+  // Which control the header offers, as data rather than as three conditional
+  // elements: the button survives the switch and keeps its hover state.
+  const taskControl =
+    busy && project?.status !== "parsing"
+      ? {
+          kind: "pause" as const,
+          label: "progress.pause" as const,
+          icon: Pause,
+          pending: action.isPending || project?.status === "pausing",
+        }
+      : paused || project?.status === "error"
+        ? {
+            kind: "resume" as const,
+            label: "progress.resumeTask" as const,
+            icon: Play,
+            pending: action.isPending,
+          }
+        : !busy && !paused && project?.status !== "error" && project?.fmt
+          ? {
+              kind: "translate" as const,
+              label: "common.startTranslation" as const,
+              icon: Play,
+              pending: action.isPending,
+            }
+          : null;
   const pct = total > 0 ? Math.round((done / total) * 100) : 0;
 
   return (
@@ -77,35 +102,19 @@ export default function ProgressPage() {
           title: project?.title || tr("progress.waitingForSource"),
         })}
         actions={
-          <>
-            {!busy &&
-              !paused &&
-              project?.status !== "error" &&
-              project?.fmt && (
-                <TaskControlButton
-                  label={tr("common.startTranslation")}
-                  icon={Play}
-                  pending={action.isPending}
-                  onClick={() => action.mutate("translate")}
-                />
-              )}
-            {busy && project?.status !== "parsing" && (
-              <TaskControlButton
-                label={tr("progress.pause")}
-                icon={Pause}
-                pending={action.isPending || project?.status === "pausing"}
-                onClick={() => action.mutate("pause")}
-              />
-            )}
-            {(paused || project?.status === "error") && (
-              <TaskControlButton
-                label={tr("progress.resumeTask")}
-                icon={Play}
-                pending={action.isPending}
-                onClick={() => action.mutate("resume")}
-              />
-            )}
-          </>
+          /* One button that changes role, not three that take turns being
+             mounted. Swapping the element under a stationary cursor unmounts the
+             hovered control and mounts a fresh one, and the replacement has never
+             been hovered, so its background animates in from transparent — the
+             flash. Keeping the same node keeps the hover state with it. */
+          taskControl && (
+            <TaskControlButton
+              label={tr(taskControl.label)}
+              icon={taskControl.icon}
+              pending={taskControl.pending}
+              onClick={() => action.mutate(taskControl.kind)}
+            />
+          )
         }
       />
       <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
@@ -126,7 +135,9 @@ export default function ProgressPage() {
               {project && <StatusBadge status={project.status} />}
             </div>
             <div className="text-sm">
-              {done} / {total}
+              {/* Held until the chapter list arrives, so the pair does not read
+                  "0 / 0" and then jump to real numbers a beat later. */}
+              {chapterQuery.isPending ? "—" : `${done} / ${total}`}
             </div>
             <Progress value={pct} />
             <div className="pt-4 space-y-3">
@@ -150,7 +161,7 @@ export default function ProgressPage() {
             {tr("progress.progressConnection")}:{" "}
             {connected ? tr("progress.live") : tr("progress.polling")}
           </p>
-          {chapters.length > 0 && (
+          {chapterQuery.isPending ? null : chapters.length > 0 && (
             <Link
               className="text-xs text-primary underline underline-offset-4"
               to={`/projects/${pid}/contents`}
@@ -180,23 +191,25 @@ function TaskControlButton({
   pending: boolean;
   onClick: () => void;
 }) {
-  const Icon = pending ? LoaderCircle : icon;
+  const Idle = icon;
   return (
     <Button
       type="button"
       variant="ghost"
       size="icon"
-      className="shrink-0 border border-border text-muted-foreground"
+      className="relative shrink-0 border border-border text-muted-foreground"
       aria-label={label}
       title={label}
       aria-busy={pending || undefined}
-      disabled={pending}
-      onClick={onClick}
+      // Not `disabled`: that applies the disabled face (half opacity, no shadow)
+      // for the length of the request, so the icon dims and comes back — a blink
+      // at the corner of the header. The ref guard stops the second press instead.
+      onClick={() => { if (!pending) onClick(); }}
     >
-      <Icon
-        className={pending ? "h-4.5 w-4.5 animate-spin" : "h-4.5 w-4.5"}
-        aria-hidden="true"
-      />
+      {/* Play or pause, nothing else. A spinner in between added a third glyph —
+          one that also animates — for the length of the request, so the control
+          flickered through a state the role never has. */}
+      <Idle className="h-4 w-4" aria-hidden="true" />
     </Button>
   );
 }
@@ -225,7 +238,7 @@ function ChapterTable({
       <CardContent className="p-0 overflow-x-auto">
         <ErrorNotice error={translate.error} />
         <table className="w-full min-w-176 text-sm">
-          <thead className="border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
+          <thead className="border-b border-subtle text-xs tracking-wide text-muted-foreground">
             <tr>
               {[
                 tr("common.chapter"),
@@ -245,7 +258,7 @@ function ChapterTable({
           </thead>
           <tbody>
             {chapters.map((c) => (
-              <tr key={c.index} className="border-b border-black/[0.05] last:border-0 dark:border-white/[0.07]">
+              <tr key={c.index} className="border-b border-subtle last:border-0">
                 <td className="w-full min-w-64 max-w-0 px-4 py-3.5 [overflow-wrap:anywhere]">
                   {c.title_translated?.trim() ||
                     c.title.trim() ||
@@ -277,8 +290,9 @@ function ChapterTable({
                     <Button
                       size="sm"
                       variant="outline"
-                      disabled={busy || translate.isPending}
-                      onClick={() => translate.mutate(c.index)}
+                      disabled={busy}
+                      aria-busy={translate.isPending || undefined}
+                      onClick={() => { if (!translate.isPending) translate.mutate(c.index); }}
                     >
                       {tr("progress.translateChapter")}
                     </Button>

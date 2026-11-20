@@ -12,6 +12,8 @@ import { ErrorNotice } from "../../components/ui/data";
 import { api, isProjectBusy } from "../../api/client";
 import type { ProjectInput } from "../../api/types";
 import { SourcePreview } from "./SourcePreview";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 import { SourceFilePicker } from "./SourceFilePicker";
 import { ProjectLocationPicker } from "./ProjectLocationPicker";
 import { releaseSource, type ProjectSource } from "../../platform";
@@ -172,8 +174,9 @@ export default function CreateProjectDialog() {
   // only a view of it, so dismissing stays available and the result still
   // arrives in the query cache; `mounted` below decides whether to redirect.
   const close = () => {
-    if (location.state?.fromAppNavigation || location.state?.fromProjectList)
-      navigate(-1);
+    // Return to the existing list entry when opened from its header. A direct
+    // visit has no such entry, so replace the dialog URL instead.
+    if (location.state?.fromProjectList) navigate(-1);
     else navigate("/", { replace: true });
   };
 
@@ -191,18 +194,19 @@ export default function CreateProjectDialog() {
       <Link to={`/projects/${pid}`}>
         <Button variant="outline">{tr("createProject.openProject")}</Button>
       </Link>
-      {interrupted ? (
-        <Button onClick={() => resume.mutate()} disabled={resume.isPending}>
-          {tr("progress.resumeTask")}
-        </Button>
-      ) : (
-        <Button
-          onClick={() => start.mutate()}
-          disabled={!preview || busy || start.isPending}
-        >
-          {start.isPending ? tr("createProject.starting") : tr("common.startTranslation")}
-        </Button>
-      )}
+      {/* One button whose role depends on the project state, rather than two that
+          take turns being mounted: swapping the element under a cursor that has
+          not moved re-mounts it without its hover state. */}
+      <Button
+        onClick={() => {
+          if (interrupted && !resume.isPending) resume.mutate();
+          if (!interrupted && !start.isPending) start.mutate();
+        }}
+        disabled={!interrupted && (!preview || busy)}
+        aria-busy={(interrupted ? resume.isPending : start.isPending) || undefined}
+      >
+        {tr(interrupted ? "progress.resumeTask" : "common.startTranslation")}
+      </Button>
     </>
   ) : (
     <>
@@ -212,10 +216,14 @@ export default function CreateProjectDialog() {
         </p>
       )}
       <Button variant="outline" onClick={close}>
-        {tr(pending ? "common.close" : "common.cancel")}
+        {tr("common.cancel")}
       </Button>
-      <Button onClick={() => create.mutate()} disabled={createDisabled}>
-        {create.isPending ? tr("createProject.uploading") : tr("common.createProject")}
+      <Button
+        onClick={() => { if (!create.isPending) create.mutate(); }}
+        disabled={createDisabled}
+        aria-busy={create.isPending || undefined}
+      >
+        {tr("common.createProject")}
       </Button>
     </>
   );
@@ -226,9 +234,7 @@ export default function CreateProjectDialog() {
       title={tr("common.createProject")}
       onClose={close}
       initialFocus={nameRef}
-      returnFocus={() =>
-        document.getElementById(location.state?.returnFocusId || "create-project-trigger")
-      }
+      returnFocus={() => document.getElementById("create-project-trigger")}
       className="max-w-2xl"
       footer={footer}
     >
@@ -245,7 +251,7 @@ export default function CreateProjectDialog() {
             project?.error
           }
         />
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className={cn(cardSurface, "p-4")}>
           <div className="space-y-2">
             <Label htmlFor="project-name">{tr("createProject.projectName")}</Label>
             <Input
@@ -257,7 +263,7 @@ export default function CreateProjectDialog() {
             />
           </div>
         </div>
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className={cn(cardSurface, "p-4")}>
           <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,1fr)]">
             <div className="min-w-0 space-y-2">
               <Label htmlFor="source-language">{tr("createProject.sourceLanguage")}</Label>
@@ -329,7 +335,7 @@ export default function CreateProjectDialog() {
           }}
         />
         {!pid && extension === "pdf" && (
-          <div className="rounded-xl border border-border bg-card p-4">
+          <div className={cn(cardSurface, "p-4")}>
             <div className="space-y-2">
               <Label htmlFor="pdf-backend">{tr("settings.pdfParser")}</Label>
               <Select

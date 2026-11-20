@@ -12,6 +12,8 @@ import { LazyBoundary } from "../../routes/LazyBoundary";
 import { ModelConnectivity } from "./ModelConnectivity";
 import { ModelNameField } from "./ModelNameField";
 import { SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
@@ -112,7 +114,7 @@ export function ProviderSettings({
     );
   };
   return (
-    <fieldset disabled={disabled} className="min-w-0 space-y-6 disabled:opacity-60">
+    <fieldset disabled={disabled} className="min-w-0 space-y-6 disabled:opacity-50">
       <div className="space-y-3">
         <SettingsGroupHeader
           title={tr("providerSettings.connections")}
@@ -148,7 +150,7 @@ export function ProviderSettings({
             </div>
           );
           return (
-            <div key={id} className="space-y-4 rounded-xl border border-border bg-card p-4">
+            <div key={id} className={cn(cardSurface, "space-y-4 p-4")}>
               <div className="grid grid-cols-2 gap-4">
                 {idField("providers", id)}
                 <div className="min-w-0 space-y-2">
@@ -256,7 +258,7 @@ export function ProviderSettings({
             </Button>
           }
         />
-        <div className="rounded-xl border border-border bg-card divide-y divide-border">
+        <div className={cn(cardSurface, "divide-y divide-border")}>
           {Object.entries(models).map(([id, raw]) => {
             const model = object(raw);
             return (

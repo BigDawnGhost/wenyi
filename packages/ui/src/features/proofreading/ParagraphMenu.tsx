@@ -82,7 +82,7 @@ export function ParagraphMenu({
     onOpen(anchor.index, view);
   };
   const item =
-    "flex w-full items-center gap-2 rounded px-3 py-2 text-left text-sm hover:bg-accent focus:bg-accent focus:outline-none disabled:opacity-40";
+    "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-hover focus:bg-hover focus:outline-none disabled:opacity-40";
   return createPortal(
     <div
       ref={popup}
@@ -128,7 +128,7 @@ export function ParagraphMenu({
         <History className="h-4 w-4" />
         {t("proofreading.precisionDrafts")}
       </button>
-      <div role="separator" className="my-1 border-t border-black/[0.05] dark:border-white/[0.07]" />
+      <div role="separator" className="my-1 border-t border-subtle" />
       {anchor.selection && (
         <button role="menuitem" className={item} onClick={() => void copy(selectionText ? selectionText() : anchor.selection)}>
           <Copy className="h-4 w-4" />

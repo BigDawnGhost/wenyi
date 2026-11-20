@@ -77,13 +77,14 @@ export function registerTests() {
         expect(submitted?.prompt_genre).toBe("academic");
         expect(submitted?.translation_mode).toBe(precision ? "three_draft_synthesis" : "standard");
         await page.goto(`/projects/${pid}/settings`);
-        const savedStyle = page.getByRole("textbox", {
+        const savedStyle = page.getByRole("region", {
           name: chinese ? "翻译风格" : "Translation style", exact: true,
         });
-        await expect(savedStyle).toHaveValue(chinese ? "学术" : "Academic");
-        await expect(savedStyle).toHaveAttribute("readonly");
+        const value = savedStyle.getByText(chinese ? "学术" : "Academic", { exact: true });
+        await expect(value).toBeVisible();
+        await expect(savedStyle.getByRole("textbox")).toHaveCount(0);
         await page.reload();
-        await expect(savedStyle).toHaveValue(chinese ? "学术" : "Academic");
+        await expect(value).toBeVisible();
       });
     }
   }

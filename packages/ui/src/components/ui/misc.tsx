@@ -42,7 +42,7 @@ export function Dialog({
         <Primitive.Content
           {...(!description ? { "aria-describedby": undefined } : {})}
           className={cn(
-            "dialog-content fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-card shadow-e4",
+            "dialog-content fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-[round(nearest,50%,1px)] flex-col overflow-hidden rounded-2xl bg-card shadow-e4",
             className,
           )}
           onOpenAutoFocus={(event) => {
@@ -188,4 +188,47 @@ export function TabsContent({
   const ctx = React.useContext(TabsCtx);
   if (ctx.value !== value) return null;
   return <div className={className}>{children}</div>;
+}
+
+/**
+ * A list or panel with nothing to show. Centred, quiet, and the same size
+ * everywhere: callers were each inventing their own padding (p-8, py-8, py-24)
+ * and losing the padding entirely when the empty case lived inside a table cell.
+ */
+export function EmptyState({
+  icon: Icon,
+  children,
+  className,
+}: {
+  /** Optional mark above the message; sized here so it stays in the icon scale. */
+  icon?: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div
+      data-slot="empty-state"
+      className={cn(
+        "flex flex-col items-center justify-center gap-2 py-8 text-center",
+        className,
+      )}
+    >
+      {Icon ? <Icon className="h-8 w-8 text-muted-foreground" aria-hidden="true" /> : null}
+      <p className="text-sm text-muted-foreground">{children}</p>
+    </div>
+  );
+}
+
+/**
+ * A placeholder for content that is still loading. Pulse is motion, so it is
+ * gated: the block still marks the space when animation is off.
+ */
+export function Skeleton({ className }: { className?: string }) {
+  return (
+    <div
+      data-slot="skeleton"
+      aria-hidden="true"
+      className={cn("rounded-md bg-muted motion-safe:animate-pulse", className)}
+    />
+  );
 }

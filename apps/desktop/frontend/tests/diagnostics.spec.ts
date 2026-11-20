@@ -47,7 +47,8 @@ test("Desktop settings export a native report and temporary detail does not save
   await section.getByRole("button", { name: "Export diagnostic report", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Export diagnostic report" });
   await expect(dialog.getByText(/No project databases/)).toBeVisible();
-  await dialog.getByLabel("Time range").selectOption("session");
+  await dialog.getByRole("combobox", { name: "Time range" }).click();
+  await page.getByRole("option", { name: "Current launch", exact: true }).click();
   await dialog.getByRole("button", { name: "Choose destination and save" }).click();
   await expect(dialog.getByRole("status")).toContainText("/fixture/diagnostics.zip");
   const calls = await page.evaluate(() => (window as unknown as {

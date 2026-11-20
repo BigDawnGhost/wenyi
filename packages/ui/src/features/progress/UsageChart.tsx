@@ -118,7 +118,7 @@ export default function UsageChart({
       className="min-w-0 space-y-5"
     >
       <div
-        className="flex flex-wrap gap-1 rounded-lg bg-muted/60 p-1"
+        className="flex flex-wrap gap-1 rounded-lg bg-surface p-1"
         role="group"
         aria-label={t("accounting.groupBy")}
       >
@@ -129,7 +129,7 @@ export default function UsageChart({
             aria-pressed={key === group}
             onClick={() => setGroup(key)}
             className={cn(
-              "min-w-0 flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "min-w-0 flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors",
               key === group
                 ? "bg-card text-foreground shadow-e1"
                 : "text-muted-foreground hover:text-foreground",
