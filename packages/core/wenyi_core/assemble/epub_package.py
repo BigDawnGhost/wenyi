@@ -18,6 +18,8 @@ import lxml.html as html
 
 from wenyi_core.atomicio import publish_target
 
+from .about import ABOUT_ID, AboutPage, unique_about_entry
+
 _XHTML = "http://www.w3.org/1999/xhtml"
 _OPF = "http://www.idpf.org/2007/opf"
 _DC = "http://purl.org/dc/elements/1.1/"
@@ -259,6 +261,7 @@ def write_epub(
     chapters: list[EpubChapter],
     toc: list[EpubTocEntry],
     resources: list[EpubResource],
+    about: AboutPage | None = None,
 ) -> None:
     """Atomically write an EPUB 3 package from explicit, already-rendered inputs."""
     _validate_paths(chapters, resources, toc)
@@ -295,10 +298,11 @@ def write_epub(
     manifest_item("ncx", "toc.ncx", "application/x-dtbncx+xml")
     _child(spine, "itemref", idref="nav")
     container = etree.Element(f"{{{_CONTAINER}}}container", nsmap={None: _CONTAINER}, version="1.0")
+    opf_path = "EPUB/content.opf"
     _child(
         _child(container, "rootfiles"),
         "rootfile",
-        **{"full-path": "EPUB/content.opf", "media-type": "application/oebps-package+xml"},
+        **{"full-path": opf_path, "media-type": "application/oebps-package+xml"},
     )
     with publish_target(out_path) as temporary:
         with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
@@ -336,4 +340,9 @@ def write_epub(
                     root.find(f".//{{{_XHTML}}}img").set("src", quote(resource.href, safe="/"))
                     manifest_item("cover", "cover.xhtml", "application/xhtml+xml")
                     archive.writestr("EPUB/cover.xhtml", _xml(root))
-            archive.writestr("EPUB/content.opf", _xml(package))
+            if about is not None:
+                entry, href = unique_about_entry(set(archive.namelist()), opf_path)
+                manifest_item(ABOUT_ID, href, "application/xhtml+xml")
+                _child(spine, "itemref", idref=ABOUT_ID)
+                archive.writestr(entry, about.render())
+            archive.writestr(opf_path, _xml(package))
