@@ -44,7 +44,7 @@ export default function ProofreadingPage() {
         index={Number(ci)}
         chapters={chapters.data || []}
         busy={busy}
-        sourceOnly={project.data?.initialized !== true}
+        sourceOnly={project.data ? !project.data.initialized : undefined}
         readOnly={
           busy || !project.data?.initialized || project.isError || chapters.isError
         }

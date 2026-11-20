@@ -3,6 +3,25 @@ import { configuration, fakeApi, globalConfiguration, pid, project } from "../..
 import { chooseOption } from "./select-helper";
 
 export function registerTests() {
+  for (const bilingual of [false, true]) {
+    test(`an explicit edition survives late export defaults (${bilingual})`, async ({ page }) => {
+      await fakeApi(page);
+      let release!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      await page.route(`**/api/projects/${pid}/config`, async route => {
+        await held;
+        return route.fulfill({ json: { ...configuration, effective: {
+          ...configuration.effective, output: { bilingual: !bilingual },
+        } } });
+      });
+      await page.goto(`/projects/${pid}/export`);
+      const edition = page.getByRole("radio", { name: bilingual ? "Bilingual" : "Monolingual", exact: true });
+      await edition.click();
+      release();
+      await expect(page.getByRole("button", { name: "Generate export" })).toBeEnabled();
+      await expect(edition).toBeChecked();
+    });
+  }
   for (const chinese of [false, true]) {
     const language = chinese ? "Chinese" : "English";
     const punctuationName = chinese ? "导出时规范标点" : "Normalize punctuation on export";

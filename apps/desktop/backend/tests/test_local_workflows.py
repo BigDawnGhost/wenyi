@@ -52,6 +52,11 @@ def test_events_http_and_review_job_identity(desktop, monkeypatch):
     )
     current = job("2025-01-01T00:00:02.100000+00:00", "current")
     job("2025-01-01T00:00:02.150000+00:00", "export", "export")
+    # The hot workflow endpoint needs a single job and its review, not either history.
+    with monkeypatch.context() as patch:
+        patch.setattr(backend, "list_jobs", lambda *_: pytest.fail("read complete job history"))
+        patch.setattr(SqliteStorage, "list_events", lambda *a, **kw: pytest.fail("read event log"))
+        assert client.get(f"/projects/{pid}/workflow").json()["run_id"] == "current"
     assert backend.job_review_id(old) == "old"
     assert backend.job_review_id(current) is None
     store.append_artifact_record(

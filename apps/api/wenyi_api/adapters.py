@@ -47,6 +47,7 @@ class PostgresRepository:
     get_job_by_arq_id = staticmethod(dal.get_job_by_arq_id)
     set_job_status = staticmethod(dal.set_job_status)
     list_jobs = staticmethod(dal.list_jobs)
+    latest_workflow_job = staticmethod(dal.latest_workflow_job)
     latest_resumable_job = staticmethod(dal.latest_resumable_job)
     job_review_id = staticmethod(dal.job_review_id)
     is_paused = staticmethod(dal.is_paused)

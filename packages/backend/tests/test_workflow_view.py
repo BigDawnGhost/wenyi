@@ -10,25 +10,20 @@ from wenyi_core.events import TranslationEvent
 
 
 @pytest.mark.parametrize("autofix, enabled", [(False, False), (True, True), (None, True)])
-def test_workflow_uses_snapshot_and_excludes_exports(
-    monkeypatch, backend_context, autofix, enabled
-):
+def test_workflow_uses_current_job_snapshot(monkeypatch, backend_context, autofix, enabled):
     monkeypatch.setattr(configuration, "require_project", lambda pid: {"id": pid, "fmt": "epub"})
     monkeypatch.setattr(
         current_context().repository,
-        "list_jobs",
-        lambda pid: [
-            {"kind": "export"},
-            {
-                "kind": "review",
-                "status": "paused",
-                "run_id": "run-a",
-                "params": {
-                    "autofix": autofix,
-                    "config_snapshot": {"pipeline": {"review_autofix": True}},
-                },
+        "latest_workflow_job",
+        lambda pid: {
+            "kind": "review",
+            "status": "paused",
+            "run_id": "run-a",
+            "params": {
+                "autofix": autofix,
+                "config_snapshot": {"pipeline": {"review_autofix": True}},
             },
-        ],
+        },
     )
 
     def offline(pid):
@@ -86,17 +81,15 @@ def test_unrelated_progress_is_not_displayed(monkeypatch, backend_context, cache
     monkeypatch.setattr(configuration, "require_project", lambda pid: {"id": pid, "fmt": "epub"})
     monkeypatch.setattr(
         current_context().repository,
-        "list_jobs",
-        lambda pid: [
-            {
-                "kind": "translation",
-                "status": "queued",
-                "run_id": "new",
-                "params": {
-                    "config_snapshot": {"pipeline": {"review": False}},
-                },
+        "latest_workflow_job",
+        lambda pid: {
+            "kind": "translation",
+            "status": "queued",
+            "run_id": "new",
+            "params": {
+                "config_snapshot": {"pipeline": {"review": False}},
             },
-        ],
+        },
     )
 
     monkeypatch.setattr(backend_context.telemetry, "progress_snapshot", lambda pid: cached)

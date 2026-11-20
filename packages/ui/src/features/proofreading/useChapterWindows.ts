@@ -38,8 +38,11 @@ export function useChapterWindows(
   const rows = new Map(windows.flatMap((w) => w.segments.map((s) => [s.position, s] as const)));
   const byIndex = new Map([...rows.values()].map((s) => [s.index, s]));
   if (pinned && !byIndex.has(pinned.index)) byIndex.set(pinned.index, pinned);
-  const watched = [...new Set([...positions.map((p) => rows.get(p)?.index), pinned?.index])]
-    .filter((i): i is number => i !== undefined).sort((a, b) => a - b);
+  // Check complete visible blocks, not just the rows mounted at poll time. Entering
+  // a previously prefetched block starts one delta read, not one read per scroll row.
+  const visibleWindows = windows.filter(w => visible.includes(w.offset));
+  const watched = visibleWindows.flatMap(w => w.segments.map(s => s.index));
+  if (pinned && !watched.includes(pinned.index)) watched.push(pinned.index);
   const current = useRef(byIndex);
   current.current = byIndex;
   const indices = useRef(watched);
@@ -79,7 +82,8 @@ export function useChapterWindows(
     return changed;
   }, [pid, ci, sourceOnly, qc]);
   const updates = useQuery({
-    queryKey: ["chapterUpdates", pid, ci, sourceOnly],
+    queryKey: ["chapterUpdates", pid, ci, sourceOnly,
+      visibleWindows.map(w => w.offset).sort((a, b) => a - b), pinned?.index ?? null],
     queryFn: ({ signal }) => refresh(signal),
     enabled: !sourceOnly && watched.length > 0,
     staleTime: Infinity,
