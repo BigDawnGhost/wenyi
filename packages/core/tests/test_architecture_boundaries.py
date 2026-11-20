@@ -284,7 +284,7 @@ def test_pipeline_modules_live_in_a_stage_subpackage():
                 f"{path.stem} appears in {staged[path.stem]} and {stage}"
             )
             staged[path.stem] = stage
-    assert len(staged) == 29, sorted(staged)
+    assert len(staged) == 30, sorted(staged)
 
 
 def test_pipeline_stage_packages_do_not_import_across_unrelated_stages():

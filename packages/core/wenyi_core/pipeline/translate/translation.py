@@ -3,6 +3,10 @@ Use the prepared book synopsis while the caller holds the book lock. Process cha
 batches serially. For each batch: translate, persist targets, align/persist annotations,
 update context, append the batch event, extract/checkpoint glossary terms, update history,
 then proceed.
+With ``pipeline.polish_concurrency`` above 1, standard mode saves each draft with a durable
+polish-pending marker and hands polishing to a bounded background pool. Finished polish jobs
+are applied on this thread in submission order; a chapter is published as done only after
+its jobs are applied. Rolling context and glossary extraction may therefore read drafts.
 At chapter end, perform fallback glossary extraction and publish model text plus done
 through save_chapter_with_status. Normalize punctuation only in export copies. If targets
 exist without a glossary checkpoint, extract missing terms without retranslating or
@@ -13,6 +17,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
+from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from ...agents.glossary_extractor import TranslatedSegmentEvidence
@@ -21,15 +26,24 @@ from ...events import ProgressFn
 from ...glossary.store import GlossaryStore
 from ...markup.contexts import annotation_contexts_for_segments
 from ...models.document import Chapter, Segment
+from ...models.glossary import GlossaryTerm
 from ...storage.protocol import Storage
 from ...storage.run_store import STATUS_DONE
 from ..annotate.docx_styles import DocxStyleService
 from .babeldoc_context import BabeldocContext
 from .context import render_recent_translations
+from .polish_queue import PolishOutcome, PolishQueue
 from .precision import PrecisionBatchExecutor, PrecisionError
 from .terminology import TerminologyService
 from .title_translation import TitleTranslationService
-from .translation_batch import BatchPlan, BatchResult, TranslationBatchExecutor, resume_batches
+from .translation_batch import (
+    BatchDraft,
+    BatchPlan,
+    BatchResult,
+    PolishJob,
+    TranslationBatchExecutor,
+    resume_batches,
+)
 
 if TYPE_CHECKING:
     from ..annotate.annotations import AnnotationService
@@ -45,6 +59,10 @@ def _is_mineru_pdf(manifest: dict[str, Any]) -> bool:
     return not bool(meta.get("babeldoc")) and meta.get("pdf_export") != "babeldoc"
 
 
+# Segment meta marker saved with a draft whose polish has not been applied yet.
+POLISH_PENDING = "polish_pending"
+
+
 class TranslationService:
     """Domain service for body translation, glossary extraction and chapter/TOC titles."""
 
@@ -55,6 +73,10 @@ class TranslationService:
         self._titles = TitleTranslationService(runtime.title_translator)
         self._batches = TranslationBatchExecutor(runtime.translator, runtime.polisher)
         self._precision = PrecisionBatchExecutor(runtime.client, runtime.config)
+        self._polish_queue: PolishQueue | None = None
+        # In-memory chapters this run still writes, including those awaiting polish results.
+        self._open_chapters: dict[int, Chapter] = {}
+        self._awaiting_polish: set[int] = set()
 
     def run(
         self,
@@ -102,6 +124,17 @@ class TranslationService:
             total_segments=total,
             allow_empty_translations=allow_empty_translations,
         )
+        pipeline = self._runtime.config.pipeline
+        if (
+            pipeline.polish
+            and pipeline.translation_mode == "standard"
+            and pipeline.polish_concurrency > 1
+        ):
+            self._polish_queue = PolishQueue(
+                self._batches.polish,
+                lambda outcome: self._apply_polish(store, outcome),
+                workers=pipeline.polish_concurrency,
+            )
         try:
             for ci in targets:
                 done = self.translate_chapter(
@@ -120,11 +153,24 @@ class TranslationService:
                     terminology=terminology,
                 )
                 self._runtime.usage.flush(store, scope="chapter")
+            queue = self._polish_queue
+            if queue is not None:
+                if progress and total and len(queue):
+                    progress(done, total, f"Polishing ({len(queue)} batches pending)")
+                queue.drain()
             # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
             if not store.pending_chapters():
                 self._titles.run(store, glossary, progress=progress)
                 self._annotations.repair_fallbacks(store, progress=progress)
+        except BaseException:
+            if self._polish_queue is not None:
+                # Unapplied jobs keep their durable marker and are repolished on resume.
+                self._polish_queue.close(cancel=True)
+            raise
         finally:
+            self._polish_queue = None
+            self._open_chapters.clear()
+            self._awaiting_polish.clear()
             self._runtime.usage.flush(store, scope="translate")
         if progress and total:
             progress(total, total, "Translation complete")
@@ -246,6 +292,7 @@ class TranslationService:
             store.set_chapter_status(ci, STATUS_DONE)
             store.log_event("chapter_skipped", chapter=ci, reason="empty")
             return done
+        self._open_chapters[ci] = chapter
         chapter_digest = chapter.meta.get("source_digest", "")
         context_policy = BabeldocContext.for_chapter(chapter)
         annotation_contexts = annotation_contexts_for_segments(
@@ -277,7 +324,19 @@ class TranslationService:
             if all(s.target is not None for s in b):
                 # Reuse a batch translated at this position/context, rebuild rolling context and skip it.
                 # Blank "" is a completed MinerU allowance; only None means not yet translated.
-                self._align_batch_context(store, chapter, batch_start, len(b))
+                marked = any(s.meta.get(POLISH_PENDING) for s in b)
+                polish_pending = marked and (
+                    self._runtime.config.pipeline.polish
+                    and self._runtime.config.pipeline.translation_mode == "standard"
+                )
+                if marked and not polish_pending:
+                    # Polishing is now off; the saved draft is final.
+                    for s in b:
+                        s.meta.pop(POLISH_PENDING, None)
+                    store.save_chapter(chapter)
+                if not polish_pending:
+                    # Applying a pending polish aligns the batch afterwards.
+                    self._align_batch_context(store, chapter, batch_start, len(b))
                 if glossary_key in glossary_checkpoints or (
                     context_policy is not None
                     and self._glossary_checkpoint_covers(glossary_checkpoints, batch_start, len(b))
@@ -315,6 +374,37 @@ class TranslationService:
                         for i, s in enumerate(b)
                     ],
                 )
+                if polish_pending:
+                    # Repolish an interrupted draft from saved text; never retranslate it.
+                    if term_snapshot_stale:
+                        term_snapshot = glossary.all_terms()
+                        term_snapshot_stale = False
+                    body_context = context_policy is None or context_policy.body[batch_start]
+                    self._schedule_polish(
+                        store,
+                        PolishJob(
+                            ci,
+                            batch_start,
+                            tuple(s.index for s in b),
+                            tuple(s.source for s in b),
+                            tuple(deepcopy(term_snapshot)),
+                            self._batch_style(analysis, style, term_snapshot),
+                            self.following_source(
+                                store, chapter, batch_start + len(b), context_policy
+                            )
+                            if body_context
+                            else "",
+                            # A target edited since the draft no longer matches and is kept.
+                            BatchDraft(
+                                tuple(
+                                    s.target_before_polish
+                                    if s.target_before_polish is not None
+                                    else s.target or ""
+                                    for s in b
+                                )
+                            ),
+                        ),
+                    )
                 seg_base += len(b)
                 if progress:
                     progress(done, total, label)
@@ -332,17 +422,9 @@ class TranslationService:
             if term_snapshot_stale:
                 term_snapshot = glossary.all_terms()
                 term_snapshot_stale = False
-            batch_style = (
-                self._runtime.analyzer.style_brief(
-                    analysis,
-                    terms=term_snapshot
-                    if self._runtime.config.pipeline.terminology_context
-                    else None,
-                )
-                if analysis is not None
-                else style
-            )
+            batch_style = self._batch_style(analysis, style, term_snapshot)
 
+            polish_job: PolishJob | None = None
             next_index = batch_start + len(b)
             body_context = context_policy is None or context_policy.body[batch_start]
             ctx_text = (
@@ -387,6 +469,15 @@ class TranslationService:
                 text_segs = chapter.text_segments
                 b = text_segs[batch_start : batch_start + len(b)]
                 self._precision.mark_published(store, result)
+            elif self._polish_queue is not None:
+                draft = self._batches.translate(plan)
+                for segment, target in zip(b, draft.targets):
+                    segment.target = target
+                    segment.target_before_polish = target
+                    segment.meta[POLISH_PENDING] = True
+                # The draft and its pending marker are saved atomically with the chapter.
+                store.save_chapter(chapter)
+                polish_job = PolishJob.from_plan(plan, draft)
             else:
                 result = self._batches.execute(plan, polish=self._runtime.config.pipeline.polish)
                 for segment, target, before_polish in zip(b, result.targets, result.before_polish):
@@ -394,13 +485,15 @@ class TranslationService:
                     segment.target_before_polish = before_polish
                 # Persist translations incrementally so interruption resumes after this batch.
                 store.save_chapter(chapter)
-            self._align_batch_context(store, chapter, batch_start, len(b))
+            if polish_job is None:
+                self._align_batch_context(store, chapter, batch_start, len(b))
             store.log_event(
                 "batch_translated",
                 chapter=ci,
                 start_index=batch_start,
                 count=len(b),
-                polished=self._runtime.config.pipeline.polish,
+                polished=self._runtime.config.pipeline.polish and polish_job is None,
+                **({"polish_deferred": True} if polish_job is not None else {}),
                 translation_mode=self._runtime.config.pipeline.translation_mode,
                 segments=[
                     {
@@ -430,11 +523,18 @@ class TranslationService:
             glossary_checkpoints.add(glossary_key)
             # The glossary may have changed; refresh before the next real translation, not after the final batch.
             term_snapshot_stale = True
+            if polish_job is not None:
+                # Queue after extraction so terms come from the draft, not a later polish.
+                self._schedule_polish(store, polish_job)
 
         # Keep chapter-wide extraction as a fallback for address, speech and fixed expressions needing context.
         # Final review reads the stable glossary after the entire book finishes translating.
         src_text = "\n".join(s.source for s in text_segs)
-        tgt_text = "\n".join(s.target or "" for s in text_segs)
+        # With background polishing, read drafts so the result does not depend on job timing.
+        tgt_text = "\n".join(
+            (s.target_before_polish if self._polish_queue is not None else None) or s.target or ""
+            for s in text_segs
+        )
         chapter_glossary_summary = self._runtime.extractor.extract_and_store(
             glossary,
             src_text,
@@ -451,14 +551,104 @@ class TranslationService:
             summary=chapter_glossary_summary,
         )
 
+        # Precision publication reloads the chapter; publish the object this loop last saved.
+        self._open_chapters[ci] = chapter
+        if self._polish_queue is not None and ci in self._polish_queue.pending_chapters():
+            # Publish done only after this chapter's queued polish jobs are applied.
+            self._awaiting_polish.add(ci)
+            return done
+        self._publish_chapter(store, ci)
+        return done
+
+    def _publish_chapter(self, store: Storage, ci: int) -> None:
+        chapter = self._open_chapters.pop(ci)
+        self._awaiting_polish.discard(ci)
         store.save_chapter_with_status(chapter, STATUS_DONE)
         store.log_event(
             "chapter_done",
             chapter=ci,
             title=chapter.title,
-            segment_count=len(text_segs),
+            segment_count=len(chapter.text_segments),
         )
-        return done
+
+    def _batch_style(
+        self, analysis: dict[str, Any] | None, style: str, terms: list[GlossaryTerm]
+    ) -> str:
+        if analysis is None:
+            return style
+        return self._runtime.analyzer.style_brief(
+            analysis,
+            terms=terms if self._runtime.config.pipeline.terminology_context else None,
+        )
+
+    def _schedule_polish(self, store: Storage, job: PolishJob) -> None:
+        """Queue a pending polish, or polish inline when no background pool is active."""
+        queue = self._polish_queue
+        if queue is not None:
+            queue.submit(job)
+            store.log_event(
+                "batch_polish_queued",
+                chapter=job.chapter,
+                start_index=job.start_index,
+                count=len(job.sources),
+                backlog=len(queue),
+            )
+            return
+        try:
+            outcome = PolishOutcome(job, self._batches.polish(job))
+        except Exception as error:  # noqa: BLE001 - a failed polish keeps the draft.
+            outcome = PolishOutcome(job, None, error)
+        self._apply_polish(store, outcome)
+
+    def _apply_polish(self, store: Storage, outcome: PolishOutcome) -> None:
+        """Apply one finished polish job to its in-memory chapter, then align and save."""
+        job = outcome.job
+        chapter = self._open_chapters[job.chapter]
+        segments = chapter.text_segments[job.start_index : job.start_index + len(job.sources)]
+        if tuple(segment.index for segment in segments) != job.segment_indices:
+            raise RuntimeError("A polish job no longer matches its chapter batch")
+        changed = 0
+        for segment, draft, polished in zip(
+            segments, job.draft.targets, outcome.polished or job.draft.targets
+        ):
+            segment.meta.pop(POLISH_PENDING, None)
+            # Keep any target changed since the draft was saved.
+            if outcome.polished is not None and segment.target == draft:
+                segment.target = polished
+                segment.target_before_polish = draft
+                changed += 1
+        store.save_chapter(chapter)
+        self._align_batch_context(store, chapter, job.start_index, len(job.sources))
+        self._runtime.usage.flush(store, scope="polish")
+        if outcome.polished is None:
+            store.log_event(
+                "batch_polish_failed",
+                chapter=job.chapter,
+                start_index=job.start_index,
+                count=len(job.sources),
+                reason=(
+                    f"{type(outcome.error).__name__}: {outcome.error}"
+                    if outcome.error is not None
+                    else "misaligned_output"
+                ),
+            )
+        else:
+            store.log_event(
+                "batch_polished",
+                chapter=job.chapter,
+                start_index=job.start_index,
+                count=len(job.sources),
+                applied=changed,
+                segments=[
+                    {"index": job.start_index + i, "target": segment.target}
+                    for i, segment in enumerate(segments)
+                ],
+            )
+        queue = self._polish_queue
+        if job.chapter in self._awaiting_polish and (
+            queue is None or job.chapter not in queue.pending_chapters()
+        ):
+            self._publish_chapter(store, job.chapter)
 
     def _align_batch_context(
         self,

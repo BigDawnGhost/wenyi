@@ -23,6 +23,25 @@ class Polisher(Agent):
         sources: list[str] | None = None,
     ) -> list[str]:
         """Polish an aligned list in a fresh conversation; return input unchanged on failure."""
+        polished = self.polish_or_none(
+            targets,
+            glossary_terms=glossary_terms,
+            style=style,
+            next_source=next_source,
+            sources=sources,
+        )
+        return list(targets) if polished is None else polished
+
+    def polish_or_none(
+        self,
+        targets: list[str],
+        *,
+        glossary_terms: list[GlossaryTerm] | None = None,
+        style: str = "",
+        next_source: str = "",
+        sources: list[str] | None = None,
+    ) -> list[str] | None:
+        """Polish an aligned list in a fresh conversation; return ``None`` on misalignment."""
         if not targets:
             return []
         n = len(targets)
@@ -62,7 +81,7 @@ class Polisher(Agent):
         )
         if isinstance(items, list) and len(items) == n:
             return items
-        return list(targets)
+        return None
 
     def polish_continue(
         self,
