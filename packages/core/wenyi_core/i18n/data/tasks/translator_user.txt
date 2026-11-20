@@ -4,11 +4,11 @@ $style
 [Whole-book synopsis]
 $book_synopsis
 
-[Chapter digest]
-$chapter_digest
-
 [Glossary] (required mappings)
 $glossary
+
+[Chapter digest]
+$chapter_digest
 
 [Paragraph-specific annotation references] (JSON; only for paragraphs in applies_to, not text to translate)
 $annotation_contexts

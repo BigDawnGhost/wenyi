@@ -182,7 +182,10 @@ inputs and output count. BabelDOC role/section boundaries further restrict prose
 context without deleting non-prose translation units.
 
 The full glossary owns name mappings. It retains stable insertion order, and fresh
-Reviewer requests share one complete final snapshot. Selective evidence and Fixer
+Reviewer requests share one complete final snapshot. `pipeline.batch_glossary`
+selects each body batch's entries once, in `TranslationService.batch_terms`, and the
+batch plan carries them to translation, polish (inline, deferred and resumed) and
+precision; extraction filters its existing entries by the extracted source text. Selective evidence and Fixer
 requests may use relevant subsets. Japanese readings are source metadata supported
 by explicit source evidence, not target-language transliterations; non-Japanese
 sources do not inject them through structured glossary rendering.
