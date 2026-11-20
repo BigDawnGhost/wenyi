@@ -1,6 +1,39 @@
 import { expect, test, type WebSocketRoute } from "@playwright/test";
 import { fakeApi, pid, project, chapter, workflow } from "../../../packages/ui/sandbox/fixtures";
 
+test("ordinary progress displays its label without refreshing unrelated snapshots", async ({ page }) => {
+  await page.clock.install({ time: new Date("2025-01-01T00:00:00Z") });
+  await fakeApi(page, { [`/projects/${pid}/workflow`]: { ...workflow, status: "running" } });
+  let socket: WebSocketRoute | undefined;
+  await page.routeWebSocket("**/ws/**", ws => ws.onMessage(() => {
+    socket = ws;
+    ws.send(JSON.stringify({ kind: "snapshot", project: { id: pid } }));
+  }));
+  const reads: string[] = [];
+  page.on("request", req => {
+    if (req.resourceType() === "fetch" && req.url().includes(`/api/projects/${pid}`))
+      reads.push(new URL(req.url()).pathname);
+  });
+  await page.goto(`/projects/${pid}`);
+  await expect(page.getByText("24 / 24", { exact: true })).toBeVisible();
+  await expect(page.getByRole("status")).toContainText("Waiting for progress updates");
+  await expect.poll(() => !!socket).toBe(true);
+  await page.clock.pauseAt(new Date("2025-01-01T00:01:00Z"));
+  reads.length = 0;
+  for (const kind of ["progress", "translation"]) {
+    socket!.send(JSON.stringify({ kind, project_id: pid, run_id: workflow.run_id, label: `Stage ${kind}` }));
+    await expect(page.getByRole("status")).toContainText(`Stage ${kind}`);
+    await page.clock.runFor(600);
+    // Deliver network callbacks before measuring absence of duplicate reads.
+    await page.evaluate(() => document.body.clientWidth);
+    if (kind === "progress") expect(reads).toEqual([]);
+    else {
+      await expect.poll(() => reads.length).toBe(2);
+      expect(reads.sort()).toEqual([`/api/projects/${pid}/chapters`, `/api/projects/${pid}/stats`]);
+    }
+  }
+});
+
 test("run time ticks during a long batch and stops on pause without reloading", async ({
   page,
 }) => {

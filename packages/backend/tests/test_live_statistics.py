@@ -203,11 +203,8 @@ def test_stats_endpoint_uses_current_job_and_falls_back_to_durable_totals(
     )
     monkeypatch.setattr(
         current_context().repository,
-        "list_jobs",
-        lambda _: [
-            {"kind": "export", "run_id": "export", "status": "running"},
-            {"kind": "translation", "run_id": "run", "status": status},
-        ],
+        "latest_workflow_job",
+        lambda _: {"kind": "translation", "run_id": "run", "status": status},
     )
     monkeypatch.setattr(configuration, "storage_for", lambda _: store)
     monkeypatch.setattr(

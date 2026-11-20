@@ -29,6 +29,25 @@ export interface ProgressMessage {
  */
 const WATCHDOG_MS = 60_000;
 
+// Stage labels are already in the frame. Only re-read the saved data that this
+// kind of event can change; completion and reconnect still reconcile everything.
+function changedSnapshots(kind: string): string[] {
+  switch (kind) {
+    case "progress":
+    case "pipeline": return [];
+    case "translation":
+    case "chapter_translation":
+    case "batch": return ["chapters", "stats"];
+    case "chapter": return ["project", "chapters", "stats"];
+    case "parse":
+    case "prepare": return ["project", "chapters"];
+    case "review": return ["workflow", "review-runs", "review-run"];
+    case "term": return ["terms", "conflicts"];
+    case "log": return ["events"];
+    default: return ["workflow"];
+  }
+}
+
 function fieldsDiffer(
   saved: Record<string, unknown>,
   snapshot: Record<string, unknown>,
@@ -213,7 +232,8 @@ export function useProjectProgress(pid: string | undefined) {
             invalidate(all, true);
           } else {
             setMsg(incoming);
-            invalidate(platform().progressKeys(incoming.kind));
+            const keys = changedSnapshots(incoming.kind);
+            if (keys.length) invalidate(keys);
           }
         } catch (error) {
           // A frame this client cannot read is a defect worth recording, but it

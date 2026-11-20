@@ -48,7 +48,6 @@ export interface ProgressServices {
   connectProgress: (project: string) => WebSocket;
   authenticateProgress: (socket: WebSocket) => void;
   progressInterval: (connected: boolean, fallback: number) => number;
-  progressKeys: (kind: string) => string[];
 }
 
 /** What a host can say about adopting a project folder that already exists.

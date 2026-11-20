@@ -306,8 +306,8 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   await page.clock.runFor(1000);
   await expect.poll(() => total() - beforeStats).toBeGreaterThanOrEqual(1);
   await settleQueries();
-  // Desktop translation frames refresh chapters and workflow, not project or stats.
-  const translationPaths = ["/chapters", "/workflow"].map(path => `/projects/${pid}${path}`);
+  // Saved batch frames refresh chapter counts and usage; the stage label is already live.
+  const translationPaths = ["/chapters", "/stats"].map(path => `/projects/${pid}${path}`);
   const beforeTranslation = translationPaths.map(path => counts[path] || 0);
   socket!.send(JSON.stringify({ kind: "translation", project_id: pid, run_id: "run-a", label: "Saved local batch" }));
   await expect(page.getByRole("status")).toContainText("Saved local batch");
