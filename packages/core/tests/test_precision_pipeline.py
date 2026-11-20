@@ -7,6 +7,7 @@ from threading import Event, Lock
 
 import pytest
 from wenyi_core.agents.precision import PrecisionError
+from wenyi_core.alignment import target_digest
 from wenyi_core.pipeline import precision as precision_module
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor
@@ -306,6 +307,43 @@ def test_guarded_publication_keeps_manual_edits_and_recovers_marker(tmp_path, mo
     assert usage is not None
     assert usage["by_stage"]["translation.body"]["calls"] == 3
     assert usage["by_stage"]["polish.body"]["calls"] == 1
+
+
+def test_precision_aligns_continuation_against_the_reloaded_chapter(tmp_path):
+    store, config = _store(tmp_path, sources=("one", " two")), _config(tmp_path)
+    config.segment.max_tokens_per_batch = 1
+    chapter = store.load_chapter(0)
+    chapter.segments[0].meta["docx_styles"] = {
+        "items": [{"id": "emphasis", "source_start": 0, "source_end": 3, "bold": True}]
+    }
+    chapter.segments[1].cont = True
+    store.save_chapter(chapter)
+    precision_handler = Handler()
+
+    def handler(messages, tier, json_mode):
+        user = messages[-1]["content"]
+        if "INPUT JSON:\n" not in user:
+            return precision_handler(messages, tier, json_mode)
+        request = json.loads(user.split("INPUT JSON:\n", 1)[1])
+        assert request["source_with_focus"] == "<focus>one</focus> two"
+        assert request["immutable_target"] == "润1:0润2:0"
+        assert [s.target for s in store.load_chapter(0).segments] == ["润1:0", "润2:0"]
+        return json.dumps({"target_quote": "润1:0", "context": request["immutable_target"]})
+
+    client = MeteredFakeClient(handler=handler)
+    Orchestrator(config, client)._translation.run(store, book_synopsis="")
+
+    saved = store.load_chapter(0).segments[0].meta["docx_styles"]
+    assert saved["target_digest"] == target_digest("润1:0润2:0")
+    assert [(row["id"], row["status"], row["bold"]) for row in saved["placements"]] == [
+        ("emphasis", "aligned", True)
+    ]
+    assert [call["operation"] for call in client.calls].count("annotation.align") == 1
+    assert [
+        e["event"]
+        for e in store.list_events()
+        if e["event"] in {"batch_translated", "docx_style_alignment_completed"}
+    ] == ["batch_translated", "docx_style_alignment_completed", "batch_translated"]
 
 
 def test_publication_refuses_manual_target_changes(tmp_path):
