@@ -272,7 +272,6 @@ class ExportRequest(RequestModel):
     order: Literal["target_first", "source_first"] = "target_first"
     about_page: bool = True
     preserve_source_style: bool = False
-    punctuation_normalize: bool | None = None
 
 
 class ExportOut(BaseModel):

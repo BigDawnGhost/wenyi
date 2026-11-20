@@ -76,8 +76,8 @@ class AnnotationService:
     ) -> None:
         """Align format-owned annotations for one fully translated logical paragraph.
         Only the first slice has an anchor and parsing metadata, so wait for all
-        continuations before merging source/target. Align against formal target text; export
-        punctuation normalization remaps placements only on a copy.
+        continuations before merging source/target. Align against formal target text,
+        using marker-free offsets for protected objects.
         Persist valid placements, note fallbacks and pending objects immediately. Skip model
         calls when annotations are absent or translation is incomplete.
         Repair mode retries only cached fallback items for the unchanged logical target.

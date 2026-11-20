@@ -1,65 +1,20 @@
-"""Disposable chapter view used only for export.
-Deterministic postprocessing changes only in-memory copies returned by load_chapter and
-never writes back to RunStore.
-"""
+"""Resolve protected-object markers on disposable export copies."""
 
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable, Iterable, Iterator
-from types import MappingProxyType
+from collections.abc import Iterable, Iterator
 from typing import Any, TypeAlias
 
 from ..alignment.objects import resolve_objects
-from ..i18n.policy.models import ExportTextInput, ExportTextResult, PolicyContext, PolicyPlan
+from ..i18n.policy.models import PolicyContext, PolicyPlan
 from ..i18n.policy.resolver import resolve_policy
 from ..markup.contexts import annotation_metadata
 from ..markup.objects import export_object_placements, object_anchors
 from ..models.document import Chapter
-from ..postprocess.export_text import boundary_map, normalize_chinese, validate_result
 from ..storage.protocol import Storage
 from ..storage.run_store import ExportSnapshotStore, RunStore
 from .writer_common import _manifest_target_lang
-
-TEXT_HANDLERS: MappingProxyType[str, Callable[[ExportTextInput], ExportTextResult]] = (
-    MappingProxyType(
-        {
-            "punctuation.zh_cn": normalize_chinese,
-        }
-    )
-)
-
-
-def _target_digest(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def _remap_metadata_offsets(
-    metadata: object, before: str, after: str, mapping: tuple[int, ...] | None = None
-) -> None:
-    """Remap export-copy offsets only when placements match the formal translation."""
-    if not isinstance(metadata, dict) or metadata.get("target_digest") != _target_digest(before):
-        return
-    mapping = mapping if mapping is not None else boundary_map(before, after)
-    raw_placements = metadata.get("placements")
-    if isinstance(raw_placements, list):
-        for placement in raw_placements:
-            if not isinstance(placement, dict):
-                continue
-            start = placement.get("target_start")
-            end = placement.get("target_end")
-            if (
-                not isinstance(start, int)
-                or isinstance(start, bool)
-                or not isinstance(end, int)
-                or isinstance(end, bool)
-            ):
-                continue
-            start = min(max(start, 0), len(before))
-            end = min(max(end, start), len(before))
-            placement["target_start"] = mapping[start]
-            placement["target_end"] = mapping[end]
-    metadata["target_digest"] = _target_digest(after)
 
 
 class ExportViewStore(RunStore):
@@ -69,7 +24,6 @@ class ExportViewStore(RunStore):
         self,
         store: Storage | ExportSnapshotStore,
         *,
-        punctuation_normalize: bool,
         plan: PolicyPlan | None = None,
     ) -> None:
         super().__init__(store.run_dir, create=False)
@@ -82,7 +36,6 @@ class ExportViewStore(RunStore):
                 _manifest_target_lang(manifest),
                 phase="export",
                 format="epub",
-                punctuation_normalize=punctuation_normalize,
                 source_identity=manifest.get("source_sha256", ""),
             )
         )
@@ -94,7 +47,7 @@ class ExportViewStore(RunStore):
         if ci in self._chapters:
             return self._chapters[ci].model_copy(deep=True)
         chapter = self._store.load_chapter(ci).model_copy(deep=True)
-        self._apply_export_policy(chapter)
+        self._resolve_protected_objects(chapter)
         self._chapters[ci] = chapter.model_copy(deep=True)
         return chapter
 
@@ -107,85 +60,39 @@ class ExportViewStore(RunStore):
                 continue
             # The snapshot already returns a deep copy, including nested annotation metadata.
             chapter = self._store.load_chapter(ci)
-            # Only translated text needs object transport and offset remapping. An explicitly
-            # empty translation is still a saved target, not a pending segment.
             if any(segment.target is not None for segment in chapter.segments):
-                self._apply_export_policy(chapter)
+                self._resolve_protected_objects(chapter)
             yield chapter
 
-    def _apply_export_policy(self, chapter: Chapter) -> None:
-        """Apply transport and text policy in place to a chapter owned by this render."""
+    def _resolve_protected_objects(self, chapter: Chapter) -> None:
+        """Restore object placements without changing saved translations."""
         segments = chapter.text_segments
-        ranges = []
         position = 0
         while position < len(segments):
             end = position + 1
             while end < len(segments) and segments[end].cont:
                 end += 1
-            ranges.append((position, end))
+            group = segments[position:end]
             position = end
-        # Transport cleanup and omission are read-only export policies for every format.
-        # A standalone export never invokes a model or changes the saved translation.
-        for start, end in ranges:
-            group = segments[start:end]
             metadata = annotation_metadata(group[0])
             if not metadata or any(segment.target is None for segment in group):
                 continue
             source = "".join(segment.source for segment in group)
             targets = tuple(segment.target or "" for segment in group)
-            if "".join(targets) == source or not "".join(targets).strip():
+            target = "".join(targets)
+            if target == source or not target.strip():
                 continue
             anchors = object_anchors(metadata.get("items", []))
             if not anchors:
                 continue
             resolved = resolve_objects(targets, anchors, source)
             metadata["placements"] = export_object_placements(metadata, resolved)
-            metadata["target_digest"] = _target_digest("".join(resolved.targets))
+            metadata["target_digest"] = hashlib.sha256(
+                "".join(resolved.targets).encode("utf-8")
+            ).hexdigest()
             metadata["objects_resolved_for_export"] = True
             for segment, text in zip(group, resolved.targets):
                 segment.target = text
-        operations = [op for op in self.language_policy.operations if op.point == "export.text"]
-        if not operations:
-            return
-
-        request = ExportTextInput(
-            tuple(segment.index for segment in segments),
-            tuple(
-                segment.target if segment.target != segment.source else None for segment in segments
-            ),
-            tuple(segment.cont for segment in segments),
-            tuple(ranges),
-        )
-        current = request
-        maps = tuple(
-            tuple(range(len("".join(text or "" for text in request.targets[start:end])) + 1))
-            for start, end in ranges
-        )
-        for operation in operations:
-            result = TEXT_HANDLERS[operation.id](current)
-            validate_result(current, result)
-            maps = tuple(
-                tuple(after[index] for index in before)
-                for before, after in zip(maps, result.logical_boundary_maps)
-            )
-            current = ExportTextInput(
-                result.segment_ids, result.targets, result.continuations, result.logical_ranges
-            )
-        for (position, end), mapping in zip(ranges, maps):
-            before = "".join(segment.target or "" for segment in segments[position:end])
-            after = "".join(target or "" for target in current.targets[position:end])
-            if any(segment.target == segment.source for segment in segments[position:end]):
-                continue
-            if before != after:
-                metadata = segments[position].meta
-                _remap_metadata_offsets(metadata.get("epub_annotations"), before, after, mapping)
-                _remap_metadata_offsets(metadata.get("annotations"), before, after, mapping)
-                _remap_metadata_offsets(metadata.get("pdf_annotations"), before, after, mapping)
-                _remap_metadata_offsets(metadata.get("docx_styles"), before, after, mapping)
-
-        for segment, target in zip(segments, current.targets):
-            if segment.target is not None and segment.target != segment.source:
-                segment.target = target
 
     def prepare(self) -> None:
         """Validate every transformation before opening or replacing an output file."""

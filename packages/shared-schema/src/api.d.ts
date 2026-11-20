@@ -1211,8 +1211,6 @@ export interface components {
              * @default false
              */
             preserve_source_style: boolean;
-            /** Punctuation Normalize */
-            punctuation_normalize?: boolean | null;
         };
         /** GlobalConfigInput */
         GlobalConfigInput: {

@@ -4,9 +4,8 @@ batches serially. For each batch: translate, persist targets, align/persist anno
 update context, append the batch event, extract/checkpoint glossary terms, update history,
 then proceed.
 At chapter end, perform fallback glossary extraction and publish model text plus done
-through save_chapter_with_status. Normalize punctuation only in export copies. If targets
-exist without a glossary checkpoint, extract missing terms without retranslating or
-overwriting targets.
+through save_chapter_with_status. If targets exist without a glossary checkpoint, extract
+missing terms without retranslating or overwriting targets.
 """
 
 from __future__ import annotations

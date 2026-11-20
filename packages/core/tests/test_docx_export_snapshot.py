@@ -138,13 +138,11 @@ _GOLDEN = [
         "target_first",
         False,
         False,
-        False,
         "bdf092dbcbf313f5b4ba0c77a117e04fbc57f2622ebf493edabd298fe9f856e3",
     ),
     (
         "target_first",
         True,
-        False,
         False,
         "9f1b4a8354b4b176039525802b71839bb02a3c1dbf9ed86f1557a702ad2f1b68",
     ),
@@ -152,16 +150,13 @@ _GOLDEN = [
         "source_first",
         True,
         True,
-        True,
-        "ccef453adb26d4b398547ded30dfb14b025ceb721ca9b425f587bf2a8527e4d3",
+        "f2666301b6750c913d17def7f475037f25f80f41a4c4f824348599393293fd6d",
     ),
 ]
 
 
-@pytest.mark.parametrize("order,bilingual,preserve,normalize,expected", _GOLDEN)
-def test_saved_docx_xml_matches_python_planner(
-    tmp_path, order, bilingual, preserve, normalize, expected
-):
+@pytest.mark.parametrize("order,bilingual,preserve,expected", _GOLDEN)
+def test_saved_docx_xml_matches_python_planner(tmp_path, order, bilingual, preserve, expected):
     missing_source = tmp_path / "not-present.docx"
     output = tmp_path / "result.docx"
     with closing(FileStorage(str(tmp_path / "state"))) as store:
@@ -181,10 +176,11 @@ def test_saved_docx_xml_matches_python_planner(
             order=order,
             bilingual=bilingual,
             preserve_source_style=preserve,
-            punctuation_normalize=normalize,
         )
         assert snapshot.load_chapter(0).segments[1].target == "甲树,"
     with ZipFile(output) as archive:
+        document = ET.fromstring(archive.read("word/document.xml"))
+        assert "甲树,乙丙丁" in ["".join(p.itertext()) for p in document.findall(".//{*}p")]
         for name, digest in [
             ("word/document.xml", expected),
             (

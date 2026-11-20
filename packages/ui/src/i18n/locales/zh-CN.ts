@@ -511,7 +511,6 @@ const zhCN = {
   "settings.tokensPerParagraph": "每段 Token 预算",
   "settings.reviewConcurrency": "审校并发数",
   "settings.pdfParser": "PDF 解析后端",
-  "settings.normalizePunctuationOnExport": "导出时规范标点",
   "settings.advancedYamlConfiguration": "高级 YAML 配置",
   "settings.validating": "校验中…",
   "settings.validateConfiguration": "校验配置",

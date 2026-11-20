@@ -24,15 +24,6 @@ OPERATIONS = MappingProxyType(
         for spec in (
             OperationSpec("prompt.language_rules", "prompt.compose", writes=("language_rules",)),
             OperationSpec(
-                "punctuation.zh_cn",
-                "export.text",
-                implementation_version="2",
-                roles=("target", "pair"),
-                languages=("zh",),
-                paths=("book",),
-                exclusive_group="target_punctuation",
-            ),
-            OperationSpec(
                 "docx.chinese_font",
                 "export.style",
                 roles=("target", "pair"),

@@ -2,11 +2,13 @@
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 from psycopg.errors import RaiseException
 from psycopg.types.json import Jsonb
 from wenyi_api.config_rebuild import rebuild_saved_settings
+from wenyi_api.global_settings import PostgresSettings
 
 
 @pytest.fixture
@@ -128,23 +130,37 @@ def test_backup_and_replacement_failures_roll_back_original_settings(
 
 def test_read_only_bootstrap_yaml_is_backed_up_in_database(pg_pool, tmp_path):
     path = tmp_path / "config.yaml"
-    original = "llm: {preset: fake}\nhonorific: {strategy: drop}\n"
+    original = (
+        "llm: {preset: fake}\n"
+        "output: {punctuation_normalize: true, bilingual_order: source_first}\n"
+    )
     path.write_text(original, encoding="utf-8")
     with pg_pool.connection() as connection:
         connection.execute("DELETE FROM application_settings")
         connection.execute("DELETE FROM configuration_backups WHERE project_id IS NULL")
     try:
         rebuild_saved_settings(pg_pool, str(path))
+        store = PostgresSettings(SimpleNamespace(pool=pg_pool), str(path))
+        defaults = store.defaults()
+        assert defaults.output.bilingual_order == "source_first"
+        assert "punctuation_normalize" not in defaults.output.model_dump()
+        assert store.load().config.output == defaults.output
         assert path.read_text(encoding="utf-8") == original
         assert list(tmp_path.iterdir()) == [path]
         with pg_pool.connection() as connection:
             assert connection.execute(
                 "SELECT document FROM application_settings WHERE id=1"
-            ).fetchone()[0] == {"llm": {"preset": "fake"}}
+            ).fetchone()[0] == {
+                "llm": {"preset": "fake"},
+                "output": {"bilingual_order": "source_first"},
+            }
             backup = connection.execute(
                 "SELECT document FROM configuration_backups WHERE project_id IS NULL"
             ).fetchone()[0]
-            assert backup["config"]["honorific"] == {"strategy": "drop"}
+            assert backup["config"]["output"] == {
+                "punctuation_normalize": True,
+                "bilingual_order": "source_first",
+            }
     finally:
         with pg_pool.connection() as connection:
             connection.execute("DELETE FROM application_settings")
