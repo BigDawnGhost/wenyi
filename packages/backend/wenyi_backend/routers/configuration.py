@@ -118,9 +118,7 @@ def check_models(pid: str, body: ModelCheckRequest) -> dict:
 def project_stats(pid: str) -> dict:
     project = require_project(pid)
     if project.get("status") in RUNNING_PROJECT_STATUSES:
-        job = next(
-            (j for j in current_context().repository.list_jobs(pid) if j["kind"] != "export"), None
-        )
+        job = current_context().repository.latest_workflow_job(pid)
         if job and job.get("status") == "running":
             try:
                 live = current_context().telemetry.statistics_snapshot(pid, job)
@@ -142,7 +140,7 @@ def workflow(pid: str) -> dict:
     """Describe the latest workflow using its frozen configuration, not edited settings."""
     project = require_project(pid)
     repository = current_context().repository
-    job = next((j for j in repository.list_jobs(pid) if j["kind"] != "export"), None)
+    job = repository.latest_workflow_job(pid)
     params = (job or {}).get("params") or {}
     snapshot = params.get("config_snapshot")
     try:

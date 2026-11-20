@@ -306,14 +306,18 @@ def get_job_by_arq_id(arq_job_id: str) -> dict[str, Any] | None:
     return _job_row(row)
 
 
-def latest_resumable_job(pid: str) -> dict[str, Any] | None:
+def latest_workflow_job(pid: str) -> dict[str, Any] | None:
     with _conn() as c:
         row = c.execute(
             f"""SELECT {_JOB_COLUMNS} FROM jobs WHERE project_id=%s
                 AND kind <> 'export' ORDER BY id DESC LIMIT 1""",
             (pid,),
         ).fetchone()
-    result = _job_row(row)
+    return _job_row(row)
+
+
+def latest_resumable_job(pid: str) -> dict[str, Any] | None:
+    result = latest_workflow_job(pid)
     if result is None or result["status"] not in {"paused", "error", "interrupted"}:
         return None
     return result

@@ -147,6 +147,9 @@ class TestReviewAutofix(unittest.TestCase):
             self.assertEqual(fixed.result["autofix"]["applied_segment_count"], 1)
             annotation_align.assert_called_once()
             style_align.assert_called_once()
+            view = annotation_align.call_args.kwargs["segments"]
+            self.assertIs(view, style_align.call_args.kwargs["segments"])
+            self.assertIs(view[0], annotation_align.call_args.args[1].segments[0])
 
     def test_final_issues_reuse_agent_loop_after_changes_then_use_fixer(self):
         seen_agent_users: list[str] = []

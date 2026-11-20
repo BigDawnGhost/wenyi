@@ -34,6 +34,7 @@ def backend(tmp_path, monkeypatch):
                 exists=lambda: False,
                 lock=lambda **kwargs: nullcontext(),
                 list_events=lambda **kwargs: [],
+                review_event_candidates=lambda *_: [],
                 close=lambda: None,
             ),
         )

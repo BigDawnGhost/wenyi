@@ -275,7 +275,7 @@ class TranslationService:
             if all(s.target is not None for s in b):
                 # Reuse a batch translated at this position/context, rebuild rolling context and skip it.
                 # Blank "" is a completed MinerU allowance; only None means not yet translated.
-                self._align_batch_context(store, chapter, batch_start, len(b))
+                self._align_batch_context(store, chapter, text_segs, batch_start, len(b))
                 if glossary_key in glossary_checkpoints or (
                     context_policy is not None
                     and self._glossary_checkpoint_covers(glossary_checkpoints, batch_start, len(b))
@@ -366,6 +366,7 @@ class TranslationService:
                     ),
                 )
                 chapter = self.save_precision_batch(store, plan, result)
+                # Precision publication reloads the chapter; alignment must use its segments.
                 text_segs = chapter.text_segments
                 b = text_segs[batch_start : batch_start + len(b)]
                 self._precision.mark_published(store, result)
@@ -376,7 +377,7 @@ class TranslationService:
                     segment.target_before_polish = before_polish
                 # Persist translations incrementally so interruption resumes after this batch.
                 store.save_chapter(chapter)
-            self._align_batch_context(store, chapter, batch_start, len(b))
+            self._align_batch_context(store, chapter, text_segs, batch_start, len(b))
             store.log_event(
                 "batch_translated",
                 chapter=ci,
@@ -450,6 +451,7 @@ class TranslationService:
         self,
         store: Storage,
         chapter: Chapter,
+        segments: list[Segment],
         start: int,
         count: int,
     ) -> None:
@@ -458,8 +460,12 @@ class TranslationService:
         Alignment handles touched logical paragraphs in source order, waiting for their
         final continuation. It can also update targets from earlier batches.
         """
-        self._annotations.align_annotations_after_batch(chapter.index, chapter, start, count, store)
-        self._docx_styles.align_styles_after_batch(chapter.index, chapter, start, count, store)
+        self._annotations.align_annotations_after_batch(
+            chapter.index, chapter, start, count, store, segments=segments
+        )
+        self._docx_styles.align_styles_after_batch(
+            chapter.index, chapter, start, count, store, segments=segments
+        )
 
     @staticmethod
     def save_precision_batch(store: Storage, plan: BatchPlan, result: BatchResult) -> Chapter:

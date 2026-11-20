@@ -10,7 +10,7 @@ from ...document_styles.docx import (
     needs_alignment,
     proportional_range_placements,
 )
-from ...models.document import Chapter
+from ...models.document import Chapter, Segment
 from ...storage.protocol import Storage
 from .annotations import AnnotationService
 
@@ -30,11 +30,14 @@ class DocxStyleService:
         chapter: Chapter,
         start_position: int,
         store: Storage,
+        *,
+        segments: list[Segment] | None = None,
     ) -> None:
         """Align mixed styles for one logical paragraph including continuations and persist
         metadata.
         """
-        segments = chapter.text_segments
+        if segments is None:
+            segments = chapter.text_segments
         if not 0 <= start_position < len(segments):
             return
         while start_position > 0 and segments[start_position].cont:
@@ -141,13 +144,19 @@ class DocxStyleService:
         start: int,
         count: int,
         store: Storage,
+        *,
+        segments: list[Segment] | None = None,
     ) -> None:
-        """Process completed mixed-style logical paragraphs touched by this batch."""
-        segments = chapter.text_segments
+        """Process completed mixed-style logical paragraphs touched by this batch.
+
+        If supplied, segments must be the nonempty view of this chapter instance.
+        """
+        if segments is None:
+            segments = chapter.text_segments
         for logical_start in AnnotationService.completed_logical_starts_in_range(
             segments, start, count
         ):
             segment = segments[logical_start]
             styles = segment.meta.get("docx_styles")
             if isinstance(styles, dict) and styles.get("items"):
-                self.align_segment_styles(ci, chapter, logical_start, store)
+                self.align_segment_styles(ci, chapter, logical_start, store, segments=segments)

@@ -166,14 +166,14 @@ def _flush_table(
         table.style = "Table Grid"
     except (KeyError, ValueError):
         pass
-    for r in range(rows):
-        for c in range(cols):
+    # Traverse the new rectangular grid by row; Table.cell() rebuilds the full grid per lookup.
+    for r, row in enumerate(table.rows):
+        for c, cell in enumerate(row.cells):
             target, source, meta = cells.get((r, c), ("", "", {}))
             style, placements, align, shade = _segment_style_payload(
                 meta, source=source, output_text=target
             )
             target_font = _font_for_text(output_font, source=source, output_text=target)
-            cell = table.cell(r, c)
             cell.text = ""
             paragraph = cell.paragraphs[0]
             blocks = [(target, style, placements, target_font)]

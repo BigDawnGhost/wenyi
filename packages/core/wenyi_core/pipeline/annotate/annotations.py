@@ -71,6 +71,7 @@ class AnnotationService:
         start_position: int,
         store: Storage,
         *,
+        segments: list[Segment] | None = None,
         retry_fallbacks: bool = False,
     ) -> None:
         """Align format-owned annotations for one fully translated logical paragraph.
@@ -81,7 +82,8 @@ class AnnotationService:
         calls when annotations are absent or translation is incomplete.
         Repair mode retries only cached fallback items for the unchanged logical target.
         """
-        segments = chapter.text_segments
+        if segments is None:
+            segments = chapter.text_segments
         if not 0 <= start_position < len(segments):
             return
         while start_position > 0 and segments[start_position].cont:
@@ -94,7 +96,7 @@ class AnnotationService:
         if not isinstance(raw_items, list) or not raw_items:
             return
 
-        logical_segments = self._logical_segments(chapter, start_position)
+        logical_segments = self._logical_segments(segments, start_position)
         if any(item.target is None for item in logical_segments):
             return
 
@@ -321,7 +323,8 @@ class AnnotationService:
             progress(0, len(chapter_indices), label)
         for done, ci in enumerate(chapter_indices, 1):
             chapter = store.load_chapter(ci)
-            for position, segment in enumerate(chapter.text_segments):
+            segments = chapter.text_segments
+            for position, segment in enumerate(segments):
                 metadata = annotation_metadata(segment)
                 if segment.cont or not isinstance(metadata, dict):
                     continue
@@ -330,7 +333,7 @@ class AnnotationService:
                     for item in metadata.get("items", [])
                 ):
                     self.align_segment_annotation(
-                        ci, chapter, position, store, retry_fallbacks=True
+                        ci, chapter, position, store, segments=segments, retry_fallbacks=True
                     )
                     continue
                 if objects_only:
@@ -340,7 +343,9 @@ class AnnotationService:
                     # Refresh missing/stale placements on resume, never during read-only export.
                     target = segment.target or ""
                     if target and metadata.get("target_digest") != target_digest(target):
-                        self.align_segment_annotation(ci, chapter, position, store)
+                        self.align_segment_annotation(
+                            ci, chapter, position, store, segments=segments
+                        )
                     # Unchanged PDF failures are best-effort omissions, not another paid
                     # repair pass. Other annotations in the same paragraph remain usable.
                     continue
@@ -350,13 +355,14 @@ class AnnotationService:
                     for item in placements
                 ):
                     continue
-                self.align_segment_annotation(ci, chapter, position, store, retry_fallbacks=True)
+                self.align_segment_annotation(
+                    ci, chapter, position, store, segments=segments, retry_fallbacks=True
+                )
             if progress:
                 progress(done, len(chapter_indices), label)
 
     @staticmethod
-    def _logical_segments(chapter: Chapter, position: int) -> list[Segment]:
-        segments = chapter.text_segments
+    def _logical_segments(segments: list[Segment], position: int) -> list[Segment]:
         end = position + 1
         while end < len(segments) and segments[end].cont:
             end += 1
@@ -369,14 +375,18 @@ class AnnotationService:
         start: int,
         count: int,
         store: Storage,
+        *,
+        segments: list[Segment] | None = None,
     ) -> None:
-        """Process complete annotated paragraphs touched by this batch serially in source
-        order.
+        """Process completed annotated paragraphs in source order.
+
+        If supplied, segments must be the nonempty view of this chapter instance.
         """
-        segments = chapter.text_segments
+        if segments is None:
+            segments = chapter.text_segments
         for logical_start in self.completed_logical_starts_in_range(
             segments,
             start,
             count,
         ):
-            self.align_segment_annotation(ci, chapter, logical_start, store)
+            self.align_segment_annotation(ci, chapter, logical_start, store, segments=segments)
