@@ -1,4 +1,4 @@
-"""Offline DOCX exports keep source styling independent of bilingual order."""
+"""Offline DOCX table export and bilingual source styling."""
 
 from __future__ import annotations
 
@@ -8,9 +8,11 @@ import pytest
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Pt, RGBColor
+from docx.table import Table
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
 from wenyi_core.ingest.docx_reader import read_docx
+from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.storage.run_store import ExportSnapshotStore
 
 
@@ -181,3 +183,78 @@ def test_bilingual_docx_source_fallback_is_not_duplicated_or_restyled(
         assert paragraph.runs[0].font.size == Pt(14)
         assert paragraph.runs[0].font.highlight_color is None
         assert paragraph.runs[0].font.name != "宋体"
+
+
+@pytest.mark.parametrize(
+    ("bilingual", "order"),
+    [
+        pytest.param(False, "target_first", id="monolingual"),
+        pytest.param(True, "target_first", id="target-first"),
+        pytest.param(True, "source_first", id="source-first"),
+    ],
+)
+def test_docx_table_export_without_whole_table_cell_lookup(tmp_path, monkeypatch, bilingual, order):
+    # Supply cells out of order and omit (0, 1) from the rectangular grid.
+    table_data = [
+        (1, 2, "Bottom right", None, {}),
+        (0, 2, "Top right", None, {}),
+        (1, 0, " \t ", None, {}),
+        (1, 1, "", None, {}),
+        (0, 0, " Source ", " 甲\n乙 ", {"docx_style": {"bold": True}}),
+    ]
+    chapter = Chapter(
+        index=0,
+        segments=[
+            Segment(
+                index=i,
+                source=source,
+                target=target,
+                meta={"table_id": 0, "row": row, "col": col, "rows": 2, "cols": 3, **style},
+            )
+            for i, (row, col, source, target, style) in enumerate(table_data)
+        ],
+    )
+    snapshot = ExportSnapshotStore(
+        str(tmp_path / "run"),
+        {"fmt": "docx", "source_lang": "en", "target_lang": "zh", "chapters": [{"index": 0}]},
+        {0: chapter},
+    )
+
+    def forbid_whole_table_lookup(*_args):
+        pytest.fail("DOCX export must not use whole-table cell lookup")
+
+    with monkeypatch.context() as patch:
+        # python-docx 1.2.0 rebuilds Table._cells on every call to Table.cell().
+        patch.setattr(Table, "cell", forbid_whole_table_lookup)
+        patch.setattr(Table, "_cells", property(forbid_whole_table_lookup), raising=False)
+        written = assemble(
+            snapshot,
+            str(tmp_path / "source.docx"),
+            out_path=str(tmp_path / "table.docx"),
+            out_format="docx",
+            bilingual=bilingual,
+            order=order,
+            preserve_source_style=True,
+        )
+
+    target, source = " 甲\n乙 ", " Source "
+    expected_runs = [target]
+    if bilingual:
+        expected_runs = (
+            [source, "\n", target] if order == "source_first" else [target, "\n", source]
+        )
+
+    (table,) = Document(written).tables
+    rows = [row.cells for row in table.rows]
+    assert [[cell.text for cell in row] for row in rows] == [
+        ["".join(expected_runs), "", "Top right"],
+        [" \t ", "", "Bottom right"],
+    ]
+    (paragraph,) = rows[0][0].paragraphs
+    assert [run.text for run in paragraph.runs] == expected_runs
+    assert [run.bold for run in paragraph.runs] == [
+        None if text == "\n" else True for text in expected_runs
+    ]
+    assert [run.font.name for run in paragraph.runs] == [
+        "宋体" if text == target else None for text in expected_runs
+    ]

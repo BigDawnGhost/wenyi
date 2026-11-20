@@ -305,10 +305,11 @@ class TestAssembleText(unittest.TestCase):
                 file.write(_FB2_WITH_IMAGES)
             store, _ = _run(fb2, os.path.join(d, "state"))
 
-            out = assemble(store, fb2, out_format="epub", about_page=False)
+            out = assemble(store, fb2, out_format="epub")
 
             with zipfile.ZipFile(out) as archive:
                 names = archive.namelist()
+                self.assertIn("EPUB/trans-novel-about.xhtml", names)
                 cover_name = next(name for name in names if name.endswith("images/cover.jpg"))
                 inside_name = next(name for name in names if name.endswith("images/inside.png"))
                 chapter_name = next(name for name in names if name.endswith("/ch0.xhtml"))

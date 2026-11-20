@@ -10,7 +10,7 @@ from typing import Literal
 
 from ..i18n.policy.models import PolicyContext, PolicyPlan
 from ..i18n.policy.resolver import resolve_policy
-from .about import append_about_page
+from .about import AboutPage
 from .docx_writer import _assemble_docx
 from .epub_writer import (
     _assemble_epub,
@@ -147,36 +147,24 @@ def assemble(
         source_path, "epub", "", bilingual=bilingual, target_lang=target_lang
     )
     _ensure_parent_dir(out_path)
+    about = (
+        AboutPage(language_policy.export.language_tag, language_policy.export.about_locale)
+        if about_page
+        else None
+    )
     if m["fmt"] == "epub":
-        result = _assemble_epub(
-            view,
-            source_path,
-            out_path,
-            bilingual=bilingual,
-            order=order,
-            preserve_source_style=preserve_source_style,
-        )
+        write = _assemble_epub
     elif m["fmt"] in {"html", "pdf"}:
-        result = _build_epub_from_html_templates(
-            view,
-            source_path,
-            out_path,
-            bilingual=bilingual,
-            order=order,
-            preserve_source_style=preserve_source_style,
-        )
+        write = _build_epub_from_html_templates
     else:
         # FB2/text: build a standard EPUB from chapter data.
-        result = _build_epub_from_chapters(
-            view,
-            source_path,
-            out_path,
-            bilingual=bilingual,
-            order=order,
-            preserve_source_style=preserve_source_style,
-        )
-    if about_page:
-        append_about_page(
-            result, language_policy.export.language_tag, locale=language_policy.export.about_locale
-        )
-    return result
+        write = _build_epub_from_chapters
+    return write(
+        view,
+        source_path,
+        out_path,
+        bilingual=bilingual,
+        order=order,
+        preserve_source_style=preserve_source_style,
+        about=about,
+    )

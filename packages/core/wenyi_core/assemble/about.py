@@ -5,6 +5,7 @@ from __future__ import annotations
 import posixpath
 import shutil
 import zipfile
+from dataclasses import dataclass
 from string import Template
 
 from bs4 import BeautifulSoup
@@ -15,8 +16,20 @@ from ..i18n.policy.resolver import resolve_policy
 from ..i18n.resources import read_text
 
 ABOUT_TITLE = "关于此翻译"
-ABOUT_FILENAME = "trans-novel-about.xhtml"
+ABOUT_ID = "trans-novel-about"
+ABOUT_FILENAME = f"{ABOUT_ID}.xhtml"
 ABOUT_REPOSITORY = "https://github.com/BigDawnGhost/wenyi"
+
+
+@dataclass(frozen=True)
+class AboutPage:
+    """Language settings for an enabled translation about page."""
+
+    lang: str
+    locale: str | None = None
+
+    def render(self) -> bytes:
+        return about_xhtml(self.lang, locale=self.locale)
 
 
 def about_xhtml(lang: str, *, locale: str | None = None) -> bytes:
@@ -30,7 +43,7 @@ def about_xhtml(lang: str, *, locale: str | None = None) -> bytes:
     return (
         Template(read_text(f"export/about.{locale}.xhtml"))
         # safe_substitute: a literal $ in future template prose must not crash the whole
-        # export postprocessing step (audit A-4).
+        # export (audit A-4).
         .safe_substitute(lang=lang, title=ABOUT_TITLE, repository=ABOUT_REPOSITORY)
         .encode("utf-8")
     )
@@ -46,6 +59,14 @@ def rootfile_path(container_xml: bytes) -> str | None:
         path = rootfile.get("full-path")
         return path if isinstance(path, str) and path else None
     except Exception:
+        return None
+
+
+def main_opf_path(archive: zipfile.ZipFile) -> str | None:
+    """Find the main OPF named by the container, if the container is present."""
+    try:
+        return rootfile_path(archive.read("META-INF/container.xml"))
+    except KeyError:
         return None
 
 
@@ -76,24 +97,33 @@ def append_about_to_opf(data: bytes, href: str) -> tuple[bytes, bool]:
             value = existing_item.get("id")
             if isinstance(value, str):
                 existing_ids.add(value)
-        item_id = "trans-novel-about"
+        item_id = ABOUT_ID
         suffix = 1
         while item_id in existing_ids:
-            item_id = f"trans-novel-about-{suffix}"
+            item_id = f"{ABOUT_ID}-{suffix}"
             suffix += 1
 
-        item = soup.new_tag("item")
+        item = soup.new_tag("item", namespace=manifest.namespace, nsprefix=manifest.prefix)
         item["id"] = item_id
         item["href"] = href
         item["media-type"] = "application/xhtml+xml"
         manifest.append(item)
 
-        itemref = soup.new_tag("itemref")
+        itemref = soup.new_tag("itemref", namespace=spine.namespace, nsprefix=spine.prefix)
         itemref["idref"] = item_id
         spine.append(itemref)
         return soup.encode(), True
     except Exception:
         return data, False
+
+
+def attach_about_entry(
+    opf_data: bytes, opf_path: str, existing_names: set[str], about: AboutPage
+) -> tuple[bytes, tuple[str, bytes] | None]:
+    """Prepare the updated OPF and ZIP member, skipping OPFs that cannot reference the page."""
+    entry, href = unique_about_entry(existing_names, opf_path)
+    updated_opf, attached = append_about_to_opf(opf_data, href)
+    return updated_opf, (entry, about.render()) if attached else None
 
 
 def append_about_page(epub_path: str, lang: str, *, locale: str | None = None) -> bool:
@@ -105,23 +135,19 @@ def append_about_page(epub_path: str, lang: str, *, locale: str | None = None) -
     """
     with publish_target(epub_path) as tmp_path:
         with zipfile.ZipFile(epub_path, "r") as zin:
-            try:
-                opf_path = rootfile_path(zin.read("META-INF/container.xml"))
-            except KeyError:
-                return False
-            if not opf_path or opf_path not in zin.namelist():
+            opf_path = main_opf_path(zin)
+            names = set(zin.namelist())
+            if opf_path is None or opf_path not in names:
                 return False
 
-            infos = zin.infolist()
-            about_entry, about_href = unique_about_entry(
-                {info.filename for info in infos}, opf_path
+            opf_data, about_entry = attach_about_entry(
+                zin.read(opf_path), opf_path, names, AboutPage(lang, locale)
             )
-            opf_data, attached = append_about_to_opf(zin.read(opf_path), about_href)
-            if not attached:
+            if about_entry is None:
                 return False
 
             with zipfile.ZipFile(tmp_path, "w") as zout:
-                for info in infos:
+                for info in zin.infolist():
                     if info.filename == "mimetype":
                         stored = zipfile.ZipInfo(info.filename, date_time=info.date_time)
                         stored.compress_type = zipfile.ZIP_STORED
@@ -132,5 +158,5 @@ def append_about_page(epub_path: str, lang: str, *, locale: str | None = None) -
                     else:
                         with zin.open(info) as source, zout.open(info, "w") as target:
                             shutil.copyfileobj(source, target)
-                zout.writestr(about_entry, about_xhtml(lang, locale=locale))
+                zout.writestr(*about_entry)
     return True

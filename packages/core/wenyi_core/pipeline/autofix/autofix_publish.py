@@ -44,6 +44,7 @@ class AutofixPublisher:
             progress(0, total, "progress.stage.publishingAutofix")
         for chapter_index in sorted(by_chapter):
             chapter = store.load_chapter(chapter_index)
+            segments = chapter.text_segments
             chapter_locations = sorted(
                 by_chapter[chapter_index], key=lambda row: row.get("index", -1)
             )
@@ -56,7 +57,7 @@ class AutofixPublisher:
                 if (
                     isinstance(text_index, bool)
                     or not isinstance(text_index, int)
-                    or not 0 <= text_index < len(chapter.text_segments)
+                    or not 0 <= text_index < len(segments)
                     or not isinstance(target, str)
                     or not isinstance(before, str)
                 ):
@@ -64,13 +65,14 @@ class AutofixPublisher:
                     row["reason"] = "invalid_index_location"
                     done += 1
                     continue
-                current = chapter.text_segments[text_index].target or ""
+                segment = segments[text_index]
+                current = segment.target or ""
                 if current == target:
                     row["status"] = "no_net_change" if current == before else "applied"
                     if current != before and row.get("alignment_status") != "completed":
                         applied_positions.append(text_index)
                 elif current == before and text_hash(current) == row.get("before_hash"):
-                    chapter.text_segments[text_index].target = target
+                    segment.target = target
                     row["status"] = "applied"
                     applied_positions.append(text_index)
                     chapter_changed = True
@@ -95,6 +97,7 @@ class AutofixPublisher:
                     text_index,
                     1,
                     store,
+                    segments=segments,
                 )
                 self._docx_styles.align_styles_after_batch(
                     chapter_index,
@@ -102,6 +105,7 @@ class AutofixPublisher:
                     text_index,
                     1,
                     store,
+                    segments=segments,
                 )
                 row["alignment_status"] = "completed"
             debug.write_json("autofix/index.json", index)
