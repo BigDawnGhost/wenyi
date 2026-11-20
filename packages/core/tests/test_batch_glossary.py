@@ -81,7 +81,8 @@ def _prepare(config, tmp_path, client, extra_terms=()):
 
 def test_default_is_all_and_unknown_scopes_are_rejected():
     assert Config.from_dict({}).pipeline.batch_glossary == "all"
-    assert Config.from_dict({"pipeline": {"batch_glossary": "relevant"}}).pipeline.batch_glossary
+    relevant = Config.from_dict({"pipeline": {"batch_glossary": "relevant"}})
+    assert relevant.pipeline.batch_glossary == "relevant"
     with pytest.raises(ValidationError, match="batch_glossary"):
         Config.from_dict({"pipeline": {"batch_glossary": "chapter"}})
 

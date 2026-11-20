@@ -373,7 +373,7 @@ described under [scope](#scope).
 | `pipeline.translation_mode` | `standard` | `standard` or `three_draft_synthesis`; the latter requires `polish: true`. |
 | `pipeline.polish` | `true` | Polish translated batches; adds substantial model work. |
 | `pipeline.polish_concurrency` | `1` | Standard-mode polish workers, integer ≥ 1. `1` polishes each batch before the next one; above `1`, drafts are saved and polished in the background while translation continues, with at most twice this many batches queued. Provider `max_concurrency` still applies. Ignored by `three_draft_synthesis`. See [deferred polishing](../guide/pipeline.md#deferred-polishing). |
-| `pipeline.batch_glossary` | `all` | `all` sends the full glossary to every body translation, polish, precision and extraction request; `relevant` sends each batch only the entries matching its text. See [translation context and the glossary](../guide/pipeline.md). |
+| `pipeline.batch_glossary` | `all` | `all` sends the full glossary to every body translation, polish and precision request; `relevant` sends each batch only the entries matching its text and limits extraction to existing entries in the extracted text. See [translation context and the glossary](../guide/pipeline.md#context-and-glossary). |
 | `pipeline.align_retry_limit` | `2` | Additional structural-output attempts; `0` disables them. |
 | `pipeline.rolling_context_tokens` | `512` | Preceding translation budget, integer ≥ 0, counted with `cl100k_base`. |
 | `pipeline.book_understanding` | `true` | Generate full-source chapter digests and a book synopsis. |
