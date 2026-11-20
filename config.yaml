@@ -26,6 +26,8 @@ pipeline:
   align_retry_limit: 2
   polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
   translation_mode: standard # standard | three_draft_synthesis; three_draft_synthesis requires polish
+  # Standard-mode polish workers; above 1, polishing runs in the background while translation continues.
+  polish_concurrency: 1
   rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)
   terminology_context: false # CLI-only experimental whole-book terminology evidence
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost

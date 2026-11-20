@@ -287,7 +287,8 @@ unsaved work or usage information; prefer normal interruption.
 
 `status` shows chapter progress, glossary statistics, and saved timing.
 `inspect-run` summarizes recorded failures, retries, timing, and cumulative
-target usage without calling a model. Add `--verbose` to include the last
+target usage without calling a model. It also shows the background polish backlog
+when `pipeline.polish_concurrency` is above 1. Add `--verbose` to include the last
 recorded traceback; review it for private text and paths before sharing.
 Neither command adds execution time.
 
