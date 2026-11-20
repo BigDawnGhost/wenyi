@@ -67,7 +67,7 @@ Use **Glossary** to add or edit source terms, translations, aliases, notes, type
 
 Search covers the whole glossary, including aliases, readings, and notes. Type filters apply to the results. Selecting all affects only the current page; changing pages or filters clears the selection. During a queued/running task, **Term details** remains available for reading and copying, but adding, importing, editing, deleting, and resolving conflicts are disabled.
 
-Import **CSV or JSON**. CSV needs `source` and `target` headers. Import checks existing source terms across the complete glossary, not only the visible page or filter. Export CSV/JSON to reuse the glossary; type labels follow the interface language, while stored/exported built-in type IDs remain English.
+Import **CSV or JSON**. The file and the parsed glossary data must both fit within **5 MiB**; if either exceeds the limit, no terms are imported. CSV needs `source` and `target` headers. Import checks existing source terms across the complete glossary, not only the visible page or filter. Export CSV/JSON to reuse the glossary; type labels follow the interface language, while stored/exported built-in type IDs remain English.
 
 ### Anki export
 

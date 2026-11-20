@@ -246,7 +246,10 @@ const en = {
   "glossary.couldNotImportTerms": "Could not import terms: {error}",
   "glossary.importTerms": "Import terms",
   "glossary.importTermsFromCsvOrJsonCsv":
-    "CSV / JSON; CSV requires source and target headers.",
+    "CSV or JSON, up to {limit} MiB. CSV requires source and target headers.",
+  "glossary.importFileTooLarge": "This file exceeds {limit} MiB. Choose a smaller file.",
+  "glossary.importRequestTooLarge":
+    "The parsed glossary exceeds {limit} MiB. No terms were imported.",
   "glossary.chooseFile": "Choose file",
   "glossary.imported": "Imported:",
   "glossary.overwrite": "Overwrite",
