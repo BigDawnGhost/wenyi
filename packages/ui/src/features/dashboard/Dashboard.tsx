@@ -6,15 +6,16 @@ import { toast } from "../../lib/toast";
 import { errorMessage } from "../../lib/error-codes";
 import { Link, Outlet, useNavigate } from "react-router-dom";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
-import { Button } from "../../components/ui/button";
+import { Button, buttonVariants } from "../../components/ui/button";
 import { LazyBoundary } from "../../routes/LazyBoundary";
+import { loadCreateProject } from "../../routes/manifest";
 import { Card, CardContent } from "../../components/ui/card";
 import { ErrorNotice } from "../../components/ui/data";
 import { Dialog, EmptyState } from "../../components/ui/misc";
 import { api, isProjectBusy } from "../../api/client";
 import type { Project } from "../../api/types";
 import { platform } from "../../platform";
-import { FolderPlus, Trash2 } from "lucide-react";
+import { FolderInput, FolderPlus, Trash2 } from "lucide-react";
 
 export default function Dashboard() {
   const { t: tr, locale } = useI18n();
@@ -47,7 +48,7 @@ export default function Dashboard() {
   });
   // A refused import says why: which file is missing, or that the original no
   // longer matches. The reason is the whole point of the entry point, so it is
-  // shown beside the button rather than in a toast that disappears.
+  // shown in the project list rather than in a toast that disappears.
   const [importFailure, setImportFailure] = useState<string | null>(null);
   const importProject = useMutation({
     mutationFn: async () => {
@@ -74,30 +75,21 @@ export default function Dashboard() {
       <PageHeader
         title={tr("dashboard.myProjects")}
         actions={
-          library && (
-            <Button
-              variant="outline"
-              aria-busy={importProject.isPending || undefined}
-              onClick={() => { if (!importProject.isPending) importProject.mutate(); }}
-            >
-              {/* The glyph stays: a spinner swapped in for the duration replaced it
-                  and rotated, which the control never does otherwise. */}
-              <FolderPlus className="h-4 w-4" />
-              {tr("dashboard.importProject")}
-            </Button>
-          )
+          <Link
+            id="create-project-trigger"
+            to="/projects/new"
+            state={{ fromProjectList: true }}
+            className={buttonVariants({ variant: "outline" })}
+            onPointerEnter={() => void loadCreateProject().catch(() => {})}
+            onFocus={() => void loadCreateProject().catch(() => {})}
+          >
+            <FolderPlus className="h-4 w-4" aria-hidden="true" />
+            {tr("common.createProject")}
+          </Link>
         }
       />
       <PageContainer className="mx-auto w-full max-w-5xl">
         <ErrorNotice error={error} />
-        {importFailure && (
-          <ErrorNotice className="mb-3">
-            <p className="font-medium">{tr("dashboard.couldNotImportProject")}</p>
-            <p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">
-              {importFailure}
-            </p>
-          </ErrorNotice>
-        )}
         {isLoading ? (
           // The skeleton mirrors the loaded card grid so loading keeps the same
           // geometry and the page does not jump when the projects arrive.
@@ -191,6 +183,27 @@ export default function Dashboard() {
                 </Card>
               );
             })}
+          </div>
+        )}
+        {library && (
+          <div className="mt-4 space-y-2">
+            <Button
+              variant="ghost"
+              className="text-muted-foreground"
+              aria-busy={importProject.isPending || undefined}
+              onClick={() => { if (!importProject.isPending) importProject.mutate(); }}
+            >
+              <FolderInput className="h-4 w-4" aria-hidden="true" />
+              {tr("dashboard.importProject")}
+            </Button>
+            {importFailure && (
+              <ErrorNotice>
+                <p className="font-medium">{tr("dashboard.couldNotImportProject")}</p>
+                <p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">
+                  {importFailure}
+                </p>
+              </ErrorNotice>
+            )}
           </div>
         )}
       </PageContainer>

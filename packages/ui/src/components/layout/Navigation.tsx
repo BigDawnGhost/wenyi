@@ -2,7 +2,7 @@ import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, type LucideIcon } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { cn } from "../../lib/utils";
-import { Button, buttonVariants, type ButtonVariant } from "../ui/button";
+import { Button } from "../ui/button";
 import {
   availableSettingsSections, isVisibleFor, navEntries, navPath, settingsPath,
 } from "../../routes/manifest";
@@ -62,35 +62,19 @@ export function NavigationLink({
   end,
   collapsed = false,
   prefetch,
-  className,
-  id,
   state,
-  centered = false,
-  variant,
 }: {
   to: string;
   icon: LucideIcon;
   label: string;
   end?: boolean;
   collapsed?: boolean;
-  /** Centre icon and label as a unit, for entries rendered as buttons. */
-  centered?: boolean;
-  /**
-   * Render as a real button of this variant rather than a sidebar row. The
-   * classes come from buttonVariants, so hover, pressed and focus behave
-   * exactly as they do on a <Button>; re-deriving them here would drift.
-   */
-  variant?: ButtonVariant;
   /** Chunk loader warmed on hover/focus so the first click renders instantly. */
   prefetch?: () => Promise<unknown>;
-  /** Extra classes merged last (e.g. the sidebar's primary-action slot). */
-  className?: string;
-  id?: string;
   state?: Record<string, unknown>;
 }) {
   return (
     <NavLink
-      id={id}
       to={to}
       state={state}
       end={end}
@@ -101,43 +85,16 @@ export function NavigationLink({
         cn(
           "group flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
           collapsed && "gap-0 px-2",
-
-          variant
-            ? cn(
-                buttonVariants({ variant }),
-                "w-full",
-                "transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
-                "transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
-                // buttonVariants brings its own transition list, and that list
-                // replaces the row's: without padding and gap here they snap to
-                // their collapsed values while the width is still animating, so
-                // the icon is centred against a button that has not shrunk yet and
-                // lurches outward before coming back. Transition them together.
-                "transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
-                // The label collapses to zero width but still occupies a gap,
-                // which pushes the lone icon off centre. Drop both the gap and
-                // the wide horizontal padding so the icon sits in the middle of
-                // the narrow button.
-                collapsed && "gap-0 px-2",
-              )
-            : isActive
-              ? "bg-accent text-accent-foreground font-medium shadow-raised active:shadow-pressed"
-              : "text-muted-foreground hover:text-foreground hover:bg-hover",
-          className,
+          isActive
+            ? "bg-accent text-accent-foreground font-medium shadow-raised active:shadow-pressed"
+            : "text-muted-foreground hover:text-foreground hover:bg-hover",
         )
       }
     >
       <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
       <span
         className={cn(
-          "min-w-0 max-w-48 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-sidebar ease-sidebar",
-          // The primary action is white on a dark face, so a label that lingers
-          // while its box narrows reads as the text being crushed. Fading it
-          // ahead of the width makes it simply disappear.
-          // flex-1 makes the label absorb the row's spare width, which is what
-          // pushes nav labels to the left. A centred entry lets the icon and
-          // label shrink-wrap so justify-center has slack to distribute.
-          !centered && "flex-1",
+          "min-w-0 max-w-48 flex-1 overflow-hidden whitespace-nowrap transition-[max-width,opacity,transform] duration-sidebar ease-sidebar",
           collapsed && "max-w-0 -translate-x-2 opacity-0",
         )}
       >

@@ -149,10 +149,8 @@ and primitives define the core vocabulary:
 | `sidebar` | Entire sidebar |
 | `sidebar.logo-row` | Brand/settings heading and collapse control |
 | `sidebar.strata` | Sidebar layers beneath the logo row; `#sidebar-navigation` |
-| `sidebar.action` | Primary action |
-| `sidebar.panels` | Global navigation |
 | `sidebar.region` | Scrollable project navigation |
-| `sidebar.footer` | Bottom navigation/action area |
+| `sidebar.footer` | Global navigation (Projects and Settings), or Back in settings |
 | `content` | Main route-content region |
 | `page.header` | Page title, subtitle and actions |
 | `page.container` | Page body |

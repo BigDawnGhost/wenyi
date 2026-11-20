@@ -119,10 +119,8 @@ Review 问题仅在展开后加载。
 | `sidebar` | 整个侧栏 |
 | `sidebar.logo-row` | 品牌/设置标题及折叠控件 |
 | `sidebar.strata` | logo 行下的侧栏层级，`#sidebar-navigation` |
-| `sidebar.action` | 主操作 |
-| `sidebar.panels` | 全局导航 |
 | `sidebar.region` | 可滚动的项目导航 |
-| `sidebar.footer` | 底部导航/操作区 |
+| `sidebar.footer` | 全局导航（项目列表和设置），或设置页的返回入口 |
 | `content` | 主路由内容区 |
 | `page.header` | 页标题、副标题及操作 |
 | `page.container` | 页正文 |

@@ -173,11 +173,12 @@ export default function CreateProjectDialog() {
   // Closing never cancels a request that is already in flight. The dialog is
   // only a view of it, so dismissing stays available and the result still
   // arrives in the query cache; `mounted` below decides whether to redirect.
-  // Dismissing lands on the project list, which is what the dialog was already
-  // showing behind itself. Going back instead would return to whatever page the
-  // button was pressed from, so the list the user had just been looking at would
-  // disappear under them.
-  const close = () => navigate("/", { replace: true });
+  const close = () => {
+    // Return to the existing list entry when opened from its header. A direct
+    // visit has no such entry, so replace the dialog URL instead.
+    if (location.state?.fromProjectList) navigate(-1);
+    else navigate("/", { replace: true });
+  };
 
   const languages = (caps?.languages || []).filter((l) => l.code !== "auto");
   const createDisabled =
@@ -233,9 +234,7 @@ export default function CreateProjectDialog() {
       title={tr("common.createProject")}
       onClose={close}
       initialFocus={nameRef}
-      returnFocus={() =>
-        document.getElementById(location.state?.returnFocusId || "create-project-trigger")
-      }
+      returnFocus={() => document.getElementById("create-project-trigger")}
       className="max-w-2xl"
       footer={footer}
     >

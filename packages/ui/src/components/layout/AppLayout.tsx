@@ -108,38 +108,9 @@ export function AppLayout() {
   // format would build the wrong menu for the newly selected project.
   const project = projectDetails ?? projects.data?.find((item) => item.id === recalledPid);
 
-  // One layered column: logo row → primary action → global panels → scrollable
-  // project region → footer, instead of three bordered blocks.
   const globalNav = navEntries
     .filter((entry) => entry.group === "global")
     .sort((a, b) => a.order - b.order);
-  const renderGlobal = (slot: "action" | "panel" | "foot") =>
-    globalNav
-      .filter((entry) =>
-        slot === "panel" ? !entry.slot || entry.slot === "panel" : entry.slot === slot,
-      )
-      .map((entry) => (
-        <NavigationLink
-          key={entry.to}
-          to={entry.to}
-          icon={entry.icon}
-          label={tr(entry.label)}
-          collapsed={collapsed}
-          end={entry.end}
-          prefetch={entry.loader}
-          id={slot === "action" ? "create-project-trigger" : undefined}
-          centered={slot === "action"}
-          // The primary-action entry is a button, so it takes the button's own
-          // variant classes instead of a private copy of the same look.
-          variant={slot === "action" ? "default" : undefined}
-          state={slot === "action"
-            ? { fromAppNavigation: true }
-            : entry.to === "/settings"
-              ? { settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }
-              : undefined}
-          className={slot === "action" ? "w-full" : undefined}
-        />
-      ));
 
   // The floating action bar is fixed to the viewport, so it needs the sidebar's
   // width to centre on the content pane rather than the window. Publish it as a
@@ -217,28 +188,6 @@ export function AppLayout() {
           ) : (
             <>
               <div
-                data-slot="sidebar.action"
-                className={cn(
-                  // Only the horizontal inset changes when the sidebar narrows:
-                  // the vertical rhythm stays put so the group does not shift
-                  // relative to the rows below it.
-                  "shrink-0 px-3 py-3 transition-[padding] duration-sidebar ease-sidebar",
-                  collapsed && "px-2",
-                )}
-              >
-                {renderGlobal("action")}
-              </div>
-              <nav
-                data-slot="sidebar.panels"
-                aria-label={tr("navigation.global")}
-                className={cn(
-                  "shrink-0 space-y-1 px-3 py-1 transition-[padding] duration-sidebar ease-sidebar",
-                  collapsed && "px-2",
-                )}
-              >
-                {renderGlobal("panel")}
-              </nav>
-              <div
                 data-slot="sidebar.region"
                 className="relative flex min-h-0 flex-1 flex-col"
               >
@@ -260,15 +209,29 @@ export function AppLayout() {
                   )}
                 </div>
               </div>
-              <div
+              <nav
                 data-slot="sidebar.footer"
+                aria-label={tr("navigation.global")}
                 className={cn(
-                  "shrink-0 px-3 pt-1 pb-3 transition-[padding] duration-sidebar ease-sidebar",
+                  "shrink-0 space-y-1 px-3 pt-1 pb-3 transition-[padding] duration-sidebar ease-sidebar",
                   collapsed && "p-2",
                 )}
               >
-                {renderGlobal("foot")}
-              </div>
+                {globalNav.map((entry) => (
+                  <NavigationLink
+                    key={entry.to}
+                    to={entry.to}
+                    icon={entry.icon}
+                    label={tr(entry.label)}
+                    collapsed={collapsed}
+                    end={entry.end}
+                    prefetch={entry.loader}
+                    state={entry.to === "/settings"
+                      ? { settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }
+                      : undefined}
+                  />
+                ))}
+              </nav>
             </>
           )}
         </div>
