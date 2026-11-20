@@ -313,7 +313,8 @@ def test_html_templates_to_epub_backfill_canonical_paragraphs_natively(
     soup = BeautifulSoup(rendered, "html.parser")
     assert len(calls) == 1 and golden in calls[0]
     if bilingual:
-        assert soup.select_one(".tn-source").get_text() == "Greeting"
+        node = soup.select_one(".tn-source")
+        assert node is not None and node.get_text() == "Greeting"
     else:
         assert calls == [golden]
         assert not soup.select(".tn-source")
@@ -389,8 +390,9 @@ def test_mineru_chunk_assembly_cache_and_html_export(tmp_path, monkeypatch):
     out = tmp_path / "output.html"
     assemble(store, str(source), out_path=str(out), out_format="html")
     soup = BeautifulSoup(out.read_text(), "html.parser")
-    assert soup.find(id="p1").get_text() == "First."
-    assert soup.find(id="p2").get_text() == "译文"
-    assert not soup.find(attrs={"data-tn-id": True})
+    p1, p2 = soup.find(id="p1"), soup.find(id="p2")
+    assert p1 is not None and p1.get_text() == "First."
+    assert p2 is not None and p2.get_text() == "译文"
+    assert not soup.select("[data-tn-id]")
     assert store.load_chapter(0).segments[1].target == ""
     assert cache.read_text() == frozen

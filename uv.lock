@@ -2480,6 +2480,7 @@ dev = [
     { name = "pytest-xdist" },
     { name = "python-docx" },
     { name = "ruff" },
+    { name = "tomli" },
 ]
 
 [package.metadata]
@@ -2495,6 +2496,7 @@ dev = [
     { name = "pytest-xdist", specifier = ">=3" },
     { name = "python-docx", specifier = ">=1.2.0" },
     { name = "ruff", specifier = ">=0.6" },
+    { name = "tomli", specifier = ">=2" },
 ]
 
 [[package]]

@@ -13,6 +13,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt
+from docx.styles.style import ParagraphStyle
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.ingest.docx_reader import read_docx
 from wenyi_core.markup import _epub_native
@@ -102,9 +103,10 @@ def test_strict_docx_reads_related_utf16_parts_and_cached_toc(tmp_path):
     output = tmp_path / "out.docx"
     assemble(store, str(source), str(output), "docx")
     result = Document(output)
-    assert result.paragraphs[0].style.style_id == "TOC2"
+    toc, heading = result.paragraphs[0].style, result.paragraphs[1].style
+    assert toc is not None and toc.style_id == "TOC2"
     assert result.paragraphs[0].text == "1. Momentum\t2"
-    assert result.paragraphs[1].style.name == "Heading 1"
+    assert heading is not None and heading.name == "Heading 1"
     assert result.paragraphs[0]._p.find(".//" + qn("w:numPr")) is None
 
 
@@ -165,7 +167,7 @@ def test_docx_list_instances_keep_nested_formats_and_restart_from_saved_state(tm
 
     seen = []
     for paragraph in doc.findall("w:body/w:p", NS):
-        label = paragraph.find("w:r/w:t", NS).text
+        label = paragraph.findtext("w:r/w:t", default="", namespaces=NS)
         num = paragraph.find("w:pPr/w:numPr", NS)
         if num is not None:
             assert label.startswith("译：")
@@ -178,6 +180,7 @@ def test_docx_list_instances_keep_nested_formats_and_restart_from_saved_state(tm
         assert value(instance, "w:lvlOverride/w:startOverride") == expected
         abstract_id = value(instance, "w:abstractNumId")
         abstract = lists.find(f"w:abstractNum[@w:abstractNumId='{abstract_id}']", NS)
+        assert abstract is not None
         nested = abstract.find("w:lvl[@w:ilvl='1']", NS)
         assert value(nested, "w:numFmt") == "lowerLetter"
         assert value(nested, "w:lvlText") == "%1.%2)"
@@ -190,6 +193,7 @@ def test_docx_keeps_order_merge_geometry_and_source_fonts_on_export(tmp_path):
     original.core_properties.title = "A & B < C"
     original.core_properties.author = "Élan"
     style = original.styles.add_style("Centered", WD_STYLE_TYPE.PARAGRAPH)
+    assert isinstance(style, ParagraphStyle)
     style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
     style.paragraph_format.space_after = Pt(9)
     style.font.name = "Source & Serif"

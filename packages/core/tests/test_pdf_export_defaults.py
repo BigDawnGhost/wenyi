@@ -58,6 +58,7 @@ def test_babeldoc_epub_reflows_saved_paragraphs_without_html_anchors(
         with ZipFile(out) as archive:
             name = next(name for name in archive.namelist() if name.endswith("/ch0.xhtml"))
             body = ET.fromstring(archive.read(name)).find("{*}body")
+        assert body is not None
         assert list(body.itertext()) == (["Source text", "译文"] if bilingual else ["译文"])
         assert store.load_chapter(0).segments[0].target == "译文"
     finally:

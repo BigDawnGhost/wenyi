@@ -166,8 +166,10 @@ def test_source_backed_export_reuses_legacy_saved_state(raw, out_format, tmp_pat
         rendered = output.read_text(encoding="utf-8")
     soup = BeautifulSoup(rendered, "html.parser")
     for i, segment in enumerate(segments):
-        assert soup.find(id=f"part-{i}").get_text() == segment.target
-        assert soup.find(id=f"tn-source-{segment.anchor}").get_text() == segment.source
+        target = soup.find(id=f"part-{i}")
+        original = soup.find(id=f"tn-source-{segment.anchor}")
+        assert target is not None and target.get_text() == segment.target
+        assert original is not None and original.get_text() == segment.source
     with ZipFile(source) as archive:
         assert archive.read("content.xhtml") == raw
 
@@ -274,12 +276,11 @@ def test_html_export_embeds_only_zip_media_and_keeps_image_only_spine_pages(tmp_
         assemble(store, str(book), str(out), out_format="html")
     soup = BeautifulSoup(out.read_text(encoding="utf-8"), "html.parser")
     embedded = "data:image/png;base64,Y292ZXI="
-    assert soup.p.string == "正文"
-    assert soup.find(id="main")["src"] == soup.find(id="plate")["src"] == embedded
-    assert soup.find(id="main")["srcset"] == (
-        f"{data_uri} 1x, {embedded} 2x, https://example.invalid/c.png 3x"
-    )
-    assert soup.object["data"] == "file:///missing.png"
+    assert soup.p is not None and soup.p.string == "正文"
+    main, plate = soup.find(id="main"), soup.find(id="plate")
+    assert main is not None and plate is not None and main["src"] == plate["src"] == embedded
+    assert main["srcset"] == (f"{data_uri} 1x, {embedded} 2x, https://example.invalid/c.png 3x")
+    assert soup.object is not None and soup.object["data"] == "file:///missing.png"
     assert book.read_bytes() == book_bytes
 
 
@@ -310,7 +311,8 @@ def test_about_append_preserves_package_prefixes_existing_ids_and_unrelated_memb
         ("trans-novel-about", "trans-novel-about.xhtml"),
         ("trans-novel-about-1", "trans-novel-about-1.xhtml"),
     ]
-    assert opf.find("opf:spine/opf:itemref", ns).get("idref") == "trans-novel-about-1"
+    itemref = opf.find("opf:spine/opf:itemref", ns)
+    assert itemref is not None and itemref.get("idref") == "trans-novel-about-1"
 
 
 def _zip_payload_offset(data, header):

@@ -105,9 +105,13 @@ def _assemble_pdf(
                 "before exporting a bilingual edition."
             )
         native = _epub_native.pdf_spread_source(data)
-        source = PdfReader(BytesIO(data)) if isinstance(native, str) else None
+        source = None
+        if isinstance(native, str):
+            source = PdfReader(BytesIO(data))
+            source_count = len(source.pages)
+        else:
+            source_count = native.page_count
         meta = manifest.get("meta") or {}
-        source_count = len(source.pages) if source is not None else native.page_count
         indices = _selected_page_indices(meta.get("babeldoc_pages"), source_count)
         if not indices:
             raise BabeldocBridgeError("The saved BabelDOC page selection contains no PDF pages")

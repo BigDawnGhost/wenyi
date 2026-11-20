@@ -518,7 +518,8 @@ def translations_from_store(store) -> tuple[str, str, dict[str, str]]:
 
 
 def _session_identity(manifest: dict) -> tuple[str, str]:
-    meta = manifest.get("meta") if isinstance(manifest.get("meta"), dict) else {}
+    raw_meta = manifest.get("meta")
+    meta = raw_meta if isinstance(raw_meta, dict) else {}
     session_id = meta.get("babeldoc_session_id")
     bridge_url = meta.get("babeldoc_bridge_url")
     if not session_id or not bridge_url:

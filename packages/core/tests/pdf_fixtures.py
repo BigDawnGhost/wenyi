@@ -11,6 +11,16 @@ from pypdf.generic import (
     RectangleObject,
 )
 
+from tests.document_assertions import require
+
+
+def pdf_dictionary(root: object, *keys: str) -> DictionaryObject:
+    """Resolve a chain of PDF dictionaries, checking each intermediate type."""
+    node = require(root, DictionaryObject)
+    for key in keys:
+        node = require(node[key], DictionaryObject)
+    return node
+
 
 def pdf_bytes(
     labels: list[str],

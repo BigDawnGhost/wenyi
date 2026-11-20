@@ -16,10 +16,12 @@ from pypdf.generic import (
     NullObject,
     NumberObject,
     RectangleObject,
+    StreamObject,
 )
 from wenyi_core.assemble.pdf_writer import _epub_native, _write_spreads
 
-from tests.pdf_fixtures import pdf_bytes, text_positions
+from tests.document_assertions import require
+from tests.pdf_fixtures import pdf_bytes, pdf_dictionary, text_positions
 
 
 def _bytes(writer):
@@ -65,15 +67,17 @@ def test_pdf_preserves_to_unicode_and_distinguishes_resource_categories(tmp_path
         with PdfWriter() as writer:
             writer.append(PdfReader(BytesIO(_graphics_pdf("unused", pixels, source=False))))
             page = writer.pages[0]
-            resources = page["/Resources"]
-            resources["/XObject"][NameObject("/F1")] = resources["/XObject"].pop("/Picture")
-            resources["/Font"]["/F1"][NameObject("/BaseFont")] = NameObject(font)
+            resources = pdf_dictionary(page, "/Resources")
+            images = pdf_dictionary(resources, "/XObject")
+            images[NameObject("/F1")] = images.pop("/Picture")
+            font_dict = pdf_dictionary(resources, "/Font", "/F1")
+            font_dict[NameObject("/BaseFont")] = NameObject(font)
             cmap = DecodedStreamObject()
             cmap.set_data(
                 b"1 begincodespacerange\n<00> <FF>\nendcodespacerange\n"
                 b"2 beginbfchar\n" + unicode_map + b"\nendbfchar\n"
             )
-            resources["/Font"]["/F1"][NameObject("/ToUnicode")] = writer._add_object(cmap)
+            font_dict[NameObject("/ToUnicode")] = writer._add_object(cmap)
             stream = DecodedStreamObject()
             stream.set_data(
                 b"% Leave /F1 Do and /F1 Tf alone in comments\n"
@@ -94,17 +98,23 @@ def test_pdf_preserves_to_unicode_and_distinguishes_resource_categories(tmp_path
     assert page.extract_text().split() == ["Hi", "译文"]
     assert page.extract_text(extraction_mode="layout").split() == ["Hi", "译文"]
     # Inspect the decoded stream itself, not pypdf's reserialization of its operations.
-    assert page["/Contents"].get_data().count(b"% Leave /F1 Do and /F1 Tf alone in comments") == 2
+    assert (
+        require(page["/Contents"], StreamObject)
+        .get_data()
+        .count(b"% Leave /F1 Do and /F1 Tf alone in comments")
+        == 2
+    )
     content = page.get_contents()
     assert content is not None
     fonts = [args[0] for args, operator in content.operations if operator == b"Tf"]
     images = [args[0] for args, operator in content.operations if operator == b"Do"]
     assert [args[0] for args, operator in content.operations if operator == b"BMC"] == ["/F1"] * 2
-    assert [page["/Resources"]["/Font"][name]["/BaseFont"] for name in fonts] == [
+    assert [pdf_dictionary(page, "/Resources", "/Font", name)["/BaseFont"] for name in fonts] == [
         "/Courier",
         "/Helvetica",
     ]
-    assert [page["/Resources"]["/XObject"][name].get_data() for name in images] == [
+    image_resources = pdf_dictionary(page, "/Resources", "/XObject")
+    assert [require(image_resources[name], StreamObject).get_data() for name in images] == [
         b"\x19\x80\xff",
         b"\x40\xff\x32",
     ]
@@ -113,16 +123,22 @@ def test_pdf_preserves_to_unicode_and_distinguishes_resource_categories(tmp_path
 def _graphics_pdf(label, pixel, *, source, nested_form=False):
     crop = (-20, 30, 180, 250)
     with PdfWriter() as writer:
-        options = dict(rotation=90, cropbox=crop, user_unit=1.25) if source else dict(height=320)
-        writer.append(PdfReader(BytesIO(pdf_bytes([label], **options))))
+        data = (
+            pdf_bytes([label], rotation=90, cropbox=crop, user_unit=1.25)
+            if source
+            else pdf_bytes([label], height=320)
+        )
+        writer.append(PdfReader(BytesIO(data)))
         page = writer.pages[0]
-        resources = page["/Resources"]
+        resources = pdf_dictionary(page, "/Resources")
         if source:
-            parent = page["/Parent"]
+            parent = pdf_dictionary(page, "/Parent")
             for key in ("/Resources", "/CropBox", "/Rotate", "/MediaBox"):
                 parent[NameObject(key)] = page.pop(key)
         else:
-            resources["/Font"]["/F1"][NameObject("/BaseFont")] = NameObject("/Courier")
+            pdf_dictionary(resources, "/Font", "/F1")[NameObject("/BaseFont")] = NameObject(
+                "/Courier"
+            )
 
         image = DecodedStreamObject()
         image.set_data(pixel)
@@ -141,7 +157,7 @@ def _graphics_pdf(label, pixel, *, source, nested_form=False):
         # A clipped red shape would extend beyond the rotated half without a clip.
         operations = b"q 1 0 0 rg 65 235 18 75 re f Q\nq 9.123456789 0 0 10 60 100 cm /Picture Do Q"
         if nested_form:
-            xobjects = resources["/XObject"]
+            xobjects = pdf_dictionary(resources, "/XObject")
             form = DecodedStreamObject()
             form.update(
                 {
@@ -251,12 +267,14 @@ def test_pdf_destinations_use_destination_page_geometry_and_skip_omitted_pages(t
     native, legacy = _native_and_legacy(
         tmp_path, source, pdf_bytes(["First", "Second"], height=320), [0, 2], order
     )
-    actual, expected = native.pages[0]["/Annots"], legacy.pages[0]["/Annots"]
+    actual = require(native.pages[0]["/Annots"], ArrayObject)
+    expected = require(legacy.pages[0]["/Annots"], ArrayObject)
     assert len(actual) == len(expected) == len(fits)
     for actual_ref, expected_ref in zip(actual, expected, strict=True):
-        ann, old_ann = actual_ref.get_object(), expected_ref.get_object()
+        ann = pdf_dictionary(actual_ref.get_object())
+        old_ann = pdf_dictionary(expected_ref.get_object())
         assert ann.raw_get("/P") == native.pages[0].indirect_reference
-        dest, old_dest = ann["/Dest"], old_ann["/Dest"]
+        dest, old_dest = require(ann["/Dest"], ArrayObject), require(old_ann["/Dest"], ArrayObject)
         assert dest[0] == native.pages[1].indirect_reference
         assert old_dest[0] == legacy.pages[1].indirect_reference
         assert dest[1] == old_dest[1]
@@ -287,9 +305,9 @@ def test_pdf_non_link_annotations_fall_back_without_overwriting_fillback(tmp_pat
     assert path.read_bytes() == target
     _write_spreads(PdfReader(BytesIO(source)), PdfReader(path), [0, 1], path, order="source_first")
     page = PdfReader(path).pages[1]
-    note = page["/Annots"][0].get_object()
+    note = pdf_dictionary(require(page["/Annots"], ArrayObject)[0].get_object())
     assert note["/Contents"] == "Keep this note"
-    assert tuple(note["/Rect"]) == (270, 80, 300, 105)
+    assert tuple(require(note["/Rect"], ArrayObject)) == (270, 80, 300, 105)
     assert " ".join(page.extract_text(extraction_mode="layout").split()) == (
         "Original second Target second"
     )
@@ -308,7 +326,7 @@ def test_pdf_declines_content_it_cannot_safely_flatten(tmp_path, extra, reason):
     with PdfWriter() as writer:
         writer.append(PdfReader(BytesIO(pdf_bytes(["Translated"]))))
         page = writer.pages[0]
-        stream = page["/Contents"]
+        stream = require(page["/Contents"], StreamObject)
         stream.set_data(stream.get_data() + extra + b"\n")
         target = _bytes(writer)
     path = tmp_path / "fillback.pdf"

@@ -123,21 +123,25 @@ def test_fillback_reassembles_rows_and_offsets_annotations_after_resume():
 def test_pdf_export_projects_fillback_payload_from_one_chapter_read(tmp_path):
     from wenyi_core.assemble.pdf_writer import _assemble_pdf
     from wenyi_core.ingest.pdf_babeldoc import rows_from_store
+    from wenyi_core.storage.run_store import ExportSnapshotStore
 
-    store, chapter = row_store()
+    saved, chapter = row_store()
     chapter.segments[0].target = "第一行\n续行🧪"
+    store = ExportSnapshotStore(str(tmp_path), saved.load_manifest(), {0: chapter})
     expected = translations_from_store(store)[2]
     rows = rows_from_store(store, expected)
     annotations = annotations_from_store(store, expected)
     before = chapter.model_dump()
-    store.load_chapter = Mock(return_value=chapter)
     out = str(tmp_path / "book.pdf")
-    with patch.object(BabeldocBridgeClient, "fillback", return_value=out) as bridge:
+    with (
+        patch.object(store, "load_chapter", wraps=store.load_chapter) as read,
+        patch.object(BabeldocBridgeClient, "fillback", return_value=out) as bridge,
+    ):
         assert _assemble_pdf(store, "unused.pdf", out, timeout=5) == out
     bridge.assert_called_once_with(
         "session", expected, out_path=out, rows=rows, annotations=annotations
     )
-    store.load_chapter.assert_called_once_with(0)
+    read.assert_called_once_with(0)
     assert chapter.model_dump() == before
 
 

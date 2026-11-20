@@ -85,7 +85,8 @@ def test_docx_resolves_opc_part_uris(tmp_path, main_target, main_name, styles):
     source = tmp_path / "source.docx"
     _package(source, main_target, main_name, styles)
 
-    assert Document(source).paragraphs[0].style.name == "Heading 1"
+    style = Document(source).paragraphs[0].style
+    assert style is not None and style.name == "Heading 1"
     _assert_heading(source)
 
 
@@ -100,7 +101,8 @@ def test_docx_resolves_escaped_reserved_uri_data(tmp_path, escape):
         (f"../styles{escape}notes.xml", f"word/styles{escape}notes.xml"),
     )
 
-    assert Document(source).paragraphs[0].style.name == "Heading 1"
+    style = Document(source).paragraphs[0].style
+    assert style is not None and style.name == "Heading 1"
     _assert_heading(source)
 
 

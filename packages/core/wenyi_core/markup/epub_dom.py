@@ -26,7 +26,7 @@ def parse_epub_dom(markup: str) -> BeautifulSoup:
         if kind == 0:
             soup.handle_data(value)
         elif kind in (1, 2):
-            soup.handle_starttag(value, None, None, dict(attrs))
+            soup.handle_starttag(value, None, None, {name: text for name, text in attrs or ()})
             if kind == 2:
                 soup.handle_endtag(value)
         elif kind == 3:

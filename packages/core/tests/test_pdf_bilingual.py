@@ -15,7 +15,7 @@ from wenyi_core.pdf_bridge import BabeldocBridgeError
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
 
-from tests.pdf_fixtures import pdf_bytes, text_positions
+from tests.pdf_fixtures import pdf_bytes, pdf_dictionary, text_positions
 
 
 @pytest.fixture(params=[FileStorage, SqliteStorage])
@@ -250,7 +250,7 @@ def test_pdf_inconsistent_source_count_uses_compatibility_page_selection(pdf_pro
     store, source, response, calls = pdf_project
     with PdfWriter() as writer, BytesIO() as malformed:
         writer.append(PdfReader(source))
-        writer.pages[0]["/Parent"][NameObject("/Count")] = NumberObject(1)
+        pdf_dictionary(writer.pages[0], "/Parent")[NameObject("/Count")] = NumberObject(1)
         writer.write(malformed)
         _replace_source(store, source, malformed.getvalue(), pages="2")
     response["content"] = pdf_bytes(["Target two"])
@@ -302,7 +302,7 @@ def test_pdf_bilingual_links_target_spread_pages_on_the_correct_side(
                 )
                 annotation[NameObject("/Dest")] = TextStringObject("reference")
                 if destination_kind == "named_tree":
-                    tree = writer.root_object["/Names"]["/Dests"]
+                    tree = pdf_dictionary(writer.root_object, "/Names", "/Dests")
                     leaf = DictionaryObject({NameObject("/Names"): tree.pop("/Names")})
                     tree[NameObject("/Kids")] = ArrayObject([writer._add_object(leaf)])
             elif destination_kind == "action":

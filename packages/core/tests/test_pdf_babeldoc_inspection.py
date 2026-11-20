@@ -19,6 +19,8 @@ from wenyi_core.ingest import pdf_babeldoc as ingest
 from wenyi_core.markup import _epub_native
 from wenyi_core.pdf_bridge import BabeldocBridgeError
 
+from tests.pdf_fixtures import pdf_dictionary
+
 
 def pdf_dict(**items):
     return DictionaryObject({NameObject(f"/{key}"): value for key, value in items.items()})
@@ -177,7 +179,7 @@ def test_native_uses_inherited_images(tmp_path, monkeypatch):
     writer = PdfWriter()
     page = add_page(writer, add_stream(writer, b"/I Do"))
     page.pop("/Resources")
-    writer.get_object(writer._pages)[NameObject("/Resources")] = pdf_dict(
+    pdf_dictionary(writer.get_object(writer._pages))[NameObject("/Resources")] = pdf_dict(
         XObject=pdf_dict(I=add_image(writer))
     )
     pdf = write_pdf(writer, tmp_path)
@@ -195,9 +197,9 @@ def test_native_outline_matches_pypdf(tmp_path, monkeypatch):
     writer.add_outline_item("Too deep", 1, parent=chapter)
     writer.add_outline_item("  最初の章  ", 0, parent=part, color=(0, 0, 1), italic=True)
     writer.add_outline_item("Old", 3)
-    last = writer.add_outline_item("New", 3).get_object()
+    last = pdf_dictionary(writer.add_outline_item("New", 3).get_object())
     # Explicit, without a GoTo action.
-    last[NameObject("/Dest")] = last.pop("/A").get_object()["/D"]
+    last[NameObject("/Dest")] = pdf_dictionary(last.pop("/A").get_object())["/D"]
     heading = writer.add_outline_item("No destination", None)
     writer.add_outline_item("Child of heading", 4, parent=heading)
     writer.add_outline_item("   ", 5)
@@ -217,8 +219,8 @@ def test_outline_uses_pypdf_for_unusual_bookmarks(tmp_path, monkeypatch, kind, e
     writer = PdfWriter()
     for _ in range(2):
         add_page(writer)
-    item = writer.add_outline_item("Title", 1).get_object()
-    action = item["/A"]
+    item = pdf_dictionary(writer.add_outline_item("Title", 1).get_object())
+    action = pdf_dictionary(item, "/A")
     if kind == "named":
         writer.add_named_destination("chapter", 1)
         action[NameObject("/D")] = TextStringObject("chapter")

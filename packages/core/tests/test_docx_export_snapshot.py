@@ -228,10 +228,10 @@ def test_docx_fallback_run_offsets_match_python(tmp_path, source, target, start,
     ns = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
     with ZipFile(output) as archive:
         runs = ET.fromstring(archive.read("word/document.xml")).findall("w:body/w:p/w:r", ns)
-    assert "".join(run.findtext("w:t", namespaces=ns) for run in runs) == target
+    assert "".join(run.findtext("w:t", default="", namespaces=ns) for run in runs) == target
     assert (
         "".join(
-            run.findtext("w:t", namespaces=ns)
+            run.findtext("w:t", default="", namespaces=ns)
             for run in runs
             if run.find("w:rPr/w:b", ns) is not None
         )

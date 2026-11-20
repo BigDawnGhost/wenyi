@@ -94,8 +94,9 @@ def test_rewritten_xhtml_declares_utf8_in_spine_and_auxiliary(
     with ZipFile(output) as archive:
         for path, text in [("body.xhtml", TARGET), ("extra.xhtml", RUSSIAN)]:
             page = BeautifulSoup(archive.read(path), "html.parser")
-            assert page.meta[attr] == expected
-            assert page.find(id="text").get_text() == text
+            assert page.meta is not None and page.meta[attr] == expected
+            node = page.find(id="text")
+            assert node is not None and node.get_text() == text
     with ZipFile(source) as archive:
         assert archive.read("body.xhtml") == body
         assert archive.read("extra.xhtml") == extra
@@ -124,10 +125,8 @@ def test_rewrite_updates_only_real_encoding_declarations(tmp_path):
         assert comment in result
         assert pi_like_comment in result
         assert script in result
-        assert (
-            BeautifulSoup(result, "html.parser").find("meta", attrs={"name": "sample"})["content"]
-            == "text/plain; charset=windows-1252"
-        )
+        meta = BeautifulSoup(result, "html.parser").find("meta", attrs={"name": "sample"})
+        assert meta is not None and meta["content"] == "text/plain; charset=windows-1252"
         assert comment in archive.read("book.opf").decode()
 
 
@@ -184,8 +183,9 @@ def test_commented_meta_does_not_reject_old_saved_state(tmp_path, monkeypatch, o
         ]
     else:
         page = BeautifulSoup(output.read_text(encoding="utf-8"), "html.parser")
-        assert page.find(id="text").get_text() == TARGET
-        assert page.select_one(".tn-source").get_text() == RUSSIAN
+        target, source_node = page.find(id="text"), page.select_one(".tn-source")
+        assert target is not None and target.get_text() == TARGET
+        assert source_node is not None and source_node.get_text() == RUSSIAN
 
 
 @pytest.mark.parametrize("encoding", ["utf-16-le", "utf-16-be"])
@@ -195,8 +195,10 @@ def test_commented_meta_does_not_reject_old_saved_state(tmp_path, monkeypatch, o
 def test_package_xml_reads_and_exports_bomless_utf16(tmp_path, encoding, decl):
     source, output = tmp_path / "source.epub", tmp_path / "output.epub"
     container, package = [(decl + xml).encode(encoding) for xml in (CONTAINER, PACKAGE)]
-    expected = ET.fromstring(package).find(".//{http://purl.org/dc/elements/1.1/}title").text
-    assert ET.fromstring(container).find("rootfile").get("full-path") == "book.opf"
+    expected = ET.fromstring(package).findtext(".//{http://purl.org/dc/elements/1.1/}title")
+    assert expected
+    rootfile = ET.fromstring(container).find("rootfile")
+    assert rootfile is not None and rootfile.get("full-path") == "book.opf"
     _write_book(source, _page(RUSSIAN), container=container, package=package)
 
     assert peek_epub_title(source) == expected

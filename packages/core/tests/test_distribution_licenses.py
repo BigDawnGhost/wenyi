@@ -6,11 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # Python 3.10
-    import tomli as tomllib
+import tomli
 
 ROOT = Path(__file__).resolve().parents[3]
 LICENSE = "GPL-3.0-only"
@@ -18,7 +14,7 @@ pytestmark = pytest.mark.packaging
 
 
 def metadata(path: Path) -> dict:
-    return tomllib.loads(path.read_text(encoding="utf-8"))
+    return tomli.loads(path.read_text(encoding="utf-8"))
 
 
 def test_workspace_packages_declare_wenyi_license():

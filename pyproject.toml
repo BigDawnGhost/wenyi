@@ -44,6 +44,7 @@ dev = [
     "pytest>=8",
     "pytest-rerunfailures>=14",
     "pytest-xdist>=3",
+    "tomli>=2", # Read package manifests in the Python 3.10+ release tests.
 ]
 
 [tool.ruff]

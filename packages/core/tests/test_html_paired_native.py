@@ -25,6 +25,7 @@ def _annotate(html: str) -> tuple[str, list[Segment]]:
 
 def _align(segment: Segment, spans: list[tuple[int, int]]) -> None:
     ann = segment.meta[ANNOTATION_META_KEY]
+    assert segment.target is not None
     ann.update(
         target_digest=target_digest(segment.target),
         placements=[
@@ -122,19 +123,22 @@ def test_standalone_export_uses_native_and_matches_old_dom(
     assert output == expected
     assert len(native) == 1 and native[0] is not None
     soup = BeautifulSoup(output, "html.parser")
-    assert soup.find(id="main").decode_contents() == "新<strong>🌎</strong><br/>尾"
+    main = soup.find(id="main")
+    assert main is not None and main.decode_contents() == "新<strong>🌎</strong><br/>尾"
     pair = soup.find(id="tn-source-tn0_1-2")
+    assert pair is not None
     assert pair.decode_contents() == "Before <strong>bold</strong> after"
     assert pair["name"] == pair["id"]
     assert pair["lang"] == pair["xml:lang"] == "fr"
     neighbor = pair.find_next_sibling() if order == "source_first" else pair.find_previous_sibling()
-    assert neighbor["id"] == "main"
+    assert neighbor is not None and neighbor["id"] == "main"
     assert pair.get("style") == ("color:blue" if preserve_style else None)
     assert pair["class"][0] == ("original" if preserve_style else "tn-source")
     assert bool(soup.find(id="tn-bilingual-style")) == (not preserve_style)
-    assert soup.select_one("div[xml\\:lang=und] span.tn-source")["xml:lang"] == "en"
+    inherited = soup.select_one("div[xml\\:lang=und] span.tn-source")
+    assert inherited is not None and inherited["xml:lang"] == "en"
     assert " First " in output and " Last " in output and "<code>fixed</code>" in output
-    assert soup.img["alt"] == '細節 & "Alt"'
+    assert soup.img is not None and soup.img["alt"] == '細節 & "Alt"'
     assert soup.img["src"] == "data:image/png;base64,aW1hZ2U="
     assert not soup.select_one(".tn-source:-soup-contains(Fallback, Heading)")
     assert "data-tn-" not in output
@@ -193,10 +197,15 @@ def test_cached_mineru_uses_native_with_media_and_nested_pairs(tmp_path, monkeyp
     assert output == expected
     assert len(native) == 1 and native[0] is not None
     soup = BeautifulSoup(output, "html.parser")
-    assert soup.find(id="media").get_text() == "新🌎尾"
+    media = soup.find(id="media")
+    assert media is not None and media.get_text() == "新🌎尾"
     assert len(soup.select("p img[src^='data:image/png;base64,']")) == 4
-    assert soup.select_one("li > div.entry.tn-source").get_text() == "Item"
-    assert soup.select_one("blockquote > div.tn-source").get_text() == "Quote"
+    item, quote = (
+        soup.select_one("li > div.entry.tn-source"),
+        soup.select_one("blockquote > div.tn-source"),
+    )
+    assert item is not None and item.get_text() == "Item"
+    assert quote is not None and quote.get_text() == "Quote"
     assert not soup.select_one(".tn-source:-soup-contains(Untranslated, Heading)")
     assert "data-tn-" not in output
 
@@ -204,6 +213,7 @@ def test_cached_mineru_uses_native_with_media_and_nested_pairs(tmp_path, monkeyp
 def test_rich_mono_native_uses_merged_placements_and_continuations(monkeypatch):
     template, segments = _annotate("<p>A <em>word</em> here.</p>")
     segment = segments[0]
+    assert segment.anchor is not None
     fresh = {segment.anchor: segment.model_copy(deep=True).meta}
     segment.target = '首\r\n🌎 "&'
     _align(segment, [(4, 5)])
@@ -262,9 +272,8 @@ def test_explicit_source_map_retains_text_only_source_fallback(monkeypatch):
         == expected
     )
     assert native == []
-    assert BeautifulSoup(expected, "html.parser").select_one(".tn-source").decode_contents() == (
-        "A word"
-    )
+    original = BeautifulSoup(expected, "html.parser").select_one(".tn-source")
+    assert original is not None and original.decode_contents() == "A word"
 
 
 @pytest.mark.parametrize("case", ["stale_digest", "wrong_slot", "noncanonical", "old_markup"])
