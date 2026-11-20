@@ -173,6 +173,65 @@ def test_translation_inputs_follow_chapter_order_and_text_positions(tmp_path):
     assert corpus == "source 1\npending 1\nsource 3\npending 3"
 
 
+def test_long_chapter_alignment_reuses_the_translation_view(tmp_path, config, monkeypatch):
+    batch_size, segment_count = 20, 3000
+    first_pending = segment_count - batch_size
+    config.segment.max_tokens_per_batch = batch_size
+    source = "word"
+    assert count_tokens(source) == 1
+    store = FileStorage(str(tmp_path / "run"))
+    store.save_chapter(
+        Chapter(
+            index=0,
+            segments=[
+                Segment(index=i, source=source, target="已译" if i < first_pending else None)
+                for i in range(segment_count)
+            ],
+        )
+    )
+    store.save_manifest({"chapters": [{"index": 0, "status": "pending"}]})
+    client = FakeClient(handler=routing_handler)
+    service = Orchestrator(config, client=client)._translation
+    monkeypatch.setattr(service._runtime.extractor, "extract_and_store", lambda *a, **kw: {})
+
+    chapter_view = Chapter.text_segments
+    reads = 0
+    reads_during_alignment = 0
+    align_batch = service._align_batch_context
+
+    def text_segments(chapter):
+        nonlocal reads
+        reads += 1
+        return chapter_view.__get__(chapter)
+
+    def align(*args, **kwargs):
+        nonlocal reads_during_alignment
+        before = reads
+        align_batch(*args, **kwargs)
+        reads_during_alignment += reads - before
+
+    monkeypatch.setattr(Chapter, "text_segments", property(text_segments))
+    monkeypatch.setattr(service, "_align_batch_context", align)
+
+    service.translate_chapter(
+        0,
+        store,
+        store,
+        "",
+        translation_history={},
+        source_corpus="",
+        annotation_context_registry=None,
+    )
+
+    assert [
+        (e["start_index"], e["count"]) for e in store.list_events(event_type="batch_skipped")
+    ] == [(start, batch_size) for start in range(0, first_pending, batch_size)]
+    translated = store.list_events(event_type="batch_translated")
+    assert [(e["start_index"], e["count"]) for e in translated] == [(first_pending, batch_size)]
+    assert [call["operation"] for call in client.calls] == ["translation.body"]
+    assert reads_during_alignment == 0
+
+
 @pytest.mark.parametrize("saved_target", [None, "saved", ""])
 def test_new_and_resumed_batches_align_before_updating_context(
     tmp_path, config, monkeypatch, saved_target
@@ -187,20 +246,20 @@ def test_new_and_resumed_batches_align_before_updating_context(
     store.save_chapter(chapter)
     stages = []
 
-    def align_annotations(ci, chapter, start, count, storage):
+    def align_annotations(ci, chapter, start, count, storage, *, segments):
         assert count == 1
         assert storage.load_chapter(ci).text_segments[start].target is not None
         stages.append(("annotations", start))
-        chapter.text_segments[start].target = f"annotated {start}"
+        segments[start].target = f"annotated {start}"
         storage.save_chapter(chapter)
 
-    def align_styles(ci, chapter, start, count, storage):
-        assert chapter.text_segments[start].target == f"annotated {start}"
+    def align_styles(ci, chapter, start, count, storage, *, segments):
+        assert segments[start].target == f"annotated {start}"
         stages.append(("styles", start))
-        chapter.text_segments[start].target = f"styled {start}"
+        segments[start].target = f"styled {start}"
         if start == 1:
             # Completing a logical paragraph can also change an earlier batch's target.
-            chapter.text_segments[0].target = "realigned prefix"
+            segments[0].target = "realigned prefix"
         storage.save_chapter(chapter)
 
     monkeypatch.setattr(orch._annotations, "align_annotations_after_batch", align_annotations)
@@ -227,10 +286,10 @@ def test_context_uses_realigned_targets_instead_of_a_cached_previous_window(
     orchestrator = Orchestrator(config, client=client)
     store = orchestrator.prepare(str(source))
 
-    def align(ci, chapter, start, count, storage):
-        chapter.text_segments[start].target = f"aligned {start}"
+    def align(ci, chapter, start, count, storage, *, segments):
+        segments[start].target = f"aligned {start}"
         if start == 1:
-            chapter.text_segments[0].target = "updated earlier target"
+            segments[0].target = "updated earlier target"
         storage.save_chapter(chapter)
 
     monkeypatch.setattr(orchestrator._translation._docx_styles, "align_styles_after_batch", align)

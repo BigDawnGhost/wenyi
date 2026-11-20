@@ -402,11 +402,11 @@ class TestPdfIngest(unittest.TestCase):
                 pdf_path,
                 out_path=output_path,
                 out_format="epub",
-                about_page=False,
             )
 
             with zipfile.ZipFile(output_path) as archive:
                 names = archive.namelist()
+                self.assertIn("EPUB/trans-novel-about.xhtml", names)
                 chapter_name = next(name for name in names if name.endswith("/ch0.xhtml"))
                 chapter = BeautifulSoup(archive.read(chapter_name), "html.parser")
                 image = chapter.find("img")

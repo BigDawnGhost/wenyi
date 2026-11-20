@@ -1,5 +1,5 @@
 import { useI18n } from "../../i18n";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "../../lib/toast";
@@ -17,17 +17,22 @@ import { useProjectQuery } from "../../lib/projectQuery";
 import { platform } from "../../platform";
 
 export default function ExportPage() {
+  const { pid = "" } = useParams();
+  return <ProjectExport key={pid} pid={pid} />;
+}
+
+function ProjectExport({ pid }: { pid: string }) {
   const saveExport = platform().capabilities.saveExport;
   const { t: tr, locale } = useI18n();
-  const { pid = "" } = useParams();
   const qc = useQueryClient();
-  const [defaultsLoaded, setDefaultsLoaded] = useState(false);
   const { data: config, error: configError } = useQuery({
     queryKey: ["config", pid],
     queryFn: () => api.getConfig(pid),
   });
   const [format, setFormat] = useState<ExportFormat | "">("");
-  const [bilingual, setBilingual] = useState(false);
+  const [editionOverride, setEditionOverride] = useState<boolean>();
+  const output = (config?.effective.output || {}) as Record<string, unknown>;
+  const bilingual = editionOverride ?? (config ? Boolean(output.bilingual) : undefined);
   const { data: project, error: projectError } = useProjectQuery(pid);
   const { data: exports, error: exportsError } = useQuery({
     queryKey: ["exports", pid],
@@ -39,19 +44,11 @@ export default function ExportPage() {
         ? 2000
         : false,
   });
-  useEffect(() => {
-    if (config && !defaultsLoaded) {
-      const output = (config.effective.output || {}) as Record<string, unknown>;
-      setBilingual(Boolean(output.bilingual));
-      setDefaultsLoaded(true);
-    }
-  }, [config, defaultsLoaded]);
   const formats = (project?.output_formats || []) as ExportFormat[];
   const fmt = formats.includes(format as ExportFormat) ? format : "";
   const pdf = fmt === "pdf" || (!fmt && project?.fmt === "pdf" && formats.includes("pdf"));
   const create = useMutation({
     mutationFn: async () => {
-      const output = (config?.effective.output || {}) as Record<string, unknown>;
       const options: ExportOptions = {
         format: fmt || undefined,
         bilingual,
@@ -136,8 +133,8 @@ export default function ExportPage() {
                 <input
                   type="radio"
                   name="edition"
-                  checked={!bilingual}
-                  onChange={() => setBilingual(false)}
+                  checked={bilingual === false}
+                  onChange={() => setEditionOverride(false)}
                 />
                 {tr("export.monolingual")}
               </label>
@@ -145,8 +142,8 @@ export default function ExportPage() {
                 <input
                   type="radio"
                   name="edition"
-                  checked={bilingual}
-                  onChange={() => setBilingual(true)}
+                  checked={bilingual === true}
+                  onChange={() => setEditionOverride(true)}
                 />
                 {tr("export.bilingual")}
               </label>
@@ -168,7 +165,7 @@ export default function ExportPage() {
                 create.isPending ||
                 !project?.fmt ||
                 !formats.length ||
-                !defaultsLoaded ||
+                !config ||
                 !!configError
               }
             >

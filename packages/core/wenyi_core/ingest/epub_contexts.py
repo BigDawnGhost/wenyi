@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from bs4 import Tag
 
-from wenyi_core.markup.anchors import index_fragment_nodes, resolve_epub_href, scope_segment_anchors
+from wenyi_core.markup.anchors import fragment_node_index, resolve_epub_href, scope_segment_anchors
 from wenyi_core.markup.annotations import _note_context_scope
 from wenyi_core.markup.contracts import ANNOTATION_ID_ATTR, ANNOTATION_META_KEY, INLINE_ID_ATTR
 from wenyi_core.markup.epub_dom import parse_epub_dom
@@ -42,10 +42,10 @@ class _ResolvedContext:
 def _resolve_resource_contexts(task: _ContextTask) -> list[_ResolvedContext]:
     """Parse one target without mutating any referring Segment or annotation."""
     soup = parse_epub_dom(task.template)
-    fragments = index_fragment_nodes(soup)
     object_nodes: dict[str, list[Tag]] = {}
     for node in soup.find_all(True, attrs={ANNOTATION_ID_ATTR: True}):
         object_nodes.setdefault(str(node[ANNOTATION_ID_ATTR]), []).append(node)
+    fragment_index: dict[str, list[Tag]] | None = None
     results: list[_ResolvedContext] = []
     for reference in task.references:
         if reference.relation == OBJECT_RELATION:
@@ -69,9 +69,11 @@ def _resolve_resource_contexts(task: _ContextTask) -> list[_ResolvedContext]:
                     )
                 )
             continue
-        nodes = fragments.get(reference.fragment, [])
-        if len(nodes) != 1:
-            # Duplicate id/name values make reference ownership ambiguous.
+        if fragment_index is None:
+            fragment_index = fragment_node_index(soup)
+        nodes = fragment_index.get(reference.fragment)
+        if nodes is None or len(nodes) != 1:
+            # Skip missing fragments and ambiguous id/name matches.
             continue
         scope, semantic_note = _note_context_scope(nodes[0], reference.fragment)
         promote = reference.relation == "internal_link" and semantic_note

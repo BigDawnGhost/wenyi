@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
+from wenyi_core.assemble.about import AboutPage
 from wenyi_core.assemble.html_bilingual import _BILINGUAL_CSS
 from wenyi_core.atomicio import publish_target
 from wenyi_core.markup import _epub_native
@@ -48,7 +49,7 @@ def write_epub(
     chapters: list[EpubChapter],
     toc: list[EpubTocEntry],
     resources: list[EpubResource],
-    about: str | None = None,
+    about: AboutPage | None = None,
     styled_bilingual: bool = False,
 ) -> None:
     """Publish a finished EPUB 3 atomically."""
@@ -59,7 +60,7 @@ def write_epub(
             "modified": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "chapters": [asdict(chapter) for chapter in chapters],
             "toc": [asdict(entry) for entry in toc],
-            "about": about,
+            "about": about.render().decode("utf-8") if about is not None else None,
             "bilingual_css": _BILINGUAL_CSS if styled_bilingual else None,
         },
         ensure_ascii=False,

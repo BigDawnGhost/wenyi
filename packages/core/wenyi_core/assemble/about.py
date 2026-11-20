@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from string import Template
 
 from ..atomicio import publish_target
@@ -11,8 +12,20 @@ from ..i18n.resources import read_text
 from ..markup import _epub_native
 
 ABOUT_TITLE = "关于此翻译"
-ABOUT_FILENAME = "trans-novel-about.xhtml"
+ABOUT_ID = "trans-novel-about"
+ABOUT_FILENAME = f"{ABOUT_ID}.xhtml"
 ABOUT_REPOSITORY = "https://github.com/BigDawnGhost/wenyi"
+
+
+@dataclass(frozen=True)
+class AboutPage:
+    """Language settings for an enabled translation about page."""
+
+    lang: str
+    locale: str | None = None
+
+    def render(self) -> bytes:
+        return about_xhtml(self.lang, locale=self.locale)
 
 
 def about_xhtml(lang: str, *, locale: str | None = None) -> bytes:
@@ -26,7 +39,7 @@ def about_xhtml(lang: str, *, locale: str | None = None) -> bytes:
     return (
         Template(read_text(f"export/about.{locale}.xhtml"))
         # safe_substitute: a literal $ in future template prose must not crash the whole
-        # export postprocessing step (audit A-4).
+        # export (audit A-4).
         .safe_substitute(lang=lang, title=ABOUT_TITLE, repository=ABOUT_REPOSITORY)
         .encode("utf-8")
     )

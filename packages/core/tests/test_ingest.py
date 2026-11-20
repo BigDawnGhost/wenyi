@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from bs4.element import Tag
 from wenyi_core.assemble.html_renderer import _render_chapter_html
 from wenyi_core.glossary.store import source_matches_text
+from wenyi_core.ingest import epub_contexts
 from wenyi_core.ingest.epub_package import _decode_markup, _find_opf_path, _parse_opf
 from wenyi_core.ingest.epub_reader import peek_epub_title
 from wenyi_core.ingest.epub_toc import parse_toc_entries
@@ -435,22 +436,24 @@ class TestSplitLongSegments(unittest.TestCase):
         self.assertEqual(chunks[1].split()[0], "charlie")
 
 
-def _write_annotation_context_epub(path: str, *, notes_in_spine: bool) -> None:
+def _write_annotation_context_epub(
+    path: str, *, notes_in_spine: bool, extra_body: str = "", extra_notes: str = ""
+) -> None:
     notes_itemref = '<itemref idref="notes"/>' if notes_in_spine else ""
     opf = f"""<package><metadata><title>Annotation Context</title></metadata>
     <manifest>
       <item id="body" href="body.xhtml" media-type="application/xhtml+xml"/>
       <item id="notes" href="notes.xhtml" media-type="application/xhtml+xml"/>
     </manifest><spine><itemref idref="body"/>{notes_itemref}</spine></package>"""
-    body = """<html><body>
+    body = f"""<html><body>
     <p>Alpha<sup id="ref-1"><a epub:type="noteref"
     href="notes.xhtml#note-1">1</a></sup>.</p>
     <p>Beta <a href="notes.xhtml#note-1">linked phrase</a>.</p>
-    </body></html>"""
-    notes = """<html><body><aside epub:type="footnote" id="note-1">
+    {extra_body}</body></html>"""
+    notes = f"""<html><body><aside epub:type="footnote" id="note-1">
     <p><a epub:type="backlink" href="body.xhtml#ref-1">1</a>
     First explanation.</p><p>Second explanation.</p>
-    </aside></body></html>"""
+    </aside>{extra_notes}</body></html>"""
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
         archive.writestr(
@@ -460,6 +463,70 @@ def _write_annotation_context_epub(path: str, *, notes_in_spine: bool) -> None:
         archive.writestr("content.opf", opf)
         archive.writestr("body.xhtml", body)
         archive.writestr("notes.xhtml", notes)
+
+
+def test_epub_annotation_context_indexes_fragment_nodes_once(tmp_path, monkeypatch):
+    full_scans = 0
+
+    class CountingSoup(BeautifulSoup):
+        @property
+        def descendants(self):
+            nonlocal full_scans
+            full_scans += 1
+            return super().descendants
+
+    # Count only context-stage root traversals, not annotation or note-scope traversal.
+    monkeypatch.setattr(
+        epub_contexts, "parse_epub_dom", lambda text: CountingSoup(text, "html.parser")
+    )
+    fragments = ["name-only", "same", "ambiguous", "missing", "duplicate-name", "same"] * 4
+    path = str(tmp_path / "indexed-notes.epub")
+    _write_annotation_context_epub(
+        path,
+        notes_in_spine=False,
+        extra_body="".join(
+            f'<p>See <a href="notes.xhtml#{fragment}">linked phrase</a>.</p>'
+            for fragment in fragments
+        ),
+        extra_notes="""
+        <aside epub:type="footnote"><a id="same" name="same"></a><p>Shared ID and name.</p></aside>
+        <aside epub:type="footnote"><a name="name-only"></a><p>Named anchor only.</p></aside>
+        <aside epub:type="footnote" id="ambiguous"><p>ID match.</p></aside>
+        <aside epub:type="footnote"><a name="ambiguous"></a><p>Name match.</p></aside>
+        <aside epub:type="footnote"><a name="duplicate-name"></a><a name="duplicate-name"></a>
+        <p>Duplicate name.</p></aside>""",
+    )
+
+    # The native reader indexes owners in Rust; also exercise the Python context
+    # resolver explicitly so this full-scan assertion cannot pass vacuously.
+    with zipfile.ZipFile(path) as archive:
+        notes = archive.read("notes.xhtml").decode("utf-8")
+    refs = [
+        epub_contexts._Reference(
+            i, "body.xhtml", None, fragment, f"notes.xhtml#{fragment}", "internal_link"
+        )
+        for i, fragment in enumerate(fragments)
+    ]
+    epub_contexts._resolve_resource_contexts(
+        epub_contexts._ContextTask("notes.xhtml", notes, {}, refs)
+    )
+    assert 0 < full_scans <= 2
+    document = load_document(path, "en", "zh")
+
+    assert len(document.chapters) == 1
+    contexts = document.meta["epub_annotation_contexts"]["contexts"]
+    assert list(contexts) == ["notes.xhtml#note-1", "notes.xhtml#name-only", "notes.xhtml#same"]
+    assert contexts["notes.xhtml#name-only"]["source_blocks"] == ["Named anchor only."]
+    assert contexts["notes.xhtml#same"]["source_blocks"] == ["Shared ID and name."]
+    items = [
+        item
+        for segment in document.chapters[0].segments
+        for item in segment.meta.get("epub_annotations", {}).get("items", [])
+    ]
+    assert [item["relation"] for item in items] == ["noteref", "noteref"] + [
+        "noteref" if fragment in {"name-only", "same"} else "internal_link"
+        for fragment in fragments
+    ]
 
 
 class TestEpubIngest(unittest.TestCase):

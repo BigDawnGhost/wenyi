@@ -16,7 +16,7 @@ import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -45,6 +45,12 @@ from .run_store import ExportSnapshotStore, RunStore, source_sha256
 #: Older schemas are upgraded on writable opens; recovery opens leave them alone.
 #: Version 2 repairs compact counts; version 3 adds lazy paragraph projections.
 SCHEMA_VERSION = 3
+
+# An optional index, not a format change. Index only review-bearing events; a
+# calendar-day prefix is timezone agnostic once the lookup includes adjacent days.
+_REVIEW_EVENTS = """key='events.jsonl' AND json_extract(value, '$.review_id') IS NOT NULL
+    AND json_extract(value, '$.event') IN ('review_started', 'review_autofix_finished')"""
+_EVENT_DAY = "substr(json_extract(value, '$.ts'), 1, 10)"
 
 # Re-exported: the class moved to locks.py, but callers still import it from here.
 __all__ = ["SCHEMA_VERSION", "SqliteStorage", "StorageBusyError"]
@@ -202,6 +208,11 @@ class SqliteStorage:
                 install(conn)
                 conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
                 conn.commit()
+            if self._upgrade:
+                conn.execute(
+                    f"CREATE INDEX IF NOT EXISTS review_events_by_day "
+                    f"ON artifact_records(key, {_EVENT_DAY}) WHERE {_REVIEW_EVENTS}"
+                )
         except BaseException:
             conn.close()
             raise
@@ -1070,6 +1081,29 @@ class SqliteStorage:
             record.update(_id=sequence, _ts=record.get("ts"))
             result.append(record)
         return result
+
+    def review_event_candidates(
+        self, start: datetime, stop: datetime | None
+    ) -> list[tuple[str, str]]:
+        """Return review identities newest-first, without loading full event payloads.
+
+        Dates stored with offsets may differ by a day from UTC. Select that small
+        superset by index; the caller resolves exact times and old truncated timestamps.
+        """
+        if not self._database_present():
+            return []
+        bounds = f"{_EVENT_DAY} >= ?"
+        params = [(start.date() - timedelta(days=1)).isoformat()]
+        if stop is not None:
+            bounds += f" AND {_EVENT_DAY} <= ?"
+            params.append((stop.date() + timedelta(days=1)).isoformat())
+        with self._read_lock():
+            rows = self._connection().execute(
+                "SELECT json_extract(value, '$.ts'), json_extract(value, '$.review_id') "
+                f"FROM artifact_records WHERE {_REVIEW_EVENTS} AND {bounds} ORDER BY sequence DESC",
+                params,
+            )
+            return [(ts, rid) for ts, rid in rows if isinstance(ts, str) and isinstance(rid, str)]
 
     def _glossary(self) -> GlossaryStore:
         return GlossaryStore.from_connection(self._connection())

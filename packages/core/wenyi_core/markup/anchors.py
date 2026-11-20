@@ -44,18 +44,19 @@ def fragment_anchor_map(template: str | BeautifulSoup) -> dict[str, str | None]:
     return mapping
 
 
-def index_fragment_nodes(soup: BeautifulSoup) -> dict[str, list[Tag]]:
-    """Index both fragment attributes, retaining duplicate owners in document order."""
-    nodes: dict[str, list[Tag]] = {}
+def fragment_node_index(soup: BeautifulSoup) -> dict[str, list[Tag]]:
+    """Index id/name matches in DOM order, retaining distinct nodes for ambiguity checks."""
+    index: dict[str, list[Tag]] = {}
     for node in soup.descendants:
         if not isinstance(node, Tag):
             continue
-        identifier, name = node.get("id"), node.get("name")
-        if isinstance(identifier, str):
-            nodes.setdefault(identifier, []).append(node)
-        if isinstance(name, str) and name != identifier:
-            nodes.setdefault(name, []).append(node)
-    return nodes
+        node_id = node.get("id")
+        node_name = node.get("name")
+        if isinstance(node_id, str):
+            index.setdefault(node_id, []).append(node)
+        if isinstance(node_name, str) and node_name != node_id:
+            index.setdefault(node_name, []).append(node)
+    return index
 
 
 def scope_segment_anchors(scope: Tag) -> list[str]:

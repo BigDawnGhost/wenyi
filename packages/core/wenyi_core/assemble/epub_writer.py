@@ -9,6 +9,7 @@ from urllib.parse import quote
 from bs4 import BeautifulSoup
 
 from wenyi_core.assemble import epub_native
+from wenyi_core.assemble.about import AboutPage
 from wenyi_core.assemble.epub_package import EpubChapter, EpubResource, EpubTocEntry, write_epub
 from wenyi_core.assemble.html_renderer import (
     _html_open_tag,
@@ -44,7 +45,7 @@ def _assemble_epub(
     bilingual: bool = False,
     order: str = "target_first",
     preserve_source_style: bool = False,
-    about: str | None = None,
+    about: AboutPage | None = None,
 ) -> str:
     """Copy the EPUB and replace physical body resources, exact TOC titles and target-language
     metadata.
@@ -69,7 +70,7 @@ def _assemble_epub(
         preserve_source_style=preserve_source_style,
         target_lang=_epub_lang(target_lang_code),
         export_title=_export_book_title(source_title, target_lang_code, bilingual=bilingual),
-        about=about,
+        about=about.render().decode("utf-8") if about is not None else None,
     )
     with publish_target(out_path) as temp_out:
         epub_native.export(source_path, temp_out, state)
@@ -84,7 +85,7 @@ def _build_epub_from_chapters(
     bilingual: bool = False,
     order: str = "target_first",
     preserve_source_style: bool = False,
-    about: str | None = None,
+    about: AboutPage | None = None,
 ) -> str:
     """Build a standard EPUB3 from chapters when no original EPUB template exists."""
     m = store.load_manifest()
@@ -215,7 +216,7 @@ def _build_epub_from_html_templates(
     bilingual: bool = False,
     order: str = "target_first",
     preserve_source_style: bool = False,
-    about: str | None = None,
+    about: AboutPage | None = None,
 ) -> str:
     """Build EPUB from rendered HTML templates and package their media resources."""
     from .writer_common import supports_pdf_export

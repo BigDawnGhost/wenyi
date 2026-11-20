@@ -19,7 +19,7 @@ export function ChapterProofreading({
   chapters: ChapterSummary[];
   busy: boolean;
   readOnly: boolean;
-  sourceOnly: boolean;
+  sourceOnly: boolean | undefined;
   error: unknown;
   targetLanguage?: string;
 }) {
@@ -30,9 +30,9 @@ export function ChapterProofreading({
     ? Number(requested) : undefined;
   const validIndex = Number.isSafeInteger(index) && index >= 0;
   const chapter = useQuery({
-    queryKey: [...windowKey(pid, index, sourceOnly), "initial", around],
+    queryKey: [...windowKey(pid, index, sourceOnly === true), "initial", around],
     queryFn: ({ signal }) => api.chapterWindow(pid, index, 0, WINDOW_SIZE, around, signal),
-    enabled: validIndex,
+    enabled: validIndex && sourceOnly !== undefined,
     staleTime: Infinity,
     gcTime: 0,
   });
@@ -62,7 +62,7 @@ export function ChapterProofreading({
         <ErrorNotice error={error || chapter.error
           || (!validIndex ? new Error(t("proofreading.invalidChapter")) : undefined)} />
         {sourceOnly ? <ReadOnlyNotice reason="source" /> : busy && <ReadOnlyNotice />}
-        {!sourceOnly && chapter.data && (
+        {sourceOnly === false && chapter.data && (
           <Card className="p-4">
             <p className="text-sm text-muted-foreground">
               {t("proofreading.savedParagraphs", {
@@ -72,11 +72,11 @@ export function ChapterProofreading({
             </p>
           </Card>
         )}
-        {chapter.data && (
+        {sourceOnly !== undefined && chapter.data && (
           <VirtualChapter pid={pid} ci={index} initial={chapter.data} sourceOnly={sourceOnly}
             busy={busy} readOnly={readOnly || chapter.isError} targetLanguage={targetLanguage} />
         )}
-        {!sourceOnly && (
+        {sourceOnly === false && (
           <Disclosure lazy title={t("review.recordedReviewNotesForThisChapter")}>
             <ChapterIssues pid={pid} ci={index} busy={busy} />
           </Disclosure>

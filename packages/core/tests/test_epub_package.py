@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import importlib.metadata
+import os
+import zipfile
+from dataclasses import replace
 from pathlib import Path
+from unittest.mock import Mock
 from urllib.parse import unquote
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_STORED, ZipFile
 
 import pytest
+from wenyi_core.assemble.about import AboutPage
 from wenyi_core.assemble.epub_package import (
     EpubChapter,
     EpubResource,
@@ -16,7 +21,10 @@ from wenyi_core.assemble.epub_package import (
     write_epub,
 )
 from wenyi_core.assemble.writer import assemble
+from wenyi_core.i18n.policy.models import PolicyContext
+from wenyi_core.i18n.policy.resolver import resolve_policy
 from wenyi_core.ingest.segmenter import load_document
+from wenyi_core.markup import _epub_native
 from wenyi_core.storage.file import FileStorage
 
 NS = {
@@ -52,6 +60,194 @@ def _write(path: Path, **overrides) -> Path:
 def test_core_distribution_does_not_require_ebooklib():
     requirements = importlib.metadata.requires("wenyi-core") or []
     assert not any(requirement.lower().startswith("ebooklib") for requirement in requirements)
+
+
+def _export_fixture(tmp_path, fmt):
+    source = tmp_path / f"source.{fmt}"
+    if fmt == "epub":
+        template = _write(
+            tmp_path / "template.epub",
+            chapters=[
+                EpubChapter(
+                    "ch0.xhtml", "Chapter", "<html><body><p>Original text.</p></body></html>"
+                )
+            ],
+            resources=[
+                EpubResource(
+                    "trans-novel-about.xhtml",
+                    "application/xhtml+xml",
+                    CONTENT.replace("<html>", f'<html xmlns="{NS["html"]}">').encode(),
+                ),
+                EpubResource("image.png", "image/png", b"original image"),
+            ],
+        )
+        with ZipFile(template) as base, ZipFile(source, "w", zipfile.ZIP_DEFLATED) as archive:
+            opf = base.read("EPUB/content.opf").replace(
+                b'id="resource-0"', b'id="trans-novel-about"'
+            )
+            archive.writestr("alternate.opf", opf)
+            for name in base.namelist():
+                archive.writestr(name, opf if name == "EPUB/content.opf" else base.read(name))
+    elif fmt == "html":
+        source.write_text("<html><body><p>Original text.</p></body></html>", encoding="utf-8")
+    else:
+        source.write_text("Original text.", encoding="utf-8")
+    document = load_document(str(source), "en", "zh")
+    for chapter in document.chapters:
+        for segment in chapter.segments:
+            segment.target = "翻译正文。"
+    store = FileStorage(str(tmp_path / "state"))
+    store.init_from_document(document)
+    return source, store
+
+
+@pytest.mark.parametrize("fmt", ["epub", "txt", "html"])
+@pytest.mark.parametrize("enabled", [True, False])
+def test_about_page_is_written_in_the_only_epub_archive(tmp_path, monkeypatch, fmt, enabled):
+    source, store = _export_fixture(tmp_path, fmt)
+    output = tmp_path / "translated.epub"
+    publishes = []
+    writers = {}
+    for name in ("export", "generate", "append_about"):
+        writers[name] = Mock(wraps=getattr(_epub_native, name))
+        monkeypatch.setattr(_epub_native, name, writers[name])
+
+    original_replace = os.replace
+
+    def track_replace(temporary, target):
+        if Path(target) == output:
+            publishes.append(Path(temporary))
+        original_replace(temporary, target)
+
+    monkeypatch.setattr("wenyi_core.atomicio.os.replace", track_replace)
+    plan = resolve_policy(
+        PolicyContext("en", "zh", phase="export", format="epub", bilingual=True, about_page=enabled)
+    )
+    # This tag normally selects the English template. An explicit locale must still win.
+    plan = replace(plan, export=replace(plan.export, language_tag="ja", about_locale="zh"))
+    assemble(
+        store,
+        str(source),
+        str(output),
+        out_format="epub",
+        bilingual=True,
+        about_page=enabled,
+        language_policy=plan,
+    )
+
+    assert len(publishes) == 1
+    assert publishes[0] != output
+    assert publishes[0].parent == output.parent
+    # The one native write must target the file that was actually published.
+    # Appending to the finished EPUB would require a second archive rewrite.
+    writers["append_about"].assert_not_called()
+    if fmt == "epub":
+        writers["generate"].assert_not_called()
+        writers["export"].assert_called_once()
+        assert [Path(p) for p in writers["export"].call_args.args[:2]] == [source, publishes[0]]
+    else:
+        writers["export"].assert_not_called()
+        writers["generate"].assert_called_once()
+        assert Path(writers["generate"].call_args.args[0]) == publishes[0]
+    with ZipFile(output) as archive:
+        names = archive.namelist()
+        mimetype = archive.infolist()[0]
+        assert mimetype.filename == "mimetype"
+        assert mimetype.compress_type == ZIP_STORED
+        assert mimetype.extra == b""
+        assert archive.read(mimetype) == b"application/epub+zip"
+        assert len(names) == len(set(names))
+        assert archive.testzip() is None
+        package = ET.fromstring(archive.read("EPUB/content.opf"))
+        assert package.findtext("opf:metadata/dc:language", namespaces=NS) == "zh-Hans"
+        expected_spine = ["nav", "chapter-0"]
+        filename = "trans-novel-about.xhtml"
+        item_id = "trans-novel-about"
+        if fmt == "epub":
+            filename = "trans-novel-about-1.xhtml"
+            item_id = "trans-novel-about-1"
+            original = ET.fromstring(archive.read("EPUB/trans-novel-about.xhtml"))
+            assert original.findtext("html:body/html:p", namespaces=NS) == "中文 & text."
+            assert archive.read("EPUB/image.png") == b"original image"
+            secondary = ET.fromstring(archive.read("alternate.opf"))
+            assert secondary.find(f"opf:manifest/opf:item[@id='{item_id}']", NS) is None
+            assert [
+                node.get("idref") for node in secondary.findall("opf:spine/opf:itemref", NS)
+            ] == expected_spine
+        if enabled:
+            expected_spine.append(item_id)
+            item = _find(package, f"opf:manifest/opf:item[@id='{item_id}']")
+            assert item.get("href") == filename
+            assert item.get("media-type") == "application/xhtml+xml"
+            page = ET.fromstring(archive.read(f"EPUB/{filename}"))
+            assert page.get("lang") == "ja"
+            assert page.get("{http://www.w3.org/XML/1998/namespace}lang") == "ja"
+            assert page.findtext("html:head/html:title", namespaces=NS) == "关于此翻译"
+        else:
+            assert f"EPUB/{filename}" not in names
+            assert package.find(f"opf:manifest/opf:item[@id='{item_id}']", NS) is None
+        assert [
+            node.get("idref") for node in package.findall("opf:spine/opf:itemref", NS)
+        ] == expected_spine
+        for name in ("EPUB/nav.xhtml", "EPUB/toc.ncx"):
+            assert b"ch0.xhtml" in archive.read(name)
+            assert b"trans-novel-about" not in archive.read(name)
+        chapter = ET.fromstring(archive.read("EPUB/ch0.xhtml"))
+        body = "".join(_find(chapter, "html:body").itertext())
+        assert "Original text." in body
+        assert "翻译正文。" in body
+
+
+@pytest.mark.parametrize("missing", ["container", "main-opf", "spine"])
+def test_source_epub_skips_about_when_main_package_cannot_reference_it(tmp_path, missing):
+    source, store = _export_fixture(tmp_path, "epub")
+    broken = tmp_path / "broken.epub"
+    container_path, opf_path = "META-INF/container.xml", "EPUB/content.opf"
+    with ZipFile(source) as original, ZipFile(broken, "w") as archive:
+        for name in original.namelist():
+            if (missing, name) in {("container", container_path), ("main-opf", opf_path)}:
+                continue
+            data = original.read(name)
+            if missing == "spine" and name == opf_path:
+                data = b"<package><manifest/></package>"
+            archive.writestr(name, data)
+    enabled = assemble(store, str(broken), str(tmp_path / "with-about.epub"))
+    disabled = assemble(store, str(broken), str(tmp_path / "without-about.epub"), about_page=False)
+    with ZipFile(enabled) as actual, ZipFile(disabled) as baseline:
+        assert actual.namelist() == baseline.namelist()
+        assert all(actual.read(name) == baseline.read(name) for name in baseline.namelist())
+
+
+def test_generated_about_page_avoids_existing_resource_path(tmp_path):
+    output = _write(
+        tmp_path / "book.epub",
+        resources=[
+            EpubResource("trans-novel-about.xhtml", "application/xhtml+xml", CONTENT.encode())
+        ],
+        about=AboutPage("en"),
+    )
+    with ZipFile(output) as archive:
+        assert archive.read("EPUB/trans-novel-about.xhtml") == CONTENT.encode()
+        package = ET.fromstring(archive.read("EPUB/content.opf"))
+        item = _find(package, "opf:manifest/opf:item[@id='trans-novel-about']")
+        assert item.get("href") == "trans-novel-about-1.xhtml"
+        assert b"About this translation" in archive.read("EPUB/trans-novel-about-1.xhtml")
+
+
+@pytest.mark.parametrize("fmt", ["epub", "txt"])
+def test_about_template_failure_does_not_publish_partial_export(tmp_path, monkeypatch, fmt):
+    source, store = _export_fixture(tmp_path, fmt)
+    output = tmp_path / "translated.epub"
+    output.write_bytes(b"previous export")
+
+    def missing_template(_):
+        raise FileNotFoundError("missing about template")
+
+    monkeypatch.setattr("wenyi_core.assemble.about.read_text", missing_template)
+    with pytest.raises(FileNotFoundError, match="missing about template"):
+        assemble(store, str(source), str(output))
+    assert output.read_bytes() == b"previous export"
+    assert list(tmp_path.glob(".wenyi-*.tmp")) == []
 
 
 def test_container_metadata_manifest_and_spine(tmp_path):

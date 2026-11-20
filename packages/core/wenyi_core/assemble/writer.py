@@ -10,7 +10,7 @@ from typing import Literal
 
 from ..i18n.policy.models import PolicyContext, PolicyPlan
 from ..i18n.policy.resolver import resolve_policy
-from .about import about_xhtml
+from .about import AboutPage
 from .docx_writer import _assemble_docx
 from .epub_writer import (
     _assemble_epub,
@@ -152,9 +152,7 @@ def assemble(
     )
     _ensure_parent_dir(out_path)
     about = (
-        about_xhtml(
-            language_policy.export.language_tag, locale=language_policy.export.about_locale
-        ).decode("utf-8")
+        AboutPage(language_policy.export.language_tag, language_policy.export.about_locale)
         if about_page
         else None
     )

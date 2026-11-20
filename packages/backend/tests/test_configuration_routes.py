@@ -93,10 +93,12 @@ def test_workflow_keeps_frozen_quick_snapshot_independent(monkeypatch):
     monkeypatch.setattr(configuration, "require_project", lambda _: {"id": "legacy"})
     monkeypatch.setattr(
         current_context().repository,
-        "list_jobs",
-        lambda _: [
-            {"kind": "translation", "status": "queued", "params": {"config_snapshot": snapshot}}
-        ],
+        "latest_workflow_job",
+        lambda _: {
+            "kind": "translation",
+            "status": "queued",
+            "params": {"config_snapshot": snapshot},
+        },
     )
     result = configuration.workflow("legacy")
     assert result["source"] == "snapshot"
