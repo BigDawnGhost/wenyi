@@ -70,7 +70,10 @@ export function registerTests() {
         }
         const notes = page.getByRole("switch", { name: chinese ? "增量术语备注" : "Incremental glossary notes", exact: true });
         await expect(notes).not.toBeChecked();
+        await expect(page.locator("#glossary-notes-hint")).toHaveCount(0);
         await notes.check();
+        await expect(page.locator("#glossary-notes-hint")).toBeVisible();
+        await expect(notes).toHaveAccessibleDescription(chinese ? /增加模型用量/ : /additional model tokens/);
         await expect(precisionSwitch).toBeChecked({ checked: precision });
         await page.getByLabel(chinese ? "上传原文" : "Upload source", { exact: true }).setInputFiles({
           name: "academic.txt", mimeType: "text/plain", buffer: Buffer.from("A public test argument."),

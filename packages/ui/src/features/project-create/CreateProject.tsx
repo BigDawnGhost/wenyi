@@ -389,7 +389,8 @@ export default function CreateProjectDialog() {
                 checked={displayedNotes}
                 disabled={locked}
                 onCheckedChange={setGlossaryNotes}
-                aria-describedby="glossary-notes-hint"
+                aria-description={displayedNotes ? undefined : tr("createProject.glossaryNotesHint")}
+                aria-describedby={displayedNotes ? "glossary-notes-hint" : undefined}
                 className="peer"
               />
               <Label
@@ -416,9 +417,11 @@ export default function CreateProjectDialog() {
                 </Label>
               </div>
             )}
-            <p id="glossary-notes-hint" className={displayedNotes ? "text-xs text-muted-foreground sm:col-span-3" : "sr-only"}>
-              {tr("createProject.glossaryNotesHint")}
-            </p>
+            {displayedNotes && (
+              <p id="glossary-notes-hint" className="text-xs text-muted-foreground sm:col-span-3">
+                {tr("createProject.glossaryNotesHint")}
+              </p>
+            )}
           </div>
         )}
         {pid && (
