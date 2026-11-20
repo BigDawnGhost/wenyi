@@ -24,16 +24,6 @@ OPERATIONS = MappingProxyType(
         for spec in (
             OperationSpec("prompt.language_rules", "prompt.compose", writes=("language_rules",)),
             OperationSpec(
-                "terminology.context",
-                "evidence.prepare",
-                paths=("book",),
-                llm_operations=(
-                    "terminology.discover",
-                    "terminology.evidence",
-                    "terminology.merge",
-                ),
-            ),
-            OperationSpec(
                 "punctuation.zh_cn",
                 "export.text",
                 implementation_version="2",

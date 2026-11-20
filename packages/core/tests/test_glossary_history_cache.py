@@ -8,9 +8,8 @@ from wenyi_core.agents.glossary_extractor import GlossaryExtractor, TranslatedSe
 from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.glossary import GlossaryTerm
-from wenyi_core.pipeline.translate.terminology import TerminologyService
 
-from tests.terminology_fixtures import EvidenceAgent, book_store
+from tests.glossary_fixtures import book_store
 
 REQUESTS = "glossary/history/requests/"
 DIAGNOSTICS = "glossary/history/diagnostics/"
@@ -238,35 +237,3 @@ def test_pre_and_posttranslation_share_storage_cache(tmp_path, monkeypatch):
     stored = store.get_term("Alice")
     assert stored is not None and stored.target == "爱丽丝"
     assert client.calls == []
-
-
-def test_prepare_batch_defers_uncertain_terms_without_touching_saved_targets(tmp_path):
-    store, chapters = book_store(tmp_path)
-    chapters[0].segments[0].target = "Earlier saved translation 爱丽丝"
-    store.save_chapter(chapters[0])
-    store.upsert_term(GlossaryTerm("Beth", "贝丝", type="person"))
-    agent = EvidenceAgent()
-    first, client = extractor([{"source": "Alice", "target": "爱丽丝"}])
-    service = TerminologyService(store, agent, chapters)
-    evidence = TranslatedSegmentEvidence(
-        0, 7, chapters[0].segments[0].source, chapters[0].segments[0].target
-    )
-    service.prepare_batch(
-        1, chapters[1].segments, extractor=first, history=[evidence], before=(1, 3)
-    )
-    alice = store.get_term("Alice")
-    assert alice is not None and alice.target == "爱丽丝"
-    assert store.get_term("Carl") is None
-    beth = store.get_term("Beth")
-    assert beth is not None and beth.note
-    assert store.load_chapter(0).segments[0].target == "Earlier saved translation 爱丽丝"
-    assert len(client.calls) == 1
-    # Repeat the identical historical request independently of admission's known-term filter.
-    resumed, client = extractor([])
-    resumed._align_with_first_occurrences(
-        [GlossaryTerm("Alice", "艾丽丝"), GlossaryTerm("Carl", "卡尔")],
-        {"Alice": evidence, "Carl": evidence},
-        store=store,
-    )
-    assert client.calls == []
-    assert store.load_chapter(0).segments[0].target == "Earlier saved translation 爱丽丝"

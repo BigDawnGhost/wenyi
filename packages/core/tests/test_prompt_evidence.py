@@ -69,7 +69,7 @@ def test_note_budget_omits_whole_entries_without_truncating_sentences():
 @pytest.mark.parametrize("agent", ["translator", "polisher", "reviewer", "fixer", "precision"])
 def test_each_agent_consumes_only_local_notes_when_enabled(enabled, agent):
     config = Config.from_dict(
-        {"llm": {"preset": "fake"}, "pipeline": {"terminology_context": enabled}}
+        {"llm": {"preset": "fake"}, "pipeline": {"glossary_note_workers": int(enabled)}}
     )
     payload = {
         "translations": ["译文"],
@@ -119,7 +119,8 @@ def test_each_agent_consumes_only_local_notes_when_enabled(enabled, agent):
             relevant_glossary=_terms(),
         )
     user = client.calls[0]["messages"][1]["content"]
-    assert (_terms()[0].note in user) is enabled
+    # Review checks the saved glossary snapshot independently of note generation.
+    assert (_terms()[0].note in user) is (enabled or agent == "reviewer")
     assert _terms()[1].note not in user
     assert _terms()[2].note not in user
     glossary = render_glossary(_terms(), source_lang=config.source_lang)
@@ -127,7 +128,7 @@ def test_each_agent_consumes_only_local_notes_when_enabled(enabled, agent):
         json.dumps(glossary, ensure_ascii=False)[1:-1] if agent == "precision" else glossary
     ) in user
     if agent == "polisher":
-        assert ("[Current source paragraphs:" in user) is enabled
+        assert "[Current source paragraphs:" not in user
 
 
 @pytest.mark.parametrize("fallback", [False, True])
@@ -135,7 +136,7 @@ def test_local_notes_survive_alignment_retry_and_individual_fallback(fallback):
     config = Config.from_dict(
         {
             "llm": {"preset": "fake"},
-            "pipeline": {"align_retry_limit": 1, "terminology_context": True},
+            "pipeline": {"align_retry_limit": 1, "glossary_note_workers": 1},
         }
     )
     count = 0
@@ -171,9 +172,7 @@ def test_batch_forwards_local_notes_and_sources_to_polish(invalid_continuation):
             return '{"translations": ["译文"]}'
         return '{"polished": ["润色"]}'
 
-    config = Config.from_dict(
-        {"llm": {"preset": "fake"}, "pipeline": {"terminology_context": True}}
-    )
+    config = Config.from_dict({"llm": {"preset": "fake"}, "pipeline": {"glossary_note_workers": 1}})
     client = FakeClient(handler=handler)
     plan = replace(_plan(["ally speaks."]), terms=tuple(_terms()))
     result = TranslationBatchExecutor(Translator(client, config), Polisher(client, config)).execute(

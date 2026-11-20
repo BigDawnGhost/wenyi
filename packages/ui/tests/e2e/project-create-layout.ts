@@ -55,8 +55,10 @@ export function registerTests({ projectLocation = false }: { projectLocation?: b
           await expect(folder).toHaveCount(0);
         }
         const precision = page.getByRole("switch", { name: chinese ? "三译合润" : "Three drafts + synthesis", exact: true });
+        const notes = page.getByRole("switch", { name: chinese ? "增量术语备注" : "Incremental glossary notes", exact: true });
         const prepare = page.getByRole("switch", { name: chinese ? "创建后执行译前准备" : "Prepare before translating", exact: true });
         const first = await bounds(precision);
+        expect((await bounds(notes)).y).toBeCloseTo(first.y, 0);
         const second = await bounds(prepare);
         expect(first.y).toBeCloseTo(second.y, 0);
         await expect(precision).not.toBeChecked();

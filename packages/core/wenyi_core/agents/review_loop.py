@@ -118,11 +118,6 @@ class ReviewAgentLoop:
                 targets,
                 [current_refs.get(index, "") for index in range(len(sources))],
             ),
-            segment_refs_json=json.dumps(
-                [{"index": index, "ref": ref} for index, ref in sorted(current_refs.items())],
-                ensure_ascii=False,
-                indent=2,
-            ),
             candidates_json=json.dumps(candidates, ensure_ascii=False, indent=2),
         )
         user += prompts.readonly_object_context(

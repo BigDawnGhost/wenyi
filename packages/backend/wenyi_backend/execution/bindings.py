@@ -32,6 +32,7 @@ def build_workflow(
         config,
         client=client,
         storage=storage,
+        allow_glossary_notes=True,
         mineru_token_resolver=mineru_token_resolver,
     )
 

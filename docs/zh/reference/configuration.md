@@ -259,9 +259,7 @@ BabelDOC 是独立 HTTP 服务。
 | `polish.body` | `strong` | 润色，包括精翻综合 |
 | `glossary.extract` | `fast` | 术语抽取 |
 | `glossary.align_history` | `fast` | 历史译法对齐 |
-| `terminology.discover` | `strong` | 基于原文的人物发现 |
-| `terminology.evidence` | `strong` | 全书原文取证 |
-| `terminology.merge` | `strong` | 证据备注综合 |
+| `glossary.note` | `fast` | 维护已译批次的术语备注 |
 | `annotation.align` | `cheap` | 注释定位 |
 | `review.scan` | `cheap` | 初审与盲审复查 |
 | `review.verify` | `strong` | 取证核查 |
@@ -359,7 +357,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | `pipeline.prescan_concurrency` | `4` | 章节梗概并发；`1` 为顺序执行。 |
 | `pipeline.synopsis_source_tokens` | `8000` | 每个章节梗概原文块的 token 预算，正整数。 |
 | `pipeline.synopsis_reduce_tokens` | `12000` | 每组摘要归并内容及生成摘要的 token 预算，正整数。 |
-| `pipeline.terminology_context` | `false` | 仅 CLI 可用的实验性全书人物证据。 |
+| `pipeline.glossary_note_workers` | `0` | CLI：`0` 关闭；`1`–`16` 指定并行词条数。[Web/Desktop 项目开关](../guide/workspace.md#创建项目)开启时使用 4 个 worker。 |
 | `pipeline.annotation_alignment` | `true` | 定位译文链接／注释。EPUB 使用段末回退标记；PDF 忽略失败项，见 [PDF 格式说明](formats.md#babeldoc)。 |
 | `pipeline.annotation_alignment_concurrency` | `4` | 单个逻辑段内逐注释请求的并发数。 |
 
@@ -377,7 +375,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 `book_understanding` 增加首次预扫工作，长章节尤甚。
 有原文的章节需要可用梗概才能翻译；全书概览失败不阻止翻译。
 失败梗概可在下次 prepare/translate 中补齐。
-无论是否开启 `terminology_context`，准备阶段都不抽取或预填术语。
+准备阶段不抽取或预填术语。
 
 概览预算使用 `cl100k_base`，不按字符数或 provider 专属分词器计算。
 超长原文及单条摘要在完整 Unicode 字符边界内尽量均分；
@@ -387,10 +385,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 `synopsis_reduce_tokens` 会拒绝超出预算的生成摘要，不覆盖模型的输出 token 上限。
 修改预算只影响待完成工作，本身不会重新生成已验证的完整章节梗概或已缓存的全书概览。
 
-术语证据在 CLI 待译工作中增加人物发现和原文备注，
-其他术语类型保持常规抽取，不产生多义项或逐次出现的译名选择。
-Web/API 不会仅因该 YAML 开关启用而生产证据。
-Review 可以使用已有备注，不生成新证据。
+旧配置中的 `terminology_context: false` 仍可读取。`true` 和 `terminology.*` 模型路由已移除；升级时删除这些设置，不会自动改为付费的 note 维护。
 
 正文翻译和新的 Reviewer 请求总是使用全量术语，没有范围选择器。
 注释定位可能增加模型请求，定位失败的处理取决于[格式](formats.md)。

@@ -95,6 +95,7 @@ async def create_project(
                 translation_mode=project.translation_mode,
             )
             config.set_prompt_genre(project.prompt_genre)
+            config.pipeline.glossary_note_workers = 4 if project.glossary_notes else 0
             if fmt == "pdf" and project.pdf_backend:
                 config.pipeline.pdf_backend = project.pdf_backend
             current_context().repository.create_project(

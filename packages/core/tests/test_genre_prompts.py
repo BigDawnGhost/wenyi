@@ -19,12 +19,17 @@ from wenyi_core.i18n.resources import read_json, read_text
 
 DATA = Path(__file__).resolve().parents[1] / "wenyi_core/i18n/data"
 BASELINE = Path(__file__).with_name("fixtures") / "literary_prompt_baseline.json"
-TASK_NAMES = tuple(sorted(path.stem for path in (DATA / "tasks").glob("*.txt")))
+# These two optional tools did not exist in the pre-split snapshot. Keep verifying
+# every original byte against that fixture; exercise the new protocol in its own tests.
+POST_SPLIT_TASKS = {"glossary_note_system", "glossary_note_lookup"}
+TASK_NAMES = tuple(
+    sorted({path.stem for path in (DATA / "tasks").glob("*.txt")} - POST_SPLIT_TASKS)
+)
 TASK_GROUPS = tuple(sorted({name.split("_")[0] for name in TASK_NAMES}))
 PLAN_CASES = {
     "standard": ("ja", "zh", "standard", False),
     "three_draft_synthesis": ("ja", "zh", "three_draft_synthesis", False),
-    "terminology": ("ja", "zh", "standard", True),
+    "incremental_notes": ("ja", "zh", "standard", True),
     "traditional": ("en", "zh-Hant", "standard", False),
     "regional": ("fr", "en-GB", "standard", False),
     "vietnamese": ("zh", "vi", "standard", False),
@@ -32,40 +37,38 @@ PLAN_CASES = {
 
 
 def rendered_digest(target: str) -> str:
-    """Cover every language direction and terminology variant with language-owned honorifics."""
+    """Cover every language direction with language-owned honorifics."""
     digest = hashlib.sha256()
     for source in (*supported_languages(), "auto"):
-        for terminology in (False, True):
-            plan = resolve_policy(
-                PolicyContext(
-                    source,
-                    target,
-                    terminology_context=terminology,
-                    task_groups=TASK_GROUPS,
-                )
+        plan = resolve_policy(
+            PolicyContext(
+                source,
+                target,
+                task_groups=TASK_GROUPS,
             )
-            frozen = dict(plan.templates)
-            rules = dict(plan.prompt_values)
-            for name in TASK_NAMES:
-                text = frozen.get(name, template(name).template)
-                variables = {}
-                for match in Template.pattern.finditer(text):
-                    key = match.group("named") or match.group("braced")
-                    if key and key not in rules:
-                        # Source data must survive the final substitution literally.
-                        variables[key] = 'fixture $tgt_label ${genre_literal} {"value": 1}'
-                prompt = render(name, src=source, tgt=target, plan=plan, **variables)
-                record = [source, terminology, name, prompt]
-                digest.update(json.dumps(record, ensure_ascii=False).encode() + b"\n")
+        )
+        frozen = dict(plan.templates)
+        rules = dict(plan.prompt_values)
+        for name in TASK_NAMES:
+            text = frozen.get(name, template(name).template)
+            variables = {}
+            for match in Template.pattern.finditer(text):
+                key = match.group("named") or match.group("braced")
+                if key and key not in rules:
+                    # Source data must survive the final substitution literally.
+                    variables[key] = 'fixture $tgt_label ${genre_literal} {"value": 1}'
+            prompt = render(name, src=source, tgt=target, plan=plan, **variables)
+            record = [source, name, prompt]
+            digest.update(json.dumps(record, ensure_ascii=False).encode() + b"\n")
     return digest.hexdigest()
 
 
 def plan_digests(case: str) -> dict[str, str]:
-    source, target, mode, terminology = PLAN_CASES[case]
+    source, target, mode, notes = PLAN_CASES[case]
     config = Config.from_dict(
         {
             "language": {"source": source, "target": target},
-            "pipeline": {"translation_mode": mode, "terminology_context": terminology},
+            "pipeline": {"translation_mode": mode, "glossary_note_workers": int(notes)},
         }
     )
     digests = {}

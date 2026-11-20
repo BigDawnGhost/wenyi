@@ -3,9 +3,6 @@ Chapter: $chapter
 Local paragraph indices allowed for new issues: 0 through $last_index
 $pairs
 
-[Current block index → stable evidence ref]
-$segment_refs_json
-
 [Preliminary candidates]
 $candidates_json
 

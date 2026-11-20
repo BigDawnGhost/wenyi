@@ -46,6 +46,7 @@ const operations: Record<string, MessageKey> = {
   "polish.body": "settings.polishing",
   "glossary.extract": "workflow.terms",
   "glossary.align_history": "accounting.alignTerms",
+  "glossary.note": "createProject.glossaryNotes",
   "annotation.align": "settings.paragraphAnnotationAlignment",
   "review.scan": "accounting.reviewScan",
   "review.verify": "accounting.reviewVerify",

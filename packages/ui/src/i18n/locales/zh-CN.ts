@@ -321,6 +321,8 @@ const zhCN = {
   "workflowPanel.currentWorkflow": "当前翻译流程",
   "workflowPanel.waitingForProgressUpdates": "等待后台上报进度",
   "createProject.precisionMode": "三译合润",
+  "createProject.glossaryNotes": "增量术语备注",
+  "createProject.glossaryNotesHint": "每批译完后，用原文证据更新术语备注。开启后会增加模型用量。",
   "createProject.promptGenre": "翻译风格",
   "settings.currentStyle": "当前译法",
   "createProject.literaryGenre": "文学",

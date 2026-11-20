@@ -4,6 +4,7 @@ Extract:
 2. Forms of address for the same entity: nicknames, honorifics, job titles, kinship terms, abbreviations, prefixed or suffixed names, diminutives, affectionate and derogatory forms.
    If a source form has its own translation, return a separate entry instead of merely adding it to aliases.
    aliases records alternative source spellings or abbreviations for the same source, not independent source-to-target mappings.
+   A form must have a stable translation independently of who is speaking and who is being addressed. If the wording depends on the local relationship, do not promote it to a glossary mapping or alias: "your brother" is not a book-wide term for an older brother. Record a supported relationship in the named person's note instead. A distinctive nickname or name with an honorific may qualify.
 3. Fixed expressions that need consistency throughout the book: ${genre_fixed_expression_examples}.
    Include only expressions that affect later consistency. Exclude ordinary greetings, particles, one-off imagery and common vocabulary.
 Rules:
@@ -13,4 +14,4 @@ Rules:
 $metadata_guidance
 Term field guidance: $term_guidance
 Return only JSON:
-{"terms":[{"source":"Original term, form of address or fixed expression",${reading_field}"target":"Actual $tgt_label wording in this batch","type":"person|place|organization|term|technique|item|setting|appellation|honorific|speech|fixed_expression","gender":"male|female|unknown","aliases":["Alternative source spelling or abbreviation"],"note":"Referent, speaker, tone, context or reason for consistency"}]}
+{"terms":[{"source":"Original term, form of address or fixed expression",${reading_field}"target":"Actual $tgt_label wording in this batch","type":"person|place|organization|term|technique|item|setting|appellation|honorific|speech|fixed_expression","scope":"stable or contextual; only stable entries may be admitted","gender":"male|female|unknown","aliases":["Alternative source spelling or abbreviation"],"note":"Referent, speaker, tone, context or reason for consistency"}]}

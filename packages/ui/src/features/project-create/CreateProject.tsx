@@ -50,6 +50,7 @@ export default function CreateProjectDialog() {
   const [translationMode, setTranslationMode] = useState<
     NonNullable<ProjectInput["translation_mode"]>
   >("standard");
+  const [glossaryNotes, setGlossaryNotes] = useState(false);
   const [promptGenre, setPromptGenre] = useState<
     NonNullable<ProjectInput["prompt_genre"]>
   >("literary");
@@ -77,6 +78,9 @@ export default function CreateProjectDialog() {
   const displayedMode = pid
     ? String(savedPipeline?.translation_mode ?? "standard")
     : translationMode;
+  const displayedNotes = pid
+    ? Number(savedPipeline?.glossary_note_workers ?? 0) > 0
+    : glossaryNotes;
   const displayedGenre = pid
     ? String(savedPipeline?.prompt_genre ?? "literary")
     : promptGenre;
@@ -129,6 +133,7 @@ export default function CreateProjectDialog() {
             target_lang: target,
             prepare,
             translation_mode: translationMode,
+            glossary_notes: glossaryNotes,
             prompt_genre: promptGenre,
             pdf_backend: extension === "pdf" && pdfBackend ? pdfBackend : null,
             // Omitted rather than sent as null when no folder was chosen: the
@@ -360,7 +365,7 @@ export default function CreateProjectDialog() {
           />
         )}
         {(!pid || savedPipeline) && (
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+          <div className="grid items-center gap-x-3 gap-y-3 sm:grid-cols-3">
             <div className="flex items-center gap-2">
               <Switch
                 id="precision-translation"
@@ -376,6 +381,22 @@ export default function CreateProjectDialog() {
                 className="cursor-pointer peer-disabled:cursor-default peer-disabled:opacity-50"
               >
                 {tr("createProject.precisionMode")}
+              </Label>
+            </div>
+            <div className="flex items-center gap-2" title={tr("createProject.glossaryNotesHint")}>
+              <Switch
+                id="glossary-notes"
+                checked={displayedNotes}
+                disabled={locked}
+                onCheckedChange={setGlossaryNotes}
+                aria-describedby="glossary-notes-hint"
+                className="peer"
+              />
+              <Label
+                htmlFor="glossary-notes"
+                className="cursor-pointer peer-disabled:cursor-default peer-disabled:opacity-50"
+              >
+                {tr("createProject.glossaryNotes")}
               </Label>
             </div>
             {!pid && (
@@ -395,6 +416,9 @@ export default function CreateProjectDialog() {
                 </Label>
               </div>
             )}
+            <p id="glossary-notes-hint" className={displayedNotes ? "text-xs text-muted-foreground sm:col-span-3" : "sr-only"}>
+              {tr("createProject.glossaryNotesHint")}
+            </p>
           </div>
         )}
         {pid && (

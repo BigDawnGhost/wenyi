@@ -76,7 +76,7 @@ class TestCliConfig(unittest.TestCase):
         captured = {}
 
         class FakeOrchestrator:
-            def __init__(self, config, *, allow_terminology_context=False):
+            def __init__(self, config, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 captured["source"] = config.pipeline.synopsis_source_tokens
                 captured["reduce"] = config.pipeline.synopsis_reduce_tokens
@@ -123,12 +123,12 @@ class TestCliConfig(unittest.TestCase):
         captured = {}
 
         class FakeOrchestrator:
-            def __init__(self, config, *, allow_terminology_context=False):
+            def __init__(self, config, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 captured["polish"] = config.pipeline.polish
                 captured["review"] = config.pipeline.review
                 captured["rolling_context_tokens"] = config.pipeline.rolling_context_tokens
-                captured["allow_terminology_context"] = allow_terminology_context
+                captured["allow_glossary_notes"] = allow_glossary_notes
 
             def run_all(self, input_path, **kwargs):
                 captured["run_all"] = kwargs
@@ -148,7 +148,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertTrue(captured["polish"])
         self.assertTrue(captured["review"])
         self.assertEqual(captured["rolling_context_tokens"], 512)
-        self.assertTrue(captured["allow_terminology_context"])
+        self.assertTrue(captured["allow_glossary_notes"])
         self.assertIn("1/1 chapters, terms: 3", plain_text(result.output))
 
     def test_translate_flags_override_config_switches(self):
@@ -164,11 +164,11 @@ class TestCliConfig(unittest.TestCase):
         captured = {}
 
         class FakeOrchestrator:
-            def __init__(self, config, *, allow_terminology_context=False):
+            def __init__(self, config, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 captured["polish"] = config.pipeline.polish
                 captured["review"] = config.pipeline.review
-                captured["allow_terminology_context"] = allow_terminology_context
+                captured["allow_glossary_notes"] = allow_glossary_notes
 
             def run_all(self, input_path, **kwargs):
                 captured["run_all"] = kwargs
@@ -195,7 +195,7 @@ class TestCliConfig(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertFalse(captured["polish"])
         self.assertTrue(captured["review"])
-        self.assertTrue(captured["allow_terminology_context"])
+        self.assertTrue(captured["allow_glossary_notes"])
 
     def test_prepare_stops_before_translation(self):
         cfg = Config.from_dict(
@@ -225,10 +225,10 @@ class TestCliConfig(unittest.TestCase):
                 return Chapter()
 
         class FakeOrchestrator:
-            def __init__(self, config, *, allow_terminology_context=False):
+            def __init__(self, config, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 captured["config"] = config
-                captured["allow_terminology_context"] = allow_terminology_context
+                captured["allow_glossary_notes"] = allow_glossary_notes
 
             def prepare_for_translation(self, input_path, **kwargs):
                 captured["input_path"] = input_path
@@ -247,7 +247,7 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(captured["input_path"], "input.txt")
-        self.assertTrue(captured["allow_terminology_context"])
+        self.assertTrue(captured["allow_glossary_notes"])
         self.assertIn("Preparation complete", plain_text(result.output))
         self.assertIn("prescanned 2/2 chapters", plain_text(result.output))
 
@@ -358,7 +358,7 @@ class TestCliConfig(unittest.TestCase):
                     "preset": "fake",
                     "models": {"default_strong": {"provider": "default", "model": "p"}},
                 },
-                "pipeline": {"terminology_context": True},
+                "pipeline": {"glossary_note_workers": 1},
             }
         )
         captured = {}
@@ -484,7 +484,7 @@ class TestCliConfig(unittest.TestCase):
 
     def test_assemble_uses_local_orchestrator_entry(self):
         cfg = Config.from_dict(
-            {"llm": {"preset": "fake"}, "pipeline": {"terminology_context": True}}
+            {"llm": {"preset": "fake"}, "pipeline": {"glossary_note_workers": 1}}
         )
         captured = {}
 
@@ -550,7 +550,7 @@ class TestCliConfig(unittest.TestCase):
             with self.subTest(error=type(error).__name__):
 
                 class FakeOrchestrator:
-                    def __init__(self, config, *, allow_terminology_context=False):
+                    def __init__(self, config, *, allow_glossary_notes=False):
                         self.client = FakeClient()
                         pass
 
@@ -588,7 +588,7 @@ class TestCliConfig(unittest.TestCase):
         cfg = Config.from_dict({"llm": {"preset": "fake"}})
 
         class FakeOrchestrator:
-            def __init__(self, config, *, allow_terminology_context=False):
+            def __init__(self, config, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 pass
 

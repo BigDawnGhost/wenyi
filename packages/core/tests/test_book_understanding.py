@@ -48,7 +48,7 @@ class TestStyleAnalysis(unittest.TestCase):
 
 
 def _selected_config():
-    return Config.from_dict({"llm": {"preset": "fake"}, "pipeline": {"terminology_context": True}})
+    return Config.from_dict({"llm": {"preset": "fake"}, "pipeline": {"glossary_note_workers": 1}})
 
 
 def _service(tmp_path, chapters=None, *, terminology=True):

@@ -43,9 +43,7 @@ class AutofixVerification:
         )
         self.fixer = ReviewFixer(client, config, operation="autofix.fix")
         # The opt-in note channel replaces legacy global character guidance only when enabled.
-        self.style = style_brief(
-            {**analysis, "characters": []} if config.pipeline.terminology_context else analysis
-        )
+        self.style = style_brief(analysis)
         self.book_synopsis = str(analysis.get("book_synopsis", "") or "")
         self.fixer_round = max(
             1,

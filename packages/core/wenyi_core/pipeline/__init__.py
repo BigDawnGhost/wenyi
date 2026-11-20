@@ -69,10 +69,9 @@ from .run import (
 from .translate import (
     babeldoc_context,  # noqa: F401
     context,  # noqa: F401
+    glossary_notes,  # noqa: F401
     precision,  # noqa: F401
     precision_records,  # noqa: F401
-    terminology,  # noqa: F401
-    terminology_metadata,  # noqa: F401
     title_translation,  # noqa: F401
     translation,  # noqa: F401
     translation_batch,  # noqa: F401
@@ -89,8 +88,7 @@ __all__ = [
     "translation",
     "translation_batch",
     "title_translation",
-    "terminology",
-    "terminology_metadata",
+    "glossary_notes",
     "context",
     "babeldoc_context",
     "precision",

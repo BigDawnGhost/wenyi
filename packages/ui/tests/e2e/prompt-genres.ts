@@ -27,6 +27,7 @@ export function registerTests() {
             pipeline: {
               ...configuration.effective.pipeline,
               prompt_genre: "academic",
+              glossary_note_workers: 4,
               translation_mode: precision ? "three_draft_synthesis" : "standard",
             },
           },
@@ -67,6 +68,10 @@ export function registerTests() {
         if (precision) {
           await precisionSwitch.check();
         }
+        const notes = page.getByRole("switch", { name: chinese ? "增量术语备注" : "Incremental glossary notes", exact: true });
+        await expect(notes).not.toBeChecked();
+        await notes.check();
+        await expect(precisionSwitch).toBeChecked({ checked: precision });
         await page.getByLabel(chinese ? "上传原文" : "Upload source", { exact: true }).setInputFiles({
           name: "academic.txt", mimeType: "text/plain", buffer: Buffer.from("A public test argument."),
         });
@@ -75,6 +80,7 @@ export function registerTests() {
         }).click();
         await expect(page).toHaveURL(`/projects/${pid}`);
         expect(submitted?.prompt_genre).toBe("academic");
+        expect(submitted?.glossary_notes).toBe(true);
         expect(submitted?.translation_mode).toBe(precision ? "three_draft_synthesis" : "standard");
         await page.goto(`/projects/${pid}/settings`);
         const savedStyle = page.getByRole("region", {
@@ -112,6 +118,7 @@ export function registerTests() {
     await page.getByRole("button", { name: "Create project", exact: true }).click();
     await expect(page).toHaveURL(`/projects/${pid}`);
     expect(submitted?.prompt_genre).toBe("literary");
+    expect(submitted?.glossary_notes).toBe(false);
     expect(submitted?.translation_mode).toBe("standard");
   });
 
@@ -125,6 +132,7 @@ export function registerTests() {
             pipeline: {
               ...configuration.effective.pipeline,
               prompt_genre: genre,
+              ...(genre ? { glossary_note_workers: 4 } : {}),
               translation_mode: genre ? "three_draft_synthesis" : "standard",
             },
           },
@@ -137,6 +145,9 @@ export function registerTests() {
       const precisionSwitch = page.getByRole("switch", { name: "Three drafts + synthesis", exact: true });
       await expect(precisionSwitch).toBeChecked({ checked: !!genre });
       await expect(precisionSwitch).toBeDisabled();
+      const notesSwitch = page.getByRole("switch", { name: "Incremental glossary notes" });
+      await expect(notesSwitch).toBeChecked({ checked: !!genre });
+      await expect(notesSwitch).toBeDisabled();
     });
   }
 }
