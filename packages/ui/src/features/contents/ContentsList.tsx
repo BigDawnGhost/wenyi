@@ -34,13 +34,13 @@ export function ContentsList({
       <CardContent className="p-0">
         <div
           aria-hidden="true"
-          className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_112px] gap-4 border-b border-black/[0.05] px-4 py-3 text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]"
+          className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_112px] gap-4 border-b border-subtle px-4 py-3 text-xs tracking-wide text-muted-foreground"
         >
           <span>{t("contents.sourceTitle")}</span>
           <span>{t("contents.translatedTitle")}</span>
           <span className="text-right">{t("common.actions")}</span>
         </div>
-        <ul aria-label={t("contents.title")} className="divide-y divide-black/[0.05] dark:divide-white/[0.07]">
+        <ul aria-label={t("contents.title")} className="divide-y divide-subtle">
           {entries.map((entry) => (
             <li
               key={entry.id}
@@ -73,7 +73,7 @@ export function ContentsList({
                     title={t(
                       sourceOnly ? "contents.readSource" : "contents.openChapter",
                     )}
-                    className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-hover"
                   >
                     <BookOpen className="h-4 w-4" aria-hidden="true" />
                   </Link>
@@ -81,7 +81,6 @@ export function ContentsList({
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8"
                   aria-label={t("contents.editTitle")}
                   title={t("contents.editTitle")}
                   disabled={readOnly}

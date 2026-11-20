@@ -12,6 +12,8 @@ import { Button } from "../../components/ui/button";
 import { ErrorNotice } from "../../components/ui/data";
 import { Textarea } from "../../components/ui/form";
 import { LanguageSettings } from "./LanguageSettings";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 import { ModelSelection } from "./ModelSelection";
 import { ExportSettings } from "./ExportSettings";
 import { ProviderSettings } from "./ProviderSettings";
@@ -121,12 +123,20 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
     },
   });
   const error = save.error || validate.error || restore.error;
-  const pending = save.isPending || validate.isPending || restore.isPending || installing;
-  const disabled = !draft || yamlDirty || pending;
+  // Installing a credential is a state the page is in, so it disables the form.
+  // A request in flight is not: disabling for it applied the disabled face to
+  // every control and stripped the hover state from the button being pressed.
+  const pending = save.isPending || validate.isPending || restore.isPending;
+  const disabled = !draft || yamlDirty || installing;
   const effective = draft?.effective || {};
   const llm = object(effective.llm);
-  const configSaved = !!draft && draft.yaml === query.data?.yaml;
-  const dirty = !configSaved || uncommitted || yamlDirty || credentialsPending;
+  // Until the first load completes there is no draft to compare against, so
+  // every derivation would read as "unsaved". Reporting that for one frame
+  // both flashes the unsaved notice and, because the notice widens the action
+  // bar, shifts the bar sideways before the load settles.
+  const loaded = !!draft;
+  const configSaved = loaded && draft.yaml === query.data?.yaml;
+  const dirty = (loaded && !configSaved) || uncommitted || yamlDirty || credentialsPending;
   const change = (next: Document) => {
     if (draft)
       setDraft({
@@ -213,22 +223,26 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
         </div>
         <div hidden={section !== "defaults"}>
           <SettingsSection title={t("settings.sectionDefaultModels")} grouped>
-            <ModelSelection
-              llm={llm}
-              models={object(llm.models)}
-              disabled={disabled}
-              onChange={changeLlm}
-            />
+            <SettingsGroup title={t("settings.modelTiers")}>
+              <ModelSelection
+                llm={llm}
+                models={object(llm.models)}
+                disabled={disabled}
+                onChange={changeLlm}
+              />
+            </SettingsGroup>
           </SettingsSection>
         </div>
         <div hidden={section !== "workflow"}>
           <SettingsSection title={t("settings.sectionWorkflow")} grouped>
-            <WorkflowSettings
-              scope="global"
-              config={effective}
-              disabled={disabled}
-              onField={(group, key, value) => change(workflowField(effective, group, key, value))}
-            />
+            <SettingsGroup title={t("settings.pipelineSteps")}>
+              <WorkflowSettings
+                scope="global"
+                config={effective}
+                disabled={disabled}
+                onField={(group, key, value) => change(workflowField(effective, group, key, value))}
+              />
+            </SettingsGroup>
           </SettingsSection>
         </div>
         <div hidden={section !== "pdf"}>
@@ -240,7 +254,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
               title={t("settings.advancedYamlConfiguration")}
               summary={yamlDirty ? t("settings.unsavedSummary") : undefined}
             >
-              <div className="rounded-xl border border-border bg-card p-4">
+              <div className={cn(cardSurface, "p-4")}>
                 <Textarea
                   aria-label={t("settings.advancedYamlConfiguration")}
                   spellCheck={false}
@@ -295,20 +309,30 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
           ) : undefined
         }
       >
-        <Button variant="outline" disabled={!draft || pending} onClick={() => restore.mutate()}>
+        <Button
+          variant="outline"
+          disabled={!draft}
+          aria-busy={restore.isPending || undefined}
+          onClick={() => { if (!pending) restore.mutate(); }}
+        >
           {t("settings.restoreDefaults")}
         </Button>
         {section === "advanced" && (
           <Button
             variant="outline"
-            disabled={!draft || pending || editingIds}
-            onClick={() => validate.mutate()}
+            disabled={!draft || editingIds}
+            aria-busy={validate.isPending || undefined}
+            onClick={() => { if (!pending) validate.mutate(); }}
           >
             {t("settings.validateConfiguration")}
           </Button>
         )}
-        <Button disabled={!draft || pending || editingIds} onClick={() => save.mutate()}>
-          {pending ? t("common.saving") : t("settings.saveConfiguration")}
+        <Button
+          disabled={!draft || editingIds}
+          aria-busy={save.isPending || undefined}
+          onClick={() => { if (!pending) save.mutate(); }}
+        >
+          {t("settings.saveConfiguration")}
         </Button>
       </SettingsActionBar>
     </>

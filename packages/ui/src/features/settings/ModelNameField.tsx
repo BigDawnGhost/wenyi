@@ -1,6 +1,6 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Check, ChevronDown, Loader2, RefreshCw } from "lucide-react";
+import { Check, ChevronDown, RefreshCw } from "lucide-react";
 import { api } from "../../api/client";
 import type { ModelListResult } from "../../api/types";
 import { useI18n, type MessageKey } from "../../i18n";
@@ -163,7 +163,7 @@ export function ModelNameField({
                   role="option"
                   aria-selected={name === value}
                   className={cn(
-                    "flex cursor-pointer items-center justify-between gap-2 rounded px-2 py-1.5 [overflow-wrap:anywhere]",
+                    "flex cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-1.5 [overflow-wrap:anywhere]",
                     index === active && "bg-accent text-accent-foreground",
                   )}
                   onMouseDown={(event) => {
@@ -184,14 +184,18 @@ export function ModelNameField({
           variant="ghost"
           size="icon"
           className="shrink-0 text-muted-foreground"
-          disabled={!provider || fetch.isPending}
+          // Only genuinely unavailable disables the button. Blocking the second
+          // press with `disabled` also applied the disabled face mid-request, and
+          // its pointer-events cut dropped the hover state under the cursor.
+          disabled={!provider}
+          aria-busy={fetch.isPending || undefined}
           aria-label={t("modelList.fetch")}
           title={t("modelList.fetch")}
-          onClick={() => fetch.mutate({ connection, provider, signature })}
+          onClick={() => { if (!fetch.isPending) fetch.mutate({ connection, provider, signature }); }}
         >
-          {fetch.isPending
-            ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-            : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+          {/* The icon stays put while a fetch runs: swapping it for a spinner
+              replaced the glyph and added a rotation the control never has. */}
+          <RefreshCw className="h-4 w-4" aria-hidden="true" />
         </Button>
       </div>
       <p role="status" aria-live="polite" className="text-xs">

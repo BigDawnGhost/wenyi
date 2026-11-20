@@ -30,7 +30,7 @@ const RULES = [
   {
     id: "raw-palette",
     pattern: /\b(?:red|emerald|green|blue|amber|yellow|orange|purple|violet|pink|rose|teal|cyan|sky|indigo|lime|fuchsia|slate|gray|zinc|neutral|stone)-(?:50|100|200|300|400|500|600|700|800|900|950)\b/,
-    hint: "use semantic tokens (hsl(var(--...))) instead of raw palette colors",
+    hint: "use semantic tokens (oklch(var(--...))) instead of raw palette colors",
   },
   {
     id: "state-layout-shift",

@@ -40,7 +40,7 @@ export function tickFrame(
         kind: "translation",
         project_id: projectId,
         run_id: runId(),
-        label: "分批翻译章节",
+        label: "translation",
         done,
         total,
       },

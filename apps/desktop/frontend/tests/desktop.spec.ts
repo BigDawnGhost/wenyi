@@ -61,8 +61,7 @@ test("Desktop settings replaces app navigation and keeps structured drafts betwe
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page).toHaveURL("/");
   await page.goto(`/projects/${pid}`);
-  await expect(nav.getByRole("link")).toHaveCount(1);
-  await expect(nav.getByRole("link")).toHaveText("Projects");
+  await expect(nav.getByRole("link")).toHaveText(["Projects", "Settings"]);
 });
 
 test("lazy credentials do not blank settings after its configuration loads", async ({ page }) => {

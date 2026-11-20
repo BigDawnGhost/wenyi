@@ -2,6 +2,7 @@ import { Component, Suspense, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { useI18n } from "../i18n";
 import { platform } from "../platform";
+import { cn } from "../lib/utils";
 
 /**
  * Shared failure presentation. Renders as a top-level `<main>` for the global
@@ -20,12 +21,17 @@ export function ErrorFallback({ fullScreen = false }: { fullScreen?: boolean }) 
       {ExportDiagnostics && <div className="mt-4"><ExportDiagnostics /></div>}
     </>
   );
+  // A failed route is a dead end, not a panel of content, so it gets the same
+  // centred treatment as the desktop-only fallback instead of text pinned to
+  // the top-left corner with a page of empty space beneath it.
+  const shell =
+    "flex flex-col items-center justify-center gap-3 p-8 text-center text-sm";
   return fullScreen ? (
-    <main role="alert" className="p-8">
+    <main role="alert" className={cn("min-h-dvh", shell)}>
       {body}
     </main>
   ) : (
-    <div role="alert" className="p-8">
+    <div role="alert" className={cn("min-h-64", shell)}>
       {body}
     </div>
   );

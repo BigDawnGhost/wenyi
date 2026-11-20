@@ -106,7 +106,7 @@ for (const theme of ["light", "dark"]) {
       await test.step(path, async () => {
         await page.goto(path);
         const section = page.locator('[data-slot="settings.section"]:visible');
-        await expect(section).toHaveCount(path.startsWith("/projects/") ? 4 : 1);
+        await expect(section).toHaveCount(path.startsWith("/projects/") ? 5 : 1);
         const content = section.locator('p:visible, input:visible, textarea:visible, a:visible, [role="combobox"]:visible, [role="switch"]:visible');
         await expectCardSurface(content);
         await expect.poll(() => page.getByRole("main").evaluate(node =>
@@ -257,7 +257,9 @@ for (const chinese of [false, true]) {
     await expect(main.locator("details, summary")).toHaveCount(0);
     await expect(main.getByRole("table")).toHaveCount(0);
     await expect(main.getByRole("heading", { level: 2 })).toHaveText(
-      chinese ? ["模型", "翻译流程", "导出偏好", advancedName] : ["Models", "Workflow", "Export preferences", advancedName],
+      chinese
+        ? ["默认模型", "翻译风格", "翻译流程", "导出偏好", advancedName]
+        : ["Default models", "Translation style", "Workflow", "Export preferences", advancedName],
     );
     const polish = page.getByLabel(chinese ? "润色" : "Polishing", { exact: true });
     await polish.uncheck();
@@ -282,7 +284,7 @@ for (const chinese of [false, true]) {
         return bounds.width === Math.min(node.clientWidth, 1024) &&
           Math.abs(bounds.left - pane.left - (node.clientWidth - bounds.width) / 2) <= 1 &&
           node.scrollWidth === node.clientWidth &&
-          sections.length === 4 && sections.every(section => {
+          sections.length === 5 && sections.every(section => {
             const heading = section.querySelector(":scope > h2")!.getBoundingClientRect();
             const content = section.querySelector(":scope > div")!.getBoundingClientRect();
             const bounds = section.getBoundingClientRect();
@@ -338,9 +340,10 @@ for (const scope of ["global", "project"] as const) {
     await chooseOption(page.getByLabel("Quality tier", { exact: true }), "default / editor-model");
     if (scope === "global") await page.getByRole("link", { name: "Workflow", exact: true }).click();
     await page.getByLabel("Apply autofixes to the saved translation after review", { exact: true }).uncheck();
-    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+    const save = page.getByRole("button", { name: "Save configuration", exact: true });
+    await save.click();
     await expect.poll(() => writes).toBe(1);
-    await expect(page.getByRole("button", { name: "Save configuration", exact: true })).toBeEnabled();
+    await expect(save).not.toHaveAttribute("aria-busy", "true");
     const expected = {
       ...document,
       llm: { ...document.llm, tiers: { ...document.llm.tiers, strong: "editor" } },
@@ -354,6 +357,7 @@ for (const scope of ["global", "project"] as const) {
     await page.getByRole("button", { name: "Validate configuration", exact: true }).click();
     await expect(page.getByText("Configuration is valid but not saved yet", { exact: true })).toBeVisible();
     expect(writes).toBe(1);
+    await expect.poll(async () => JSON.parse(await yaml.inputValue())).toEqual(tuned);
     if (scope === "global") await page.getByRole("link", { name: "Workflow", exact: true }).click();
     await page.getByLabel("Book understanding", { exact: true }).uncheck();
     await page.getByRole("button", { name: "Save configuration", exact: true }).click();
@@ -364,6 +368,37 @@ for (const scope of ["global", "project"] as const) {
     });
   });
 }
+
+test("an in-flight project validation does not replace a newer YAML edit", async ({ page }) => {
+  const endpoint = `**/api/projects/${pid}/config/validate`;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route(endpoint, async route => {
+    const { yaml } = route.request().postDataJSON();
+    await gate;
+    await route.fulfill({ json: { ...configuration, yaml, effective: JSON.parse(yaml) } });
+  });
+  await page.goto(`/projects/${pid}/settings`);
+  const editor = page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true });
+  const validate = page.getByRole("button", { name: "Validate configuration", exact: true });
+  await expect(editor).toBeEditable();
+  const original = JSON.parse(await editor.inputValue());
+  const draft = JSON.stringify({ ...original, segment: { max_tokens_per_batch: 2700 } });
+  const newer = JSON.stringify({ ...original, segment: { max_tokens_per_batch: 3100 } });
+  await editor.fill(draft);
+  const response = page.waitForResponse(endpoint);
+  try {
+    await validate.click();
+    await expect(validate).toHaveAttribute("aria-busy", "true");
+    await editor.fill(newer);
+  } finally {
+    release();
+  }
+  await response;
+  await expect(validate).not.toHaveAttribute("aria-busy", "true");
+  await expect(editor).toHaveValue(newer);
+  await expect(page.getByLabel("Quality tier", { exact: true })).toBeDisabled();
+});
 
 test("idle project settings remain editable after returning from the event log", async ({ page }) => {
   let saved = configuration;

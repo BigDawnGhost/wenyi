@@ -96,16 +96,15 @@ for (const locale of ["en", "zh-CN"]) {
       name: chinese ? "删除项目" : "Delete project", exact: true,
     });
     await confirm.click();
-    await expect(confirm).toBeDisabled();
+    await expect(confirm).toHaveAttribute("aria-busy", "true");
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    expect(deleteRequests).toBe(1);
     // A delete that is already running cannot be recalled, but the dialog is
-    // only a view of it, so dismissing stays available and the label stops
-    // promising a cancel it cannot perform.
-    // The footer action is the one under test; the header also has a Close
-    // control with the same accessible name.
-    const dismiss = confirmation.getByRole("button", {
+    // only a view of it, so the header's close control stays available.
+    await expect(confirmation.getByRole("button", {
       name: chinese ? "关闭" : "Close", exact: true,
-    }).last();
-    await expect(dismiss).toBeEnabled();
+    })).toBeEnabled();
     // Escape must actually close the dialog now, and must not send a second
     // request for a delete that is still running.
     await page.keyboard.press("Escape");

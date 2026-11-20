@@ -257,7 +257,7 @@ for (const mode of ["standard", "three_draft_synthesis"] as const) {
     // the dismiss control is relabelled rather than disabled. It stays on
     // screen here, because the replacement drop below needs the open dialog.
     await expect(dialog.getByRole("button", { name: "Close", exact: true }).first()).toBeEnabled();
-    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
     await expect(zone).toHaveAttribute("aria-disabled", "true");
     await expect.poll(() => calls(page)).toContainEqual({
       command: "native_drop_upload",

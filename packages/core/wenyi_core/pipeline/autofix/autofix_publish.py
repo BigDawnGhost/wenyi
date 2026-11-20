@@ -41,7 +41,7 @@ class AutofixPublisher:
         total = len(locations)
         done = 0
         if progress and total:
-            progress(0, total, "Publishing Review Autofix")
+            progress(0, total, "progress.stage.publishingAutofix")
         for chapter_index in sorted(by_chapter):
             chapter = store.load_chapter(chapter_index)
             segments = chapter.text_segments
@@ -82,7 +82,7 @@ class AutofixPublisher:
                     row["actual_hash"] = text_hash(current)
                 done += 1
                 if progress:
-                    progress(done, total, "Publishing Review Autofix")
+                    progress(done, total, "progress.stage.publishingAutofix")
             if chapter_changed:
                 store.save_chapter(chapter)
 

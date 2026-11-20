@@ -16,7 +16,7 @@ export function SelectionBar({
 }) {
   const { t: tr } = useI18n();
   return (
-    <div className="flex items-center gap-3 rounded-md border bg-muted/60 px-4 py-2 text-sm">
+    <div className="flex items-center gap-3 rounded-md border bg-surface px-4 py-2 text-sm">
       <span>{tr("glossary.selectedCount", { count })}</span>
       <Button
         size="sm"

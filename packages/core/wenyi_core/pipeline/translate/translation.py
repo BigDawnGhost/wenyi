@@ -127,7 +127,7 @@ class TranslationService:
         finally:
             self._runtime.usage.flush(store, scope="translate")
         if progress and total:
-            progress(total, total, "Translation complete")
+            progress(total, total, "progress.stage.translationDone")
         store.log_event("translate_run_finished", total_segments=total)
         return store
 
@@ -524,7 +524,7 @@ class TranslationService:
         visible numbering.
         """
         title = (title or "").strip()
-        return title or f"Chapter {index + 1}"
+        return title or f"progress.stage.chapter:{index + 1}"
 
     def extract_batch_glossary(
         self,

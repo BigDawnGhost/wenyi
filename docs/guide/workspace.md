@@ -4,7 +4,7 @@ Web and Desktop share the workflow below, but keep separate projects and configu
 
 ## Create a project
 
-1. Choose **Create project**, give the book a name, and select source and target languages. The source language can be detected automatically. Selecting a file suggests its name when the project name is empty.
+1. Choose **Create project** at the top right of **My projects**, give the book a name, and select source and target languages. The source language can be detected automatically. Selecting a file suggests its name when the project name is empty.
 2. Drag in one nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, or PDF, or choose **Browse files**. For PDF, select the parser before upload: MinerU is the default; BabelDOC is the optional layout-preserving route. See [format support](../reference/formats.md) and [Desktop's BabelDOC plugin](desktop.md#optional-babeldoc-plugin).
 3. Choose **Translation style**: **Literary** is the default; **Academic** emphasizes arguments, conceptual distinctions, qualifications, and citations. The choice applies to preparation, translation, terminology, polishing, and Review.
 4. Decide whether to enable **Three drafts + synthesis** and **Prepare before translating**. Both switches are off by default.

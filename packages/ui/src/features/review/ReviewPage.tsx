@@ -9,10 +9,12 @@ import { useProjectQuery } from "../../lib/projectQuery";
 import { useProjectProgress } from "../../lib/ws";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
 import { Button } from "../../components/ui/button";
-import { Card } from "../../components/ui/card";
+import { Card, cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 import { Select, SelectItem } from "../../components/ui/select";
 import { StatusBadge } from "../../components/StatusBadge";
 import { ErrorNotice } from "../../components/ui/data";
+import { EmptyState } from "../../components/ui/misc";
 import { ReviewIssues } from "./ReviewIssues";
 import { ReviewActivity } from "./ReviewActivity";
 import { reviewPhase, reviewProgress } from "./reviewData";
@@ -137,12 +139,10 @@ function ReviewWorkbench({ pid }: { pid: string }) {
               !loading &&
               !error && (
                 <Button
-                  disabled={review.isPending}
-                  onClick={() => review.mutate()}
+                  aria-busy={review.isPending || undefined}
+                  onClick={() => { if (!review.isPending) review.mutate(); }}
                 >
-                  {review.isPending
-                    ? t("common.submitting")
-                    : t("review.runWholeBookReview")}
+                  {t("review.runWholeBookReview")}
                 </Button>
               )}
           </>
@@ -187,7 +187,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
           </Card>
         )}
         {run.data && (
-          <section className="space-y-5 rounded-xl border border-border bg-card p-5">
+          <section className={cn(cardSurface, "space-y-5 p-5")}>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="font-medium">
                 {t(
@@ -218,9 +218,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
             {!items.length &&
               status === "completed" &&
               (!reviewing || previousResults) && (
-                <p className="text-sm text-muted-foreground">
-                  {t("review.noIssues")}
-                </p>
+                <EmptyState>{t("review.noIssues")}</EmptyState>
               )}
             <details className="pt-4">
               <summary className="w-fit cursor-pointer text-xs text-muted-foreground">
@@ -233,7 +231,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
           </section>
         )}
         {!loading && !error && !run.data && !reviewing && (
-          <div className="space-y-2 rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground">
+          <div className={cn(cardSurface, "space-y-2 p-5 text-sm text-muted-foreground")}>
             <p>{t("review.noReviewYet")}</p>
             {!chapters.isPending && !translated && (
               <p>{t("review.wholeBookReviewIsAvailableOnceAll")}</p>

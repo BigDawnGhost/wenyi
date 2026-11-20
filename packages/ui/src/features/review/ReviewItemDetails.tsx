@@ -43,7 +43,7 @@ export function ReviewItemDetails({
           {item.changes.map((change, index) => (
             <p
               key={index}
-              className="rounded-md bg-muted/40 p-3 whitespace-pre-wrap [overflow-wrap:anywhere]"
+              className="rounded-md bg-surface p-3 whitespace-pre-wrap [overflow-wrap:anywhere]"
             >
               {text(change.suggested_target) || t("review.emptyTranslation")}
             </p>
@@ -66,7 +66,7 @@ export function ReviewItemDetails({
             const after = published ? publication.target : record.after;
             const reason = publication.reason || record.reason;
             return (
-              <div key={index} className="space-y-3 rounded-md border p-3">
+              <div key={index} className="space-y-3 rounded-md border border-subtle p-3">
                 <Badge
                   variant={
                     applied ? "success" : failed ? "destructive" : "secondary"
@@ -145,7 +145,7 @@ export function ReviewItemDetails({
 function Passage({ location }: { location: ReviewLocation }) {
   const { t } = useI18n();
   return (
-    <div className="grid grid-cols-2 gap-4 rounded-md bg-muted/40 p-3">
+    <div className="grid grid-cols-2 gap-4 rounded-md bg-surface p-3">
       <TextBlock label={t("common.source")} value={location.source} />
       <TextBlock
         label={t("common.translation")}

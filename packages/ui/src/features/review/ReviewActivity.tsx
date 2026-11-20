@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Loader2 } from "lucide-react";
+import { LoaderCircle } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { useForeground } from "../../lib/runtime";
 import type { ProgressMessage } from "../../lib/ws";
@@ -8,6 +8,8 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { Progress } from "../../components/ui/progress";
 import { formatDuration } from "../progress/accountingData";
 import { reviewPhase } from "./reviewData";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 
 export function ReviewActivity({
   pid,
@@ -55,7 +57,7 @@ export function ReviewActivity({
   return (
     <section
       aria-label={t("review.currentRun")}
-      className="space-y-4 rounded-xl border border-border bg-card p-5"
+      className={cn(cardSurface, "space-y-4 p-5")}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
@@ -63,7 +65,7 @@ export function ReviewActivity({
               horizontally when a run starts or ends. */}
           <span className="flex h-4 w-4 shrink-0 items-center justify-center">
             {running && (
-              <Loader2
+              <LoaderCircle
                 aria-hidden
                 className="h-4 w-4 animate-spin text-muted-foreground"
               />

@@ -4,6 +4,8 @@ import { useI18n } from "../../i18n";
 import { Button } from "../../components/ui/button";
 import { Input, Label } from "../../components/ui/form";
 import { ErrorNotice } from "../../components/ui/data";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 import { platform } from "../../platform";
 
 /** Choose where a new project is written, or leave the installation default. */
@@ -33,7 +35,7 @@ export function ProjectLocationPicker({
     }
   };
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
+    <div className={cn(cardSurface, "p-4")}>
       <div className="space-y-2">
         <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3">
           <Label htmlFor="project-location">{t("createProject.location")}</Label>

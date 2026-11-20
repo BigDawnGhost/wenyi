@@ -3,6 +3,7 @@ import { useI18n } from "../../i18n";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
 import { Badge } from "../../components/ui/badge";
+import { EmptyState } from "../../components/ui/misc";
 import { Eye, Pencil, Trash2 } from "lucide-react";
 import { PAGE_SIZE, termTypes } from "./termTypes";
 
@@ -82,7 +83,7 @@ export function TermTable({
             <col className="w-36" />
             <col className="w-24" />
           </colgroup>
-          <thead className="whitespace-nowrap border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
+          <thead className="whitespace-nowrap border-b border-subtle text-xs tracking-wide text-muted-foreground">
             <tr>
               <th className="text-left px-4 py-3.5 font-medium">
                 <input
@@ -115,7 +116,7 @@ export function TermTable({
             {(terms || []).map((t: Term) => (
               <tr
                 key={t.source}
-                className="border-b border-black/[0.05] last:border-0 hover:bg-muted/40 dark:border-white/[0.07]"
+                className="border-b border-subtle last:border-0 transition-colors hover:bg-hover"
               >
                 <td className="px-4 py-3.5">
                   <input
@@ -144,7 +145,6 @@ export function TermTable({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8"
                       aria-label={tr(readOnly ? "glossary.termDetails" : "glossary.editTerm")}
                       onClick={() => onEdit(t)}
                     >
@@ -155,7 +155,6 @@ export function TermTable({
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-8 w-8"
                       disabled={readOnly}
                       aria-label={tr("glossary.deleteTerm")}
                       onClick={() => onDelete(t.source)}
@@ -168,15 +167,14 @@ export function TermTable({
             ))}
             {terms && terms.length === 0 && (
               <tr>
-                <td
-                  colSpan={5}
-                  className="p-8 text-center text-muted-foreground text-sm"
-                >
-                  {tr(
-                    searchQuery || type
-                      ? "glossary.noMatchingTerms"
-                      : "glossary.noTermsYetTermsAreExtractedDuring",
-                  )}
+                <td colSpan={5}>
+                  <EmptyState>
+                    {tr(
+                      searchQuery || type
+                        ? "glossary.noMatchingTerms"
+                        : "glossary.noTermsYetTermsAreExtractedDuring",
+                    )}
+                  </EmptyState>
                 </td>
               </tr>
             )}

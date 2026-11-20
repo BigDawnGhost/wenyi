@@ -149,10 +149,8 @@ and primitives define the core vocabulary:
 | `sidebar` | Entire sidebar |
 | `sidebar.logo-row` | Brand/settings heading and collapse control |
 | `sidebar.strata` | Sidebar layers beneath the logo row; `#sidebar-navigation` |
-| `sidebar.action` | Primary action |
-| `sidebar.panels` | Global navigation |
 | `sidebar.region` | Scrollable project navigation |
-| `sidebar.footer` | Bottom navigation/action area |
+| `sidebar.footer` | Global navigation (Projects and Settings), or Back in settings |
 | `content` | Main route-content region |
 | `page.header` | Page title, subtitle and actions |
 | `page.container` | Page body |
@@ -189,6 +187,7 @@ shared [stylesheet](../../packages/ui/src/index.css#L15):
 | `runtime-placeholder` | Desktop runtime pending/closing gate |
 | `route-placeholder` | Quiet in-content route gate |
 | `disclosure-summary`, `disclosure-chevron` | Native disclosure styling |
+| `glass-bar` | Floating action bar glass: translucent tint plus backdrop blur |
 
 These are authoring conventions, not a claim that every dependency or older
 arbitrary utility is px-only. Keep shared theme tokens and reduced-motion behavior
