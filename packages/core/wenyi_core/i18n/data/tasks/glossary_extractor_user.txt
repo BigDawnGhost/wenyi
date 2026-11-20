@@ -1,4 +1,4 @@
-[Existing glossary (reference; reuse established translations)]
+[Existing glossary (reference; do not repeat unchanged entries)]
 $glossary
 
 [Source ($src_label)]
@@ -7,4 +7,4 @@ $source
 [Translation ($tgt_label)]
 $target
 
-Extract new or newly confirmed terms, forms of address and fixed expressions. Return JSON: {"terms":[...]}.
+Extract only new terms, forms of address and fixed expressions, plus existing entries this batch translates differently or gives a missing alias, gender or reading. An empty list is valid. Return JSON: {"terms":[...]}.

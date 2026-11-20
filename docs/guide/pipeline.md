@@ -98,6 +98,15 @@ its chapter. Fresh Reviewer requests receive the complete final glossary.
 This favors book-wide consistency at the cost of larger prompts. Evidence queries
 and individual Fixers can use relevant subsets.
 
+Extraction therefore keeps the glossary selective: names, book-specific terms,
+recurring forms of address and fixed expressions, not everyday vocabulary, one-off
+descriptions or single lines. It runs after every batch and once per chapter, with the
+`fast` profile's reasoning setting. A lighter profile of the same model, such as
+`reasoning_effort: low`, usually suffices; route `glossary.extract` and
+`glossary.align_history` to it as shown in
+[connections, profiles, and routes](../reference/configuration.md#model-profiles).
+Disabling reasoning entirely risks wrong mappings for forms of address.
+
 After EPUB body translation, Wenyi completes the parsed navigation tree and adds its
 source-and-translation pairs to the glossary before final Review, including nested,
 reused and previously saved titles. Existing glossary translations are retained;
