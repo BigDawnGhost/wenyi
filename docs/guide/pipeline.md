@@ -91,9 +91,9 @@ translation, not the following source reference. BabelDOC uses a
 
 With `pipeline.polish_concurrency` above 1 in standard mode, polishing no longer
 blocks translation. Each draft is saved and queued for polishing, and the next batch
-starts at once. Its recent-translation context and the batch's glossary extraction
-therefore usually come from unpolished drafts, which trades a little continuity for
-throughput with a slow polisher. A chapter is marked done only after all its polish
+starts at once. Recent-translation context and glossary extraction always read the
+unpolished drafts, so results do not depend on when polishing finishes. This trades a
+little continuity for throughput with a slow polisher. A chapter is marked done only after all its polish
 jobs are applied. Annotation alignment runs on the polished text. If polishing fails
 or returns the wrong paragraph count, the draft stays as the translation and a
 `batch_polish_failed` event is recorded. An interrupted run repolishes the saved

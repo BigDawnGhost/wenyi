@@ -334,9 +334,7 @@ class TranslationService:
                     for s in b:
                         s.meta.pop(POLISH_PENDING, None)
                     store.save_chapter(chapter)
-                if not polish_pending:
-                    # Applying a pending polish aligns the batch afterwards.
-                    self._align_batch_context(store, chapter, batch_start, len(b))
+                self._align_batch_context(store, chapter, batch_start, len(b))
                 if glossary_key in glossary_checkpoints or (
                     context_policy is not None
                     and self._glossary_checkpoint_covers(glossary_checkpoints, batch_start, len(b))
@@ -485,8 +483,9 @@ class TranslationService:
                     segment.target_before_polish = before_polish
                 # Persist translations incrementally so interruption resumes after this batch.
                 store.save_chapter(chapter)
-            if polish_job is None:
-                self._align_batch_context(store, chapter, batch_start, len(b))
+            # Align drafts now so later context never depends on polish timing; applying a
+            # polish aligns the polished text again.
+            self._align_batch_context(store, chapter, batch_start, len(b))
             store.log_event(
                 "batch_translated",
                 chapter=ci,
@@ -608,14 +607,12 @@ class TranslationService:
         if tuple(segment.index for segment in segments) != job.segment_indices:
             raise RuntimeError("A polish job no longer matches its chapter batch")
         changed = 0
-        for segment, draft, polished in zip(
-            segments, job.draft.targets, outcome.polished or job.draft.targets
-        ):
+        for segment, polished in zip(segments, outcome.polished or job.draft.targets):
             segment.meta.pop(POLISH_PENDING, None)
-            # Keep any target changed since the draft was saved.
-            if outcome.polished is not None and segment.target == draft:
+            # Alignment updates target and target_before_polish together, so equality means
+            # the target is still the (aligned) draft; keep any target edited since then.
+            if outcome.polished is not None and segment.target == segment.target_before_polish:
                 segment.target = polished
-                segment.target_before_polish = draft
                 changed += 1
         store.save_chapter(chapter)
         self._align_batch_context(store, chapter, job.start_index, len(job.sources))
@@ -757,22 +754,30 @@ class TranslationService:
 
         Formal chapters are the sole source of context on fresh and resumed runs. Chapter
         boundaries do not stop history; BabelDOC still filters layout noise and stops at headings.
+        With background polishing, context reads drafts so it never depends on job timing.
         """
+
+        def target(segment: Segment) -> str | None:
+            if self._polish_queue is not None and segment.target_before_polish is not None:
+                return segment.target_before_polish
+            return segment.target
 
         def targets() -> Iterator[str | None]:
             if policy is not None:
-                yield from reversed(policy.recent_targets(chapter.text_segments, start))
+                yield from reversed(policy.recent_targets(chapter.text_segments, start, target))
                 if start and policy.sections[start - 1] != 0:
                     return
             else:
-                yield from (segment.target for segment in reversed(chapter.text_segments[:start]))
+                yield from (target(segment) for segment in reversed(chapter.text_segments[:start]))
             for previous in self._neighboring_chapters(store, chapter.index, following=False):
                 segments = previous.text_segments
                 previous_policy = BabeldocContext.for_chapter(previous)
                 if previous_policy is None:
-                    yield from (segment.target for segment in reversed(segments))
+                    yield from (target(segment) for segment in reversed(segments))
                 else:
-                    yield from reversed(previous_policy.recent_targets(segments, len(segments)))
+                    yield from reversed(
+                        previous_policy.recent_targets(segments, len(segments), target)
+                    )
                     if previous_policy.sections and previous_policy.sections[-1] != 0:
                         return
 

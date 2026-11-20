@@ -198,3 +198,19 @@ def test_interruption_waits_for_running_polish_and_records_its_usage(tmp_path):
     usage = store.load_usage()
     assert usage is not None
     assert usage["totals"] == client.usage_summary()["totals"]
+
+
+@pytest.mark.parametrize("workers", [1, 3])
+def test_background_polish_context_reads_drafts_regardless_of_timing(tmp_path, workers):
+    txt, config = _setup(tmp_path, workers=workers)
+    # A fast polisher would finish before the next batch if context depended on timing.
+    client = SlowPolishClient(delay=0)
+    Orchestrator(config, client=client).run(txt)
+    prompts = [
+        call["messages"][-1]["content"]
+        for call in client.calls
+        if call["operation"] == "translation.body"
+    ]
+    assert len(prompts) == 7
+    # Inline polishing feeds polished text forward; background polishing always uses drafts.
+    assert any("润" in prompt for prompt in prompts) is (workers == 1)
