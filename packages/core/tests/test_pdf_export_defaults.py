@@ -3,6 +3,8 @@
 import hashlib
 import json
 from pathlib import Path
+from xml.etree import ElementTree as ET
+from zipfile import ZipFile
 
 import pytest
 from pypdf import PdfReader
@@ -10,13 +12,57 @@ from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
+from wenyi_core.ingest.pdf_babeldoc import read_pdf_babeldoc
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.run_store import RunStore
 
 from tests.fake_llm import routing_handler
 from tests.pdf_fixtures import pdf_bytes
+
+
+@pytest.mark.parametrize("flag", ["babeldoc", "pdf_export"])
+@pytest.mark.parametrize("bilingual", [False, True])
+def test_babeldoc_epub_reflows_saved_paragraphs_without_html_anchors(
+    tmp_path, monkeypatch, flag, bilingual
+):
+    source = tmp_path / "book.pdf"
+    source.write_bytes(pdf_bytes(["Source text"]))
+    monkeypatch.setattr(
+        "wenyi_core.pdf_bridge.BabeldocBridgeClient.extract",
+        lambda *a, **kw: {
+            "session_id": "offline",
+            "paragraphs": {"paragraphs": [{"id": "0:0", "page": 0, "source": "Source text"}]},
+        },
+    )
+    doc = read_pdf_babeldoc(str(source), "en", "zh", bridge_url="http://bridge.invalid")
+    assert not doc.chapters[0].template and not doc.chapters[0].segments[0].anchor
+    del doc.meta["pdf_export" if flag == "babeldoc" else "babeldoc"]
+    doc.chapters[0].segments[0].target = "译文"
+    store = FileStorage(str(tmp_path / "state"))
+    try:
+        store.save_manifest(
+            store.stage_document(doc, source_hash=hashlib.sha256(source.read_bytes()).hexdigest())
+        )
+        out = assemble(
+            store,
+            str(source),
+            str(tmp_path / "out.epub"),
+            "epub",
+            bilingual=bilingual,
+            order="source_first",
+            about_page=False,
+        )
+        with ZipFile(out) as archive:
+            name = next(name for name in archive.namelist() if name.endswith("/ch0.xhtml"))
+            body = ET.fromstring(archive.read(name)).find("{*}body")
+        assert body is not None
+        assert list(body.itertext()) == (["Source text", "译文"] if bilingual else ["译文"])
+        assert store.load_chapter(0).segments[0].target == "译文"
+    finally:
+        store.close()
 
 
 @pytest.fixture

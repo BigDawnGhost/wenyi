@@ -1,17 +1,71 @@
-"""Create the DOCX document, coordinate chapter emission and save the export."""
+"""Bind the policy-adjusted export snapshot to the native Word renderer."""
 
 from __future__ import annotations
 
-from docx import Document as open_docx
-from docx.oxml.ns import qn
+import json
+from collections.abc import Iterator
+from typing import Any
 
-from wenyi_core.assemble.docx_blocks import _add_heading, _emit_chapter_blocks
-from wenyi_core.assemble.writer_common import (
-    _ch_title,
-)
+from wenyi_core.atomicio import publish_target
+from wenyi_core.markup import _epub_native
+from wenyi_core.markup.contracts import HTML_ATTRIBUTE_META_KEY
 from wenyi_core.models.document import KIND_HEADING
 
 from .export_view import AssembleStore
+from .policy import export_options
+from .writer_common import _ch_title
+
+# Only saved metadata consumed by the version 1 DOCX projection. Do not send
+# templates, annotations from other formats, history, or stage metadata.
+_SEGMENT_FIELDS = (
+    HTML_ATTRIBUTE_META_KEY,
+    "heading_level",
+    "align",
+    "shade",
+    "docx_paragraph",
+    "docx_tabs",
+    "docx_toc_level",
+    "docx_source_runs",
+    "docx_style",
+    "docx_styles",
+    "list_num_id",
+    "list_ilvl",
+    "list_fmt",
+    "table_id",
+    "row",
+    "col",
+    "rows",
+    "cols",
+    "docx_grid_span",
+    "docx_row_span",
+    "docx_merge_continuation",
+)
+
+
+def _encode(data: dict[str, Any]) -> bytes:
+    return json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode()
+
+
+def _chapters(store: AssembleStore, rows: list[dict[str, Any]]) -> Iterator[bytes]:
+    for row in rows:
+        chapter = store.load_chapter(row["index"])
+        yield _encode(
+            {
+                "title": _ch_title(row),
+                "explicit_title": bool(chapter.meta.get("explicit_title")),
+                "heading_level": chapter.meta.get("heading_level"),
+                "segments": [
+                    {
+                        "source": seg.source,
+                        "target": seg.target,
+                        "cont": seg.cont,
+                        "heading": seg.kind == KIND_HEADING,
+                        "meta": {key: seg.meta[key] for key in _SEGMENT_FIELDS if key in seg.meta},
+                    }
+                    for seg in chapter.segments
+                ],
+            }
+        )
 
 
 def _assemble_docx(
@@ -22,48 +76,22 @@ def _assemble_docx(
     order: str = "target_first",
     preserve_source_style: bool = False,
 ) -> str:
-    """Rebuild a DOCX by chapter, restoring heading outlines, styles and tables from metadata."""
+    """Rebuild a DOCX without mutating saved chapters or reopening the source archive."""
     manifest = store.load_manifest()
-    from .policy import export_options
-
-    output_font = export_options(store, "docx").target_font
-    doc = open_docx()
-    if doc.paragraphs:
-        p0 = doc.paragraphs[0]
-        if not p0.text.strip():
-            p0.clear()
-
-    first_block = True
-    for c in manifest["chapters"]:
-        chapter = store.load_chapter(c["index"])
-        has_h1 = any(
-            s.kind == KIND_HEADING
-            and isinstance(s.meta, dict)
-            and int(s.meta.get("heading_level") or 1) == 1
-            for s in chapter.segments
-        )
-        title = _ch_title(c)
-        if title and not has_h1 and chapter.meta.get("explicit_title"):
-            if first_block and doc.paragraphs and not doc.paragraphs[0].text:
-                pass
-            _add_heading(doc, title, 1, output_font=output_font)
-        _emit_chapter_blocks(
-            doc,
-            chapter,
-            bilingual=bilingual,
-            order=order,
-            output_font=output_font,
-            preserve_source_style=preserve_source_style,
-        )
-        first_block = False
-
-    body = doc.element.body
-    for child in list(body):
-        if child.tag == qn("w:p") and not (child.text or "").strip():
-            texts = [node.text for node in child.iter(qn("w:t")) if node.text]
-            if not any(texts) and body.index(child) == 0:
-                body.remove(child)
-            break
-
-    doc.save(out_path)
+    meta = manifest.get("meta") or {}
+    header = _encode(
+        {
+            "version": 1,
+            "options": {
+                "target_font": export_options(store, "docx").target_font,
+                "bilingual": bilingual,
+                "source_first": order == "source_first",
+                "preserve_source_style": preserve_source_style,
+            },
+            "numbering": meta.get("docx_numbering") or {},
+            "core_properties": meta.get("docx_core_properties") or {},
+        }
+    )
+    with publish_target(out_path) as temporary:
+        _epub_native.write_docx(temporary, header, _chapters(store, manifest["chapters"]))
     return out_path

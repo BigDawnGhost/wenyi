@@ -1,6 +1,7 @@
 """Layout-preserving PDF output through the external BabelDOC HTTP bridge."""
 
 import hashlib
+import logging
 import math
 from io import BytesIO
 from pathlib import Path
@@ -10,12 +11,8 @@ from pypdf import PageObject, PdfReader, PdfWriter, Transformation
 from pypdf.errors import PdfReadError
 
 from ..atomicio import publish_target
-from ..ingest.pdf_babeldoc import (
-    _selected_page_indices,
-    annotations_from_store,
-    rows_from_store,
-    translations_from_store,
-)
+from ..ingest.pdf_babeldoc import _selected_page_indices, fillback_from_store
+from ..markup import _epub_native
 from ..pdf_bridge import BabeldocBridgeClient, BabeldocBridgeError
 from .export_view import AssembleStore
 from .pdf_links import merge_page_with_links
@@ -46,7 +43,7 @@ def _write_spreads(
     *,
     order: Literal["target_first", "source_first"],
 ) -> None:
-    """Pair matching pages left to right in the requested order, without rasterizing."""
+    """Compatibility writer for PDFs the native parser/composer does not support."""
     if not indices or len(translated.pages) != len(indices):
         raise BabeldocBridgeError(
             f"Cannot pair bilingual PDF pages: expected {len(indices)} translated pages "
@@ -94,12 +91,7 @@ def _assemble_pdf(
     order: Literal["target_first", "source_first"] = "target_first",
 ) -> str:
     """Fill back translations, placing the first bilingual version on the left."""
-    session_id, bridge_url, mapping = translations_from_store(store)
-    annotations = annotations_from_store(store, mapping)
-    annotation_options = {"annotations": annotations} if annotations else {}
-    rows = rows_from_store(store, mapping)
-    if rows:
-        annotation_options["rows"] = rows
+    session_id, bridge_url, mapping, annotation_options = fillback_from_store(store)
     client = BabeldocBridgeClient(bridge_url, timeout=timeout)
     if not bilingual:
         return client.fillback(session_id, mapping, out_path=out_path, **annotation_options)
@@ -112,15 +104,32 @@ def _assemble_pdf(
                 "PDF source does not match translation state: restore the original PDF "
                 "before exporting a bilingual edition."
             )
-        source = PdfReader(BytesIO(data))
+        native = _epub_native.pdf_spread_source(data)
+        source = None
+        if isinstance(native, str):
+            source = PdfReader(BytesIO(data))
+            source_count = len(source.pages)
+        else:
+            source_count = native.page_count
         meta = manifest.get("meta") or {}
-        indices = _selected_page_indices(meta.get("babeldoc_pages"), len(source.pages))
+        indices = _selected_page_indices(meta.get("babeldoc_pages"), source_count)
         if not indices:
             raise BabeldocBridgeError("The saved BabelDOC page selection contains no PDF pages")
         # Keep both the bridge result and any failed composition private until the spread is complete.
         with publish_target(out_path) as temp:
             client.fillback(session_id, mapping, out_path=temp, **annotation_options)
-            _write_spreads(source, PdfReader(temp), indices, temp, order=order)
+            fallback = (
+                native
+                if isinstance(native, str)
+                else _epub_native.pdf_write_spreads(native, temp, indices, order == "source_first")
+            )
+            if fallback is not None:
+                logging.getLogger(__name__).debug("Using compatibility PDF writer: %s", fallback)
+                if source is None:
+                    source = PdfReader(BytesIO(data))
+                    # Recover according to pypdf's page tree if native declined the merge.
+                    indices = _selected_page_indices(meta.get("babeldoc_pages"), len(source.pages))
+                _write_spreads(source, PdfReader(temp), indices, temp, order=order)
     except (OSError, PdfReadError, ValueError) as error:
         raise BabeldocBridgeError(f"Cannot assemble bilingual PDF: {error}") from error
     return out_path

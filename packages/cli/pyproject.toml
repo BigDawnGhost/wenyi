@@ -3,6 +3,8 @@ name = "wenyi-cli"
 dynamic = ["version"]
 description = "Local command-line interface for Wenyi's translation engine."
 readme = "README.md"
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "wenyi-core",
@@ -21,7 +23,7 @@ wenyi = "wenyi_cli.main:main"
 wenyi-core = { workspace = true }
 
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling>=1.27", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]

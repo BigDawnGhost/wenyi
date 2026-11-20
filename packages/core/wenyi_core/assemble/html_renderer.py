@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from html import escape
 
 from bs4 import BeautifulSoup
@@ -15,12 +16,15 @@ from wenyi_core.assemble.html_bilingual import (
 )
 from wenyi_core.assemble.html_inline import _merge_epub_render_meta, _replace_block_content
 from wenyi_core.assemble.writer_common import _bilingual_source, _ordered_pair, _seg_text
+from wenyi_core.markup import _epub_native
 from wenyi_core.markup.contracts import (
     ANNOTATION_ID_ATTR,
+    ANNOTATION_META_KEY,
     HTML_ATTRIBUTE_ID_ATTR,
     HTML_ATTRIBUTE_META_KEY,
     HTML_MARKUP_META_KEY,
     INLINE_ID_ATTR,
+    INLINE_META_KEY,
     LINE_WRAPPER_ATTR,
 )
 from wenyi_core.markup.html import html_attribute_names
@@ -119,6 +123,7 @@ def _render_segments_html(
     resource_href: str = "",
     source_ids_by_anchor: dict[str, str] | None = None,
     source_link_targets: dict[tuple[str, str], str] | None = None,
+    prefer_native: bool = False,
 ) -> str:
     """Backfill translations once per physical HTML resource, indexed by anchor.
     Logical EPUB chapters may share one XHTML or span several. Callers must first group
@@ -126,7 +131,141 @@ def _render_segments_html(
     With preserve_source_style, reuse original class/style attributes without muted CSS;
     retain tn-source only as a structural marker.
     """
+    if prefer_native and not bilingual:
+        rendered = _render_plain_native(template, segments, render_meta_by_anchor)
+        if rendered is not None:
+            return rendered
+    if prefer_native and source_ids_by_anchor is None and source_link_targets is None:
+        rendered = _render_paired_native(
+            template,
+            segments,
+            render_meta_by_anchor,
+            bilingual=bilingual,
+            source_first=order == "source_first",
+            preserve_source_style=preserve_source_style,
+            source_lang=source_lang,
+        )
+        if rendered is not None:
+            return rendered
+
     soup = BeautifulSoup(template, "html.parser")
+    _render_segments_dom(
+        soup,
+        segments,
+        render_meta_by_anchor=render_meta_by_anchor,
+        bilingual=bilingual,
+        order=order,
+        preserve_source_style=preserve_source_style,
+        source_lang=source_lang,
+        resource_href=resource_href,
+        source_ids_by_anchor=source_ids_by_anchor,
+        source_link_targets=source_link_targets,
+    )
+    return str(soup)
+
+
+def _render_paired_native(
+    template: str,
+    segments: list[Segment],
+    fresh_metadata: dict[str, dict[str, object]] | None,
+    *,
+    bilingual: bool,
+    source_first: bool,
+    preserve_source_style: bool,
+    source_lang: str,
+) -> str | None:
+    """Project the same text, clone decisions and merged metadata as the compatibility path."""
+    targets, sources, kinds, stored_metadata = _segment_render_maps(segments)
+    edits = []
+    rich = False
+    for anchor, target in targets.items():
+        stored = stored_metadata[anchor]
+        fresh = (fresh_metadata or {}).get(anchor, {})
+        merged = _merge_epub_render_meta(stored, fresh)
+        slot = None
+        metadata = None
+        if HTML_ATTRIBUTE_META_KEY in merged:
+            attribute = (fresh if fresh_metadata is not None else stored).get(
+                HTML_ATTRIBUTE_META_KEY
+            )
+            if (
+                set(merged) != {HTML_ATTRIBUTE_META_KEY}
+                or not isinstance(attribute, dict)
+                or set(attribute) != {"node_id", "name"}
+            ):
+                return None
+            node_id, name = attribute["node_id"], attribute["name"]
+            if not isinstance(node_id, str) or not isinstance(name, str):
+                return None
+            slot = (node_id, name)
+        elif merged:
+            if set(merged) - {HTML_MARKUP_META_KEY, ANNOTATION_META_KEY, INLINE_META_KEY}:
+                return None
+            rich |= ANNOTATION_META_KEY in merged or INLINE_META_KEY in merged
+            try:
+                metadata = json.dumps(merged, allow_nan=False)
+            except (TypeError, ValueError, RecursionError):
+                return None
+        source = sources[anchor]
+        pair = (
+            slot is None
+            and bilingual
+            and kinds[anchor] != KIND_HEADING
+            and bool(_bilingual_source(source, target))
+        )
+        edits.append((anchor, target, source, pair, slot, metadata))
+    if not bilingual and not rich:
+        return None
+    return _epub_native.html_backfill_paired(
+        template, edits, source_first, preserve_source_style, source_lang
+    )
+
+
+def _render_plain_native(
+    template: str,
+    segments: list[Segment],
+    fresh_metadata: dict[str, dict[str, object]] | None,
+) -> str | None:
+    """Decline rich metadata rather than approximating annotation or placement semantics."""
+    targets, sources, _kinds, stored_metadata = _segment_render_maps(segments)
+    edits = []
+    for anchor, target in targets.items():
+        stored = stored_metadata[anchor]
+        fresh = (fresh_metadata or {}).get(anchor, {})
+        merged = stored | fresh
+        if set(merged) - {HTML_MARKUP_META_KEY, HTML_ATTRIBUTE_META_KEY}:
+            return None
+        attribute = (fresh if fresh_metadata is not None else stored).get(HTML_ATTRIBUTE_META_KEY)
+        slot = None
+        if attribute is not None:
+            if not isinstance(attribute, dict):
+                return None
+            node_id, name = attribute.get("node_id"), attribute.get("name")
+            if not isinstance(node_id, str) or not isinstance(name, str):
+                return None
+            slot = (node_id, name)
+        elif merged and (HTML_ATTRIBUTE_META_KEY in merged or not merged.get(HTML_MARKUP_META_KEY)):
+            return None
+        edits.append(
+            (anchor, target, sources[anchor], slot, bool(merged.get(HTML_MARKUP_META_KEY)))
+        )
+    return _epub_native.html_backfill_plain(template, edits)
+
+
+def _render_segments_dom(
+    soup: BeautifulSoup,
+    segments: list[Segment],
+    *,
+    render_meta_by_anchor: dict[str, dict[str, object]] | None = None,
+    bilingual: bool = False,
+    order: str = "target_first",
+    preserve_source_style: bool = False,
+    source_lang: str = "",
+    resource_href: str = "",
+    source_ids_by_anchor: dict[str, str] | None = None,
+    source_link_targets: dict[tuple[str, str], str] | None = None,
+) -> None:
+    """Backfill an already annotated DOM in place."""
     by_anchor, src_by_anchor, kind_by_anchor, stored_meta_by_anchor = _segment_render_maps(segments)
     # Index once so anchor lookups are O(1), avoiding a full DOM scan with soup.find for every anchor.
     # Reuse the resulting index throughout this resource.
@@ -152,7 +291,7 @@ def _render_segments_html(
 
         source_link_targets = {
             (resource_href, fragment): source_ids_by_anchor[segment_anchor]
-            for fragment, segment_anchor in fragment_anchor_map(template).items()
+            for fragment, segment_anchor in fragment_anchor_map(soup).items()
             if fragment
             and isinstance(segment_anchor, str)
             and segment_anchor in source_ids_by_anchor
@@ -279,7 +418,6 @@ def _render_segments_html(
         node.attrs.pop(INLINE_ID_ATTR, None)
     for node in soup.find_all(True, attrs={HTML_ATTRIBUTE_ID_ATTR: True}):
         node.attrs.pop(HTML_ATTRIBUTE_ID_ATTR, None)
-    return str(soup)
 
 
 def _render_chapter_html(
@@ -289,6 +427,7 @@ def _render_chapter_html(
     order: str = "target_first",
     preserve_source_style: bool = False,
     source_lang: str = "",
+    prefer_native: bool = False,
 ) -> str:
     """Backfill a chapter template for HTML/PDF input and generated HTML output."""
     return _render_segments_html(
@@ -299,4 +438,5 @@ def _render_chapter_html(
         preserve_source_style=preserve_source_style,
         source_lang=source_lang,
         resource_href=chapter.href or "",
+        prefer_native=prefer_native,
     )

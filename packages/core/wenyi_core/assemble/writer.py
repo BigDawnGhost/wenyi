@@ -28,6 +28,7 @@ from .writer_common import (
     _manifest_target_lang,
     default_output_format,
     output_backend,
+    supports_pdf_export,
 )
 
 __all__ = ["assemble"]
@@ -96,7 +97,10 @@ def assemble(
             store, punctuation_normalize=punctuation_normalize, plan=language_policy
         )
     m = view.load_manifest()
-    view.prepare()
+    # EPUB and PDF writers project all chapters before opening output or making
+    # a bridge request. Prewarming their view would deep-copy the same chapters twice.
+    if out_format not in {"epub", "pdf"}:
+        view.prepare()
     target_lang = _manifest_target_lang(m)
     if out_format == "txt":
         out_path = out_path or _default_out(
@@ -153,13 +157,13 @@ def assemble(
         else None
     )
     if m["fmt"] == "epub":
-        write = _assemble_epub
-    elif m["fmt"] in {"html", "pdf"}:
-        write = _build_epub_from_html_templates
+        writer = _assemble_epub
+    elif m["fmt"] == "html" or (m["fmt"] == "pdf" and not supports_pdf_export(m)):
+        writer = _build_epub_from_html_templates
     else:
-        # FB2/text: build a standard EPUB from chapter data.
-        write = _build_epub_from_chapters
-    return write(
+        # BabelDOC snapshots have paragraph IDs, not MinerU HTML templates or anchors.
+        writer = _build_epub_from_chapters
+    return writer(
         view,
         source_path,
         out_path,

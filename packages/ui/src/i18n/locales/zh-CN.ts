@@ -699,7 +699,7 @@ const zhCN = {
   "error.projectBusy": "项目正忙，请在当前任务结束后重试。",
   "error.queueUnavailable": "任务队列暂不可用，请稍后重试。",
   "error.exportNotFound": "该导出文件已不存在，请重新导出。",
-  "error.sourceNotReady": "原文尚未处理完成。",
+  "error.sourceNotReady": "原文解析完成后即可导出。",
   "error.settingsConflict": "设置已在别处被修改，请刷新后重试。",
   "error.chapterNotFound": "该章节已不存在。",
   "error.segmentNotFound": "该段落已不存在。",

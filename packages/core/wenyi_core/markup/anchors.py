@@ -9,28 +9,38 @@ from urllib.parse import unquote, urlsplit
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 
+from wenyi_core.markup.epub_dom import parse_epub_dom
 
-def fragment_anchor_map(template: str) -> dict[str, str | None]:
+
+def fragment_anchor_map(template: str | BeautifulSoup) -> dict[str, str | None]:
     """Map XHTML id/name values to Segment anchors.
     None means the ID exists after the resource's final translatable block. Keep this
     distinct from a fragment that does not exist at all.
     """
-    soup = BeautifulSoup(template, "html.parser")
+    soup = parse_epub_dom(template) if isinstance(template, str) else template
     mapping: dict[str, str | None] = {}
-    for node in soup.find_all(True):
+    pending: list[str] = []
+    for node in soup.descendants:
+        if not isinstance(node, Tag):
+            continue
+        raw_anchor = node.get("data-tn-id")
+        if node.has_attr("data-tn-id") and pending:
+            for value in pending:
+                mapping[value] = raw_anchor if isinstance(raw_anchor, str) and raw_anchor else None
+            pending.clear()
         identifiers = [node.get("id"), node.get("name")]
         if not any(isinstance(value, str) and value for value in identifiers):
             continue
         block = (
             node if node.has_attr("data-tn-id") else node.find_parent(attrs={"data-tn-id": True})
         )
-        if not isinstance(block, Tag):
-            block = node.find_next(attrs={"data-tn-id": True})
         raw_anchor = block.get("data-tn-id") if isinstance(block, Tag) else None
         anchor = raw_anchor if isinstance(raw_anchor, str) and raw_anchor else None
         for value in identifiers:
-            if isinstance(value, str) and value:
-                mapping.setdefault(value, anchor)
+            if isinstance(value, str) and value and value not in mapping:
+                mapping[value] = anchor
+                if block is None:
+                    pending.append(value)
     return mapping
 
 

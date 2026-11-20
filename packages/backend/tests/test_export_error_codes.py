@@ -12,12 +12,12 @@ from wenyi_backend.export_plan import resolve_export
 from wenyi_backend.schemas import ExportRequest
 
 
-def test_uninitialised_project_refuses_export_with_a_code():
+def test_missing_parse_refuses_export_with_a_code():
     with pytest.raises(ApiError) as caught:
-        resolve_export({"fmt": "epub", "initialized": False}, {}, ExportRequest())
+        resolve_export({"fmt": "epub", "initialized": False}, None, ExportRequest())
     assert caught.value.code == SOURCE_NOT_READY
     assert caught.value.status_code == 409
-    assert caught.value.detail == "Prepare or translate the source before exporting"
+    assert caught.value.detail == "Parse the source before exporting"
 
 
 def test_writer_rejection_keeps_the_writer_message():
@@ -37,7 +37,7 @@ def test_writer_rejection_keeps_the_writer_message():
 def test_migrated_errors_still_satisfy_except_http_exception():
     """Existing guards catch HTTPException; the code must ride along intact."""
     try:
-        resolve_export({"fmt": "epub", "initialized": False}, {}, ExportRequest())
+        resolve_export({"fmt": "epub", "initialized": False}, None, ExportRequest())
     except HTTPException as error:
         assert isinstance(error, ApiError)
         assert error.code == SOURCE_NOT_READY
@@ -48,6 +48,6 @@ def test_migrated_errors_still_satisfy_except_http_exception():
 def test_source_not_ready_is_distinct_from_queue_unavailable():
     """A missing source is not a queue failure; clients branch on the difference."""
     with pytest.raises(ApiError) as caught:
-        resolve_export({"fmt": "epub", "initialized": False}, {}, ExportRequest())
+        resolve_export({"fmt": "epub", "initialized": False}, None, ExportRequest())
     assert caught.value.code == SOURCE_NOT_READY
     assert caught.value.code != QUEUE_UNAVAILABLE

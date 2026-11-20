@@ -3,22 +3,14 @@
 from __future__ import annotations
 
 import os
-import zipfile
 from html import escape
 from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 
-from wenyi_core.assemble.about import AboutPage, attach_about_entry, main_opf_path
-from wenyi_core.assemble.epub_navigation import _is_nav, _rewrite_opf_metadata, _rewrite_toc
+from wenyi_core.assemble import epub_native
+from wenyi_core.assemble.about import AboutPage
 from wenyi_core.assemble.epub_package import EpubChapter, EpubResource, EpubTocEntry, write_epub
-from wenyi_core.assemble.epub_presentation import (
-    _HTML_EXTS,
-    EpubPresentation,
-    _epub_looks_vertical,
-    _rewrite_html_document,
-)
-from wenyi_core.assemble.epub_resources import _render_epub_resources
 from wenyi_core.assemble.html_renderer import (
     _html_open_tag,
     _render_chapter_html,
@@ -42,11 +34,11 @@ from wenyi_core.atomicio import publish_target
 from wenyi_core.ingest.fb2_reader import read_fb2_binaries
 from wenyi_core.models.document import KIND_HEADING
 
-from .export_view import AssembleStore
+from .export_view import AssembleStore, ExportViewStore
 
 
 def _assemble_epub(
-    store: AssembleStore,
+    store: ExportViewStore,
     source_path: str,
     out_path: str,
     *,
@@ -63,106 +55,25 @@ def _assemble_epub(
         raise ValueError("--out must not point at the source file; choose a different output path")
     m = store.load_manifest()
     target_lang_code = _manifest_target_lang(m)
-    target_lang = _epub_lang(target_lang_code)
     raw_source_lang = m.get("source_lang", "")
     source_lang = raw_source_lang if isinstance(raw_source_lang, str) else ""
     raw_meta = m.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
-    raw_toc_entries = meta.get("toc_entries", [])
-    toc_entries: list[dict[str, object]] = (
-        [entry for entry in raw_toc_entries if isinstance(entry, dict)]
-        if isinstance(raw_toc_entries, list)
-        else []
-    )
-    raw_toc_paths = meta.get("toc_paths")
-    toc_paths: set[str] = set()
-    if isinstance(raw_toc_paths, list):
-        toc_paths.update(path for path in raw_toc_paths if isinstance(path, str) and path)
-    for entry in toc_entries:
-        toc_path = entry.get("toc_path")
-        if isinstance(toc_path, str) and toc_path:
-            toc_paths.add(toc_path)
-    ncx_paths = {
-        str(entry["toc_path"])
-        for entry in toc_entries
-        if entry.get("kind") == "ncx" and isinstance(entry.get("toc_path"), str)
-    }
-
-    chapters = [store.load_chapter(c["index"]) for c in m["chapters"]]
-
     source_title = m.get("title", "") if isinstance(m.get("title"), str) else ""
-    book_title = _export_book_title(
-        source_title,
-        target_lang_code,
+    state = epub_native.options(
+        store.iter_chapters_once(c["index"] for c in m["chapters"]),
+        meta,
+        book_title=source_title,
+        source_lang=source_lang,
         bilingual=bilingual,
+        order=order,
+        preserve_source_style=preserve_source_style,
+        target_lang=_epub_lang(target_lang_code),
+        export_title=_export_book_title(source_title, target_lang_code, bilingual=bilingual),
+        about=about.render().decode("utf-8") if about is not None else None,
     )
-
-    # Publish atomically: a failure mid-copy must not truncate or destroy an existing
-    # export at the same path. The publish context stays outermost so the source handle
-    # is closed before the Windows replacement runs.
     with publish_target(out_path) as temp_out:
-        with zipfile.ZipFile(source_path, "r") as zin:
-            about_opf = main_opf_path(zin) if about is not None else None
-            about_entry: tuple[str, bytes] | None = None
-            force_horizontal = _epub_looks_vertical(zin)
-            rendered = _render_epub_resources(
-                zin,
-                chapters,
-                meta,
-                # Use the original book title for annotation so export suffixes cannot be mistaken for body titles.
-                book_title=source_title,
-                bilingual=bilingual,
-                order=order,
-                preserve_source_style=preserve_source_style,
-                source_lang=source_lang,
-                presentation=EpubPresentation(target_lang, force_horizontal),
-            )
-
-            # Keep the original member order except for EPUB's required first entry.
-            infos = sorted(zin.infolist(), key=lambda info: info.filename != "mimetype")
-            with zipfile.ZipFile(temp_out, "w") as zout:
-                for info in infos:
-                    name = info.filename
-                    low = name.lower()
-                    data = zin.read(info)
-                    if name == "mimetype":
-                        stored = zipfile.ZipInfo(name, date_time=info.date_time)
-                        zout.writestr(stored, data, zipfile.ZIP_STORED)
-                        continue
-                    if low.endswith(".opf"):
-                        data = _rewrite_opf_metadata(
-                            data,
-                            book_title=book_title,
-                            lang=target_lang,
-                            force_horizontal=force_horizontal,
-                        )
-                    elif low.endswith(".ncx") or name in ncx_paths:
-                        data = _rewrite_toc(data, toc_entries, is_ncx=True, toc_path=name)
-                    elif low.endswith(_HTML_EXTS):
-                        if name in rendered:
-                            # Resource workers already applied TOC, language and layout rewrites.
-                            data = rendered[name].encode("utf-8")
-                        else:
-                            if name in toc_paths or _is_nav(data):
-                                data = _rewrite_toc(
-                                    data,
-                                    toc_entries,
-                                    is_ncx=False,
-                                    toc_path=name,
-                                )
-                            data = _rewrite_html_document(
-                                data,
-                                lang=target_lang,
-                                force_horizontal=force_horizontal,
-                                bilingual=bilingual and not preserve_source_style,
-                            )
-                    if about is not None and name == about_opf:
-                        data, about_entry = attach_about_entry(
-                            data, name, set(zin.namelist()), about
-                        )
-                    zout.writestr(info, data)
-                if about_entry is not None:
-                    zout.writestr(*about_entry)
+        epub_native.export(source_path, temp_out, state)
     return out_path
 
 
@@ -262,18 +173,7 @@ def _build_epub_from_chapters(
             f"<head><title>{escape(ch_title)}</title></head>"
             f"<body>{''.join(body_parts)}</body></html>"
         )
-        chapters.append(
-            EpubChapter(
-                fname,
-                ch_title,
-                _rewrite_html_document(
-                    content,
-                    lang=lang,
-                    force_horizontal=False,
-                    bilingual=bilingual and not preserve_source_style,
-                ).decode("utf-8"),
-            )
-        )
+        chapters.append(EpubChapter(fname, ch_title, content))
         entry = EpubTocEntry(fname, ch_title)
         heading = next(
             (
@@ -303,6 +203,7 @@ def _build_epub_from_chapters(
         toc=toc,
         resources=resources,
         about=about,
+        styled_bilingual=bilingual and not preserve_source_style,
     )
     return out_path
 
@@ -318,6 +219,8 @@ def _build_epub_from_html_templates(
     about: AboutPage | None = None,
 ) -> str:
     """Build EPUB from rendered HTML templates and package their media resources."""
+    from .writer_common import supports_pdf_export
+
     manifest = store.load_manifest()
     target_lang_code = _manifest_target_lang(manifest)
     raw_title = manifest.get("title", "translated")
@@ -329,6 +232,10 @@ def _build_epub_from_html_templates(
     lang = _epub_lang(target_lang_code)
     raw_meta = manifest.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
+    source_format = manifest.get("fmt")
+    prefer_native = source_format == "html" or (
+        source_format == "pdf" and not supports_pdf_export(manifest)
+    )
     head_html = meta.get("head_html", "")
     head_html = head_html if isinstance(head_html, str) else ""
     # Carry inline styles, not unbundled external head resources or source scripts.
@@ -349,6 +256,7 @@ def _build_epub_from_html_templates(
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
+            prefer_native=prefer_native,
         )
         rendered, assets = _package_html_resources(
             rendered,
@@ -368,18 +276,7 @@ def _build_epub_from_html_templates(
             html_open + f"<head><title>{escape(chapter_title)}</title>{head_html}</head>"
             f"{body_open}{rendered}</body></html>"
         )
-        chapters.append(
-            EpubChapter(
-                filename,
-                chapter_title,
-                _rewrite_html_document(
-                    content,
-                    lang=lang,
-                    force_horizontal=False,
-                    bilingual=bilingual and not preserve_source_style,
-                ).decode("utf-8"),
-            )
-        )
+        chapters.append(EpubChapter(filename, chapter_title, content))
         toc.append(EpubTocEntry(filename, chapter_title))
 
     resources = [
@@ -394,5 +291,6 @@ def _build_epub_from_html_templates(
         toc=toc,
         resources=resources,
         about=about,
+        styled_bilingual=bilingual and not preserve_source_style,
     )
     return out_path

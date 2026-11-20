@@ -722,7 +722,7 @@ const en = {
   "error.projectBusy": "The project is busy. Try again when the current task finishes.",
   "error.queueUnavailable": "The task queue is unavailable. Try again in a moment.",
   "error.exportNotFound": "That export is no longer available. Generate it again.",
-  "error.sourceNotReady": "The source has not finished preparing yet.",
+  "error.sourceNotReady": "Export becomes available once the source has been parsed.",
   "error.settingsConflict": "These settings were changed elsewhere. Reload and try again.",
   "error.chapterNotFound": "That chapter no longer exists.",
   "error.segmentNotFound": "That paragraph no longer exists.",

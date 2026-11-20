@@ -476,7 +476,9 @@ def test_epub_annotation_context_indexes_fragment_nodes_once(tmp_path, monkeypat
             return super().descendants
 
     # Count only context-stage root traversals, not annotation or note-scope traversal.
-    monkeypatch.setattr(epub_contexts, "BeautifulSoup", CountingSoup)
+    monkeypatch.setattr(
+        epub_contexts, "parse_epub_dom", lambda text: CountingSoup(text, "html.parser")
+    )
     fragments = ["name-only", "same", "ambiguous", "missing", "duplicate-name", "same"] * 4
     path = str(tmp_path / "indexed-notes.epub")
     _write_annotation_context_epub(
@@ -495,6 +497,20 @@ def test_epub_annotation_context_indexes_fragment_nodes_once(tmp_path, monkeypat
         <p>Duplicate name.</p></aside>""",
     )
 
+    # The native reader indexes owners in Rust; also exercise the Python context
+    # resolver explicitly so this full-scan assertion cannot pass vacuously.
+    with zipfile.ZipFile(path) as archive:
+        notes = archive.read("notes.xhtml").decode("utf-8")
+    refs = [
+        epub_contexts._Reference(
+            i, "body.xhtml", None, fragment, f"notes.xhtml#{fragment}", "internal_link"
+        )
+        for i, fragment in enumerate(fragments)
+    ]
+    epub_contexts._resolve_resource_contexts(
+        epub_contexts._ContextTask("notes.xhtml", notes, {}, refs)
+    )
+    assert 0 < full_scans <= 2
     document = load_document(path, "en", "zh")
 
     assert len(document.chapters) == 1
@@ -511,7 +527,6 @@ def test_epub_annotation_context_indexes_fragment_nodes_once(tmp_path, monkeypat
         "noteref" if fragment in {"name-only", "same"} else "internal_link"
         for fragment in fragments
     ]
-    assert full_scans <= 2  # One fragment index build, plus the existing object-node scan.
 
 
 class TestEpubIngest(unittest.TestCase):

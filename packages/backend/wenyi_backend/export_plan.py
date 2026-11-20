@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from wenyi_core.assemble.writer_common import default_output_format, output_backend
+from wenyi_core.config import Config
 from wenyi_core.storage.names import safe_component
+from wenyi_core.storage.protocol import Storage
 
 from .errors import INVALID_CONFIGURATION, SOURCE_NOT_READY, ApiError
 from .schemas import ExportRequest
+from .source_view import parsed_source
 
 
 def export_stem(filename: str) -> str:
@@ -32,9 +36,19 @@ def export_filename(project: dict, target_lang: str, fmt: str, bilingual: bool) 
     return f"{original}.{target_lang}{'-bi' if bilingual else ''}.{suffix}"
 
 
-def resolve_export(project: dict, manifest: dict, body: ExportRequest) -> tuple[str, dict]:
-    if not project.get("initialized"):
-        raise ApiError(SOURCE_NOT_READY, 409, "Prepare or translate the source before exporting")
+def export_input(
+    project: dict, storage: Storage, config_for: Callable[[dict], Config]
+) -> dict | None:
+    """Select only committed inputs: a translation manifest or a matching completed parse."""
+    if project.get("initialized"):
+        return storage.load_manifest()
+    document = parsed_source(project, storage, config_for)
+    return {"fmt": document.fmt, "meta": document.meta} if document is not None else None
+
+
+def resolve_export(project: dict, manifest: dict | None, body: ExportRequest) -> tuple[str, dict]:
+    if manifest is None:
+        raise ApiError(SOURCE_NOT_READY, 409, "Parse the source before exporting")
     fmt = body.format or ("docx" if project["fmt"] == "docx" else default_output_format(manifest))
     try:
         output_backend(manifest, fmt)

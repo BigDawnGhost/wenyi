@@ -8,6 +8,7 @@ from pathlib import Path
 
 from wenyi_core.ingest.encoding import decode_source
 from wenyi_core.ingest.errors import IngestError
+from wenyi_core.ingest.fb2_reader import peek_fb2_title, read_fb2, read_fb2_binaries
 from wenyi_core.ingest.text_reader import read_text
 
 
@@ -73,6 +74,42 @@ class TestTextReaderLegacyEncodings(unittest.TestCase):
         path.write_bytes("# Title\n\nBody text.\n".encode("utf-8"))
         document = read_text(str(path), "en", "zh")
         self.assertEqual(document.chapters[0].title, "Title")
+
+    def test_native_text_keeps_python_line_and_section_boundaries(self):
+        path = self.dir / "book.md"
+        path.write_bytes(
+            " Preface  \r\ncontinued\u2028\r\n## A\u0085One\u2029Two\u001e\t\n終章\n".encode(
+                "utf-8"
+            )
+        )
+        document = read_text(str(path), "en", "zh")
+        self.assertEqual(
+            [chapter.title for chapter in document.chapters],
+            ["book", "A", "終章"],
+        )
+        self.assertEqual(
+            [chapter.meta["heading_level"] for chapter in document.chapters],
+            [1, 2, 1],
+        )
+        self.assertEqual(
+            [[segment.source for segment in chapter.segments] for chapter in document.chapters],
+            [[" Preface  \ncontinued"], ["A", "One\nTwo\n\t"], ["終章"]],
+        )
+
+
+def test_fb2_ignores_xml_comments_inside_titles_and_binaries(tmp_path):
+    path = tmp_path / "book.fb2"
+    path.write_text(
+        "<FictionBook><description><title-info>"
+        "<book-title><!-- ignored -->A<!-- ignored --> B</book-title>"
+        "</title-info></description><body><section><p>Body</p></section></body>"
+        '<binary id="cover" content-type="image/png">Y292<!-- ignored -->ZXI=</binary>'
+        "</FictionBook>",
+        encoding="utf-8",
+    )
+
+    assert peek_fb2_title(str(path)) == read_fb2(str(path), "en", "zh").title == "A B"
+    assert read_fb2_binaries(str(path)) == {"cover": ("image/png", b"cover")}
 
 
 if __name__ == "__main__":

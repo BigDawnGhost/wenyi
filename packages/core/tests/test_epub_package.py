@@ -7,7 +7,7 @@ import os
 import zipfile
 from dataclasses import replace
 from pathlib import Path
-from typing import Literal
+from unittest.mock import Mock
 from urllib.parse import unquote
 from xml.etree import ElementTree as ET
 from zipfile import ZIP_STORED, ZipFile
@@ -24,6 +24,7 @@ from wenyi_core.assemble.writer import assemble
 from wenyi_core.i18n.policy.models import PolicyContext
 from wenyi_core.i18n.policy.resolver import resolve_policy
 from wenyi_core.ingest.segmenter import load_document
+from wenyi_core.markup import _epub_native
 from wenyi_core.storage.file import FileStorage
 
 NS = {
@@ -105,25 +106,19 @@ def _export_fixture(tmp_path, fmt):
 def test_about_page_is_written_in_the_only_epub_archive(tmp_path, monkeypatch, fmt, enabled):
     source, store = _export_fixture(tmp_path, fmt)
     output = tmp_path / "translated.epub"
-    opens = []
     publishes = []
-
-    class TrackedZip(ZipFile):
-        def __init__(
-            self, file: str | Path, mode: Literal["r", "w"] = "r", compression: int = ZIP_STORED
-        ):
-            super().__init__(file, mode, compression)
-            opens.append((Path(file), mode, self))
+    writers = {}
+    for name in ("export", "generate", "append_about"):
+        writers[name] = Mock(wraps=getattr(_epub_native, name))
+        monkeypatch.setattr(_epub_native, name, writers[name])
 
     original_replace = os.replace
 
     def track_replace(temporary, target):
         if Path(target) == output:
-            assert all(archive.fp is None for _, _, archive in opens)
             publishes.append(Path(temporary))
         original_replace(temporary, target)
 
-    monkeypatch.setattr(zipfile, "ZipFile", TrackedZip)
     monkeypatch.setattr("wenyi_core.atomicio.os.replace", track_replace)
     plan = resolve_policy(
         PolicyContext("en", "zh", phase="export", format="epub", bilingual=True, about_page=enabled)
@@ -143,9 +138,17 @@ def test_about_page_is_written_in_the_only_epub_archive(tmp_path, monkeypatch, f
     assert len(publishes) == 1
     assert publishes[0] != output
     assert publishes[0].parent == output.parent
-    assert [(path, mode) for path, mode, _ in opens] == (
-        ([(source, "r")] if fmt == "epub" else []) + [(publishes[0], "w")]
-    )
+    # The one native write must target the file that was actually published.
+    # Appending to the finished EPUB would require a second archive rewrite.
+    writers["append_about"].assert_not_called()
+    if fmt == "epub":
+        writers["generate"].assert_not_called()
+        writers["export"].assert_called_once()
+        assert [Path(p) for p in writers["export"].call_args.args[:2]] == [source, publishes[0]]
+    else:
+        writers["export"].assert_not_called()
+        writers["generate"].assert_called_once()
+        assert Path(writers["generate"].call_args.args[0]) == publishes[0]
     with ZipFile(output) as archive:
         names = archive.namelist()
         mimetype = archive.infolist()[0]
@@ -482,14 +485,12 @@ def test_xml_entities_are_not_loaded_from_the_filesystem(tmp_path):
 def test_write_failure_preserves_existing_export_and_cleans_temporary_file(tmp_path, monkeypatch):
     output = tmp_path / "book.epub"
     output.write_bytes(b"previous export")
-    original_write = ZipFile.writestr
 
-    def failing_write(archive, name, *args, **kwargs):
-        if name == "EPUB/ch0.xhtml":
-            raise OSError("disk full")
-        return original_write(archive, name, *args, **kwargs)
+    def failing_write(temporary, _state, _assets):
+        temporary.write_bytes(b"incomplete native output")
+        raise OSError("disk full")
 
-    monkeypatch.setattr(ZipFile, "writestr", failing_write)
+    monkeypatch.setattr("wenyi_core.assemble.epub_package._epub_native.generate", failing_write)
     with pytest.raises(OSError, match="disk full"):
         _write(output)
     assert output.read_bytes() == b"previous export"

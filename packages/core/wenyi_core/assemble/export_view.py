@@ -6,7 +6,7 @@ never writes back to RunStore.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from types import MappingProxyType
 from typing import Any, TypeAlias
 
@@ -94,6 +94,27 @@ class ExportViewStore(RunStore):
         if ci in self._chapters:
             return self._chapters[ci].model_copy(deep=True)
         chapter = self._store.load_chapter(ci).model_copy(deep=True)
+        self._apply_export_policy(chapter)
+        self._chapters[ci] = chapter.model_copy(deep=True)
+        return chapter
+
+    def iter_chapters_once(self, indices: Iterable[int]) -> Iterator[Chapter]:
+        """Yield independent render copies without retaining a second book in the view."""
+        for ci in indices:
+            if not isinstance(self._store, ExportSnapshotStore) or ci in self._chapters:
+                # Live storage and any previously prepared view keep their cached-read semantics.
+                yield self.load_chapter(ci)
+                continue
+            # The snapshot already returns a deep copy, including nested annotation metadata.
+            chapter = self._store.load_chapter(ci)
+            # Only translated text needs object transport and offset remapping. An explicitly
+            # empty translation is still a saved target, not a pending segment.
+            if any(segment.target is not None for segment in chapter.segments):
+                self._apply_export_policy(chapter)
+            yield chapter
+
+    def _apply_export_policy(self, chapter: Chapter) -> None:
+        """Apply transport and text policy in place to a chapter owned by this render."""
         segments = chapter.text_segments
         ranges = []
         position = 0
@@ -125,8 +146,7 @@ class ExportViewStore(RunStore):
                 segment.target = text
         operations = [op for op in self.language_policy.operations if op.point == "export.text"]
         if not operations:
-            self._chapters[ci] = chapter.model_copy(deep=True)
-            return chapter
+            return
 
         request = ExportTextInput(
             tuple(segment.index for segment in segments),
@@ -166,8 +186,6 @@ class ExportViewStore(RunStore):
         for segment, target in zip(segments, current.targets):
             if segment.target is not None and segment.target != segment.source:
                 segment.target = target
-        self._chapters[ci] = chapter.model_copy(deep=True)
-        return chapter
 
     def prepare(self) -> None:
         """Validate every transformation before opening or replacing an output file."""

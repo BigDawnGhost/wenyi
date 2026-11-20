@@ -295,7 +295,14 @@ class RunStore(FileArtifacts):
         else:
             self._remove(self.annotation_contexts_path)
 
-        manifest = {
+        manifest = self._document_manifest(doc, digest, document_meta)
+        for c in doc.chapters:
+            self.save_chapter(c)
+        return manifest
+
+    @staticmethod
+    def _document_manifest(doc: Document, digest: str, document_meta: dict) -> dict:
+        return {
             "title": doc.title,
             "fmt": doc.fmt,
             "source_sha256": digest,
@@ -313,9 +320,6 @@ class RunStore(FileArtifacts):
                 for c in doc.chapters
             ],
         }
-        for c in doc.chapters:
-            self.save_chapter(c)
-        return manifest
 
     def ensure_source_identity(
         self,
@@ -580,6 +584,19 @@ class ExportSnapshotStore(RunStore):
     """Read-only in-memory export state; source resources still refer to the formal run
     directory.
     """
+
+    @classmethod
+    def from_parsed_document(
+        cls, run_dir: str, document: Document, digest: str
+    ) -> ExportSnapshotStore:
+        """Build a read-only source edition without staging or committing translation state."""
+        meta = dict(document.meta)
+        meta.pop("epub_annotation_contexts", None)
+        manifest = cls._document_manifest(document, digest, meta)
+        chapters = {ch.index: ch for ch in document.chapters}
+        if len(chapters) != len(document.chapters):
+            raise ValueError("Duplicate chapter index in parsed document")
+        return cls(run_dir, manifest, chapters)
 
     def __init__(
         self,

@@ -145,6 +145,11 @@ def test_cli_zip_preserves_executable_mode(tmp_path):
     target = tmp_path / "cli.zip"
     script("package_release").cli_archive(binary, target)
     with zipfile.ZipFile(target) as archive:
+        assert archive.read("LICENSE") == (ROOT / "LICENSE").read_bytes()
+        assert (
+            archive.read("THIRD_PARTY_NOTICES.md")
+            == (ROOT / "packages/core/THIRD_PARTY_NOTICES.md").read_bytes()
+        )
         info = archive.getinfo("wenyi")
         assert info.create_system == 3
         assert stat.S_IMODE(info.external_attr >> 16) == 0o755
@@ -156,6 +161,49 @@ def test_cli_zip_preserves_executable_mode(tmp_path):
         if shutil.which("unzip"):
             subprocess.run(["unzip", str(target), "-d", str(tmp_path / "extracted")], check=True)
             subprocess.run([str(tmp_path / "extracted/wenyi")], check=True)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [None, "missing", "stale", "undeclared", "wrong-license", "missing-stdlib", "extra-dll"],
+)
+def test_core_wheel_requires_the_declared_license_texts(tmp_path, monkeypatch, fault):
+    verifier = script("check_wheel_resources")
+    monkeypatch.setattr(verifier, "ROOT", tmp_path)
+    (tmp_path / "LICENSE").write_bytes(b"first-party license")
+    resource = "wenyi_core/i18n/data/example.txt"
+    data = tmp_path / "packages/core" / resource
+    data.parent.mkdir(parents=True)
+    data.write_bytes(b"resource")
+    notice = "THIRD_PARTY_NOTICES.md"
+    (tmp_path / "packages/core" / notice).write_bytes(b"upstream license and copyright")
+    wheel = tmp_path / "wenyi_core-1.0-cp310-abi3-linux_x86_64.whl"
+    info = "wenyi_core-1.0.dist-info"
+    expression = "MIT" if fault == "wrong-license" else "GPL-3.0-only"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr(resource, b"resource")
+        archive.writestr("wenyi_core/markup/_epub_native.abi3.so", b"extension")
+        for name in ("COPYRIGHT-library.html", "licenses/MIT.txt", "licenses/Apache-2.0.txt"):
+            if fault != "missing-stdlib":
+                archive.writestr(f"wenyi_core/_licenses/rust-std/{name}", b"toolchain notices")
+        if fault == "extra-dll":
+            archive.writestr("wenyi_core.libs/unreviewed.dll", b"unexpected")
+        archive.writestr(
+            f"{info}/METADATA",
+            f"Name: wenyi-core\nLicense-Expression: {expression}\nLicense-File: LICENSE\n"
+            + ("" if fault == "undeclared" else f"License-File: {notice}\n"),
+        )
+        archive.writestr(f"{info}/licenses/LICENSE", b"first-party license")
+        if fault != "missing":
+            archive.writestr(
+                f"{info}/licenses/{notice}",
+                b"only an SPDX list" if fault == "stale" else b"upstream license and copyright",
+            )
+    if fault is None:
+        verifier.verify_wheel(wheel, "wenyi-core")
+    else:
+        with pytest.raises((ValueError, KeyError)):
+            verifier.verify_wheel(wheel, "wenyi-core")
 
 
 @pytest.mark.parametrize("version", ["1.2.3", "1.2.4-rc.1", "1.2.4-dev.17+gabc"])
@@ -627,13 +675,26 @@ def test_pypi_workflow_only_publishes_verified_release_artifacts():
         assert f"uv build --no-sources --package {package} --out-dir dist/pypi" in commands
     assert "--all-packages" not in commands
     assert "check_wheel_resources.py dist/pypi" in commands
+    assert "core_native_notices.py --check" in commands
     assert "for extension in whl tar.gz" in commands
     assert "uv pip check" in commands
     assert "version(package)" in commands
+    assert '"$environment/bin/python" -I scripts/release/smoke_document_formats.py' in commands
     assert '"$environment/bin/wenyi" languages' in commands
     assert "uv publish" not in commands
 
-    assert document["jobs"]["publish-core"]["needs"] == "build"
+    wheels = document["jobs"]["wheels"]
+    assert wheels["needs"] == "build"
+    wheel_builder = next(
+        step for step in wheels["steps"] if "cibuildwheel@" in step.get("uses", "")
+    )
+    assert wheel_builder["with"]["package-dir"] == "${{ steps.core.outputs.sdist }}"
+    assert wheel_builder["env"]["CIBW_BUILD"] == "cp310-*"
+    assert "wenyi_core.markup._epub_native" in wheel_builder["env"]["CIBW_TEST_COMMAND"]
+    assert any(
+        "check_wheel_resources.py wheelhouse" in step.get("run", "") for step in wheels["steps"]
+    )
+    assert document["jobs"]["publish-core"]["needs"] == ["build", "wheels"]
     assert "secrets." not in str(document)
     producer = next(
         step for step in build["steps"] if "actions/upload-artifact@" in step.get("uses", "")
@@ -655,7 +716,11 @@ def test_pypi_workflow_only_publishes_verified_release_artifacts():
             for step in publish["steps"]
             if "actions/download-artifact@" in step.get("uses", "")
         )
-        assert producer["with"]["name"] == consumer["with"]["name"]
+        if job == "publish-core":
+            assert consumer["with"]["pattern"] == "pypi-*"
+            assert consumer["with"]["merge-multiple"] == "true"
+        else:
+            assert producer["with"]["name"] == consumer["with"]["name"]
 
 
 def test_pypi_pending_publishers_have_distinct_package_identities():

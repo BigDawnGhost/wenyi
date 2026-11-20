@@ -1,6 +1,6 @@
 import { useI18n } from "../../i18n";
 import { useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "../../lib/toast";
 import { api } from "../../api/client";
@@ -13,6 +13,7 @@ import { Label } from "../../components/ui/form";
 import { ErrorNotice } from "../../components/ui/data";
 import { Progress } from "../../components/ui/progress";
 import { cn, formatBytes } from "../../lib/utils";
+import { useProjectQuery } from "../../lib/projectQuery";
 import { platform } from "../../platform";
 
 export default function ExportPage() {
@@ -32,10 +33,7 @@ function ProjectExport({ pid }: { pid: string }) {
   const [editionOverride, setEditionOverride] = useState<boolean>();
   const output = (config?.effective.output || {}) as Record<string, unknown>;
   const bilingual = editionOverride ?? (config ? Boolean(output.bilingual) : undefined);
-  const { data: project, error: projectError } = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-  });
+  const { data: project, error: projectError } = useProjectQuery(pid);
   const { data: exports, error: exportsError } = useQuery({
     queryKey: ["exports", pid],
     queryFn: () => api.listExports(pid),
@@ -152,6 +150,14 @@ function ProjectExport({ pid }: { pid: string }) {
             </fieldset>
             {bilingual && pdf && (
               <p className="text-sm text-muted-foreground">{tr("export.pdfBilingualLayout")}</p>
+            )}
+            {project?.fmt && !formats.length && (
+              <p role="status" className="text-sm text-muted-foreground">
+                {tr("error.sourceNotReady")}{" "}
+                <Link to={`/projects/${pid}`} className="underline">
+                  {tr("common.translationOverview")}
+                </Link>
+              </p>
             )}
             <Button
               onClick={() => create.mutate()}
