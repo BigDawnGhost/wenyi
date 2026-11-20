@@ -94,6 +94,15 @@ class Translator(Agent):
             normalized.append(segment_items)
         return normalized
 
+    def render_glossary_block(self, glossary_terms: list[GlossaryTerm], sources: list[str]) -> str:
+        """Render the ``[Glossary]`` block exactly as a body translation request sends it."""
+        return prompts.render_glossary(
+            glossary_terms,
+            source_lang=self.src,
+            genre=self.language_policy.context.genre,
+            note_source="\n".join(sources) if self.config.pipeline.terminology_context else None,
+        )
+
     def _call_batch(
         self,
         sources: list[str],
@@ -126,14 +135,7 @@ class Translator(Agent):
             tgt=self.tgt,
             style=style or "(none)",
             book_synopsis=book_synopsis or "(none)",
-            glossary=prompts.render_glossary(
-                glossary_terms,
-                source_lang=self.src,
-                genre=self.language_policy.context.genre,
-                note_source="\n".join(sources)
-                if self.config.pipeline.terminology_context
-                else None,
-            ),
+            glossary=self.render_glossary_block(glossary_terms, sources),
             annotation_contexts=prompts.render_annotation_contexts(
                 annotation_contexts or [[] for _ in sources]
             ),

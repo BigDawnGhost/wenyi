@@ -335,6 +335,9 @@ class GlossaryExtractor(Agent):
             if source_corpus is not None
             else all_existing
         )
+        if self.config.pipeline.batch_glossary == "relevant":
+            # Duplicates and conflicts only concern entries present in this batch.
+            existing = GlossaryStore.terms_in(existing, source_text)
         terms = self.extract(source_text, target_text, existing)
         occurrences = (
             self._first_occurrences(terms, store, history, before) if before is not None else {}

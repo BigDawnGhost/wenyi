@@ -181,12 +181,17 @@ class TestMinerUEmptyTargetResume(unittest.TestCase):
 
 class TestTranslatorPromptOrder(unittest.TestCase):
     def test_static_and_dynamic_prompt_sections_have_cache_friendly_order(self):
+        # The append-only glossary precedes the per-chapter digest so it can be a cached prefix.
         self.assertLess(
-            template("translator_user").template.index("[Chapter digest]"),
+            template("translator_user").template.index("[Whole-book synopsis]"),
             template("translator_user").template.index("[Glossary]"),
         )
         self.assertLess(
             template("translator_user").template.index("[Glossary]"),
+            template("translator_user").template.index("[Chapter digest]"),
+        )
+        self.assertLess(
+            template("translator_user").template.index("[Chapter digest]"),
             template("translator_user").template.index(
                 "[Paragraph-specific annotation references]"
             ),

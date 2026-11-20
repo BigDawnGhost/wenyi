@@ -24,6 +24,7 @@ from ...agents.glossary_extractor import TranslatedSegmentEvidence
 from ...config import PipelineConfig
 from ...events import ProgressFn
 from ...glossary.store import GlossaryStore
+from ...ingest.tokens import count_tokens
 from ...markup.contexts import annotation_contexts_for_segments
 from ...models.document import Chapter, Segment
 from ...models.glossary import GlossaryTerm
@@ -378,6 +379,11 @@ class TranslationService:
                         term_snapshot = glossary.all_terms()
                         term_snapshot_stale = False
                     body_context = context_policy is None or context_policy.body[batch_start]
+                    polish_next_source = (
+                        self.following_source(store, chapter, batch_start + len(b), context_policy)
+                        if body_context
+                        else ""
+                    )
                     self._schedule_polish(
                         store,
                         PolishJob(
@@ -385,13 +391,21 @@ class TranslationService:
                             batch_start,
                             tuple(s.index for s in b),
                             tuple(s.source for s in b),
-                            tuple(deepcopy(term_snapshot)),
+                            tuple(
+                                deepcopy(
+                                    self.batch_terms(
+                                        term_snapshot,
+                                        b,
+                                        chapter_digest=chapter_digest if body_context else "",
+                                        annotation_contexts=annotation_contexts[
+                                            batch_start : batch_start + len(b)
+                                        ],
+                                        next_source=polish_next_source,
+                                    )
+                                )
+                            ),
                             self._batch_style(analysis, style, term_snapshot),
-                            self.following_source(
-                                store, chapter, batch_start + len(b), context_policy
-                            )
-                            if body_context
-                            else "",
+                            polish_next_source,
                             # A target edited since the draft no longer matches and is kept.
                             BatchDraft(
                                 tuple(
@@ -435,16 +449,24 @@ class TranslationService:
                 if body_context
                 else ""
             )
+            batch_digest = chapter_digest if body_context else ""
+            batch_annotations = annotation_contexts[batch_start : batch_start + len(b)]
             plan = BatchPlan.capture(
                 ci,
                 batch_start,
                 b,
-                term_snapshot,
+                self.batch_terms(
+                    term_snapshot,
+                    b,
+                    chapter_digest=batch_digest,
+                    annotation_contexts=batch_annotations,
+                    next_source=next_source,
+                ),
                 ctx_text,
                 batch_style,
                 book_synopsis if body_context else "",
-                chapter_digest if body_context else "",
-                annotation_contexts[batch_start : batch_start + len(b)],
+                batch_digest,
+                batch_annotations,
                 next_source,
                 allow_empty_translations=allow_empty_translations,
             )
@@ -494,6 +516,12 @@ class TranslationService:
                 polished=self._runtime.config.pipeline.polish and polish_job is None,
                 **({"polish_deferred": True} if polish_job is not None else {}),
                 translation_mode=self._runtime.config.pipeline.translation_mode,
+                glossary_terms=len(plan.terms),
+                glossary_tokens=count_tokens(
+                    self._runtime.translator.render_glossary_block(
+                        list(plan.terms), list(plan.sources)
+                    )
+                ),
                 segments=[
                     {
                         "index": batch_start + i,
@@ -569,6 +597,29 @@ class TranslationService:
             title=chapter.title,
             segment_count=len(chapter.text_segments),
         )
+
+    def batch_terms(
+        self,
+        snapshot: list[GlossaryTerm],
+        batch: list[Segment],
+        *,
+        chapter_digest: str,
+        annotation_contexts: list[list[dict[str, str]]],
+        next_source: str,
+    ) -> list[GlossaryTerm]:
+        """Select the glossary entries one batch sends under ``pipeline.batch_glossary``.
+
+        ``all`` keeps the full snapshot in stable insertion order. ``relevant`` keeps the
+        entries whose source or aliases occur in the batch source, its following-source
+        reference, its annotation contexts or the chapter digest; the digest names characters
+        and places a paragraph may only refer to by pronoun.
+        """
+        if self._runtime.config.pipeline.batch_glossary != "relevant":
+            return snapshot
+        parts = [segment.source for segment in batch]
+        parts.extend(item.get("source", "") for group in annotation_contexts for item in group)
+        parts.extend((next_source, chapter_digest))
+        return GlossaryStore.terms_in(snapshot, "\n".join(part for part in parts if part))
 
     def _batch_style(
         self, analysis: dict[str, Any] | None, style: str, terms: list[GlossaryTerm]

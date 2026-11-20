@@ -43,7 +43,11 @@ segment:
 
 # ── Pipeline options (quality and cost)───────────────────────────────────────────
 pipeline:
-  # Body translation and Reviewer requests always use the full glossary.
+  # all: body batches get the full glossary (book-wide consistency, larger prompts).
+  # relevant: each batch gets only entries matching its source, next source, annotations
+  # and chapter digest; glossary extraction then sees only entries present in its batch.
+  # Reviewer requests always use the full glossary.
+  batch_glossary: all # all | relevant
   review: true # Run final review after whole-book translation; disable with --no-review
   # Additional structural retries for standard translation and each precision stage; 0 disables retries.
   align_retry_limit: 2
@@ -116,6 +120,9 @@ class PipelineConfig(BaseModel):
             raise ValueError("three_draft_synthesis translation mode requires pipeline.polish=true")
         return self
 
+    # Glossary sent to body translation, polish, precision and extraction requests:
+    # "all" keeps book-wide consistency; "relevant" sends only entries matching each batch.
+    batch_glossary: Literal["all", "relevant"] = "all"
     review: bool = True
     # Additional structural retries for standard translation and precision generation/synthesis.
     align_retry_limit: int = 2

@@ -75,8 +75,8 @@ An unfinished chapter's individual prescan chunks are not separately checkpointe
 ## Translation context and the glossary
 
 Chapters and body batches progress in source order. A normal batch receives style
-guidance, the book synopsis, its chapter digest, the **full current glossary**,
-relevant source notes, recent translated text, the requested source, and one following
+guidance, the book synopsis, the **current glossary** (full or batch-relevant, see
+below), its chapter digest, relevant source notes, recent translated text, the requested source, and one following
 source segment as a read-only reference. The following segment helps with continuity;
 it is not translated early or included in the expected output count.
 
@@ -105,10 +105,20 @@ New terms and conflicts inform later batches; they do not automatically rewrite
 earlier translations. The glossary is authoritative for name mappings, while style
 guidance retains source identities and descriptive character information.
 
-Each pending body batch receives all current mappings, including terms absent from
-its chapter. Fresh Reviewer requests receive the complete final glossary.
-This favors book-wide consistency at the cost of larger prompts. Evidence queries
-and individual Fixers can use relevant subsets.
+By default (`pipeline.batch_glossary: all`) each pending body batch receives all
+current mappings, including terms absent from its chapter. This favors book-wide
+consistency at the cost of larger prompts: on a long book the glossary can become the
+largest part of every translation and polish request. With `all`, the glossary sits
+before the chapter digest, so providers with prefix caching can reuse it across
+batches. With `batch_glossary: relevant`, each batch instead receives only entries
+whose source or aliases occur in its source paragraphs, the following-source
+reference, its annotation contexts or the chapter digest, and glossary extraction sees
+only existing entries that occur in the extracted text. A paragraph that names a
+character only by pronoun or title then relies on the digest and recent translations
+for that mapping. Fresh Reviewer requests always receive the complete final glossary.
+Evidence queries and individual Fixers can use relevant subsets. Each
+`batch_translated` event records the entries (`glossary_terms`) it sent and an
+estimate of the glossary block's `cl100k_base` tokens (`glossary_tokens`).
 
 Extraction therefore keeps the glossary selective: names, book-specific terms,
 recurring forms of address and fixed expressions, not everyday vocabulary, one-off

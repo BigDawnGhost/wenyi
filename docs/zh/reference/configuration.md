@@ -354,6 +354,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | `pipeline.translation_mode` | `standard` | `standard` 或 `three_draft_synthesis`，后者要求 `polish: true`。 |
 | `pipeline.polish` | `true` | 润色已译批次，增加较多模型工作。 |
 | `pipeline.polish_concurrency` | `1` | 标准模式润色并发，整数 ≥ 1。`1` 在下一批开始前润色当前批；大于 `1` 时先保存初稿，在后台润色并继续翻译，最多排队该值两倍的批次。provider `max_concurrency` 仍然生效。`three_draft_synthesis` 忽略此项。见[后台润色](../guide/pipeline.md#deferred-polishing)。 |
+| `pipeline.batch_glossary` | `all` | `all` 向每个正文翻译、润色和精翻请求发送全量术语；`relevant` 只向每批发送与其文本匹配的词条，并让抽取只看到被抽取文本中出现的已有词条。见[翻译上下文与术语库](../guide/pipeline.md#context-and-glossary)。 |
 | `pipeline.align_retry_limit` | `2` | 额外结构输出尝试次数；`0` 关闭。 |
 | `pipeline.rolling_context_tokens` | `512` | 前文译文预算，整数 ≥ 0，按 `cl100k_base` 计数。 |
 | `pipeline.book_understanding` | `true` | 生成覆盖完整原文的章节梗概和全书概览。 |
@@ -393,7 +394,8 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 Web/API 不会仅因该 YAML 开关启用而生产证据。
 Review 可以使用已有备注，不生成新证据。
 
-正文翻译和新的 Reviewer 请求总是使用全量术语，没有范围选择器。
+无论 `batch_glossary` 如何设置，新的 Reviewer 请求总是使用全量术语。
+`relevant` 可缩短长篇书的正文提示词，但会去掉段落只隐含指代的词条；修改它不会重译已完成批次。
 注释定位可能增加模型请求，定位失败的处理取决于[格式](formats.md)。
 完整流程、成本和续跑语义见[流程指南](../guide/pipeline.md)，
 标记／排版限制见[格式参考](formats.md)。
