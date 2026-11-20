@@ -177,9 +177,13 @@ but must not filter inline content by tag or language.
 
 Recent context is derived from formal targets in book order, not an independent
 persisted rolling-context string. Stop at pending text; skip intentionally blank
-completed targets. Lookahead is a read-only source neighbor, excluded from numbered
+completed targets. Lookahead is read-only source text, excluded from numbered
 inputs and output count. BabelDOC role/section boundaries further restrict prose
-context without deleting non-prose translation units.
+context without deleting non-prose translation units. The PDF lookahead skips
+table contents and looks for the next prose paragraph in the same section. If the
+next page opens with a table caption, the caption's first sentence is included
+before that paragraph. If there is no following prose in the section, only the
+caption's first sentence is included.
 
 The full glossary owns name mappings. It retains stable insertion order, and fresh
 Reviewer requests share one complete final snapshot. Selective evidence and Fixer
