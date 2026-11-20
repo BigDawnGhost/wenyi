@@ -70,7 +70,10 @@ def test_metadata_language_is_explicit(task, target, name):
     assert f"Write all human-readable metadata in {name}" in prompt
     assert "including every note" in prompt
     if task == "analyzer_system":
-        assert "Preserve source exactly in its original language" in prompt
+        schema = json.loads(prompt[prompt.index("\n{") :])
+        assert schema["characters"][0]["source"] == "Exact source spelling for identification only"
+        assert "Preserve source exactly in its original language" not in prompt
+        assert "Do not prescribe in any field what to translate or leave untranslated" in prompt
     else:
         assert "Preserve source and aliases" in prompt
     assert "male|female|unknown" in prompt

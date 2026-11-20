@@ -523,7 +523,7 @@ class TestCliBilingualFlags(unittest.TestCase):
                 return None
 
         class FakeOrchestrator:
-            def __init__(self, config, *, allow_terminology_context=False):
+            def __init__(self, config, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 captured["mono"] = config.output.mono
                 captured["bilingual"] = config.output.bilingual

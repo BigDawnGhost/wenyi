@@ -39,7 +39,7 @@ class Orchestrator:
         client: LLMClient | None = None,
         storage: Storage | None = None,
         *,
-        allow_terminology_context: bool = False,
+        allow_glossary_notes: bool = False,
         mineru_token_resolver: Callable[[], str | None] | None = None,
     ):
         """Assemble shared runtime and domain services without domain I/O."""
@@ -48,7 +48,7 @@ class Orchestrator:
             config,
             client=client,
             storage=storage,
-            allow_terminology_context=allow_terminology_context,
+            allow_glossary_notes=allow_glossary_notes,
         )
         self.client = self._runtime.client
         self._preparation = PreparationService(

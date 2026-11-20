@@ -255,7 +255,7 @@ class ReviewFixer(Agent):
                 relevant_glossary,
                 source_lang=self.src,
                 genre=self.language_policy.context.genre,
-                note_source=source if self.config.pipeline.terminology_context else None,
+                note_source=source if self.config.pipeline.use_glossary_notes else None,
             ),
             nearby_pairs=_nearby_text(nearby_pairs),
             issues_json=json.dumps(issue_payload, ensure_ascii=False, indent=2),

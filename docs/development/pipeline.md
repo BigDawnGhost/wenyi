@@ -187,12 +187,7 @@ requests may use relevant subsets. Japanese readings are source metadata support
 by explicit source evidence, not target-language transliterations; non-Japanese
 sources do not inject them through structured glossary rendering.
 
-Experimental terminology evidence requires both configuration and operation-scoped
-permission. Only authorized CLI preparation/translation entry points grant production
-access; preparation itself still does not extract terms. Ordinary Runtime/API callers
-cannot gain permission by setting YAML. Person evidence publication is all-or-nothing
-across required groups, bound to current entry identity, and must preserve protected
-manual fields and authoritative mappings.
+Incremental notes are generated after translation by opted-in CLI or Web/Desktop project workflows. Preparation does not seed glossary entries and Review does not generate glossary notes.
 
 <a id="storage-and-artifacts"></a>
 
@@ -304,6 +299,12 @@ The Review engine may mutate only its run-local shadow translation and artifacts
 Every Fixer in a round reads the same immutable snapshot; patches are applied
 together afterward. Blind re-review reads the new shadow without earlier issue
 explanations. Evidence and arbitration recommendations do not modify the glossary.
+
+Read-only model tools are declared per consumer in `wenyi_core/agent_tools.py`.
+The same declarations generate prompt help and check request argument names.
+Bind handlers to one conversation's matched terms, translated window, or Review
+snapshot; never expose all handlers to every agent. Handlers enforce data access
+and value limits. Each agent keeps its own turn budget, output validation and replay.
 
 Reviewer output requires a completion receipt matching the exact reviewed-segment
 count. Do not accept truncated output by inventing missing JSON content. Invalid
@@ -434,12 +435,7 @@ Distinguish provider/account failures, output-contract failures and persistence
 failures. A transport or quota stop is not evidence that a candidate is wrong.
 Expected user errors should be actionable without a traceback.
 
-For terminology validation, persist operation identifiers, fixed reason codes,
-counts, local indices and request-cache keys rather than rejected names, model prose,
-untrusted references or raw response bodies. Do not relabel a failed request as an
-empty successful result. Cache hits should not emit duplicate rejection audits.
-This safe diagnostic policy does not make full event streams, Review traces or
-precision archives safe to share: those may contain source and translated text.
+Full event streams, Review traces and precision archives may contain source and translated text; do not share them as sanitized diagnostics.
 
 Validate changes at the boundary they affect:
 

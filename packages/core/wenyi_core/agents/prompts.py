@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from ..alignment.objects import OBJECT_PREFIX
+from ..glossary.notes import guidance
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..i18n.genres import DEFAULT_GENRE, Genre, compose
 from ..i18n.resources import read_text
@@ -59,8 +60,8 @@ def render_glossary(
         tag = f"({t.type}{(', ' + ', '.join(extra)) if extra else ''})"
         alias = f" [Aliases:  {', '.join(t.aliases)}]" if t.aliases else ""
         lines.append(f"- {t.source} → {t.target}{tag}{alias}")
-        if id(t) in relevant and t.note.strip():
-            note = json.dumps({"term": t.source, "note": t.note.strip()}, ensure_ascii=False)
+        if id(t) in relevant and (current := guidance(t.note, note_source)):
+            note = json.dumps({"term": t.source, "note": current}, ensure_ascii=False)
             if len(note) <= note_budget:
                 notes.append(note)
                 note_budget -= len(note)

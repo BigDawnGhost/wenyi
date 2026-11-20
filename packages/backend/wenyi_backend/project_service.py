@@ -76,6 +76,7 @@ def effective_config(
     for field, default, label in (
         ("translation_mode", "standard", "translation mode"),
         ("prompt_genre", DEFAULT_GENRE, "prompt genre"),
+        ("glossary_note_workers", 0, "incremental glossary notes setting"),
     ):
         saved_value = saved_pipeline.get(field, default)
         if document is not None:

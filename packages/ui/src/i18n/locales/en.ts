@@ -331,6 +331,8 @@ const en = {
   "workflowPanel.currentWorkflow": "Current workflow",
   "workflowPanel.waitingForProgressUpdates": "Waiting for progress updates",
   "createProject.precisionMode": "Three drafts + synthesis",
+  "createProject.glossaryNotes": "Incremental glossary notes",
+  "createProject.glossaryNotesHint": "Update glossary notes with source references after each batch. This uses additional model tokens.",
   "createProject.promptGenre": "Translation style",
   "settings.currentStyle": "Current style",
   "createProject.literaryGenre": "Literary",

@@ -25,7 +25,6 @@ def used_rule_keys(templates: Iterable[tuple[str, str]]) -> set[str]:
 
 Point = Literal[
     "prompt.compose",
-    "evidence.prepare",
     "candidate.validate",
     "export.text",
     "export.style",
@@ -116,7 +115,6 @@ class PolicyContext:
     order: Literal["target_first", "source_first"] = "target_first"
     preserve_source_style: bool = False
     about_page: bool = True
-    terminology_context: bool = False
     genre: Genre = DEFAULT_GENRE
 
 
@@ -180,9 +178,11 @@ class PolicyPlan:
         }
 
     def task_fingerprint(self, prefix: str) -> str:
-        """Bind a derived artifact only to the templates and rules that produced it."""
+        """Bind a derived artifact to an exact template or a task family's templates."""
         templates = tuple(
-            (name, text) for name, text in self.templates if name.startswith(prefix + "_")
+            (name, text)
+            for name, text in self.templates
+            if name == prefix or name.startswith(prefix + "_")
         )
         used = used_rule_keys(templates)
         values = {key: value for key, value in self.prompt_values if key in used}
@@ -200,9 +200,6 @@ class PolicyPlan:
                     (op.id, op.implementation_version, op.contract_version, op.options)
                     for op in self.operations
                     if op.point == "prompt.compose"
-                    or op.point == "evidence.prepare"
-                    # Book preparation has the same inputs and semantics in both modes.
-                    and prefix not in {"analyzer", "chapter_digest", "book_synopsis"}
                 ],
             }
         )

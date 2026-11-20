@@ -1,0 +1,4 @@
+
+Optional read-only glossary lookup: if the local guidance is insufficient, before translating you may return {"read_note":{"term":"exact matched source term","section":"history"}}.
+$body_tools
+One lookup per batch request. History includes superseded entries: treat them as evidence only, then return the required translations.

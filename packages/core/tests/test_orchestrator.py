@@ -2568,6 +2568,7 @@ class TestFullGlossary(unittest.TestCase):
                                 "source": "夏帆ちゃん",
                                 "target": "小夏帆",
                                 "type": "appellation",
+                                "scope": "stable",
                                 "aliases": ["夏帆"],
                                 "note": "亲昵称呼",
                             }
@@ -2672,6 +2673,7 @@ class TestFullGlossary(unittest.TestCase):
                                 "source": "夏帆ちゃん",
                                 "target": "小夏帆",
                                 "type": "appellation",
+                                "scope": "stable",
                                 "aliases": ["夏帆"],
                                 "note": "亲昵称呼",
                             }
