@@ -12,7 +12,7 @@ from wenyi_core.config import PipelineConfig
 from wenyi_core.llm.limits import RequestCancelled
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.translate.translation import POLISH_PENDING
-from wenyi_core.storage.run_store import STATUS_DONE
+from wenyi_core.storage.run_store import STATUS_DONE, STATUS_PENDING
 
 from tests.fake_llm import MeteredFakeClient, routing_handler
 from tests.pipeline_fixtures import fake_pipeline_config, require_file_storage
@@ -214,3 +214,32 @@ def test_background_polish_context_reads_drafts_regardless_of_timing(tmp_path, w
     assert len(prompts) == 7
     # Inline polishing feeds polished text forward; background polishing always uses drafts.
     assert any("润" in prompt for prompt in prompts) is (workers == 1)
+
+
+def test_resume_repolishes_only_marked_segments_of_a_mixed_batch(tmp_path):
+    txt, config = _setup(tmp_path, workers=2)
+    config.pipeline.polish = False
+    orchestrator = Orchestrator(config, client=SlowPolishClient(delay=0))
+    store = require_file_storage(orchestrator.run(txt))
+    chapter = store.load_chapter(0)
+    segments = chapter.text_segments
+    for segment in segments:
+        # Final drafts, for example kept after a failed polish.
+        segment.target_before_polish = segment.target
+    segments[1].meta[POLISH_PENDING] = True
+    store.save_chapter(chapter)
+    store.set_chapter_status(0, STATUS_PENDING)
+    drafts = [segment.target for segment in segments]
+
+    # A larger budget merges the pending draft with final drafts into one resume batch.
+    config.pipeline.polish = True
+    config.segment.max_tokens_per_batch = 1800
+    orchestrator.run(txt)
+
+    resumed = store.load_chapter(0).text_segments
+    assert resumed[1].target is not None and resumed[1].target.startswith("润")
+    assert resumed[1].target_before_polish == drafts[1]
+    assert [s.target for i, s in enumerate(resumed) if i != 1] == [
+        d for i, d in enumerate(drafts) if i != 1
+    ]
+    assert all(POLISH_PENDING not in segment.meta for segment in resumed)

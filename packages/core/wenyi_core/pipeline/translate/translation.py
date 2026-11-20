@@ -608,10 +608,15 @@ class TranslationService:
             raise RuntimeError("A polish job no longer matches its chapter batch")
         changed = 0
         for segment, polished in zip(segments, outcome.polished or job.draft.targets):
-            segment.meta.pop(POLISH_PENDING, None)
-            # Alignment updates target and target_before_polish together, so equality means
-            # the target is still the (aligned) draft; keep any target edited since then.
-            if outcome.polished is not None and segment.target == segment.target_before_polish:
+            pending = segment.meta.pop(POLISH_PENDING, None)
+            # Only marked drafts change. Alignment updates target and target_before_polish
+            # together, so equality means the target is still the (aligned) draft; keep any
+            # target edited since then.
+            if (
+                pending
+                and outcome.polished is not None
+                and segment.target == segment.target_before_polish
+            ):
                 segment.target = polished
                 changed += 1
         store.save_chapter(chapter)
