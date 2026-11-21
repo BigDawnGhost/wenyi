@@ -65,4 +65,3 @@ output:
   # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
   bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page
-  punctuation_normalize: true # Normalize only exported copies; preserve formal translations in state

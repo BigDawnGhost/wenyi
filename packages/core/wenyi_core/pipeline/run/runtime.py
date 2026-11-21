@@ -46,7 +46,6 @@ class PipelineRuntime:
         self.storage = storage
         self.config = config
         self._allow_glossary_notes = allow_glossary_notes
-        from ...assemble.export_view import TEXT_HANDLERS
         from ...assemble.policy import WRITER_OPERATIONS
         from ...i18n.policy.registry import validate_implementations
         from ...i18n.prompts import PROMPT_OPERATIONS
@@ -55,7 +54,6 @@ class PipelineRuntime:
         validate_implementations(
             {
                 **WRITER_OPERATIONS,
-                "export.text": tuple(TEXT_HANDLERS),
                 "prompt.compose": PROMPT_OPERATIONS,
             },
             tuple(OPERATIONS),

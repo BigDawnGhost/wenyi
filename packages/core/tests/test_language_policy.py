@@ -5,11 +5,14 @@ from dataclasses import replace
 from typing import cast
 
 import pytest
+from wenyi_core.assemble.policy import export_plan
 from wenyi_core.i18n import languages
 from wenyi_core.i18n.policy.models import OperationBinding, OperationSpec, PolicyContext
 from wenyi_core.i18n.policy.registry import OPERATIONS
 from wenyi_core.i18n.policy.resolver import resolve_policy, sort_operations
 from wenyi_core.i18n.resources import read_json
+from wenyi_core.models.document import Chapter, Document, Segment
+from wenyi_core.storage.file import FileStorage
 
 
 def export(src="ja", tgt="zh", fmt="epub", **kwargs):
@@ -18,29 +21,24 @@ def export(src="ja", tgt="zh", fmt="epub", **kwargs):
 
 def test_profiles_keep_roles_and_scripts_separate():
     plan = export("ja-JP", "zh-Hans")
-    assert plan.enabled("punctuation.zh_cn")
     assert plan.export.language_tag == "zh-Hans"
     assert plan.export.about_locale == "zh"
     traditional = export("en", "zh-TW")
-    assert not traditional.enabled("punctuation.zh_cn")
     assert traditional.export.language_tag == "zh-Hant"
     assert traditional.export.about_locale == "en"
     assert export("vi", "en", "docx").export.target_font is None
     assert export("en", "zh", "docx").export.target_font == "宋体"
 
 
-def test_explicit_on_never_bypasses_format_or_existing_flags():
+def test_explicit_on_never_bypasses_format():
     context = PolicyContext("en", "zh", phase="export", format="epub")
     with pytest.raises(ValueError, match="docx.chinese_font"):
         resolve_policy(context, {"docx.chinese_font": OperationBinding(mode="on")})
-    with pytest.raises(ValueError, match="punctuation.zh_cn"):
-        resolve_policy(
-            replace(context, punctuation_normalize=False),
-            {"punctuation.zh_cn": OperationBinding(mode="on")},
-        )
-    off = resolve_policy(context, {"punctuation.zh_cn": OperationBinding(mode="off")})
-    assert not off.enabled("punctuation.zh_cn")
-    assert off.selection("punctuation.zh_cn").origins[-1] == "developer"
+    off = resolve_policy(
+        replace(context, format="docx"), {"docx.chinese_font": OperationBinding(mode="off")}
+    )
+    assert not off.enabled("docx.chinese_font")
+    assert off.selection("docx.chinese_font").origins[-1] == "developer"
 
 
 def test_unknown_operations_and_parameters_are_rejected():
@@ -49,7 +47,7 @@ def test_unknown_operations_and_parameters_are_rejected():
     with pytest.raises(ValueError, match="Unknown option"):
         resolve_policy(
             PolicyContext("ja", "zh"),
-            {"punctuation.zh_cn": OperationBinding(options={"font": "x"})},
+            {"docx.chinese_font": OperationBinding(options={"made_up": "x"})},
         )
 
 
@@ -71,6 +69,35 @@ def test_fingerprints_exclude_export_options_from_paid_phases():
         ).fingerprint
     )
     assert a.to_dict()["fingerprint"] == a.fingerprint
+
+
+def test_export_identity_binds_targets_and_output_choices_not_cache_timestamps(tmp_path):
+    source = tmp_path / "source.txt"
+    source.write_text("Original.", encoding="utf-8")
+    chapter = Chapter(index=0, segments=[Segment(index=0, source="Original.", target=None)])
+    store = FileStorage(str(tmp_path / "run"))
+    store.init_from_document(
+        Document(
+            title="Test",
+            source_lang="en",
+            target_lang="zh",
+            fmt="text",
+            source_path=str(source),
+            chapters=[chapter],
+        )
+    )
+    initial = export_plan(store, "epub")
+    manifest = store.load_manifest()
+    manifest["created_at"] = "changed timestamp"
+    store.save_manifest(manifest)
+    chapter.meta["source_digest_policy"] = "irrelevant analysis identity"
+    store.save_chapter(chapter)
+    assert export_plan(store, "epub").fingerprint == initial.fingerprint
+    assert export_plan(store, "epub", bilingual=True).fingerprint != initial.fingerprint
+    assert export_plan(store, "epub", about_page=False).fingerprint != initial.fingerprint
+    chapter.segments[0].target = ""
+    store.save_chapter(chapter)
+    assert export_plan(store, "epub").fingerprint != initial.fingerprint
 
 
 @pytest.mark.parametrize("target", ["zh", "en", "zh-Hant"])
@@ -108,7 +135,7 @@ def test_about_page_copy_only_invalidates_enabled_epub_exports(
 
 
 def test_sort_uses_stable_ids_and_rejects_invalid_graphs():
-    a = OperationSpec("a", "export.text", roles=("target",))
+    a = OperationSpec("a", "export.style", roles=("target",))
     b = replace(a, id="b", after=("a",))
     assert sort_operations((b, a), {"a": a, "b": b}) == (a, b)
     assert sort_operations((b,), {"a": a, "b": b}) == (b,)
@@ -116,14 +143,14 @@ def test_sort_uses_stable_ids_and_rejects_invalid_graphs():
         sort_operations((replace(a, after=("b",)), b), {"a": a, "b": b})
     with pytest.raises(ValueError, match="requires"):
         sort_operations((replace(b, requires=("a",)),), {"a": a, "b": b})
-    c = replace(a, id="c", point="export.style")
+    c = replace(a, id="c", point="export.metadata")
     with pytest.raises(ValueError, match="extension point"):
         sort_operations((replace(a, after=("c",)), c), {"a": a, "c": c})
 
 
 def test_registry_is_immutable():
     with pytest.raises(TypeError):
-        cast(dict[str, OperationSpec], OPERATIONS)["oops"] = OPERATIONS["punctuation.zh_cn"]
+        cast(dict[str, OperationSpec], OPERATIONS)["oops"] = OPERATIONS["docx.chinese_font"]
 
 
 def test_recursive_inheritance_replaces_bindings_and_rejects_cycles(monkeypatch):

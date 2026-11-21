@@ -59,8 +59,7 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertEqual(cfg.output.bilingual_order, "target_first")
             self.assertFalse(cfg.output.bilingual_preserve_source_style)
             self.assertTrue(cfg.output.about_page)
-            self.assertTrue(cfg.output.punctuation_normalize)
-            self.assertIn("  punctuation_normalize: true", generated)
+            self.assertNotIn("punctuation_normalize", generated)
             self.assertNotIn("\npunctuation:\n", generated)
             self.assertTrue(cfg.pipeline.review)
             self.assertEqual(cfg.pipeline.align_retry_limit, 2)
@@ -189,11 +188,6 @@ class TestConfigFileCreation(unittest.TestCase):
         cfg = Config.from_dict({"output": {"about_page": False}})
 
         self.assertFalse(cfg.output.about_page)
-
-    def test_export_punctuation_normalization_can_be_disabled(self):
-        cfg = Config.from_dict({"output": {"punctuation_normalize": False}})
-
-        self.assertFalse(cfg.output.punctuation_normalize)
 
     def test_unknown_config_sections_are_rejected(self):
         for section in ("punctuation", "pipline"):

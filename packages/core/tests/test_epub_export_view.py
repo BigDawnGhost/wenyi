@@ -11,7 +11,6 @@ from wenyi_core.assemble.writer import assemble
 from wenyi_core.ingest.epub_reader import read_epub
 from wenyi_core.markup.segments import annotate_epub_resource
 from wenyi_core.models.document import Chapter, Segment
-from wenyi_core.postprocess.export_text import normalize_chinese
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.run_store import ExportSnapshotStore
 
@@ -69,7 +68,7 @@ def book(tmp_path):
 
 
 def render(store, source, out, **options):
-    assemble(store, str(source), str(out), "epub", punctuation_normalize=True, **options)
+    assemble(store, str(source), str(out), "epub", **options)
     with ZipFile(out) as zf:
         return {name: zf.read(name) for name in zf.namelist()}
 
@@ -101,23 +100,14 @@ def test_mono_and_bilingual_match_live_export_in_either_sequence(book, tmp_path,
     for bi in (False, True, True, False):
         actual = render(snapshot, source, tmp_path / "snapshot.epub", bilingual=bi, order=order)
         assert actual == expected[bi]
-        assert "他说“等等……然后走了”" in actual["EPUB/one.xhtml"].decode()
+        assert '他说"等等...然后走了"' in actual["EPUB/one.xhtml"].decode()
         assert b"two.xhtml#note" in actual["EPUB/one.xhtml"]
     assert [snapshot.load_chapter(ci) for ci in indices] == before
     assert [live.load_chapter(ci) for ci in indices] == before
 
 
 @pytest.mark.parametrize("target", [None, "", "译文."])
-def test_only_completely_pending_chapters_skip_target_processing(tmp_path, monkeypatch, target):
-    calls = []
-
-    def observe(request):
-        calls.append(request.targets)
-        return normalize_chinese(request)
-
-    monkeypatch.setattr(
-        "wenyi_core.assemble.export_view.TEXT_HANDLERS", {"punctuation.zh_cn": observe}
-    )
+def test_render_copies_preserve_pending_empty_and_translated_targets(tmp_path, target):
     saved = Chapter(
         index=0,
         segments=[
@@ -128,10 +118,9 @@ def test_only_completely_pending_chapters_skip_target_processing(tmp_path, monke
     snapshot = ExportSnapshotStore(
         str(tmp_path), {"source_lang": "en", "target_lang": "zh"}, {0: saved}
     )
-    view = ExportViewStore(snapshot, punctuation_normalize=True)
+    view = ExportViewStore(snapshot)
     [chapter] = view.iter_chapters_once([0])
-    assert calls == ([] if target is None else [(None, target)])
-    assert chapter.segments[1].target == ("译文。" if target else target)
+    assert chapter == saved
     chapter.segments[0].meta["nested"].append(2)
     assert snapshot.load_chapter(0) == saved
     [again] = view.iter_chapters_once([0])
@@ -151,10 +140,11 @@ def test_fully_translated_chapter_resolves_protected_marker_only_on_its_copy(tmp
     snapshot = ExportSnapshotStore(
         str(tmp_path), {"source_lang": "en", "target_lang": "zh"}, {0: saved}
     )
-    [rendered] = ExportViewStore(snapshot, punctuation_normalize=True).iter_chapters_once([0])
-    assert rendered == ExportViewStore(snapshot, punctuation_normalize=True).load_chapter(0)
+    view = ExportViewStore(snapshot)
+    [rendered] = view.iter_chapters_once([0])
+    assert rendered == view.load_chapter(0)
     [result] = rendered.segments
-    assert result.target == "设为正数。"
+    assert result.target == "设为正数."
     [placement] = result.meta["epub_annotations"]["placements"]
     assert placement["id"] == item["id"] and placement["target_start"] == 1
     assert snapshot.load_chapter(0) == saved

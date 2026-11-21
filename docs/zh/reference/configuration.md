@@ -21,7 +21,7 @@ CLI 读取当前工作目录的 `config.yaml`；使用 `wenyi --config PATH ...`
 | `llm` | 提供商连接、模型配置、操作路由、配额和预算。 |
 | `segment` | 源文分批与超长段落切分。 |
 | `pipeline` | 准备、翻译、润色、Review 和 PDF 后端。 |
-| `output` | 单／双语版本、双语样式、说明页和标点。 |
+| `output` | 单／双语版本、双语样式和说明页。 |
 | `paths` | CLI 状态位置。 |
 
 **平台边界**
@@ -444,15 +444,12 @@ BabelDOC 是可选的独立 AGPL 服务，用于尽量保留 PDF 版式。
 | `output.bilingual_order` | `target_first` | `target_first` 或 `source_first`；选择按段配对格式中在前的版本，以及 PDF 并列页中位于左侧的版本。 |
 | `output.bilingual_preserve_source_style` | `false` | 保留已记录的原文样式，替代该格式的默认原文显示方式。 |
 | `output.about_page` | `true` | 为 EPUB 添加“关于此翻译”项目说明页。 |
-| `output.punctuation_normalize` | `true` | 只在导出副本上规范简体中文标点。 |
 
 `bilingual_preserve_source_style` 与顺序独立。
 EPUB/HTML 中，`true` 用正常书籍样式替代淡化原文。
 DOCX 中，`false` 使用正常正文样式；`true` 恢复已记录的字符样式，
 包括段落／表格中的混合样式，无法恢复从未记录的样式。
 
-标点规范化不修改正式章节译文或 Review 输入。
-繁体中文和其他目标跳过该简体中文转换。
 EPUB 说明页在简体中文目标下为中文，其余目标目前使用英语。
 
 CLI 的 `translate` 和 `assemble` 可用 `--mono/--no-mono`、
@@ -514,13 +511,15 @@ CLI 在所选文件旁保存原始字节备份，名称为 `<文件名>.backup-<
 注释保留在备份里，重建后的 YAML 只保存支持的设置。
 Web 备份保存在 PostgreSQL，Desktop 备份保存在所选数据根目录的目录库，
 与各自设置一起保存。Web 遇到不兼容的初始 YAML 时也在 PostgreSQL 备份，
-不改写挂载文件。有效设置不重写，重复启动不重复生成备份。
+不改写挂载文件。从初始 YAML 读取默认值时沿用相同重建规则，不修改文件或已保存设置。
+有效设置不重写，重复启动不重复生成备份。
 
 备份或替换保存失败时，原设置保持不变，加载／启动报错。
 语法损坏的 YAML 需要修正，不猜测其含义。
 重建不修改原书、章节译文、用量或冻结任务快照。
-若排队任务仍带有不兼容的旧快照，需要按重建后的设置重新启动任务，
-不会静默换一种模式执行。Web/Desktop 新设置提交与 Core 直接校验仍然严格。
+排队任务忽略已移除的导出标点开关，其余设置保持不变。
+若旧快照仍不兼容，需要按重建后的设置重新启动任务。
+Web/Desktop 新设置提交与 Core 直接校验仍然严格。
 
 可从备份取回当前 schema 仍支持的自定义选择，不再提供单独的配置转换命令。
 

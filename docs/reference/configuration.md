@@ -24,7 +24,7 @@ and direct Core configuration validation reject unknown fields.
 | `llm` | Provider connections, model profiles, operation routes, quotas, and budgets. |
 | `segment` | Source batching and long-paragraph splitting. |
 | `pipeline` | Preparation, translation, polishing, Review, and PDF backend. |
-| `output` | Editions, bilingual styling, about page, and punctuation. |
+| `output` | Editions, bilingual styling, and about page. |
 | `paths` | CLI state location. |
 
 **Platform boundaries**
@@ -469,7 +469,6 @@ for choosing the backend.
 | `output.bilingual_order` | `target_first` | `target_first` or `source_first`; selects the first version in paragraph-paired formats and the left-hand version in PDF spreads. |
 | `output.bilingual_preserve_source_style` | `false` | Preserve recorded source styles rather than the format's default source presentation. |
 | `output.about_page` | `true` | Add the project “About this translation” page to EPUB output. |
-| `output.punctuation_normalize` | `true` | Normalize Simplified Chinese punctuation on the export copy only. |
 
 `bilingual_preserve_source_style` is independent of ordering. In EPUB/HTML,
 `true` inherits normal book styling instead of subdued source text. In DOCX,
@@ -477,10 +476,8 @@ for choosing the backend.
 including mixed spans in paragraphs/tables. It cannot recover styles never
 recorded from the source.
 
-Punctuation normalization does not modify saved chapter translations or Review
-input. Traditional Chinese and other targets skip this Simplified Chinese
-conversion. The EPUB about page is Chinese for Simplified Chinese targets and
-otherwise currently uses English.
+The EPUB about page is Chinese for Simplified Chinese targets and otherwise
+currently uses English.
 
 CLI `--mono/--no-mono` and `--bilingual/--no-bilingual` override these edition
 defaults for `translate` and `assemble`. With default YAML, `--bilingual` produces
@@ -546,14 +543,16 @@ CLI backups are exact copies beside the selected file, named
 YAML contains supported settings only. Web backups live in PostgreSQL and
 Desktop backups in the selected data root's catalog, alongside the settings
 they protect. Web also backs up incompatible bootstrap YAML in PostgreSQL
-without rewriting the mounted file. Unchanged settings are not rewritten, and
-repeated startup does not duplicate backups.
+without rewriting the mounted file. Reading defaults from bootstrap YAML applies
+the same reconstruction without changing the file or saved settings. Unchanged
+settings are not rewritten, and repeated startup does not duplicate backups.
 
 If a backup or replacement cannot be saved, the original settings stay intact
 and loading/startup fails. Malformed YAML must be corrected rather than guessed.
 Reconstruction does not change source books, chapter translations, usage, or
-frozen job snapshots. A queued job with an incompatible old snapshot must be
-started again under the rebuilt settings, not silently run with a different mode.
+frozen job snapshots. Queued jobs ignore the retired export punctuation switch
+without changing their other settings. A job with a still-incompatible snapshot
+must be started again under the rebuilt settings.
 New Web/Desktop setting submissions and direct Core validation remain strict.
 Use the backup to recover custom choices that are still supported by the current
 schema; there is no separate configuration conversion command.

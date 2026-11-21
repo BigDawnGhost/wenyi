@@ -88,7 +88,6 @@ output:
   # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
   bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page
-  punctuation_normalize: true # Normalize only exported copies; preserve formal translations in state
 """
 
 
@@ -195,9 +194,6 @@ class OutputConfig(BaseModel):
     )
     bilingual_preserve_source_style: bool = False  # EPUB/HTML styling and DOCX source metadata
     about_page: bool = True  # Append the project about page
-    punctuation_normalize: bool = (
-        True  # Normalize export copies only; never write back to chapter target
-    )
 
 
 class LanguageConfig(BaseModel):
@@ -248,13 +244,7 @@ class Config(BaseModel):
 
     @model_validator(mode="after")
     def validate_builtin_language_policy(self) -> Config:
-        resolve_policy(
-            PolicyContext(
-                self.source_lang,
-                self.target_lang,
-                punctuation_normalize=self.output.punctuation_normalize,
-            ),
-        )
+        resolve_policy(PolicyContext(self.source_lang, self.target_lang))
         return self
 
     @property
@@ -289,7 +279,6 @@ class Config(BaseModel):
             phase=phase,
             format=format,
             backend=backend,
-            punctuation_normalize=self.output.punctuation_normalize,
             source_identity=source_identity,
             task_groups=self._policy_tasks(phase),
             bilingual=self.output.bilingual,

@@ -1,14 +1,26 @@
-"""Pure reconstruction of saved global/project settings; platforms own backup and commit."""
+"""Reconstruct saved settings without writing them; platforms own backup and commit."""
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
-from wenyi_core.config import Config
+from wenyi_core.config import Config, parse_config_yaml
 from wenyi_core.config_rebuild import RebuiltConfig, rebuild_config
 from wenyi_core.i18n.genres import require_genre
 
 from .config_documents import PROJECT_LLM_FIELDS, PROJECT_PIPELINE_FIELDS, config_document
 from .strategies import PRESET_TEMPLATES, builtin_template_definition, strategy_to_config
+
+
+def read_bootstrap_settings(path: str | Path) -> Any:
+    """Read the configured seed without changing it; startup can back up the original."""
+    document = parse_config_yaml(Path(path).read_text(encoding="utf-8"))
+    return {} if document is None else document
+
+
+def load_bootstrap_defaults(path: str | Path) -> Config:
+    """Resolve defaults from the saved seed without writing the YAML or active settings."""
+    return Config.from_dict(rebuild_settings(read_bootstrap_settings(path)).document)
 
 
 def rebuild_default_template(value: Any) -> str:
@@ -17,16 +29,22 @@ def rebuild_default_template(value: Any) -> str:
 
 
 def rebuild_strategy(raw: Any) -> RebuiltConfig:
-    """Reset invalid saved workflow selections; explicit project configuration stays separate."""
+    """Discard retired export settings before validating saved workflow selections."""
     if raw is None:
         return RebuiltConfig({}, ())
     if isinstance(raw, dict):
+        document = deepcopy(raw)
+        removed = ()
+        steps = document.get("steps")
+        if isinstance(steps, dict) and "punctuation_normalize" in steps:
+            steps.pop("punctuation_normalize")
+            removed = ("strategy.steps.punctuation_normalize",)
         try:
-            strategy_to_config(raw, Config())
+            strategy_to_config(document, Config())
         except (ValueError, TypeError):
             pass
         else:
-            return RebuiltConfig(deepcopy(raw), ())
+            return RebuiltConfig(document, removed)
     return RebuiltConfig({}, ("strategy",))
 
 

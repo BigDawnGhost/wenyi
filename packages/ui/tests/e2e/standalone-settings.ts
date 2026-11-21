@@ -456,7 +456,7 @@ for (const chinese of [false, true]) {
     await expect(yaml).toBeVisible();
     await expect(page.getByRole("link", { name: advancedName, exact: true })).toHaveCount(0);
     await expect(main.getByRole("combobox")).toHaveCount(7);
-    await expect(main.getByRole("switch")).toHaveCount(7);
+    await expect(main.getByRole("switch")).toHaveCount(6);
     await expect(main.getByRole("spinbutton", { includeHidden: true })).toHaveCount(0);
     await expect(page.getByLabel(chinese ? "分批翻译章节" : "Translate chapters in batches", { exact: true })).toHaveCount(0);
     await expect(main.locator("details, summary")).toHaveCount(0);
@@ -707,7 +707,7 @@ test("running projects keep both basic and advanced settings read-only", async (
   await expect(page.getByText("Read-only while a task runs", { exact: true })).toBeVisible();
   await expect(page.locator('[id="route-translation.body"]')).toBeDisabled();
   const switches = page.getByRole("main").getByRole("switch");
-  await expect(switches).toHaveCount(7);
+  await expect(switches).toHaveCount(6);
   for (const control of await switches.all()) {
     await expect(control).toBeDisabled();
   }

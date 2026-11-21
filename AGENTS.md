@@ -42,7 +42,7 @@ Wenyi 是支持多语言互译、术语、润色、全书 Review 和多格式导
 | 存储接口与本地适配 | `storage/` 的 `protocol.py`、`file.py`、`artifacts.py`、`run_store.py` | `test_storage_injection.py`、`test_file_storage.py`、`test_file_artifacts.py` |
 | 翻译与上下文 | `pipeline/translate/` 的 `translation.py`、`translation_batch.py`、`context.py`、`title_translation.py`；`agents/` 模型任务 | `test_translator.py`、`test_translation*.py`、`test_title_translation.py` |
 | Review、润色、Autofix | `pipeline/review/`、`pipeline/autofix/`；`agents/review_*.py`；`review/` 模型、证据与运行记录 | `test_review*.py`、`test_routing_resume.py` |
-| 输入、导出与报告 | `ingest/`、`assemble/`、`pipeline/finalize/`、`postprocess/` | `test_ingest.py`、`test_assemble.py`、`test_bilingual.py` |
+| 输入、导出与报告 | `ingest/`、`assemble/`、`pipeline/finalize/` | `test_ingest.py`、`test_assemble.py`、`test_bilingual.py` |
 | EPUB/HTML 注释与 DOCX 样式 | `markup/` 共享标记处理；`pipeline/annotate/` 对齐；`document_styles/docx.py` 纯样式策略 | `test_annotation_aligner.py`、`test_docx.py` |
 | PDF | `ingest/`、`assemble/` 的 PDF 路径；`pdf_bridge/` | `test_pdf_support.py`、`test_babeldoc_bridge_client.py` |
 | 术语 | `glossary/` SQLite、抽取与冲突裁定 | `test_glossary*.py` |
@@ -72,7 +72,7 @@ CLI / Web / Desktop → Orchestrator → Runtime / Preparation / Translation / A
 - `wenyi_core` 不依赖 CLI、HTTP backend 或其框架。领域服务通过 `Storage` / `ArtifactStorage` 读写运行状态；CLI 使用文件适配，Desktop 注入 `SqliteStorage`，Web 注入 `PostgresStorage`，不得在领域服务中绕过接口直接写文件状态或打开 SQLite。
 - `wenyi_backend` 不导入 Web/Desktop 适配或 PG/Redis/Arq/keyring；平台通过显式上下文和端口注入依赖，不用进程全局开关决定当前平台。每个 app、worker 和线程回调保持正确的上下文身份。
 - 共享 UI 不反向导入 app，通过平台服务接收原生能力。Web 产物不包含 Desktop IPC、凭据库或本地运行器；Desktop 运行包不依赖 Web 数据库/队列。Docker 只安装 Web 与共享运行依赖，不安装整个 workspace。
-- `pipeline/orchestrator.py` 是薄 façade。不得直接导入 `agents`、`ingest`、`glossary`、`assemble`、`postprocess` 或 `llm`，不得直接调用领域函数，也不得拥有线程池。
+- `pipeline/orchestrator.py` 是薄 façade。不得直接导入 `agents`、`ingest`、`glossary`、`assemble` 或 `llm`，不得直接调用领域函数，也不得拥有线程池。
 - 下层服务不得反向导入 `orchestrator.py`。
 - `cli.py` 保持应用装配职责；命令通过显式注册和调用上下文接收依赖，不反向导入 CLI 全局对象。
 - `agents/` 不得依赖 pipeline 编排、状态机或 RunStore；可使用顶层 `review/` 的纯模型。

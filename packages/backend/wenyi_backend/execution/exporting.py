@@ -41,7 +41,6 @@ def render_export(
     order: Literal["target_first", "source_first"] = "target_first",
     about_page: bool = True,
     preserve_source_style: bool = False,
-    punctuation_normalize: bool | None = None,
 ) -> str:
     """Return a complete private output; only the coordinator may publish it."""
     from wenyi_core.assemble.policy import export_plan
@@ -78,9 +77,6 @@ def render_export(
             plan = export_plan(
                 snapshot,
                 fmt,
-                punctuation_normalize=config.output.punctuation_normalize
-                if punctuation_normalize is None
-                else punctuation_normalize,
                 bilingual=bilingual,
                 order=order,
                 preserve_source_style=preserve_source_style,
@@ -96,9 +92,6 @@ def render_export(
                 order=order,
                 about_page=about_page,
                 preserve_source_style=preserve_source_style,
-                punctuation_normalize=config.output.punctuation_normalize
-                if punctuation_normalize is None
-                else punctuation_normalize,
                 babeldoc_timeout=config.pipeline.babeldoc_timeout,
                 language_policy=plan,
             )

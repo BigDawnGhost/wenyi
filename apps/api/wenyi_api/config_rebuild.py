@@ -5,11 +5,12 @@ from pathlib import Path
 
 from psycopg.types.json import Jsonb
 from wenyi_backend.config_rebuild import (
+    read_bootstrap_settings,
     rebuild_default_template,
     rebuild_settings,
     rebuild_strategy,
 )
-from wenyi_core.config import Config, parse_config_yaml
+from wenyi_core.config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +23,7 @@ def rebuild_saved_settings(pool, config_path: str) -> None:
         exists = connection.execute("SELECT 1 FROM application_settings WHERE id=1").fetchone()
     seed = {}
     if exists is None and Path(config_path).is_file():
-        raw = parse_config_yaml(Path(config_path).read_text(encoding="utf-8"))
-        seed = {} if raw is None else raw
+        seed = read_bootstrap_settings(config_path)
     with pool.connection() as connection:
         connection.execute("SELECT pg_advisory_xact_lock(hashtextextended('wenyi:settings',0))")
         row = connection.execute(
