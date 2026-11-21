@@ -5,9 +5,10 @@ or bilingual text according to bilingual and order.
 
 from __future__ import annotations
 
-from ..models.document import KIND_HEADING
+from ..atomicio import publish_target
+from ..markup import _epub_native
 from .export_view import AssembleStore
-from .writer_common import _bilingual_source, _merged_paragraphs, _ordered_pair
+from .writer_common import _merged_paragraphs
 
 
 def _assemble_plain_text(
@@ -20,22 +21,9 @@ def _assemble_plain_text(
 ) -> str:
     """Shared text/Markdown implementation; prefix headings with # when markdown=True."""
     m = store.load_manifest()
-    chapter_blocks: list[str] = []
-    for c in m["chapters"]:
-        ch = store.load_chapter(c["index"])
-        blocks: list[str] = []
-        for kind, target, source, level in _merged_paragraphs(ch):
-            if kind == KIND_HEADING and markdown:
-                target = "#" * min(level, 6) + " " + target
-            src = _bilingual_source(source, target) if (bilingual and kind != KIND_HEADING) else ""
-            if not src:
-                blocks.append(target)
-            else:
-                first, second = _ordered_pair(src, target, order)
-                blocks.extend((first, second))
-        chapter_blocks.append("\n\n".join(blocks))
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write("\n\n".join(chapter_blocks) + "\n")
+    chapters = [_merged_paragraphs(store.load_chapter(row["index"])) for row in m["chapters"]]
+    with publish_target(out_path) as temporary:
+        _epub_native.write_text(temporary, chapters, bilingual, order == "source_first", markdown)
     return out_path
 
 

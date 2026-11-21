@@ -81,11 +81,11 @@ class PreparationService:
             title = os.path.splitext(os.path.basename(input_path))[0]
         elif ext == ".epub":
             if progress:
-                progress(0, 0, "Locating translation progress…")
+                progress(0, 0, "progress.stage.locateProgress")
             title = peek_epub_title(input_path)
         else:
             if progress:
-                progress(0, 0, "Locating translation progress…")
+                progress(0, 0, "progress.stage.locateProgress")
             doc = load_document(
                 input_path,
                 self._runtime.config.source_lang,
@@ -117,7 +117,7 @@ class PreparationService:
         PDF state follows the filename, allowing manifest checks before repeated external
         conversion. Cache the initial converted HTML within that state directory.
         """
-        self._runtime.require_terminology_context_access()
+        self._runtime.require_glossary_note_access()
         if self._runtime.storage is not None:
             store = self._runtime.storage
             source_hash = source_sha256(input_path)
@@ -189,7 +189,7 @@ class PreparationService:
         # For new auto-language runs, use model detection only; require an explicit language on failure.
         if self._runtime.config.source_lang in ("auto", "", None):
             if progress:
-                progress(0, 0, "Detecting language…")
+                progress(0, 0, "progress.stage.language")
             try:
                 detected = self.detect_language_ai(doc)
             except LanguageDetectionError as error:
@@ -228,7 +228,7 @@ class PreparationService:
         if self._runtime.config.pipeline.book_understanding:
             digests = self._understanding.ensure_chapter_digests(store, doc.chapters, progress)
         if progress:
-            progress(0, 0, "Analyzing book style…")
+            progress(0, 0, "progress.stage.style")
         analysis = self._analyze_document(store, doc, digests, source_hash)
         analysis["language_policy"] = manifest["language_policies"]["analysis"]
         analysis["style_policy"] = self._runtime.config.language_policy(
@@ -306,7 +306,7 @@ class PreparationService:
         manifest = store.load_manifest()
         self._runtime.apply_manifest_languages(manifest)
         if phase == "translation":
-            self._runtime.require_terminology_context_access()
+            self._runtime.require_glossary_note_access()
         if phase == "translation" and translation_revision(store, self._runtime.config):
             self._rebuild_analysis(store, manifest)
         return manifest

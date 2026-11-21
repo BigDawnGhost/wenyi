@@ -8,6 +8,8 @@ from hashlib import sha256
 from threading import Lock
 from typing import Any
 
+from ..agent_tools import REVIEW_TOOLS, BoundTools, ToolError
+from ..glossary.notes import NoteJournal
 from ..glossary.store import GlossaryTerm, source_matches_text, term_match_sources
 from ..markup.contexts import object_contexts_for_segments
 from ..models.document import Chapter
@@ -95,6 +97,13 @@ class BookEvidenceIndex:
                     self._alias_lookup.setdefault(normalized_alias, []).append(term)
         self._occurrence_cache: dict[str, tuple[SegmentRef, ...]] = {}
         self._cache_lock = Lock()
+        self._tools = BoundTools(
+            REVIEW_TOOLS,
+            glossary_term=self.glossary_term,
+            term_occurrences=self.term_occurrences,
+            segment_context=self.segment_context,
+            book_context=self.book_context,
+        )
 
     def segment_ref(self, chapter: int, text_index: int) -> SegmentRef | None:
         """Return a paragraph reference by chapter and text_segments index."""
@@ -234,6 +243,7 @@ class BookEvidenceIndex:
 
     def _term_evidence(self, term: GlossaryTerm) -> dict[str, Any]:
         """Condense one glossary term into citable read-only evidence."""
+        journal = NoteJournal(term.note)
         return {
             "ref": _glossary_ref(term.source),
             "source": _clip(term.source, 256),
@@ -243,7 +253,10 @@ class BookEvidenceIndex:
             "gender": _clip(term.gender, 64),
             "aliases": [_clip(alias, 256) for alias in term.aliases[:16]],
             "first_chapter": term.first_chapter,
-            "note": _clip(term.note, 2000),
+            # Include scope and refs alongside active facts, not stale superseded history.
+            "note": _clip(
+                "\n".join([*journal.editor, journal.page("guidance", 0)["text"]]).strip(), 2000
+            ),
         }
 
     def glossary_term(self, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -260,10 +273,18 @@ class BookEvidenceIndex:
             }
         if term is None:
             return {"ok": False, "error": "term_not_found"}
-        return {
+        result = {
             "ok": True,
             "term": self._term_evidence(term),
         }
+        if "section" in arguments or "offset" in arguments:
+            try:
+                result["note_page"] = NoteJournal(term.note).page(
+                    arguments.get("section", "guidance"), arguments.get("offset", 0)
+                )
+            except ValueError:
+                return {"ok": False, "error": "invalid_note_page"}
+        return result
 
     def segment_context(self, arguments: dict[str, Any]) -> dict[str, Any]:
         """Return source/target context around a paragraph across chapter boundaries."""
@@ -332,28 +353,11 @@ class BookEvidenceIndex:
             return {"request_id": "", "ok": False, "error": "invalid_request_id"}
         if not isinstance(arguments, dict):
             return {"request_id": request_id, "ok": False, "error": "invalid_arguments"}
-        if not isinstance(tool, str):
-            return {
-                "request_id": request_id,
-                "tool": tool,
-                "ok": False,
-                "error": "unknown_tool",
-            }
-        handlers = {
-            "glossary_term": self.glossary_term,
-            "term_occurrences": self.term_occurrences,
-            "segment_context": self.segment_context,
-            "book_context": self.book_context,
-        }
-        handler = handlers.get(tool)
-        if handler is None:
-            return {
-                "request_id": request_id,
-                "tool": tool,
-                "ok": False,
-                "error": "unknown_tool",
-            }
-        result = {"request_id": request_id, "tool": tool, **handler(arguments)}
+        try:
+            payload = self._tools.call(tool, arguments)
+        except ToolError as error:
+            payload = {"ok": False, "error": str(error)}
+        result = {"request_id": request_id, "tool": tool, **payload}
         if len(json.dumps(result, ensure_ascii=False).encode("utf-8")) > 64_000:
             return {
                 "request_id": request_id,

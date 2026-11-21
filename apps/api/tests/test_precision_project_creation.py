@@ -90,12 +90,16 @@ def test_creation_does_not_mutate_application_defaults(creation_api):
     defaults.pipeline.polish = False
     response = client.post(
         "/projects",
-        data={"project": '{"name":"Book","translation_mode":"three_draft_synthesis"}'},
+        data={
+            "project": '{"name":"Book","translation_mode":"three_draft_synthesis","glossary_notes":true}'
+        },
         files={"file": ("book.txt", b"A fictional traveler crossed a bridge.")},
     )
     assert response.status_code == 201, response.text
     # Unlike the PG snapshot test, these application defaults disable polishing.
     assert saved[response.json()["id"]]["config"]["pipeline"]["polish"] is True
+    assert saved[response.json()["id"]]["config"]["pipeline"]["glossary_note_workers"] == 4
+    assert defaults.pipeline.glossary_note_workers == 0
     assert defaults.pipeline.translation_mode == "standard"
     assert defaults.pipeline.polish is False
 
@@ -103,6 +107,7 @@ def test_creation_does_not_mutate_application_defaults(creation_api):
 def test_creation_defaults_to_standard_even_with_legacy_global_precision(creation_api):
     client, defaults, saved, _, _ = creation_api
     defaults.pipeline.translation_mode = "three_draft_synthesis"
+    defaults.pipeline.glossary_note_workers = 2
     response = client.post(
         "/projects",
         data={"project": '{"name":"Book"}'},
@@ -111,6 +116,7 @@ def test_creation_defaults_to_standard_even_with_legacy_global_precision(creatio
     assert response.status_code == 201, response.text
     pipeline = saved[response.json()["id"]]["config"]["pipeline"]
     assert pipeline["translation_mode"] == "standard"
+    assert pipeline["glossary_note_workers"] == 0
     assert "precision_concurrency" not in pipeline
 
 
@@ -119,6 +125,7 @@ def test_creation_defaults_to_standard_even_with_legacy_global_precision(creatio
     [
         ('"translation_mode":"unknown"', "book.txt"),
         ('"translation_mode":"best_of_three"', "book.txt"),
+        ('"glossary_notes":"false"', "book.txt"),
         ('"prompt_genre":"unknown"', "book.txt"),
         ('"prompt_genre":null', "book.txt"),
         ('"prompt_genre":"Academic"', "book.txt"),
@@ -216,7 +223,11 @@ def test_precision_mode_is_immutable_but_partial_config_remains_editable(
     )
     pid = created.json()["id"]
     before = deepcopy(saved[pid])
-    for yaml in ("pipeline: {translation_mode: standard}", "pipeline: {polish: false}"):
+    for yaml in (
+        "pipeline: {translation_mode: standard}",
+        "pipeline: {polish: false}",
+        "pipeline: {glossary_note_workers: 4}",
+    ):
         rejected = getattr(client, method)(f"/projects/{pid}/config{suffix}", json={"yaml": yaml})
         assert rejected.status_code == 422, rejected.text
         assert saved[pid] == before

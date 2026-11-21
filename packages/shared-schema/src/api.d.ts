@@ -1211,8 +1211,6 @@ export interface components {
              * @default false
              */
             preserve_source_style: boolean;
-            /** Punctuation Normalize */
-            punctuation_normalize?: boolean | null;
         };
         /** GlobalConfigInput */
         GlobalConfigInput: {
@@ -1510,6 +1508,11 @@ export interface components {
              * @enum {string}
              */
             translation_mode: "standard" | "three_draft_synthesis";
+            /**
+             * Glossary Notes
+             * @default false
+             */
+            glossary_notes: boolean;
             /**
              * Prompt Genre
              * @default literary
@@ -3446,6 +3449,20 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Glossary import request exceeds 5 MiB */
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @constant */
+                        code: "glossary_import_too_large";
+                        message: string;
+                        request_id?: string;
                     };
                 };
             };

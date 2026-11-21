@@ -2,6 +2,8 @@
 name = "wenyi-backend"
 dynamic = ["version"]
 description = "Shared HTTP contracts, routes, and services for Wenyi backends."
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
     "wenyi-core",
@@ -13,7 +15,7 @@ dependencies = [
 wenyi-core = { workspace = true }
 
 [build-system]
-requires = ["hatchling", "hatch-vcs"]
+requires = ["hatchling>=1.27", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [tool.hatch.version]

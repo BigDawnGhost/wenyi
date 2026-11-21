@@ -1,6 +1,7 @@
 {
   "name": "wenyi-monorepo",
   "private": true,
+  "license": "GPL-3.0-only",
   "description": "Frontend tooling for the Wenyi workspace.",
   "scripts": {
     "dev:web": "pnpm -C apps/web dev",

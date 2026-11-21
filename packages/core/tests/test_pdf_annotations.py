@@ -260,14 +260,14 @@ def test_pdf_export_copy_keeps_marker_order_when_clean_prose_matches_source(proj
     annotations, _ = service()
     annotations.align_annotations_after_batch(0, chapter, 0, 1, project)
     before = project.load_chapter(0).model_dump()
-    export = ExportViewStore(project, punctuation_normalize=False)
+    export = ExportViewStore(project)
     assert export.load_chapter(0).segments[0].target == segment.source
     payload = annotations_from_store(export, {"0:0": segment.source})["0:0"]
     assert [row["target_order"] for row in payload["placements"]] == [1, 0]
     assert project.load_chapter(0).model_dump() == before
     chapter.segments[0].target = ""
     project.save_chapter(chapter)
-    export = ExportViewStore(project, punctuation_normalize=False)
+    export = ExportViewStore(project)
     clean = _fillback_text(export.load_chapter(0).segments[0])
     assert clean == segment.source
     payload = annotations_from_store(export, {"0:0": clean})["0:0"]
@@ -489,15 +489,21 @@ def test_pdf_corner_mark_uses_existing_point_alignment_without_inserting_into_ta
 
 
 def test_pdf_client_sends_exact_alignment_payload(tmp_path, monkeypatch):
+    from contextlib import nullcontext
+
     client = BabeldocBridgeClient("http://bridge.invalid")
     monkeypatch.setattr(client, "health", lambda: {"capabilities": ["annotation-best-effort-v1"]})
     requests = []
 
-    def post(*args, **kwargs):
+    def stream(*args, **kwargs):
         requests.append(kwargs["json"])
-        return SimpleNamespace(status_code=200, content=b"%PDF synthetic result")
+        return nullcontext(
+            SimpleNamespace(
+                status_code=200, iter_bytes=lambda **_: [b"%PDF synthetic result"], headers={}
+            )
+        )
 
-    monkeypatch.setattr("wenyi_core.pdf_bridge.client.httpx.post", post)
+    monkeypatch.setattr("wenyi_core.pdf_bridge.client.httpx.stream", stream)
     payload = {"0:0": {"target_digest": "digest", "placements": []}}
     client.fillback("session", {"0:0": "正文"}, out_path=tmp_path / "out.pdf", annotations=payload)
     assert requests == [
@@ -510,17 +516,21 @@ def test_pdf_client_sends_exact_alignment_payload(tmp_path, monkeypatch):
 
 
 def test_pdf_client_logs_bridge_statistics_without_changing_export(tmp_path, monkeypatch, caplog):
+    from contextlib import nullcontext
+
     client = BabeldocBridgeClient("http://bridge.invalid")
     monkeypatch.setattr(client, "health", lambda: {"capabilities": ["annotation-best-effort-v1"]})
     statistics = {"total": 2, "aligned": 1, "applied": 1, "skipped": 1}
     response = SimpleNamespace(
         status_code=200,
-        content=b"%PDF translated output",
+        iter_bytes=lambda **_: [b"%PDF translated output"],
         headers={"X-Wenyi-PDF-Annotation-Stats": json.dumps(statistics)},
     )
-    monkeypatch.setattr("wenyi_core.pdf_bridge.client.httpx.post", lambda *a, **kw: response)
+    monkeypatch.setattr(
+        "wenyi_core.pdf_bridge.client.httpx.stream", lambda *a, **kw: nullcontext(response)
+    )
     with caplog.at_level("INFO", logger="wenyi_core.pdf_bridge.client"):
         client.fillback("session", {"0:0": "中文译文"}, out_path=tmp_path / "out.pdf")
-    assert (tmp_path / "out.pdf").read_bytes() == response.content
+    assert (tmp_path / "out.pdf").read_bytes() == b"%PDF translated output"
     assert "PDF annotation statistics:" in caplog.text
     assert '"skipped": 1' in caplog.text

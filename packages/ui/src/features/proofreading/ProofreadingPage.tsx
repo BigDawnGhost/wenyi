@@ -44,7 +44,7 @@ export default function ProofreadingPage() {
         index={Number(ci)}
         chapters={chapters.data || []}
         busy={busy}
-        sourceOnly={project.data?.initialized !== true}
+        sourceOnly={project.data ? !project.data.initialized : undefined}
         readOnly={
           busy || !project.data?.initialized || project.isError || chapters.isError
         }
@@ -60,8 +60,7 @@ export default function ProofreadingPage() {
         <ErrorNotice error={project.error || chapters.error} />
         <Card>
           <CardContent className="p-4 space-y-3">
-            <h2 className="font-medium">{t("review.proofreadByChapter")}</h2>
-            <div className="flex flex-wrap gap-3">
+            <div className="flex flex-wrap items-start gap-3">
               <div className="flex-1 min-w-48 space-y-1">
                 <Label htmlFor="chapter-search">
                   {t("proofreading.search")}
@@ -72,7 +71,7 @@ export default function ProofreadingPage() {
                   onChange={(event) => setSearch(event.target.value)}
                 />
               </div>
-              <div className="space-y-1">
+              <div className="w-40 space-y-1">
                 <Label htmlFor="chapter-status">
                   {t("proofreading.filter")}
                 </Label>
@@ -94,7 +93,7 @@ export default function ProofreadingPage() {
               {filtered?.map((chapter) => (
                 <li key={chapter.index}>
                   <Link
-                    className="-mx-2 flex items-center justify-between gap-4 rounded-lg px-3 py-3 transition-colors hover:bg-hover"
+                    className="flex items-center justify-between gap-4 rounded-lg px-4 py-3 transition-colors hover:bg-hover"
                     to={`/projects/${pid}/proofreading/${chapter.index}`}
                   >
                     <div className="min-w-0 space-y-1">

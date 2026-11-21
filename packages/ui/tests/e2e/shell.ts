@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi, pid, project, resolveFixture } from "../../sandbox/fixtures";
-import { expectCardSurface } from "./color-helper";
+import { expectCardSurface, expectTokenColor } from "./color-helper";
 
 
 /** Whether the Desktop host must keep running this suite as well.
@@ -123,39 +123,37 @@ export function registerShellTests({ apiOrigin }: { apiOrigin?: string } = {}) {
   });
 
   for (const theme of ["light", "dark"]) {
-    test(`create project sidebar entry stays borderless with keyboard focus in ${theme}`, async ({ page }) => {
+    test(`the project list header has an outline create action with visible keyboard focus in ${theme}`, async ({ page }) => {
       await page.addInitScript(theme => localStorage.setItem("wenyi.theme", theme), theme);
       await fakeApi(page, {}, apiOrigin);
       await page.goto("/");
-      const create = page.getByRole("link", { name: "Create project", exact: true });
-      for (const collapsed of [false, true]) {
-        const toggle = page.getByRole("button", { name: "Collapse sidebar", exact: true });
-        if (collapsed) await toggle.click();
-        await page.mouse.move(0, 0);
-        await expect(create).toBeVisible();
-        await expect(create).toHaveCSS("border-width", "0px");
-        await expect(create).toHaveCSS("box-shadow", "none");
-        await create.hover();
-        await expect(create).toHaveCSS("border-width", "0px");
-        await expect(create).toHaveCSS("box-shadow", "none");
-        await page.mouse.move(0, 0);
-        await page.getByRole("button", {
-          name: collapsed ? "Expand sidebar" : "Collapse sidebar", exact: true,
-        }).focus();
-        await page.keyboard.press("Tab");
-        await expect(create).toBeFocused();
-        await expect(create).not.toHaveCSS("box-shadow", "none");
-      }
+      const sidebar = page.getByRole("complementary");
+      const header = page.locator('[data-slot="page.header"]');
+      const create = header.getByRole("link", { name: "Create project", exact: true });
+      await expect(sidebar.getByRole("link", { name: "Create project", exact: true })).toHaveCount(0);
+      await expect(header.getByRole("button", { name: "Import existing project", exact: true })).toHaveCount(0);
+      await expect(create).toBeVisible();
+      await expectTokenColor(create, "background-color", "card");
+      await expectTokenColor(create, "color", "foreground");
+      const restingShadow = await create.evaluate(element => getComputedStyle(element).boxShadow);
+      await create.hover();
+      await expectTokenColor(create, "background-color", "card-hover");
+      await page.mouse.move(0, 0);
+      await sidebar.getByRole("link", { name: "Settings", exact: true }).focus();
+      await page.keyboard.press("Tab");
+      await expect(create).toBeFocused();
+      await expect(create).not.toHaveCSS("box-shadow", restingShadow);
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("dialog", { name: "Create project", exact: true })).toBeVisible();
     });
   }
 
-  test("creation closes back to the originating project and restores sidebar focus", async ({ page }) => {
-    await fakeApi(
-      page,
-      { [`/projects/${pid}`]: { ...project, initialized: false } },
-      apiOrigin,
-    );
+  test("creation closes to the project list and restores header focus", async ({ page }) => {
+    await fakeApi(page, {}, apiOrigin);
     await page.goto(`/projects/${pid}`);
+    await expect(page.getByRole("link", { name: "Create project", exact: true })).toHaveCount(0);
+    await page.getByRole("link", { name: "Projects", exact: true }).click();
+    await expect(page).toHaveURL("/");
     const create = page.getByRole("link", { name: "Create project", exact: true });
     for (const close of ["button", "escape"]) {
       await create.click();
@@ -166,8 +164,10 @@ export function registerShellTests({ apiOrigin }: { apiOrigin?: string } = {}) {
       } else {
         await page.keyboard.press("Escape");
       }
-      await expect(page).toHaveURL(`/projects/${pid}`);
+      await expect(page).toHaveURL("/");
       await expect(create).toBeFocused();
     }
+    await page.goBack();
+    await expect(page).toHaveURL(`/projects/${pid}`);
   });
 }

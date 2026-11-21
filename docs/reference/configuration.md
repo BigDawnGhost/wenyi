@@ -24,7 +24,7 @@ and direct Core configuration validation reject unknown fields.
 | `llm` | Provider connections, model profiles, tiers, routes, quotas, and budgets. |
 | `segment` | Source batching and long-paragraph splitting. |
 | `pipeline` | Preparation, translation, polishing, Review, and PDF backend. |
-| `output` | Editions, bilingual styling, about page, and punctuation. |
+| `output` | Editions, bilingual styling, and about page. |
 | `paths` | CLI state location. |
 
 **Platform boundaries**
@@ -273,9 +273,7 @@ its stage is disabled; reachable checks follow the selected workflow switches.
 | `polish.body` | `strong` | Polishing, including precision synthesis |
 | `glossary.extract` | `fast` | Glossary extraction |
 | `glossary.align_history` | `fast` | Earlier translation alignment |
-| `terminology.discover` | `strong` | Source-grounded person discovery |
-| `terminology.evidence` | `strong` | Whole-book source evidence |
-| `terminology.merge` | `strong` | Evidence-note synthesis |
+| `glossary.note` | `fast` | Maintain incremental notes for translated batches |
 | `annotation.align` | `cheap` | Annotation placement |
 | `review.scan` | `cheap` | Initial Review and blind rechecks |
 | `review.verify` | `strong` | Evidence verification |
@@ -380,7 +378,7 @@ described under [scope](#scope).
 | `pipeline.prescan_concurrency` | `4` | Chapter-digest concurrency; use `1` for sequential work. |
 | `pipeline.synopsis_source_tokens` | `8000` | Positive integer token budget for each chapter-digest source chunk. |
 | `pipeline.synopsis_reduce_tokens` | `12000` | Positive integer token budget for each digest merge group and generated summary. |
-| `pipeline.terminology_context` | `false` | CLI-only experimental whole-book evidence for person entries. |
+| `pipeline.glossary_note_workers` | `0` | CLI: `0` disables; `1`–`16` sets parallel note workers. The [Web/Desktop project switch](../guide/workspace.md#create-a-project) uses 4 when enabled. |
 | `pipeline.annotation_alignment` | `true` | Align translated links/annotations. EPUB uses paragraph-end fallbacks; PDF omits failed items. See [PDF formats](formats.md#babeldoc). |
 | `pipeline.annotation_alignment_concurrency` | `4` | Concurrent per-annotation requests within one logical paragraph. |
 
@@ -401,7 +399,7 @@ reference. It is reconstructed from saved translations.
 Chapters containing source text need usable digests before translation; a failed
 whole-book synopsis does not block translation. Failed digests can be completed
 on a later prepare/translate run. Preparation never extracts or pre-fills glossary
-entries, with or without `terminology_context`.
+entries.
 
 The synopsis budgets use `cl100k_base`, not character counts or provider-specific
 tokenizers. Oversized source and individual digests are split as evenly as complete
@@ -414,11 +412,7 @@ output: these are content budgets, not whole-request limits.
 override the model's output-token limit. Budget changes apply to pending work and
 do not by themselves regenerate verified complete digests or cached synopses.
 
-Terminology evidence adds person discovery and source-grounded notes during
-pending CLI translation work. Other term types retain ordinary extraction.
-It does not create multiple senses or per-occurrence target choices.
-Web/API do not produce this evidence merely because the YAML flag is set.
-Review can consume existing notes without producing new evidence.
+Older configurations with `terminology_context: false` still load. The `true` setting and `terminology.*` model routes have been removed; remove these settings when upgrading. Incremental note generation is never enabled implicitly.
 
 Fresh Reviewer requests always receive the full glossary, whatever
 `batch_glossary` says. `relevant` shrinks body prompts on long books but drops entries a
@@ -490,7 +484,6 @@ for choosing the backend.
 | `output.bilingual_order` | `target_first` | `target_first` or `source_first`; selects the first version in paragraph-paired formats and the left-hand version in PDF spreads. |
 | `output.bilingual_preserve_source_style` | `false` | Preserve recorded source styles rather than the format's default source presentation. |
 | `output.about_page` | `true` | Add the project “About this translation” page to EPUB output. |
-| `output.punctuation_normalize` | `true` | Normalize Simplified Chinese punctuation on the export copy only. |
 
 `bilingual_preserve_source_style` is independent of ordering. In EPUB/HTML,
 `true` inherits normal book styling instead of subdued source text. In DOCX,
@@ -498,10 +491,8 @@ for choosing the backend.
 including mixed spans in paragraphs/tables. It cannot recover styles never
 recorded from the source.
 
-Punctuation normalization does not modify saved chapter translations or Review
-input. Traditional Chinese and other targets skip this Simplified Chinese
-conversion. The EPUB about page is Chinese for Simplified Chinese targets and
-otherwise currently uses English.
+The EPUB about page is Chinese for Simplified Chinese targets and otherwise
+currently uses English.
 
 CLI `--mono/--no-mono` and `--bilingual/--no-bilingual` override these edition
 defaults for `translate` and `assemble`. With default YAML, `--bilingual` produces
@@ -567,14 +558,16 @@ CLI backups are exact copies beside the selected file, named
 YAML contains supported settings only. Web backups live in PostgreSQL and
 Desktop backups in the selected data root's catalog, alongside the settings
 they protect. Web also backs up incompatible bootstrap YAML in PostgreSQL
-without rewriting the mounted file. Unchanged settings are not rewritten, and
-repeated startup does not duplicate backups.
+without rewriting the mounted file. Reading defaults from bootstrap YAML applies
+the same reconstruction without changing the file or saved settings. Unchanged
+settings are not rewritten, and repeated startup does not duplicate backups.
 
 If a backup or replacement cannot be saved, the original settings stay intact
 and loading/startup fails. Malformed YAML must be corrected rather than guessed.
 Reconstruction does not change source books, chapter translations, usage, or
-frozen job snapshots. A queued job with an incompatible old snapshot must be
-started again under the rebuilt settings, not silently run with a different mode.
+frozen job snapshots. Queued jobs ignore the retired export punctuation switch
+without changing their other settings. A job with a still-incompatible snapshot
+must be started again under the rebuilt settings.
 New Web/Desktop setting submissions and direct Core validation remain strict.
 Use the backup to recover custom choices that are still supported by the current
 schema; there is no separate configuration conversion command.

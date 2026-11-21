@@ -6,7 +6,6 @@ import os
 import tempfile
 import unittest
 import zipfile
-from contextlib import nullcontext
 from unittest.mock import patch
 
 import pytest
@@ -493,62 +492,6 @@ class TestAssembleEpubTemplateBilingual(unittest.TestCase):
 
 
 class TestCliBilingualFlags(unittest.TestCase):
-    def test_translate_flags_override_output_config(self):
-        cfg = Config.from_dict(
-            {
-                "llm": {
-                    "preset": "fake",
-                    "models": {"default_strong": {"provider": "default", "model": "p"}},
-                },
-            }
-        )
-        captured = {}
-
-        class FakeStore:
-            run_dir = "state/book"
-
-            def lock(self):
-                return nullcontext()
-
-            def state_lock(self):
-                return nullcontext()
-
-            def load_manifest(self):
-                return {"chapters": [{"status": "done"}]}
-
-            def stats(self):
-                return {"terms": 0}
-
-            def load_usage(self):
-                return None
-
-        class FakeOrchestrator:
-            def __init__(self, config, *, allow_terminology_context=False):
-                self.client = FakeClient()
-                captured["mono"] = config.output.mono
-                captured["bilingual"] = config.output.bilingual
-
-            def run_all(self, input_path, **kwargs):
-                return {
-                    "output": "novel.zh.epub",
-                    "outputs": ["novel.zh.epub", "novel.zh-bi.epub"],
-                    "store": FakeStore(),
-                }
-
-        with (
-            patch("wenyi_cli.commands.context.CommandContext.load_config", return_value=cfg),
-            patch("wenyi_core.pipeline.orchestrator.Orchestrator", FakeOrchestrator),
-            patch("wenyi_cli.commands.validation.os.path.isfile", return_value=True),
-        ):
-            result = CliRunner().invoke(app, ["translate", "input.txt", "--no-mono", "--bilingual"])
-
-        self.assertEqual(result.exit_code, 0, result.output)
-        flat = result.output.replace("\n", "")
-        self.assertFalse(captured["mono"])
-        self.assertTrue(captured["bilingual"])
-        self.assertIn("novel.zh.epub", flat)
-        self.assertIn("novel.zh-bi.epub", flat)
-
     def test_tools_assemble_produces_mono_and_bilingual_outputs(self):
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")

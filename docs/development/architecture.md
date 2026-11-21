@@ -39,7 +39,7 @@ are relative to the repository root.
 | Whole-book review | `pipeline/review/review_workflow.py` coordinates sessions; `review_checkpoint.py`, `review_rounds.py`, `review_chunks.py`, and `review_results.py` separate recovery, decisions, execution, and result handling. |
 | Autofix | `pipeline/autofix/review_autofix.py` coordinates the separate publication service; `autofix_candidates.py`, `autofix_plan.py`, and `autofix_publish.py` separate candidates, the recoverable index, and writes to formal translations. |
 | Review agents | `agents/review_*.py` owns model interactions; `review/` provides shared evidence, types, and run artifacts without depending on pipeline orchestration. |
-| EPUB / HTML | `markup/` owns shared deterministic anchors, annotations, ruby and segment handling; readers and writers remain in `ingest/` and `assemble/`. `assemble/epub_package.py` packages generated EPUB 3 books with local XML serialization and `zipfile`, without EbookLib. |
+| EPUB / HTML | `markup/` defines the annotation, ruby and segment state contracts. `packages/core/rust/` owns EPUB parsing, template backfill and EPUB 3 package generation. Python HTML handling and cross-format adapters remain in `ingest/` and `assemble/`. |
 | DOCX | `document_styles/docx.py` owns pure style policy; DOCX readers and writers own parsing and document emission. |
 | Persistence | Domain services use `storage/protocol.py`. CLI uses `storage/file.py`; Desktop injects `storage/sqlite.py` for each project directory resolved through its catalog's registered library location; Web injects `apps/api/wenyi_api/storage_pg.py` for PostgreSQL state. |
 | Settings reconstruction | `config_rebuild.py` validates saved fields against the current Core schema; `packages/backend/wenyi_backend/config_rebuild.py` applies global/project scope. Each platform owns backup and replacement. |
@@ -132,26 +132,69 @@ changing formal targets. Stable segment identities, consistent export snapshots,
 once-only usage accounting apply across storage backends. Detailed checkpoint, language
 policy and prompt-resource rules live in [pipeline development](pipeline.md).
 
-### EPUB CPU workers
+### Native EPUB engine
 
-EPUB readers and template exporters use `resource_pool.py` for physical-XHTML work:
-at least 12 resources and 2 MiB of uncompressed XHTML enable up to six spawned workers,
-capped by available CPU count and affinity. Smaller inputs, daemon processes and
-non-importable interactive entry points run the same functions serially. These internal
-thresholds are independent of LLM concurrency and apply to CLI, Web and Desktop.
+The crate lives in `packages/core/rust/`. `src/lib.rs` is the PyO3 boundary;
+`src/epub/` contains the engine, with `ingest.rs` and `extract.rs` for reading,
+`export.rs`, `generate.rs` and `html.rs` for writing, and shared modules for the
+archive, DOM, tokenizers, links and worker budget.
 
-One admission slot per parent process prevents concurrent EPUB operations from multiplying
-their pools; separate application/worker processes retain independent budgets. Each pool
-admits at most two pending resources per worker, yields in source order and drains/cancels
-its work before releasing admission. Workers receive explicit data, never Storage,
-database connections, credentials or platform context.
+Core's private PyO3 extension opens the ZIP, reads OPF and NAV/NCX, builds XHTML
+trees, extracts paragraphs and notes, and groups them into logical chapters. The
+XHTML and tolerant HTML tokenizers both run in Rust. The engine returns the same
+chapter, anchor and annotation state consumed by translation and resume.
 
-Parsing annotates resources, then resolves note contexts by target XHTML before constructing
-logical chapters. Bilingual export prepares all source-link destinations before rendering,
-sending each resource only its outgoing link mapping. EPUB presentation rewrites run in the
-resource task; ZIP reading/writing, package coordination and atomic publication stay in the
-parent. Frozen CLI/Desktop entry points dispatch multiprocessing workers before importing
-their applications.
+Template export checks saved anchors and source text against the original resource.
+It reuses the in-memory tree for translations, note placement and presentation.
+When rendering an original EPUB from a frozen snapshot, the writer consumes one
+independent copy of each chapter without caching another in the export view.
+Chapters with no saved targets skip translation-only processing, not source validation.
+Bilingual export allocates source IDs for all pages before rewriting cross-file
+links; it does not serialize and reparse the trees. The writer copies unchanged
+members in compressed form and inserts the optional about page in the same pass.
+For EPUB-to-HTML export, Rust extracts the rendered bodies and embeds referenced
+media using ZIP-only lookup; Python supplies the common HTML shell. For other
+source formats, Python supplies rendered chapters and resolved assets to Rust to
+generate the EPUB 3 package.
+
+The extension releases the Python GIL. A process-wide admission slot bounds
+simultaneous book-sized trees, and an ordered pool of up to six threads processes
+books with at least twelve resources. Python still owns storage snapshots, language
+policies and atomic replacement; native workers never access application state.
+
+The same extension hosts `text.rs` (plain-text and Markdown sections, paragraphs
+and export formatting) and `fb2.rs` (FictionBook XML and resource references).
+The Python adapters keep the strict legacy-encoding policy.
+
+`docx/` handles WordprocessingML import and reconstruction, including the package
+parts, paragraph and run properties, table merges and list numbering. Python
+applies export language policy and supplies one snapshot chapter at a time. Rust
+projects style ranges, merges continuations and orders bilingual paragraphs.
+`python-docx` is used for independent test fixtures, not by the installed engine.
+
+For standalone HTML with an explicit canonical shell and text-only paragraphs
+and headings, `html/ingest.rs` builds chapters, anchors and templates in one pass.
+Other inputs retain the tolerant HTML parser and the same persisted identities.
+`html.rs` plans prose regions, normalizes annotation offsets, backfills text
+and attributes, updates canonical document
+shells and rewrites local media references. For canonical HTML, Rust can also
+emit both bilingual orders and restore simple annotations with verified offsets.
+Complex link rewrites, nested or stale placements and noncanonical inputs use
+the Python compatibility renderer.
+MinerU uses the same module to read ordinary result ZIPs, combine HTML chunks and
+extract eligible cached blocks. Large PDFs are split in a private directory using
+`pdf/`, with pypdf page cloning for unsupported page features. Python owns the
+HTTP calls, cache policy and temporary-file lifetime.
+
+PDF layout extraction and fillback remain in the separate BabelDOC bridge. For
+image-only detection and bookmarks, Core first inspects the PDF natively; ambiguous
+text, named destinations and unusual outlines use a shared pypdf reader. Core
+projects translations, row ranges and annotation placements from the same saved
+paragraphs. It streams the HTTP response to a private file and uses `pdf/` to
+compose bilingual spreads and remap links before atomic publication. Supported page
+content is written into the spread itself, so ordinary page text stays visible to
+pypdf's layout extractor. The Python composer remains the fallback for unsupported
+features such as encrypted inputs or non-link annotations.
 
 ## Boundary verification
 

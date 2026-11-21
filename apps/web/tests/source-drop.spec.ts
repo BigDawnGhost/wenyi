@@ -250,7 +250,7 @@ test("uploading rejects replacement drops and creation enters the overview", asy
     await expect(
       dialog.getByRole("button", { name: "Close", exact: true }).first(),
     ).toBeEnabled();
-    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
     await zone.dispatchEvent("dragenter", { dataTransfer: replacement });
     await expect(
       zone.getByText("Release to add the file"),

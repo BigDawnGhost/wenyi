@@ -4,6 +4,22 @@ import { chooseOption } from "../../../../packages/ui/tests/e2e/select-helper";
 
 const origin = "http://127.0.0.1:19481";
 
+test("a parsed project can save a book without translation preparation", async ({ page }) => {
+  await fakeApi(page, {
+    [`/projects/${pid}`]: { ...project, fmt: "epub", status: "uploaded", initialized: false },
+  }, origin);
+  await page.addInitScript(() => {
+    window.__WENYI_DESKTOP__ = { apiBase: "http://127.0.0.1:19481", token: "fixture-token" };
+    window.__TAURI_INTERNALS__ = {
+      invoke: () => Promise.resolve({ path: "/fixture/source.epub" } as never),
+    };
+  });
+  await page.goto(`/projects/${pid}/export`);
+  await expect(page.getByRole("button", { name: "EPUB", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Generate export" }).click();
+  await expect(page.getByText("Saved to /fixture/source.epub", { exact: true })).toBeVisible();
+});
+
 for (const [babeldoc, order] of [
   [false, "target_first"],
   [true, "target_first"],
@@ -82,7 +98,6 @@ test("HTML native save preserves the options and reports the HTML path", async (
     if (request.method() === "POST" && request.url().endsWith("/exports")) browserJobs++;
   });
   await page.goto(`/projects/${pid}/settings`);
-  await page.getByRole("switch", { name: "Normalize punctuation on export", exact: true }).uncheck();
   await page.getByRole("switch", { name: "Include an “About this translation” page", exact: true }).uncheck();
   await chooseOption(page.getByLabel("Bilingual order"), "Source first");
   await page.getByRole("switch", { name: "Preserve source formatting in bilingual output", exact: true }).check();
@@ -95,8 +110,8 @@ test("HTML native save preserves the options and reports the HTML path", async (
   await expect(page.getByText("Saved to /fixture/book.html", { exact: true })).toBeVisible();
   expect(await page.evaluate(() =>
     (window as unknown as { savedOptions: Record<string, unknown> }).savedOptions,
-  )).toMatchObject({
-    format: "html", bilingual: true, punctuation_normalize: false,
+  )).toEqual({
+    format: "html", bilingual: true,
     about_page: false, order: "source_first", preserve_source_style: true,
   });
   expect(browserJobs).toBe(0);

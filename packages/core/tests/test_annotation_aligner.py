@@ -398,7 +398,7 @@ def test_units_are_sequential_and_duplicate_unit_identity_makes_no_requests():
 @pytest.mark.parametrize("kind", ["epub_annotations", "docx_styles"])
 @pytest.mark.parametrize("fail", [False, True])
 def test_services_persist_completed_continuations_and_reuse_success_or_fallback_on_resume(
-    tmp_path, kind, fail
+    tmp_path, monkeypatch, kind, fail
 ):
     value = unit()
     items = [dict(item) for item in value.items]
@@ -414,7 +414,8 @@ def test_services_persist_completed_continuations_and_reuse_success_or_fallback_
                 anchor="paragraph",
                 meta={kind: {"version": 1, "source_length": len(value.source), "items": items}},
             ),
-            Segment(index=1, source=" met Bo.", target=None, cont=True),
+            Segment(index=1, source=" \n"),
+            Segment(index=2, source=" met Bo.", target=None, cont=True),
         ],
     )
     config = Config.from_dict({"llm": {"preset": "fake"}})
@@ -429,14 +430,31 @@ def test_services_persist_completed_continuations_and_reuse_success_or_fallback_
     else:
         run = DocxStyleService(runtime).align_styles_after_batch
     store = FileStorage(str(tmp_path / "book"))
+    chapter_view = Chapter.text_segments
+    reads = 0
+
+    def text_segments(chapter):
+        nonlocal reads
+        reads += 1
+        return chapter_view.__get__(chapter)
+
+    monkeypatch.setattr(Chapter, "text_segments", property(text_segments))
+    # Even with all targets present, the first batch must wait for the final slice's range.
+    chapter.segments[2].target = "见到了博。"
     run(0, chapter, 0, 1, store)
     assert not client.calls
-    chapter.segments[1].target = "见到了博。"
+    # A batch touching the final slice must still wait if a slice has no target.
+    chapter.segments[2].target = None
     run(0, chapter, 1, 1, store)
+    assert not client.calls
+    assert store.list_events() == []
+    chapter.segments[2].target = "见到了博。"
+    run(0, chapter, 1, 1, store)
+    assert reads == 3  # One nonempty view per stand-alone batch, not per logical lookup.
     saved = store.load_chapter(0)
     metadata = saved.segments[0].meta[kind]
     assert metadata["target_digest"] == target_digest(value.target)
-    assert len(metadata["placements"]) == len(items)
+    assert [row["id"] for row in metadata["placements"]] == [item["id"] for item in items]
     assert all(
         row["status"] == ("fallback" if fail else "aligned") for row in metadata["placements"]
     )
@@ -445,16 +463,18 @@ def test_services_persist_completed_continuations_and_reuse_success_or_fallback_
         assert metadata["placements"][0]["method"] == (
             "proportional_source_range" if fail else "llm_source_focus"
         )
-    assert [segment.target for segment in saved.segments] == ["阿达", "见到了博。"]
+    assert [segment.target for segment in saved.segments] == ["阿达", None, "见到了博。"]
     paid_calls = len(client.calls)
     # Reopen persisted state and retry the interrupted batch, with no new calls/events.
+    events = store.list_events()
     resumed_store = FileStorage(str(tmp_path / "book"))
     run(0, resumed_store.load_chapter(0), 1, 1, resumed_store)
     assert len(client.calls) == paid_calls == len(items)
+    assert resumed_store.list_events() == events
     # A changed formal target must not reuse old offsets.
-    previous_target = saved.segments[1].target
+    previous_target = saved.segments[2].target
     assert previous_target is not None
-    saved.segments[1].target = previous_target + "后来。"
+    saved.segments[2].target = previous_target + "后来。"
     run(0, saved, 1, 1, resumed_store)
     assert len(client.calls) == paid_calls * 2
     assert saved.segments[0].meta[kind]["target_digest"] == target_digest(value.target + "后来。")

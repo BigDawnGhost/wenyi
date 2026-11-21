@@ -209,22 +209,23 @@ Web/Desktop 的创建时选择见[工作区指南](workspace.md)。
 
 <a id="terminology-context"></a>
 
-### 实验性术语证据
+### 增量术语备注
 
-设置 `pipeline.terminology_context: true`，可开启仅 CLI 支持的全书人物原文证据。
-使用前先检查路由：
-
-```bash
-wenyi models explain --operation terminology.evidence
-wenyi models check --for translate
-wenyi translate book.epub
-```
-
-此功能在待译批次中增加人物发现和取证；`prepare` 仍不抽取或建立术语。
-其他类型保持常规译后抽取。已有权威译名和受保护的人工字段保留。
-它会增加上下文、模型调用和首批延迟，默认关闭，也不是逐次出现的词义选择系统。
-Review 可以消费已有备注，但不生产这类证据。
-用于长书前请阅读[上下文与术语](pipeline.md#context-and-glossary)。
+要让备注随翻译更新，设置 `pipeline.glossary_note_workers: 4`，然后照常运行 `wenyi translate book.epub`。
+每批译完后，`glossary.note` 并行维护本批命中的词条，不预读后文；
+下一批等本批备注发布后再开始。新事实逐条追加，标有原文位置
+`c章:s段:起点-终点`（从 0 开始，终点不含）。纠正必须指明哪条旧判断有误、
+为什么，以及新证据在哪；其他事实继续有效。维护时可回读该词条引用过的原文。
+正文只接收命中词在当前语境下仍有效的事实及原有备注；标准翻译需要时可分页查历史。
+依赖说话对象的亲属称呼记在人物证据里，不作为全书固定译法。已有映射不会自动删除，
+历史记录也不会回写到已存译文。
+响应格式无法识别或适用条件无法在引用原文中找到时，该词条最多再答一次。
+无依据的事实记为“未采纳”，不写入备注；同批有效事实保留，正文继续。
+续跑不会重试同批已记录的结果，后文有新证据仍可更新。模型服务、额度和存储故障仍会暂停任务。
+即使关闭备注生成，Review 也会逐段对照已存主译名、适用备注和实际译文。只有原文支持的正文错误
+才进入修订流程；词条自身与备注不一致时，另记在 Review 目录的 `rounds/final/glossary_alerts.json`，
+供人工判断，不会触发 Autofix 或改写术语库。
+可对比 `glossary.note` 与 `translation.body` 的用量；并行能缩短等待，并不减少计费调用。
 
 <a id="resume"></a>
 

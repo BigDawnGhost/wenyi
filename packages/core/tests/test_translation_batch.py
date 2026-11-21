@@ -141,7 +141,9 @@ class TestTranslationService(unittest.TestCase):
     def test_progress_label_prefers_real_title(self):
         self.assertEqual(TranslationService.chapter_progress_label("引言", 0), "引言")
         self.assertEqual(TranslationService.chapter_progress_label("第一章", 1), "第一章")
-        self.assertEqual(TranslationService.chapter_progress_label("", 1), "Chapter 2")
+        self.assertEqual(
+            TranslationService.chapter_progress_label("", 1), "progress.stage.chapter:2"
+        )
 
     def test_resume_batch_from_continuation_receives_absolute_annotation_slice(self):
         with tempfile.TemporaryDirectory() as directory:

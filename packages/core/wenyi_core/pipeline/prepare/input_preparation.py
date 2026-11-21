@@ -73,7 +73,7 @@ def parse_document(
         document = cached
     else:
         if progress:
-            progress(0, 0, "Parsing document…")
+            progress(0, 0, "progress.stage.parsing")
         pipeline = config.pipeline
         document = load_document(
             input_path,
@@ -111,7 +111,7 @@ def locate_input_storage(
 ) -> tuple[Storage, str]:
     """Locate local state using filename or metadata titles, without parsing chapters."""
     if progress:
-        progress(0, 0, "Locating source…")
+        progress(0, 0, "progress.stage.locateSource")
     extension = os.path.splitext(input_path)[1].lower()
     digest = source_sha256(input_path)
     if extension in (

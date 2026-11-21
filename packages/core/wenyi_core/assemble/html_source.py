@@ -128,4 +128,5 @@ def _render_html_source(
         order=order,
         preserve_source_style=preserve_source_style,
         source_lang=manifest.get("source_lang", ""),
+        prefer_native=True,
     )

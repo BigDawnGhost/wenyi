@@ -2,7 +2,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useI18n } from "../../i18n";
 import { api } from "../../api/client";
 import { ErrorNotice } from "../../components/ui/data";
+import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 
 export function PrecisionDrafts({
   pid,
@@ -49,7 +52,7 @@ export function PrecisionDrafts({
   if (!data.available)
     return (
       <div className="space-y-3">
-        <p role="status" className="rounded-xl border border-border bg-card p-4 text-sm text-muted-foreground">
+        <p role="status" className={cn(cardSurface, "p-4 text-sm text-muted-foreground")}>
           {t(`proofreading.precisionUnavailable.${data.reason ?? "no_archive"}`)}
         </p>
         <Button variant="outline" disabled={query.isFetching} onClick={() => void query.refetch()}>
@@ -66,27 +69,25 @@ export function PrecisionDrafts({
   );
   return (
     <div className="space-y-4">
-      <p className="rounded-lg bg-muted/50 p-3 text-sm">
+      <p className="rounded-lg bg-surface p-3 text-sm">
         {t("proofreading.precisionExplanation")}
       </p>
       {data.candidates.map((candidate) => (
-        <section key={candidate.id} className="min-w-0 space-y-3 rounded-xl border border-border bg-card p-4">
+        <section key={candidate.id} className={cn(cardSurface, "min-w-0 space-y-3 p-4")}>
           <h3 className="flex flex-wrap items-center gap-2 text-sm font-medium">
             {candidate.id}
             {candidate.id === data.before_polish_candidate && (
-              <span className="rounded bg-muted px-2 py-1 text-xs">
-                {t("proofreading.beforePolishComparison")}
-              </span>
+              <Badge variant="secondary">{t("proofreading.beforePolishComparison")}</Badge>
             )}
           </h3>
           {text(candidate.target)}
         </section>
       ))}
-      <section className="space-y-3 rounded-lg border bg-muted/30 p-4">
+      <section className="space-y-3 rounded-lg border bg-surface p-4">
         <h3 className="text-sm font-medium">{t("proofreading.archivedSynthesis")}</h3>
         {text(data.synthesized_target)}
       </section>
-      <section className="space-y-3 rounded-xl border border-border bg-card p-4">
+      <section className={cn(cardSurface, "space-y-3 p-4")}>
         <h3 className="text-sm font-medium">{t("proofreading.currentTranslation")}</h3>
         {target !== data.synthesized_target && (
           <p className="text-xs text-muted-foreground">{t("proofreading.currentDiffers")}</p>

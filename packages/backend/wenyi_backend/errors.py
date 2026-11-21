@@ -24,6 +24,7 @@ INVALID_CONFIGURATION = "invalid_configuration"
 UNSUPPORTED_CLIENT = "unsupported_client"
 # Added by the upload guard (audit C-2).
 SOURCE_TOO_LARGE = "source_too_large"
+GLOSSARY_IMPORT_TOO_LARGE = "glossary_import_too_large"
 
 
 class ApiError(HTTPException):
@@ -91,6 +92,7 @@ def describe_status(status: int) -> str:
 
 
 __all__ = [
+    "GLOSSARY_IMPORT_TOO_LARGE",
     "INVALID_CONFIGURATION",
     "PROJECT_BUSY",
     "PROJECT_NOT_FOUND",

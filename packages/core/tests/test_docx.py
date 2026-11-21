@@ -279,6 +279,7 @@ class TestDocxReader(unittest.TestCase):
             result = DocxDocument(out_path)
             paragraphs = [p for p in result.paragraphs if p.text]
             self.assertEqual([p.text for p in paragraphs], ["译One", "One", "译Two", "Two"])
+            num_ids = []
             for paragraph in paragraphs:
                 target_side = paragraph.text.startswith("译")
                 style_name = paragraph.style.name if paragraph.style is not None else ""
@@ -288,8 +289,13 @@ class TestDocxReader(unittest.TestCase):
                     target_side,
                     paragraph.text,
                 )
-                num_pr = paragraph._p.pPr.find(qn("w:numPr")) if paragraph._p.pPr else None
-                self.assertEqual(num_pr is not None, paragraph.text == "译One")
+                num_pr = paragraph._p.find(f"{qn('w:pPr')}/{qn('w:numPr')}")
+                self.assertEqual(num_pr is not None, target_side)
+                if num_pr is not None:
+                    num_ids.append(num_pr.find(qn("w:numId")).get(qn("w:val")))
+            # A different numId (including one inherited from the template)
+            # would start a different list rather than continue the first item.
+            self.assertEqual(num_ids[0], num_ids[1])
 
 
 class TestDocxStyles(unittest.TestCase):
@@ -593,7 +599,7 @@ class TestDocxCliDefaults(unittest.TestCase):
         captured: dict = {}
 
         class FakeOrchestrator:
-            def __init__(self, config, client=None, *, allow_terminology_context=False):
+            def __init__(self, config, client=None, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 del client
                 captured["config"] = config
@@ -630,7 +636,7 @@ class TestDocxCliDefaults(unittest.TestCase):
         captured: dict = {}
 
         class FakeOrchestrator:
-            def __init__(self, config, client=None, *, allow_terminology_context=False):
+            def __init__(self, config, client=None, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 del client
 

@@ -12,12 +12,20 @@ on:
     branches: [main]
     paths:
       - .github/workflows/build.yml
+      - LICENSE
+      - packages/core/LICENSE
+      - packages/core/THIRD_PARTY_NOTICES.md
+      - packages/cli/LICENSE
+      - scripts/release/core_native_notices.py
       - scripts/release/release_version.py
       - scripts/release/package_release.py
       - scripts/release/check_backend_packages.py
       - scripts/release/check_wheel_resources.py
       - scripts/dev/cli_entry.py
       - packages/core/tests/test_release_packaging.py
+      - packages/core/hatch_build.py
+      - packages/core/pyproject.toml
+      - packages/core/rust/**
   release:
     types: [published]
 
@@ -74,10 +82,10 @@ jobs:
           python -m pip install hatch-vcs
           python scripts/release/release_version.py --github-output "$GITHUB_OUTPUT"
 
+      - uses: dtolnay/rust-toolchain@stable
       - name: Install build dependencies
         run: python -m pip install ./packages/core ./packages/cli pyinstaller
 
-      - uses: dtolnay/rust-toolchain@stable
       - name: Build the wenyi-locks native library
         shell: bash
         run: |
@@ -101,18 +109,19 @@ jobs:
         run: >
           python -m PyInstaller --name wenyi --onefile --clean --noconfirm
           --add-binary "${{ env.LOCKS_LIB }}${{ runner.os == 'Windows' && ';' || ':' }}."
-          --paths packages/core --paths packages/cli
           --collect-all bs4 --collect-all lxml
           --collect-all openai --collect-all pydantic --collect-all yaml
           --collect-all wenyi_core --collect-all tiktoken --collect-all tiktoken_ext
-          --collect-all docx --collect-all google.genai
+          --collect-all google.genai
           --collect-data wenyi_core.i18n
           --copy-metadata wenyi-core --copy-metadata wenyi-cli
           --workpath build/pyinstaller --specpath build/pyinstaller-spec
           --distpath dist scripts/dev/cli_entry.py
 
       - name: Smoke test executable
+        shell: bash
         run: |
+          python -c "from PyInstaller.archive.readers import CArchiveReader; assert any('_epub_native.' in name for name in CArchiveReader('${{ matrix.binary }}').toc), 'Missing EPUB extension'"
           ${{ matrix.binary }} --help
           ${{ matrix.binary }} --version
           ${{ matrix.binary }} languages

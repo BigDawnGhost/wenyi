@@ -7,6 +7,7 @@ import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from contextlib import nullcontext
+from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
 
@@ -56,6 +57,28 @@ def store(tmp_path):
     storage = SqliteStorage(str(tmp_path / "run"))
     yield storage
     storage.close_all()
+
+
+def test_review_lookup_skips_unrelated_event_history(store):
+    raw = "2025-01-02T01:00:00+08:00"
+    store.append_artifact_record(
+        "events.jsonl", {"ts": raw, "event": "review_started", "review_id": "r"}
+    )
+    conn = store._connection()
+    with store.state_lock():
+        conn.executemany(
+            "INSERT INTO artifact_records(key,value) VALUES('events.jsonl',?)",
+            [('{"event":"translation_batch"}',)] * 4000,
+        )
+    # A full scan takes at least one instruction per row. Bound work rather
+    # than wall time, including when looking for a review that doesn't exist.
+    conn.set_progress_handler(lambda: 1, 2000)
+    try:
+        start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        assert store.review_event_candidates(start, start) == [(raw, "r")]
+        assert store.review_event_candidates(start.replace(year=2026), None) == []
+    finally:
+        conn.set_progress_handler(None, 0)
 
 
 def test_run_exit_invalidates_connections_in_reused_threads(store):
@@ -928,7 +951,6 @@ def test_autofix_publication_recovers_without_changing_manifest(
             "language": {"source": "en", "target": "zh"},
             "llm": {"preset": "fake"},
             "pipeline": {"review_autofix": True, "review_concurrency": 1},
-            "output": {"punctuation_normalize": False},
             "paths": {"state_dir": str(tmp_path / "unused")},
         }
     )

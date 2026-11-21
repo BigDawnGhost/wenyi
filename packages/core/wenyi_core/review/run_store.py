@@ -323,6 +323,17 @@ class ReviewRunStore:
     def load_chunk_result(self, chunk_id: str) -> dict[str, Any] | None:
         return self._read(os.path.join(self.run_dir, "chunks", f"{chunk_id}.json"))
 
+    def glossary_alerts(self) -> list[dict[str, Any]]:
+        """Rebuild read-only glossary observations from completed leaves, including on resume."""
+        rows = {}
+        for name in sorted(self._names("chunks")):
+            if name.endswith(".json"):
+                chunk = self.load_chunk_result(name[:-5]) or {}
+                for alert in chunk.get("glossary_alerts", []):
+                    key = (alert["chapter"], alert["index"], alert["term"], alert["note"])
+                    rows.setdefault(key, alert)
+        return [rows[k] for k in sorted(rows)]
+
     def rebuild_snapshots_from_chunks(self, review_round: int) -> None:
         """Rebuild initial/dismissed snapshots from persisted chunk caches.
         On scan_done resume, review_once no longer replays aggregation calls. Restore them

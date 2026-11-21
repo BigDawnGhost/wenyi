@@ -34,20 +34,6 @@ const MinerUCredential = lazy(() =>
 );
 void loadDesktopCredential().catch(() => { /* The route retries when opened. */ });
 
-const progressKeys: Record<string, string[]> = {
-  progress: ["workflow"],
-  pipeline: ["workflow"],
-  batch: ["chapters", "stats"],
-  chapter: ["project", "chapters", "stats"],
-  translation: ["chapters", "workflow"],
-  chapter_translation: ["chapters", "workflow"],
-  parse: ["project", "chapters", "workflow"],
-  prepare: ["project", "chapters", "workflow"],
-  review: ["workflow", "review-runs", "review-run"],
-  term: ["terms", "conflicts"],
-  log: ["events"],
-};
-
 export function desktopPlatform(queryClient: QueryClient): PlatformServices {
   return {
     activity,
@@ -70,7 +56,6 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
     connectProgress: (project) => new WebSocket(progressUrl(project)),
     authenticateProgress: (socket) => socket.send(JSON.stringify({ token: authToken() })),
     progressInterval,
-    progressKeys: (kind) => progressKeys[kind] || ["workflow"],
     bindSourceDrop,
     capabilities: {
       generalSettings: NotificationSettings,

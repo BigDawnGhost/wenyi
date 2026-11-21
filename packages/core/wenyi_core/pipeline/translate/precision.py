@@ -5,12 +5,14 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Any
 
 from ...agents import prompts
 from ...agents.precision import PrecisionAgent, PrecisionError, PrecisionInputs
 from ...config import Config
+from ...glossary.notes import guidance
+from ...glossary.store import GlossaryStore
 from ...llm.base import LLMClient
 from ...llm.routing import identity, inference_snapshot
 from ...markup.ruby import strip_ruby_markers
@@ -143,6 +145,18 @@ class _PrecisionRun:
     ):
         self.client = client
         self.config = config
+        if config.pipeline.glossary_note_workers:
+            # Drafts consume guidance, not lookup history. Freeze only the note view they
+            # can see so unrelated new citations cannot invalidate three paid drafts.
+            source = "\n".join(plan.sources)
+            relevant = {t.source for t in GlossaryStore.terms_in(list(plan.terms), source)}
+            plan = replace(
+                plan,
+                terms=tuple(
+                    replace(t, note=guidance(t.note, source) if t.source in relevant else "")
+                    for t in plan.terms
+                ),
+            )
         self.plan = plan
         self.store = store
         self.checkpoint = checkpoint
@@ -169,6 +183,8 @@ class _PrecisionRun:
             "glossary_reading_source": "ja",
             "inference": inference_snapshot(config.llm, _OPERATIONS),
         }
+        if config.pipeline.glossary_note_workers:
+            self.binding["incremental_note_view"] = 1
         object_guidance = prompts.protected_object_guidance(
             [item.get("marker", "") for group in plan.annotation_contexts for item in group]
         )

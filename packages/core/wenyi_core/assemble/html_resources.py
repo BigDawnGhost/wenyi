@@ -16,6 +16,8 @@ from urllib.parse import unquote, urlsplit
 
 from bs4 import BeautifulSoup
 
+from wenyi_core.markup import _epub_native
+
 from .export_view import AssembleStore
 
 # File kinds that travel inside the source container and must be packaged beside the
@@ -220,8 +222,20 @@ def _embed_html_resources(
     *,
     source_dir: str,
     zip_resources: dict[str, bytes] | None = None,
+    prefer_native: bool = False,
 ) -> str:
     """Inline readable local/container media while retaining data and remote references."""
+    if prefer_native and zip_resources is None:
+
+        def load(reference: str) -> tuple[str, bytes] | None:
+            if reference.lstrip().lower().startswith("data:"):
+                return None
+            return _load_html_resource(reference, source_dir=source_dir)
+
+        rendered = _epub_native.html_inline_media(html, load)
+        if rendered is not None:
+            return rendered
+
     rewritten, _packaged = _package_html_resources(
         html,
         source_dir=source_dir,

@@ -33,7 +33,7 @@ pipeline:
   # Standard-mode polish workers; above 1, polishing runs in the background while translation continues.
   polish_concurrency: 1
   rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)
-  terminology_context: false # CLI-only experimental whole-book terminology evidence
+  glossary_note_workers: 0 # Incremental evidence notes: 0 disables, 1-16 workers per batch
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
   # Prescan content budgets in cl100k_base tokens; prompt/context overhead is additional.
@@ -70,4 +70,3 @@ output:
   # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
   bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page
-  punctuation_normalize: true # Normalize only exported copies; preserve formal translations in state

@@ -1060,9 +1060,13 @@ class TestReviewReporting(unittest.TestCase):
                 progress=lambda done, total, label: events.append((done, total, label)),
             )
 
-        first = [(done, total) for done, total, label in events if label == "Whole-book review R1"]
+        first = [
+            (done, total) for done, total, label in events if label == "progress.stage.reviewRound1"
+        ]
         second = [
-            (done, total) for done, total, label in events if label == "Blind whole-book review R2"
+            (done, total)
+            for done, total, label in events
+            if label == "progress.stage.reviewRound:2"
         ]
         clean = [(done, total) for done, total, label in events if label == "Clean confirmation"]
         self.assertGreater(len(first), 2)
@@ -1074,14 +1078,17 @@ class TestReviewReporting(unittest.TestCase):
             self.assertTrue(any(0 < done < total for done, total in stage))
         self.assertEqual(clean, [(1, 2), (2, 2)])
         loading = [
-            (done, total) for done, total, label in events if label == "Loading review chapters"
+            (done, total)
+            for done, total, label in events
+            if label == "progress.stage.reviewChapters"
         ]
         self.assertTrue(loading)
         self.assertEqual(loading[0][0], 0)
         self.assertEqual(loading[-1][0], loading[-1][1])
         labels = [label for _, _, label in events]
         self.assertLess(
-            labels.index("Restoring review checkpoint…"), labels.index("Whole-book review R1")
+            labels.index("progress.stage.reviewCheckpoint"),
+            labels.index("progress.stage.reviewRound1"),
         )
 
     def test_review_accepts_numeric_string_index(self):
@@ -1698,7 +1705,7 @@ class TestReviewReporting(unittest.TestCase):
                 [
                     (done, total)
                     for done, total, label in progress_events
-                    if label == "Conflict arbitration R1"
+                    if label == "progress.stage.arbitration:1"
                 ],
                 [(0, 1), (1, 1)],
             )
@@ -1818,11 +1825,11 @@ class TestReviewReporting(unittest.TestCase):
             [
                 (done, total)
                 for done, total, label in progress_events
-                if label == "Shadow revision R1"
+                if label == "progress.stage.shadowRevision:1"
             ],
             [(0, 1), (1, 1)],
         )
-        self.assertIn("Blind whole-book review R2", [label for _, _, label in progress_events])
+        self.assertIn("progress.stage.reviewRound:2", [label for _, _, label in progress_events])
 
     def test_clean_first_pass_requires_an_independent_confirmation(self):
         review_calls = 0
@@ -2561,6 +2568,7 @@ class TestFullGlossary(unittest.TestCase):
                                 "source": "夏帆ちゃん",
                                 "target": "小夏帆",
                                 "type": "appellation",
+                                "scope": "stable",
                                 "aliases": ["夏帆"],
                                 "note": "亲昵称呼",
                             }
@@ -2642,7 +2650,7 @@ class TestFullGlossary(unittest.TestCase):
             # Skip all saved batches and retain only the chapter-end fallback extraction.
             self.assertEqual(len(glossary_calls), 1)
             self.assertTrue(glossary_labels)
-            self.assertTrue(all(label != "Parsing document…" for label in glossary_labels))
+            self.assertNotIn("progress.stage.parsing", glossary_labels)
 
     def test_final_glossary_is_available_to_review_prompt(self):
         """Terms discovered in later chapters must be available to final review from the first
@@ -2665,6 +2673,7 @@ class TestFullGlossary(unittest.TestCase):
                                 "source": "夏帆ちゃん",
                                 "target": "小夏帆",
                                 "type": "appellation",
+                                "scope": "stable",
                                 "aliases": ["夏帆"],
                                 "note": "亲昵称呼",
                             }
@@ -2750,17 +2759,17 @@ class TestProgressLabels(unittest.TestCase):
 
             labels = [label for _, _, label in events]
             expected = [
-                "Parsing document…",
-                "Prescanning chapter digests",
-                "Analyzing book style…",
-                "Generating whole-book synopsis…",
+                "progress.stage.parsing",
+                "progress.stage.prescan",
+                "progress.stage.style",
+                "progress.stage.synopsis",
                 "Translating chapter titles…",
-                "Translation complete",
-                "Assembling translation…",
+                "progress.stage.translationDone",
+                "progress.stage.assembling",
             ]
             positions = [labels.index(label) for label in expected]
             self.assertEqual(positions, sorted(positions), labels)
-            self.assertIn((0, 0, "Generating whole-book synopsis…"), events)
+            self.assertIn((0, 0, "progress.stage.synopsis"), events)
             self.assertNotIn("Generating report…", labels)
 
 

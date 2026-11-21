@@ -4,16 +4,30 @@ import { errorMessage } from "../../lib/error-codes";
 import { cn } from "../../lib/utils";
 import { Lock } from "lucide-react";
 import { Card } from "./card";
-export function ErrorNotice({ error }: { error?: unknown }) {
+export function ErrorNotice({
+  error,
+  children,
+  className,
+}: {
+  error?: unknown;
+  /** A caller-built message, for notices that are not a caught error. */
+  children?: React.ReactNode;
+  className?: string;
+}) {
   // The hook runs before the early return so the call order stays stable.
   const { t } = useI18n();
-  if (!error) return null;
+  // Either an error to format or a caller-built message: both are this same
+  // panel, and a page that had its own copy was one edit away from drifting.
+  if (!error && !children) return null;
   return (
     <div
       role="alert"
-      className="rounded-md border-l-4 border-l-destructive bg-destructive/10 p-3 text-sm text-destructive"
+      className={cn(
+        "rounded-md border-l-4 border-l-destructive bg-destructive/10 p-3 text-sm text-destructive",
+        className,
+      )}
     >
-      {errorMessage(error, t)}
+      {children ?? errorMessage(error, t)}
     </div>
   );
 }

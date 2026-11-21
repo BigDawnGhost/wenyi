@@ -21,7 +21,7 @@ CLI 读取当前工作目录的 `config.yaml`；使用 `wenyi --config PATH ...`
 | `llm` | 提供商连接、模型配置、档位、路由、配额和预算。 |
 | `segment` | 源文分批与超长段落切分。 |
 | `pipeline` | 准备、翻译、润色、Review 和 PDF 后端。 |
-| `output` | 单／双语版本、双语样式、说明页和标点。 |
+| `output` | 单／双语版本、双语样式和说明页。 |
 | `paths` | CLI 状态位置。 |
 
 **平台边界**
@@ -259,9 +259,7 @@ BabelDOC 是独立 HTTP 服务。
 | `polish.body` | `strong` | 润色，包括精翻综合 |
 | `glossary.extract` | `fast` | 术语抽取 |
 | `glossary.align_history` | `fast` | 历史译法对齐 |
-| `terminology.discover` | `strong` | 基于原文的人物发现 |
-| `terminology.evidence` | `strong` | 全书原文取证 |
-| `terminology.merge` | `strong` | 证据备注综合 |
+| `glossary.note` | `fast` | 维护已译批次的术语备注 |
 | `annotation.align` | `cheap` | 注释定位 |
 | `review.scan` | `cheap` | 初审与盲审复查 |
 | `review.verify` | `strong` | 取证核查 |
@@ -361,7 +359,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | `pipeline.prescan_concurrency` | `4` | 章节梗概并发；`1` 为顺序执行。 |
 | `pipeline.synopsis_source_tokens` | `8000` | 每个章节梗概原文块的 token 预算，正整数。 |
 | `pipeline.synopsis_reduce_tokens` | `12000` | 每组摘要归并内容及生成摘要的 token 预算，正整数。 |
-| `pipeline.terminology_context` | `false` | 仅 CLI 可用的实验性全书人物证据。 |
+| `pipeline.glossary_note_workers` | `0` | CLI：`0` 关闭；`1`–`16` 指定并行词条数。[Web/Desktop 项目开关](../guide/workspace.md#创建项目)开启时使用 4 个 worker。 |
 | `pipeline.annotation_alignment` | `true` | 定位译文链接／注释。EPUB 使用段末回退标记；PDF 忽略失败项，见 [PDF 格式说明](formats.md#babeldoc)。 |
 | `pipeline.annotation_alignment_concurrency` | `4` | 单个逻辑段内逐注释请求的并发数。 |
 
@@ -379,7 +377,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 `book_understanding` 增加首次预扫工作，长章节尤甚。
 有原文的章节需要可用梗概才能翻译；全书概览失败不阻止翻译。
 失败梗概可在下次 prepare/translate 中补齐。
-无论是否开启 `terminology_context`，准备阶段都不抽取或预填术语。
+准备阶段不抽取或预填术语。
 
 概览预算使用 `cl100k_base`，不按字符数或 provider 专属分词器计算。
 超长原文及单条摘要在完整 Unicode 字符边界内尽量均分；
@@ -389,10 +387,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 `synopsis_reduce_tokens` 会拒绝超出预算的生成摘要，不覆盖模型的输出 token 上限。
 修改预算只影响待完成工作，本身不会重新生成已验证的完整章节梗概或已缓存的全书概览。
 
-术语证据在 CLI 待译工作中增加人物发现和原文备注，
-其他术语类型保持常规抽取，不产生多义项或逐次出现的译名选择。
-Web/API 不会仅因该 YAML 开关启用而生产证据。
-Review 可以使用已有备注，不生成新证据。
+旧配置中的 `terminology_context: false` 仍可读取。`true` 和 `terminology.*` 模型路由已移除；升级时删除这些设置，不会自动改为付费的 note 维护。
 
 无论 `batch_glossary` 如何设置，新的 Reviewer 请求总是使用全量术语。
 `relevant` 可缩短长篇书的正文提示词，但会去掉段落只隐含指代的词条；修改它不会重译已完成批次。
@@ -462,15 +457,12 @@ BabelDOC 是可选的独立 AGPL 服务，用于尽量保留 PDF 版式。
 | `output.bilingual_order` | `target_first` | `target_first` 或 `source_first`；选择按段配对格式中在前的版本，以及 PDF 并列页中位于左侧的版本。 |
 | `output.bilingual_preserve_source_style` | `false` | 保留已记录的原文样式，替代该格式的默认原文显示方式。 |
 | `output.about_page` | `true` | 为 EPUB 添加“关于此翻译”项目说明页。 |
-| `output.punctuation_normalize` | `true` | 只在导出副本上规范简体中文标点。 |
 
 `bilingual_preserve_source_style` 与顺序独立。
 EPUB/HTML 中，`true` 用正常书籍样式替代淡化原文。
 DOCX 中，`false` 使用正常正文样式；`true` 恢复已记录的字符样式，
 包括段落／表格中的混合样式，无法恢复从未记录的样式。
 
-标点规范化不修改正式章节译文或 Review 输入。
-繁体中文和其他目标跳过该简体中文转换。
 EPUB 说明页在简体中文目标下为中文，其余目标目前使用英语。
 
 CLI 的 `translate` 和 `assemble` 可用 `--mono/--no-mono`、
@@ -532,13 +524,15 @@ CLI 在所选文件旁保存原始字节备份，名称为 `<文件名>.backup-<
 注释保留在备份里，重建后的 YAML 只保存支持的设置。
 Web 备份保存在 PostgreSQL，Desktop 备份保存在所选数据根目录的目录库，
 与各自设置一起保存。Web 遇到不兼容的初始 YAML 时也在 PostgreSQL 备份，
-不改写挂载文件。有效设置不重写，重复启动不重复生成备份。
+不改写挂载文件。从初始 YAML 读取默认值时沿用相同重建规则，不修改文件或已保存设置。
+有效设置不重写，重复启动不重复生成备份。
 
 备份或替换保存失败时，原设置保持不变，加载／启动报错。
 语法损坏的 YAML 需要修正，不猜测其含义。
 重建不修改原书、章节译文、用量或冻结任务快照。
-若排队任务仍带有不兼容的旧快照，需要按重建后的设置重新启动任务，
-不会静默换一种模式执行。Web/Desktop 新设置提交与 Core 直接校验仍然严格。
+排队任务忽略已移除的导出标点开关，其余设置保持不变。
+若旧快照仍不兼容，需要按重建后的设置重新启动任务。
+Web/Desktop 新设置提交与 Core 直接校验仍然严格。
 
 可从备份取回当前 schema 仍支持的自定义选择，不再提供单独的配置转换命令。
 

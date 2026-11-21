@@ -6,11 +6,13 @@ individual DOM text nodes. Converted PDFs can retain the established EPUB block 
 
 from __future__ import annotations
 
+import json
 import os
 
 from bs4 import BeautifulSoup, Tag
 from bs4.element import Comment, Doctype
 
+from wenyi_core.markup import _epub_native
 from wenyi_core.markup.html import html_document_soup, html_is_protected, html_visible_text
 from wenyi_core.markup.segments import annotate_epub_resource
 
@@ -33,6 +35,16 @@ def _extract_chapter(
     preserve_inline_markup: bool = True,
 ) -> tuple[str, list[Segment], str]:
     """Extract a fragment using the selected markup policy and prefer its explicit title."""
+    if not preserve_inline_markup:
+        native = _epub_native.mineru_annotate_plain(html, chapter_index)
+        if native is not None:
+            detected_title, packed, template = native
+            segments = [
+                Segment.model_validate({**segment, "resource_href": None})
+                for segment in json.loads(packed)
+            ]
+            return chapter_title.strip() or detected_title, segments, template
+
     detected_title, segments, template = annotate_epub_resource(
         html,
         chapter_index,
@@ -72,7 +84,7 @@ def read_html(
     selects boundary tags or disables splitting, and encoding defaults to UTF-8.
     """
     with open(path, "r", encoding=encoding, errors="replace") as f:
-        document, _template = annotate_html_document(
+        document, _template = _annotate_html(
             f.read(),
             path,
             source_lang,
@@ -80,6 +92,7 @@ def read_html(
             chapter_tags=chapter_tags,
             encoding=encoding,
             preserve_inline_markup=preserve_inline_markup,
+            rebuild_shell=False,
         )
     return document
 
@@ -95,12 +108,78 @@ def annotate_html_document(
     preserve_inline_markup: bool = True,
 ) -> tuple[Document, str]:
     """Extract logical chapters and annotate the complete physical source for backfill."""
+    return _annotate_html(
+        html,
+        path,
+        source_lang,
+        target_lang,
+        chapter_tags=chapter_tags,
+        encoding=encoding,
+        preserve_inline_markup=preserve_inline_markup,
+        rebuild_shell=True,
+    )
+
+
+def _annotate_html(
+    html: str,
+    path: str,
+    source_lang: str,
+    target_lang: str,
+    *,
+    chapter_tags: frozenset[str] | None,
+    encoding: str,
+    preserve_inline_markup: bool,
+    rebuild_shell: bool,
+) -> tuple[Document, str]:
+    """Extract chapter templates; rebuild the physical document only for source backfill."""
     # Match text-file reading when exports decode a frozen byte snapshot directly.
-    soup = html_document_soup(html.replace("\r\n", "\n").replace("\r", "\n"))
+    html = html.replace("\r\n", "\n").replace("\r", "\n")
+    tags = list(chapter_tags) if chapter_tags else None
+    native = (
+        _epub_native.html_annotate_document(html, tags or [], rebuild_shell)
+        if preserve_inline_markup
+        else None
+    )
+    if native is not None:
+        packed, template = native
+        shell = json.loads(packed)
+        chapters = shell.pop("chapters")
+    else:
+        chapters, shell, template = _annotate_html_compat(
+            html,
+            chapter_tags=chapter_tags,
+            preserve_inline_markup=preserve_inline_markup,
+            rebuild_shell=rebuild_shell,
+        )
 
-    # Derive the book title from the filename, matching the text reader.
-    book_title = os.path.splitext(os.path.basename(path))[0]
+    document = Document(
+        title=os.path.splitext(os.path.basename(path))[0],
+        source_lang=source_lang,
+        target_lang=target_lang,
+        fmt="html",
+        source_path=os.path.abspath(path),
+        chapters=chapters,
+        meta={
+            "chapter_tags": tags,
+            **shell,
+            "html_parse": {
+                "version": 1,
+                "encoding": encoding,
+                "preserve_inline_markup": preserve_inline_markup,
+            },
+        },
+    )
+    return document, template
 
+
+def _annotate_html_compat(
+    html: str,
+    *,
+    chapter_tags: frozenset[str] | None,
+    preserve_inline_markup: bool,
+    rebuild_shell: bool,
+) -> tuple[list[Chapter], dict[str, object], str]:
+    soup = html_document_soup(html)
     # Chapter-based formats also need head contents; HTML exports reparse the full source.
     head_html = soup.head.decode_contents() if soup.head else ""
 
@@ -189,12 +268,12 @@ def annotate_html_document(
                 preserve_inline_markup=preserve_inline_markup,
             )
 
-        annotated_parts.append(template)
-        template_soup = BeautifulSoup(template, "html.parser")
-        has_visible_media = template_soup.find(
-            ["img", "picture", "svg", "object", "video", "audio", "canvas", "iframe"]
-        )
-        if not any(s.source.strip() for s in segments) and has_visible_media is None:
+        if rebuild_shell:
+            annotated_parts.append(template)
+        # Only textless chapters need a media scan to decide whether to keep them.
+        if not any(s.source.strip() for s in segments) and not BeautifulSoup(
+            template, "html.parser"
+        ).find(["img", "picture", "svg", "object", "video", "audio", "canvas", "iframe"]):
             if preserve_inline_markup:
                 pending_template += template
             continue
@@ -218,30 +297,17 @@ def annotate_html_document(
         else:
             chapters.append(Chapter(index=0, template=pending_template))
 
-    # Logical chapter boundaries never become physical document boundaries. Restore every
-    # annotated fragment, including non-translatable layout, into the original shell.
-    body.clear()
-    annotated_body = BeautifulSoup("".join(annotated_parts), "html.parser")
-    for node in list(annotated_body.contents):
-        body.append(node.extract())
+    if rebuild_shell:
+        # Logical chapter boundaries never become physical document boundaries. Restore every
+        # annotated fragment, including non-translatable layout, into the original shell.
+        body.clear()
+        annotated_body = BeautifulSoup("".join(annotated_parts), "html.parser")
+        for node in list(annotated_body.contents):
+            body.append(node.extract())
 
-    document = Document(
-        title=book_title,
-        source_lang=source_lang,
-        target_lang=target_lang,
-        fmt="html",
-        source_path=os.path.abspath(path),
-        chapters=chapters,
-        meta={
-            "chapter_tags": list(chapter_tags) if chapter_tags else None,
-            "head_html": head_html,
-            "html_attrs": dict(soup.html.attrs) if soup.html else {},
-            "body_attrs": dict(soup.body.attrs) if soup.body else {},
-            "html_parse": {
-                "version": 1,
-                "encoding": encoding,
-                "preserve_inline_markup": preserve_inline_markup,
-            },
-        },
-    )
-    return document, str(soup)
+    shell = {
+        "head_html": head_html,
+        "html_attrs": dict(soup.html.attrs) if soup.html else {},
+        "body_attrs": dict(soup.body.attrs) if soup.body else {},
+    }
+    return chapters, shell, str(soup) if rebuild_shell else ""

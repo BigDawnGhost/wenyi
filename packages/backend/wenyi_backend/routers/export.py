@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import mimetypes
 from urllib.parse import quote
 from uuid import uuid4
@@ -15,10 +16,9 @@ from ..errors import (
     EXPORT_NOT_FOUND,
     INVALID_CONFIGURATION,
     QUEUE_UNAVAILABLE,
-    SOURCE_NOT_READY,
     ApiError,
 )
-from ..export_plan import resolve_export
+from ..export_plan import export_input, resolve_export
 from ..export_response import ExportResponse
 from ..schemas import AssembleEnqueued, ExportOut, ExportRequest
 from ..workers import enqueue
@@ -33,15 +33,19 @@ def list_exports(pid: str) -> list[dict]:
     return current_context().exports.list_exports(pid)
 
 
-async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export") -> dict:
-    project = require_project(pid)
-    if not project.get("initialized"):
-        raise ApiError(SOURCE_NOT_READY, 409, "Prepare or translate the source before exporting")
-    store = storage_for(pid)
+def _resolve_input(project: dict, body: ExportRequest) -> tuple[str, dict]:
+    store = storage_for(project["id"])
     try:
-        fmt, options = resolve_export(project, store.load_manifest(), body)
+        return resolve_export(project, export_input(project, store, effective_config), body)
     finally:
         store.close()
+
+
+async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export") -> dict:
+    project = require_project(pid)
+    # Loading an uninitialized book's saved parse can be expensive. Keep the HTTP
+    # event loop free and open/close the adapter on the same worker thread.
+    fmt, options = await asyncio.to_thread(_resolve_input, project, body)
     try:
         snapshot = runtime_document(effective_config(project))
     except ValueError as error:
@@ -68,6 +72,11 @@ async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export")
             run_id=run_id,
             export_id=export_id,
             fmt=fmt,
+            **(
+                {"parsed_source_sha256": project["source_sha256"]}
+                if not project.get("initialized")
+                else {}
+            ),
             **options,
         )
         if job is None:

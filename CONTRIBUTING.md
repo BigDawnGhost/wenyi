@@ -81,8 +81,11 @@ When migrating existing work:
 
 ## Run the CLI from source
 
-For development, use Python 3.10+ and [uv](https://docs.astral.sh/uv/) in a repository
-checkout. To use a released version without a checkout, follow the
+For development, use Python 3.10+, [uv](https://docs.astral.sh/uv/), and a stable
+[Rust](https://rustup.rs/) toolchain with a native linker. Installing Core from
+source compiles its EPUB extension. After changing Core's Rust sources, rebuild it
+with `uv sync --locked --reinstall-package wenyi-core` (keep any extra workspace
+package selections you normally use). To install prebuilt packages, follow the
 [CLI installation guide](docs/guide/cli.md) instead.
 
 From the repository root:

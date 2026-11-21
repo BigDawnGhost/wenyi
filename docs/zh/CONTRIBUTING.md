@@ -67,8 +67,10 @@ CLI/Desktop 打包工作流有路径过滤，不应将这些条件检查设为�
 
 ## 从源码运行 CLI
 
-开发时，在源码仓库中使用 Python 3.10+ 和 [uv](https://docs.astral.sh/uv/)。
-如果只是使用已发布版本，无需拉取源码，按 [CLI 安装指南](guide/cli.md)操作即可。
+开发需要 Python 3.10+、[uv](https://docs.astral.sh/uv/) 和带本机链接器的稳定版
+[Rust](https://rustup.rs/) 工具链。从源码安装 Core 会编译 EPUB 扩展。修改 Core 的
+Rust 源码后，用 `uv sync --locked --reinstall-package wenyi-core` 重编译（保留平时
+使用的其他工作区包选项）。安装预构建的软件包请参阅 [CLI 安装指南](guide/cli.md)。
 
 从仓库根目录执行：
 

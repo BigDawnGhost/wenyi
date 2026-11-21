@@ -39,11 +39,23 @@ def verify_bundle(directory: Path) -> None:
     assert expected
     for resource in expected:
         assert (internal / "wenyi_core/i18n/data" / resource).is_file(), resource
+    assert any((internal / "wenyi_core/markup").glob("_epub_native.*")), (
+        "Missing bundled EPUB extension"
+    )
+    assert (internal / "wenyi_core/_licenses/rust-std/COPYRIGHT-library.html").is_file(), (
+        "Missing bundled Rust standard library notices"
+    )
     for package in ("wenyi-core", "wenyi-backend", "wenyi-desktop"):
         normalized = package.replace("-", "_")
         metadata = list(internal.glob(f"{normalized}-*.dist-info/METADATA"))
         assert len(metadata) == 1, f"Missing {package} metadata"
         assert f"Version: {version(package)}\n" in metadata[0].read_text()
+        licenses = metadata[0].parent / "licenses"
+        assert (licenses / "LICENSE").read_bytes() == (ROOT / "LICENSE").read_bytes(), package
+        if package == "wenyi-core":
+            assert (licenses / "THIRD_PARTY_NOTICES.md").read_bytes() == (
+                ROOT / "packages/core/THIRD_PARTY_NOTICES.md"
+            ).read_bytes(), "Missing or stale Core native license notices"
     for module in EXCLUDED_MODULES:
         assert not (internal / module).exists(), f"Unexpected bundled module: {module}"
         assert not list(internal.glob(f"{module}-*.dist-info")), module

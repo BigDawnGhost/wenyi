@@ -50,7 +50,7 @@ test("native drops default an unspecified project name and upload it", async ({ 
       handle: "final",
       project: {
         name: "原文.第二版", source_lang: "auto", target_lang: "zh",
-        prepare: false, translation_mode: "standard", prompt_genre: "literary", pdf_backend: null,
+        prepare: false, translation_mode: "standard", glossary_notes: false, prompt_genre: "literary", pdf_backend: null,
       },
     },
   });
@@ -242,6 +242,7 @@ for (const mode of ["standard", "three_draft_synthesis"] as const) {
     const precisionSwitch = page.getByRole("switch", { name: "Three drafts + synthesis", exact: true });
     await expect(precisionSwitch).not.toBeChecked();
     await precisionSwitch.setChecked(mode === "three_draft_synthesis");
+    await page.getByRole("switch", { name: "Incremental glossary notes", exact: true }).check();
     const prepareSwitch = page.getByRole("switch", { name: "Prepare before translating", exact: true });
     await expect(prepareSwitch).not.toBeChecked();
     await prepareSwitch.setChecked(mode === "three_draft_synthesis");
@@ -257,7 +258,7 @@ for (const mode of ["standard", "three_draft_synthesis"] as const) {
     // the dismiss control is relabelled rather than disabled. It stays on
     // screen here, because the replacement drop below needs the open dialog.
     await expect(dialog.getByRole("button", { name: "Close", exact: true }).first()).toBeEnabled();
-    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("button", { name: "Cancel", exact: true })).toBeEnabled();
     await expect(zone).toHaveAttribute("aria-disabled", "true");
     await expect.poll(() => calls(page)).toContainEqual({
       command: "native_drop_upload",
@@ -265,7 +266,7 @@ for (const mode of ["standard", "three_draft_synthesis"] as const) {
         handle: "original",
         project: {
           name: "Native book", source_lang: "auto", target_lang: "zh",
-          prepare: mode === "three_draft_synthesis", translation_mode: mode, prompt_genre: "academic", pdf_backend: null,
+          prepare: mode === "three_draft_synthesis", translation_mode: mode, glossary_notes: true, prompt_genre: "academic", pdf_backend: null,
         },
       },
     });

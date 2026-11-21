@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
+import mimetypes
 import os
-import posixpath
-import zipfile
 from html import escape
 
-from bs4 import BeautifulSoup
-from bs4.element import Tag
-
-from wenyi_core.assemble.epub_resources import _epub_resource_specs, _render_epub_resources
+from wenyi_core.assemble import epub_native
 from wenyi_core.assemble.html_bilingual import _BILINGUAL_CSS, _BILINGUAL_STYLE_ID
 from wenyi_core.assemble.html_renderer import _html_open_tag, _render_chapter_html
 from wenyi_core.atomicio import publish_target
+from wenyi_core.markup import _epub_native
 from wenyi_core.markup.html import html_document_soup
 
-from ..ingest.epub_package import _decode_markup
 from ..models.document import KIND_HEADING
 from .export_view import AssembleStore
 from .html_resources import (
@@ -25,13 +21,32 @@ from .html_resources import (
     _template_resource_source,
 )
 from .html_source import _render_html_source
-from .writer_common import _bilingual_source, _epub_lang, _manifest_target_lang, _merged_paragraphs
+from .writer_common import (
+    _bilingual_source,
+    _epub_lang,
+    _manifest_target_lang,
+    _merged_paragraphs,
+    supports_pdf_export,
+)
 
 
 def _html_presentation(
-    html: str, target_lang: str, *, bilingual: bool, preserve_source_style: bool
+    html: str,
+    target_lang: str,
+    *,
+    bilingual: bool,
+    preserve_source_style: bool,
+    prefer_native: bool = False,
 ) -> str:
     """Update output language/encoding without replacing the source head or shell."""
+    language = _epub_lang(target_lang)
+    add_style = bilingual and not preserve_source_style
+    if prefer_native:
+        rendered = _epub_native.html_present(
+            html, language, _BILINGUAL_STYLE_ID, _BILINGUAL_CSS if add_style else ""
+        )
+        if rendered is not None:
+            return rendered
     soup = html_document_soup(html)
     head = soup.head
     assert head is not None and soup.html is not None
@@ -39,13 +54,13 @@ def _html_presentation(
         if node.has_attr("charset") or str(node.get("http-equiv", "")).lower() == "content-type":
             node.decompose()
     head.insert(0, soup.new_tag("meta", charset="utf-8"))
-    if bilingual and not preserve_source_style and not soup.find(id=_BILINGUAL_STYLE_ID):
+    if add_style and not soup.find(id=_BILINGUAL_STYLE_ID):
         style = soup.new_tag("style", id=_BILINGUAL_STYLE_ID)
         style.string = _BILINGUAL_CSS
         head.append(style)
-    soup.html["lang"] = _epub_lang(target_lang)
+    soup.html["lang"] = language
     if soup.html.has_attr("xml:lang"):
-        soup.html["xml:lang"] = _epub_lang(target_lang)
+        soup.html["xml:lang"] = language
     return str(soup)
 
 
@@ -64,6 +79,8 @@ def _assemble_html(
     m = store.load_manifest()
     raw_meta = m.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
+    mineru = m.get("fmt") == "pdf" and not supports_pdf_export(m)
+    prefer_native = m.get("fmt") == "html" or mineru
     raw_head_html = meta.get("head_html", "")
     head_html = raw_head_html if isinstance(raw_head_html, str) else ""
 
@@ -79,18 +96,11 @@ def _assemble_html(
             order=order,
             preserve_source_style=preserve_source_style,
         )
-    elif m.get("fmt") == "epub" and _epub_resource_specs(meta):
-        chapters = [store.load_chapter(c["index"]) for c in m["chapters"]]
-        with zipfile.ZipFile(source_path, "r") as archive:
-            # Resolve media only inside the EPUB, never against adjacent local files.
-            media = {
-                info.filename: archive.read(info.filename)
-                for info in archive.infolist()
-                if os.path.splitext(info.filename)[1].lower() in _MEDIA_SUFFIXES
-            }
-            rendered = _render_epub_resources(
-                archive,
-                chapters,
+    elif m.get("fmt") == "epub" and epub_native.resource_specs(meta):
+        body_parts = epub_native.render_html_bodies(
+            source_path,
+            epub_native.options(
+                (store.load_chapter(c["index"]) for c in m["chapters"]),
                 meta,
                 book_title=m.get("title", "") if isinstance(m.get("title"), str) else "",
                 bilingual=bilingual,
@@ -99,30 +109,12 @@ def _assemble_html(
                 source_lang=(
                     m.get("source_lang", "") if isinstance(m.get("source_lang"), str) else ""
                 ),
-            )
-            for _resource_index, href in _epub_resource_specs(meta):
-                resource_html = rendered.get(href)
-                if not resource_html:
-                    # Pages without translated segments (image-only plates) must keep
-                    # their original body instead of being silently dropped.
-                    try:
-                        resource_html = _decode_markup(archive.read(href))
-                    except KeyError:
-                        continue
-                resource_soup = BeautifulSoup(resource_html, "html.parser")
-                resource_body = resource_soup.find("body")
-                body_html = (
-                    resource_body.decode_contents()
-                    if isinstance(resource_body, Tag)
-                    else str(resource_soup)
-                )
-                # Embed page-relative media before combining physical resources.
-                rewritten = _embed_html_resources(
-                    body_html,
-                    source_dir=posixpath.dirname(href),
-                    zip_resources=media,
-                )
-                body_parts.append(rewritten)
+            ),
+            {
+                suffix[1:]: mimetypes.guess_type(f"asset{suffix}")[0] or "application/octet-stream"
+                for suffix in _MEDIA_SUFFIXES
+            },
+        )
         rendered_epub = bool(body_parts)
 
     for c in [] if rendered_epub or rendered_source_html is not None else m["chapters"]:
@@ -135,6 +127,7 @@ def _assemble_html(
                     bilingual=bilingual,
                     order=order,
                     preserve_source_style=preserve_source_style,
+                    prefer_native=mineru,
                 )
             )
             continue
@@ -175,12 +168,14 @@ def _assemble_html(
         _manifest_target_lang(m),
         bilingual=bilingual,
         preserve_source_style=preserve_source_style,
+        prefer_native=prefer_native,
     )
     if m.get("fmt") != "epub":
         # EPUB references were already resolved in the container, with no disk fallback.
         full_html = _embed_html_resources(
             full_html,
             source_dir=os.path.dirname(_template_resource_source(store, m, source_path)),
+            prefer_native=prefer_native,
         )
 
     # The document and all embedded media publish together as one atomic file.

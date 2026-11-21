@@ -22,6 +22,59 @@ async function waitForProjectReconciliation(
 }
 
 export function registerTests() {
+test("cold proofreading reads its initial paragraph window only once", async ({ page }) => {
+  await fakeApi(page);
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route(`**/api/projects/${pid}`, async route => {
+    await held;
+    return route.fulfill({ json: project });
+  });
+  let windows = 0;
+  page.on("response", r => { if (r.url().includes("/window?")) windows++; });
+  await mockChapter(page, 0, () => ({
+    index: 0, segments: [{ index: 0, source: "Source", target: "Saved" }],
+  }));
+  await page.goto(`/projects/${pid}/proofreading/0`);
+  await expect(page.getByRole("button", { name: "Proofread by chapter" })).toBeVisible();
+  release();
+  await expect(page.getByTestId("translation-text")).toHaveText("Saved");
+  expect(windows).toBe(1);
+});
+
+test("scrolling into a prefetched window after completion reconciles its translations", async ({ page }) => {
+  const saved = { ...project, status: "translating" };
+  const segments = Array.from({ length: 110 }, (_, index) => ({
+    index, source: `Source paragraph ${index}`, target: `Draft ${index}`,
+  }));
+  await fakeApi(page, { [`/projects/${pid}`]: saved });
+  await mockChapter(page, 0, () => ({ index: 0, title: "Test chapter", segments }));
+  let neighborReads = 0;
+  page.on("response", r => {
+    const url = new URL(r.url());
+    if (url.pathname.endsWith("/window") && url.searchParams.get("offset") === "32") neighborReads++;
+  });
+  await page.goto(`/projects/${pid}/proofreading/0`);
+  await expect(page.locator("#paragraph-0").getByTestId("translation-text")).toHaveText("Draft 0");
+  await expect.poll(() => neighborReads).toBeGreaterThan(0);
+  const prefetched = neighborReads;
+  for (const row of segments) row.target = `Final ${row.index}`;
+  saved.status = "done";
+  await expect(page.getByText("Read-only while a task runs", { exact: true })).toHaveCount(0);
+  await expect(page.locator("#paragraph-0").getByTestId("translation-text")).toHaveText("Final 0");
+  const pane = page.locator('[data-slot="content"]');
+  const row = page.locator("#paragraph-48");
+  // Scroll progressively: jumping across the window would evict it and mask a stale prefetch.
+  await expect.poll(async () => {
+    if (await row.count()) return true;
+    await pane.evaluate(e => { e.scrollTop += 180; });
+    return false;
+  }, { intervals: [30], timeout: 8000 }).toBe(true);
+  await row.scrollIntoViewIfNeeded();
+  await expect(row.getByTestId("translation-text")).toHaveText("Final 48");
+  expect(neighborReads).toBe(prefetched);
+});
+
 for (const status of ["done", "paused"]) {
   for (const route of [
     "", "/proofreading/0", "/contents", "/glossary", "/review",

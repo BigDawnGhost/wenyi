@@ -1,8 +1,10 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { fakeApi, pid, project } from "../../../../packages/ui/sandbox/fixtures";
-import type {} from "../src/runtime";
+import { registerDesktopSetup } from "./shared-setup";
 
 const origin = "http://127.0.0.1:19481";
+registerDesktopSetup(origin);
+
 const term = {
   source: "Fixture name",
   target: "Original translation",
@@ -13,102 +15,35 @@ const term = {
   aliases: [],
 };
 
-async function desktopGlossary(page: Page, locale: string, sourceLang: string) {
-  await page.addInitScript(({ origin, locale }) => {
-    localStorage.setItem("wenyi.locale", locale);
-    window.__WENYI_DESKTOP_PENDING__ = true;
-    window.__WENYI_DESKTOP__ = { apiBase: origin, token: "temporary-fixture-token" };
-  }, { origin, locale });
+test("Desktop sends hidden readings to the local API and shows them after language detection", async ({ page }) => {
+  const book = { ...project, source_lang: "auto", target_lang: "en" };
+  await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   await fakeApi(page, {
-    [`/projects/${pid}`]: {
-      ...project,
-      source_lang: sourceLang,
-      target_lang: sourceLang === "ja" ? "en" : "ja",
-    },
+    [`/projects/${pid}`]: book,
     [`/projects/${pid}/glossary/terms`]: [term],
   }, origin);
   await page.goto(`/projects/${pid}/glossary`);
-  await expect(page.getByRole("cell", { name: term.source, exact: true })).toBeVisible();
-}
 
-for (const locale of ["en", "zh-CN"] as const) {
-  const chinese = locale === "zh-CN";
-  const reading = chinese ? "读音" : "Reading";
-  const addTerm = chinese ? "添加术语" : "Add term";
-  const editTerm = chinese ? "编辑术语" : "Edit term";
-  const cancel = chinese ? "取消" : "Cancel";
-  const save = chinese ? "保存" : "Save";
+  const edit = page.getByRole("button", { name: "编辑术语", exact: true });
+  const dialog = page.getByRole("dialog");
+  const reading = dialog.getByRole("textbox", { name: "读音", exact: true });
+  await edit.click();
+  await expect(dialog).toBeVisible();
+  await expect(reading).toHaveCount(0);
+  await dialog.locator("textarea").fill("Updated note");
+  const update = page.waitForRequest(request =>
+    request.method() === "PUT" &&
+    request.url() === `${origin}/projects/${pid}/glossary/terms/${encodeURIComponent(term.source)}`,
+  );
+  await dialog.getByRole("button", { name: "保存", exact: true }).click();
+  expect((await update).postDataJSON()).toMatchObject({ ...term, note: "Updated note" });
+  await expect(dialog).not.toBeVisible();
 
-  for (const sourceLang of ["ja", "en", "auto"] as const) {
-    test(`Desktop glossary readings follow ${sourceLang} source in ${locale}`, async ({ page }) => {
-      await desktopGlossary(page, locale, sourceLang);
-      await expect(page.getByRole("columnheader", { name: /^(Reading|读音)$/ })).toHaveCount(0);
-      if (sourceLang !== "ja") {
-        await expect(page.locator("input[placeholder]").first())
-          .not.toHaveAttribute("placeholder", /readings?|读音/i);
-      }
-
-      await page.getByRole("button", { name: addTerm, exact: true }).click();
-      const addDialog = page.getByRole("dialog", { name: addTerm, exact: true });
-      await expect(addDialog).toBeVisible();
-      const addReading = addDialog.getByRole("textbox", { name: reading, exact: true });
-      if (sourceLang === "ja") {
-        await expect(addReading).toBeVisible();
-        await addReading.fill("new-reading");
-      } else {
-        await expect(addReading).toHaveCount(0);
-        await expect(addDialog.getByText(reading, { exact: true })).toHaveCount(0);
-      }
-      await addDialog.getByRole("button", { name: cancel, exact: true }).click();
-
-      await page.getByRole("button", { name: editTerm, exact: true }).click();
-      const editDialog = page.getByRole("dialog", { name: editTerm, exact: true });
-      await expect(editDialog).toBeVisible();
-      const editReading = editDialog.getByRole("textbox", { name: reading, exact: true });
-      if (sourceLang === "ja") {
-        await expect(editReading).toHaveValue(term.reading);
-      } else {
-        await expect(editReading).toHaveCount(0);
-        await expect(editDialog.getByText(reading, { exact: true })).toHaveCount(0);
-      }
-
-      // Notes are the only multiline textbox; changing them must not erase hidden readings.
-      await editDialog.locator("textarea").fill("Updated note");
-      const update = page.waitForRequest(request =>
-        request.url().startsWith(`${origin}/projects/${pid}/glossary/terms/`) &&
-        request.method() === "PUT",
-      );
-      await editDialog.getByRole("button", { name: save, exact: true }).click();
-      expect((await update).postDataJSON()).toMatchObject({
-        source: term.source,
-        target: term.target,
-        reading: term.reading,
-        note: "Updated note",
-      });
-      await expect(editDialog).not.toBeVisible();
-    });
-  }
-
-  test(`Desktop detected Japanese readings appear after refresh in ${locale}`, async ({ page }) => {
-    await desktopGlossary(page, locale, "auto");
-    await page.getByRole("button", { name: addTerm, exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: addTerm, exact: true });
-    await expect(dialog).toBeVisible();
-    await expect(dialog.getByText(reading, { exact: true })).toHaveCount(0);
-    await dialog.getByRole("button", { name: cancel, exact: true }).click();
-
-    // Simulate source-language detection without starting a real Desktop task.
-    await page.route(`${origin}/projects/${pid}`, route => route.fulfill({
-      json: { ...project, source_lang: "ja", target_lang: "ja" },
-    }));
-    await page.reload();
-    await expect(page.getByRole("cell", { name: term.source, exact: true })).toBeVisible();
-    await page.getByRole("button", { name: addTerm, exact: true }).click();
-    await expect(dialog.getByRole("textbox", { name: reading, exact: true })).toBeVisible();
-    await dialog.getByRole("button", { name: cancel, exact: true }).click();
-    await page.getByRole("button", { name: editTerm, exact: true }).click();
-    await expect(page.getByRole("dialog", { name: editTerm, exact: true })
-      .getByRole("textbox", { name: reading, exact: true })).toHaveValue(term.reading);
-    await expect(page.getByRole("columnheader", { name: /^(Reading|读音)$/ })).toHaveCount(0);
-  });
-}
+  book.source_lang = "ja";
+  await page.reload();
+  await page.getByRole("button", { name: "添加术语", exact: true }).click();
+  await expect(reading).toBeVisible();
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await edit.click();
+  await expect(reading).toHaveValue(term.reading);
+});

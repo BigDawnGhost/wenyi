@@ -100,12 +100,14 @@ export const workflow = {
   run_id: "run-a",
   review_id: null,
   stages: [
-    { id: "book_understanding", label: "全书理解与结构解析", enabled: true },
-    { id: "translation", label: "分批翻译章节", enabled: true },
-    { id: "polish", label: "逐章润色", enabled: true },
-    { id: "review", label: "全书 Review", enabled: true },
-    { id: "review_autofix", label: "Review 自动修复", enabled: true },
-    { id: "annotation_alignment", label: "注释与排版对齐", enabled: false },
+    // label mirrors id: the client translates a known stage id, so the fixture
+    // does not pin the UI to the language it happens to be written in.
+    { id: "book_understanding", label: "book_understanding", enabled: true },
+    { id: "translation", label: "translation", enabled: true },
+    { id: "polish", label: "polish", enabled: true },
+    { id: "review", label: "review", enabled: true },
+    { id: "review_autofix", label: "review_autofix", enabled: true },
+    { id: "annotation_alignment", label: "annotation_alignment", enabled: false },
   ],
   progress: null,
 } satisfies Output<"WorkflowOut">;
@@ -132,7 +134,7 @@ export const effective = {
     review_concurrency: 4,
     pdf_backend: "mineru",
   },
-  output: { punctuation_normalize: true },
+  output: { about_page: true },
 };
 export const projectEffective = {
   ...effective,
@@ -298,11 +300,12 @@ function tableData(): Record<string, unknown> {
             calls: 1,
           },
         },
+        // Only proper names here. A stage or tier label is translated by the
+        // client from its id, so supplying one in the fixture pinned the UI to
+        // whatever language the fixture was written in.
         labels: {
           "deepseek-flash": "Deepseek Flash",
           deepseek: "Deepseek",
-          translation: "分批翻译章节",
-          strong: "强档模型",
         },
       },
       timing: {
@@ -442,7 +445,7 @@ function evolveSandbox(json: unknown, path: string, state: SandboxState): unknow
       ...workflow,
       status: "running",
       progress: {
-        label: "分批翻译章节",
+        label: "translation",
         done: Math.min(enabled, Math.floor((ratio as number) * (enabled + 1))),
         total: enabled,
         updated_at: new Date().toISOString(),
@@ -554,6 +557,22 @@ export function resolveFixture(
     return { status: 404, json: { detail: `Unexpected endpoint ${path}` } };
   }
   if (path in overrides) return { status: 200, json: overrides[path] };
+  // Save and validate must echo the submitted document. The table stores one
+  // static configuration, so returning it here would replace the caller's
+  // draft with the fixture and make the page look as if it reloaded.
+  if (verb !== "GET" && /\/config(\/validate)?$/.test(path)) {
+    const submitted = JSON.parse(rawBody || "{}") as { yaml?: string };
+    const base = data[path.replace(/\/validate$/, "")] as typeof configuration | undefined;
+    if (submitted.yaml && base) {
+      return { status: 200, json: { ...base, yaml: submitted.yaml } };
+    }
+  }
+  if (verb !== "GET" && path === "/settings/validate") {
+    const submitted = JSON.parse(rawBody || "{}") as { yaml?: string };
+    if (submitted.yaml) {
+      return { status: 200, json: { ...globalConfiguration, yaml: submitted.yaml } };
+    }
+  }
   if (verb === "POST" && path.endsWith("/glossary/terms/lookup")) {
     const sources = new Set((JSON.parse(rawBody || "{}") as { sources?: string[] }).sources);
     const terms = data[path.replace(/\/lookup$/, "")] as { source: string }[] || [];

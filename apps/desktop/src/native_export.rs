@@ -428,6 +428,21 @@ impl Connection {
             .send()
             .map_err(|_| "Local export connection failed. Retry saving.")?;
         if !response.status().is_success() {
+            // A conflicting plan can mean a missing source parse, not a broken engine.
+            // Only expose the known code, never arbitrary response text or local paths.
+            if response.status() == reqwest::StatusCode::CONFLICT {
+                let mut body = Vec::new();
+                if response.take(4097).read_to_end(&mut body).is_ok() && body.len() <= 4096 {
+                    if let Ok(envelope) = serde_json::from_slice::<Value>(&body) {
+                        if envelope["code"].as_str() == Some("source_not_ready") {
+                            return Err(crate::ipc_error::IpcError::new(
+                                "source_not_ready",
+                                "Export becomes available once the source has been parsed.",
+                            ));
+                        }
+                    }
+                }
+            }
             return Err(crate::ipc_error::IpcError::new(
                 "export_engine_unavailable",
                 "The local engine could not prepare this save. Retry saving.",
@@ -1584,6 +1599,23 @@ mod tests {
             assert_eq!(task.join().unwrap().len(), 2);
             assert_eq!(std::fs::read(&old).unwrap(), b"old");
             fixture.clean();
+        }
+    }
+
+    #[test]
+    fn distinguishes_source_not_ready_from_other_conflicts_without_exposing_details() {
+        for (code, expected) in [
+            ("source_not_ready", "source_not_ready"),
+            ("other_conflict", "export_engine_unavailable"),
+        ] {
+            let body = serde_json::json!({ "code": code, "message": "private detail" });
+            let (connection, task) = server(vec![response("409 Conflict", &body.to_string(), "")]);
+            let error = connection
+                .json("/exports/plan", Some(&serde_json::json!({})))
+                .unwrap_err();
+            assert_eq!(error.code, expected);
+            assert!(!error.message.contains("private detail"));
+            task.join().unwrap();
         }
     }
 

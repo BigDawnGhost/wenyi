@@ -9,7 +9,7 @@ from wenyi_core.config_rebuild import merge_section
 from wenyi_core.i18n.genres import DEFAULT_GENRE
 
 PROJECT_LLM_FIELDS = frozenset({"tiers", "routes", "budget"})
-PROJECT_PIPELINE_FIELDS = frozenset({"translation_mode", "prompt_genre"})
+PROJECT_PIPELINE_FIELDS = frozenset({"translation_mode", "prompt_genre", "glossary_note_workers"})
 
 
 def config_document(config: Config) -> dict[str, Any]:

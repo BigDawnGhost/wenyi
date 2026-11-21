@@ -51,22 +51,6 @@ function fail(response: { status: number; json: unknown }): never {
   });
 }
 
-// The Desktop host maps event kinds to query keys; the sandbox uses the same
-// table so live-refresh behavior matches the native host.
-const PROGRESS_KEYS: Record<string, string[]> = {
-  progress: ["workflow"],
-  pipeline: ["workflow"],
-  batch: ["chapters", "stats"],
-  chapter: ["project", "chapters", "stats"],
-  translation: ["chapters", "workflow"],
-  chapter_translation: ["chapters", "workflow"],
-  parse: ["project", "chapters", "workflow"],
-  prepare: ["project", "chapters", "workflow"],
-  review: ["workflow", "review-runs", "review-run"],
-  term: ["terms", "conflicts"],
-  log: ["events"],
-};
-
 /** A WebSocket stand-in whose frames come from the sandbox state machine. */
 class FakeWebSocket extends EventTarget {
   static readonly CONNECTING = 0;
@@ -241,7 +225,6 @@ export function createMockPlatform(options: MockPlatformOptions = {}): PlatformS
     connectProgress: (project) => new FakeWebSocket(project, sandbox) as unknown as WebSocket,
     authenticateProgress: (socket) => socket.send(JSON.stringify({ token: authTokenValue })),
     progressInterval: (_connected, fallback) => fallback,
-    progressKeys: (kind) => PROGRESS_KEYS[kind] ?? ["workflow"],
     bindSourceDrop: (_zone, callbacks) => {
       sourceDrop = callbacks;
       return () => {

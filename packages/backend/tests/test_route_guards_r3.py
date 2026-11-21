@@ -3,9 +3,13 @@ analysis initialization guard, degraded health and import limits."""
 
 from __future__ import annotations
 
+import asyncio
+import json
 from dataclasses import replace
 from unittest.mock import MagicMock, Mock
 
+import httpx2
+import pytest
 from fastapi.testclient import TestClient
 from wenyi_backend.application import create_app
 
@@ -72,11 +76,52 @@ def test_review_mutations_answer_409_when_project_is_unprepared(backend_context)
     assert complete.status_code == 409
 
 
-def test_glossary_import_rejects_oversized_term_list(backend_context):
-    client = _client_with(backend_context)
-    terms = [{"source": f"t{i}", "target": f"译{i}"} for i in range(1001)]
-    response = client.post("/projects/pid1/glossary/import", json={"terms": terms})
-    assert response.status_code == 422
+def test_glossary_import_accepts_more_than_1000_short_terms(backend_context):
+    storage = MagicMock()
+    context = replace(backend_context, storage_for=Mock(return_value=storage))
+    terms = [{"source": f"t{i}", "target": f"译{i}"} for i in range(2183)]
+    response = _client_with(context).post("/projects/pid1/glossary/import", json={"terms": terms})
+    assert response.status_code == 200, response.text
+    assert response.json() == {"imported": len(terms), "conflicts": 0}
+    assert storage.upsert_term.call_count == len(terms)
+
+
+@pytest.mark.parametrize("streamed", [False, True])
+@pytest.mark.parametrize("extra_bytes", [0, 1])
+def test_glossary_import_limits_utf8_bytes_before_writing(backend_context, streamed, extra_bytes):
+    limit = 5 * 1024 * 1024
+    note = "译" * (limit // 3 - 100)
+    body = json.dumps({"terms": [{"source": "a", "target": "b", "note": note}]}, ensure_ascii=False)
+    data = body.encode()
+    data += b" " * (limit - len(data) + extra_bytes)
+    storage = MagicMock()
+    context = replace(backend_context, storage_for=Mock(return_value=storage))
+    path = "/projects/pid1/glossary/import"
+    headers = {"content-type": "application/json"}
+
+    async def post_stream():
+        async def chunks():
+            for i in range(0, len(data), 65536):
+                yield data[i : i + 65536]
+            assert not extra_bytes, "The app must stop reading once the limit is exceeded"
+
+        transport = httpx2.ASGITransport(app=create_app(context))
+        async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
+            return await client.post(path, content=chunks(), headers=headers)
+
+    response = (
+        asyncio.run(post_stream())
+        if streamed
+        else _client_with(context).post(path, content=data, headers=headers)
+    )
+    if extra_bytes:
+        assert response.status_code == 413, response.text[:200]
+        assert response.json()["code"] == "glossary_import_too_large"
+        context.storage_for.assert_not_called()
+    else:
+        assert response.status_code == 200, response.text[:200]
+        assert response.json()["imported"] == 1
+        storage.upsert_term.assert_called_once()
 
 
 def test_health_degrades_without_driver_details(backend_context):

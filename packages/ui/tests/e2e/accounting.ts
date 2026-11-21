@@ -140,24 +140,21 @@ for (const theme of ["light", "dark"] as const) {
       if (state.tone !== "secondary") {
         const colors = await badge.evaluate(element => {
           const style = getComputedStyle(element);
-          return [style.color, style.backgroundColor, style.borderTopColor].map(color => {
-            const channels = color.match(/[\d.]+/g)!.slice(0, 3).map(Number);
-            const maximum = Math.max(...channels) / 255;
-            const minimum = Math.min(...channels) / 255;
-            const lightness = (maximum + minimum) / 2;
-            const saturation = maximum === minimum ? 0
-              : (maximum - minimum) / (1 - Math.abs(2 * lightness - 1));
-            return { color, saturation, lightness };
-          });
+          return [style.color, style.backgroundColor, style.borderTopColor];
         });
-        for (const { color, saturation } of colors) {
+        for (const color of colors) {
+          const match = /^oklch\(([\d.]+) ([\d.]+) /.exec(color);
+          expect(match, color).not.toBeNull();
+          const chroma = Number(match![2]);
           if (theme === "light") {
-            expect(saturation, `${state.status}: ${color} should not look gray`).toBeGreaterThan(0.65);
+            expect(chroma, `${state.status}: ${color} should not look gray`).toBeGreaterThan(0.01);
           } else {
-            expect(saturation, `${state.status}: ${color} should stay muted`).toBeLessThan(0.4);
+            expect(chroma, `${state.status}: ${color} should stay muted`).toBeLessThan(0.06);
           }
         }
-        if (theme === "light") expect(colors[1].lightness).toBeGreaterThanOrEqual(0.95);
+        if (theme === "light") {
+          expect(Number(/^oklch\(([\d.]+)/.exec(colors[1])![1])).toBeGreaterThanOrEqual(0.95);
+        }
       }
     }
     await page.getByRole("main").locator(".grid").screenshot({
@@ -227,8 +224,7 @@ test("all usage series and run bars follow the system theme without changing tot
       for (let index = 0; index < 6; index++) {
         const fill = fills.nth(index);
         await expect(fill).not.toHaveCSS("background-color", lightColors[index]);
-        const color = await fill.evaluate(element => getComputedStyle(element).backgroundColor);
-        expect(colorContrast(color, background)).toBeGreaterThanOrEqual(3);
+        expect(await colorContrast(fill, "background-color", background)).toBeGreaterThanOrEqual(3);
       }
     }
     expect(await fills.evaluateAll(elements =>

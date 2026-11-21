@@ -2,6 +2,8 @@
   "bundle": {
     "active": true,
     "resources": {
+      "../../LICENSE": "licenses/LICENSE",
+      "../../packages/core/THIRD_PARTY_NOTICES.md": "licenses/core/THIRD_PARTY_NOTICES.md",
       "sidecar/wenyi-engine/": "sidecar/wenyi-engine/"
     }
   }

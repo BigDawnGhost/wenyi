@@ -149,9 +149,9 @@ def execute(
                     if stop.is_set():
                         value.cancel()
 
-                progress(0, 0, "任务启动")
+                progress(0, 0, "progress.stage.taskStart")
                 result_status = dependencies.operation(request, storage, progress, bind_client)
-                progress(1, 1, "任务完成")
+                progress(1, 1, "progress.stage.taskDone")
                 storage.log_event("task_completed", kind=kind, run_id=run_id)
             # Publish completion only after telemetry and the run lock have exited.
             projects.set_project_status(pid, result_status)

@@ -230,7 +230,10 @@ def write_completed(debug: ReviewRunStore, state: ReviewSessionState, loaded) ->
         state.patch_records,
         state.active_patches,
     )
+    glossary_alerts = debug.glossary_alerts()
+    debug.write_json("rounds/final/glossary_alerts.json", glossary_alerts)
     summary = {
+        "glossary_alert_count": len(glossary_alerts),
         "initial_issue_count": len(initial_issues),
         "dismissed_issue_count": len(dismissed),
         "pre_arbitration_issue_count": len(latest.pre_arbitration_issues),

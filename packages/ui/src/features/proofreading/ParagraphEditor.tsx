@@ -149,7 +149,7 @@ export function ParagraphEditor({
           close();
       }}
     >
-      <header className="shrink-0 space-y-2 border-b border-black/[0.05] p-5 pr-14 dark:border-white/[0.07]">
+      <header className="shrink-0 space-y-2 border-b border-subtle p-5 pr-14">
         <h2
           ref={heading}
           id="paragraph-editor-title"
@@ -162,7 +162,7 @@ export function ParagraphEditor({
           type="button"
           aria-label={t("common.close")}
           disabled={save.isPending}
-          className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="absolute right-4 top-4 flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
           onClick={close}
         >
           <X className="h-4 w-4" />
@@ -171,7 +171,7 @@ export function ParagraphEditor({
       <div
         role="tablist"
         aria-label={t("proofreading.paragraphEditor")}
-        className="flex shrink-0 gap-5 border-b border-black/[0.05] px-5 dark:border-white/[0.07]"
+        className="flex shrink-0 gap-5 border-b border-subtle px-5"
       >
         {(["edit", "history", "precision"] as const).map((tab, index, tabs) => (
           <button
@@ -226,7 +226,7 @@ export function ParagraphEditor({
         {stale && (
           <div
             role="status"
-            className="mb-4 space-y-2 rounded-lg border bg-muted/50 p-3 text-sm"
+            className="mb-4 space-y-2 rounded-lg border bg-surface p-3 text-sm"
           >
             <p>{t("proofreading.changedWhileEditing")}</p>
             <Button
@@ -302,7 +302,7 @@ export function ParagraphEditor({
           </section>
         </div>
       </div>
-      <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-black/[0.05] bg-card p-4 dark:border-white/[0.07]">
+      <footer className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-subtle bg-card p-4">
         {draft !== (baseline ?? "") && (
           <p className="mr-auto text-xs text-muted-foreground">
             {t("proofreading.unsavedChanges")}
@@ -313,10 +313,11 @@ export function ParagraphEditor({
         </Button>
         {view === "edit" && (
           <Button
-            disabled={disabled || stale || draft === (baseline ?? "")}
-            onClick={() => save.mutate()}
+            disabled={disabled || stale || draft === (baseline ?? "") || save.isPending}
+            aria-busy={save.isPending || undefined}
+            onClick={() => { if (!save.isPending) save.mutate(); }}
           >
-            {save.isPending ? t("common.saving") : t("review.saveTranslation")}
+            {t("review.saveTranslation")}
           </Button>
         )}
       </footer>

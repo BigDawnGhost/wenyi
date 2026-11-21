@@ -21,22 +21,43 @@
 @layer base {
   :root {
     color-scheme: light;
-    --background: 0 0% 97.3%;
-    --foreground: 240 10% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
+    --background: 0.9795 0 0;
+    --foreground: 0.1405 0.0044 285.82;
+    --card: 1 0 0;
+    --card-foreground: 0.1405 0.0044 285.82;
+    /* Popover surfaces float above the page, so they take the page-opposite
+       pole: white on the light theme, the raised card step on the dark one. */
+    --popover: 1 0 0;
+    --popover-foreground: 0.1405 0.0044 285.82;
+    /* Control hover faces. Every face steps toward mid gray, so the visible
+       direction follows the face's own lightness instead of a fixed sign:
+       a white key darkens in the light theme, a dark key lightens in the
+       dark theme. These stay opaque on purpose; an alpha step would let
+       whatever sits behind the control show through the key. */
+    --card-hover: 0.972 0 0;
+    --card-pressed: var(--card);
+    --primary: 0.2103 0.0059 285.88;
+    --primary-foreground: 0.9848 0 0;
+    /* Hover for the inverted (primary) button. The button face sits at the
+       opposite pole from the page, so its hover has to express the same thing
+       every other surface state does: a step toward neutral gray, not a step
+       in a fixed lightness direction. That makes the sign theme-dependent:
+       light theme lightens the near-black face, dark theme darkens the
+       near-white face. A single-direction value is wrong in one theme by
+       construction, so both values stay opaque and are tuned per theme. */
+    --primary-hover: 0.305 0.0059 285.88;
+    --secondary: 0.9676 0.0013 286.38;
+    --secondary-foreground: 0.2103 0.0059 285.88;
+    --secondary-hover: 0.953 0.0013 286.38;
+    --secondary-pressed: var(--secondary);
+    --muted: 0.9676 0.0013 286.38;
+    --muted-foreground: 0.5519 0.0137 285.94;
     /* Ink anchor for alpha-derived interaction surfaces: fixed near-black in
        the light theme, near-white in dark. Deliberately not var(--foreground),
        which carries the 240 hue; state surfaces stay neutral so one alpha step
-       weighs the same on every background. Consumed as hsl(var(--hover)) and
-       hsl(var(--selected)). */
-    --ink: 13 13 13;
+       weighs the same on every background. Consumed as oklch(var(--hover)) and
+       oklch(var(--selected)). */
+    --ink: 0.16 0 0;
     /* light: 5% hover, 8% selected */
     --hover: var(--ink) / 0.05;
     --selected: var(--ink) / 0.08;
@@ -45,50 +66,53 @@
     --surface: var(--ink) / 0.03;
     /* --accent stays a solid step: one consumer (sidebar nav) still blends it
        with /50, which cannot re-alpha an alpha-bearing value. */
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
+    /* Selected surfaces share the control hover step, so a selected row and a
+       hovered key sit at the same height above the page instead of the row
+       reading darker than the key it sits next to. */
+    --accent: 0.972 0 0;
+    --accent-foreground: 0.2103 0.0059 285.88;
     /* Third text tier: placeholder and disabled copy sit one step below the
        secondary text (muted-foreground). */
     --text-placeholder: var(--ink) / 0.35;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --warning: 26 90% 37%;
-    --warning-foreground: 0 0% 98%;
-    --warning-text: 26 90% 37%;
-    --info: 200 96% 32%;
-    --info-foreground: 0 0% 98%;
+    --destructive: 0.6368 0.2078 25.33;
+    --destructive-foreground: 0.9848 0 0;
+    --warning: 0.5542 0.1447 49.16;
+    --warning-foreground: 0.9848 0 0;
+    --warning-text: 0.5542 0.1447 49.16;
+    --info: 0.5061 0.1156 240.36;
+    --info-foreground: 0.9848 0 0;
     /* Light status labels use fresh pastels; action and alert colors stay independent. */
-    --status-success: 138 76% 97%;
-    --status-success-foreground: 142 72% 29%;
-    --status-success-border: 141 79% 85%;
-    --status-warning: 48 100% 96%;
-    --status-warning-foreground: 35 92% 32%;
-    --status-warning-border: 45 95% 76%;
-    --status-danger: 0 86% 97%;
-    --status-danger-foreground: 0 72% 45%;
-    --status-danger-border: 0 90% 86%;
-    --status-info: 214 100% 97%;
-    --status-info-foreground: 217 80% 42%;
-    --status-info-border: 214 95% 85%;
+    --status-success: 0.9836 0.0162 155.55;
+    --status-success-foreground: 0.5248 0.1373 149.83;
+    --status-success-border: 0.9246 0.0811 155.98;
+    --status-warning: 0.9866 0.0218 95.28;
+    --status-warning-foreground: 0.5407 0.1186 65.54;
+    --status-warning-border: 0.9089 0.1116 91.59;
+    --status-danger: 0.9678 0.0142 17.4;
+    --status-danger-foreground: 0.5314 0.1989 27.39;
+    --status-danger-border: 0.8513 0.0746 18.73;
+    --status-info: 0.9716 0.0136 255.03;
+    --status-info-foreground: 0.484 0.178 260.15;
+    --status-info-border: 0.8605 0.0668 255.25;
     /* Chart hues retain their meaning; the dark palette reduces saturation and glare. */
     --chart-track: var(--muted);
-    --chart-1: 199.4 95.5% 73.9%;
-    --chart-2: 37.7 92.1% 50.2%;
-    --chart-3: 200.4 98% 39.4%;
-    --chart-4: 212.7 26.8% 83.9%;
-    --chart-5: 173.4 80.4% 40%;
-    --chart-6: 215.4 16.3% 46.9%;
-    --diff-removed-bg: 0 93.3% 94.1%;
-    --diff-removed-foreground: 0 62.8% 30.6%;
-    --diff-added-bg: 140.6 84.2% 92.5%;
-    --diff-added-foreground: 143.8 61.2% 20.2%;
-    --border: 240 5.9% 90%;
+    --chart-1: 0.8273 0.1014 230.38;
+    --chart-2: 0.7686 0.1646 70.11;
+    --chart-3: 0.5875 0.1388 241.95;
+    --chart-4: 0.8688 0.0198 252.85;
+    --chart-5: 0.7038 0.123 182.48;
+    --chart-6: 0.5547 0.0407 257.44;
+    --diff-removed-bg: 0.9355 0.031 17.72;
+    --diff-removed-foreground: 0.3959 0.1331 25.72;
+    --diff-added-bg: 0.9622 0.0437 156.72;
+    --diff-added-foreground: 0.3926 0.0897 152.53;
+    --border: 0.9197 0.004 286.32;
     /* Sub-hairline: about 5.5% ink for high-repetition separators (table rows,
        group boundaries) so dense lists do not fog up like the standard
        hairline does. */
     --border-subtle: var(--ink) / 0.055;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
+    --input: 0.9197 0.004 286.32;
+    --ring: 0.2103 0.0059 285.88;
     --radius: 8px;
     /* Elevation scale: e0 wells, e1-e2 resting surfaces, e3 hover lift, e4
        floating layers. Consumed through the shadow-eN utilities registered in
@@ -98,9 +122,32 @@
     --shadow-e2: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 1px 3px rgba(24, 26, 32, 0.06), 0 0 0 1px rgba(24, 26, 32, 0.07);
     --shadow-e3: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 4px 8px -2px rgba(24, 26, 32, 0.08), 0 12px 28px -12px rgba(24, 26, 32, 0.14), 0 0 0 1px rgba(24, 26, 32, 0.06);
     --shadow-e4: 0 8px 16px -4px rgba(24, 26, 32, 0.08), 0 28px 56px -20px rgba(24, 26, 32, 0.22), 0 0 0 1px rgba(24, 26, 32, 0.06);
-    --shadow-focus-ring: 0 0 0 1px hsl(var(--ring));
+    --shadow-focus-ring: 0 0 0 1px oklch(var(--ring));
     /* Input surfaces keep the quiet well; hover only deepens the well and
        hairline, never lifts (consumed by .input-quiet below). */
+    /* Raised control key: one physical object in both themes. The top edge
+       spreads a soft shadow because a highlight alone is invisible on white,
+       so the key would fuse with the page; the close shadow and the bottom
+       inner lip carry the depth. Pressed sinks into the surface instead. */
+    --shadow-raised: inset 0 1px 0 rgba(255, 255, 255, 1), 0 -1px 3px -1px rgba(24, 26, 32, 0.16), 0 1px 2px rgba(24, 26, 32, 0.07), 0 3px 6px -3px rgba(24, 26, 32, 0.14);
+    --shadow-raised-hover: inset 0 1px 0 rgba(255, 255, 255, 1), 0 -1px 4px -1px rgba(24, 26, 32, 0.20), 0 2px 4px rgba(24, 26, 32, 0.09), 0 5px 10px -4px rgba(24, 26, 32, 0.18);
+    --shadow-pressed: inset 0 2px 4px rgba(24, 26, 32, 0.14), inset 0 -1px 0 rgba(255, 255, 255, 0.55), 0 1px 1px rgba(24, 26, 32, 0.05);
+    /* Solid filled keys (primary, destructive) sit at the pole opposite the
+       page, so they read depth with the other theme's recipe: a faint top
+       highlight, a dark bottom lip and a contact shadow under the slab. */
+    --shadow-raised-invert: inset 0 1px 0 rgba(255, 255, 255, 0.16), inset 0 -1px 0 rgba(0, 0, 0, 0.30), 0 1px 2px rgba(24, 26, 32, 0.28), 0 3px 7px -3px rgba(24, 26, 32, 0.22);
+    --shadow-raised-invert-hover: inset 0 1px 0 rgba(255, 255, 255, 0.21), inset 0 -1px 0 rgba(0, 0, 0, 0.34), 0 2px 4px rgba(24, 26, 32, 0.32), 0 6px 14px -5px rgba(24, 26, 32, 0.30);
+    /* Light theme's inverted key is a dark slab. A black inner shadow barely
+       reads on a face that is already near-black, so the sink is carried by
+       a deep, wide inset plus a bright bottom lip that catches light where
+       the face turns under. The pressed face returns to the resting plate;
+       hover is the lit state, press is not. */
+    --primary-pressed: var(--primary);
+    --shadow-pressed-invert:
+      inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      inset 0 4px 10px -1px rgba(0, 0, 0, 0.95),
+      inset 0 10px 18px -8px rgba(0, 0, 0, 0.85),
+      inset 0 -2px 0 rgba(255, 255, 255, 0.22);
     --shadow-input-hover: inset 0 1px 2px rgba(24, 26, 32, 0.09), 0 0 0 1px rgba(24, 26, 32, 0.16);
     --shadow-sidebar: 0 0 0 1px rgba(24, 26, 32, 0.05), 12px 0 32px -20px rgba(24, 26, 32, 0.18);
   }
@@ -109,64 +156,90 @@
 /* Theme classes are runtime state, not Tailwind content to be purged. */
 .dark {
     color-scheme: dark;
-    --background: 0 0% 8.6%;
-    --foreground: 0 0% 74.1%;
-    --card: 0 0% 11.8%;
-    --card-foreground: 0 0% 74.1%;
-    --primary: 0 0% 82%;
-    --primary-foreground: 0 0% 10%;
-    --secondary: 0 0% 15.7%;
-    --secondary-foreground: 0 0% 74.1%;
-    --muted: 0 0% 15.7%;
-    --muted-foreground: 0 0% 55%;
-    --ink: 0 0% 100%;
+    --background: 0.1999 0 0;
+    --foreground: 0.7982 0 0;
+    --card: 0.2354 0 0;
+    --card-foreground: 0.7982 0 0;
+    --popover: 0.277 0 0;
+    --popover-foreground: 0.7982 0 0;
+    --card-hover: 0.296 0 0;
+    --card-pressed: var(--card);
+    --primary: 0.861 0 0;
+    --primary-foreground: 0.2156 0 0;
+    /* The dark theme's inverted key is a light slab. It rests on the darker
+       step and brightens under the cursor, so the hover reads as the same
+       gesture the light theme makes: the slab gains light rather than
+       losing it. */
+    --primary-hover: 0.9255 0 0;
+    --secondary: 0.277 0 0;
+    --secondary-foreground: 0.7982 0 0;
+    --secondary-hover: 0.33 0 0;
+    --secondary-pressed: var(--secondary);
+    --muted: 0.277 0 0;
+    --muted-foreground: 0.6409 0 0;
+    --ink: 1 0 0;
     --hover: var(--ink) / 0.08;
     --selected: var(--ink) / 0.12;
     --surface: var(--ink) / 0.03;
-    --accent: 0 0% 15.7%;
-    --accent-foreground: 0 0% 74.1%;
+    --accent: 0.296 0 0;
+    --accent-foreground: 0.7982 0 0;
     --text-placeholder: var(--ink) / 0.3;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --warning: 23 82% 31%;
-    --warning-foreground: 0 0% 98%;
-    --warning-text: 38 85% 60%;
-    --info: 201 90% 27%;
-    --info-foreground: 0 0% 98%;
-    --status-success: 154 13% 16%;
-    --status-success-foreground: 152 22% 73%;
-    --status-success-border: 154 14% 28%;
-    --status-warning: 36 18% 16%;
-    --status-warning-foreground: 38 34% 72%;
-    --status-warning-border: 36 20% 28%;
-    --status-danger: 4 18% 18%;
-    --status-danger-foreground: 4 36% 76%;
-    --status-danger-border: 4 22% 32%;
-    --status-info: 210 18% 17%;
-    --status-info-foreground: 210 26% 74%;
-    --status-info-border: 210 20% 30%;
-    --chart-track: 0 0% 20%;
-    --chart-1: 200 28% 62%;
-    --chart-2: 38 42% 59%;
-    --chart-3: 212 38% 55%;
-    --chart-4: 216 12% 56%;
-    --chart-5: 167 32% 49%;
-    --chart-6: 222 14% 61%;
-    --diff-removed-bg: 0 74.7% 15.5%;
-    --diff-removed-foreground: 0 96.3% 89.4%;
-    --diff-added-bg: 144.9 80.4% 10%;
-    --diff-added-foreground: 141 78.9% 85.1%;
-    --border: 0 0% 19.6%;
+    --destructive: 0.3959 0.1331 25.72;
+    --destructive-foreground: 0.9848 0 0;
+    --warning: 0.4697 0.1224 46.71;
+    --warning-foreground: 0.9848 0 0;
+    --warning-text: 0.7984 0.1424 77.38;
+    --info: 0.438 0.0988 240.83;
+    --info-foreground: 0.9848 0 0;
+    --status-success: 0.29 0.0168 167;
+    --status-success-foreground: 0.8104 0.0381 165.56;
+    --status-success-border: 0.4167 0.0287 166.64;
+    --status-warning: 0.2896 0.0176 77.93;
+    --status-warning-foreground: 0.8087 0.0462 81.33;
+    --status-warning-border: 0.4166 0.0311 77.76;
+    --status-danger: 0.2895 0.0235 23.3;
+    --status-danger-foreground: 0.789 0.0484 23;
+    --status-danger-border: 0.4166 0.0472 23.82;
+    --status-info: 0.2864 0.0181 248.46;
+    --status-info-foreground: 0.7897 0.031 248.22;
+    --status-info-border: 0.4114 0.0323 248.62;
+    --chart-track: 0.3211 0 0;
+    --chart-1: 0.7084 0.0475 229.87;
+    --chart-2: 0.729 0.0823 80.55;
+    --chart-3: 0.6203 0.0841 252.43;
+    --chart-4: 0.6371 0.0273 258.37;
+    --chart-5: 0.6658 0.0835 177.72;
+    --chart-6: 0.6728 0.0304 267.1;
+    --diff-removed-bg: 0.2576 0.0886 26.05;
+    --diff-removed-foreground: 0.8844 0.0593 18.34;
+    --diff-added-bg: 0.2664 0.0628 152.95;
+    --diff-added-foreground: 0.925 0.0805 156;
+    --border: 0.3171 0 0;
     --border-subtle: var(--ink) / 0.065;
-    --input: 0 0% 17.6%;
-    --ring: 0 0% 60%;
+    --input: 0.2967 0 0;
+    --ring: 0.683 0 0;
     /* Dark elevations: weaker top highlight, deeper shadows, white hairline. */
     --shadow-e0: inset 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.06);
     --shadow-e1: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 0 0 1px rgba(255, 255, 255, 0.07);
     --shadow-e2: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 2px 6px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255, 255, 255, 0.08);
     --shadow-e3: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 6px 16px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.09);
     --shadow-e4: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.09);
-    --shadow-focus-ring: 0 0 0 1px hsl(var(--ring));
+    --shadow-focus-ring: 0 0 0 1px oklch(var(--ring));
+    --shadow-raised: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.40);
+    --shadow-raised-hover: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 2px 6px rgba(0, 0, 0, 0.42), 0 6px 16px rgba(0, 0, 0, 0.45);
+    --shadow-pressed: inset 0 3px 7px rgba(0, 0, 0, 0.62), inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+    /* Dark theme: the inverted key is near-white on a dark bar, so it borrows
+       the light theme's recipe, with black contact shadows that still read
+       against the dark surface. */
+    --shadow-raised-invert: inset 0 1px 0 rgba(255, 255, 255, 1), inset 0 -1px 0 rgba(0, 0, 0, 0.16), 0 1px 3px rgba(0, 0, 0, 0.45), 0 4px 10px -4px rgba(0, 0, 0, 0.50);
+    --shadow-raised-invert-hover: inset 0 1px 0 rgba(255, 255, 255, 1), inset 0 -1px 0 rgba(0, 0, 0, 0.20), 0 2px 6px rgba(0, 0, 0, 0.50), 0 8px 20px -6px rgba(0, 0, 0, 0.60);
+    /* The dark theme's inverted key is a light slab, so a black inner shade
+       would be invisible against it: the sink has to come from a mid-gray
+       shade plus a white bottom lip, which is how a light key recesses. */
+    --primary-pressed: var(--primary);
+    --card-pressed: var(--card);
+    --secondary-pressed: var(--secondary);
+    --shadow-pressed-invert: inset 0 3px 7px rgba(0, 0, 0, 0.30), inset 0 -1px 0 rgba(255, 255, 255, 0.90);
     --shadow-input-hover: inset 0 1px 2px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.16);
     --shadow-sidebar: 0 0 0 1px rgba(255, 255, 255, 0.06), 12px 0 32px -20px rgba(0, 0, 0, 0.5);
 }
@@ -181,7 +254,7 @@
   /* Native controls: use theme foreground instead of browser default blue. */
   input[type="checkbox"],
   input[type="radio"] {
-    accent-color: hsl(var(--foreground));
+    accent-color: oklch(var(--foreground));
   }
   :where(button, a[href], summary, [role="button"], [role="tab"]) {
     border-radius: var(--radius);
@@ -219,6 +292,87 @@ body :is(button, a[href], summary, input, textarea, select, [tabindex]):focus-vi
   box-shadow: var(--shadow-input-hover);
 }
 
+/* Floating action bar, built in three layers so each optical property is
+   tunable on its own instead of fighting inside one backdrop-filter:
+
+     ::before  frost  — samples the page, blurs and saturates it into the
+                       colour wash. Nothing crisp lives here.
+     children  content — buttons and labels, painted above the frost so
+                       they keep their native subpixel rendering.
+     ::after   sheen  — the specular highlight that reads as thickness.
+
+   The parent must not create a backdrop root (no isolation, filter,
+   transform or opacity), or the frost would sample its own stacking
+   context and come out empty. */
+/* No `position` here: the bar is already `sticky`, which is a positioned
+   element and therefore its own containing block, so the absolutely
+   positioned layers anchor to it. Declaring `relative` would override
+   the utility and drop the bar out of the sticky flow. */
+.glass-bar {
+  box-shadow:
+    0 12px 36px -6px rgba(15, 23, 42, 0.16),
+    0 2px 8px rgba(15, 23, 42, 0.07);
+}
+/* Frost: the pane is one flat tint over a blurred backdrop, nothing else.
+   The border lives on this layer rather than on the container so it gets
+   the same backdrop treatment; a border on the parent would paint a crisp
+   line over a blurred surface, which reads as a separate outline floating
+   above the glass instead of the glass edge itself. */
+.glass-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  box-sizing: border-box;
+  border: 1px solid rgba(24, 26, 32, 0.10);
+  border-radius: inherit;
+  background-color: rgba(255, 255, 255, 0.22);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+}
+/* Sheen: a 1px inner hairline on the top edge only. It reads as the lip of
+   a physical pane without adding a gradient across the face. */
+.glass-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.55);
+}
+.glass-bar > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* The bar mounts with the page but floats above the content, so it would
+   otherwise appear fully formed while the page beneath is still fading in.
+   Same duration and curve as the page entrance so the two read as one
+   movement. Only opacity and transform animate: the bar is horizontally
+   centred by layout, so transform is free, and neither property triggers
+   a relayout. */
+/* Movement only, no opacity. A translucent element forces the browser to skip
+   or defer its own backdrop-filter, so a fade-in shows the bar unfrosted until
+   the last frame and the glass then pops in. Rising from below keeps the same
+   entrance without ever leaving the element opaque. */
+@keyframes bar-enter {
+  from { transform: translateY(14px); }
+  to { transform: translateY(0); }
+}
+.dark .glass-bar {
+  box-shadow:
+    0 12px 36px -6px rgba(0, 0, 0, 0.55),
+    0 2px 8px rgba(0, 0, 0, 0.40);
+}
+.dark .glass-bar::before {
+  border-color: rgba(255, 255, 255, 0.10);
+  background-color: rgba(38, 38, 38, 0.26);
+}
+.dark .glass-bar::after {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
 /* Keep the centered content column steady when the scrollbar appears or
    disappears while switching pages or tabs. */
 [data-slot="content"] {
@@ -236,8 +390,8 @@ input:is([type="checkbox"], [type="radio"]) {
   flex: 0 0 16px;
   margin: 0;
   vertical-align: middle;
-  border: 1px solid hsl(var(--muted-foreground));
-  background-color: hsl(var(--background));
+  border: 1px solid oklch(var(--muted-foreground));
+  background-color: oklch(var(--background));
   background-position: center;
   background-repeat: no-repeat;
 }
@@ -245,8 +399,8 @@ input:is([type="checkbox"], [type="radio"]) {
 input[type="checkbox"] { border-radius: 4px; }
 input[type="radio"] { border-radius: 50%; }
 input:is([type="checkbox"], [type="radio"]):checked {
-  border-color: hsl(var(--muted-foreground));
-  background-color: hsl(var(--muted-foreground));
+  border-color: oklch(var(--muted-foreground));
+  background-color: oklch(var(--muted-foreground));
 }
 input[type="checkbox"]:checked {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8 3 3 6-6' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -255,7 +409,7 @@ input[type="checkbox"]:checked {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='m3.5 8 3 3 6-6' fill='none' stroke='%231a1a1a' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 input[type="radio"]:checked {
-  background-image: radial-gradient(circle, hsl(var(--background)) 0 3px, transparent 3.5px);
+  background-image: radial-gradient(circle, oklch(var(--background)) 0 3px, transparent 3.5px);
 }
 input:is([type="checkbox"], [type="radio"]):disabled {
   opacity: 0.5;
@@ -294,31 +448,44 @@ details[open] > .disclosure-summary > .disclosure-chevron {
   place-items: center;
   animation: page-enter 200ms cubic-bezier(0.05, 0.7, 0.1, 1) both;
 }
-/* Page body entrance: one fade-and-rise for the whole container. No fill
-   forwards, so the settled container never becomes a containing block for
-   in-page fixed elements such as the paragraph menu. */
+/* Page container: deliberately not animated. Navigating between sibling
+   pages replaces the container, so any entrance here would replay on every
+   navigation and read as the whole page flickering. The route gate already
+   fades the loading placeholder, which is the only moment the content is
+   actually absent. */
 .page-enter {
-  animation: page-enter 200ms cubic-bezier(0.05, 0.7, 0.1, 1) backwards;
+  /* Retained as the page-body hook; see route-placeholder for the fade. */
 }
 @keyframes runtime-enter {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+/* Opacity only. A transform here would make every page container the
+   containing block for fixed descendants while the animation runs, so any
+   fixed element inside the page (the settings action bar) would position
+   itself against the animating column instead of the viewport and jump for
+   the length of the entrance. */
 @keyframes page-enter {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 /* Dialog entrance: enter-only; exit stays instant (Radix presence). The final
-   frame repeats the utility centering so fill-forwards cannot displace it. */
+   frame repeats the utility centering so fill-forwards cannot displace it:
+   the animation owns transform, so a settled dialog must land on the same
+   translate the utility set up. */
 .dialog-overlay { animation: overlay-in 200ms cubic-bezier(0.05, 0.7, 0.1, 1) both; }
 .dialog-content { animation: dialog-in 320ms cubic-bezier(0.05, 0.7, 0.1, 1) both; }
 @keyframes overlay-in {
   from { opacity: 0; }
   to { opacity: 1; }
 }
+/* The final frame rounds the vertical offset to whole pixels: a -50%
+   translate of an odd-height panel lands on a half pixel, which pushes
+   every glyph inside through the antialiaser and makes settled text look
+   soft. round() resolves it at runtime, where the height is known. */
 @keyframes dialog-in {
   from { opacity: 0; transform: translate(-50%, -48%) scale(0.97); }
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to { opacity: 1; transform: translate(-50%, round(nearest, -50%, 1px)) scale(1); }
 }
 /* Popover and menu entrance for surfaces that are not viewport-centered:
    select listboxes, auto-margin native dialogs, anchored menus. */
@@ -342,7 +509,7 @@ details[open] > .disclosure-summary > .disclosure-chevron {
    denser wenyi layout). Firefox gets the thin auto-drawn equivalent. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: hsl(var(--border)) transparent;
+  scrollbar-color: oklch(var(--border)) transparent;
 }
 ::-webkit-scrollbar {
   width: 10px;
@@ -354,7 +521,7 @@ details[open] > .disclosure-summary > .disclosure-chevron {
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 9999px;
-  background: hsl(var(--border));
+  background: oklch(var(--border));
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:vertical {
@@ -365,4 +532,16 @@ details[open] > .disclosure-summary > .disclosure-chevron {
 }
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+
+/* A pressed button scales to 0.98. The glyph inside travels with that scale,
+   so a centred button — whose content sits half a button in from the edge —
+   moves its icon by about a pixel on the way down and again on the way back,
+   which reads as the icon shivering. Scaling the content by the inverse keeps
+   it fixed on screen while the button itself still narrows. */
+.press-static-content {
+  transition: transform 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+.group:active .press-static-content {
+  transform: scale(1.020408);
 }

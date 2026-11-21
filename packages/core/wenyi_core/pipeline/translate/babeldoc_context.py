@@ -114,16 +114,29 @@ class BabeldocContext:
         ]
 
     def next_source(self, segments: list[Segment], end: int) -> str:
-        """Find the next prose unit, skipping layout noise but never a section boundary."""
+        """Find the next prose reference without crossing a section boundary."""
         if end > 0 and not self.body[end - 1]:
             return ""
         section = self.sections[end - 1] if end > 0 else 0
+        previous_page = segments[end - 1].meta.get("page") if end > 0 else None
+        caption = ""
         for index in range(end, len(segments)):
             if self.sections[index] != section:
                 break
+            segment = segments[index]
             if self.body[index]:
-                return segments[index].source
-        return ""
+                return f"{caption}\n\n{segment.source}" if caption else segment.source
+            # Keep the next page's opening caption as a supplement, not a substitute for prose.
+            if (
+                type(previous_page) is int
+                and self.labels[index] == "table_caption"
+                and segment.meta.get("page") == previous_page + 1
+                and segments[index - 1].meta.get("page") == previous_page
+            ):
+                caption = re.split(
+                    r"(?<=[。．！？])|(?<=[.!?])\s+", segment.source.strip(), maxsplit=1
+                )[0]
+        return caption
 
     def recent_targets(
         self,

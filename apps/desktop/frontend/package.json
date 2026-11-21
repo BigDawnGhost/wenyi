@@ -1,6 +1,7 @@
 {
   "name": "@wenyi/desktop",
   "private": true,
+  "license": "GPL-3.0-only",
   "description": "Desktop frontend and native platform adapters for Wenyi.",
   "type": "module",
   "scripts": {

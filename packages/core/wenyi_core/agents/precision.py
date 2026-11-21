@@ -62,7 +62,7 @@ class PrecisionAgent(Agent):
                         source_lang=self.src,
                         genre=self.language_policy.context.genre,
                         note_source="\n".join(inputs.sources)
-                        if self.config.pipeline.terminology_context
+                        if self.config.pipeline.use_glossary_notes
                         else None,
                     ),
                     "chapter_digest": inputs.chapter_digest,

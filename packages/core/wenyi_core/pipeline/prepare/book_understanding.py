@@ -121,7 +121,7 @@ class BookUnderstandingService:
             "glossary": snapshot,
         }
         if progress:
-            progress(0, 0, "Generating whole-book synopsis…")
+            progress(0, 0, "progress.stage.synopsis")
         synopsis = self._synopsizer.book_synopsis(digests, style, glossary=terms)
         if synopsis:
             # The snapshot is derived state; write it before the analysis that references it.
@@ -223,7 +223,7 @@ class BookUnderstandingService:
             )
             workers = max(1, self._config.pipeline.prescan_concurrency)
             if progress:
-                progress(0, len(todo), "Prescanning chapter digests")
+                progress(0, len(todo), "progress.stage.prescan")
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 futs = {ex.submit(self._synopsizer.digest_chapter, src): ci for ci, src in todo}
                 for n_done, fut in enumerate(as_completed(futs), 1):

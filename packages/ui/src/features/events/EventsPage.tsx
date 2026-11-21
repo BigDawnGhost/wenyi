@@ -7,6 +7,7 @@ import { useProjectQuery } from "../../lib/projectQuery";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
 import { Card, CardContent } from "../../components/ui/card";
 import { ErrorNotice, StructuredData } from "../../components/ui/data";
+import { EmptyState } from "../../components/ui/misc";
 import { Badge } from "../../components/ui/badge";
 
 function badgeFor(type: string) {
@@ -109,9 +110,7 @@ export default function EventsPage() {
         <Card>
           <CardContent className="p-4">
             {!events?.length ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                {tr("events.noEventsYet")}
-              </p>
+              <EmptyState>{tr("events.noEventsYet")}</EmptyState>
             ) : (
               <div className="space-y-2">
                 {events.map((e) => {
@@ -131,7 +130,7 @@ export default function EventsPage() {
                         <summary className="cursor-pointer break-words">
                           {describe(e)}
                         </summary>
-                        <div className="mt-3 rounded border border-black/[0.05] p-3 dark:border-white/[0.07]">
+                        <div className="mt-3 rounded border border-subtle p-3">
                           <StructuredData value={e.payload} />
                         </div>
                       </details>

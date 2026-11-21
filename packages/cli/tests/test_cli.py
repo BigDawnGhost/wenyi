@@ -76,7 +76,7 @@ class TestCliConfig(unittest.TestCase):
         captured = {}
 
         class FakeOrchestrator:
-            def __init__(self, config, *, allow_terminology_context=False):
+            def __init__(self, config, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 captured["source"] = config.pipeline.synopsis_source_tokens
                 captured["reduce"] = config.pipeline.synopsis_reduce_tokens
@@ -118,22 +118,24 @@ class TestCliConfig(unittest.TestCase):
                     "models": {"default_strong": {"provider": "default", "model": "p"}},
                 },
                 "pipeline": {"polish": True},
+                "output": {"mono": True, "bilingual": True},
             }
         )
         captured = {}
 
         class FakeOrchestrator:
-            def __init__(self, config, *, allow_terminology_context=False):
+            def __init__(self, config, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 captured["polish"] = config.pipeline.polish
                 captured["review"] = config.pipeline.review
                 captured["rolling_context_tokens"] = config.pipeline.rolling_context_tokens
-                captured["allow_terminology_context"] = allow_terminology_context
+                captured["allow_glossary_notes"] = allow_glossary_notes
 
             def run_all(self, input_path, **kwargs):
                 captured["run_all"] = kwargs
                 return {
                     "output": "out.epub",
+                    "outputs": ["out.epub", "out-bi.epub"],
                     "store": FakeStore(),
                 }
 
@@ -148,8 +150,11 @@ class TestCliConfig(unittest.TestCase):
         self.assertTrue(captured["polish"])
         self.assertTrue(captured["review"])
         self.assertEqual(captured["rolling_context_tokens"], 512)
-        self.assertTrue(captured["allow_terminology_context"])
-        self.assertIn("1/1 chapters, terms: 3", plain_text(result.output))
+        self.assertTrue(captured["allow_glossary_notes"])
+        output = plain_text(result.output)
+        self.assertIn("1/1 chapters, terms: 3", output)
+        self.assertIn("out.epub", output)
+        self.assertIn("out-bi.epub", output)
 
     def test_translate_flags_override_config_switches(self):
         cfg = Config.from_dict(
@@ -158,17 +163,20 @@ class TestCliConfig(unittest.TestCase):
                     "preset": "fake",
                     "models": {"default_strong": {"provider": "default", "model": "p"}},
                 },
-                "pipeline": {"polish": True},
+                "pipeline": {"polish": True, "review": False},
+                "output": {"mono": True, "bilingual": False},
             }
         )
         captured = {}
 
         class FakeOrchestrator:
-            def __init__(self, config, *, allow_terminology_context=False):
+            def __init__(self, config, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 captured["polish"] = config.pipeline.polish
                 captured["review"] = config.pipeline.review
-                captured["allow_terminology_context"] = allow_terminology_context
+                captured["mono"] = config.output.mono
+                captured["bilingual"] = config.output.bilingual
+                captured["allow_glossary_notes"] = allow_glossary_notes
 
             def run_all(self, input_path, **kwargs):
                 captured["run_all"] = kwargs
@@ -189,13 +197,17 @@ class TestCliConfig(unittest.TestCase):
                     "input.txt",
                     "--no-polish",
                     "--review",
+                    "--no-mono",
+                    "--bilingual",
                 ],
             )
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertFalse(captured["polish"])
         self.assertTrue(captured["review"])
-        self.assertTrue(captured["allow_terminology_context"])
+        self.assertFalse(captured["mono"])
+        self.assertTrue(captured["bilingual"])
+        self.assertTrue(captured["allow_glossary_notes"])
 
     def test_prepare_stops_before_translation(self):
         cfg = Config.from_dict(
@@ -225,10 +237,10 @@ class TestCliConfig(unittest.TestCase):
                 return Chapter()
 
         class FakeOrchestrator:
-            def __init__(self, config, *, allow_terminology_context=False):
+            def __init__(self, config, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 captured["config"] = config
-                captured["allow_terminology_context"] = allow_terminology_context
+                captured["allow_glossary_notes"] = allow_glossary_notes
 
             def prepare_for_translation(self, input_path, **kwargs):
                 captured["input_path"] = input_path
@@ -247,7 +259,7 @@ class TestCliConfig(unittest.TestCase):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(captured["input_path"], "input.txt")
-        self.assertTrue(captured["allow_terminology_context"])
+        self.assertTrue(captured["allow_glossary_notes"])
         self.assertIn("Preparation complete", plain_text(result.output))
         self.assertIn("prescanned 2/2 chapters", plain_text(result.output))
 
@@ -317,6 +329,7 @@ class TestCliConfig(unittest.TestCase):
                 self.assertEqual(validate.call_count, 1)
 
     def test_api_preflight_skips_local_commands(self):
+        cfg = Config.from_dict({"llm": {"preset": "deepseek"}})
         for args in (
             ["status", "missing.txt"],
             ["glossary", "list", "missing.txt"],
@@ -331,13 +344,20 @@ class TestCliConfig(unittest.TestCase):
             ["assemble", "missing.txt"],
         ):
             with self.subTest(args=args):
-                with patch(
-                    "wenyi_cli.commands.context.CommandContext.validate_api_configuration",
-                    side_effect=AssertionError(f"{args} must not validate credentials"),
-                ) as validate:
-                    result = CliRunner().invoke(app, args)
+                with (
+                    patch(
+                        "wenyi_cli.commands.context.CommandContext.load_config", return_value=cfg
+                    ),
+                    patch(
+                        "wenyi_cli.commands.context.CommandContext.validate_api_configuration",
+                        side_effect=AssertionError(f"{args} must not validate credentials"),
+                    ) as validate,
+                ):
+                    result = CliRunner().invoke(app, args, env={"DEEPSEEK_API_KEY": None})
                 self.assertEqual(result.exit_code, 1, result.output)
-                self.assertIn("Input file does not exist", plain_text(result.output))
+                output = plain_text(result.output)
+                self.assertIn("Input file does not exist", output)
+                self.assertNotIn("DEEPSEEK_API_KEY", output)
                 validate.assert_not_called()
 
     def test_api_preflight_skips_help_at_every_level(self):
@@ -358,7 +378,7 @@ class TestCliConfig(unittest.TestCase):
                     "preset": "fake",
                     "models": {"default_strong": {"provider": "default", "model": "p"}},
                 },
-                "pipeline": {"terminology_context": True},
+                "pipeline": {"glossary_note_workers": 1},
             }
         )
         captured = {}
@@ -469,22 +489,9 @@ class TestCliConfig(unittest.TestCase):
         self.assertNotIn("Traceback", plain_text(result.output))
         require_input.assert_not_called()
 
-    def test_assemble_skips_api_preflight(self):
-        cfg = Config.from_dict({"llm": {"preset": "deepseek"}})
-        with (
-            patch("wenyi_cli.commands.context.CommandContext.load_config", return_value=cfg),
-            patch("wenyi_cli.commands.validation.os.path.isfile", return_value=False),
-            patch.dict(os.environ, {}, clear=True),
-        ):
-            result = CliRunner().invoke(app, ["assemble", "missing.epub"])
-
-        self.assertEqual(result.exit_code, 1, result.output)
-        self.assertIn("Input file does not exist", plain_text(result.output))
-        self.assertNotIn("DEEPSEEK_API_KEY", plain_text(result.output))
-
     def test_assemble_uses_local_orchestrator_entry(self):
         cfg = Config.from_dict(
-            {"llm": {"preset": "fake"}, "pipeline": {"terminology_context": True}}
+            {"llm": {"preset": "fake"}, "pipeline": {"glossary_note_workers": 1}}
         )
         captured = {}
 
@@ -550,7 +557,7 @@ class TestCliConfig(unittest.TestCase):
             with self.subTest(error=type(error).__name__):
 
                 class FakeOrchestrator:
-                    def __init__(self, config, *, allow_terminology_context=False):
+                    def __init__(self, config, *, allow_glossary_notes=False):
                         self.client = FakeClient()
                         pass
 
@@ -588,7 +595,7 @@ class TestCliConfig(unittest.TestCase):
         cfg = Config.from_dict({"llm": {"preset": "fake"}})
 
         class FakeOrchestrator:
-            def __init__(self, config, *, allow_terminology_context=False):
+            def __init__(self, config, *, allow_glossary_notes=False):
                 self.client = FakeClient()
                 pass
 

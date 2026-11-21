@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import posixpath
+import re
 
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString, Tag
 
 from wenyi_core.alignment.objects import object_marker
+from wenyi_core.markup import _epub_native
 from wenyi_core.markup.annotations import (
     _ANNOTATION_MARKER_ONLY,
     _annotation_roots,
@@ -26,9 +28,12 @@ from wenyi_core.markup.contracts import (
     INLINE_META_KEY,
     LINE_WRAPPER_ATTR,
 )
+from wenyi_core.markup.epub_dom import parse_epub_dom
 from wenyi_core.markup.objects import OBJECT_RELATION
 from wenyi_core.markup.ruby import RUBY_MARK_LEFT, RUBY_MARK_RIGHT
 from wenyi_core.models.document import KIND_HEADING, KIND_TEXT, Segment
+
+_LAYOUT_WHITESPACE = re.compile(r"[ \t\r\n\f\v]+")
 
 
 def _preserved_inline_roots(block: Tag) -> list[Tag]:
@@ -38,24 +43,21 @@ def _preserved_inline_roots(block: Tag) -> list[Tag]:
     roots: list[Tag] = []
     seen: set[int] = set()
     for candidate in block.find_all(True):
-        if any(
+        is_atomic = candidate.name in _ATOMIC_INLINE_TAGS
+        is_empty_anchor = (
+            candidate.name in {"a", "span"}
+            and (candidate.has_attr("id") or candidate.has_attr("name"))
+            and not candidate.get_text(strip=True)
+        )
+        if not is_atomic and not is_empty_anchor:
+            continue
+        # Annotation roots are restored separately. Still record their atomic children
+        # independently so rebuilding a range link cannot erase its images.
+        if candidate.has_attr(ANNOTATION_ID_ATTR) or any(
             parent.name in _ATOMIC_INLINE_TAGS
             for parent in candidate.parents
             if parent is not block
         ):
-            continue
-        if candidate.has_attr(ANNOTATION_ID_ATTR):
-            # Annotation roots are restored separately by epub_annotations, so do not duplicate them as
-            # ordinary inline nodes. Still record their atomic children, such as images, independently
-            # so rebuilding a range link's body cannot erase those children.
-            continue
-        is_atomic = candidate.name in _ATOMIC_INLINE_TAGS
-        is_empty_anchor = (
-            candidate.name in {"a", "span"}
-            and not candidate.get_text(strip=True)
-            and (candidate.has_attr("id") or candidate.has_attr("name"))
-        )
-        if not is_atomic and not is_empty_anchor:
             continue
 
         root = candidate
@@ -80,6 +82,9 @@ def _normalize_html_text(
     offsets: list[int],
 ) -> tuple[str, list[int]]:
     """Collapse HTML layout whitespace and map raw character boundaries to normalized text."""
+    if not offsets:
+        return _LAYOUT_WHITESPACE.sub(" ", raw_text).strip(), []
+
     output: list[str] = []
     boundary_map = [0] * (len(raw_text) + 1)
     for index, char in enumerate(raw_text):
@@ -105,6 +110,8 @@ def _segment_content(
     block: Tag,
     anchor: str,
     annotation_roots: dict[int, dict[str, object]] | None = None,
+    *,
+    html_mode: bool = False,
 ) -> tuple[str, dict[str, object]]:
     """Extract translatable text and assign stable IDs/positions to inline nontext nodes.
     Collapse XHTML formatting whitespace as browsers do. Translation-target selection
@@ -206,9 +213,12 @@ def _segment_content(
     for annotation in ordered_annotations:
         start, end = annotation_events.get(str(annotation["id"]), (raw_length, raw_length))
         event_offsets.extend((start, end))
-    text, normalized_offsets = _normalize_html_text(raw_text, event_offsets)
+    normalize = _epub_native.html_normalize_text if html_mode else _normalize_html_text
+    text, normalized_offsets = normalize(raw_text, event_offsets)
     if not text:
         return "", {}
+    if not event_offsets:
+        return text, {}
 
     source_length = len(text)
     nodes: list[dict[str, object]] = []
@@ -414,7 +424,28 @@ def annotate_epub_resource(
     Use the physical resource index in anchors rather than the final Chapter index, so
     writers rebuild identical data-tn-id values even if logical chapter policies change.
     """
-    soup = BeautifulSoup(html, "html.parser")
+    soup = BeautifulSoup(html, "html.parser") if html_mode else parse_epub_dom(html)
+    title, segments = annotate_resource_dom(
+        soup,
+        resource_index,
+        href,
+        book_title=book_title,
+        skip_navigation=skip_navigation,
+        html_mode=html_mode,
+    )
+    return title, segments, str(soup)
+
+
+def annotate_resource_dom(
+    soup: BeautifulSoup,
+    resource_index: int,
+    href: str,
+    *,
+    book_title: str = "",
+    skip_navigation: bool = False,
+    html_mode: bool = False,
+) -> tuple[str, list[Segment]]:
+    """Annotate the caller's DOM in place, allowing export to backfill the same tree."""
     segments: list[Segment] = []
     first_heading: Tag | None = None
     heading_title_parts: list[str] = []
@@ -457,6 +488,8 @@ def annotate_epub_resource(
         # Text-bearing inline id/name wrappers are flattened during target backfill. Convert them first
         # to empty anchors at the same position so the existing nontext restoration mechanism preserves them.
         for descendant in list(el.find_all(True)):
+            if not (descendant.has_attr("id") or descendant.has_attr("name")):
+                continue
             if not descendant.get_text(strip=True):
                 continue
             if descendant.name in _ATOMIC_INLINE_TAGS or any(
@@ -483,7 +516,7 @@ def annotate_epub_resource(
                 marker.attrs.update(anchor_attrs)
                 descendant.insert_before(marker)
 
-        text, meta = _segment_content(el, anchor, annotations)
+        text, meta = _segment_content(el, anchor, annotations, html_mode=html_mode)
         if (
             annotations
             and all(annotation.get("mode") == "point" for annotation in annotations.values())
@@ -534,7 +567,7 @@ def annotate_epub_resource(
         if not _looks_like_internal_title(candidate, href, book_title):
             title = candidate
 
-    return title, segments, str(soup)
+    return title, segments
 
 
 def _inside_navigation_list(element: Tag) -> bool:

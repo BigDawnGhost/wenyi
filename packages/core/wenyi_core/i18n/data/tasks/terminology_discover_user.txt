@@ -1,2 +1,0 @@
-Source-only discovery input:
-$payload

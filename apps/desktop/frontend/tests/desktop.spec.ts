@@ -42,6 +42,7 @@ test("Desktop settings replaces app navigation and keeps structured drafts betwe
   await expect(page).toHaveURL("/settings");
   const sidebar = page.getByRole("complementary");
   await expect(sidebar).toHaveCount(1);
+  await expect(page.locator("#sidebar-navigation")).toBeVisible();
   expect(await shell!.evaluate(node => node === document.querySelector("#sidebar-navigation"))).toBe(true);
   await expect(page.getByRole("navigation", { name: "Settings navigation" })).toBeVisible();
   await expect(nav).toHaveCount(0);
@@ -61,8 +62,7 @@ test("Desktop settings replaces app navigation and keeps structured drafts betwe
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page).toHaveURL("/");
   await page.goto(`/projects/${pid}`);
-  await expect(nav.getByRole("link")).toHaveCount(1);
-  await expect(nav.getByRole("link")).toHaveText("Projects");
+  await expect(nav.getByRole("link")).toHaveText(["Projects", "Settings"]);
 });
 
 test("lazy credentials do not blank settings after its configuration loads", async ({ page }) => {
@@ -307,8 +307,8 @@ test("Desktop healthy socket reduces requests, retains reconciliation and resume
   await page.clock.runFor(1000);
   await expect.poll(() => total() - beforeStats).toBeGreaterThanOrEqual(1);
   await settleQueries();
-  // Desktop translation frames refresh chapters and workflow, not project or stats.
-  const translationPaths = ["/chapters", "/workflow"].map(path => `/projects/${pid}${path}`);
+  // Saved batch frames refresh chapter counts and usage; the stage label is already live.
+  const translationPaths = ["/chapters", "/stats"].map(path => `/projects/${pid}${path}`);
   const beforeTranslation = translationPaths.map(path => counts[path] || 0);
   socket!.send(JSON.stringify({ kind: "translation", project_id: pid, run_id: "run-a", label: "Saved local batch" }));
   await expect(page.getByRole("status")).toContainText("Saved local batch");
@@ -520,27 +520,6 @@ for (const kind of ["state", "final"]) {
   });
 }
 
-test("navigating between routes keeps the sidebar shell as the same node", async ({ page }) => {
-  await desktop(page);
-  await fakeApi(page, {}, origin);
-  await page.goto("/");
-  await page.locator("#sidebar-navigation").waitFor();
-  await page.evaluate(() => {
-    (window as unknown as { __shellNav?: Element | null }).__shellNav =
-      document.querySelector("#sidebar-navigation");
-  });
-  await page.locator('a[href="/settings"]').click();
-  await expect(page).toHaveURL("/settings");
-  await expect(page.locator("#sidebar-navigation")).toBeVisible();
-  expect(
-    await page.evaluate(
-      () =>
-        (window as unknown as { __shellNav?: Element | null }).__shellNav ===
-        document.querySelector("#sidebar-navigation"),
-    ),
-  ).toBe(true);
-});
-
 test("Desktop HTTP errors remain visible", async ({ page }) => {
   await desktop(page);
   await fakeApi(page, {}, origin);
@@ -550,10 +529,7 @@ test("Desktop HTTP errors remain visible", async ({ page }) => {
   await expect(page.getByText("Local database is unavailable")).toBeVisible();
 });
 
-// Every shared suite the Desktop host no longer registers still needs proof that the
-// Desktop bootstrap can render it. One parameterised smoke covers each module with a
-// real route, so a shared component that breaks only under the native bootstrap is not
-// left with a Web-only guard.
+// Web runs the full suites. Check their targets under a cold Desktop bootstrap once per route.
 type SharedRenderSmoke = {
   module: string;
   route: string;
@@ -579,16 +555,18 @@ const SHARED_RENDER_SMOKE: SharedRenderSmoke[] = [
   { module: "style-editing", route: `/projects/${pid}/style`, slot: "page.header" },
 ] as const;
 
-for (const smoke of SHARED_RENDER_SMOKE) {
-  test(`Desktop bootstrap renders the shared ${smoke.module} suite`, async ({ page }) => {
+for (const route of new Set(SHARED_RENDER_SMOKE.map(smoke => smoke.route))) {
+  const suites = SHARED_RENDER_SMOKE.filter(smoke => smoke.route === route);
+  test(`Desktop bootstrap renders ${suites.map(smoke => smoke.module).join(", ")}`, async ({ page }) => {
     await desktop(page);
     await fakeApi(page, {}, origin);
-    await page.goto(smoke.route);
-    const target = smoke.role ? page.getByRole(smoke.role).first()
-      : smoke.testId ? page.getByTestId(smoke.testId)
-        : page.locator(`[data-slot="${smoke.slot}"]`);
-    await expect(target).toBeVisible();
-    // The bootstrap must survive the render: no fallback to the Web transport.
+    await page.goto(route);
+    for (const smoke of suites) {
+      const target = smoke.role ? page.getByRole(smoke.role).first()
+        : smoke.testId ? page.getByTestId(smoke.testId)
+          : page.locator(`[data-slot="${smoke.slot}"]`);
+      await expect(target, smoke.module).toBeVisible();
+    }
     await expect(page.locator('[data-runtime-state="pending"]')).toHaveCount(0);
   });
 }

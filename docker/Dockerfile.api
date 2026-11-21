@@ -8,6 +8,11 @@ FROM python:3.12-slim AS builder
 
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_COMPILE_BYTECODE=1 \
@@ -16,20 +21,20 @@ ENV PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     TIKTOKEN_CACHE_DIR=/app/.venv/share/tiktoken \
     UV_DEFAULT_INDEX=${UV_DEFAULT_INDEX} \
-    PATH="/app/.venv/bin:$PATH" \
+    PATH="/app/.venv/bin:/root/.cargo/bin:$PATH" \
     WENYI_CONFIG=/app/config.yaml
 
 WORKDIR /app
 
 COPY --from=uv /uv /uvx /bin/
 
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock LICENSE ./
 COPY packages/core packages/core
 COPY packages/backend packages/backend
 COPY apps/api apps/api
 # uv parses workspace metadata, but neither package is installed or copied to runtime.
-COPY packages/cli/pyproject.toml packages/cli/pyproject.toml
-COPY apps/desktop/backend/pyproject.toml apps/desktop/backend/pyproject.toml
+COPY packages/cli/pyproject.toml packages/cli/LICENSE packages/cli/
+COPY apps/desktop/backend/pyproject.toml apps/desktop/backend/LICENSE apps/desktop/backend/
 
 # The Docker context excludes Git metadata; release builds supply WENYI_VERSION.
 ARG WENYI_VERSION=0.0.0+docker

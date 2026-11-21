@@ -2478,7 +2478,9 @@ dev = [
     { name = "pytest" },
     { name = "pytest-rerunfailures" },
     { name = "pytest-xdist" },
+    { name = "python-docx" },
     { name = "ruff" },
+    { name = "tomli" },
 ]
 
 [package.metadata]
@@ -2492,7 +2494,9 @@ dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-rerunfailures", specifier = ">=14" },
     { name = "pytest-xdist", specifier = ">=3" },
+    { name = "python-docx", specifier = ">=1.2.0" },
     { name = "ruff", specifier = ">=0.6" },
+    { name = "tomli", specifier = ">=2" },
 ]
 
 [[package]]
@@ -2561,7 +2565,6 @@ dependencies = [
     { name = "openai" },
     { name = "pydantic" },
     { name = "pypdf" },
-    { name = "python-docx" },
     { name = "pyyaml" },
     { name = "tenacity" },
     { name = "tiktoken" },
@@ -2577,7 +2580,6 @@ requires-dist = [
     { name = "openai", specifier = ">=1.40" },
     { name = "pydantic", specifier = ">=2.7" },
     { name = "pypdf", specifier = ">=6.14.2" },
-    { name = "python-docx", specifier = ">=1.2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "tenacity", specifier = ">=8.2" },
     { name = "tiktoken", specifier = ">=0.14.0" },

@@ -9,9 +9,6 @@
   "synopsis_length": "500 characters",
   "policy": {
     "target": {
-      "punctuation.zh_cn": {
-        "mode": "auto"
-      },
       "docx.chinese_font": {
         "mode": "auto"
       }

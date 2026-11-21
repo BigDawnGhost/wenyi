@@ -25,6 +25,14 @@ export function workflowStageLabel(
   fallback: string,
   t: Translator,
 ) {
+  // Two shapes arrive here. A bare stage id ("translation") names one of the fixed
+  // stages. A message key, optionally carrying an argument such as
+  // "progress.stage.arbitration:2", is one the pipeline raised for a specific run,
+  // and needs the key translated with that argument interpolated.
+  if (id.startsWith("progress.stage.")) {
+    const [key, argument] = id.split(":");
+    return t(key as MessageKey, argument ? { round: argument, count: argument } : undefined);
+  }
   return stages[id] ? t(stages[id]) : fallback;
 }
 
@@ -38,6 +46,7 @@ const operations: Record<string, MessageKey> = {
   "polish.body": "settings.polishing",
   "glossary.extract": "workflow.terms",
   "glossary.align_history": "accounting.alignTerms",
+  "glossary.note": "createProject.glossaryNotes",
   "annotation.align": "settings.paragraphAnnotationAlignment",
   "review.scan": "accounting.reviewScan",
   "review.verify": "accounting.reviewVerify",

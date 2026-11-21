@@ -62,8 +62,6 @@ export function NavigationLink({
   end,
   collapsed = false,
   prefetch,
-  className,
-  id,
   state,
 }: {
   to: string;
@@ -73,14 +71,10 @@ export function NavigationLink({
   collapsed?: boolean;
   /** Chunk loader warmed on hover/focus so the first click renders instantly. */
   prefetch?: () => Promise<unknown>;
-  /** Extra classes merged last (e.g. the sidebar's primary-action slot). */
-  className?: string;
-  id?: string;
   state?: Record<string, unknown>;
 }) {
   return (
     <NavLink
-      id={id}
       to={to}
       state={state}
       end={end}
@@ -89,12 +83,11 @@ export function NavigationLink({
       onFocus={() => void prefetch?.().catch(() => {})}
       className={({ isActive }) =>
         cn(
-          "flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
+          "group flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm transition-[color,background-color,padding,gap,box-shadow,border-color,transform] duration-sidebar ease-sidebar",
           collapsed && "gap-0 px-2",
           isActive
-            ? "bg-accent text-accent-foreground font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.5)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]"
+            ? "bg-accent text-accent-foreground font-medium shadow-raised active:shadow-pressed"
             : "text-muted-foreground hover:text-foreground hover:bg-hover",
-          className,
         )
       }
     >

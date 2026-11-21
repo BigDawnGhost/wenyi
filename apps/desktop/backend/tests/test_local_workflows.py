@@ -52,6 +52,11 @@ def test_events_http_and_review_job_identity(desktop, monkeypatch):
     )
     current = job("2025-01-01T00:00:02.100000+00:00", "current")
     job("2025-01-01T00:00:02.150000+00:00", "export", "export")
+    # The hot workflow endpoint needs a single job and its review, not either history.
+    with monkeypatch.context() as patch:
+        patch.setattr(backend, "list_jobs", lambda *_: pytest.fail("read complete job history"))
+        patch.setattr(SqliteStorage, "list_events", lambda *a, **kw: pytest.fail("read event log"))
+        assert client.get(f"/projects/{pid}/workflow").json()["run_id"] == "current"
     assert backend.job_review_id(old) == "old"
     assert backend.job_review_id(current) is None
     store.append_artifact_record(
@@ -121,6 +126,43 @@ def test_upload_parse_preview_and_workflow_use_sqlite(desktop):
     assert not list(backend.workspace.rglob("preview.json"))
     assert not list(backend.workspace.rglob("manifest.json"))
     store.close()
+
+
+def test_export_after_parse_uses_original_without_initializing(desktop):
+    client, backend, fake = desktop
+    pid = upload(client)
+    plan = client.post(f"/desktop/projects/{pid}/exports/plan", json={"format": "epub"})
+    assert plan.status_code == 200, plan.text
+    assert backend.list_exports(pid) == []
+    created = client.post(f"/projects/{pid}/exports", json=plan.json()["request"])
+    assert created.status_code == 200, created.text
+    assert wait_job(created.json()["job_id"])["status"] == "done"
+    content = client.get(f"/desktop/projects/{pid}/exports/{created.json()['export_id']}/content")
+    assert content.status_code == 200
+    with ZipFile(BytesIO(content.content)) as archive:
+        chapter = next(name for name in archive.namelist() if name.endswith("/ch0.xhtml"))
+        assert "A short paragraph." in archive.read(chapter).decode()
+    assert not backend.get_project(pid)["initialized"]
+    assert not fake.calls
+
+
+def test_missing_or_stale_parse_does_not_queue_an_empty_export(desktop):
+    client, backend, _ = desktop
+    pid = upload(client)
+    store = backend.storage_for(pid)
+    try:
+        parsed = store.read_artifact("parsed_document.json")
+        store.write_artifact("parsed_document.json", {**parsed, "source_sha256": "0" * 64})
+        for _ in range(2):
+            assert not client.get(f"/projects/{pid}").json()["output_formats"]
+            for url in (f"/desktop/projects/{pid}/exports/plan", f"/projects/{pid}/exports"):
+                response = client.post(url, json={})
+                assert response.status_code == 409
+                assert response.json()["code"] == "source_not_ready"
+            store.delete_artifact("parsed_document.json")
+        assert not backend.list_exports(pid)
+    finally:
+        store.close()
 
 
 def test_parse_completion_waits_for_run_lock_release(desktop, monkeypatch):
@@ -504,18 +546,12 @@ def test_epub_export_preserves_long_filename(desktop, bilingual):
 
 
 @pytest.mark.parametrize("bilingual", [False, True])
-@pytest.mark.parametrize("punctuation_normalize", [False, True])
-def test_repeated_epub_export_with_leading_punctuation(desktop, bilingual, punctuation_normalize):
+def test_repeated_epub_export_preserves_leading_punctuation(desktop, bilingual):
     client, backend, fake = desktop
     pid, store = initialize(backend)
     chapter = store.load_chapter(0)
     chapter.text_segments[0].target = "—你好。…再见。"
     store.save_chapter(chapter)
-    response = client.put(
-        f"/projects/{pid}/config",
-        json={"yaml": json.dumps({"output": {"punctuation_normalize": punctuation_normalize}})},
-    )
-    assert response.status_code == 200, response.text
     export_ids = []
     for _ in range(2):
         response = client.post(
@@ -536,8 +572,7 @@ def test_repeated_epub_export_with_leading_punctuation(desktop, bilingual, punct
                 if name.endswith(".xhtml")
                 for paragraph in BeautifulSoup(archive.read(name), "html.parser").find_all("p")
             ]
-        expected = "——你好。……再见。" if punctuation_normalize else "—你好。…再见。"
-        assert expected in paragraphs
+        assert "—你好。…再见。" in paragraphs
         assert ("A paragraph." in paragraphs) == bilingual
         assert store.load_chapter(0) == chapter
     assert len(set(export_ids)) == 2

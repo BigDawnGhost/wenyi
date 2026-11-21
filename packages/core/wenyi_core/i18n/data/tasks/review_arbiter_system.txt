@@ -7,7 +7,7 @@ Prefer selective evidence using first/middle/last or an explicit occurrence numb
 Request at most 4 items per round, for at most $max_evidence_rounds rounds.
 To request evidence, return:
 {"action":"request_evidence","requests":[
-  {"request_id":"Unique ID","tool":"glossary_term|term_occurrences|segment_context|book_context","arguments":{}}
+  {"request_id":"Unique ID","tool":"one listed tool name","arguments":{}}
 ],"complete":false}
 
 Return the final result as JSON only:
