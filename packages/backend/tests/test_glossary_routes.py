@@ -130,3 +130,58 @@ def test_anki_export_rejects_missing_projects(backend_context):
         backend_context.repository.get_project.return_value = None
         assert client.get("/projects/missing/glossary/export?format=apkg").status_code == 404
     backend_context.storage_for.assert_not_called()
+
+
+def test_conflicts_sort_by_frequency_and_resolve_as_context_dependent(backend_context, tmp_path):
+    storage = SqliteStorage(str(tmp_path / "project"))
+    storage.upsert_term(GlossaryTerm(source="大人物", target="big man"))
+    storage.upsert_term(GlossaryTerm(source="大人物", target="big shot"))
+    storage.upsert_term(GlossaryTerm(source="洗白", target="go legit"))
+    storage.upsert_term(GlossaryTerm(source="洗白", target="whitewash"))
+    storage.upsert_term(GlossaryTerm(source="洗白", target="launder"))
+    storage.upsert_term(GlossaryTerm(source="洗白", target="go legit"))
+
+    backend_context.repository.get_project.return_value = {
+        "id": "project-1",
+        "fmt": "text",
+        "status": "done",
+    }
+    backend_context.storage_for.side_effect = lambda _pid: SqliteStorage(str(tmp_path / "project"))
+    backend_context.update_term.side_effect = lambda _pid, store, source, term: store.update_term(
+        source, term
+    )
+    app = FastAPI()
+    app.include_router(glossary.router)
+    with TestClient(app) as client:
+        listed = client.get("/projects/project-1/glossary/conflicts")
+        assert listed.status_code == 200, listed.text
+        rows = listed.json()
+        # 洗白 has 2 open conflicts vs 1 for 大人物, so 洗白 comes first.
+        assert rows[0]["source"] == "洗白"
+        assert rows[0]["conflict_count"] == 2
+        assert rows[-1]["source"] == "大人物"
+        assert rows[-1]["conflict_count"] == 1
+
+        cid = rows[0]["id"]
+        res = client.post(
+            f"/projects/project-1/glossary/conflicts/{cid}/resolve",
+            json={"decision": "context_dependent"},
+        )
+        assert res.status_code == 200, res.text
+
+        remaining = client.get("/projects/project-1/glossary/conflicts").json()
+        assert [r["source"] for r in remaining] == ["大人物"]
+
+    term = storage.get_term("洗白")
+    assert term is not None
+    assert term.status == "context_dependent"
+    assert term.target == "go legit | whitewash | launder"
+
+    # A later extraction with a new sense appends without raising a new conflict.
+    assert storage.upsert_term(GlossaryTerm(source="洗白", target="clean up")) == "unchanged"
+    updated = storage.get_term("洗白")
+    assert updated is not None
+    assert updated.status == "context_dependent"
+    assert updated.target == "go legit | whitewash | launder | clean up"
+    assert [row["source"] for row in storage.open_conflicts()] == ["大人物"]
+    storage.close()

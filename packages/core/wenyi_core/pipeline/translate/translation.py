@@ -185,11 +185,13 @@ class TranslationService:
         unpolished_chapters = [
             row["index"] for row in final_manifest.get("chapters", []) if row.get("unpolished")
         ]
+        glossary_stats = store.stats()
         store.log_event(
             "translate_run_finished",
             total_segments=total,
             unpolished_chapters=unpolished_chapters,
             unpolished_chapter_count=len(unpolished_chapters),
+            open_conflicts=glossary_stats.get("open_conflicts", 0),
         )
         return store
 

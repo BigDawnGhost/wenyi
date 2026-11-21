@@ -13,7 +13,12 @@ from fastapi.routing import APIRoute
 from starlette.types import Message as ASGIMessage
 from wenyi_core.glossary.anki import export_anki_glossary
 from wenyi_core.i18n.metadata import normalize_term_type
-from wenyi_core.models.glossary import GlossaryTerm
+from wenyi_core.models.glossary import (
+    STATUS_CONTEXT_DEPENDENT,
+    STATUS_OK,
+    GlossaryTerm,
+    merge_context_senses,
+)
 
 from ..context import current_context
 from ..errors import GLOSSARY_IMPORT_TOO_LARGE, ApiError
@@ -159,30 +164,57 @@ def delete_term(pid: str, source: str) -> dict:
 def list_conflicts(pid: str) -> list[dict]:
     require_project(pid)
     with closing(storage_for(pid)) as storage:
-        return storage.open_conflicts()
+        conflicts = storage.open_conflicts()
+    counts: dict[str, int] = {}
+    for row in conflicts:
+        source = row["source"]
+        counts[source] = counts.get(source, 0) + 1
+    enriched = [{**row, "conflict_count": counts.get(row["source"], 1)} for row in conflicts]
+    enriched.sort(key=lambda row: (-row["conflict_count"], row.get("id", 0)))
+    return enriched
 
 
 @router.post("/conflicts/{cid}/resolve", response_model=Message)
 def resolve_conflict(pid: str, cid: int, body: ResolveConflict) -> dict:
     with project_write(pid) as (_project, storage):
-        conflict = next((row for row in storage.open_conflicts() if row["id"] == cid), None)
+        open_conflicts = storage.open_conflicts()
+        conflict = next((row for row in open_conflicts if row["id"] == cid), None)
         if conflict is None:
             raise HTTPException(404, "conflict not found")
         existing = storage.get_term(conflict["source"])
         if existing is None:
             raise HTTPException(404, "term not found")
+        status = STATUS_OK
         if body.decision == "current":
             target = existing.target
         elif body.decision == "proposed":
             target = conflict["proposed_target"]
+        elif body.decision == "context_dependent":
+            status = STATUS_CONTEXT_DEPENDENT
+            if isinstance(body.target, str) and body.target.strip():
+                target = merge_context_senses(body.target)
+            else:
+                candidates = [existing.target]
+                for row in open_conflicts:
+                    if row["source"] == existing.source and row.get("proposed_target"):
+                        candidates.append(row["proposed_target"])
+                target = merge_context_senses(*candidates)
         else:
             target = body.target
         if not isinstance(target, str) or not target.strip():
             raise HTTPException(422, "A nonempty target is required to resolve the conflict")
         with storage.state_lock():
-            storage.resolve_term(existing.source, target)
+            if status == STATUS_CONTEXT_DEPENDENT:
+                storage.resolve_term(existing.source, target, status=status)
+            else:
+                storage.resolve_term(existing.source, target)
             storage.mark_conflicts_resolved(existing.source)
-            storage.log_event("glossary_conflict_resolved", source=existing.source, target=target)
+            storage.log_event(
+                "glossary_conflict_resolved",
+                source=existing.source,
+                target=target,
+                status=status,
+            )
     return {"message": "resolved"}
 
 

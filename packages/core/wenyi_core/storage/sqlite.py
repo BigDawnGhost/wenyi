@@ -1149,9 +1149,9 @@ class SqliteStorage:
     def terms_in_text(self, text: str) -> list[GlossaryTerm]:
         return self.terms_in(self.all_terms(), text)
 
-    def resolve_term(self, source: str, target: str) -> bool:
+    def resolve_term(self, source: str, target: str, *, status: str = "ok") -> bool:
         with self.state_lock():
-            return self._glossary().resolve_term(source, target)
+            return self._glossary().resolve_term(source, target, status=status)
 
     def delete_term(self, source: str) -> bool:
         with self.state_lock():
@@ -1164,10 +1164,11 @@ class SqliteStorage:
 
     def update_term(self, source: str, term: GlossaryTerm) -> bool:
         """Apply an explicit edit in place, retaining prompt order and first chapter."""
+        status = "context_dependent" if term.status == "context_dependent" else "ok"
         with self.state_lock():
             cursor = self._connection().execute(
                 "UPDATE glossary SET source=?, target=?, reading=?, type=?, gender=?, "
-                "aliases=?, note=?, status='ok', updated_at=? WHERE source=?",
+                "aliases=?, note=?, status=?, updated_at=? WHERE source=?",
                 (
                     term.source,
                     term.target,
@@ -1176,6 +1177,7 @@ class SqliteStorage:
                     term.gender,
                     json.dumps(term.aliases, ensure_ascii=False),
                     term.note,
+                    status,
                     time.time(),
                     source,
                 ),

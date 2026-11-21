@@ -186,6 +186,8 @@ export const preview = {
     { index: 1, title: "Two", word_count: 400 },
     { index: 2, title: "Three", word_count: 400 },
   ],
+  skipped_boilerplate_count: 0,
+  skipped_boilerplate: [],
 } satisfies Output<"UploadPreview">;
 
 function tableData(): Record<string, unknown> {

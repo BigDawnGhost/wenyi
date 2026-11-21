@@ -5,6 +5,7 @@ import { useI18n } from "../../i18n";
 import { toast } from "../../lib/toast";
 import { errorMessage } from "../../lib/error-codes";
 import { Button } from "../../components/ui/button";
+import { Badge } from "../../components/ui/badge";
 import { Card, CardContent } from "../../components/ui/card";
 
 /** Unresolved terminology conflicts raised by extraction, resolved inline. */
@@ -48,6 +49,11 @@ export function ConflictList({
             className="flex flex-wrap items-center gap-3 text-sm border-t border-subtle pt-2"
           >
             <span className="font-medium">{c.source}</span>
+            {(c.conflict_count ?? 1) > 1 && (
+              <Badge variant="warning" className="tabular-nums">
+                ×{c.conflict_count}
+              </Badge>
+            )}
             <span className="text-muted-foreground">
               {tr("glossary.current")}
               {c.existing_target}
@@ -56,7 +62,7 @@ export function ConflictList({
               {tr("glossary.aiSuggestion")}
               {c.proposed_target}
             </span>
-            <span className="flex gap-1 ml-auto">
+            <span className="flex flex-wrap gap-1 ml-auto">
               <Button
                 size="sm"
                 variant="outline"
@@ -72,6 +78,16 @@ export function ConflictList({
                 onClick={() => resolve.mutate({ cid: c.id, decision: "proposed" })}
               >
                 {tr("glossary.acceptSuggestion")}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() =>
+                  resolve.mutate({ cid: c.id, decision: "context_dependent" })
+                }
+              >
+                {tr("glossary.markContextDependent")}
               </Button>
             </span>
           </div>

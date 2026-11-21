@@ -5,14 +5,14 @@ translation and mark related conflicts resolved.
 
 from __future__ import annotations
 
-from .store import GlossaryStore
+from .store import STATUS_OK, GlossaryStore
 
 
-def resolve(store: GlossaryStore, source: str, target: str) -> bool:
+def resolve(store: GlossaryStore, source: str, target: str, *, status: str = STATUS_OK) -> bool:
     """Resolve a source term's final translation and clear conflicts; report whether the term
     exists.
     """
-    if not store.resolve_term(source, target):
+    if not store.resolve_term(source, target, status=status):
         return False
     store.mark_conflicts_resolved(source)
     return True

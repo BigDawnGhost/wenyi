@@ -1141,6 +1141,11 @@ export interface components {
             chapter: number | null;
             /** Note */
             note?: string | null;
+            /**
+             * Conflict Count
+             * @default 1
+             */
+            conflict_count: number;
         };
         /** DigestUpdate */
         DigestUpdate: {
@@ -1628,7 +1633,7 @@ export interface components {
              * Decision
              * @enum {string}
              */
-            decision: "current" | "proposed" | "custom";
+            decision: "current" | "proposed" | "custom" | "context_dependent";
             /** Target */
             target?: string | null;
         };
@@ -1878,6 +1883,12 @@ export interface components {
              * @default
              */
             note: string;
+            /**
+             * Status
+             * @default ok
+             * @enum {string}
+             */
+            status: "ok" | "context_dependent";
         };
         /** TermLookup */
         TermLookup: {

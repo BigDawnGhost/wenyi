@@ -143,10 +143,11 @@ class PostgresRepository:
             dal.set_project_status(job["project_id"], status)
 
     def update_term(self, pid, storage, source, term):
+        status = "context_dependent" if term.status == "context_dependent" else "ok"
         with self.pool.connection() as conn:
             conn.execute(
                 """UPDATE glossary SET source=%s,target=%s,reading=%s,type=%s,gender=%s,
-                aliases=%s,note=%s,status='ok',updated_at=%s WHERE project_id=%s AND source=%s""",
+                aliases=%s,note=%s,status=%s,updated_at=%s WHERE project_id=%s AND source=%s""",
                 (
                     term.source,
                     term.target,
@@ -155,6 +156,7 @@ class PostgresRepository:
                     term.gender,
                     Jsonb(term.aliases),
                     term.note,
+                    status,
                     time.time(),
                     pid,
                     source,
