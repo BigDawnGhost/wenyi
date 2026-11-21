@@ -35,6 +35,65 @@ _POSSESSIVE_KIN = re.compile(
     r"(?:brothers?|sisters?|siblings?|uncles?|aunts?|cousins?|parents?|mothers?|fathers?|sons?|daughters?)",
     re.IGNORECASE,
 )
+_EN_CONTRADICTION_PREFIX = (
+    r"(?:distinct\s+from|different\s+from|not\s+to\s+be\s+confused\s+with|unlike|"
+    r"not\s+the\s+same\s+as|rather\s+than|instead\s+of|do\s+not\s+(?:use|translate\s+as)|"
+    r"don't\s+(?:use|translate\s+as)|never\s+(?:use|translate\s+as)|avoid|not)"
+)
+_ZH_CONTRADICTION_PREFIX = r"(?:区别于|不同于|并非|不是|非|勿译为|不要译为|不可译为)"
+
+
+def _note_contradicts_target(target: str, note: str) -> bool:
+    """Return True when the note explicitly distinguishes the entry from its own target."""
+    cleaned_target = target.strip()
+    cleaned_note = note.strip()
+    if not cleaned_target or not cleaned_note:
+        return False
+    escaped = re.escape(cleaned_target)
+    en_pattern = re.compile(
+        rf"\b{_EN_CONTRADICTION_PREFIX}\s+(?:(?:the|a|an)\s+)?[\"'“‘`]?{escaped}[\"'”’`]?(?!\w)",
+        re.IGNORECASE,
+    )
+    if en_pattern.search(cleaned_note):
+        return True
+    zh_pattern = re.compile(rf"{_ZH_CONTRADICTION_PREFIX}\s*[\"'“‘「『]?{escaped}")
+    return zh_pattern.search(cleaned_note) is not None
+
+
+def _is_shadowed_or_unbounded_source(
+    term: GlossaryTerm,
+    source_text: str,
+    candidate_longer_keys: Iterable[str],
+) -> bool:
+    """Reject a source key that only appears inside a longer word or a longer batch/known term."""
+    source = term.source.strip()
+    if not source or not source_text:
+        return False
+    lowered_text = source_text.casefold()
+    lowered_source = source.casefold()
+    if lowered_source not in lowered_text:
+        return False
+    # For space-delimited scripts, require a token boundary rather than matching inside a word.
+    if not source_matches_text(source, source_text):
+        return True
+    longer = sorted(
+        {
+            key.strip()
+            for key in candidate_longer_keys
+            if (stripped := key.strip())
+            and len(stripped.casefold()) > len(lowered_source)
+            and lowered_source in stripped.casefold()
+            and source_matches_text(stripped, source_text)
+        },
+        key=len,
+        reverse=True,
+    )
+    if not longer:
+        return False
+    masked = source_text
+    for key in longer:
+        masked = re.sub(re.escape(key), " ", masked, flags=re.IGNORECASE)
+    return not source_matches_text(source, masked)
 
 
 def _text(value: object, default: str = "") -> str:
@@ -145,7 +204,26 @@ class GlossaryExtractor(Agent):
                     note=_text(d.get("note")),
                 )
             )
-        return terms
+        all_keys: list[str] = []
+        for item in (*terms, *existing):
+            all_keys.append(item.source)
+            all_keys.extend(item.aliases)
+        filtered: list[GlossaryTerm] = []
+        for term in terms:
+            if _note_contradicts_target(term.target, term.note):
+                _LOGGER.warning(
+                    "Rejected glossary extraction with self-contradictory note: source=%r",
+                    term.source,
+                )
+                continue
+            if _is_shadowed_or_unbounded_source(term, source_text, all_keys):
+                _LOGGER.warning(
+                    "Rejected glossary extraction shadowed by longer term or word boundary: source=%r",
+                    term.source,
+                )
+                continue
+            filtered.append(term)
+        return filtered
 
     @staticmethod
     def _first_occurrences(

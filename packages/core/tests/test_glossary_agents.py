@@ -408,6 +408,81 @@ class TestExtractor(unittest.TestCase):
             self.assertEqual(summary["history_unresolved"], 1)
             store.close()
 
+    def test_rejects_strict_substring_shadowed_by_longer_term_in_batch_or_glossary(self):
+        # Case 1: 少将 only appears inside 少将军 in this batch (longer term in same batch).
+        payload = json.dumps(
+            {
+                "terms": [
+                    {"source": "少将军", "target": "the young general", "type": "person"},
+                    {"source": "少将", "target": "young general", "type": "term"},
+                ]
+            },
+            ensure_ascii=False,
+        )
+        extractor = GlossaryExtractor(FakeClient(handler=lambda *args: payload), _cfg())
+        result = extractor.extract("少将军走进了大厅。", "The young general entered the hall.", [])
+        self.assertEqual([t.source for t in result], ["少将军"])
+
+        # Case 2: 少将 only appears inside 少将军 (longer term already in existing glossary).
+        payload_short = json.dumps(
+            {"terms": [{"source": "少将", "target": "young general", "type": "term"}]},
+            ensure_ascii=False,
+        )
+        extractor2 = GlossaryExtractor(FakeClient(handler=lambda *args: payload_short), _cfg())
+        existing = [GlossaryTerm(source="少将军", target="the young general", type="person")]
+        self.assertEqual(
+            extractor2.extract(
+                "少将军走进了大厅。", "The young general entered the hall.", existing
+            ),
+            [],
+        )
+
+        # Case 3: When 少将 ALSO appears on its own outside 少将军, keep both!
+        result_both = extractor.extract(
+            "少将军向少将敬礼。",
+            "The young general saluted the major general.",
+            [],
+        )
+        self.assertEqual([t.source for t in result_both], ["少将军", "少将"])
+
+        # Case 4: Space-delimited token boundary prevents extracting "Ann" from "Anna".
+        en_payload = json.dumps({"terms": [{"source": "Ann", "target": "安", "type": "person"}]})
+        en_cfg = _cfg()
+        en_cfg.source_lang = "en"
+        en_ext = GlossaryExtractor(FakeClient(handler=lambda *args: en_payload), en_cfg)
+        self.assertEqual(en_ext.extract("Anna arrived early.", "安娜早到了。", []), [])
+        self.assertEqual(len(en_ext.extract("Ann arrived early.", "安早到了。", [])), 1)
+
+    def test_rejects_entry_whose_note_contradicts_its_own_target(self):
+        payload = json.dumps(
+            {
+                "terms": [
+                    {
+                        "source": "兄弟会",
+                        "target": "Brothers gang",
+                        "type": "organization",
+                        "note": "Generic fraternal organization, distinct from the Brothers gang",
+                    },
+                    {
+                        "source": "兄弟会分支",
+                        "target": "兄弟帮",
+                        "type": "organization",
+                        "note": "区别于兄弟帮的普通社团",
+                    },
+                    {
+                        "source": "议会",
+                        "target": "Council",
+                        "type": "organization",
+                        "note": "Formal governing body, not a club",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+        extractor = GlossaryExtractor(FakeClient(handler=lambda *args: payload), _cfg())
+        result = extractor.extract("兄弟会和议会开会。", "The fraternity and Council met.", [])
+        self.assertEqual([t.source for t in result], ["议会"])
+
 
 if __name__ == "__main__":
     unittest.main()
