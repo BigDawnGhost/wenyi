@@ -44,11 +44,15 @@ Parsing and initialized translation are distinct states.
 
 With book understanding enabled, every nonempty chapter needs a complete digest
 before body work. A failed chunk or merge cannot publish a partial chapter digest.
-A failed synopsis group invalidates the whole synopsis; stale retained analysis must
-not be injected as a current synopsis. The synopsis keeps a snapshot of the mappings
-it read (target, type, gender and aliases). Terms added later, and note edits, reuse it;
-changing or removing a snapshot mapping regenerates it. Preparation never extracts or
-seeds glossary entries.
+A failed synopsis group invalidates the whole synopsis; if regeneration fails while
+a previously saved non-empty synopsis exists, the run logs the failure and falls
+back to the saved stale synopsis without updating cache metadata so the next run
+retries regeneration. The synopsis keeps a snapshot of the `[target, type]`
+mappings for terms matched in the chapter digests (accepting legacy version-3
+snapshots without forcing regeneration). Terms added later, unmatched terms, and
+note, alias or gender edits reuse it; changing a matched term's target or type,
+or removing a matched term, regenerates it. Preparation never extracts or seeds
+glossary entries.
 
 Prescan content budgets use the shared `cl100k_base` token estimator, not character
 counts or a provider-specific tokenizer. The source and reduction limits come from
