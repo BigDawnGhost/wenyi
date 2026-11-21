@@ -17,9 +17,12 @@ Download a `wenyi-desktop-<version>-<platform>-<arch>` package from [GitHub Rele
 
 Packages are distributed directly, without an outer ZIP. Allow an AppImage to execute in its file permissions before opening it. Choose the macOS package for your processor; there is no universal package. The native macOS host requires 10.14 or later for UserNotifications (Apple Silicon requires macOS 11 or later). Check the release notes for any higher bundled-runtime requirements and signing status.
 
-Keep the program installation separate from your documents. The Windows installer defaults to `%LOCALAPPDATA%\Programs\Wenyi Desktop`; changing this location does not move your data. It refuses unsafe or unrelated occupied folders, including locations overlapping Wenyi's data directories. Choose a dedicated empty program folder or the existing Wenyi installation.
+On Windows, double-click the installer and choose an installation scope:
 
-On Windows, run setup as your normal user, not **Run as administrator**. If setup reports that Wenyi or its engine is still running, quit through the tray and wait for tasks to stop; setup does not force-stop translations. Installing an older version over a newer one is refused.
+- **Current user only** (default for a new installation): installs to `%LOCALAPPDATA%\Programs\Wenyi Desktop` without requesting administrator privileges. You can choose a dedicated empty program folder or the existing Wenyi installation.
+- **All users**: requires administrator approval and installs to `Wenyi Desktop` in the system's Program Files folder. To update it, download the new installer from GitHub Releases and choose **All users** again.
+
+Either way, each account keeps its own settings and projects. Installing for all users does not remove an existing current-user installation. If setup reports that Wenyi or its engine is still running, quit through the tray and wait for tasks to stop. Setup does not force-stop translations or allow downgrades.
 
 After installation, set up [API keys](#api-keys), then follow the shared [workspace guide](workspace.md) to create, translate, proofread, and export a book. Building from source belongs in the [Desktop development guide](../development/desktop.md).
 
@@ -111,7 +114,7 @@ Open **Settings → About** to check the current version, check for updates, and
 
 Before installing, finish or pause active project tasks, wait for exports, saves, and plugin setup to finish, and save or discard unsaved editor/settings drafts. Close other copies of the same program, even if they use different data roots.
 
-Supported release builds offer in-app installation on Windows, macOS, and Linux **AppImage**. macOS updates keep the installed architecture. Linux `.deb`/`.rpm` users update through downloaded packages, not AppImage replacement. Older or unconfigured builds may require a manual update. A network/check failure does not prevent continuing to use Desktop.
+Supported release builds offer in-app installation on Windows for the current user, macOS, and Linux **AppImage**. macOS updates keep the installed architecture. Windows all-users and Linux `.deb`/`.rpm` installations update through downloaded packages. Older or unconfigured builds may require a manual update. A network/check failure does not prevent continuing to use Desktop.
 
 An in-app installation first stops writes and the engine, then backs up **all registered project directories** and `catalog.sqlite3` to `<data-root>/backups/<version>-<timestamp>/`. The backup includes any database WAL/SHM files and a `MANIFEST.json` recording original locations and file verification data. It does not copy earlier backups, export credential secrets, or replace your regular backups.
 
@@ -121,12 +124,12 @@ A manually run installer neither creates this snapshot nor requires a historical
 
 ### Windows uninstallation
 
-Uninstall keeps data by default. Its two independent deletion options are initially unchecked:
+Uninstalling an all-users installation requires administrator approval and leaves every account's data in place. A current-user uninstall also keeps data by default, with two independent deletion options initially unchecked:
 
-- Delete the catalog, settings, logs, locks, and runtime, **not project files**.
+- Delete the catalog, settings, logs, and runtime, **not project files**.
 - Permanently delete default project files and upgrade backups.
 
-Both options apply only to `%LOCALAPPDATA%\Wenyi\Desktop`; custom data roots, external project libraries, and legacy directories are retained. Deleting the catalog also loses the project list, even if project files remain; those files are not automatically rediscovered. Silent uninstall and upgrade replacement do not select either option. For recovery or reinstalling, leave both unchecked and retain a separate backup.
+Both options apply only to `%LOCALAPPDATA%\Wenyi\Desktop`; custom data roots, external project libraries, and legacy directories are retained. If another copy of Wenyi is using that data, you can remove the program without deleting any data, or cancel and close the other copy first. Deleting the catalog also loses the project list, even if project files remain; those files are not automatically rediscovered. Silent uninstall and upgrade replacement do not select either option. For recovery or reinstalling, leave both unchecked and retain a separate backup.
 
 ## Close or quit Desktop
 

@@ -18,6 +18,8 @@ mod paths;
 mod process;
 mod profile;
 mod publish;
+#[cfg(any(windows, test))]
+mod uninstall;
 mod updates;
 
 use crate::mutex::lock;
@@ -258,6 +260,10 @@ fn main() {
     let data_dir = match args.as_slice() {
         [] => None,
         [flag, path] if flag == "--data-dir" => Some(std::path::PathBuf::from(path)),
+        #[cfg(windows)]
+        [flag, selection] if flag == "--uninstall-user-data" => {
+            std::process::exit(uninstall::run(selection));
+        }
         [flag] if flag == "--version" || flag == "-V" => {
             println!("Wenyi Desktop {}", env!("WENYI_DESKTOP_VERSION"));
             return;

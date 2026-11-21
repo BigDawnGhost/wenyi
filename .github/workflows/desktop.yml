@@ -43,8 +43,8 @@ permissions:
   contents: read
 
 jobs:
-  # A pull request needs feedback on Linux plus a Windows smoke check; only a
-  # release or a manual dispatch pays for every platform and the packaging run.
+  # Pull requests build the Windows installer only when it can change.
+  # Releases and manual dispatches package every platform.
   plan:
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -88,6 +88,11 @@ jobs:
               - "package.json"
               - "pnpm-lock.yaml"
               - ".github/workflows/desktop.yml"
+            windows_installer:
+              - "apps/desktop/installer.*"
+              - "apps/desktop/tauri.windows.conf.json"
+              - "scripts/dev/desktop_installer_smoke.py"
+              - ".github/workflows/desktop.yml"
       - id: set
         # The value must be a single line: a multi-line $GITHUB_OUTPUT entry is
         # rejected by the runner as an invalid output format.
@@ -95,10 +100,12 @@ jobs:
           # A business-code pull request does not need the Tauri release build;
           # it still runs cargo test, the menu test and the desktop suite.
           DESKTOP_CHANGED: ${{ steps.filter.outputs.desktop }}
+          WINDOWS_INSTALLER_CHANGED: ${{ steps.filter.outputs.windows_installer }}
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             if [ "$DESKTOP_CHANGED" = "true" ]; then tier=full; else tier=test; fi
-            matrix="[{\"os\":\"ubuntu-22.04\",\"platform\":\"linux-x64\",\"tier\":\"${tier}\",\"bundles\":\"appimage,deb,rpm\"},{\"os\":\"windows-latest\",\"platform\":\"windows-x64\",\"tier\":\"smoke\",\"bundles\":\"nsis\"}]"
+            if [ "$WINDOWS_INSTALLER_CHANGED" = "true" ]; then windows_tier=full; else windows_tier=smoke; fi
+            matrix="[{\"os\":\"ubuntu-22.04\",\"platform\":\"linux-x64\",\"tier\":\"${tier}\",\"bundles\":\"appimage,deb,rpm\"},{\"os\":\"windows-latest\",\"platform\":\"windows-x64\",\"tier\":\"${windows_tier}\",\"bundles\":\"nsis\"}]"
           else
             matrix='[{"os":"ubuntu-22.04","platform":"linux-x64","tier":"full","bundles":"appimage,deb,rpm"},{"os":"windows-latest","platform":"windows-x64","tier":"full","bundles":"nsis"},{"os":"macos-15","platform":"macos-arm64","tier":"full","bundles":"dmg","signed_bundles":"dmg,app"},{"os":"macos-15-intel","platform":"macos-x64","tier":"full","bundles":"dmg","signed_bundles":"dmg,app"}]'
           fi
@@ -346,6 +353,9 @@ jobs:
       - name: Verify native Windows GUI subsystem
         if: runner.os == 'Windows' && matrix.tier == 'full'
         run: uv run --no-project python scripts/dev/desktop_pe.py target/release/wenyi-desktop.exe
+      - name: Exercise Windows install scopes and profile cleanup
+        if: runner.os == 'Windows' && matrix.tier == 'full'
+        run: uv run --no-project python scripts/dev/desktop_installer_smoke.py
       - name: Verify native application version
         if: matrix.tier == 'full'
         shell: bash
