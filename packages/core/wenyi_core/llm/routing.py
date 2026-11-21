@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from types import MappingProxyType
 from typing import Any
 
-from .configuration import LLMConfig
+from .configuration import LLMConfig, effective_context_window
 from .operations import OPERATIONS, require_operation
 from .registry import provider_spec
 from .transport import ResolvedModel
@@ -41,6 +41,7 @@ class ResolvedRoute:
     model_identity: str
     fingerprint: str
     fallbacks: tuple[str, ...] = ()
+    context_window: int | None = None
 
     def request_model(self) -> ResolvedModel:
         options = (
@@ -104,6 +105,7 @@ def model_route(
             {"operation": operation, "protocol": spec.protocol_version, "inference": physical_model}
         ),
         fallbacks,
+        effective_context_window(connection.kind, model.model, model.context_window),
     )
 
 

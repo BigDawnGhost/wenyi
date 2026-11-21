@@ -24,6 +24,7 @@ from ...agents.glossary_extractor import TranslatedSegmentEvidence
 from ...agents.glossary_note import GlossaryNoteAgent
 from ...config import PipelineConfig
 from ...events import ProgressFn
+from ...glossary.prompt_scope import prompt_terms
 from ...glossary.store import GlossaryStore
 from ...ingest.tokens import count_tokens
 from ...markup.contexts import annotation_contexts_for_segments
@@ -682,19 +683,23 @@ class TranslationService:
         annotation_contexts: list[list[dict[str, str]]],
         next_source: str,
     ) -> list[GlossaryTerm]:
-        """Select the glossary entries one batch sends under ``pipeline.batch_glossary``.
+        """Select the glossary entries one batch sends under ``pipeline.batch_glossary`` and
+        ``pipeline.glossary_prompt_tokens``.
 
-        ``all`` keeps the full snapshot in stable insertion order. ``relevant`` keeps the
-        entries whose source or aliases occur in the batch source, its following-source
-        reference, its annotation contexts or the chapter digest; the digest names characters
-        and places a paragraph may only refer to by pronoun.
+        ``all`` sends the full snapshot while it fits the token budget, then keeps its
+        append-stable leading run plus any matching later entries. ``relevant`` keeps only
+        matching entries within the token budget.
         """
-        if self._runtime.config.pipeline.batch_glossary != "relevant":
-            return snapshot
         parts = [segment.source for segment in batch]
         parts.extend(item.get("source", "") for group in annotation_contexts for item in group)
         parts.extend((next_source, chapter_digest))
-        return GlossaryStore.terms_in(snapshot, "\n".join(part for part in parts if part))
+        match_text = "\n".join(part for part in parts if part)
+        return prompt_terms(
+            snapshot,
+            match_text,
+            budget=self._runtime.config.pipeline.glossary_prompt_tokens,
+            mode=self._runtime.config.pipeline.batch_glossary,
+        )
 
     def _schedule_polish(self, store: Storage, job: PolishJob) -> None:
         """Queue a pending polish, or polish inline when no background pool is active."""

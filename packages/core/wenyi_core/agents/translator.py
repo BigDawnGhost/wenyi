@@ -11,6 +11,7 @@ import json
 
 from ..alignment.objects import marked_sources
 from ..llm.json_parser import JsonParseError
+from ..llm.preflight import fit_prompt_to_context_window
 from ..llm.retrying import TruncatedResponseError
 from ..models.glossary import GlossaryTerm
 from . import prompts
@@ -127,35 +128,57 @@ class Translator(Agent):
         """
         n = len(sources)
         model_sources = marked_sources(sources, annotation_contexts or [[] for _ in sources])
-        system = self.render(
+        system_template = self.render(
             "translator_system",
             src=self.src,
             tgt=self.tgt,
         ) + prompts.protected_object_guidance(model_sources)
-        user = self.render(
-            "translator_user",
-            src=self.src,
-            tgt=self.tgt,
-            style=style or "(none)",
-            book_synopsis=book_synopsis or "(none)",
-            glossary=self.render_glossary_block(glossary_terms, sources),
-            annotation_contexts=prompts.render_annotation_contexts(
-                annotation_contexts or [[] for _ in sources]
-            ),
-            chapter_digest=chapter_digest or "(none)",
-            context=context or "(none)",
-            n=n,
-            n_minus_1=n - 1,
-            numbered_source=prompts.numbered(model_sources),
-            next_source=prompts.render_source_reference(next_source),
+        rendered_annotations = prompts.render_annotation_contexts(
+            annotation_contexts or [[] for _ in sources]
+        )
+        numbered_source = prompts.numbered(model_sources)
+        next_ref = prompts.render_source_reference(next_source)
+        note_lookup_suffix = (
+            "\n" + self.render("glossary_note_lookup")
+            if self.config.pipeline.glossary_note_workers
+            else ""
+        )
+
+        def _render(terms_for_prompt: list[GlossaryTerm]) -> tuple[str, str]:
+            user_text = self.render(
+                "translator_user",
+                src=self.src,
+                tgt=self.tgt,
+                style=style or "(none)",
+                book_synopsis=book_synopsis or "(none)",
+                glossary=self.render_glossary_block(terms_for_prompt, sources),
+                annotation_contexts=rendered_annotations,
+                chapter_digest=chapter_digest or "(none)",
+                context=context or "(none)",
+                n=n,
+                n_minus_1=n - 1,
+                numbered_source=numbered_source,
+                next_source=next_ref,
+            )
+            if note_lookup_suffix:
+                has_tools = batch_note_tools(terms_for_prompt, "\n".join(sources)) is not None
+                if has_tools:
+                    user_text += note_lookup_suffix
+            return system_template, user_text
+
+        match_text = "\n".join(part for part in (*sources, next_source, chapter_digest) if part)
+        system, user, effective_terms, _shrunk = fit_prompt_to_context_window(
+            config=self.config,
+            operation="translation.body",
+            terms=glossary_terms,
+            match_text=match_text,
+            render_messages=_render,
         )
         tools = (
-            batch_note_tools(glossary_terms, "\n".join(sources))
+            batch_note_tools(effective_terms, "\n".join(sources))
             if self.config.pipeline.glossary_note_workers
             else None
         )
-        if tools is not None:
-            user += "\n" + self.render("glossary_note_lookup")
         messages: Messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user},

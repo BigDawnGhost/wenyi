@@ -48,6 +48,9 @@ pipeline:
   # and chapter digest; glossary extraction then sees only entries present in its batch.
   # Reviewer requests always use the full glossary.
   batch_glossary: all # all | relevant
+  # Glossary token budget per request (cl100k_base). In all mode, keeps the append-stable
+  # leading run within the budget plus matching later entries; in relevant mode, caps matched entries.
+  glossary_prompt_tokens: 4000
   review: true # Run final review after whole-book translation; disable with --no-review
   # Additional structural retries for standard translation and each precision stage; 0 disables retries.
   align_retry_limit: 2
@@ -135,6 +138,8 @@ class PipelineConfig(BaseModel):
     # Glossary sent to body translation, polish, precision and extraction requests:
     # "all" keeps book-wide consistency; "relevant" sends only entries matching each batch.
     batch_glossary: Literal["all", "relevant"] = "all"
+    # Per-request glossary token budget (cl100k_base); 0 keeps only matching entries.
+    glossary_prompt_tokens: int = Field(default=4000, ge=0)
 
     review: bool = True
     # Additional structural retries for standard translation and precision generation/synthesis.

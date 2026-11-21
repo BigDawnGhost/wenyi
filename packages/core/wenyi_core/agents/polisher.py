@@ -7,6 +7,7 @@ polishing cannot drop paragraphs.
 
 from __future__ import annotations
 
+from ..llm.preflight import fit_prompt_to_context_window
 from ..models.glossary import GlossaryTerm
 from . import prompts
 from .base import Agent, Messages
@@ -43,25 +44,40 @@ class Polisher(Agent):
     ) -> list[str] | None:
         """Send one standalone polish request and return the aligned list or ``None``."""
         n = len(targets)
-        system = self.render(
+        system_template = self.render(
             "polisher_system", src=self.src, tgt=self.tgt, n=n
         ) + prompts.protected_object_guidance(targets)
-        user = self.render(
-            "polisher_user",
-            src=self.src,
-            tgt=self.tgt,
-            glossary=prompts.render_glossary(
-                glossary_terms or [],
-                source_lang=self.src,
-                genre=self.language_policy.context.genre,
-                note_source=(
-                    "\n".join(sources or []) if self.config.pipeline.use_glossary_notes else None
+        note_source = "\n".join(sources or []) if self.config.pipeline.use_glossary_notes else None
+        numbered_target = prompts.numbered(targets)
+        next_ref = prompts.render_source_reference(next_source)
+
+        def _render(terms_for_prompt: list[GlossaryTerm]) -> tuple[str, str]:
+            return (
+                system_template,
+                self.render(
+                    "polisher_user",
+                    src=self.src,
+                    tgt=self.tgt,
+                    glossary=prompts.render_glossary(
+                        terms_for_prompt,
+                        source_lang=self.src,
+                        genre=self.language_policy.context.genre,
+                        note_source=note_source,
+                    ),
+                    style=style or "(none)",
+                    n=n,
+                    numbered_target=numbered_target,
+                    next_source=next_ref,
                 ),
-            ),
-            style=style or "(none)",
-            n=n,
-            numbered_target=prompts.numbered(targets),
-            next_source=prompts.render_source_reference(next_source),
+            )
+
+        match_text = "\n".join(part for part in (*(sources or ()), next_source) if part)
+        system, user, _effective_terms, _shrunk = fit_prompt_to_context_window(
+            config=self.config,
+            operation="polish.body",
+            terms=list(glossary_terms or ()),
+            match_text=match_text,
+            render_messages=_render,
         )
         items = self._ask_json(
             system,

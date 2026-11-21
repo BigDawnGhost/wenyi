@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from ..config import Config
+from ..glossary.prompt_scope import prompt_terms
 from ..glossary.store import (
     TYPE_TERM,
     GlossaryOccurrenceMatcher,
@@ -23,6 +24,7 @@ from ..glossary.store import (
 from ..i18n.policy.models import content_hash
 from ..llm.base import LLMClient
 from ..llm.json_parser import JsonParseError, parse_json_result
+from ..llm.preflight import fit_prompt_to_context_window
 from ..models.glossary import SOURCE_ONLY_TYPES
 from ..storage.protocol import Storage
 from . import prompts
@@ -161,14 +163,27 @@ class GlossaryExtractor(Agent):
         self, source_text: str, target_text: str, existing: list[GlossaryTerm]
     ) -> list[GlossaryTerm]:
         """Extract valid terms from source/target pairs and normalize model field types."""
-        system = self.render("glossary_extractor_system", src=self.src, tgt=self.tgt)
-        user = self.render(
-            "glossary_extractor_user",
-            src=self.src,
-            tgt=self.tgt,
-            glossary=prompts.render_glossary(existing, source_lang=self.src),
-            source=source_text,
-            target=target_text,
+        system_template = self.render("glossary_extractor_system", src=self.src, tgt=self.tgt)
+
+        def _render(terms_for_prompt: list[GlossaryTerm]) -> tuple[str, str]:
+            return (
+                system_template,
+                self.render(
+                    "glossary_extractor_user",
+                    src=self.src,
+                    tgt=self.tgt,
+                    glossary=prompts.render_glossary(terms_for_prompt, source_lang=self.src),
+                    source=source_text,
+                    target=target_text,
+                ),
+            )
+
+        system, user, _effective_existing, _shrunk = fit_prompt_to_context_window(
+            config=self.config,
+            operation="glossary.extract",
+            terms=existing,
+            match_text=source_text,
+            render_messages=_render,
         )
 
         def local_reference(spelling: str) -> bool:
@@ -433,9 +448,12 @@ class GlossaryExtractor(Agent):
             if source_corpus is not None
             else all_existing
         )
-        if self.config.pipeline.batch_glossary == "relevant":
-            # Duplicates and conflicts only concern entries present in this batch.
-            existing = GlossaryStore.terms_in(existing, source_text)
+        existing = prompt_terms(
+            existing,
+            source_text,
+            budget=self.config.pipeline.glossary_prompt_tokens,
+            mode=self.config.pipeline.batch_glossary,
+        )
         terms = self.extract(source_text, target_text, existing)
         occurrences = (
             self._first_occurrences(terms, store, history, before) if before is not None else {}
