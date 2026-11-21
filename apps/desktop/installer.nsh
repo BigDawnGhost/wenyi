@@ -56,6 +56,10 @@ LangString WenyiDeleteProjects ${LANG_SIMPCHINESE} "永久删除默认项目文�
   !insertmacro WenyiFailWithStatus "${MESSAGE}" 2
 !macroend
 
+!macro WenyiBadDirectory PATH
+  !insertmacro WenyiFailWithStatus "$(WenyiDirectory)$\r$\n${PATH}" 7
+!macroend
+
 ; The reduced child need not inherit the parent's handles. Report Win32
 ; errors via the process status too: 100000 + stage * 10000 + Win32 error.
 !macro WenyiTokenFailure STAGE OPERATION ERROR
@@ -248,7 +252,7 @@ Function ${PREFIX}AcquireSetupMutex
   StrCpy $SetupMutex $0
   ${If} $0 == 0
   ${OrIf} $1 == 183
-    !insertmacro WenyiFail "$(WenyiSetupBusy)"
+    !insertmacro WenyiFailWithStatus "$(WenyiSetupBusy)" 10
   ${EndIf}
 FunctionEnd
 !macroend
@@ -263,13 +267,13 @@ FunctionEnd
   System::Call 'kernel32::GetFullPathNameW(w "${PATH}", i ${NSIS_MAX_STRLEN}, w .r2, p 0) i .r0'
   ${If} $0 == 0
   ${OrIf} $0 >= ${NSIS_MAX_STRLEN}
-    !insertmacro WenyiFail "$(WenyiDirectory)$\r$\n${PATH}"
+    !insertmacro WenyiBadDirectory "${PATH}"
   ${EndIf}
   StrCpy $3 ""
   ${Do}
     System::Call 'kernel32::GetLongPathNameW(w r2, w .r4, i ${NSIS_MAX_STRLEN}) i .r0'
     ${If} $0 >= ${NSIS_MAX_STRLEN}
-      !insertmacro WenyiFail "$(WenyiDirectory)$\r$\n${PATH}"
+      !insertmacro WenyiBadDirectory "${PATH}"
     ${ElseIf} $0 != 0
       ${Break}
     ${EndIf}
@@ -277,14 +281,14 @@ FunctionEnd
     StrCpy $3 "\$1$3"
     ${GetParent} "$2" $2
     ${If} $2 == ""
-      !insertmacro WenyiFail "$(WenyiDirectory)$\r$\n${PATH}"
+      !insertmacro WenyiBadDirectory "${PATH}"
     ${EndIf}
   ${Loop}
   StrLen $0 $4
   StrLen $1 $3
   IntOp $0 $0 + $1
   ${If} $0 >= ${NSIS_MAX_STRLEN}
-    !insertmacro WenyiFail "$(WenyiDirectory)$\r$\n${PATH}"
+    !insertmacro WenyiBadDirectory "${PATH}"
   ${EndIf}
   StrCpy ${OUT} "$4$3"
 !macroend
@@ -311,9 +315,9 @@ FunctionEnd
   StrCpy $0 $R8 1 -1
   ${IfThen} $0 == "\" ${|} StrCpy $R8 $R8 -1 ${|}
   !insertmacro WenyiContains "$R7" "$R8"
-  ${IfThen} $R5 == 1 ${|} !insertmacro WenyiFail "$(WenyiDirectory)$\r$\n$INSTDIR" ${|}
+  ${IfThen} $R5 == 1 ${|} !insertmacro WenyiBadDirectory "$INSTDIR" ${|}
   !insertmacro WenyiContains "$R8" "$R7"
-  ${IfThen} $R5 == 1 ${|} !insertmacro WenyiFail "$(WenyiDirectory)$\r$\n$INSTDIR" ${|}
+  ${IfThen} $R5 == 1 ${|} !insertmacro WenyiBadDirectory "$INSTDIR" ${|}
 !macroend
 
 ; Inspect every existing ancestor. Checking only the leaf misses an alias of a
@@ -324,7 +328,7 @@ FunctionEnd
     System::Call 'kernel32::GetFileAttributesW(w R8) i .r0'
     ${If} $0 != -1
       IntOp $0 $0 & ${WENYI_REPARSE_POINT}
-      ${IfThen} $0 != 0 ${|} !insertmacro WenyiFail "$(WenyiDirectory)$\r$\n$R8" ${|}
+      ${IfThen} $0 != 0 ${|} !insertmacro WenyiBadDirectory "$R8" ${|}
     ${EndIf}
     ${GetParent} "$R8" $0
     ${If} $0 == ""
@@ -344,7 +348,7 @@ FunctionEnd
   ${If} $0 < 3
   ${OrIf} $1 != 0
   ${OrIf} $R7 == $PROFILE
-    !insertmacro WenyiFail "$(WenyiDirectory)$\r$\n$INSTDIR"
+    !insertmacro WenyiBadDirectory "$INSTDIR"
   ${EndIf}
   !insertmacro WenyiNoLinkedParents "$INSTDIR"
   !insertmacro WenyiDisjoint "$WINDIR"
@@ -372,7 +376,7 @@ FunctionEnd
         ${If} $3 != "."
         ${AndIf} $3 != ".."
           FindClose $2
-          !insertmacro WenyiFail "$(WenyiDirectory)$\r$\n$INSTDIR"
+          !insertmacro WenyiBadDirectory "$INSTDIR"
         ${EndIf}
         FindNext $2 $3
       ${Loop}
@@ -384,7 +388,7 @@ FunctionEnd
   ClearErrors
   GetTempFileName $0 "$INSTDIR"
   ${If} ${Errors}
-    !insertmacro WenyiFail "$(WenyiDirectory)$\r$\n$INSTDIR"
+    !insertmacro WenyiBadDirectory "$INSTDIR"
   ${EndIf}
   Delete "$0"
 !macroend

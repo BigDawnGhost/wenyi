@@ -291,18 +291,18 @@ Section WebView2
   !else if "{{install_webview2_mode}}" == "downloadBootstrapper"
     ; Tauri can force this mode for updater-only artifacts. If the previously
     ; installed runtime is missing, require repair rather than fetching code.
-    !insertmacro WenyiFail "$(WenyiWebviewFailed)"
+    !insertmacro WenyiFailWithStatus "$(WenyiWebviewFailed)" 8
   !else
     !error "Wenyi requires an embedded WebView2 bootstrapper or offline installer."
   !endif
   ClearErrors
   ExecWait '"$PLUGINSDIR\webview2.exe" {{webview2_installer_args}} /install' $0
   ${If} ${Errors}
-    !insertmacro WenyiFail "$(WenyiWebviewFailed)"
+    !insertmacro WenyiFailWithStatus "$(WenyiWebviewFailed)" 8
   ${EndIf}
   ${If} $0 != 0
   ${AndIf} $0 != 3010
-    !insertmacro WenyiFail "$(WenyiWebviewFailed)"
+    !insertmacro WenyiFailWithStatus "$(WenyiWebviewFailed)" 8
   ${EndIf}
   webview_done:
 SectionEnd

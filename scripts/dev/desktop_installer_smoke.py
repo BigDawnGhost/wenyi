@@ -33,8 +33,15 @@ def main() -> None:
             if 100_000 <= code < 180_000:
                 stage, win32_error = divmod(code - 100_000, 10_000)
                 detail = f" (restricted-token stage {stage}, Win32 error {win32_error})"
-            elif code == 9:
-                detail = " (Restart Manager could not verify the installed files)"
+            else:
+                reason = {
+                    7: "installation path rejected",
+                    8: "WebView2 setup failed",
+                    9: "Restart Manager could not verify the installed files",
+                    10: "setup could not acquire the installation lock",
+                }.get(code)
+                if reason:
+                    detail = f" ({reason})"
             raise AssertionError(f"{exe.name} {args!r}: expected {expected}, got {code}{detail}")
 
     (setup,) = Path("target/release/bundle/nsis").resolve().glob("*-setup.exe")
@@ -45,7 +52,7 @@ def main() -> None:
         raise SystemExit("Refusing to use an existing Wenyi installation or workspace.")
 
     with tempfile.TemporaryDirectory() as temp:
-        user = Path(temp) / "Current User"
+        user = Path(temp).resolve() / "Current User"
         run(setup, "/S", "/NS", f"/D={user}")
         assert location(cu) == user and location(lm) is None
         run(setup, "/AllUsers", "/S", "/NS")
