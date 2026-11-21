@@ -6,13 +6,13 @@ import type { ChapterSummary } from "../../api/types";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
 import { Button } from "../../components/ui/button";
 import { Card } from "../../components/ui/card";
-import { ErrorNotice, ReadOnlyNotice, StructuredData } from "../../components/ui/data";
+import { ErrorNotice, StructuredData } from "../../components/ui/data";
 import { Disclosure } from "../../components/ui/disclosure";
 import { VirtualChapter } from "./VirtualChapter";
 import { WINDOW_SIZE, windowKey } from "./useChapterWindows";
 
 export function ChapterProofreading({
-  pid, index, chapters, busy, readOnly, sourceOnly, error, targetLanguage,
+  pid, index, chapters, busy, readOnly, sourceOnly, error, sourceLanguage, targetLanguage,
 }: {
   pid: string;
   index: number;
@@ -21,6 +21,7 @@ export function ChapterProofreading({
   readOnly: boolean;
   sourceOnly: boolean | undefined;
   error: unknown;
+  sourceLanguage: string;
   targetLanguage?: string;
 }) {
   const { t } = useI18n();
@@ -61,7 +62,6 @@ export function ChapterProofreading({
       <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice error={error || chapter.error
           || (!validIndex ? new Error(t("proofreading.invalidChapter")) : undefined)} />
-        {sourceOnly ? <ReadOnlyNotice reason="source" /> : busy && <ReadOnlyNotice />}
         {sourceOnly === false && chapter.data && (
           <Card className="p-4">
             <p className="text-sm text-muted-foreground">
@@ -74,7 +74,8 @@ export function ChapterProofreading({
         )}
         {sourceOnly !== undefined && chapter.data && (
           <VirtualChapter pid={pid} ci={index} initial={chapter.data} sourceOnly={sourceOnly}
-            busy={busy} readOnly={readOnly || chapter.isError} targetLanguage={targetLanguage} />
+            busy={busy} readOnly={readOnly || chapter.isError}
+            sourceLanguage={sourceLanguage} targetLanguage={targetLanguage} />
         )}
         {sourceOnly === false && (
           <Disclosure lazy title={t("review.recordedReviewNotesForThisChapter")}>

@@ -1,4 +1,4 @@
-import { createTranslator, type Locale, type MessageKey } from "./catalog";
+import { createTranslator, isMessageKey, type Locale, type MessageKey } from "./catalog";
 
 type Translator = ReturnType<typeof createTranslator>;
 
@@ -30,10 +30,13 @@ export function workflowStageLabel(
   // "progress.stage.arbitration:2", is one the pipeline raised for a specific run,
   // and needs the key translated with that argument interpolated.
   if (id.startsWith("progress.stage.")) {
-    const [key, argument] = id.split(":");
-    return t(key as MessageKey, argument ? { round: argument, count: argument } : undefined);
+    // Cached progress from older engines encoded the first round without an argument.
+    const label = id === "progress.stage.reviewRound1" ? "progress.stage.reviewRound:1" : id;
+    const [key, argument] = label.split(":");
+    if (!isMessageKey(key)) return t("workflow.unknownStage");
+    return t(key, argument ? { round: argument, count: argument } : undefined);
   }
-  return stages[id] ? t(stages[id]) : fallback;
+  return Object.hasOwn(stages, id) ? t(stages[id]) : fallback;
 }
 
 const operations: Record<string, MessageKey> = {
@@ -61,7 +64,7 @@ const operations: Record<string, MessageKey> = {
 
 /** Keep unfamiliar operation IDs visible until a translation is registered. */
 export function operationLabel(id: string, t: Translator) {
-  return operations[id]
+  return Object.hasOwn(operations, id)
     ? t(operations[id])
     : workflowStageLabel(id, id || "—", t);
 }

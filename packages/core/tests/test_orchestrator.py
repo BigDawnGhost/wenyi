@@ -1061,7 +1061,9 @@ class TestReviewReporting(unittest.TestCase):
             )
 
         first = [
-            (done, total) for done, total, label in events if label == "progress.stage.reviewRound1"
+            (done, total)
+            for done, total, label in events
+            if label == "progress.stage.reviewRound:1"
         ]
         second = [
             (done, total)
@@ -1088,7 +1090,7 @@ class TestReviewReporting(unittest.TestCase):
         labels = [label for _, _, label in events]
         self.assertLess(
             labels.index("progress.stage.reviewCheckpoint"),
-            labels.index("progress.stage.reviewRound1"),
+            labels.index("progress.stage.reviewRound:1"),
         )
 
     def test_review_accepts_numeric_string_index(self):
@@ -2769,6 +2771,12 @@ class TestProgressLabels(unittest.TestCase):
             ]
             positions = [labels.index(label) for label in expected]
             self.assertEqual(positions, sorted(positions), labels)
+            self.assertTrue(
+                any(
+                    done == total > 0 and label == "progress.stage.prescan"
+                    for done, total, label in events
+                )
+            )
             self.assertIn((0, 0, "progress.stage.synopsis"), events)
             self.assertNotIn("Generating report…", labels)
 

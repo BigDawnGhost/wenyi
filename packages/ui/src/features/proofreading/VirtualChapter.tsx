@@ -6,6 +6,7 @@ import { useI18n } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { cardSurface } from "../../components/ui/card";
 import { ErrorNotice } from "../../components/ui/data";
+import { bookTextFont } from "./bookText";
 import { ParagraphActions } from "./ParagraphActions";
 import { ParagraphMenu, type ParagraphMenuAnchor } from "./ParagraphMenu";
 import { ParagraphEditor } from "./ParagraphEditor";
@@ -13,10 +14,12 @@ import { useChapterWindows } from "./useChapterWindows";
 import { useReaderSelection } from "./useReaderSelection";
 
 const ParagraphRow = memo(function ParagraphRow({
-  segment, sourceOnly, expanded, onMenu,
+  segment, sourceOnly, sourceLanguage, targetLanguage, expanded, onMenu,
 }: {
   segment: ReaderSegment;
   sourceOnly: boolean;
+  sourceLanguage: string;
+  targetLanguage?: string;
   expanded: boolean;
   onMenu: (anchor: ParagraphMenuAnchor) => void;
 }) {
@@ -27,12 +30,13 @@ const ParagraphRow = memo(function ParagraphRow({
       className={cn("grid", sourceOnly ? "" : "grid-cols-2", "border-b border-subtle")}
     >
       <div className="min-w-0 border-r border-subtle p-4 text-sm">
-        <p data-reader-text="source" className="whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">
+        <p data-reader-text="source" lang={sourceLanguage}
+          className={cn("whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]", bookTextFont(segment.source))}>
           {segment.source}
         </p>
       </div>
       {!sourceOnly && (
-        <ParagraphActions index={segment.index} target={segment.target}
+        <ParagraphActions index={segment.index} target={segment.target} targetLanguage={targetLanguage}
           expanded={expanded} onMenu={onMenu} />
       )}
     </div>
@@ -40,7 +44,7 @@ const ParagraphRow = memo(function ParagraphRow({
 });
 
 export function VirtualChapter({
-  pid, ci, initial, sourceOnly, busy, readOnly, targetLanguage,
+  pid, ci, initial, sourceOnly, busy, readOnly, sourceLanguage, targetLanguage,
 }: {
   pid: string;
   ci: number;
@@ -48,6 +52,7 @@ export function VirtualChapter({
   sourceOnly: boolean;
   busy: boolean;
   readOnly: boolean;
+  sourceLanguage: string;
   targetLanguage?: string;
 }) {
   const { t } = useI18n();
@@ -128,6 +133,7 @@ export function VirtualChapter({
               style={{ transform: `translateY(${row.start - margin}px)` }}>
               {segment ? (
                 <ParagraphRow segment={segment} sourceOnly={sourceOnly}
+                  sourceLanguage={sourceLanguage} targetLanguage={targetLanguage}
                   expanded={menu?.index === segment.index} onMenu={openMenu} />
               ) : (
                 <div aria-busy="true" className="border-b border-subtle h-40 p-4 text-sm text-muted-foreground">
@@ -146,7 +152,7 @@ export function VirtualChapter({
       {!sourceOnly && editor && active && (
         <ParagraphEditor key={active.index} pid={pid} chapterIndex={ci} segment={active}
           initialView={editor.view} readOnly={readOnly || !!reader.error} busy={busy}
-          targetLanguage={targetLanguage} onClose={() => setEditor(null)}
+          sourceLanguage={sourceLanguage} targetLanguage={targetLanguage} onClose={() => setEditor(null)}
           onRefresh={async () => { await reader.refresh(); }} />
       )}
     </>

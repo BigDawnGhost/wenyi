@@ -49,6 +49,7 @@ export default function ProofreadingPage() {
           busy || !project.data?.initialized || project.isError || chapters.isError
         }
         error={project.error || chapters.error}
+        sourceLanguage={project.data?.source_lang === "auto" ? "" : project.data?.source_lang ?? ""}
         targetLanguage={project.data?.target_lang ?? undefined}
       />
     );

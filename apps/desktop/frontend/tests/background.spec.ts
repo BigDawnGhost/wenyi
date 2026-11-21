@@ -219,7 +219,9 @@ test("a terminal response arriving while hidden defers final reads until restore
       held = true;
       await delayed;
     }
-    await route.fulfill({ json: { ...project, status: hold ? "done" : "translating" } });
+    await route.fulfill({ json: {
+      ...project, status: hold ? "done" : "translating", name: hold ? "Final snapshot" : project.name,
+    } });
   });
   const reads: string[] = [];
   page.on("request", request => {
@@ -238,8 +240,8 @@ test("a terminal response arriving while hidden defers final reads until restore
   release();
   await expect.poll(async () => {
     await page.clock.runFor(100);
-    return page.getByText("Read-only while a task runs", { exact: true }).count();
-  }).toBe(0);
+    return page.getByTitle("Final snapshot", { exact: true }).count();
+  }).toBe(1);
   await page.clock.runFor(60_000);
   expect(reads).toEqual(before);
   await setBackground(page, false);
