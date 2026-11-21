@@ -101,6 +101,7 @@ def workflow_dependencies(context: BackendContext) -> ExecutionDependencies:
         operation=partial(run_operation, services=operation_services(context)),
         run_sync=context.run_workflow_sync,
         metrics=context.metrics,
+        schedule_resume=context.schedule_auto_resume,
     )
 
 

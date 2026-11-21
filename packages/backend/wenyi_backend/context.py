@@ -139,6 +139,9 @@ class BackendContext:
     # Web retains its executor; Desktop owns a dedicated thread per workflow.
     run_workflow_sync: WorkflowDispatcher = asyncio.to_thread
     metrics: Metrics = field(default_factory=Metrics)
+    # Optional host hooks for automatic resume after resumable provider outages.
+    schedule_auto_resume: Callable[[Any, int, int, str], None] | None = None
+    cancel_auto_resume: Callable[[str], None] | None = None
 
 
 _context: ContextVar[BackendContext] = ContextVar("wenyi_backend_context")

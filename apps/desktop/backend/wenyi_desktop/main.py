@@ -57,6 +57,14 @@ class DesktopServices:
             raise RuntimeError("Desktop workers have not started")
         return self.runtime.enqueue(name, **kwargs)
 
+    def schedule_auto_resume(self, request, attempt: int, delay_seconds: int, next_retry_at: str):
+        if self.runtime is not None:
+            self.runtime.schedule_auto_resume(request, attempt, delay_seconds, next_retry_at)
+
+    def cancel_auto_resume(self, pid: str) -> None:
+        if self.runtime is not None:
+            self.runtime.cancel_auto_resume(pid)
+
     def progress_snapshot(self, pid):
         return progress_snapshot(self.backend, self.runtime, pid)
 
@@ -150,6 +158,8 @@ def create_context(
         update_term=lambda pid, storage, source, term: storage.update_term(source, term),
         api_token=api_token,
         remove_project=backend.remove_project,
+        schedule_auto_resume=services.schedule_auto_resume,
+        cancel_auto_resume=services.cancel_auto_resume,
     )
 
 

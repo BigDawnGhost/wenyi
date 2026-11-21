@@ -241,19 +241,44 @@ def postgres_repository(context: BackendContext) -> PostgresRepository:
     return repository
 
 
-def create_context(settings: Settings) -> BackendContext:
+def create_context(settings: Settings, *, loop=None) -> BackendContext:
+    import asyncio
+
     from .queue import enqueue
 
     repository = PostgresRepository(settings)
+    telemetry = RedisTelemetry(settings.redis_url, repository)
 
     async def submit(name, **kwargs):
         return await enqueue(settings.redis_url, name, **kwargs)
+
+    def schedule_auto_resume(request, attempt: int, delay_seconds: int, next_retry_at: str) -> None:
+        coro = enqueue(
+            settings.redis_url,
+            "run_auto_resume",
+            _defer_by=delay_seconds,
+            _job_id=f"auto-resume:{request.project_id}:{request.run_id or 'none'}:{attempt}",
+            project_id=request.project_id,
+            expected_run_id=request.run_id,
+            attempt=attempt,
+        )
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=10)
+        else:
+            asyncio.run(coro)
+
+    def cancel_auto_resume(pid: str) -> None:
+        cache = telemetry.connect()
+        try:
+            cache.set(f"project:{pid}:auto_resume", "", ex=604800)
+        finally:
+            telemetry.release(cache)
 
     return BackendContext(
         repository=repository,
         settings_store=PostgresSettings(repository, settings.config_path),
         exports=PostgresExports(repository),
-        telemetry=RedisTelemetry(settings.redis_url, repository),
+        telemetry=telemetry,
         storage_for=repository.storage_for,
         read_storage_for=repository.storage_for,
         build_client=build_client,
@@ -265,4 +290,6 @@ def create_context(settings: Settings) -> BackendContext:
         api_token=settings.api_token,
         remove_project=repository.remove_project,
         metrics=Metrics(RedisCounters(settings.redis_url)),
+        schedule_auto_resume=schedule_auto_resume,
+        cancel_auto_resume=cancel_auto_resume,
     )

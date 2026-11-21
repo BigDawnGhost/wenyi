@@ -8,6 +8,7 @@ import logging
 from arq.connections import RedisSettings
 from wenyi_backend.context import use_context
 from wenyi_backend.workers.tasks import (
+    run_auto_resume,
     run_chapter_translation,
     run_export,
     run_parse,
@@ -36,7 +37,7 @@ async def _recovery_loop(ctx: dict) -> None:
 
 
 async def startup(ctx: dict) -> None:
-    context = create_context(settings)
+    context = create_context(settings, loop=asyncio.get_running_loop())
     postgres_repository(context).start()
     ctx["backend"] = context
     # Maintenance must run even while a long translation occupies every job slot.
@@ -61,6 +62,7 @@ class WorkerSettings:
         run_translation,
         run_chapter_translation,
         run_review,
+        run_auto_resume,
     ]
     on_startup = startup
     on_shutdown = shutdown
