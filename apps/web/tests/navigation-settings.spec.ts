@@ -125,15 +125,14 @@ test("project settings retain invalid inline YAML and prevent basic edits from o
   const settings = {
     ...effective,
     llm: {
-      tiers: { strong: "main", cheap: "main", fast: "main" },
-      routes: { "translation.body": { model: "main" } },
+      routes: { "translation.body": { model: "deepseek/deepseek-flash" } },
     },
   };
   await fakeApi(page, {
     [`/projects/${pid}/config`]: {
       ...configuration,
       registered_models: {
-        main: { provider: "default", model: "deepseek-flash" },
+        "deepseek/deepseek-flash": { provider: "deepseek", model: "deepseek-flash", thinking_levels: ["off", "low", "high", "max"], thinking_value: "high" },
       },
       effective: settings,
       yaml: JSON.stringify(settings),
@@ -150,7 +149,7 @@ test("project settings retain invalid inline YAML and prevent basic edits from o
     });
   });
   await page.goto(`/projects/${pid}/settings`);
-  await expect(page.getByLabel("Quality tier")).toBeVisible();
+  await expect(page.locator('[id="route-translation.body"]')).toBeVisible();
   await expect(
     page.getByLabel("Apply autofixes to the saved translation after review", {
       exact: true,
@@ -166,7 +165,7 @@ test("project settings retain invalid inline YAML and prevent basic edits from o
     segment: { ...settings.segment, max_tokens_per_batch: 0 },
   });
   await yaml.fill(invalid);
-  await expect(page.getByLabel("Quality tier", { exact: true })).toBeDisabled();
+  await expect(page.locator('[id="route-translation.body"]')).toBeDisabled();
   await expect(page.getByLabel("Polishing", { exact: true })).toBeDisabled();
   await page.getByRole("link", { name: /Advanced YAML has unvalidated changes/ }).click();
   await expect(page).toHaveURL(`/projects/${pid}/settings#advanced-yaml`);

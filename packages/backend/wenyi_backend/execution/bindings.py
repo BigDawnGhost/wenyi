@@ -62,7 +62,14 @@ def build_config_for(context: BackendContext, pid: str, run_id: str | None = Non
     snapshot = ((job or {}).get("params") or {}).get("config_snapshot")
     state_dir = str(context.project_dir(pid))
     if snapshot:
-        return config_from_document({**snapshot, "paths": {"state_dir": state_dir}})
+        document = {**snapshot, "paths": {"state_dir": state_dir}}
+        output = document.get("output")
+        if isinstance(output, dict) and "punctuation_normalize" in output:
+            # Frozen job snapshots are not rewritten by saved-settings rebuilds.
+            output = dict(output)
+            output.pop("punctuation_normalize")
+            document["output"] = output
+        return config_from_document(document)
     return effective_config(
         project, defaults=context.settings_store.load().config, state_dir=state_dir
     )
@@ -102,8 +109,9 @@ def export_dependencies(context: BackendContext) -> ExportDependencies:
 
     def render(request: ExportRequest) -> str:
         options = dict(request.options)
-        # Previously queued jobs may carry the retired local PDF renderer option.
+        # Previously queued jobs may still carry retired export options.
         options.pop("pdf_engine", None)
+        options.pop("punctuation_normalize", None)
         return render_export(
             request.project_id,
             export_id=request.export_id,

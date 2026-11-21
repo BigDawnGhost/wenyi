@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from types import MappingProxyType
 from typing import Any
 
-from .configuration import LLMConfig
+from .configuration import LLMConfig, _located_error, split_model_ref
 from .operations import OPERATIONS, require_operation
 from .registry import provider_spec
 from .transport import ResolvedModel
@@ -29,7 +29,6 @@ def identity(value: Any) -> str:
 class ResolvedRoute:
     operation: str
     origin: str
-    tier: str | None
     profile: str
     provider: str
     provider_kind: str
@@ -60,16 +59,23 @@ def model_route(
     profile: str,
     *,
     origin: str,
-    tier: str | None = None,
     fallbacks: tuple[str, ...] = (),
     output_hint: int | None = None,
+    thinking: str | None = None,
 ) -> ResolvedRoute:
     spec = require_operation(operation)
     model = config.models[profile]
-    connection = config.providers[model.provider]
+    connection_name, remote_model = split_model_ref(profile)
+    connection = config.providers[connection_name]
     provider = provider_spec(connection.kind)
     adapter = provider.adapter_type()
-    options = provider.validate_model(model)
+    overrides = None
+    if thinking is not None:
+        control = adapter.route_thinking(connection, remote_model)
+        if control is None:
+            raise ValueError("The selected model does not support a thinking override")
+        overrides = control.apply(model.options, thinking)
+    options = provider.validate_model(model, options=overrides)
     if output_hint is not None and output_hint <= 0:
         raise ValueError("max_tokens must be positive")
     limit = adapter.output_limit(options, output_hint, model.max_output_tokens)
@@ -81,7 +87,7 @@ def model_route(
     }
     physical_model = {
         "provider": physical_provider,
-        "model": model.model,
+        "model": remote_model,
         "adapter_protocol": adapter.protocol_version,
         "options": options.model_dump(mode="json"),
         "max_output_tokens": limit,
@@ -90,12 +96,11 @@ def model_route(
     return ResolvedRoute(
         operation,
         origin,
-        tier,
         profile,
-        model.provider,
+        connection_name,
         connection.kind,
         endpoint,
-        model.model,
+        remote_model,
         canonical_json(options.model_dump(mode="json")),
         limit,
         identity(physical_provider),
@@ -107,41 +112,39 @@ def model_route(
     )
 
 
+def operation_route(
+    config: LLMConfig, operation: str, *, output_hint: int | None = None
+) -> ResolvedRoute:
+    route = config.routes[operation]
+    return model_route(
+        config,
+        operation,
+        route.model,
+        origin=f"llm.routes.{operation}",
+        fallbacks=tuple(route.fallbacks),
+        output_hint=output_hint,
+        thinking=route.thinking,
+    )
+
+
 def resolve_routes(config: LLMConfig) -> Mapping[str, ResolvedRoute]:
     """Compile all registered routes without credentials, SDK construction or network I/O."""
     resolved: dict[str, ResolvedRoute] = {}
-
-    def resolve(operation: str) -> ResolvedRoute:
-        if operation in resolved:
-            return resolved[operation]
-        spec = require_operation(operation)
-        route = config.routes.get(operation)
-        if route is not None:
-            tier = route.tier
-            profile = route.model if route.model is not None else config.tiers[tier or "strong"]
-            origin = f"llm.routes.{operation}"
-            fallbacks = tuple(route.fallbacks)
-        elif spec.inherits:
-            parent = resolve(spec.inherits)
-            tier, profile, fallbacks = parent.tier, parent.profile, parent.fallbacks
-            origin = f"inherits {spec.inherits}"
-        else:
-            tier = spec.tier
-            profile = config.tiers[tier or "strong"]
-            fallbacks = ()
-            origin = f"default tier {tier}"
+    for operation, spec in OPERATIONS.items():
+        route = config.routes[operation]
+        fallbacks = tuple(route.fallbacks)
         if fallbacks and spec.resumable_conversation:
             raise ValueError(
                 f"{operation}: model failover is not allowed inside resumable evidence conversations"
             )
-        result = model_route(
-            config, operation, profile, origin=origin, tier=tier, fallbacks=fallbacks
-        )
-        resolved[operation] = result
-        return result
-
-    for operation in OPERATIONS:
-        resolve(operation)
+        try:
+            resolved[operation] = operation_route(config, operation)
+        except ValueError as error:
+            if route.thinking is None:
+                raise
+            raise _located_error(
+                ValueError(str(error)), ("routes", operation, "thinking")
+            ) from None
     return MappingProxyType(resolved)
 
 

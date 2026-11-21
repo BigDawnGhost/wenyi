@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi } from "../../../../packages/ui/sandbox/fixtures";
+import { fakeApi, globalConfiguration } from "../../../../packages/ui/sandbox/fixtures";
 
 test("MinerU saves automatically, shows the saved key masked, and environment wins", async ({ page }) => {
   await page.addInitScript(() => Object.assign(window, {
@@ -212,7 +212,7 @@ test("local errors are redacted, never retried automatically, and Chinese deskto
   expect(await card.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
 });
 
-test("saving MinerU neither publishes configuration nor discards the model draft", async ({ page }) => {
+test("saving MinerU does not rewrite a provider saved from its dialog", async ({ page }) => {
   await page.addInitScript(() => Object.assign(window, {
     __WENYI_DESKTOP__: { apiBase: "http://127.0.0.1:4174/api", token: "fixture" },
   }));
@@ -223,9 +223,14 @@ test("saving MinerU neither publishes configuration nor discards the model draft
   };
   let mineruWrites = 0;
   let configurationWrites = 0;
-  page.on("request", request => {
-    if (new URL(request.url()).pathname === "/api/settings" && request.method() === "PUT")
+  let config = globalConfiguration;
+  await page.route("**/api/settings", route => {
+    if (route.request().method() === "PUT") {
       configurationWrites++;
+      const { yaml } = route.request().postDataJSON();
+      config = { ...config, yaml, effective: JSON.parse(yaml), revision: config.revision + 1 };
+    }
+    return route.fulfill({ json: config });
   });
   await page.route("**/api/desktop/external-credentials/mineru", route => {
     if (route.request().method() === "PUT") mineruWrites++;
@@ -233,15 +238,19 @@ test("saving MinerU neither publishes configuration nor discards the model draft
   });
   await page.route("**/api/desktop/credentials", route => route.fulfill({ json: {} }));
   await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
   const model = page.getByLabel("Model name", { exact: true });
   await model.fill("independent-model");
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("link", { name: "PDF", exact: true }).click();
   const card = page.getByTestId("mineru-settings");
   await card.getByLabel("MinerU API key", { exact: true }).fill("fake-independent-mineru");
   await expect(card.getByRole("status")).toHaveText("MinerU key saved.");
   await expect(card.getByLabel("MinerU API key", { exact: true })).toHaveValue("fake-independent-mineru");
   await page.getByRole("link", { name: "Models & connections", exact: true }).click();
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
   await expect(model).toHaveValue("independent-model");
   expect(mineruWrites).toBe(1);
-  expect(configurationWrites).toBe(0);
+  expect(configurationWrites).toBe(1);
 });

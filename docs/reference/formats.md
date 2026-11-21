@@ -350,9 +350,7 @@ workflow translates; later batches appear only in a later export.
 
 Re-export makes no translation-model calls and does not rerun preparation, Review,
 polishing or annotation repair. BabelDOC PDF export still contacts its external
-bridge. Export-only punctuation normalization changes an in-memory copy for
-Simplified Chinese targets without changing saved translations or losing the position
-of annotations and styles. Other targets skip that normalization.
+bridge. Export preserves the punctuation in the saved text.
 
-Changing only output format, bilingual order, source styling or export font/punctuation
-policy therefore needs a fresh export, not a fresh paid translation.
+Changing only output format, bilingual order, source styling or export font policy
+therefore needs a fresh export, not a fresh paid translation.

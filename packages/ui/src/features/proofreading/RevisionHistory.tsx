@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { Button } from "../../components/ui/button";
+import { cn } from "../../lib/utils";
+import { bookTextFont } from "./bookText";
 import type { SegmentRevision } from "../../api/types";
 import { TranslationDiff } from "./TranslationDiff";
 
@@ -128,7 +130,8 @@ function HistoryEntry({
                     <h3 className="text-xs font-medium text-muted-foreground">
                       {t("proofreading.beforeChange")}
                     </h3>
-                    <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+                    <p lang={entry.before ? language : undefined}
+                      className={cn("whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]", bookTextFont(entry.before))}>
                       {entry.before || t("review.emptyTranslation")}
                     </p>
                   </section>
@@ -137,7 +140,8 @@ function HistoryEntry({
                   <h3 className="text-xs font-medium text-muted-foreground">
                     {t("proofreading.savedVersion")}
                   </h3>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+                  <p lang={entry.after ? language : undefined}
+                    className={cn("whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]", bookTextFont(entry.after))}>
                     {entry.after == null
                       ? t("proofreading.waitingForTranslation")
                       : entry.after || t("review.emptyTranslation")}

@@ -46,7 +46,7 @@ class TestOrchestrator(unittest.TestCase):
 
             def handler(messages, tier, json_mode):
                 if "SEARCH/REPLACE PATCH" in messages[0]["content"]:
-                    self.assertEqual(tier, "cheap")
+                    self.assertEqual(tier, "annotation.align")
                     payload = json.loads(messages[-1]["content"].split("INPUT JSON:\n", 1)[1])
                     return json.dumps(
                         {
@@ -1061,7 +1061,9 @@ class TestReviewReporting(unittest.TestCase):
             )
 
         first = [
-            (done, total) for done, total, label in events if label == "progress.stage.reviewRound1"
+            (done, total)
+            for done, total, label in events
+            if label == "progress.stage.reviewRound:1"
         ]
         second = [
             (done, total)
@@ -1088,7 +1090,7 @@ class TestReviewReporting(unittest.TestCase):
         labels = [label for _, _, label in events]
         self.assertLess(
             labels.index("progress.stage.reviewCheckpoint"),
-            labels.index("progress.stage.reviewRound1"),
+            labels.index("progress.stage.reviewRound:1"),
         )
 
     def test_review_accepts_numeric_string_index(self):
@@ -2712,9 +2714,9 @@ class TestFullGlossary(unittest.TestCase):
             orch.run_review(txt)
 
 
-class TestTierRouting(unittest.TestCase):
-    def test_task_tiers(self):
-        """Route tasks to their tiers without implicit output caps."""
+class TestOperationRouting(unittest.TestCase):
+    def test_tasks_use_registered_operations(self):
+        """Route tasks by operation without implicit output caps."""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -2725,18 +2727,18 @@ class TestTierRouting(unittest.TestCase):
             orch.run_review(txt)
 
             expect = {
-                "chapter digest writer": "fast",
-                "whole-book synopsis writer": "fast",
-                "terminology and forms-of-address extractor": "fast",
-                "translation reviewer": "cheap",
-                "literary translator": "strong",
+                "chapter digest writer": {"synopsis.chapter"},
+                "whole-book synopsis writer": {"synopsis.book"},
+                "terminology and forms-of-address extractor": {"glossary.extract"},
+                "translation reviewer": {"review.scan"},
+                "literary translator": {"translation.body", "polish.body"},
             }
             seen = set()
             for c in client.calls:
                 system = c["messages"][0]["content"]
-                for marker, tier in expect.items():
+                for marker, operations in expect.items():
                     if marker in system:
-                        self.assertEqual(c["tier"], tier, f"{marker} 应走 {tier} 档")
+                        self.assertIn(c["operation"], operations, marker)
                         seen.add(marker)
                         self.assertIsNone(c["max_tokens"])
             self.assertEqual(seen, set(expect), "各类调用都应出现")
@@ -2769,6 +2771,12 @@ class TestProgressLabels(unittest.TestCase):
             ]
             positions = [labels.index(label) for label in expected]
             self.assertEqual(positions, sorted(positions), labels)
+            self.assertTrue(
+                any(
+                    done == total > 0 and label == "progress.stage.prescan"
+                    for done, total, label in events
+                )
+            )
             self.assertIn((0, 0, "progress.stage.synopsis"), events)
             self.assertNotIn("Generating report…", labels)
 

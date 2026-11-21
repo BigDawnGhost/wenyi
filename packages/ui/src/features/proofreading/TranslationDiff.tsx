@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { diffArrays, diffChars } from "diff";
 import { useI18n } from "../../i18n";
+import { cn } from "../../lib/utils";
+import { bookTextFont } from "./bookText";
 
 type WordSegmenter = {
   segment(text: string): Iterable<{ segment: string }>;
@@ -118,7 +120,7 @@ export function TranslationDiff({
               <h3 className="text-xs font-medium text-muted-foreground">
                 {t(label)}
               </h3>
-              <p className={prose}>
+              <p lang={text ? language : undefined} className={cn(prose, bookTextFont(text))}>
                 {text === "" ? t("review.emptyTranslation") : text}
               </p>
             </section>
@@ -134,7 +136,8 @@ export function TranslationDiff({
               <ins className={added}>{t("proofreading.diffAdded")}</ins>
             </span>
           </div>
-          <p className={prose} data-testid="translation-diff-text">
+          <p lang={before || after ? language : undefined}
+            className={cn(prose, bookTextFont(identical ? before : before + after))} data-testid="translation-diff-text">
             {identical
               ? before === ""
                 ? t("review.emptyTranslation")

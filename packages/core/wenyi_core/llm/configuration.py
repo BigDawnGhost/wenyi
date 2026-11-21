@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_core import InitErrorDetails
 
-from .operation_names import TIERS, require_operation_name
+from .operation_names import OPERATION_NAMES, require_operation_name
 
 
 def _located_error(error: ValueError, location: tuple[str, ...]) -> ValidationError:
@@ -30,6 +38,14 @@ def _located_error(error: ValueError, location: tuple[str, ...]) -> ValidationEr
             InitErrorDetails(type="value_error", loc=location, input=None, ctx={"error": error})
         )
     return ValidationError.from_exception_data("LLMConfig", details, hide_input=True)
+
+
+def merge_llm_settings(base: dict, override: dict) -> dict:
+    """A configuration layer replaces only the routes it explicitly specifies."""
+    result = {**base, **override}
+    if isinstance(base.get("routes"), dict) and isinstance(override.get("routes"), dict):
+        result["routes"] = {**base["routes"], **override["routes"]}
+    return result
 
 
 class ProviderConfig(BaseModel):
@@ -66,37 +82,36 @@ class ProviderConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    """A reusable model request profile referencing one connection."""
+    """Request parameters for one connection/model pair."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
-    provider: str = Field(min_length=1)
-    model: str = Field(min_length=1)
     max_output_tokens: int | None = Field(default=None, gt=0)
     options: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("model", "provider")
-    @classmethod
-    def nonblank_name(cls, value: str) -> str:
-        if not value.strip():
-            raise ValueError("Model and provider names cannot be blank")
-        return value
+
+def split_model_ref(reference: str) -> tuple[str, str]:
+    """Only the first slash is structural; remote model names may contain slashes."""
+    provider, _, model = reference.partition("/")
+    if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*", provider) or not model or model != model.strip():
+        raise ValueError(f"Expected connection/model, got {reference!r}")
+    return provider, model
+
+
+def _model_ref(reference: str) -> str:
+    split_model_ref(reference)
+    return reference
+
+
+ModelRef = Annotated[str, AfterValidator(_model_ref)]
 
 
 class RouteConfig(BaseModel):
-    """Select exactly one model profile or product tier."""
+    """Select a registered model and optional ordered fallback profiles."""
 
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
-    model: str | None = None
-    tier: str | None = None
-    fallbacks: list[str] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_selection(self) -> RouteConfig:
-        if (self.model is None) == (self.tier is None):
-            raise ValueError("A route requires exactly one of model or tier")
-        if self.tier is not None and self.tier not in TIERS:
-            raise ValueError(f"Unknown tier: {self.tier}")
-        return self
+    model: ModelRef
+    fallbacks: list[ModelRef] = Field(default_factory=list)
+    thinking: str | None = None
 
 
 class QuotaConfig(BaseModel):
@@ -122,8 +137,7 @@ class LLMConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
     preset: str | None = None
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
-    models: dict[str, ModelConfig] = Field(default_factory=dict)
-    tiers: dict[str, str] = Field(default_factory=dict)
+    models: dict[ModelRef, ModelConfig] = Field(default_factory=dict)
     routes: dict[str, RouteConfig] = Field(default_factory=dict)
     quotas: dict[str, QuotaConfig] = Field(default_factory=dict)
     budget: BudgetConfig = Field(default_factory=BudgetConfig)
@@ -146,7 +160,7 @@ class LLMConfig(BaseModel):
                 defaults = provider_spec(preset).preset()
             except ValueError as error:
                 raise _located_error(error, ("preset",)) from error
-            for section in ("providers", "models", "tiers"):
+            for section in ("providers", "models", "routes"):
                 supplied = raw.get(section, {})
                 if not isinstance(supplied, dict):
                     raise _located_error(ValueError(f"llm.{section} must be a mapping"), (section,))
@@ -157,16 +171,12 @@ class LLMConfig(BaseModel):
     def validate_graph(self) -> LLMConfig:
         from .registry import provider_spec
 
-        for section in ("providers", "models", "quotas"):
+        for section in ("providers", "quotas"):
             for name in getattr(self, section):
                 if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*", name):
                     raise _located_error(
                         ValueError(f"Invalid llm.{section} ID: {name}"), (section, name)
                     )
-        if set(self.tiers) != set(TIERS):
-            raise _located_error(
-                ValueError("llm.tiers must define exactly strong, cheap and fast"), ("tiers",)
-            )
         for name, connection in self.providers.items():
             try:
                 provider = provider_spec(connection.kind)
@@ -182,15 +192,14 @@ class LLMConfig(BaseModel):
                     ("providers", name, "quota_group"),
                 )
         for name, model in self.models.items():
-            if model.provider not in self.providers:
+            connection, _ = split_model_ref(name)
+            if connection not in self.providers:
                 raise _located_error(
-                    ValueError(
-                        f"llm.models.{name}.provider: unknown connection {model.provider!r}"
-                    ),
-                    ("models", name, "provider"),
+                    ValueError(f"llm.models.{name}: unknown connection {connection!r}"),
+                    ("models", name),
                 )
             try:
-                provider = provider_spec(self.providers[model.provider].kind)
+                provider = provider_spec(self.providers[connection].kind)
                 options = provider.validate_model(model)
                 provider.adapter_type().output_limit(options, None, model.max_output_tokens)
             except ValidationError as error:
@@ -199,18 +208,13 @@ class LLMConfig(BaseModel):
                 raise _located_error(
                     ValueError(f"llm.models.{name}: {error}"), ("models", name)
                 ) from error
-        for name, reference in self.tiers.items():
-            if reference not in self.models:
-                raise _located_error(
-                    ValueError(f"llm.tiers.{name}: unknown model profile {reference!r}"),
-                    ("tiers", name),
-                )
         for operation, route in self.routes.items():
             try:
                 require_operation_name(operation)
             except ValueError as error:
                 raise _located_error(error, ("routes", operation)) from error
-            for reference in ([route.model] if route.model is not None else []) + route.fallbacks:
+            selections = [route.model, *route.fallbacks]
+            for reference in selections:
                 if reference not in self.models:
                     raise _located_error(
                         ValueError(
@@ -218,12 +222,20 @@ class LLMConfig(BaseModel):
                         ),
                         ("routes", operation),
                     )
-            primary = route.model or self.tiers[route.tier or "strong"]
-            if len(set([primary, *route.fallbacks])) != 1 + len(route.fallbacks):
+            if len(set(selections)) != len(selections):
                 raise _located_error(
                     ValueError(f"llm.routes.{operation}: duplicate fallback model"),
                     ("routes", operation, "fallbacks"),
                 )
+        if missing := set(OPERATION_NAMES) - self.routes.keys():
+            raise ValidationError.from_exception_data(
+                "LLMConfig",
+                [
+                    InitErrorDetails(type="missing", loc=("routes", operation), input=None)
+                    for operation in sorted(missing)
+                ],
+                hide_input=True,
+            )
         from .routing import resolve_routes
 
         resolve_routes(self)

@@ -144,14 +144,14 @@ def test_review_fingerprint_only_tracks_reachable_inference(tmp_path):
     first = ReviewService(PipelineRuntime(config, FakeClient()))._review_config_snapshot()
     changed = config.model_copy(deep=True)
     raw = changed.llm.model_dump()
-    raw["models"]["alternate"] = {"provider": "default", "model": "alternate"}
-    raw["routes"]["translation.body"] = {"model": "alternate"}
-    raw["routes"]["review.verify"] = {"model": "alternate"}  # Disabled by review_agent_loop.
+    raw["models"]["fake/alternate"] = {}
+    raw["routes"]["translation.body"] = {"model": "fake/alternate"}
+    raw["routes"]["review.verify"] = {"model": "fake/alternate"}  # Disabled by review_agent_loop.
     changed.llm = LLMConfig.model_validate(raw)
     changed.pipeline.review_concurrency = 1
     same = ReviewService(PipelineRuntime(changed, FakeClient()))._review_config_snapshot()
     assert same == first
-    raw["routes"]["review.scan"] = {"model": "alternate"}
+    raw["routes"]["review.scan"] = {"model": "fake/alternate"}
     changed.llm = LLMConfig.model_validate(raw)
     assert ReviewService(PipelineRuntime(changed, FakeClient()))._review_config_snapshot() != first
 
@@ -356,8 +356,10 @@ def test_evidence_trace_is_reused_only_under_the_same_model(tmp_path):
     assert len(first.calls) == 1
     ReviewActionLoop(first, config, review_evidence(), ReviewTraceStore(debug)).run(**arguments)
     assert len(first.calls) == 1
-    config.llm.models["default_strong"] = config.llm.models["default_strong"].model_copy(
-        update={"model": "different-verifier"}
+    route = config.llm.routes["review.verify"]
+    config.llm.models["fake/different-verifier"] = config.llm.models[route.model]
+    config.llm.routes["review.verify"] = route.model_copy(
+        update={"model": "fake/different-verifier"}
     )
     second = FakeClient(handler=lambda *args: response, config=config.llm)
     ReviewActionLoop(second, config, review_evidence(), ReviewTraceStore(debug)).run(**arguments)
@@ -380,8 +382,8 @@ def test_completed_translation_is_kept_and_changed_review_model_gets_new_run(tmp
     assert cached["review_dir"] == initial["review_dir"]
     assert second_client.calls == []
     raw = config.llm.model_dump()
-    raw["models"]["editor"] = {"provider": "default", "model": "new-editor"}
-    raw["routes"]["review.scan"] = {"model": "editor"}
+    raw["models"]["fake/new-editor"] = {}
+    raw["routes"]["review.scan"] = {"model": "fake/new-editor"}
     config.llm = LLMConfig.model_validate(raw)
     third_client = FakeClient(handler=routing_handler)
     third = Orchestrator(config, third_client)

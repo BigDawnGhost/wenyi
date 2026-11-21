@@ -19,6 +19,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, BinaryIO, Iterator
 
 from fastapi import HTTPException
+from wenyi_backend.config_rebuild import load_bootstrap_defaults
 from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_core.config import Config
 from wenyi_core.errors import SchemaTooNew
@@ -374,7 +375,7 @@ class LocalBackend:
 
     def defaults(self) -> Config:
         # Config() uses built-in defaults, never the CLI's cwd config.yaml.
-        return Config.load(self.config_path) if self.config_path else Config()
+        return load_bootstrap_defaults(self.config_path) if self.config_path else Config()
 
     def _get(self, table, identity, connection=None):
         with self.transaction(connection, write=False) as conn:

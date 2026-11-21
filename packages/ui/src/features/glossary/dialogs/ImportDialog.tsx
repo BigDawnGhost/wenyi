@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation } from "@tanstack/react-query";
 import { Upload } from "lucide-react";
 import { api } from "../../../api/client";
+import {
+  glossaryImportBody,
+  MAX_GLOSSARY_IMPORT_BYTES,
+  MAX_GLOSSARY_IMPORT_MIB,
+} from "../../../api/glossary-import";
 import type { Term } from "../../../api/types";
 import { useI18n } from "../../../i18n";
-import { errorMessage } from "../../../lib/error-codes";
+import { errorMessage, isErrorEnvelope } from "../../../lib/error-codes";
 import { toast } from "../../../lib/toast";
 import { cn } from "../../../lib/utils";
 import { Button } from "../../../components/ui/button";
@@ -24,12 +28,12 @@ export function ImportDialog({
   pid,
   open,
   onClose,
-  onSaved,
+  onChanged,
 }: {
   pid: string;
   open: boolean;
   onClose: () => void;
-  onSaved: () => void;
+  onChanged: () => void;
 }) {
   const { t: tr } = useI18n();
   const [step, setStep] = useState<
@@ -38,6 +42,7 @@ export function ImportDialog({
   const [parsed, setParsed] = useState<Partial<Term>[]>([]);
   const [conflicts, setConflicts] = useState<ImportConflict[]>([]);
   const [conflictPage, setConflictPage] = useState(0);
+  const [importError, setImportError] = useState("");
   const pageConflicts = conflicts.slice(
     conflictPage * PAGE_SIZE,
     (conflictPage + 1) * PAGE_SIZE,
@@ -51,6 +56,7 @@ export function ImportDialog({
     setParsed([]);
     setConflicts([]);
     setConflictPage(0);
+    setImportError("");
   };
   useEffect(() => {
     if (!open) operation.current++;
@@ -59,10 +65,18 @@ export function ImportDialog({
     };
   }, [open]);
 
+  const requestTooLarge = () =>
+    tr("glossary.importRequestTooLarge", { limit: MAX_GLOSSARY_IMPORT_MIB });
+
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const attempt = ++operation.current;
+    if (file.size > MAX_GLOSSARY_IMPORT_BYTES) {
+      setImportError(tr("glossary.importFileTooLarge", { limit: MAX_GLOSSARY_IMPORT_MIB }));
+      return;
+    }
+    setImportError("");
     const reader = new FileReader();
     // A refused or interrupted read fires neither load nor the parse guards
     // below, so without these the dialog stayed on "upload" and the user saw
@@ -109,6 +123,11 @@ export function ImportDialog({
         toast.error(tr("glossary.theFileIsEmptyOrHasAn"));
         return;
       }
+      const body = glossaryImportBody(items);
+      if (body === null) {
+        setImportError(requestTooLarge());
+        return;
+      }
       // Look up only imported sources, across every page and regardless of active filters.
       setStep("checking");
       const sources = [...new Set(items.map((item) => item.source!))];
@@ -138,48 +157,60 @@ export function ImportDialog({
           });
         }
       }
-      setParsed(items);
       if (found.length > 0) {
+        setParsed(items);
         setConflicts(found);
         setStep("conflicts");
       } else {
-        doImport(items);
+        void doImport(body);
       }
     };
     reader.readAsText(file);
   };
 
-  const doImport = (items?: Partial<Term>[]) => {
+  const finishImport = (imported: number) => {
+    toast.success(tr("glossary.importedTerms", { count: imported }));
+    reset();
+    onClose();
+  };
+
+  const doImport = async (body: string) => {
+    const attempt = ++operation.current;
     setStep("importing");
-    const toImport = items || parsed;
-    // apply conflict decisions: filter out skipped
+    let result: { imported: number };
+    try {
+      result = await api.importGlossary(pid, body);
+    } catch (e) {
+      if (attempt !== operation.current) return;
+      const status = isErrorEnvelope(e) ? e.status : undefined;
+      const error = status === 413
+        ? requestTooLarge()
+        : errorMessage(status === 422 ? { code: "validation_failed" } : e, tr);
+      reset();
+      setImportError(tr("glossary.couldNotImportTerms", { error }));
+      return;
+    }
+    onChanged();
+    if (attempt === operation.current) finishImport(result.imported);
+  };
+
+  const confirmImport = () => {
     const skipSources = new Set(
       conflicts.filter((c) => c.decision === "skip").map((c) => c.source),
     );
-    const filtered = toImport.filter((t) => !skipSources.has(t.source!));
-    m.mutate(filtered);
-  };
-
-  const m = useMutation({
-    mutationFn: (items: Partial<Term>[]) => api.importGlossary(pid, items),
-    onSuccess: (res) => {
-      toast.success(tr("glossary.importedTerms", { count: res.imported }));
+    const selected = parsed.filter((term) => !skipSources.has(term.source!));
+    if (selected.length === 0) {
+      finishImport(0);
+      return;
+    }
+    const body = glossaryImportBody(selected);
+    if (body === null) {
       reset();
-      onSaved();
-    },
-    onError: (e) => {
-      // Route through errorMessage: a rejected import (422) carries a field-error list
-      // rather than prose, so the raw message would show JSON instead of a readable
-      // explanation of the limit.
-      const failure = e as Error & { status?: number };
-      const normalized =
-        failure.status === 422 ? { code: "validation_failed" } : e;
-      toast.error(
-        tr("glossary.couldNotImportTerms", { error: errorMessage(normalized, tr) }),
-      );
-      setStep("upload");
-    },
-  });
+      setImportError(requestTooLarge());
+      return;
+    }
+    void doImport(body);
+  };
 
   const toggleConflict = (idx: number) => {
     setConflicts((prev) =>
@@ -195,6 +226,7 @@ export function ImportDialog({
     <Dialog
       open={open}
       title={tr("glossary.importTerms")}
+      closeDisabled={step === "importing"}
       onClose={() => {
         reset();
         onClose();
@@ -203,8 +235,9 @@ export function ImportDialog({
       {step === "upload" && (
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            {tr("glossary.importTermsFromCsvOrJsonCsv")}
+            {tr("glossary.importTermsFromCsvOrJsonCsv", { limit: MAX_GLOSSARY_IMPORT_MIB })}
           </p>
+          {importError && <p role="alert" className="text-sm text-destructive">{importError}</p>}
           <input
             ref={fileRef}
             type="file"
@@ -265,7 +298,7 @@ export function ImportDialog({
             >
               {tr("common.cancel")}
             </Button>
-            <Button onClick={() => doImport()}>
+            <Button onClick={confirmImport}>
               {tr("glossary.confirmImport")}
             </Button>
           </div>
@@ -273,7 +306,7 @@ export function ImportDialog({
       )}
 
       {(step === "importing" || step === "checking") && (
-        <div className="py-8 text-center text-sm text-muted-foreground">
+        <div role="status" className="py-8 text-center text-sm text-muted-foreground">
           {tr(step === "checking" ? "glossary.checkingTerms" : "glossary.importing")}
         </div>
       )}

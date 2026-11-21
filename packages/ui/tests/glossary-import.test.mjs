@@ -3,6 +3,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import {
+  glossaryImportBody,
+  MAX_GLOSSARY_IMPORT_BYTES,
+} from "../src/api/glossary-import.ts";
 import { parseCsv } from "../src/features/glossary/import.ts";
 
 const translate = (key) => `localized:${key}`;
@@ -59,4 +63,21 @@ test("an unterminated quote fails instead of importing partial rows", () => {
 test("a missing type column falls back to the generic term type", () => {
   const [parsed] = parseCsv("source,target\n原文,譯名\n", translate);
   assert.equal(parsed.type, "term");
+});
+
+test("request limits include the UTF-8 bytes, JSON envelope and separators", () => {
+  const terms = [{ source: "原文", target: "譯名" }, { source: "a", target: "b" }];
+  const remaining = MAX_GLOSSARY_IMPORT_BYTES - Buffer.byteLength(glossaryImportBody(terms));
+  terms[0].note = "字".repeat(Math.floor(remaining / 3)) + "x".repeat(remaining % 3);
+
+  assert.equal(Buffer.byteLength(glossaryImportBody(terms)), MAX_GLOSSARY_IMPORT_BYTES);
+
+  terms[0].note += "x";
+  assert.ok(terms.every(entry => glossaryImportBody([entry]) !== null));
+  assert.equal(glossaryImportBody(terms), null);
+});
+
+test("a single entry can exceed the byte limit after JSON escaping", () => {
+  const terms = [{ source: "a", target: "b", note: "\\".repeat(MAX_GLOSSARY_IMPORT_BYTES / 2) }];
+  assert.equal(glossaryImportBody(terms), null);
 });

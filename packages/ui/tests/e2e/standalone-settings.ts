@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { configuration, fakeApi, globalConfiguration, pid, project } from "../../sandbox/fixtures";
+import { capabilities, configuration, fakeApi, globalConfiguration, pid, project } from "../../sandbox/fixtures";
 import { chooseOption } from "./select-helper";
 import { expectCardSurface, expectTokenColor } from "./color-helper";
 
@@ -11,11 +11,12 @@ import { expectCardSurface, expectTokenColor } from "./color-helper";
 export const desktopHostSensitive = true;
 
 export function registerTests({
+  manualKeys = false,
   categories = {
-    en: ["General", "Models & connections", "Default models", "Workflow", "PDF", "Advanced"],
-    "zh-CN": ["通用", "模型与接口", "默认模型", "翻译流程", "PDF", "高级"],
+    en: ["General", "Models & connections", "Stage models", "Workflow", "PDF", "Advanced"],
+    "zh-CN": ["通用", "模型与接口", "各阶段模型", "翻译流程", "PDF", "高级"],
   },
-}: { categories?: Record<"en" | "zh-CN", string[]> } = {}) {
+}: { manualKeys?: boolean; categories?: Record<"en" | "zh-CN", string[]> } = {}) {
 test.beforeEach(async ({ page }) => {
   await fakeApi(page);
 });
@@ -38,9 +39,12 @@ for (const theme of ["light", "dark"]) {
         };
       };
       await page.goto("/settings/providers");
-      const reference = await page.getByRole("heading", {
-        name: chinese ? "API 连接" : "Connections", exact: true,
-      }).evaluate(typography);
+      const providerHeading = page.getByRole("heading", {
+        name: chinese ? "模型" : "Models", exact: true,
+      });
+      await expect(providerHeading).toBeVisible();
+      await expect(providerHeading).toHaveCSS("font-size", "14px");
+      const reference = await providerHeading.evaluate(typography);
       for (const path of ["/settings", "/settings/pdf", "/settings/advanced", `/projects/${pid}/settings`]) {
         await page.goto(path);
         const headings = page.locator("main h2:visible, main h3:visible");
@@ -107,7 +111,7 @@ for (const theme of ["light", "dark"]) {
         await page.goto(path);
         const section = page.locator('[data-slot="settings.section"]:visible');
         await expect(section).toHaveCount(path.startsWith("/projects/") ? 5 : 1);
-        const content = section.locator('p:visible, input:visible, textarea:visible, a:visible, [role="combobox"]:visible, [role="switch"]:visible');
+        const content = section.locator('p:visible, h4:visible, input:visible, textarea:visible, a:visible, [role="combobox"]:visible, [role="switch"]:visible');
         await expectCardSurface(content);
         await expect.poll(() => page.getByRole("main").evaluate(node =>
           node.scrollWidth <= node.clientWidth,
@@ -142,7 +146,13 @@ for (const chinese of [false, true]) {
     await nav.getByRole("link", { name: chinese ? "模型与接口" : "Models & connections", exact: true }).click();
     await page.reload();
     await expect(nav.getByRole("link", { name: chinese ? "模型与接口" : "Models & connections", exact: true })).toHaveAttribute("aria-current", "page");
-    await expect(page.getByLabel(chinese ? "模型 ID" : "Model ID", { exact: true })).toBeVisible();
+    const editLabel = chinese ? "编辑提供商 deepseek" : "Edit provider deepseek";
+    const edit = page.getByRole("button", { name: editLabel, exact: true });
+    await expect(edit).toBeVisible();
+    await expect(edit).toHaveAttribute("title", editLabel);
+    await expect(edit).toHaveText("");
+    await expect(page.getByText("deepseek-flash", { exact: true })).toHaveCount(0);
+    await expect(page.getByLabel(chinese ? "模型 ID" : "Model ID", { exact: true })).toHaveCount(0);
     await expect.poll(() => page.getByRole("main").evaluate(node => node.scrollWidth <= node.clientWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath("settings-providers.png") });
     await page.getByRole("button", { name: chinese ? "返回" : "Back", exact: true }).click();
@@ -152,10 +162,208 @@ for (const chinese of [false, true]) {
 
 test("direct settings links have a safe return destination", async ({ page }) => {
   await page.goto("/settings/providers");
-  await expect(page.getByLabel("Model ID", { exact: true })).toBeVisible();
-  await page.getByRole("link", { name: "Default models", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Edit provider deepseek" })).toBeVisible();
+  await page.getByRole("link", { name: "Stage models", exact: true }).click();
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page).toHaveURL("/");
+});
+
+test("models in use cannot be deleted and do not show their route references", async ({ page }) => {
+  const base = globalConfiguration.effective;
+  const effective = { ...base, llm: { ...base.llm, models: {
+    ...base.llm.models, "deepseek/alternate": {},
+  } } };
+  await page.route("**/api/settings", route => route.fulfill({ json: {
+    ...globalConfiguration, effective, yaml: JSON.stringify(effective),
+  } }));
+  await page.goto("/settings/defaults");
+  const stage = page.getByRole("combobox", { name: "Model: Translate chapters in batches", exact: true });
+  await chooseOption(stage, "deepseek / alternate");
+  await page.getByRole("link", { name: "Models & connections", exact: true }).click();
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("button", { name: "Delete model deepseek-flash" })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: "Delete model alternate" })).toBeDisabled();
+  await expect(dialog.getByText("translation.body", { exact: false })).toHaveCount(0);
+});
+
+test("saving an edited provider returns focus to its edit button", async ({ page }) => {
+  let saved = globalConfiguration;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/settings", async route => {
+    if (route.request().method() === "PUT") {
+      await gate;
+      const { yaml } = route.request().postDataJSON();
+      saved = { ...saved, yaml, effective: JSON.parse(yaml), revision: saved.revision + 1 };
+    }
+    await route.fulfill({ json: saved });
+  });
+  await page.goto("/settings/providers");
+  const edit = page.getByRole("button", { name: "Edit provider deepseek" });
+  await edit.focus();
+  await edit.press("Enter");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByLabel("Connection ID")).toBeFocused();
+  await dialog.getByLabel("API base URL").fill("https://example.invalid/v1");
+  await dialog.getByRole("button", { name: "Save provider" }).click();
+  try {
+    await expect(dialog.getByRole("button", { name: "Close", exact: true })).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+  } finally {
+    release();
+  }
+  await expect(dialog).toHaveCount(0);
+  await expect(edit).toBeFocused();
+});
+
+for (const theme of ["light", "dark"]) {
+  test(`provider editor groups and aligns connection and model controls in ${theme}`, async ({ page }, testInfo) => {
+    if (manualKeys) await page.route("**/api/desktop/credentials", route => route.fulfill({ json: {} }));
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.addInitScript(theme => {
+      localStorage.setItem("wenyi.locale", "zh-CN");
+      localStorage.setItem("wenyi.theme", theme);
+    }, theme);
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto("/settings/providers");
+    await page.getByRole("button", { name: "编辑提供商 deepseek" }).click();
+    const dialog = page.getByRole("dialog");
+    const connection = dialog.getByRole("region", { name: "API 连接", exact: true });
+    const models = dialog.getByRole("region", { name: "模型", exact: true });
+    const panel = (region: typeof dialog) => region.locator('[data-slot="card"]');
+    const id = panel(connection).getByLabel("连接 ID", { exact: true });
+    const model = panel(models).getByRole("combobox", { name: "模型名称", exact: true });
+    await expect(id).toBeVisible();
+    await expect(model).toBeVisible();
+    const credential = connection.getByLabel(manualKeys ? "API 密钥" : "API Key 环境变量", { exact: true });
+    await expect(credential).toBeVisible();
+    await expect(dialog.getByRole("alert")).toHaveCount(0);
+    await expect(dialog.getByLabel(manualKeys ? "API Key 环境变量" : "API 密钥", { exact: true })).toHaveCount(0);
+    await expect(dialog.getByRole("heading", { name: "环境变量", exact: true })).toHaveCount(0);
+    const bounds = (await id.boundingBox())!;
+    for (const field of [connection.getByRole("combobox"), credential, model]) {
+      const box = (await field.boundingBox())!;
+      expect(box.x).toBe(bounds.x);
+      expect(box.height).toBe(bounds.height);
+    }
+    const remove = models.getByRole("button", { name: /删除模型/ });
+    expect((await remove.boundingBox())!.y).toBe((await model.boundingBox())!.y);
+    await expect(dialog.getByRole("button", { name: "保存提供商" })).toBeInViewport();
+    await page.screenshot({ path: testInfo.outputPath(`provider-layout-${theme}.png`) });
+  });
+}
+
+test("model suggestions float without resizing the card and stay keyboard accessible", async ({ page }) => {
+  await page.setViewportSize({ width: 960, height: 560 });
+  await page.route("**/api/settings/models/list", route => route.fulfill({ json: {
+    ok: true, category: "ok", models: Array.from({ length: 24 }, (_, i) => `model-${i}`),
+  } }));
+  await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+  const dialog = page.getByRole("dialog");
+  const name = dialog.getByRole("combobox", { name: "Model name", exact: true });
+  const card = dialog.locator('[data-slot="card"]').filter({ has: page.getByRole("combobox", { name: "Model name" }) });
+  await dialog.getByRole("button", { name: "Fetch models" }).click();
+  const options = page.getByRole("listbox", { name: "Model name" });
+  await expect(options).toBeVisible();
+  await dialog.getByLabel("Connection ID").focus();
+  await expect(options).toHaveCount(0);
+  const height = await card.evaluate(el => el.clientHeight);
+  await name.focus();
+  await expect(options).toBeInViewport();
+  expect(await card.evaluate(el => el.clientHeight)).toBe(height);
+  await name.press("Escape");
+  await expect(options).toHaveCount(0);
+  await expect(name).toBeFocused();
+  await name.press("ArrowDown");
+  await name.press("Enter");
+  await expect(name).toHaveValue("model-0");
+});
+
+test("stage models can retry an initial capability failure in place", async ({ page }) => {
+  let unavailable = true;
+  await page.route("**/api/capabilities", route => unavailable
+    ? route.fulfill({ status: 503, json: { detail: "Stages unavailable" } })
+    : route.fulfill({ json: capabilities }));
+  await page.goto("/settings/defaults");
+  const section = page.getByRole("region", { name: "Stage models", exact: true });
+  await expect(section.getByRole("alert")).toContainText("Stages unavailable");
+  unavailable = false;
+  await section.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(section.getByRole("combobox", { name: "Thinking effort: Verify review evidence" })).toBeEnabled();
+  await expect(section.getByRole("alert")).toHaveCount(0);
+});
+
+test("provider dialog saves multiple models directly and cancellation writes nothing", async ({ page }, testInfo) => {
+  let saved = structuredClone(globalConfiguration);
+  let writes = 0;
+  await page.route("**/api/settings", async route => {
+    if (route.request().method() === "PUT") {
+      writes++;
+      const { yaml } = route.request().postDataJSON();
+      saved = { ...saved, yaml, effective: JSON.parse(yaml), revision: saved.revision + 1 };
+    }
+    await route.fulfill({ json: saved });
+  });
+  await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Add provider", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Connection ID").fill("editorial");
+  await expect(dialog.getByLabel("Model ID", { exact: true })).toHaveCount(0);
+  await dialog.getByLabel("API base URL").fill("https://example.invalid/v1");
+  await dialog.getByLabel("Model name", { exact: true }).fill("writer-v1");
+  await dialog.getByRole("button", { name: "Add model", exact: true }).click();
+  await dialog.getByLabel("Model name", { exact: true }).last().fill("verifier-v2");
+  await page.screenshot({ path: testInfo.outputPath("provider-editor.png") });
+  await dialog.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByRole("button", { name: "Edit provider editorial" })).toBeVisible();
+  await expect(page.getByText("writer-v1", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("API base URL")).toHaveCount(0);
+  await page.getByRole("button", { name: "Edit provider editorial" }).click();
+  await dialog.getByRole("button", { name: "Delete model writer-v1" }).click();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(writes).toBe(1);
+  expect(saved.effective.llm.models).toMatchObject({
+    "editorial/writer-v1": {},
+    "editorial/verifier-v2": {},
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Edit provider editorial" }).click();
+  await expect(dialog.getByLabel("Model name", { exact: true }).last()).toHaveValue("verifier-v2");
+});
+
+test("basic provider edits preserve parameters configured in advanced YAML", async ({ page }) => {
+  const initial = globalConfiguration.effective;
+  const provider = { ...initial.llm.providers.deepseek, timeout: 45.5, max_retries: 0, max_concurrency: 3 };
+  const model = {
+    ...initial.llm.models["deepseek/deepseek-flash"],
+    max_output_tokens: 8192,
+    options: { thinking: true, reasoning_effort: "low", extra_body: { temperature: 0.4 } },
+  };
+  let effective = {
+    ...initial,
+    llm: { ...initial.llm, providers: { deepseek: provider }, models: { "deepseek/deepseek-flash": model } },
+  };
+  await page.route("**/api/settings", route => {
+    if (route.request().method() === "PUT") effective = JSON.parse(route.request().postDataJSON().yaml);
+    return route.fulfill({ json: { ...globalConfiguration, effective, yaml: JSON.stringify(effective) } });
+  });
+  await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByRole("spinbutton")).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Add parameter" })).toHaveCount(0);
+  await dialog.getByLabel("API base URL").fill("https://example.invalid/v1");
+  await dialog.getByLabel("Model name", { exact: true }).fill("updated-model");
+  await dialog.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByText("Global settings saved", { exact: true })).toBeVisible();
+  expect(effective.llm.providers.deepseek).toEqual({ ...provider, base_url: "https://example.invalid/v1" });
+  expect(effective.llm.models).toEqual({ "deepseek/updated-model": model });
+  expect(Object.values(effective.llm.routes).map(route => route.model)).toEqual(
+    Object.keys(effective.llm.routes).map(() => "deepseek/updated-model"),
+  );
 });
 
 test("model suggestions remain pointer-accessible outside the model card", async ({ page }) => {
@@ -170,6 +378,7 @@ test("model suggestions remain pointer-accessible outside the model card", async
     },
   }));
   await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
   await page.getByRole("button", { name: "Fetch models", exact: true }).click();
   const option = page.getByRole("option", { name: "listed-model-7", exact: true });
   await expect(option).toBeInViewport();
@@ -188,24 +397,20 @@ test("model suggestions remain pointer-accessible outside the model card", async
 
 test("category history preserves drafts and closes dropdowns", async ({ page }) => {
   await page.goto("/settings/workflow");
-  await page.getByLabel("Polishing", { exact: true }).uncheck();
+  const polish = page.getByRole("switch", { name: "Polishing", exact: true });
+  // Before settings arrive the disabled placeholder is already unchecked.
+  await expect(polish).toBeChecked();
+  await polish.uncheck();
   await page.getByRole("link", { name: "Models & connections", exact: true }).click();
-  await page.getByLabel("Model ID", { exact: true }).fill("unfinished model");
-  await page.getByRole("link", { name: "General", exact: true }).click();
-  await expect(page).toHaveURL("/settings");
-  await expect(page.getByLabel("Interface language", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Save configuration", exact: true })).toBeDisabled();
-  await page.getByRole("link", { name: "Apply or discard the ID edits before saving.", exact: true }).click();
-  await expect(page).toHaveURL("/settings/providers");
-  await expect(page.getByRole("link", { name: "Models & connections", exact: true })).toHaveAttribute("aria-current", "page");
-  await expect(page.getByLabel("Model ID", { exact: true })).toHaveValue("unfinished model");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+  await page.getByLabel("Model name", { exact: true }).fill("unfinished model");
   await page.getByLabel("API provider", { exact: true }).click();
   await expect(page.getByRole("listbox")).toBeVisible();
   await page.goBack();
-  await expect(page).toHaveURL("/settings");
+  await expect(page).toHaveURL("/settings/workflow");
   await expect(page.getByRole("listbox")).toHaveCount(0);
-  await page.getByRole("link", { name: "Workflow", exact: true }).click();
-  await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(polish).not.toBeChecked();
 });
 
 for (const chinese of [false, true]) {
@@ -221,8 +426,8 @@ for (const chinese of [false, true]) {
     await expect(main.locator("details, summary")).toHaveCount(0);
     await page.getByLabel(chinese ? "润色" : "Polishing", { exact: true }).uncheck();
     await page.screenshot({ path: testInfo.outputPath("settings-workflow-simple.png") });
-    await page.getByRole("link", { name: chinese ? "默认模型" : "Default models", exact: true }).click();
-    await expect(main.getByRole("combobox")).toHaveCount(3);
+    await page.getByRole("link", { name: chinese ? "各阶段模型" : "Stage models", exact: true }).click();
+    await expect(main.getByRole("combobox")).toHaveCount(6);
     await expect(page.getByLabel(chinese ? "分批翻译章节" : "Translate chapters in batches", { exact: true })).toHaveCount(0);
     await page.getByRole("link", { name: chinese ? "高级" : "Advanced", exact: true }).click();
     const yaml = page.getByRole("textbox", { name: chinese ? "高级 YAML 配置" : "Advanced YAML configuration", exact: true });
@@ -250,16 +455,16 @@ for (const chinese of [false, true]) {
     const yaml = page.getByRole("textbox", { name: advancedName, exact: true });
     await expect(yaml).toBeVisible();
     await expect(page.getByRole("link", { name: advancedName, exact: true })).toHaveCount(0);
-    await expect(main.getByRole("combobox")).toHaveCount(4);
-    await expect(main.getByRole("switch")).toHaveCount(7);
+    await expect(main.getByRole("combobox")).toHaveCount(7);
+    await expect(main.getByRole("switch")).toHaveCount(6);
     await expect(main.getByRole("spinbutton", { includeHidden: true })).toHaveCount(0);
     await expect(page.getByLabel(chinese ? "分批翻译章节" : "Translate chapters in batches", { exact: true })).toHaveCount(0);
     await expect(main.locator("details, summary")).toHaveCount(0);
     await expect(main.getByRole("table")).toHaveCount(0);
     await expect(main.getByRole("heading", { level: 2 })).toHaveText(
       chinese
-        ? ["默认模型", "翻译风格", "翻译流程", "导出偏好", advancedName]
-        : ["Default models", "Translation style", "Workflow", "Export preferences", advancedName],
+        ? ["各阶段模型", "翻译风格", "翻译流程", "导出偏好", advancedName]
+        : ["Stage models", "Translation style", "Workflow", "Export preferences", advancedName],
     );
     const polish = page.getByLabel(chinese ? "润色" : "Polishing", { exact: true });
     await polish.uncheck();
@@ -305,18 +510,68 @@ for (const chinese of [false, true]) {
 }
 
 for (const scope of ["global", "project"] as const) {
+  test(`${scope} stage thinking shows the model's effort and saves concrete selections`, async ({ page }) => {
+    const base = scope === "global" ? globalConfiguration : configuration;
+    const endpoint = scope === "global" ? "/settings" : `/projects/${pid}/config`;
+    let saved = {
+      ...base,
+      registered_models: {
+        ...base.registered_models,
+        // Return an unsorted capability list to verify presentation order.
+        "deepseek/deepseek-flash": {
+          ...base.registered_models["deepseek/deepseek-flash"],
+          thinking_levels: ["max", "high", "low", "xhigh", "off"],
+        },
+      },
+    };
+    const writes: Record<string, { model: string; thinking?: string | null }>[] = [];
+    await page.route(`**/api${endpoint}`, async route => {
+      if (route.request().method() === "PUT") {
+        const { yaml } = route.request().postDataJSON();
+        const effective = JSON.parse(yaml);
+        writes.push(effective.llm.routes);
+        saved = { ...saved, effective, yaml };
+      }
+      await route.fulfill({ json: saved });
+    });
+    await page.goto(scope === "global" ? "/settings/defaults" : `/projects/${pid}/settings`);
+    const translation = page.getByRole("combobox", { name: "Thinking effort: Translate chapters in batches" });
+    const verify = page.getByRole("combobox", { name: "Thinking effort: Verify review evidence" });
+    await expect(translation).toHaveText("high");
+    await expect(page.getByText("Thinking effort", { exact: true })).toHaveCount(0);
+    await translation.click();
+    await expect(page.getByRole("option")).toHaveText(["off", "low", "high", "xhigh", "max"]);
+    await expect(page.getByRole("option", { name: "high", exact: true })).toHaveAttribute("aria-selected", "true");
+    await page.getByRole("option", { name: "max", exact: true }).click();
+    await expect(verify).toHaveText("high");
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+    await expect(page.getByText(scope === "global" ? "Global settings saved" : "Project settings saved", { exact: true })).toBeVisible();
+    expect(writes[0]["translation.body"]).toMatchObject({
+      model: "deepseek/deepseek-flash", thinking: "max",
+    });
+    expect(writes[0]["review.verify"].thinking).toBeUndefined();
+    await page.reload();
+    await expect(translation).toHaveText("max");
+    await chooseOption(translation, "high");
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+    await expect.poll(() => writes[1]?.["translation.body"].thinking).toBe("high");
+  });
+
   test(`${scope} basic edits preserve advanced values before and after YAML validation`, async ({ page }) => {
     const base = scope === "global" ? globalConfiguration : configuration;
     const models = {
       ...configuration.registered_models,
-      editor: { provider: "default", model: "editor-model" },
+      "deepseek/editor-model": { provider: "deepseek", model: "editor-model", thinking_levels: [], thinking_value: null },
     };
     const document = {
       ...base.effective,
       llm: {
         ...base.effective.llm,
-        ...(scope === "global" ? { models, preset: null } : {}),
-        routes: { "translation.body": { model: "editor", fallbacks: ["default_model"] } },
+        ...(scope === "global" ? { models: Object.fromEntries(Object.keys(models).map(ref => [ref, {}])), preset: null } : {}),
+        routes: {
+          ...base.effective.llm.routes,
+          "translation.body": { model: "deepseek/editor-model", fallbacks: ["deepseek/deepseek-flash"] },
+        },
       },
       segment: { max_tokens_per_batch: 2700, max_tokens_per_segment: 0 },
       pipeline: { ...base.effective.pipeline, review_concurrency: 7, annotation_alignment: false },
@@ -337,7 +592,14 @@ for (const scope of ["global", "project"] as const) {
       await route.fulfill({ json: { ...saved, yaml, effective: JSON.parse(yaml) } });
     });
     await page.goto(scope === "global" ? "/settings/defaults" : `/projects/${pid}/settings`);
-    await chooseOption(page.getByLabel("Quality tier", { exact: true }), "default / editor-model");
+    await expect(page.getByRole("combobox", { name: "Default model", exact: true })).toHaveCount(0);
+    const review = page.getByRole("combobox", { name: "Model: Verify review evidence" });
+    const autofix = page.getByRole("combobox", { name: "Model: Verify autofixes" });
+    await chooseOption(review, "deepseek / editor-model");
+    await expect(autofix).toHaveText("deepseek / deepseek-flash");
+    await autofix.click();
+    await expect(page.getByRole("option")).toHaveText(["deepseek / deepseek-flash", "deepseek / editor-model"]);
+    await page.keyboard.press("Escape");
     if (scope === "global") await page.getByRole("link", { name: "Workflow", exact: true }).click();
     await page.getByLabel("Apply autofixes to the saved translation after review", { exact: true }).uncheck();
     const save = page.getByRole("button", { name: "Save configuration", exact: true });
@@ -346,7 +608,10 @@ for (const scope of ["global", "project"] as const) {
     await expect(save).not.toHaveAttribute("aria-busy", "true");
     const expected = {
       ...document,
-      llm: { ...document.llm, tiers: { ...document.llm.tiers, strong: "editor" } },
+      llm: {
+        ...document.llm,
+        routes: { ...document.llm.routes, "review.verify": { model: "deepseek/editor-model" } },
+      },
       pipeline: { ...document.pipeline, review_autofix: false },
     };
     expect(saved.effective).toEqual(expected);
@@ -397,7 +662,7 @@ test("an in-flight project validation does not replace a newer YAML edit", async
   await response;
   await expect(validate).not.toHaveAttribute("aria-busy", "true");
   await expect(editor).toHaveValue(newer);
-  await expect(page.getByLabel("Quality tier", { exact: true })).toBeDisabled();
+  await expect(page.locator('[id="route-translation.body"]')).toBeDisabled();
 });
 
 test("idle project settings remain editable after returning from the event log", async ({ page }) => {
@@ -439,10 +704,9 @@ test("idle project settings remain editable after returning from the event log",
 test("running projects keep both basic and advanced settings read-only", async ({ page }) => {
   await fakeApi(page, { [`/projects/${pid}`]: { ...project, status: "translating" } });
   await page.goto(`/projects/${pid}/settings`);
-  await expect(page.getByText("Read-only while a task runs", { exact: true })).toBeVisible();
-  await expect(page.getByLabel("Quality tier", { exact: true })).toBeDisabled();
+  await expect(page.locator('[id="route-translation.body"]')).toBeDisabled();
   const switches = page.getByRole("main").getByRole("switch");
-  await expect(switches).toHaveCount(7);
+  await expect(switches).toHaveCount(6);
   for (const control of await switches.all()) {
     await expect(control).toBeDisabled();
   }
@@ -451,6 +715,7 @@ test("running projects keep both basic and advanced settings read-only", async (
   for (const name of ["Save configuration", "Restore defaults", "Validate configuration"]) {
     await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
   }
+  await expect(page.getByText("Read-only while a task runs", { exact: true })).toHaveCount(0);
 });
 
 test("category content uses a centered reading column without a duplicate title", async ({ page }) => {

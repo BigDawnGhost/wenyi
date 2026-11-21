@@ -151,10 +151,10 @@ description. PDF objects retain their markers in formal targets through Review/A
 missing or damaged markers use the same bounded repair as EPUB.
 Review evidence hashes still bind the actual saved target, with object references
 supplied separately. Annotation offsets/digests bind the marker-free text. Export
-resolves markers only on a disposable chapter copy, then remaps clean offsets during
-punctuation normalization. Failed objects remain pending in state but do not block
-export: Core warns and sends explicit `omitted_protected_objects` IDs to a bridge
-advertising `protected-object-omission-v1`. The bridge retains valid siblings and
+resolves markers only on a disposable chapter copy. Failed objects remain pending
+in state but do not block export: Core warns and sends explicit
+`omitted_protected_objects` IDs to a bridge advertising `protected-object-omission-v1`.
+The bridge retains valid siblings and
 translated prose, recording omissions without modifying frozen source objects.
 Older PDF sessions require a fresh import rather than an in-place source
 rewrite.
@@ -177,9 +177,13 @@ but must not filter inline content by tag or language.
 
 Recent context is derived from formal targets in book order, not an independent
 persisted rolling-context string. Stop at pending text; skip intentionally blank
-completed targets. Lookahead is a read-only source neighbor, excluded from numbered
+completed targets. Lookahead is read-only source text, excluded from numbered
 inputs and output count. BabelDOC role/section boundaries further restrict prose
-context without deleting non-prose translation units.
+context without deleting non-prose translation units. The PDF lookahead skips
+table contents and looks for the next prose paragraph in the same section. If the
+next page opens with a table caption, the caption's first sentence is included
+before that paragraph. If there is no following prose in the section, only the
+caption's first sentence is included.
 
 The full glossary owns name mappings. It retains stable insertion order, and fresh
 Reviewer requests share one complete final snapshot. Selective evidence and Fixer
@@ -371,7 +375,7 @@ duration; logs cannot reconstruct events that were never saved.
 
 `i18n/policy/` is the pure typed registry/resolver. Source and target bindings are
 separate; language profiles inherit root-to-leaf, with exact registered pair rules.
-Agents consume frozen prompt plans, domain adapters execute selected text/writer
+Agents consume frozen prompt plans, writer adapters execute selected export
 capabilities, and pipeline services persist phase identities through Storage.
 
 Plans freeze only consumed prompt resources and capabilities. Persist immutable
@@ -382,10 +386,9 @@ digest/style caches; an interrupted rebuild must not prematurely commit the new
 checkpoint. Completed targets and glossary notes remain intact.
 
 Export identity is separate and includes actual format/backend and the consistent
-source/target snapshot. Punctuation, font and source-presentation changes require re-export rather
-than retranslation. Normalize complete logical paragraphs on an export-only copy,
-remap annotation/style offsets once, and validate the complete view before opening
-the output. Preserve pending, intentionally empty, and source-fallback identities.
+source/target snapshot. Font and source-presentation changes require re-export rather
+than retranslation. Export keeps pending, intentionally empty, and source-fallback
+segments distinct.
 
 Task instructions use English. Generated prose and descriptive metadata follow the
 target language; original source names and aliases remain matching identities.

@@ -546,18 +546,12 @@ def test_epub_export_preserves_long_filename(desktop, bilingual):
 
 
 @pytest.mark.parametrize("bilingual", [False, True])
-@pytest.mark.parametrize("punctuation_normalize", [False, True])
-def test_repeated_epub_export_with_leading_punctuation(desktop, bilingual, punctuation_normalize):
+def test_repeated_epub_export_preserves_leading_punctuation(desktop, bilingual):
     client, backend, fake = desktop
     pid, store = initialize(backend)
     chapter = store.load_chapter(0)
     chapter.text_segments[0].target = "—你好。…再见。"
     store.save_chapter(chapter)
-    response = client.put(
-        f"/projects/{pid}/config",
-        json={"yaml": json.dumps({"output": {"punctuation_normalize": punctuation_normalize}})},
-    )
-    assert response.status_code == 200, response.text
     export_ids = []
     for _ in range(2):
         response = client.post(
@@ -578,8 +572,7 @@ def test_repeated_epub_export_with_leading_punctuation(desktop, bilingual, punct
                 if name.endswith(".xhtml")
                 for paragraph in BeautifulSoup(archive.read(name), "html.parser").find_all("p")
             ]
-        expected = "——你好。……再见。" if punctuation_normalize else "—你好。…再见。"
-        assert expected in paragraphs
+        assert "—你好。…再见。" in paragraphs
         assert ("A paragraph." in paragraphs) == bilingual
         assert store.load_chapter(0) == chapter
     assert len(set(export_ids)) == 2

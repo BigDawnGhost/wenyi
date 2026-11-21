@@ -11,7 +11,7 @@ import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
 import { Card } from "../../components/ui/card";
 import { Input } from "../../components/ui/form";
 import { Select, SelectDismissScope, SelectItem } from "../../components/ui/select";
-import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
+import { ErrorNotice } from "../../components/ui/data";
 import { PAGE_SIZE, termTypes } from "./termTypes";
 import { TermPagination, TermTable } from "./TermTable";
 import { GlossaryActions } from "./GlossaryActions";
@@ -188,7 +188,6 @@ export default function GlossaryPage() {
       />
       <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice error={termsError || conflictsError} />
-        {busy && <ReadOnlyNotice />}
         <Card className="flex flex-wrap items-center gap-2 p-4">
           <Input
             placeholder={tr(
@@ -280,13 +279,11 @@ export default function GlossaryPage() {
               }}
             />
             <ImportDialog
+              key={pid}
               pid={pid}
               open={importOpen}
               onClose={() => setImportOpen(false)}
-              onSaved={() => {
-                invalidate();
-                setImportOpen(false);
-              }}
+              onChanged={invalidate}
             />
           </>
         )}

@@ -22,14 +22,14 @@ Closing the creation dialog after upload has started does not cancel the request
 
 ## Choose models and workflow
 
-Global **Settings → Models & connections** manages provider connections and registered models. **Default models** chooses the **Quality**, **Economy**, and **Fast** tiers. **Project settings** selects registered models for those tiers and adjusts that project's workflow; it does not register new providers or models.
+Register providers and models in **Settings → Models & connections**. In **Stage models**, select a provider and model directly for each operation. **Project settings** offers the same selections for one project without changing the shared registry.
 
-1. Configure the connection and register the model names you will use. Desktop accepts keys through its [credential controls](desktop.md#api-keys). Web reads credentials from the server environment; its form stores variable names, not secret values. Ask the deployment administrator to supply missing keys.
-2. Fetch names with the refresh control beside **Model name**, or type a name manually. Fetching contacts the provider's model-list service but **uses no model tokens**. It uses the edited connection, including an unsaved base URL; Desktop can also use the key currently entered. On Web, save a newly chosen environment-variable name before fetching.
-3. **Save configuration** before using **Test connection**. The test sends one short live request per saved model and reports connectivity, latency, and failures. **It consumes tokens and may incur provider charges.** Configuration validation and credential-availability checks do not send a model request.
-4. Check the selected tiers and workflow switches before starting. Ordinary controls cover book understanding, polishing, whole-book Review, and Review Autofix.
+1. Choose **Add provider** or **Edit** to open a provider's editor. The dialog shows its connection settings and registered models. Desktop accepts keys through its [credential controls](desktop.md#api-keys); Web only accepts the name of a server environment variable.
+2. Fetch names with the refresh control beside **Model name**, or type a name manually. There is no separate model ID: each model name is registered once per connection. Fetching contacts the provider's model-list service but **uses no model tokens**. It uses the edited connection, including an unsaved base URL; Desktop can also use the key currently entered. On Web, save a newly chosen environment-variable name before fetching.
+3. Choose **Save provider** in the dialog to save that connection and its models immediately. No second save on the Settings page is needed, and unrelated drafts are not submitted. Choose **Cancel** to discard the dialog's edits. Reopen the dialog and choose **Test connection** to see the status, latency, and any failures for the saved models on that connection. The test sends short live requests and **may incur provider charges**. Configuration validation and credential-availability checks do not send model requests.
+4. Check the operation models and workflow switches before starting. The **Thinking effort** column shows the configured value where the provider exposes one. Select a level to change it for that stage alone. Changes to one stage, including Review or Autofix, do not affect the others.
 
-Use **Advanced YAML configuration** for operation-specific models and fallbacks, token budgets, concurrency, annotation alignment, and parser defaults. In **Project settings**, the editor is shown below Workflow and Export preferences; global Settings has an **Advanced** category. PDF parser selection is also available when creating a project.
+Use **Settings → Advanced → Advanced YAML configuration** to change [connection and model parameters](../reference/configuration.md#model-profiles), such as timeouts, retries, output limits, thinking options, and custom request fields. Fallbacks, token budgets, workflow concurrency, annotation alignment, and parser defaults are also configured in YAML. In **Project settings**, the editor is shown below Workflow and Export preferences. PDF parser selection is also available when creating a project.
 
 Validate or save edited YAML before returning to ordinary controls; unvalidated YAML disables them. Ordinary edits preserve advanced values already in the draft. **Validate configuration** checks the current draft without sending a model request.
 
@@ -67,7 +67,7 @@ Use **Glossary** to add or edit source terms, translations, aliases, notes, type
 
 Search covers the whole glossary, including aliases, readings, and notes. Type filters apply to the results. Selecting all affects only the current page; changing pages or filters clears the selection. During a queued/running task, **Term details** remains available for reading and copying, but adding, importing, editing, deleting, and resolving conflicts are disabled.
 
-Import **CSV or JSON**. CSV needs `source` and `target` headers. Import checks existing source terms across the complete glossary, not only the visible page or filter. Export CSV/JSON to reuse the glossary; type labels follow the interface language, while stored/exported built-in type IDs remain English.
+Import **CSV or JSON**. The file and the parsed glossary data must both fit within **5 MiB**; if either exceeds the limit, no terms are imported. CSV needs `source` and `target` headers. Import checks existing source terms across the complete glossary, not only the visible page or filter. Export CSV/JSON to reuse the glossary; type labels follow the interface language, while stored/exported built-in type IDs remain English.
 
 ### Anki export
 
@@ -103,7 +103,7 @@ Choose a format and, where supported, monolingual or bilingual output. Export re
 
 You can export as soon as source parsing finishes. Before translation preparation, the book contains the parsed original; exporting does not start translation or require a translation model. Once translation state exists, exports use its saved translations and fall back to the source for untranslated passages.
 
-Configure **Export preferences** in **Settings → General** for global defaults, or in **Project settings** for a project override, then **Save configuration**. These preferences control punctuation normalization, bilingual order, the optional EPUB “About this translation” page, and preservation of source formatting in bilingual output (not used for PDF). The export page uses the project's effective saved preferences; it does not provide separate overrides for an individual export. Existing project overrides take precedence over global defaults.
+Configure **Export preferences** in **Settings → General** for global defaults, or in **Project settings** for a project override, then **Save configuration**. These preferences control bilingual order, the optional EPUB “About this translation” page, and preservation of source formatting in bilingual output (not used for PDF). The export page uses the project's effective saved preferences; it does not provide separate overrides for an individual export. Existing project overrides take precedence over global defaults.
 
 EPUB, DOCX, HTML, TXT, and Markdown are available for ordinary book projects. **PDF export is only available for projects saved with the BabelDOC parser** and preserves their PDF layout through the bridge. Changing the current default parser does not turn an existing MinerU project into a BabelDOC project. See [format support](../reference/formats.md).
 

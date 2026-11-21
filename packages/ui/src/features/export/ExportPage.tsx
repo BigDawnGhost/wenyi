@@ -55,7 +55,6 @@ function ProjectExport({ pid }: { pid: string }) {
         order: output.bilingual_order === "source_first" ? "source_first" : "target_first",
         about_page: output.about_page !== false,
         preserve_source_style: !pdf && Boolean(output.bilingual_preserve_source_style),
-        punctuation_normalize: output.punctuation_normalize !== false,
       };
       if (saveExport) {
         const saved = await saveExport(pid, options);

@@ -45,7 +45,6 @@ def assemble(
     preserve_source_style: bool = False,
     about_page: bool = True,
     babeldoc_timeout: float = 600.0,
-    punctuation_normalize: bool = False,
     language_policy: PolicyPlan | None = None,
 ) -> str:
     """Generate translated output, defaulting to PDF for BabelDOC state and EPUB otherwise.
@@ -56,8 +55,7 @@ def assemble(
     With bilingual=True, include source text in the requested order. PDF pairs matching pages
     left to right in that order. preserve_source_style reuses
     original styles instead of muted CSS in EPUB/HTML or plain source text in DOCX.
-    about_page appends the translation about page. punctuation_normalize changes only export
-    copies, never chapter target state.
+    about_page appends the translation about page.
     """
     if out_format is not None and out_format not in _OUT_EXT:
         supported = " / ".join(_OUT_EXT)
@@ -75,7 +73,6 @@ def assemble(
                 phase="export",
                 format=out_format,
                 backend=backend,
-                punctuation_normalize=punctuation_normalize,
                 source_identity=m.get("source_sha256", ""),
                 bilingual=bilingual,
                 order=order,
@@ -89,13 +86,11 @@ def assemble(
         or language_policy.context.backend != backend
     ):
         raise ValueError("Export language policy does not match the actual output format")
-    view: AssembleStore
-    if isinstance(store, ExportViewStore):
-        view = store
-    else:
-        view = ExportViewStore(
-            store, punctuation_normalize=punctuation_normalize, plan=language_policy
-        )
+    view = (
+        store
+        if isinstance(store, ExportViewStore)
+        else ExportViewStore(store, plan=language_policy)
+    )
     m = view.load_manifest()
     # EPUB and PDF writers project all chapters before opening output or making
     # a bridge request. Prewarming their view would deep-copy the same chapters twice.

@@ -1,6 +1,16 @@
 # Wenyi repository guide for coding agents
 
-本文件适用于整个仓库；更深层的 `AGENTS.md` 在其范围内优先。按任务查阅相关源码、测试和文档，无需预先通读仓库。
+本文件适用于整个仓库；更深层的 `AGENTS.md` 在其范围内优先。
+
+## 动手前先读对应的开发文档
+
+设计、修改或审查代码前，先按**受影响的行为**从[开发文档索引](docs/development/index.md#find-the-owning-layer)找到负责该主题的文档，阅读相关章节，再决定实现和验证方式。跨层改动分别查阅涉及的契约，不必通读整套文档。常见入口：
+
+- Web/Desktop 页面、组件或交互（包括小幅 UI 调整）：先读[前端开发](docs/development/frontend.md)；涉及尺寸、颜色、间距或动效时，再查[设计令牌](docs/development/design-tokens.md)。
+- 模块依赖、存储接口或平台边界：先读[架构](docs/development/architecture.md)；涉及检查点、续跑或提示词时，查[流水线契约](docs/development/pipeline.md)。
+- Web API、worker 或队列查 [Web 开发](docs/development/web.md)；Desktop 凭据、本地运行器或原生能力查 [Desktop 开发](docs/development/desktop.md)。
+
+实现验收和代码审查都要对照读到的约束。例如改弹窗保存流程，应验证失败后能否在原表单重试、关闭后键盘焦点回到哪里；类型检查和构建通过不能代替这些行为检查。
 
 ## 工作范围与完成条件
 
@@ -32,7 +42,7 @@ Wenyi 是支持多语言互译、术语、润色、全书 Review 和多格式导
 | 存储接口与本地适配 | `storage/` 的 `protocol.py`、`file.py`、`artifacts.py`、`run_store.py` | `test_storage_injection.py`、`test_file_storage.py`、`test_file_artifacts.py` |
 | 翻译与上下文 | `pipeline/translate/` 的 `translation.py`、`translation_batch.py`、`context.py`、`title_translation.py`；`agents/` 模型任务 | `test_translator.py`、`test_translation*.py`、`test_title_translation.py` |
 | Review、润色、Autofix | `pipeline/review/`、`pipeline/autofix/`；`agents/review_*.py`；`review/` 模型、证据与运行记录 | `test_review*.py`、`test_routing_resume.py` |
-| 输入、导出与报告 | `ingest/`、`assemble/`、`pipeline/finalize/`、`postprocess/` | `test_ingest.py`、`test_assemble.py`、`test_bilingual.py` |
+| 输入、导出与报告 | `ingest/`、`assemble/`、`pipeline/finalize/` | `test_ingest.py`、`test_assemble.py`、`test_bilingual.py` |
 | EPUB/HTML 注释与 DOCX 样式 | `markup/` 共享标记处理；`pipeline/annotate/` 对齐；`document_styles/docx.py` 纯样式策略 | `test_annotation_aligner.py`、`test_docx.py` |
 | PDF | `ingest/`、`assemble/` 的 PDF 路径；`pdf_bridge/` | `test_pdf_support.py`、`test_babeldoc_bridge_client.py` |
 | 术语 | `glossary/` SQLite、抽取与冲突裁定 | `test_glossary*.py` |
@@ -45,7 +55,7 @@ Web/Desktop 相关入口使用仓库根目录相对路径：
 - Web 装配、PostgreSQL 与队列：`apps/api/wenyi_api/`；测试在 `apps/api/tests/`。Desktop SQLite、凭据和本地运行器：`apps/desktop/backend/wenyi_desktop/`；测试在 `apps/desktop/backend/tests/`。
 - 共享页面与组件：`packages/ui/`；平台入口与适配分别在 `apps/web/src/` 和 `apps/desktop/frontend/src/`，E2E 在各自 `tests/`。API 类型在 `packages/shared-schema/`，接口变更需同步检查后端 schema、共享类型与前端调用。
 
-用户操作查阅 [guide](docs/guide/index.md)，选项与格式查阅 [configuration](docs/reference/configuration.md)、[formats](docs/reference/formats.md)，内部职责与恢复契约查阅 [architecture](docs/development/architecture.md)、[pipeline](docs/development/pipeline.md)。前端约定见 [frontend](docs/development/frontend.md)；中文版在 `docs/zh/` 的对应目录。CI 与打包以 `.github/workflows/` 和 `pyproject.toml` 为准。
+用户操作查阅 [guide](docs/guide/index.md)，选项与格式查阅 [configuration](docs/reference/configuration.md)、[formats](docs/reference/formats.md)。中文版在 `docs/zh/` 的对应目录。CI 与打包以 `.github/workflows/` 和 `pyproject.toml` 为准。
 
 `packages/` 和 `apps/` 包含产品源码；其中忽略的运行产物仍属于本地数据。`state/`、`output/`、`review-*`、Web `DATA_DIR`、Desktop 工作区、缓存、构建目录和样例书籍均需保留。除非用户明确要求，不读取整本私有书籍，不改写、移动、删除或提交这些数据。
 
@@ -62,7 +72,7 @@ CLI / Web / Desktop → Orchestrator → Runtime / Preparation / Translation / A
 - `wenyi_core` 不依赖 CLI、HTTP backend 或其框架。领域服务通过 `Storage` / `ArtifactStorage` 读写运行状态；CLI 使用文件适配，Desktop 注入 `SqliteStorage`，Web 注入 `PostgresStorage`，不得在领域服务中绕过接口直接写文件状态或打开 SQLite。
 - `wenyi_backend` 不导入 Web/Desktop 适配或 PG/Redis/Arq/keyring；平台通过显式上下文和端口注入依赖，不用进程全局开关决定当前平台。每个 app、worker 和线程回调保持正确的上下文身份。
 - 共享 UI 不反向导入 app，通过平台服务接收原生能力。Web 产物不包含 Desktop IPC、凭据库或本地运行器；Desktop 运行包不依赖 Web 数据库/队列。Docker 只安装 Web 与共享运行依赖，不安装整个 workspace。
-- `pipeline/orchestrator.py` 是薄 façade。不得直接导入 `agents`、`ingest`、`glossary`、`assemble`、`postprocess` 或 `llm`，不得直接调用领域函数，也不得拥有线程池。
+- `pipeline/orchestrator.py` 是薄 façade。不得直接导入 `agents`、`ingest`、`glossary`、`assemble` 或 `llm`，不得直接调用领域函数，也不得拥有线程池。
 - 下层服务不得反向导入 `orchestrator.py`。
 - `cli.py` 保持应用装配职责；命令通过显式注册和调用上下文接收依赖，不反向导入 CLI 全局对象。
 - `agents/` 不得依赖 pipeline 编排、状态机或 RunStore；可使用顶层 `review/` 的纯模型。

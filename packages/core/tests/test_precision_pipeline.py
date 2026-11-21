@@ -141,8 +141,10 @@ def test_incompatible_pending_checkpoints_are_not_reused(tmp_path, change):
     elif change == "context":
         plan = replace(plan, context="new context")
     else:
-        config.llm.models["default_strong"] = config.llm.models["default_strong"].model_copy(
-            update={"model": "different-model"}
+        route = config.llm.routes["translation.body"]
+        config.llm.models["fake/different-model"] = config.llm.models[route.model]
+        config.llm.routes["translation.body"] = route.model_copy(
+            update={"model": "fake/different-model"}
         )
     second = executor.execute(plan, store)
     assert second.precision_key != first.precision_key

@@ -32,7 +32,7 @@ def test_policy_artifacts_resume_and_export_are_backend_neutral(storage, tmp_pat
         storage.read_artifact(reference)["schema_version"] == 1 for reference in checkpoint.values()
     )
     before = storage.load_chapter(0).model_dump()
-    config.output.punctuation_normalize = False
+    config.output.about_page = False
     resumed = FakeClient(handler=routing_handler)
     orchestrator = Orchestrator(config, client=resumed, storage=storage)
     orchestrator.run(str(source))

@@ -46,18 +46,20 @@ function useElapsedSeconds(active: boolean): number | undefined {
   return elapsed;
 }
 
-/** Live test of saved connections; unsaved edits must be saved before they can be tested. */
+/** Live test of this saved provider; the dialog owns saving unsaved edits. */
 export function ModelConnectivity({
+  connection,
   saved,
   disabled,
 }: {
+  connection: string;
   saved: boolean;
   disabled: boolean;
 }) {
   const { t } = useI18n();
-  const ping = useMutation({ mutationFn: () => api.pingModels() });
+  const ping = useMutation({ mutationFn: () => api.pingModels(connection) });
   const elapsed = useElapsedSeconds(ping.isPending);
-  const results = ping.data;
+  const results = saved ? ping.data : undefined;
   const failed = results?.filter((result) => !result.ok).length ?? 0;
   const detail = (result: ModelPingResult) => {
     const key = categoryMessages[result.category];
@@ -65,16 +67,11 @@ export function ModelConnectivity({
     return result.status_code ? `${text} (HTTP ${result.status_code})` : text;
   };
   return (
-    <div className="space-y-3 px-4 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0 space-y-1">
-          <p className="text-sm font-medium">{t("connectivity.title")}</p>
-          <p className="text-xs text-muted-foreground">{t("connectivity.description")}</p>
+    <div className="space-y-3 border-t border-border px-4 py-3">
+      <div className="flex flex-wrap items-center justify-end gap-3">
           {!saved && (
             <p className="text-xs text-muted-foreground">{t("connectivity.saveFirst")}</p>
           )}
-        </div>
-        <div className="flex items-center gap-3">
           {ping.isPending && elapsed !== undefined && (
             <p className="text-xs tabular-nums text-muted-foreground">
               {t("connectivity.elapsed", { seconds: elapsed })}
@@ -84,15 +81,15 @@ export function ModelConnectivity({
             type="button"
             variant="outline"
             size="sm"
+            title={t("connectivity.description")}
             disabled={!saved || disabled}
             aria-busy={ping.isPending || undefined}
             onClick={() => { if (!ping.isPending) ping.mutate(); }}
           >
             {t("connectivity.test")}
           </Button>
-        </div>
       </div>
-      <ErrorNotice error={ping.error} />
+      {saved && <ErrorNotice error={ping.error} />}
       {(results != null || ping.isPending) && (
         <div role="status" aria-live="polite" className="space-y-2">
           {results && (
@@ -120,8 +117,7 @@ export function ModelConnectivity({
                   {results.map((result) => (
                     <tr key={result.profile} className="border-t border-subtle align-top">
                       <td className="py-2 pr-3 [overflow-wrap:anywhere]">
-                        <div className="font-medium">{result.profile}</div>
-                        <div className="text-xs text-muted-foreground">{result.model}</div>
+                        <div className="font-medium">{result.model}</div>
                       </td>
                       <td className="py-2 pr-3 [overflow-wrap:anywhere]">
                         {result.connection} / {result.provider}

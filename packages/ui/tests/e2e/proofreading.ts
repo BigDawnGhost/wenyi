@@ -9,6 +9,80 @@ import { fakeApi, mockChapter, pid, project, chapter } from "../../sandbox/fixtu
 export const desktopHostSensitive = false;
 
 export function registerTests() {
+test("quote widths follow the writing system without changing book content", async ({ page }) => {
+  const prose = [
+    "«\u202fL’heure\u202f»", "„Привет“", "‘Ελληνικά’", "‘مرحبا’", "‘Paris — Москва’",
+  ];
+  const cjk = ["她说：“Hello。”", "「こんにちは」", "그는 ‘안녕’이라고 했다."];
+  await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
+  await fakeApi(page, { [`/projects/${pid}`]: { ...project, source_lang: "auto" } });
+  await mockChapter(page, 0, () => ({
+    index: 0, segments: [...prose, ...cjk].map((source, index) => ({ index, source, target: null, kind: "text" })),
+  }));
+  await page.goto(`/projects/${pid}/proofreading/0`);
+  // Make inheritance observable without relying on installed CJK fonts.
+  await page.addStyleTag({ content: 'html { font-family: monospace; }' });
+  for (const text of [...prose, ...cjk]) {
+    const paragraph = page.getByText(text, { exact: true });
+    await expect(paragraph).toBeVisible();
+    expect(await paragraph.textContent()).toBe(text);
+    if (cjk.includes(text)) {
+      await expect(paragraph).toHaveCSS("font-family", "monospace");
+    } else {
+      await expect(paragraph).toHaveCSS("font-family", /Wenyi Proportional Quotes/);
+    }
+  }
+  // The quote face must not claim letters, combining marks or real spaces.
+  const coverage = await page.evaluate(async () => {
+    const font = '14px "Wenyi Proportional Quotes"';
+    return [
+      (await document.fonts.load(font, "’«")).length,
+      (await document.fonts.load(font, "AéЖΩم\u0301 \u202f")).length,
+    ];
+  });
+  expect(coverage).toEqual([1, 0]);
+});
+
+for (const sourceLanguage of ["en", "auto"]) {
+test(`book text keeps proportional apostrophes in a Chinese interface (${sourceLanguage})`, async ({ page }) => {
+  const source = "‘He’d go,’ she said.  ‘Wouldn’t you?’";
+  const target = "« J’irais », dit-elle.";
+  await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
+  await fakeApi(page, { [`/projects/${pid}`]: { ...project, source_lang: sourceLanguage, target_lang: "fr" } });
+  await mockChapter(page, 0, () => ({
+    index: 0, segments: [
+      { index: 0, kind: "text", source, target },
+      { index: 1, kind: "text", source: "她说：“Hello。”", target: null },
+    ],
+  }));
+  await page.goto(`/projects/${pid}/proofreading/0`);
+  const paragraph = page.locator("#paragraph-0");
+  const original = paragraph.locator('[data-reader-text="source"]');
+  const translation = paragraph.getByTestId("translation-text");
+  // Do not depend on the CI runner having a particular CJK system font:
+  // simulate an inherited wide glyph and measure the apostrophe inside the word.
+  await page.addStyleTag({ content: '[data-testid="chapter-reader"] { font-family: monospace; }' });
+  await expect(original).toHaveAttribute("lang", sourceLanguage === "auto" ? "" : sourceLanguage);
+  const advance = await original.evaluate(p => {
+    const range = document.createRange();
+    range.setStart(p.firstChild!, 3);
+    range.setEnd(p.firstChild!, 4);
+    return range.getBoundingClientRect().width / parseFloat(getComputedStyle(p).fontSize);
+  });
+  expect(advance).toBeLessThan(0.5);
+  await expect(page.locator('#paragraph-1 [data-reader-text="source"]')).toHaveCSS("font-family", "monospace");
+  await expect(translation).toHaveAttribute("lang", "fr");
+  expect(await original.textContent()).toBe(source);
+  await paragraph.getByRole("button", { name: "段落操作" }).click();
+  await page.getByRole("menuitem", { name: "编辑译文" }).click();
+  const editor = page.getByRole("dialog");
+  await expect(editor.getByText(source, { exact: true })).toHaveAttribute("lang", sourceLanguage === "auto" ? "" : sourceLanguage);
+  await expect(editor.getByRole("textbox")).toHaveAttribute("lang", "fr");
+  await expect(editor.getByRole("textbox")).toHaveValue(target);
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+});
+}
+
 test("proofreading is separate and refreshes saved batches before a chapter finishes", async ({
   page,
 }) => {
@@ -201,6 +275,8 @@ test("Chinese desktop navigation opens proofreading and distinguishes saved empt
   });
   await page.goto(`/projects/${pid}/review`);
   await page.getByRole("link", { name: "人工校阅", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "人工校阅", exact: true })).toBeVisible();
+  await expect(page.getByText("人工逐章校阅", { exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: /Chapter One/ }).click();
   await expect(page.getByText("等待译文落盘", { exact: true })).toHaveCount(0);
   await expect(

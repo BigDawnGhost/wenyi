@@ -267,26 +267,20 @@ test("authenticates the progress socket before displaying project events", async
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
-test("global API provider form saves endpoint, model and tier changes", async ({
+test("global API provider form saves endpoint and model changes", async ({
   page,
 }) => {
   const settings = {
     ...effective,
     llm: {
       preset: "deepseek",
-      providers: { default: { kind: "deepseek" } },
+      providers: { deepseek: { kind: "deepseek" } },
       models: {
-        default_strong: {
-          provider: "default",
-          model: "deepseek-chat",
+        "deepseek/deepseek-chat": {
           options: { thinking: true },
         },
       },
-      tiers: {
-        strong: "default_strong",
-        cheap: "default_strong",
-        fast: "default_strong",
-      },
+      routes: { "translation.body": { model: "deepseek/deepseek-chat" } },
     },
   };
   await fakeApi(page, {
@@ -301,28 +295,29 @@ test("global API provider form saves endpoint, model and tier changes", async ({
     },
   });
   await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
   await page
-    .locator("#provider-models")
+    .getByRole("dialog")
     .getByLabel("API provider", { exact: true })
     .click();
   await page.getByRole("option", { name: "openai-compatible", exact: true }).click();
   await page.getByLabel("API base URL").fill("https://example.com/v1");
   await page.getByLabel("API key environment variable").fill("CUSTOM_API_KEY");
-  await page.locator("#provider-models").getByLabel("Model name", { exact: true }).fill("custom-model");
+  await page.getByLabel("Model name", { exact: true }).fill("custom-model");
   const request = page.waitForRequest(
     (r) => r.method() === "PUT" && r.url().endsWith("/settings"),
   );
   await page
-    .getByRole("button", { name: "Save configuration", exact: true })
+    .getByRole("button", { name: "Save provider", exact: true })
     .click();
   const saved = JSON.parse((await request).postDataJSON().yaml);
-  expect(saved.llm.providers.default).toMatchObject({
+  expect(saved.llm.providers.deepseek).toMatchObject({
     kind: "openai-compatible",
     base_url: "https://example.com/v1",
     api_key_env: "CUSTOM_API_KEY",
   });
-  expect(saved.llm.models.default_strong.model).toBe("custom-model");
-  expect(saved.llm.models.default_strong.options).toEqual({});
+  expect(saved.llm.routes["translation.body"].model).toBe("deepseek/custom-model");
+  expect(saved.llm.models["deepseek/custom-model"].options).toEqual({});
   expect(saved.pipeline).toEqual(settings.pipeline);
 });
 

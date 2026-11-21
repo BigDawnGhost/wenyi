@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..thinking import effort_control
 from ..transport import Messages, ResolvedModel
 from ..usage import UsageSample, make_usage_sample, read_usage_counter
 from ._openai_compatible import (
@@ -42,22 +43,8 @@ class DeepSeekOptions(BaseModel):
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
-def preset_models() -> dict[str, ResolvedModel[DeepSeekOptions]]:
-    """Return built-in DeepSeek defaults for strong, cheap and fast tiers."""
-    return {
-        "strong": ResolvedModel(
-            model="deepseek-flash",
-            options=DeepSeekOptions(),
-        ),
-        "cheap": ResolvedModel(
-            model="deepseek-flash",
-            options=DeepSeekOptions(),
-        ),
-        "fast": ResolvedModel(
-            model="deepseek-flash",
-            options=DeepSeekOptions(),
-        ),
-    }
+def preset_model() -> ResolvedModel[DeepSeekOptions]:
+    return ResolvedModel("deepseek-flash", DeepSeekOptions())
 
 
 def build_request_kwargs(
@@ -83,6 +70,7 @@ def build_request_kwargs(
 
 
 class DeepSeekClient(OpenAICompatibleBaseClient[DeepSeekOptions]):
+    thinking_control = effort_control("off", "low", "high", "max")
     default_base_url = DEFAULT_BASE_URL
     default_api_key_env = DEFAULT_API_KEY_ENV
     requires_api_key = True
@@ -99,7 +87,7 @@ class DeepSeekClient(OpenAICompatibleBaseClient[DeepSeekOptions]):
         json_mode: bool,
         max_tokens: int | None,
     ) -> dict[str, Any]:
-        """Build final request arguments for the selected DeepSeek tier."""
+        """Build final request arguments for the selected DeepSeek model."""
         return build_request_kwargs(
             model_config,
             messages,

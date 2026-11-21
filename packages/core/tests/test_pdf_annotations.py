@@ -260,14 +260,14 @@ def test_pdf_export_copy_keeps_marker_order_when_clean_prose_matches_source(proj
     annotations, _ = service()
     annotations.align_annotations_after_batch(0, chapter, 0, 1, project)
     before = project.load_chapter(0).model_dump()
-    export = ExportViewStore(project, punctuation_normalize=False)
+    export = ExportViewStore(project)
     assert export.load_chapter(0).segments[0].target == segment.source
     payload = annotations_from_store(export, {"0:0": segment.source})["0:0"]
     assert [row["target_order"] for row in payload["placements"]] == [1, 0]
     assert project.load_chapter(0).model_dump() == before
     chapter.segments[0].target = ""
     project.save_chapter(chapter)
-    export = ExportViewStore(project, punctuation_normalize=False)
+    export = ExportViewStore(project)
     clean = _fillback_text(export.load_chapter(0).segments[0])
     assert clean == segment.source
     payload = annotations_from_store(export, {"0:0": clean})["0:0"]

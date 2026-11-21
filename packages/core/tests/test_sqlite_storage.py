@@ -951,7 +951,6 @@ def test_autofix_publication_recovers_without_changing_manifest(
             "language": {"source": "en", "target": "zh"},
             "llm": {"preset": "fake"},
             "pipeline": {"review_autofix": True, "review_concurrency": 1},
-            "output": {"punctuation_normalize": False},
             "paths": {"state_dir": str(tmp_path / "unused")},
         }
     )

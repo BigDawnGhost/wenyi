@@ -59,7 +59,7 @@ for (const { locale, entry } of [
       await page.getByRole("link", { name: new RegExp(chapter.title) }).click();
     }
     await expect(page.getByText("Parsed source paragraph.", { exact: true })).toBeVisible();
-    await expect(page.getByRole("status").filter({ hasText: zh ? "AI 预处理尚未完成，暂为只读" : "Read-only until AI preparation is complete" })).toBeVisible();
+    await expect(page.getByText(zh ? "AI 预处理尚未完成，暂为只读" : "Read-only until AI preparation is complete", { exact: true })).toHaveCount(0);
     for (const status of ["preparing", "error"]) {
       state.status = status;
       // Idle projects do not poll for work started by another client.

@@ -42,17 +42,20 @@ test("Desktop settings replaces app navigation and keeps structured drafts betwe
   await expect(page).toHaveURL("/settings");
   const sidebar = page.getByRole("complementary");
   await expect(sidebar).toHaveCount(1);
+  await expect(page.locator("#sidebar-navigation")).toBeVisible();
   expect(await shell!.evaluate(node => node === document.querySelector("#sidebar-navigation"))).toBe(true);
   await expect(page.getByRole("navigation", { name: "Settings navigation" })).toBeVisible();
   await expect(nav).toHaveCount(0);
   await page.getByRole("link", { name: "Workflow", exact: true }).click();
   await page.getByLabel("Polishing", { exact: true }).uncheck();
   await page.getByRole("link", { name: "Models & connections", exact: true }).click();
-  await page.locator("#provider-models").getByLabel("API provider", { exact: true }).click();
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+  await page.getByLabel("API provider", { exact: true }).click();
   await expect(page.getByRole("listbox")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page).toHaveURL("/settings/providers");
   await expect(page.locator('[role="listbox"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.getByRole("link", { name: "Workflow", exact: true }).click();
   await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
   await page.reload();
@@ -68,7 +71,7 @@ test("lazy credentials do not blank settings after its configuration loads", asy
   await desktop(page);
   await fakeApi(page, {
     "/desktop/credentials": {
-      default: { mode: "environment", available: false, storage: "environment" },
+      deepseek: { mode: "environment", available: false, storage: "environment" },
     },
   }, origin);
   let releaseConfig = () => {};
@@ -105,12 +108,13 @@ test("lazy credentials do not blank settings after its configuration loads", asy
     await expect(page.getByRole("heading", { name: "General", exact: true })).toBeVisible();
     await expect(page.getByLabel("Interface language")).toBeVisible();
     await page.getByRole("link", { name: "Models & connections", exact: true }).click();
-    await expect(page.locator("#provider-models").getByLabel("API provider", { exact: true })).toBeVisible();
-    await expect(page.locator("#key-default")).toBeVisible();
+    await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+    await expect(page.getByLabel("API provider", { exact: true })).toBeVisible();
+    const env = page.getByLabel("API key environment variable", { exact: true });
+    await expect(env).toHaveCount(0);
     releaseCredential();
-    // The native field keeps environment controls visible alongside the masked API key.
-    await expect(page.locator("#credential-secret-default")).toBeVisible();
-    await expect(page.locator("#key-default")).toBeVisible();
+    await expect(page.getByLabel("API key", { exact: true })).toBeVisible();
+    await expect(env).toHaveCount(0);
   } finally {
     releaseConfig();
     releaseCredential();
@@ -519,27 +523,6 @@ for (const kind of ["state", "final"]) {
   });
 }
 
-test("navigating between routes keeps the sidebar shell as the same node", async ({ page }) => {
-  await desktop(page);
-  await fakeApi(page, {}, origin);
-  await page.goto("/");
-  await page.locator("#sidebar-navigation").waitFor();
-  await page.evaluate(() => {
-    (window as unknown as { __shellNav?: Element | null }).__shellNav =
-      document.querySelector("#sidebar-navigation");
-  });
-  await page.locator('a[href="/settings"]').click();
-  await expect(page).toHaveURL("/settings");
-  await expect(page.locator("#sidebar-navigation")).toBeVisible();
-  expect(
-    await page.evaluate(
-      () =>
-        (window as unknown as { __shellNav?: Element | null }).__shellNav ===
-        document.querySelector("#sidebar-navigation"),
-    ),
-  ).toBe(true);
-});
-
 test("Desktop HTTP errors remain visible", async ({ page }) => {
   await desktop(page);
   await fakeApi(page, {}, origin);
@@ -549,10 +532,7 @@ test("Desktop HTTP errors remain visible", async ({ page }) => {
   await expect(page.getByText("Local database is unavailable")).toBeVisible();
 });
 
-// Every shared suite the Desktop host no longer registers still needs proof that the
-// Desktop bootstrap can render it. One parameterised smoke covers each module with a
-// real route, so a shared component that breaks only under the native bootstrap is not
-// left with a Web-only guard.
+// Web runs the full suites. Check their targets under a cold Desktop bootstrap once per route.
 type SharedRenderSmoke = {
   module: string;
   route: string;
@@ -578,16 +558,18 @@ const SHARED_RENDER_SMOKE: SharedRenderSmoke[] = [
   { module: "style-editing", route: `/projects/${pid}/style`, slot: "page.header" },
 ] as const;
 
-for (const smoke of SHARED_RENDER_SMOKE) {
-  test(`Desktop bootstrap renders the shared ${smoke.module} suite`, async ({ page }) => {
+for (const route of new Set(SHARED_RENDER_SMOKE.map(smoke => smoke.route))) {
+  const suites = SHARED_RENDER_SMOKE.filter(smoke => smoke.route === route);
+  test(`Desktop bootstrap renders ${suites.map(smoke => smoke.module).join(", ")}`, async ({ page }) => {
     await desktop(page);
     await fakeApi(page, {}, origin);
-    await page.goto(smoke.route);
-    const target = smoke.role ? page.getByRole(smoke.role).first()
-      : smoke.testId ? page.getByTestId(smoke.testId)
-        : page.locator(`[data-slot="${smoke.slot}"]`);
-    await expect(target).toBeVisible();
-    // The bootstrap must survive the render: no fallback to the Web transport.
+    await page.goto(route);
+    for (const smoke of suites) {
+      const target = smoke.role ? page.getByRole(smoke.role).first()
+        : smoke.testId ? page.getByTestId(smoke.testId)
+          : page.locator(`[data-slot="${smoke.slot}"]`);
+      await expect(target, smoke.module).toBeVisible();
+    }
     await expect(page.locator('[data-runtime-state="pending"]')).toHaveCount(0);
   });
 }

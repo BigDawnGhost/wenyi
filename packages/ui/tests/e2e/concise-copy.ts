@@ -209,8 +209,8 @@ for (const locale of ["en", "zh-CN"] as const) {
       });
       await expect(dialog.getByText(
         locale === "zh-CN"
-          ? "CSV / JSON；CSV 需包含 source、target 列头。"
-          : "CSV / JSON; CSV requires source and target headers.",
+          ? "支持 CSV 或 JSON，最大 5 MiB。CSV 需包含 source、target 列头。"
+          : "CSV or JSON, up to 5 MiB. CSV requires source and target headers.",
         { exact: true },
       )).toBeVisible();
       await expect(dialog.locator('input[type="file"]'))

@@ -21,10 +21,10 @@ and direct Core configuration validation reject unknown fields.
 | Section | Controls |
 |---|---|
 | `language` | Source and target languages. |
-| `llm` | Provider connections, model profiles, tiers, routes, quotas, and budgets. |
+| `llm` | Provider connections, model profiles, operation routes, quotas, and budgets. |
 | `segment` | Source batching and long-paragraph splitting. |
 | `pipeline` | Preparation, translation, polishing, Review, and PDF backend. |
-| `output` | Editions, bilingual styling, about page, and punctuation. |
+| `output` | Editions, bilingual styling, and about page. |
 | `paths` | CLI state location. |
 
 **Platform boundaries**
@@ -35,9 +35,9 @@ and direct Core configuration validation reject unknown fields.
   selected [data root's catalog](../guide/desktop.md#data-locations-and-backups).
   It does not read the CLI's current-directory config or import Web projects.
 - Web/Desktop global settings own connections, model definitions, presets, and
-  provider quotas. Project configuration selects registered model IDs through
-  `llm.tiers`, `llm.routes` and fallbacks, and may set `llm.budget`; it cannot
-  define a private registry. Register custom IDs globally before using them.
+  provider quotas. Project configuration selects registered connection/model pairs through
+  `llm.routes` and fallbacks, and may set `llm.budget`; it cannot
+  define a private registry. Register models globally before using them.
 - Projects copy defaults at creation. Later global-default changes do not reset
   existing project choices. Registry edits affect newly started/resumed tasks;
   queued/running tasks retain their configuration snapshots.
@@ -46,7 +46,7 @@ and direct Core configuration validation reject unknown fields.
   field `pipeline.prompt_genre` is **not** accepted in Core/CLI YAML or global
   settings. CLI uses [`--prompt-genre literary|academic`](../guide/cli.md#prompt-genres)
   for invocation-local selection, defaulting to `literary`.
-- Renaming registered IDs updates project selections, but historical usage and
+- Editing a registered model name or connection in Settings updates project selections, but historical usage and
   queued snapshots retain their old IDs. Referenced registrations cannot be
   deleted until those references are changed.
 
@@ -103,9 +103,7 @@ and policy resources are documented in [language policies](../development/pipeli
 
 ## Models and operation routing
 
-Connections describe where requests go; profiles describe a model request;
-tiers and operation routes choose profiles. Tier names are convenient roles,
-not measured quality or price rankings.
+Models are identified by `connection/model`, without aliases or separate model IDs. Only the first slash separates the connection from the remote model name, so `gateway/org/model:v2` is valid. A model name is unique within its connection; another connection may use the same name. Each operation has its own model assignment; there is no shared model selection or inheritance between operations. Obsolete tiers, model aliases, and `llm.default_model` are not converted.
 
 ### Presets
 
@@ -115,14 +113,13 @@ llm:
 ```
 
 An omitted or empty `llm` section uses the DeepSeek preset. Each preset expands to
-connection `default`, profiles `default_strong`, `default_cheap`, and
-`default_fast`, and all three tier mappings:
+one connection named after the provider, one registered model, and a separate route for each operation:
 
-| Preset | Models in all three tiers | Model options |
+| Preset | Model assigned to each operation | Model options |
 |---|---|---|
-| `deepseek` | `deepseek-flash` | `thinking: true`, `reasoning_effort: high` |
-| `gemini` | `gemini-3.6-flash` | Thinking/temperature unset; service defaults apply. |
-| `fake` | `fake` | Offline test adapter, no real translation or credentials. |
+| `deepseek` | `deepseek/deepseek-flash` | `thinking: true`, `reasoning_effort: high` |
+| `gemini` | `gemini/gemini-3.6-flash` | Thinking/temperature unset; service defaults apply. |
+| `fake` | `fake/fake` | Offline test adapter, no real translation or credentials. |
 
 Other provider kinds have no built-in preset: configure explicit profiles.
 Presets do not query the remote service for capabilities.
@@ -133,7 +130,7 @@ Presets do not query the remote service for capabilities.
 
 | Setting | Default / requirement |
 |---|---|
-| `llm.preset` | Optional; use an available preset, or define the registry and all tiers explicitly. |
+| `llm.preset` | Optional; without a preset, register models and specify all operation routes. |
 | `llm.providers.<id>.kind` | Required registered provider kind. |
 | `llm.providers.<id>.base_url` | Adapter default, or explicit absolute HTTP(S) URL; no embedded credentials, query, or fragment. |
 | `llm.providers.<id>.api_key_env` | Adapter default environment-variable name; stores a name, not a key. |
@@ -141,26 +138,24 @@ Presets do not query the remote service for capabilities.
 | `llm.providers.<id>.max_retries` | `4` additional transport attempts; integer ≥ 0. |
 | `llm.providers.<id>.max_concurrency` | Unset/unlimited; positive integer if supplied. |
 | `llm.providers.<id>.quota_group` | Unset; otherwise reference a configured quota group. |
-| `llm.models.<id>.provider` | Required connection ID. |
-| `llm.models.<id>.model` | Required remote model name. |
-| `llm.models.<id>.max_output_tokens` | Unset; positive integer if supplied. |
-| `llm.models.<id>.options` | `{}`; adapter-specific fields below. |
-| `llm.tiers` | Exactly `strong`, `cheap`, and `fast`, each mapped to a profile. |
-| `llm.routes.<operation>.model` / `.tier` | Exactly one selection on each explicit route. Omitted routes use the operation defaults. |
-| `llm.routes.<operation>.fallbacks` | `[]`; ordered profile IDs, subject to failover restrictions below. |
+| `llm.models.<connection/model>` | `{}` registers the model with provider defaults. |
+| `llm.models.<connection/model>.max_output_tokens` | Unset; positive integer if supplied. |
+| `llm.models.<connection/model>.options` | `{}`; adapter-specific fields below. |
+| `llm.routes.<operation>.model` | Registered `connection/model` for this operation. |
+| `llm.routes.<operation>.thinking` | Omit or set to `null` to use the registered model's settings. Otherwise set an effort supported by the selected provider configuration. |
+| `llm.routes.<operation>.fallbacks` | `[]`; ordered `connection/model` values, subject to failover restrictions below. |
 | `llm.quotas` | `{}`; optional named quota groups. |
 | `llm.budget` | No limits unless supplied. |
 
-Provider, model, and quota IDs start with a letter and contain only letters,
+Connection and quota IDs start with a letter and contain only letters,
 digits, underscores, or hyphens. Unknown operations, fields, and references in
-the routing schema fail validation. Tiers can all point to the same profile,
-but none may be missing.
+the routing schema fail validation.
 
-Preset overrides replace **whole connection/profile entries** by ID: repeat
-required fields when replacing one. Model options are not merged with the old
-profile. Tiers and routes are selected per key.
+Preset overrides replace **whole connection, model, or route entries** by key. In project YAML, supplied routes replace the corresponding global operation routes; omitted operations retain their global selections.
 
-For example, keep the default translation route and use another model for
+Thinking overrides affect only the operation's primary model. The same registered model can use different efforts across operations, for example `translation.body: {model: deepseek/deepseek-flash, thinking: high}` and `language.detect: {model: deepseek/deepseek-flash, thinking: "off"}`. DeepSeek offers `off`, `low`, `high`, and `max`; other adapters provide their own choices, and the endpoint ultimately determines which values its model accepts. Gemini 3 overrides replace the model's thinking budget with a level for that operation. If raw request overrides already set thinking fields, use those settings instead of a stage override. Fallbacks use their own registered settings.
+
+For example, keep the preset's translation route and use another model for
 polishing and evidence verification:
 
 ```yaml
@@ -174,19 +169,16 @@ llm:
       max_retries: 2
       max_concurrency: 2
   models:
-    editor:
-      provider: editorial
-      model: YOUR_EDITOR_MODEL
+    editorial/YOUR_EDITOR_MODEL:
       max_output_tokens: 8192
       options:
         thinking_level: high
   routes:
-    polish.body: {model: editor}
-    review.verify: {model: editor}
+    polish.body: {model: editorial/YOUR_EDITOR_MODEL}
+    review.verify: {model: editorial/YOUR_EDITOR_MODEL}
 ```
 
 Replace the model placeholder with one supported by the endpoint.
-`autofix.verify` inherits the effective `review.verify` route unless overridden.
 Use `wenyi models list`, `models explain --operation ID`, and
 `models check --for prepare|translate|review` for local checks.
 Only `models ping` sends live probes; see the [CLI reference](../guide/cli.md#model-commands).
@@ -262,25 +254,25 @@ project settings or parser caches. BabelDOC is a separate HTTP service.
 These are the complete current routing IDs. A route may be configured even when
 its stage is disabled; reachable checks follow the selected workflow switches.
 
-| Operation | Default tier / inheritance | Purpose |
-|---|---|---|
-| `language.detect` | `cheap` | Source-language detection |
-| `analysis.style` | `strong` | Style and character-voice analysis |
-| `synopsis.chapter` | `fast` | Chapter digest |
-| `synopsis.book` | `fast` | Whole-book synopsis |
-| `translation.body` | `strong` | Body translation, including precision drafts |
-| `translation.title` | `strong` | Chapter and TOC titles |
-| `polish.body` | `strong` | Polishing, including precision synthesis |
-| `glossary.extract` | `fast` | Glossary extraction |
-| `glossary.align_history` | `fast` | Earlier translation alignment |
-| `glossary.note` | `fast` | Maintain incremental notes for translated batches |
-| `annotation.align` | `cheap` | Annotation placement |
-| `review.scan` | `cheap` | Initial Review and blind rechecks |
-| `review.verify` | `strong` | Evidence verification |
-| `review.arbitrate` | `strong` | Contradictory recommendation arbitration |
-| `review.fix` | `strong` | Run-local shadow revision |
-| `autofix.verify` | Resolved `review.verify` route | Publication evidence verification |
-| `autofix.fix` | Resolved `review.fix` route | Publication revision |
+| Operation | Purpose |
+|---|---|
+| `language.detect` | Source-language detection |
+| `analysis.style` | Style and character-voice analysis |
+| `synopsis.chapter` | Chapter digest |
+| `synopsis.book` | Whole-book synopsis |
+| `translation.body` | Body translation, including precision drafts |
+| `translation.title` | Chapter and TOC titles |
+| `polish.body` | Polishing, including precision synthesis |
+| `glossary.extract` | Glossary extraction |
+| `glossary.align_history` | Earlier translation alignment |
+| `glossary.note` | Maintain incremental notes for translated batches |
+| `annotation.align` | Annotation placement |
+| `review.scan` | Initial Review and blind rechecks |
+| `review.verify` | Evidence verification |
+| `review.arbitrate` | Contradictory recommendation arbitration |
+| `review.fix` | Run-local shadow revision |
+| `autofix.verify` | Publication evidence verification |
+| `autofix.fix` | Publication revision |
 
 <a id="limits-and-failover"></a>
 
@@ -298,16 +290,13 @@ its stage is disabled; reachable checks follow the selected workflow switches.
 llm:
   preset: fake
   providers:
-    default:
+    fake:
       kind: fake
       max_concurrency: 2
       quota_group: account
   models:
-    bounded:
-      provider: default
-      model: fake
+    fake/fake:
       max_output_tokens: 2048
-  tiers: {strong: bounded, cheap: bounded, fast: bounded}
   quotas:
     account:
       requests_per_minute: 20
@@ -331,11 +320,11 @@ Deadline/Ctrl+C cancellation is cooperative; in-flight requests may finish or
 time out. Restarting creates a new invocation budget.
 
 For eligible stateless operations, an explicit route can include
-`fallbacks: [backup_profile]`. The profiles must exist and cannot repeat the
+`fallbacks: [backup/backup-model]`. The models must be registered and cannot repeat the
 primary or each other. The chain is used only after retryable transport failures
 exhaust retries—not for authentication, configuration, or output-schema errors.
 Resumable `review.verify`, `review.arbitrate`, and `autofix.verify` conversations
-reject failover. Inherited routes also inherit their fallback selection.
+reject failover.
 
 <a id="routing-and-resume"></a>
 
@@ -344,14 +333,13 @@ reject failover. Inherited routes also inherit their fallback selection.
 Changing translation, analysis, or synopsis models preserves completed work and
 uses new routes for pending calls. Matching Review identities can reuse or resume
 results; changing a relevant model, endpoint, inference option, or protocol starts
-a new Review. Unrelated routes, credential rotation, alias renaming, and
+a new Review. Unrelated routes, credential rotation, connection renaming, and
 concurrency changes do not by themselves invalidate it.
 Unfinished Autofix inference planning requires its original routes; already
 indexed publication can finish from saved candidates.
 
-Usage remains cumulative, with independent tier, operation, provider, and model
-views; direct profile selections use tier `direct`. Model/endpoint/options,
-not aliases alone, distinguish inference identities. Failed parsing and retries
+Usage remains cumulative, with independent operation, provider, and model
+views. Model, endpoint, and options distinguish inference identities. Failed parsing and retries
 can still consume tokens. Missing provider counters are not invented.
 Use [CLI inspection and migrations](../guide/cli.md#automation); ledger internals
 are covered in [pipeline development](../development/pipeline.md).
@@ -481,7 +469,6 @@ for choosing the backend.
 | `output.bilingual_order` | `target_first` | `target_first` or `source_first`; selects the first version in paragraph-paired formats and the left-hand version in PDF spreads. |
 | `output.bilingual_preserve_source_style` | `false` | Preserve recorded source styles rather than the format's default source presentation. |
 | `output.about_page` | `true` | Add the project “About this translation” page to EPUB output. |
-| `output.punctuation_normalize` | `true` | Normalize Simplified Chinese punctuation on the export copy only. |
 
 `bilingual_preserve_source_style` is independent of ordering. In EPUB/HTML,
 `true` inherits normal book styling instead of subdued source text. In DOCX,
@@ -489,10 +476,8 @@ for choosing the backend.
 including mixed spans in paragraphs/tables. It cannot recover styles never
 recorded from the source.
 
-Punctuation normalization does not modify saved chapter translations or Review
-input. Traditional Chinese and other targets skip this Simplified Chinese
-conversion. The EPUB about page is Chinese for Simplified Chinese targets and
-otherwise currently uses English.
+The EPUB about page is Chinese for Simplified Chinese targets and otherwise
+currently uses English.
 
 CLI `--mono/--no-mono` and `--bilingual/--no-bilingual` override these edition
 defaults for `translate` and `assemble`. With default YAML, `--bilingual` produces
@@ -558,14 +543,16 @@ CLI backups are exact copies beside the selected file, named
 YAML contains supported settings only. Web backups live in PostgreSQL and
 Desktop backups in the selected data root's catalog, alongside the settings
 they protect. Web also backs up incompatible bootstrap YAML in PostgreSQL
-without rewriting the mounted file. Unchanged settings are not rewritten, and
-repeated startup does not duplicate backups.
+without rewriting the mounted file. Reading defaults from bootstrap YAML applies
+the same reconstruction without changing the file or saved settings. Unchanged
+settings are not rewritten, and repeated startup does not duplicate backups.
 
 If a backup or replacement cannot be saved, the original settings stay intact
 and loading/startup fails. Malformed YAML must be corrected rather than guessed.
 Reconstruction does not change source books, chapter translations, usage, or
-frozen job snapshots. A queued job with an incompatible old snapshot must be
-started again under the rebuilt settings, not silently run with a different mode.
+frozen job snapshots. Queued jobs ignore the retired export punctuation switch
+without changing their other settings. A job with a still-incompatible snapshot
+must be started again under the rebuilt settings.
 New Web/Desktop setting submissions and direct Core validation remain strict.
 Use the backup to recover custom choices that are still supported by the current
 schema; there is no separate configuration conversion command.

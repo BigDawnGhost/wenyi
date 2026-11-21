@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type WebSocketRoute } from "@playwright/test";
 import { createTranslator } from "../../src/i18n/catalog";
 import { fakeApi, pid, project, workflow } from "../../sandbox/fixtures";
 import { expectTokenColor } from "./color-helper";
@@ -130,6 +130,39 @@ for (const locale of ["en", "zh-CN"] as const) {
         }
       });
     }
+
+    test("renders cached and live pipeline stage keys without losing the workflow", async ({ page }) => {
+      const frame = {
+        project_id: pid, run_id: workflow.run_id, kind: workflow.kind, done: 0, total: 5,
+        label: "progress.stage.prescan", payload: {}, updated_at: new Date().toISOString(),
+        elapsed_seconds: 0,
+      };
+      await page.route(`**/projects/${pid}/workflow`, route =>
+        route.fulfill({ json: { ...workflow, status: "running", progress: frame } }));
+      let socket!: WebSocketRoute;
+      await page.routeWebSocket(`**/ws/projects/${pid}/progress`, ws => ws.onMessage(() => {
+        socket = ws;
+        ws.send(JSON.stringify({ kind: "snapshot", project: { id: pid } }));
+      }));
+      await page.goto(`/projects/${pid}`);
+      const status = page.getByRole("region", { name: t("workflowPanel.currentWorkflow") }).getByRole("status");
+      await expect(status).toContainText(locale === "en" ? "Prescanning chapters…" : "正在预扫章节…");
+      await expect.poll(() => Boolean(socket)).toBe(true);
+      for (const [label, en, zh] of [
+        ["progress.stage.chapter:3", "Chapter 3", "第 3 章"],
+        ["progress.stage.reviewChapters", "Loading chapters for review…", "正在载入待审校章节…"],
+        ["progress.stage.reviewRound:1", "Review round 1", "第 1 轮审校"],
+        ["progress.stage.futureStage:2", "Unknown stage", "未知阶段"],
+        ["progress.stage.reviewRound:2", "Review round 2", "第 2 轮审校"],
+        // Older engines used a separate wire label for the first round.
+        ["progress.stage.reviewRound1", "Review round 1", "第 1 轮审校"],
+        ["A chapter: its title", "A chapter: its title", "A chapter: its title"],
+      ]) {
+        socket.send(JSON.stringify({ ...frame, label, done: 1, updated_at: new Date().toISOString() }));
+        await expect(status).toContainText(locale === "en" ? en : zh);
+        await expect(status).toContainText(t("workflow.stageCount", { done: 1, total: frame.total }));
+      }
+    });
 
     test("shows the current stage directly without reports or nested workflow panels", async ({
       page,

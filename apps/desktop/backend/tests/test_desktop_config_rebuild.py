@@ -74,6 +74,84 @@ def test_startup_backs_up_global_and_project_settings_once(saved_catalog):
         assert connection.execute("SELECT count(*) FROM configuration_backups").fetchone()[0] == 2
 
 
+@pytest.mark.parametrize("preset", ["deepseek", None])
+def test_reopening_catalog_removes_old_choices_from_both_model_pickers(tmp_path, preset):
+    from fastapi.testclient import TestClient
+    from wenyi_desktop.main import create_app, create_context
+
+    workspace = tmp_path / "workspace"
+    backend = LocalBackend(workspace)
+    pid = backend.create_project("Book", "en", "zh", {"template": "标准翻译"})
+    profile = {"provider": "default", "model": "deepseek-flash"}
+    names = ["default", "default_strong", "default_cheap", "default_fast"]
+    llm = {
+        "preset": preset,
+        "providers": {"default": {"kind": "deepseek"}},
+        "default_model": "default",
+        "models": dict.fromkeys(names, profile),
+    }
+    with backend.transaction() as connection:
+        backend.save_settings({"config": {"llm": llm}, "revision": 1}, connection)
+    backend.set_project_config(pid, {"llm": {"default_model": "default_fast"}})
+    backend.close()
+
+    context = create_context(workspace)
+    with TestClient(create_app(context=context)) as client:
+        settings = client.get("/settings").json()["effective"]["llm"]
+        project = client.get(f"/projects/{pid}/config").json()
+        assert list(settings["providers"]) == ["deepseek"]
+        assert list(settings["models"]) == ["deepseek/deepseek-flash"]
+        assert project["registered_models"] == {
+            "deepseek/deepseek-flash": {
+                "provider": "deepseek",
+                "model": "deepseek-flash",
+                "thinking_levels": ["off", "low", "high", "max"],
+                "thinking_value": "high",
+            }
+        }
+        assert "default_model" not in project["effective"]["llm"]
+        assert {route["model"] for route in project["effective"]["llm"]["routes"].values()} == {
+            "deepseek/deepseek-flash"
+        }
+
+
+def test_new_catalog_loads_legacy_bootstrap_defaults_without_rewriting_yaml(tmp_path):
+    seed = tmp_path / "config.yaml"
+    original = "output: {punctuation_normalize: true, bilingual_order: source_first}\n"
+    seed.write_text(original, encoding="utf-8")
+
+    backend = LocalBackend(tmp_path / "workspace", str(seed))
+    output = backend.defaults().output
+
+    assert output.bilingual_order == "source_first"
+    assert "punctuation_normalize" not in output.model_dump()
+    assert seed.read_text(encoding="utf-8") == original
+
+
+@pytest.mark.parametrize("occupied", [False, True])
+def test_rebuilt_preset_keeps_the_vault_reference_without_overwriting_another(tmp_path, occupied):
+    from wenyi_desktop.local_credentials import CredentialStore
+
+    backend = LocalBackend(tmp_path / "workspace")
+    store = CredentialStore(backend.workspace)
+    raw = {
+        "preset": "deepseek",
+        "providers": {"default": {"kind": "deepseek"}},
+        "models": {"default_strong": {"provider": "default", "model": "deepseek-flash"}},
+    }
+    with backend.transaction() as conn:
+        backend.save_settings({"config": {"llm": raw}, "revision": 1}, conn)
+        records = {"default": {"mode": "manual", "storage": "system", "reference": "old-ref"}}
+        if occupied:
+            records["deepseek"] = {**records["default"], "reference": "other-ref"}
+        store._commit(records, conn)
+    backend.close()
+    LocalBackend(backend.workspace).close()
+    assert store._records()["deepseek"]["reference"] == ("other-ref" if occupied else "old-ref")
+    if not occupied:
+        assert "default" not in store._records()
+
+
 @pytest.mark.parametrize("failure", ["backup", "replacement"])
 @pytest.mark.parametrize("scope", ["global", "project"])
 def test_backup_and_replacement_roll_back_together(saved_catalog, failure, scope):

@@ -22,6 +22,7 @@ export function SettingsRow({
   control,
   detail,
   className,
+  controlClassName,
 }: {
   label: ReactNode;
   htmlFor?: string;
@@ -29,6 +30,7 @@ export function SettingsRow({
   control: ReactNode;
   detail?: ReactNode;
   className?: string;
+  controlClassName?: string;
 }) {
   return (
     <div className={cn("border-t border-border px-4 py-3 first:border-t-0", className)}>
@@ -43,7 +45,7 @@ export function SettingsRow({
             <p className="text-sm leading-6 text-muted-foreground">{description}</p>
           )}
         </div>
-        <div className="flex w-full max-w-80 shrink-0 items-center justify-end gap-2 sm:w-80">{control}</div>
+        <div className={cn("flex w-full max-w-80 shrink-0 items-center justify-end gap-2 sm:w-80", controlClassName)}>{control}</div>
       </div>
       {detail != null && <div className="mt-3 min-w-0">{detail}</div>}
     </div>

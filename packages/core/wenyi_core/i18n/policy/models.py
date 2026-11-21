@@ -26,7 +26,6 @@ def used_rule_keys(templates: Iterable[tuple[str, str]]) -> set[str]:
 Point = Literal[
     "prompt.compose",
     "candidate.validate",
-    "export.text",
     "export.style",
     "export.metadata",
 ]
@@ -108,7 +107,6 @@ class PolicyContext:
     path: Literal["book"] = "book"
     format: str = ""
     backend: str = "native"
-    punctuation_normalize: bool = True
     source_identity: str = ""
     task_groups: tuple[str, ...] = ()
     bilingual: bool = False
@@ -203,20 +201,3 @@ class PolicyPlan:
                 ],
             }
         )
-
-
-@dataclass(frozen=True)
-class ExportTextInput:
-    segment_ids: tuple[int, ...]
-    targets: tuple[str | None, ...]
-    continuations: tuple[bool, ...]
-    logical_ranges: tuple[tuple[int, int], ...]
-
-
-@dataclass(frozen=True)
-class ExportTextResult:
-    segment_ids: tuple[int, ...]
-    targets: tuple[str | None, ...]
-    continuations: tuple[bool, ...]
-    logical_ranges: tuple[tuple[int, int], ...]
-    logical_boundary_maps: tuple[tuple[int, ...], ...]

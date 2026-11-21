@@ -193,8 +193,9 @@ class BookUnderstandingService:
                 workers=max(1, self._config.pipeline.prescan_concurrency),
             )
             workers = max(1, self._config.pipeline.prescan_concurrency)
+            label = "progress.stage.prescan"
             if progress:
-                progress(0, len(todo), "progress.stage.prescan")
+                progress(0, len(todo), label)
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 futs = {ex.submit(self._synopsizer.digest_chapter, src): ci for ci, src in todo}
                 for n_done, fut in enumerate(as_completed(futs), 1):
@@ -220,7 +221,7 @@ class BookUnderstandingService:
                         failed.append(ci)
                         store.log_event("book_understanding_chapter_digest_failed", chapter=ci)
                     if progress:
-                        progress(n_done, len(todo), "Prescanning chapter digests")
+                        progress(n_done, len(todo), label)
 
         if error is not None:
             raise error

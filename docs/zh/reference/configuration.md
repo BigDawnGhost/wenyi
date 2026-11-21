@@ -18,10 +18,10 @@ CLI 读取当前工作目录的 `config.yaml`；使用 `wenyi --config PATH ...`
 | 配置节 | 控制内容 |
 |---|---|
 | `language` | 源语言与目标语言。 |
-| `llm` | 提供商连接、模型配置、档位、路由、配额和预算。 |
+| `llm` | 提供商连接、模型配置、操作路由、配额和预算。 |
 | `segment` | 源文分批与超长段落切分。 |
 | `pipeline` | 准备、翻译、润色、Review 和 PDF 后端。 |
-| `output` | 单／双语版本、双语样式、说明页和标点。 |
+| `output` | 单／双语版本、双语样式和说明页。 |
 | `paths` | CLI 状态位置。 |
 
 **平台边界**
@@ -32,15 +32,15 @@ CLI 读取当前工作目录的 `config.yaml`；使用 `wenyi --config PATH ...`
   [数据根目录的目录库](../guide/desktop.md#数据位置与备份)，
   不读取 CLI 当前目录配置，也不导入 Web 项目。
 - Web/Desktop 总设置管理连接、模型定义、预设与提供商配额。
-  项目通过 `llm.tiers`、`llm.routes` 及备用路由选用已注册模型，
-  可以设置 `llm.budget`，但不能定义私有模型注册库。自定义 ID 应先在总设置注册。
+  项目通过 `llm.routes` 及备用路由选用已注册模型，
+  可以设置 `llm.budget`，但不能定义私有模型注册库。请先在总设置登记模型。
 - 项目创建时复制默认值；之后修改全局默认值不会重置已有项目选择。
   模型库编辑影响新启动／恢复的任务；排队和运行中的任务保留其配置快照。
 - Web/Desktop 的翻译方式与提示词题材在创建时确定；只要选择仍有效，其他设置或默认值变化不改变它们。
   项目保存的 `pipeline.prompt_genre` **不属于** Core/CLI YAML 或总设置字段；
   CLI 使用 [`--prompt-genre literary|academic`](../guide/cli.md#prompt-genres)
   选择本次调用的风格，默认 `literary`。
-- 重命名注册 ID 会更新项目选择，历史用量和排队快照保留旧 ID。
+- 在设置界面修改已登记的连接名或模型名会更新项目选择，不改写历史用量和排队快照。
   被引用的注册项必须先调整引用才能删除。
 
 CLI/Web 的密钥只从环境变量读取。Desktop 另支持手动凭据：
@@ -94,8 +94,7 @@ language:
 
 ## 模型与操作路由
 
-连接描述请求发往哪里，模型配置（profile）描述一次模型请求，
-档位和操作路由负责选择模型配置。档位是便捷角色，不是质量或价格实测排名。
+模型用 `连接名/远端模型名` 唯一标识，不再另取模型 ID。只有第一个 `/` 用作分隔符，例如 `gateway/org/model:v2`。同一连接下模型名不能重复，不同连接可以使用同名模型。每个阶段单独指定模型，没有共享模型设置，也不继承其他阶段。旧档位、模型别名和 `llm.default_model` 不会转换。
 
 <a id="presets"></a>
 
@@ -107,14 +106,13 @@ llm:
 ```
 
 省略或留空 `llm` 会使用 DeepSeek 预设。
-每个预设展开为连接 `default`、模型配置 `default_strong`、
-`default_cheap`、`default_fast` 和三个档位映射：
+每个预设以提供商名称登记一个连接和一个模型，并为各阶段分别指定该模型：
 
-| 预设 | 三个档位的模型 | 模型选项 |
+| 预设 | 各阶段初始模型 | 模型选项 |
 |---|---|---|
-| `deepseek` | `deepseek-flash` | `thinking: true`、`reasoning_effort: high` |
-| `gemini` | `gemini-3.6-flash` | 不设置 thinking／temperature，沿用服务默认。 |
-| `fake` | `fake` | 离线测试适配器，无真实翻译、无需凭据。 |
+| `deepseek` | `deepseek/deepseek-flash` | `thinking: true`、`reasoning_effort: high` |
+| `gemini` | `gemini/gemini-3.6-flash` | 不设置 thinking／temperature，沿用服务默认。 |
+| `fake` | `fake/fake` | 离线测试适配器，无真实翻译、无需凭据。 |
 
 其他提供商没有内置预设，需要显式配置模型。
 预设不会向远端查询能力。
@@ -125,7 +123,7 @@ llm:
 
 | 设置 | 默认值／要求 |
 |---|---|
-| `llm.preset` | 可选；选择现有预设，或显式定义模型注册和全部档位。 |
+| `llm.preset` | 可选；不使用预设时，须登记模型并指定所有阶段的路由。 |
 | `llm.providers.<id>.kind` | 必填，已注册的提供商类型。 |
 | `llm.providers.<id>.base_url` | 适配器默认值，或显式 HTTP(S) 绝对 URL；不能含凭据、query 或 fragment。 |
 | `llm.providers.<id>.api_key_env` | 适配器默认环境变量名；保存名字而非密钥值。 |
@@ -133,24 +131,23 @@ llm:
 | `llm.providers.<id>.max_retries` | 额外传输尝试 `4` 次，整数 ≥ 0。 |
 | `llm.providers.<id>.max_concurrency` | 不设置则不限制；设置时为正整数。 |
 | `llm.providers.<id>.quota_group` | 默认不设置，否则引用已有配额组。 |
-| `llm.models.<id>.provider` | 必填连接 ID。 |
-| `llm.models.<id>.model` | 必填远端模型名。 |
-| `llm.models.<id>.max_output_tokens` | 默认不设置；设置时为正整数。 |
-| `llm.models.<id>.options` | `{}`，下文的适配器专属字段。 |
-| `llm.tiers` | 恰好包含 `strong`、`cheap`、`fast`，各自映射到模型配置。 |
-| `llm.routes.<operation>.model` / `.tier` | 每条显式路由必须且只能选择一个；省略路由则使用操作默认值。 |
-| `llm.routes.<operation>.fallbacks` | `[]`；按顺序填写模型配置 ID，受下文故障切换限制。 |
+| `llm.models.<连接名/模型名>` | `{}` 表示登记该模型并使用提供商默认参数。 |
+| `llm.models.<连接名/模型名>.max_output_tokens` | 默认不设置；设置时为正整数。 |
+| `llm.models.<连接名/模型名>.options` | `{}`，下文的适配器专属字段。 |
+| `llm.routes.<operation>.model` | 本操作使用的 `连接名/模型名`。 |
+| `llm.routes.<operation>.thinking` | 省略或设为 `null` 时沿用已登记模型的思考设置；也可指定所选提供商配置支持的强度。 |
+| `llm.routes.<operation>.fallbacks` | `[]`；按顺序填写 `连接名/模型名`，受下文故障切换限制。 |
 | `llm.quotas` | `{}`，可选命名配额组。 |
 | `llm.budget` | 未设置则不限制。 |
 
-连接、模型和配额 ID 以字母开头，仅包含字母、数字、下划线或连字符。
+连接和配额 ID 以字母开头，仅包含字母、数字、下划线或连字符。
 路由模型中的未知操作、字段和引用会在校验时失败。
-三个档位可以全部指向同一模型，但不能缺失。
 
-覆盖预设时按 ID **整体替换连接／模型配置**，需要重复必填字段。
-模型选项不与旧配置合并。档位和路由按各自的键选择。
+覆盖预设时按键**整体替换连接、模型配置或路由**。项目 YAML 中，已填写的路由替换对应的全局阶段设置，未填写的阶段保留全局选择。
 
-例如保留默认翻译路由，另选润色与取证模型：
+思考强度只覆盖本阶段的主模型。同一个模型可在不同阶段使用不同强度，例如 `translation.body: {model: deepseek/deepseek-flash, thinking: high}` 与 `language.detect: {model: deepseek/deepseek-flash, thinking: "off"}`。DeepSeek 支持 `off`、`low`、`high`、`max`；其他适配器提供各自的选项，具体远端模型接受哪些值以提供商为准。Gemini 3 的阶段强度会在本次操作中取代模型的思考预算。若高级请求字段已指定思考参数，则沿用这些参数，不再设置阶段覆盖。备用模型使用各自登记的设置。
+
+例如保留预设中的翻译路由，另选润色与取证模型：
 
 ```yaml
 llm:
@@ -163,19 +160,16 @@ llm:
       max_retries: 2
       max_concurrency: 2
   models:
-    editor:
-      provider: editorial
-      model: YOUR_EDITOR_MODEL
+    editorial/YOUR_EDITOR_MODEL:
       max_output_tokens: 8192
       options:
         thinking_level: high
   routes:
-    polish.body: {model: editor}
-    review.verify: {model: editor}
+    polish.body: {model: editorial/YOUR_EDITOR_MODEL}
+    review.verify: {model: editorial/YOUR_EDITOR_MODEL}
 ```
 
-把模型占位符替换成端点支持的模型。未覆盖时，`autofix.verify`
-继承实际 `review.verify` 路由。
+把模型占位符替换成端点支持的模型。
 用 `wenyi models list`、`models explain --operation ID` 和
 `models check --for prepare|translate|review` 本地检查。
 只有 `models ping` 发起真实探测，详见 [CLI 命令](../guide/cli.md#model-commands)。
@@ -248,25 +242,25 @@ BabelDOC 是独立 HTTP 服务。
 以下是完整的当前路由 ID。即使阶段关闭，也可以配置其路由；
 可达性检查按所选流程开关进行。
 
-| 操作 | 默认档位／继承 | 用途 |
-|---|---|---|
-| `language.detect` | `cheap` | 源语言识别 |
-| `analysis.style` | `strong` | 风格与人物语气分析 |
-| `synopsis.chapter` | `fast` | 章节梗概 |
-| `synopsis.book` | `fast` | 全书概览 |
-| `translation.body` | `strong` | 正文翻译，包括精翻初稿 |
-| `translation.title` | `strong` | 章节与目录标题 |
-| `polish.body` | `strong` | 润色，包括精翻综合 |
-| `glossary.extract` | `fast` | 术语抽取 |
-| `glossary.align_history` | `fast` | 历史译法对齐 |
-| `glossary.note` | `fast` | 维护已译批次的术语备注 |
-| `annotation.align` | `cheap` | 注释定位 |
-| `review.scan` | `cheap` | 初审与盲审复查 |
-| `review.verify` | `strong` | 取证核查 |
-| `review.arbitrate` | `strong` | 矛盾建议仲裁 |
-| `review.fix` | `strong` | 本次运行内的影子修订 |
-| `autofix.verify` | 已解析的 `review.verify` 路由 | 发布取证核查 |
-| `autofix.fix` | 已解析的 `review.fix` 路由 | 发布修订 |
+| 操作 | 用途 |
+|---|---|
+| `language.detect` | 源语言识别 |
+| `analysis.style` | 风格与人物语气分析 |
+| `synopsis.chapter` | 章节梗概 |
+| `synopsis.book` | 全书概览 |
+| `translation.body` | 正文翻译，包括精翻初稿 |
+| `translation.title` | 章节与目录标题 |
+| `polish.body` | 润色，包括精翻综合 |
+| `glossary.extract` | 术语抽取 |
+| `glossary.align_history` | 历史译法对齐 |
+| `glossary.note` | 维护已译批次的术语备注 |
+| `annotation.align` | 注释定位 |
+| `review.scan` | 初审与盲审复查 |
+| `review.verify` | 取证核查 |
+| `review.arbitrate` | 矛盾建议仲裁 |
+| `review.fix` | 本次运行内的影子修订 |
+| `autofix.verify` | 发布取证核查 |
+| `autofix.fix` | 发布修订 |
 
 <a id="limits-and-failover"></a>
 
@@ -284,16 +278,13 @@ BabelDOC 是独立 HTTP 服务。
 llm:
   preset: fake
   providers:
-    default:
+    fake:
       kind: fake
       max_concurrency: 2
       quota_group: account
   models:
-    bounded:
-      provider: default
-      model: fake
+    fake/fake:
       max_output_tokens: 2048
-  tiers: {strong: bounded, cheap: bounded, fast: bounded}
   quotas:
     account:
       requests_per_minute: 20
@@ -315,11 +306,11 @@ Token 限额先按保守的提示词字节估算加配置的输出上限预留�
 预留量不是计费量或金额上限。截止时间与 Ctrl+C 为协作式取消，
 在途请求可能完成或超时；重新启动会获得新的一次调用预算。
 
-允许故障切换的无状态操作可在显式路由中填写 `fallbacks: [backup_profile]`。
+允许故障切换的无状态操作可在显式路由中填写 `fallbacks: [backup/backup-model]`。
 这些模型必须存在，不能与主模型或彼此重复。
 只有可重试传输错误耗尽重试才切换，不因认证、配置或输出结构错误切换。
 可续跑的 `review.verify`、`review.arbitrate` 和 `autofix.verify`
-对话不允许故障切换。继承路由也会继承备用选择。
+对话不允许故障切换。
 
 <a id="routing-and-resume"></a>
 
@@ -327,11 +318,10 @@ Token 限额先按保守的提示词字节估算加配置的输出上限预留�
 
 更换翻译、分析或概览模型保留已完成工作，待完成请求使用新路由。
 Review 身份匹配时可以复用或续跑；相关模型、端点、推理选项或协议变化会开启新 Review。
-无关路由、凭据轮换、别名重命名与并发调整本身不会使它失效。
+无关路由、凭据轮换、连接重命名与并发调整本身不会使它失效。
 未完成的 Autofix 模型规划需要原路由；已经写入索引的发布可从保存的候选继续。
 
-用量保持累计，并提供独立的档位、操作、提供商和模型视图；
-直接选模型的请求归入 `direct` 档位。推理身份按模型／端点／选项区分，不只看别名。
+用量保持累计，并提供独立的操作、提供商和模型视图。推理身份按模型／端点／选项区分。
 解析失败与重试仍可能消耗 token，缺失的提供商计数不会被虚构。
 用户操作见 [CLI 查看与迁移](../guide/cli.md#automation)，
 账本内部机制见[流程开发文档](../development/pipeline.md)。
@@ -454,15 +444,12 @@ BabelDOC 是可选的独立 AGPL 服务，用于尽量保留 PDF 版式。
 | `output.bilingual_order` | `target_first` | `target_first` 或 `source_first`；选择按段配对格式中在前的版本，以及 PDF 并列页中位于左侧的版本。 |
 | `output.bilingual_preserve_source_style` | `false` | 保留已记录的原文样式，替代该格式的默认原文显示方式。 |
 | `output.about_page` | `true` | 为 EPUB 添加“关于此翻译”项目说明页。 |
-| `output.punctuation_normalize` | `true` | 只在导出副本上规范简体中文标点。 |
 
 `bilingual_preserve_source_style` 与顺序独立。
 EPUB/HTML 中，`true` 用正常书籍样式替代淡化原文。
 DOCX 中，`false` 使用正常正文样式；`true` 恢复已记录的字符样式，
 包括段落／表格中的混合样式，无法恢复从未记录的样式。
 
-标点规范化不修改正式章节译文或 Review 输入。
-繁体中文和其他目标跳过该简体中文转换。
 EPUB 说明页在简体中文目标下为中文，其余目标目前使用英语。
 
 CLI 的 `translate` 和 `assemble` 可用 `--mono/--no-mono`、
@@ -524,13 +511,15 @@ CLI 在所选文件旁保存原始字节备份，名称为 `<文件名>.backup-<
 注释保留在备份里，重建后的 YAML 只保存支持的设置。
 Web 备份保存在 PostgreSQL，Desktop 备份保存在所选数据根目录的目录库，
 与各自设置一起保存。Web 遇到不兼容的初始 YAML 时也在 PostgreSQL 备份，
-不改写挂载文件。有效设置不重写，重复启动不重复生成备份。
+不改写挂载文件。从初始 YAML 读取默认值时沿用相同重建规则，不修改文件或已保存设置。
+有效设置不重写，重复启动不重复生成备份。
 
 备份或替换保存失败时，原设置保持不变，加载／启动报错。
 语法损坏的 YAML 需要修正，不猜测其含义。
 重建不修改原书、章节译文、用量或冻结任务快照。
-若排队任务仍带有不兼容的旧快照，需要按重建后的设置重新启动任务，
-不会静默换一种模式执行。Web/Desktop 新设置提交与 Core 直接校验仍然严格。
+排队任务忽略已移除的导出标点开关，其余设置保持不变。
+若旧快照仍不兼容，需要按重建后的设置重新启动任务。
+Web/Desktop 新设置提交与 Core 直接校验仍然严格。
 
 可从备份取回当前 schema 仍支持的自定义选择，不再提供单独的配置转换命令。
 

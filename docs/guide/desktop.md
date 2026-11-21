@@ -30,12 +30,12 @@ After installation, set up [API keys](#api-keys), then follow the shared [worksp
 
 ### Model connections
 
-Open **Settings → Models & connections**, add or select a connection, and enter its API key and any custom base URL. **Save configuration** saves the connection and submits the key together; there is no separate model-key save step. An unsaved key is only an in-memory draft and is discarded when you leave Settings.
+Open **Settings → Models & connections**, add or edit a provider, and enter its API key and any custom base URL. Choose **Save provider** once. If the connection is saved but the key is not, the dialog stays open: correct the key if needed and save again. Cancel discards the unsaved key, not the connection already saved.
 
 - Desktop prefers the system credential store: macOS Keychain, Windows credentials, or a supported Linux Secret Service/KWallet store.
 - If that store is unavailable or cannot save the key, Desktop keeps it **only for the current session** and shows a warning. Enter it again after restarting. There is no plaintext-file fallback.
 - Saved manual keys appear masked; the eye control reveals them. Clearing a model-key field and saving removes its saved key.
-- **Use environment variable instead** removes the manual credential and switches to the configured environment variable. With no explicit variable name, the provider's default is used. A missing manual/session key does not silently fall back to an environment key; an explicitly named variable does not fall back to another variable.
+- The provider editor accepts an API key, not an environment-variable name. Connections already using an environment variable keep using it until you save a manual key. Clearing a manual key does not switch back to the environment.
 - Restart Desktop after changing its inherited environment outside the app. Credential changes affect new clients, not the configuration and credential snapshot of an active task.
 
 Wenyi does not write secrets to YAML/JSON, SQLite, project files, browser storage, or logs. Project backups contain credential references, not the secrets held by the system vault or session memory.

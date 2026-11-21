@@ -61,11 +61,6 @@ def print_usage(console: Console, usage: dict[str, Any] | None) -> None:
         f"{_cache_description(totals)}",
         markup=False,
     )
-    for tier, v in sorted(usage.get("by_tier", {}).items()):
-        console.print(
-            f"  · {tier}: {v['total_tokens']:,} tok, {v['calls']} calls, {_cache_description(v)}",
-            markup=False,
-        )
     for stage, v in sorted(
         (usage.get("by_stage") or {}).items(),
         key=lambda item: -item[1]["total_tokens"],
