@@ -8,7 +8,7 @@ from typing import Any
 from wenyi_core.llm.retrying import error_status_code, retry_reason
 
 # Waits before each automatic resume; together they cover about 15 minutes. A resume that
-# makes progress resets the streak, so only an outage that never lets work through runs out.
+# gets any model response resets the streak, so only an outage that answers nothing runs out.
 AUTO_RESUME_DELAYS_SECONDS: tuple[int, ...] = (60, 120, 240, 480)
 MAX_AUTO_RESUME_ATTEMPTS = len(AUTO_RESUME_DELAYS_SECONDS)
 AUTO_RESUME_ATTEMPT_PARAM = "_auto_resume_attempt"
@@ -17,7 +17,7 @@ _TERMINAL_HTTP_STATUS_CODES = frozenset({400, 401, 402, 403, 404})
 
 
 class ProviderOutageExhausted(RuntimeError):
-    """Automatic resumes ran out while the provider kept failing without any progress."""
+    """Automatic resumes ran out while the provider answered no request."""
 
     code = "provider_unavailable"
 
@@ -25,7 +25,7 @@ class ProviderOutageExhausted(RuntimeError):
         waited_minutes = round(sum(AUTO_RESUME_DELAYS_SECONDS[:attempts]) / 60)
         super().__init__(
             f"The model provider kept failing for about {waited_minutes} minutes "
-            f"({attempts} automatic retries without progress). Check the provider, then "
+            f"({attempts} automatic retries with no successful response). Check the provider, then "
             f"resume the task. Last error: {error}"
         )
 
@@ -42,7 +42,7 @@ def outage_attempt(params: dict[str, Any] | None) -> int:
 
 
 def auto_resume_exhausted(attempt: int) -> bool:
-    """Return True when ``attempt`` automatic resumes already ran without progress."""
+    """Return True when ``attempt`` automatic resumes already ran with no model response."""
     return attempt >= MAX_AUTO_RESUME_ATTEMPTS
 
 

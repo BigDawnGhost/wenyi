@@ -125,19 +125,20 @@ def execute(
 
         resources.callback(stop_watcher)
         emitter = redis_progress_fn(cache, pid, kind=kind, run_id=run_id)
-        # First count reported per stage; a later, higher count means this job got work done,
-        # which ends any outage streak carried in from earlier automatic resumes.
-        progress_baseline: dict[str, int] = {}
-        progressed = False
+        # A model response during this job ends any outage streak carried in from earlier
+        # automatic resumes. Progress counts are not used: resuming Review reports rising
+        # chapter counts while it only reloads saved state.
+        provider_answered = threading.Event()
+
+        def note_provider_answer(event: str, **_data: object) -> None:
+            if event == "llm_request_completed":
+                provider_answered.set()
 
         def progress(done: int, total: int, label: str) -> None:
-            nonlocal progressed
             if stop.is_set() or projects.is_paused(pid):
                 if client is not None:
                     client.cancel()
                 raise PauseRequested(pid)
-            if done > progress_baseline.setdefault(label, done):
-                progressed = True
             emitter(done, total, label)
 
         job = None
@@ -168,6 +169,7 @@ def execute(
                     live.bind_client(value)
                     value.set_event_sink(storage.log_event)
                     scope.enter_context(value.observe_events(dependencies.metrics.record_event))
+                    scope.enter_context(value.observe_events(note_provider_answer))
                     if stop.is_set():
                         value.cancel()
 
@@ -197,7 +199,7 @@ def execute(
         except Exception as error:
             original = error
             outage = is_outage_interrupt(error)
-            attempt = 0 if progressed else outage_attempt(request.params)
+            attempt = 0 if provider_answered.is_set() else outage_attempt(request.params)
             if outage and auto_resume_exhausted(attempt):
                 error = ProviderOutageExhausted(original, attempts=attempt)
             elif outage:

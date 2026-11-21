@@ -368,7 +368,28 @@ def test_outage_stops_auto_resuming_after_about_fifteen_minutes_without_progress
     )
 
 
-def test_outage_after_progress_restarts_the_retry_streak(execution):
+class _EventClient:
+    """Minimal LLM client stand-in that forwards events to the runner's observers."""
+
+    def __init__(self) -> None:
+        self.observers = []
+
+    def set_event_sink(self, _sink) -> None:
+        pass
+
+    def cancel(self) -> None:
+        pass
+
+    def observe_events(self, observer):
+        self.observers.append(observer)
+        return nullcontext()
+
+    def emit(self, event: str) -> None:
+        for observer in self.observers:
+            observer(event)
+
+
+def test_outage_after_a_model_response_restarts_the_retry_streak(execution):
     from wenyi_backend.execution.outage import AUTO_RESUME_ATTEMPT_PARAM, MAX_AUTO_RESUME_ATTEMPTS
 
     _request, dependencies, _storage = execution
@@ -378,12 +399,14 @@ def test_outage_after_progress_restarts_the_retry_streak(execution):
         schedule_resume=lambda req, attempt, delay, retry_at: scheduled.append((attempt, delay)),
     )
 
-    def translate_one_batch_then_fail(_request, _storage, progress, _bind):
-        progress(10, 100, "Chapter 3")
-        progress(20, 100, "Chapter 3")
+    def answer_once_then_fail(_request, _storage, _progress, bind):
+        client = _EventClient()
+        bind(client)
+        client.emit("llm_request_scheduled")
+        client.emit("llm_request_completed")
         raise TimeoutError("provider timed out")
 
-    deps.operation.side_effect = translate_one_batch_then_fail
+    deps.operation.side_effect = answer_once_then_fail
     request = ExecutionRequest(
         "translation", "project", "run", {AUTO_RESUME_ATTEMPT_PARAM: MAX_AUTO_RESUME_ATTEMPTS}
     )
@@ -393,7 +416,7 @@ def test_outage_after_progress_restarts_the_retry_streak(execution):
     assert scheduled == [(1, 60)]
 
 
-def test_outage_without_progress_keeps_the_retry_streak(execution):
+def test_rising_progress_without_a_model_response_keeps_the_retry_streak(execution):
     from wenyi_backend.execution.outage import AUTO_RESUME_ATTEMPT_PARAM
 
     _request, dependencies, _storage = execution
@@ -403,14 +426,17 @@ def test_outage_without_progress_keeps_the_retry_streak(execution):
         schedule_resume=lambda req, attempt, delay, retry_at: scheduled.append((attempt, delay)),
     )
 
-    def skip_finished_batches_then_fail(_request, _storage, progress, _bind):
-        # Resume reports the already-finished count again for each stage it passes through.
-        progress(20, 100, "Chapter 3")
-        progress(20, 100, "Chapter 3")
-        progress(20, 100, "Chapter 4")
+    def reload_saved_review_then_fail(_request, _storage, progress, bind):
+        client = _EventClient()
+        bind(client)
+        # Resumed Review reports rising chapter counts while it only reloads saved state.
+        for position in range(4):
+            progress(position, 3, "progress.stage.reviewChapters")
+        client.emit("llm_request_scheduled")
+        client.emit("llm_request_failed")
         raise TimeoutError("provider timed out")
 
-    deps.operation.side_effect = skip_finished_batches_then_fail
+    deps.operation.side_effect = reload_saved_review_then_fail
     request = ExecutionRequest("translation", "project", "run", {AUTO_RESUME_ATTEMPT_PARAM: 2})
 
     runner.execute(request, deps)
