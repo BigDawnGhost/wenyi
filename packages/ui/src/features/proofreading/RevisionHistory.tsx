@@ -128,7 +128,7 @@ function HistoryEntry({
                     <h3 className="text-xs font-medium text-muted-foreground">
                       {t("proofreading.beforeChange")}
                     </h3>
-                    <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+                    <p lang={entry.before ? language : undefined} className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
                       {entry.before || t("review.emptyTranslation")}
                     </p>
                   </section>
@@ -137,7 +137,7 @@ function HistoryEntry({
                   <h3 className="text-xs font-medium text-muted-foreground">
                     {t("proofreading.savedVersion")}
                   </h3>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+                  <p lang={entry.after ? language : undefined} className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
                     {entry.after == null
                       ? t("proofreading.waitingForTranslation")
                       : entry.after || t("review.emptyTranslation")}

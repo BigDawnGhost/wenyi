@@ -7,7 +7,6 @@ import { toast } from "../../../lib/toast";
 import { Button } from "../../../components/ui/button";
 import { Input, Textarea, Label } from "../../../components/ui/form";
 import { Select, SelectItem } from "../../../components/ui/select";
-import { ReadOnlyNotice } from "../../../components/ui/data";
 import { Dialog } from "../../../components/ui/misc";
 import { termTypes } from "../termTypes";
 
@@ -83,7 +82,6 @@ export function TermDetailsDialog({
       onClose={onClose}
       title={tr(readOnly ? "glossary.termDetails" : "glossary.editTerm")}
     >
-      {readOnly && <ReadOnlyNotice className="mb-3" />}
       {m.error && (
         <p role="alert" className="mb-3 text-sm text-destructive">
           {tr("glossary.couldNotUpdateTerm", { error: m.error.message })}

@@ -704,7 +704,6 @@ test("idle project settings remain editable after returning from the event log",
 test("running projects keep both basic and advanced settings read-only", async ({ page }) => {
   await fakeApi(page, { [`/projects/${pid}`]: { ...project, status: "translating" } });
   await page.goto(`/projects/${pid}/settings`);
-  await expect(page.getByText("Read-only while a task runs", { exact: true })).toBeVisible();
   await expect(page.locator('[id="route-translation.body"]')).toBeDisabled();
   const switches = page.getByRole("main").getByRole("switch");
   await expect(switches).toHaveCount(6);
@@ -716,6 +715,7 @@ test("running projects keep both basic and advanced settings read-only", async (
   for (const name of ["Save configuration", "Restore defaults", "Validate configuration"]) {
     await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
   }
+  await expect(page.getByText("Read-only while a task runs", { exact: true })).toHaveCount(0);
 });
 
 test("category content uses a centered reading column without a duplicate title", async ({ page }) => {

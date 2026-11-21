@@ -9,6 +9,29 @@ import { fakeApi, mockChapter, pid, project, chapter } from "../../sandbox/fixtu
 export const desktopHostSensitive = false;
 
 export function registerTests() {
+test("book text keeps its language and punctuation in a Chinese interface", async ({ page }) => {
+  const source = "‘He’d go,’ she said.  ‘Wouldn’t you?’";
+  const target = "« J’irais », dit-elle.";
+  await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
+  await fakeApi(page, { [`/projects/${pid}`]: { ...project, source_lang: "en", target_lang: "fr" } });
+  await mockChapter(page, 0, () => ({
+    index: 0, segments: [{ index: 0, kind: "text", source, target }],
+  }));
+  await page.goto(`/projects/${pid}/proofreading/0`);
+  const original = page.locator('[data-reader-text="source"]');
+  const translation = page.getByTestId("translation-text");
+  await expect(original).toHaveAttribute("lang", "en");
+  await expect(translation).toHaveAttribute("lang", "fr");
+  expect(await original.textContent()).toBe(source);
+  await page.getByRole("button", { name: "段落操作" }).click();
+  await page.getByRole("menuitem", { name: "编辑译文" }).click();
+  const editor = page.getByRole("dialog");
+  await expect(editor.getByText(source, { exact: true })).toHaveAttribute("lang", "en");
+  await expect(editor.getByRole("textbox")).toHaveAttribute("lang", "fr");
+  await expect(editor.getByRole("textbox")).toHaveValue(target);
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+});
+
 test("proofreading is separate and refreshes saved batches before a chapter finishes", async ({
   page,
 }) => {
