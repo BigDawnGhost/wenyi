@@ -118,9 +118,7 @@ def check_models(pid: str, body: ModelCheckRequest) -> dict:
 def project_stats(pid: str) -> dict:
     project = require_project(pid)
     if project.get("status") in RUNNING_PROJECT_STATUSES:
-        job = next(
-            (j for j in current_context().repository.list_jobs(pid) if j["kind"] != "export"), None
-        )
+        job = current_context().repository.latest_workflow_job(pid)
         if job and job.get("status") == "running":
             try:
                 live = current_context().telemetry.statistics_snapshot(pid, job)
@@ -142,7 +140,7 @@ def workflow(pid: str) -> dict:
     """Describe the latest workflow using its frozen configuration, not edited settings."""
     project = require_project(pid)
     repository = current_context().repository
-    job = next((j for j in repository.list_jobs(pid) if j["kind"] != "export"), None)
+    job = repository.latest_workflow_job(pid)
     params = (job or {}).get("params") or {}
     snapshot = params.get("config_snapshot")
     try:
@@ -153,30 +151,29 @@ def workflow(pid: str) -> dict:
     kind = job["kind"] if job else "translation"
     stages = []
 
-    def add(key, label, enabled=True):
-        stages.append({"id": key, "label": label, "enabled": bool(enabled)})
+    def add(key, enabled=True):
+        # The id is the label. Stage names are API identifiers that the client
+        # translates; writing prose here fixed every deployment to the language
+        # this file happens to be written in.
+        stages.append({"id": key, "label": key, "enabled": bool(enabled)})
 
     if kind == "parse":
-        add("parse", "解析原文与生成预览")
+        add("parse")
     else:
         if kind != "review":
-            add("prepare", "解析、术语与风格准备")
-            add("book_understanding", "全书预理解", pipeline.get("book_understanding"))
+            add("prepare")
+            add("book_understanding", pipeline.get("book_understanding"))
         if kind in {"translation", "chapter_translation"}:
-            add("translation", "分批翻译章节")
-            add("polish", "批次内润色", pipeline.get("polish"))
-            add("annotation_alignment", "逐段注释定位", pipeline.get("annotation_alignment"))
+            add("translation")
+            add("polish", pipeline.get("polish"))
+            add("annotation_alignment", pipeline.get("annotation_alignment"))
         if kind in {"translation", "review"}:
             review = kind == "review" or pipeline.get("review", False)
             autofix = params.get("autofix")
             if autofix is None:
                 autofix = pipeline.get("review_autofix")
-            add("review", "全书审校", review)
-            add(
-                "review_autofix",
-                "修复审校问题并写回",
-                review and autofix,
-            )
+            add("review", review)
+            add("review_autofix", review and autofix)
     progress = None
     if job:
         try:

@@ -1,6 +1,6 @@
 import { useI18n } from "../../i18n";
-import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useState } from "react";
+import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "../../lib/toast";
 import { api } from "../../api/client";
@@ -13,24 +13,27 @@ import { Label } from "../../components/ui/form";
 import { ErrorNotice } from "../../components/ui/data";
 import { Progress } from "../../components/ui/progress";
 import { cn, formatBytes } from "../../lib/utils";
+import { useProjectQuery } from "../../lib/projectQuery";
 import { platform } from "../../platform";
 
 export default function ExportPage() {
+  const { pid = "" } = useParams();
+  return <ProjectExport key={pid} pid={pid} />;
+}
+
+function ProjectExport({ pid }: { pid: string }) {
   const saveExport = platform().capabilities.saveExport;
   const { t: tr, locale } = useI18n();
-  const { pid = "" } = useParams();
   const qc = useQueryClient();
-  const [defaultsLoaded, setDefaultsLoaded] = useState(false);
   const { data: config, error: configError } = useQuery({
     queryKey: ["config", pid],
     queryFn: () => api.getConfig(pid),
   });
   const [format, setFormat] = useState<ExportFormat | "">("");
-  const [bilingual, setBilingual] = useState(false);
-  const { data: project, error: projectError } = useQuery({
-    queryKey: ["project", pid],
-    queryFn: () => api.getProject(pid),
-  });
+  const [editionOverride, setEditionOverride] = useState<boolean>();
+  const output = (config?.effective.output || {}) as Record<string, unknown>;
+  const bilingual = editionOverride ?? (config ? Boolean(output.bilingual) : undefined);
+  const { data: project, error: projectError } = useProjectQuery(pid);
   const { data: exports, error: exportsError } = useQuery({
     queryKey: ["exports", pid],
     queryFn: () => api.listExports(pid),
@@ -41,26 +44,17 @@ export default function ExportPage() {
         ? 2000
         : false,
   });
-  useEffect(() => {
-    if (config && !defaultsLoaded) {
-      const output = (config.effective.output || {}) as Record<string, unknown>;
-      setBilingual(Boolean(output.bilingual));
-      setDefaultsLoaded(true);
-    }
-  }, [config, defaultsLoaded]);
   const formats = (project?.output_formats || []) as ExportFormat[];
   const fmt = formats.includes(format as ExportFormat) ? format : "";
   const pdf = fmt === "pdf" || (!fmt && project?.fmt === "pdf" && formats.includes("pdf"));
   const create = useMutation({
     mutationFn: async () => {
-      const output = (config?.effective.output || {}) as Record<string, unknown>;
       const options: ExportOptions = {
         format: fmt || undefined,
         bilingual,
         order: output.bilingual_order === "source_first" ? "source_first" : "target_first",
         about_page: output.about_page !== false,
         preserve_source_style: !pdf && Boolean(output.bilingual_preserve_source_style),
-        punctuation_normalize: output.punctuation_normalize !== false,
       };
       if (saveExport) {
         const saved = await saveExport(pid, options);
@@ -108,7 +102,7 @@ export default function ExportPage() {
                     "rounded-lg border p-3 text-left text-sm transition-[background-color,border-color,box-shadow] duration-motion-fast ease-standard focus-visible:outline-none",
                     !fmt
                       ? "border-primary/50 bg-accent"
-                      : "border-border hover:border-muted-foreground/40 hover:bg-muted/40",
+                      : "border-border hover:border-muted-foreground/40 hover:bg-hover",
                   )}
                 >
                   {tr("export.automatic")}
@@ -122,7 +116,7 @@ export default function ExportPage() {
                       "rounded-lg border p-3 text-left text-sm transition-[background-color,border-color,box-shadow] duration-motion-fast ease-standard focus-visible:outline-none",
                       fmt === f
                         ? "border-primary/50 bg-accent"
-                        : "border-border hover:border-muted-foreground/40 hover:bg-muted/40",
+                        : "border-border hover:border-muted-foreground/40 hover:bg-hover",
                     )}
                   >
                     {f.toUpperCase()}
@@ -138,8 +132,8 @@ export default function ExportPage() {
                 <input
                   type="radio"
                   name="edition"
-                  checked={!bilingual}
-                  onChange={() => setBilingual(false)}
+                  checked={bilingual === false}
+                  onChange={() => setEditionOverride(false)}
                 />
                 {tr("export.monolingual")}
               </label>
@@ -147,8 +141,8 @@ export default function ExportPage() {
                 <input
                   type="radio"
                   name="edition"
-                  checked={bilingual}
-                  onChange={() => setBilingual(true)}
+                  checked={bilingual === true}
+                  onChange={() => setEditionOverride(true)}
                 />
                 {tr("export.bilingual")}
               </label>
@@ -156,13 +150,21 @@ export default function ExportPage() {
             {bilingual && pdf && (
               <p className="text-sm text-muted-foreground">{tr("export.pdfBilingualLayout")}</p>
             )}
+            {project?.fmt && !formats.length && (
+              <p role="status" className="text-sm text-muted-foreground">
+                {tr("error.sourceNotReady")}{" "}
+                <Link to={`/projects/${pid}`} className="underline">
+                  {tr("common.translationOverview")}
+                </Link>
+              </p>
+            )}
             <Button
               onClick={() => create.mutate()}
               disabled={
                 create.isPending ||
                 !project?.fmt ||
                 !formats.length ||
-                !defaultsLoaded ||
+                !config ||
                 !!configError
               }
             >
@@ -197,7 +199,7 @@ export default function ExportPage() {
               {tr("export.retentionHelp")}
             </p>
             <table className="w-full text-sm">
-              <thead className="border-b border-black/[0.05] text-xs tracking-wide text-muted-foreground dark:border-white/[0.07]">
+              <thead className="border-b border-subtle text-xs tracking-wide text-muted-foreground">
                 <tr>
                   {[
                     tr("export.format"),
@@ -214,7 +216,7 @@ export default function ExportPage() {
               </thead>
               <tbody>
                 {exports?.slice(0, 5).map((e) => (
-                  <tr key={e.id} className="border-b border-black/[0.05] last:border-0 dark:border-white/[0.07]">
+                  <tr key={e.id} className="border-b border-subtle last:border-0">
                     <td className="px-4 py-3.5">
                       {e.format.toUpperCase()}
                       <div className="text-xs text-muted-foreground mt-1">

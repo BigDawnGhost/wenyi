@@ -1,2 +1,0 @@
-One bounded source evidence group:
-$payload

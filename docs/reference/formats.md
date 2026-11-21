@@ -183,10 +183,14 @@ as other book inputs. It is a reconstruction of supported document structures,
 not an exact Word package round trip.
 
 - Heading/outline levels are recorded; level-one headings split chapters.
-- Simple tables are rebuilt cell-by-cell. Merged cells and nested tables are not
-  supported.
+- Cached table-of-contents text and levels are retained as static entries, not
+  as live Word fields or links.
+- Tables are rebuilt cell by cell, including horizontal and vertical merges.
+  Nested tables and separate formatting or numbering for each paragraph in a cell
+  are not supported.
 - Automatic lists are reconstructed as numbered/bulleted groups, restarting by
-  source list identity. Visible numbering already present in text is not added again.
+  source list identity and preserving supported nesting and restart values.
+  Visible numbering already present in text is not added again.
 - Recorded bold, italic, underline, color, size, paragraph alignment and shading
   are retained where supported.
 - Uniform paragraph styles need no extra alignment call. Meaningful mixed-style
@@ -237,6 +241,8 @@ Review the external service's deployment and licensing requirements separately.
 Before contacting the bridge, Wenyi checks selected pages for image-only content.
 If no extractable text layer is found, use MinerU or run OCR first. Chapter grouping
 uses PDF bookmarks, with one chapter when no outline is available.
+Explicit EPUB export reflows those saved chapters without contacting the bridge.
+It does not reproduce PDF page layout or require a MinerU HTML cache.
 
 With a row-capable bridge, aligned numbered contents entries with dot leaders and
 page numbers, and confidently detected list items with repeated unknown leading
@@ -344,9 +350,7 @@ workflow translates; later batches appear only in a later export.
 
 Re-export makes no translation-model calls and does not rerun preparation, Review,
 polishing or annotation repair. BabelDOC PDF export still contacts its external
-bridge. Export-only punctuation normalization changes an in-memory copy for
-Simplified Chinese targets without changing saved translations or losing the position
-of annotations and styles. Other targets skip that normalization.
+bridge. Export preserves the punctuation in the saved text.
 
-Changing only output format, bilingual order, source styling or export font/punctuation
-policy therefore needs a fresh export, not a fresh paid translation.
+Changing only output format, bilingual order, source styling or export font policy
+therefore needs a fresh export, not a fresh paid translation.

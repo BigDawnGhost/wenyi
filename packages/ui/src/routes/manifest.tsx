@@ -5,7 +5,6 @@ import {
   Code,
   FileOutput,
   FileScan,
-  FolderPlus,
   Info,
   Languages,
   LayoutDashboard,
@@ -27,7 +26,7 @@ import { platform } from "../platform";
 // intent prefetch. Adding or removing a page changes only this file.
 
 const loadDashboard = () => import("../features/dashboard/Dashboard");
-const loadCreateProject = () => import("../features/project-create/CreateProject");
+export const loadCreateProject = () => import("../features/project-create/CreateProject");
 const loadProgressPage = () => import("../features/progress/ProgressPage");
 const loadGlossaryPage = () => import("../features/glossary/GlossaryPage");
 const loadStylePage = () => import("../features/style/StylePage");
@@ -156,8 +155,6 @@ export interface NavEntry {
   /** Exact-match highlighting (overview and the project list). */
   end?: boolean;
   group: "global" | "project";
-  /** Sidebar stratum a global entry renders in (layered-sidebar slots). */
-  slot?: "action" | "panel" | "foot";
   order: number;
   audience: Audience;
   /** Chunk loader used for warm-up and hover/focus prefetch. */
@@ -165,9 +162,8 @@ export interface NavEntry {
 }
 
 export const navEntries: NavEntry[] = [
-  { to: "/", label: "appLayout.projects", icon: LayoutDashboard, end: true, group: "global", slot: "panel", order: 10, audience: "all", loader: loadDashboard },
-  { to: "/projects/new", label: "common.createProject", icon: FolderPlus, group: "global", slot: "action", order: 20, audience: "all", loader: loadCreateProject },
-  { to: "/settings", label: "settings.title", icon: Settings, group: "global", slot: "foot", order: 30, audience: "all", loader: loadInterfaceSettingsPage },
+  { to: "/", label: "appLayout.projects", icon: LayoutDashboard, end: true, group: "global", order: 10, audience: "all", loader: loadDashboard },
+  { to: "/settings", label: "settings.title", icon: Settings, group: "global", order: 30, audience: "all", loader: loadInterfaceSettingsPage },
   { to: "/projects/:pid", label: "common.translationOverview", icon: Sparkles, end: true, group: "project", order: 10, audience: "all", loader: loadProgressPage },
   { to: "/projects/:pid/proofreading", label: "progress.manualProofreading", icon: BookOpenCheck, group: "project", order: 20, audience: "book", loader: loadProofreadingPage },
   { to: "/projects/:pid/review", label: "common.wholeBookReview", icon: ListChecks, group: "project", order: 30, audience: "book", loader: loadReviewPage },

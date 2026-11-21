@@ -22,5 +22,5 @@ the Web API, or the Desktop application.
 
 - [CLI guide](https://github.com/BigDawnGhost/wenyi/blob/main/docs/guide/cli.md)
 - [Configuration](https://github.com/BigDawnGhost/wenyi/blob/main/docs/reference/configuration.md)
-- [Source and license](https://github.com/BigDawnGhost/wenyi)
+- [Wenyi source (GPL-3.0-only)](https://github.com/BigDawnGhost/wenyi)
 - [简体中文](https://github.com/BigDawnGhost/wenyi/blob/main/docs/zh/guide/cli.md)

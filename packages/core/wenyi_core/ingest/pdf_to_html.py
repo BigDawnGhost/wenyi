@@ -14,17 +14,18 @@ from __future__ import annotations
 
 import io
 import os
-import re
 import sys
 import tempfile
 import time
 import zipfile
 from collections.abc import Callable
+from contextlib import closing
 from pathlib import Path
 
 import httpx
 from pypdf import PdfReader, PdfWriter
 
+from wenyi_core.markup import _epub_native
 from wenyi_core.models.errors import MinerUError, MinerUTimeoutError
 
 API_BASE = "https://mineru.net/api/v4"
@@ -184,70 +185,46 @@ class MinerUApi:
 # ── PDF splitting ──
 
 
-def _split_pdf(pdf_path: str, max_pages: int = MAX_PAGES) -> list[Path]:
-    reader = PdfReader(pdf_path)
-    total = len(reader.pages)
-    chunks: list[Path] = []
-    try:
-        for start in range(0, total, max_pages):
-            end = min(start + max_pages, total)
-            writer = PdfWriter()
-            for i in range(start, end):
-                writer.add_page(reader.pages[i])
-            tmp = tempfile.NamedTemporaryFile(
-                prefix=f"chunk_p{start + 1}-{end}_", suffix=".pdf", delete=False
-            )
-            writer.write(tmp.name)
-            tmp.close()
-            chunks.append(Path(tmp.name))
-    except BaseException:
-        # A mid-split failure must not leave earlier chunks behind (audit X-4).
-        for chunk in chunks:
-            chunk.unlink(missing_ok=True)
-        raise
-    return chunks
+def _chunk_path(directory: Path, start: int, end: int) -> Path:
+    return directory / f"chunk_p{start + 1}-{end}.pdf"
+
+
+def _prepare_chunks(source: Path, directory: Path, max_pages: int) -> tuple[int, list[Path]]:
+    """Reuse the untouched file below the limit. Split once and never reopen chunks to count."""
+    total = _epub_native.mineru_prepare_chunks(source, directory, max_pages)
+    if total is None:
+        # Preserve the page cloning semantics of pypdf for unsupported document features.
+        with PdfReader(source) as reader:
+            total = len(reader.pages)
+            if total > max_pages:
+                for start in range(0, total, max_pages):
+                    end = min(start + max_pages, total)
+                    with PdfWriter() as writer:
+                        for i in range(start, end):
+                            writer.add_page(reader.pages[i])
+                        writer.write(_chunk_path(directory, start, end))
+    return total, (
+        [source]
+        if total <= max_pages
+        else [
+            _chunk_path(directory, start, min(start + max_pages, total))
+            for start in range(0, total, max_pages)
+        ]
+    )
 
 
 # ── HTML helpers ──
 
 
 def _html_from_zip(zip_bytes: bytes) -> str:
+    native = _epub_native.mineru_html_from_zip(zip_bytes)
+    if native is not None:
+        return native
     with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
         for name in zf.namelist():
             if name.endswith((".html", ".htm")):
                 return zf.read(name).decode("utf-8")
     raise MinerUError("No HTML file in result ZIP")
-
-
-def _assemble_html(parts: list[str], title: str) -> str:
-    head = _clean_head(parts[0])
-    bodies = [_body_text(p) for p in parts]
-    return f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>{title}</title>
-{head}
-</head>
-<body>
-{"".join(bodies)}
-</body>
-</html>"""
-
-
-def _body_text(html: str) -> str:
-    m = re.search(r"<body[^>]*>(.*?)</body>", html, re.DOTALL | re.IGNORECASE)
-    return m.group(1) if m else html
-
-
-def _clean_head(html: str) -> str:
-    m = re.search(r"<head[^>]*>(.*?)</head>", html, re.DOTALL | re.IGNORECASE)
-    if not m:
-        return ""
-    head = m.group(1)
-    head = re.sub(r"<title[^>]*>.*?</title>", "", head, flags=re.DOTALL | re.IGNORECASE)
-    head = re.sub(r"<meta[^>]*charset[^>]*/?>", "", head, flags=re.IGNORECASE)
-    return head.strip()
 
 
 # ── helpers ──
@@ -257,10 +234,6 @@ def _check(body: dict) -> dict:
     if body.get("code") != 0:
         raise MinerUError(f"API error: code={body.get('code')} msg={body.get('msg')}")
     return body
-
-
-def _page_count(pdf_path: str) -> int:
-    return len(PdfReader(pdf_path).pages)
 
 
 # ── public API ──
@@ -304,35 +277,24 @@ def convert_pdf_to_html(
     if not api_token:
         raise MinerUError("API token not provided and MINERU_API_KEY not set")
 
-    total_pages = _page_count(pdf_path)
-    msg(f"PDF: {total_pages} pages")
-
-    # Prepare chunks
-    if total_pages <= MAX_PAGES:
-        chunk_paths = [Path(pdf_path)]
-        owned: list[Path] = []
-    else:
-        msg(f"Splitting into ≤{MAX_PAGES}-page chunks…")
-        chunk_paths = _split_pdf(pdf_path, MAX_PAGES)
-        owned = chunk_paths
-        for i, cp in enumerate(chunk_paths):
-            msg(f"  Chunk {i + 1}/{len(chunk_paths)}: {_page_count(str(cp))} pages")
-
-    api = MinerUApi(api_token)
-    try:
-        msg(f"Uploading and extracting {len(chunk_paths)} chunk(s)…")
-        zip_bytes_list = api.submit_batch([str(cp) for cp in chunk_paths])
-
-        html_parts = [_html_from_zip(zb) for zb in zip_bytes_list]
-        for i in range(len(html_parts)):
-            msg(f"  Chunk {i + 1} done ({len(html_parts[i]):,} chars)")
-    finally:
-        api.close()
-        for cp in owned:
-            cp.unlink(missing_ok=True)
+    with tempfile.TemporaryDirectory(prefix="mineru-chunks-") as directory:
+        total_pages, chunk_paths = _prepare_chunks(Path(pdf_path), Path(directory), MAX_PAGES)
+        msg(f"PDF: {total_pages} pages")
+        if len(chunk_paths) > 1:
+            for i in range(len(chunk_paths)):
+                count = min(MAX_PAGES, total_pages - i * MAX_PAGES)
+                msg(f"  Chunk {i + 1}/{len(chunk_paths)}: {count} pages")
+        with closing(MinerUApi(api_token)) as api:
+            msg(f"Uploading and extracting {len(chunk_paths)} chunk(s)…")
+            zip_bytes_list = api.submit_batch([str(cp) for cp in chunk_paths])
+    html_parts = [_html_from_zip(zb) for zb in zip_bytes_list]
+    for i, part in enumerate(html_parts):
+        msg(f"  Chunk {i + 1} done ({len(part):,} chars)")
 
     html = (
-        html_parts[0] if len(html_parts) == 1 else _assemble_html(html_parts, Path(pdf_path).name)
+        html_parts[0]
+        if len(html_parts) == 1
+        else _epub_native.mineru_assemble_html(html_parts, Path(pdf_path).name)
     )
     Path(output_path).write_text(html, encoding="utf-8")
     msg(f"Done → {output_path} ({len(html):,} chars)")

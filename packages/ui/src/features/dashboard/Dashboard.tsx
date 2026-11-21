@@ -6,15 +6,16 @@ import { toast } from "../../lib/toast";
 import { errorMessage } from "../../lib/error-codes";
 import { Link, Outlet, useNavigate } from "react-router-dom";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
-import { Button } from "../../components/ui/button";
+import { Button, buttonVariants } from "../../components/ui/button";
 import { LazyBoundary } from "../../routes/LazyBoundary";
+import { loadCreateProject } from "../../routes/manifest";
 import { Card, CardContent } from "../../components/ui/card";
 import { ErrorNotice } from "../../components/ui/data";
-import { Dialog } from "../../components/ui/misc";
+import { Dialog, EmptyState } from "../../components/ui/misc";
 import { api, isProjectBusy } from "../../api/client";
 import type { Project } from "../../api/types";
 import { platform } from "../../platform";
-import { FolderPlus, LoaderCircle, Trash2 } from "lucide-react";
+import { FolderInput, FolderPlus, Trash2 } from "lucide-react";
 
 export default function Dashboard() {
   const { t: tr, locale } = useI18n();
@@ -47,7 +48,7 @@ export default function Dashboard() {
   });
   // A refused import says why: which file is missing, or that the original no
   // longer matches. The reason is the whole point of the entry point, so it is
-  // shown beside the button rather than in a toast that disappears.
+  // shown in the project list rather than in a toast that disappears.
   const [importFailure, setImportFailure] = useState<string | null>(null);
   const importProject = useMutation({
     mutationFn: async () => {
@@ -74,35 +75,21 @@ export default function Dashboard() {
       <PageHeader
         title={tr("dashboard.myProjects")}
         actions={
-          library && (
-            <Button
-              variant="outline"
-              disabled={importProject.isPending}
-              onClick={() => importProject.mutate()}
-            >
-              {importProject.isPending ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" />
-              ) : (
-                <FolderPlus className="h-4 w-4" />
-              )}
-              {tr("dashboard.importProject")}
-            </Button>
-          )
+          <Link
+            id="create-project-trigger"
+            to="/projects/new"
+            state={{ fromProjectList: true }}
+            className={buttonVariants({ variant: "outline" })}
+            onPointerEnter={() => void loadCreateProject().catch(() => {})}
+            onFocus={() => void loadCreateProject().catch(() => {})}
+          >
+            <FolderPlus className="h-4 w-4" aria-hidden="true" />
+            {tr("common.createProject")}
+          </Link>
         }
       />
       <PageContainer className="mx-auto w-full max-w-5xl">
         <ErrorNotice error={error} />
-        {importFailure && (
-          <div
-            role="alert"
-            className="mb-3 rounded-lg border-l-4 border-l-destructive bg-destructive/10 px-4 py-3 text-sm"
-          >
-            <p className="font-medium">{tr("dashboard.couldNotImportProject")}</p>
-            <p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">
-              {importFailure}
-            </p>
-          </div>
-        )}
         {isLoading ? (
           // The skeleton mirrors the loaded card grid so loading keeps the same
           // geometry and the page does not jump when the projects arrive.
@@ -126,9 +113,7 @@ export default function Dashboard() {
           </div>
         ) : !projects?.length ? (
           <Card>
-            <p className="px-6 py-24 text-center text-sm text-muted-foreground">
-              {tr("dashboard.noProjectsYet")}
-            </p>
+            <EmptyState className="py-24">{tr("dashboard.noProjectsYet")}</EmptyState>
           </Card>
         ) : (
           <div className="grid grid-cols-3 gap-4">
@@ -168,20 +153,18 @@ export default function Dashboard() {
                           type="button"
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                          className="text-muted-foreground hover:text-destructive"
                           aria-label={tr("dashboard.deleteProject", {
                             name: p.name,
                           })}
                           title={tr("dashboard.deleteAction")}
-                          disabled={deleteProject.isPending}
+                          aria-busy={
+                            deleteProject.isPending && deleteProject.variables?.id === p.id
+                              || undefined
+                          }
                           onClick={() => setPendingDelete(p)}
                         >
-                          {deleteProject.isPending &&
-                          deleteProject.variables?.id === p.id ? (
-                            <LoaderCircle className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="h-4 w-4" />
-                          )}
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>
@@ -202,6 +185,27 @@ export default function Dashboard() {
             })}
           </div>
         )}
+        {library && (
+          <div className="mt-4 space-y-2">
+            <Button
+              variant="ghost"
+              className="text-muted-foreground"
+              aria-busy={importProject.isPending || undefined}
+              onClick={() => { if (!importProject.isPending) importProject.mutate(); }}
+            >
+              <FolderInput className="h-4 w-4" aria-hidden="true" />
+              {tr("dashboard.importProject")}
+            </Button>
+            {importFailure && (
+              <ErrorNotice>
+                <p className="font-medium">{tr("dashboard.couldNotImportProject")}</p>
+                <p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">
+                  {importFailure}
+                </p>
+              </ErrorNotice>
+            )}
+          </div>
+        )}
       </PageContainer>
       <Dialog
         open={pendingDelete !== null}
@@ -217,26 +221,21 @@ export default function Dashboard() {
             >
               {/* Dismissing the dialog does not stop a delete that is already
                   running, so the label must not promise that it does. */}
-              {tr(deleteProject.isPending ? "common.close" : "common.cancel")}
+              {tr("common.cancel")}
             </Button>
             <Button
               variant="destructive"
-              disabled={deleteProject.isPending || !pendingDelete}
+              disabled={!pendingDelete}
+              aria-busy={deleteProject.isPending || undefined}
               onClick={() => {
                 if (pendingDelete && !deleteProject.isPending) {
                   deleteProject.mutate(pendingDelete);
                 }
               }}
             >
-              {/* The fixed icon slot keeps the button's width while pending, so
-                  the footer buttons do not shift when the spinner appears. */}
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-                {deleteProject.isPending ? (
-                  <LoaderCircle className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4" />
-                )}
-              </span>
+              {/* The icon stays put while the deletion runs; swapping in a spinner
+                  replaced the glyph and rotated it, which the footer never does. */}
+              <Trash2 className="h-4 w-4 shrink-0" />
               {tr("dashboard.deleteAction")}
             </Button>
           </>

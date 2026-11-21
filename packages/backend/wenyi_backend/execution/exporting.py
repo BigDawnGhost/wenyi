@@ -36,17 +36,18 @@ def render_export(
     services: OperationServices,
     storage_for: Callable[[str], BackendStorage],
     run_id: str | None = None,
+    parsed_source_sha256: str | None = None,
     bilingual: bool = False,
     order: Literal["target_first", "source_first"] = "target_first",
     about_page: bool = True,
     preserve_source_style: bool = False,
-    punctuation_normalize: bool | None = None,
 ) -> str:
     """Return a complete private output; only the coordinator may publish it."""
     from wenyi_core.assemble.policy import export_plan
     from wenyi_core.assemble.writer import assemble
+    from wenyi_core.pipeline.prepare.input_preparation import load_parsed_document
     from wenyi_core.storage.language_policies import persist_plan
-    from wenyi_core.storage.run_store import source_sha256
+    from wenyi_core.storage.run_store import ExportSnapshotStore, source_sha256
 
     from ..export_plan import export_filename
 
@@ -60,14 +61,22 @@ def render_export(
         out_dir = Path(services.exports_dir(pid)) / str(export_id)
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = str(out_dir / export_filename(project, config.target_lang, fmt, bilingual))
-        snapshot = storage.create_export_snapshot(actual_sha256=source_digest)
+        if parsed_source_sha256 is None:
+            snapshot = storage.create_export_snapshot(actual_sha256=source_digest)
+        else:
+            if source_digest != parsed_source_sha256:
+                raise ValueError("Source changed after export was requested")
+            document = load_parsed_document(storage, source, config, actual_sha256=source_digest)
+            if document is None:
+                raise ValueError("The matching parsed source is no longer available; parse again")
+            snapshot = ExportSnapshotStore.from_parsed_document(
+                storage.run_dir, document, source_digest
+            )
+            del document
         with storage.assemble_lock():
             plan = export_plan(
                 snapshot,
                 fmt,
-                punctuation_normalize=config.output.punctuation_normalize
-                if punctuation_normalize is None
-                else punctuation_normalize,
                 bilingual=bilingual,
                 order=order,
                 preserve_source_style=preserve_source_style,
@@ -83,9 +92,6 @@ def render_export(
                 order=order,
                 about_page=about_page,
                 preserve_source_style=preserve_source_style,
-                punctuation_normalize=config.output.punctuation_normalize
-                if punctuation_normalize is None
-                else punctuation_normalize,
                 babeldoc_timeout=config.pipeline.babeldoc_timeout,
                 language_policy=plan,
             )

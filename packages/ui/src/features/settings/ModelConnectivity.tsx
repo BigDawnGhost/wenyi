@@ -84,10 +84,11 @@ export function ModelConnectivity({
             type="button"
             variant="outline"
             size="sm"
-            disabled={!saved || disabled || ping.isPending}
-            onClick={() => ping.mutate()}
+            disabled={!saved || disabled}
+            aria-busy={ping.isPending || undefined}
+            onClick={() => { if (!ping.isPending) ping.mutate(); }}
           >
-            {ping.isPending ? t("connectivity.testing") : t("connectivity.test")}
+            {t("connectivity.test")}
           </Button>
         </div>
       </div>
@@ -117,7 +118,7 @@ export function ModelConnectivity({
                 </thead>
                 <tbody>
                   {results.map((result) => (
-                    <tr key={result.profile} className="border-t border-black/[0.05] align-top dark:border-white/[0.07]">
+                    <tr key={result.profile} className="border-t border-subtle align-top">
                       <td className="py-2 pr-3 [overflow-wrap:anywhere]">
                         <div className="font-medium">{result.profile}</div>
                         <div className="text-xs text-muted-foreground">{result.model}</div>

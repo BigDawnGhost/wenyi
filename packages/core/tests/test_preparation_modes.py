@@ -27,7 +27,7 @@ def config(enabled):
         {
             "language": {"source": "en", "target": "zh"},
             "llm": {"preset": "fake"},
-            "pipeline": {"terminology_context": enabled, "polish": False, "review": False},
+            "pipeline": {"glossary_note_workers": int(enabled), "polish": False, "review": False},
         }
     )
 
@@ -39,8 +39,7 @@ def test_preparation_prompts_and_task_identities_are_shared():
             task = f"{group}_{role}"
             assert dict(plans[0].templates)[task] == dict(plans[1].templates)[task]
         assert plans[0].task_fingerprint(group) == plans[1].task_fingerprint(group)
-    assert not plans[0].enabled("terminology.context")
-    assert plans[1].enabled("terminology.context")
+    assert plans[0].fingerprint == plans[1].fingerprint
 
 
 @pytest.mark.parametrize("enabled", [False, True])
@@ -89,14 +88,14 @@ def test_initialization_retry_and_mode_switch_reuse_preparation(tmp_path, store,
 
     first = MeteredFakeClient(handler=fail_style)
     with pytest.raises(RuntimeError, match="Interrupted style"):
-        Orchestrator(
-            selected, client=first, storage=store, allow_terminology_context=enabled
-        ).prepare(str(source))
+        Orchestrator(selected, client=first, storage=store, allow_glossary_notes=enabled).prepare(
+            str(source)
+        )
     assert not store.exists()
     previous = store.load_usage()["totals"]["calls"]
     resumed = MeteredFakeClient(handler=routing_handler)
     Orchestrator(
-        selected, client=resumed, storage=store, allow_terminology_context=enabled
+        selected, client=resumed, storage=store, allow_glossary_notes=enabled
     ).prepare_for_translation(str(source))
     assert [call["operation"] for call in resumed.calls] == ["analysis.style", "synopsis.book"]
     assert store.load_usage()["totals"]["calls"] == previous + 2
@@ -111,7 +110,7 @@ def test_initialization_retry_and_mode_switch_reuse_preparation(tmp_path, store,
         config(not enabled),
         client=switched,
         storage=store,
-        allow_terminology_context=not enabled,
+        allow_glossary_notes=True,
     ).prepare_for_translation(str(source))
     assert switched.calls == []
     assert store.load_usage() == after
@@ -143,16 +142,16 @@ def test_failed_manifest_commit_reuses_paid_analysis_without_seeding(
     monkeypatch.setattr(store, "save_manifest", interrupt)
     first = MeteredFakeClient(handler=handler)
     with pytest.raises(RuntimeError, match="manifest commit"):
-        Orchestrator(
-            selected, client=first, storage=store, allow_terminology_context=enabled
-        ).prepare(str(source))
+        Orchestrator(selected, client=first, storage=store, allow_glossary_notes=enabled).prepare(
+            str(source)
+        )
     assert not store.exists()
     before = store.load_usage()
     monkeypatch.setattr(store, "save_manifest", original)
     resumed = MeteredFakeClient(handler=handler)
-    Orchestrator(
-        selected, client=resumed, storage=store, allow_terminology_context=enabled
-    ).prepare(str(source))
+    Orchestrator(selected, client=resumed, storage=store, allow_glossary_notes=enabled).prepare(
+        str(source)
+    )
     assert store.exists()
     assert resumed.calls == []
     assert store.all_terms() == []

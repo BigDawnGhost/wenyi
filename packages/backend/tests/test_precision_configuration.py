@@ -12,13 +12,19 @@ def test_global_configuration_does_not_expose_project_precision_choices():
     config = Config.from_dict({"llm": {"preset": "fake"}})
     response = settings.response(GlobalSettings(config))
     assert "translation_mode" not in response["effective"]["pipeline"]
+    assert "glossary_note_workers" not in response["effective"]["pipeline"]
     assert "precision_concurrency" not in response["effective"]["pipeline"]
     assert "translation_mode" not in response["yaml"]
     assert "precision_concurrency" not in response["yaml"]
 
 
 @pytest.mark.parametrize(
-    "field,value", [("translation_mode", "three_draft_synthesis"), ("prompt_genre", "academic")]
+    "field,value",
+    [
+        ("translation_mode", "three_draft_synthesis"),
+        ("prompt_genre", "academic"),
+        ("glossary_note_workers", 4),
+    ],
 )
 def test_global_yaml_rejects_project_precision_choices(field, value):
     with pytest.raises(ValueError, match="project"):

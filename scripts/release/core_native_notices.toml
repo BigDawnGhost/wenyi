@@ -1,0 +1,609 @@
+# Review all added/changed crate archives and incorporated code/data before
+# updating this inventory. The digest covers the sorted "name version SHA256\n"
+# records in Cargo.lock (excluding the local crate); Cargo.lock pins each .crate.
+# Group files and per-crate extras are required, never guessed. Select either a
+# full archive path, path#Lfirst-Llast (inclusive), or @supplement. Supplemental
+# text is kept here with its upstream provenance for offline regeneration.
+review_sha256 = "a6197cdbc05ebdb0fd237b7e0d0f2f5b7db7bb20c15b9dd3ee8013bda4d54369"
+
+[group.dual]
+files = ["LICENSE-APACHE", "LICENSE-MIT"]
+crates = [
+    "aes 0.9.4", "anyhow 1.0.104", "arbitrary 1.5.0", "base64 0.22.1", "bitflags 2.13.2",
+    "block-buffer 0.10.4", "block-buffer 0.12.1", "block-padding 0.4.2", "cbc 0.2.1",
+    "cfg-if 1.0.5", "chacha20 0.10.2", "cipher 0.5.2", "const-oid 0.10.3",
+    "core_detect 1.0.0", "cpubits 0.1.1", "cpufeatures 0.2.17", "cpufeatures 0.3.1",
+    "crc32fast 1.5.5", "crossbeam-deque 0.8.8", "crossbeam-epoch 0.9.21", "crossbeam-utils 0.8.23",
+    "crypto-common 0.1.7", "crypto-common 0.2.2", "derive_arbitrary 1.5.0", "digest 0.10.7",
+    "digest 0.11.3", "ecb 0.2.1", "either 1.19.0", "equivalent 1.0.3", "fastrand 2.5.0",
+    "flate2 1.1.11", "getrandom 0.4.3", "hashbrown 0.17.1", "heck 0.5.0", "html5ever 0.39.0",
+    "hybrid-array 0.4.15", "indexmap 2.14.2", "inout 0.2.6", "itoa 1.0.19", "libc 0.2.191",
+    "lock_api 0.4.14", "log 0.4.35", "markup5ever 0.39.0", "md-5 0.11.0", "once_cell 1.21.4",
+    "parking_lot 0.12.5", "parking_lot_core 0.9.12", "percent-encoding 2.3.2",
+    "portable-atomic 1.15.0", "proc-macro2 1.0.107", "pyo3 0.29.2", "pyo3-build-config 0.29.2",
+    "pyo3-ffi 0.29.2", "pyo3-macros 0.29.2", "pyo3-macros-backend 0.29.2", "quote 1.0.47",
+    "rangemap 1.8.0", "rayon 1.12.0", "rayon-core 1.13.0", "regex 1.13.2", "regex-automata 0.4.19",
+    "regex-syntax 0.8.12", "roxmltree 0.21.2", "rustversion 1.0.23", "scopeguard 1.2.0",
+    "serde 1.0.229", "serde_core 1.0.229", "serde_derive 1.0.229", "serde_json 1.0.154",
+    "sha2 0.10.9", "sha2 0.11.1", "smallvec 1.16.6", "string_cache 0.9.0",
+    "string_cache_codegen 0.6.1", "stringprep 0.1.5", "syn 2.0.119", "syn 3.0.10", "tendril 0.5.1",
+    "thiserror 2.0.21", "thiserror-impl 2.0.21", "typenum 1.20.1", "unicode-ident 1.0.27",
+    "unicode-normalization 0.1.26", "unicode-properties 0.1.5", "version_check 0.9.5",
+    "web_atoms 0.2.6", "weezl 0.2.1", "chardetng 1.0.0", "encoding_rs 0.8.44",
+    "multiversion_no_op 1.0.0", "rand 0.10.4", "rand_core 0.10.1", "unicode-bidi 0.3.18",
+    "siphasher 1.0.4", "adler2 2.0.1",
+]
+
+[group.license]
+files = ["LICENSE"]
+crates = [
+    "alloc-no-stdlib 2.0.4", "brotli-decompressor 5.0.3", "foldhash 0.2.0", "generic-array 0.14.7",
+    "lopdf 0.47.0", "nom 8.0.0", "phf 0.13.1", "phf_codegen 0.13.1", "phf_generator 0.13.1",
+    "phf_shared 0.13.1", "precomputed-hash 0.1.1", "redox_syscall 0.5.18",
+    "target-lexicon 0.13.6", "zip 2.6.1", "zlib-rs 0.6.8",
+]
+
+[group.unlicense]
+files = ["COPYING", "LICENSE-MIT", "UNLICENSE"]
+crates = ["aho-corasick 1.1.5", "memchr 2.8.3"]
+
+[group.triple]
+files = ["LICENSE-APACHE.md", "LICENSE-MIT.md", "LICENSE-ZLIB.md"]
+crates = ["miniz_oxide 0.9.1", "tinyvec 1.13.3"]
+
+[group.individual]
+files = []
+crates = [
+    "alloc-stdlib 0.2.4", "new_debug_unreachable 1.0.6", "quick-xml 0.41.0", "r-efi 6.0.0",
+    "simd-adler32 0.3.10", "simdutf8 0.1.5", "windows-link 0.2.1", "zmij 1.0.23",
+]
+
+[extra]
+"adler2 2.0.1" = ["LICENSE-0BSD"]
+"aes 0.9.4" = ["src/backends/fixslice/mod.rs#L1-L14"]
+"alloc-stdlib 0.2.4" = ["@dropbox-allocator"]
+"arbitrary 1.5.0" = ["src/lib.rs#L1-L7"]
+"bitflags 2.13.2" = ["src/lib.rs#L1-L9"]
+"brotli-decompressor 5.0.3" = ["src/context.rs#L5-L8", "@google-brotli"]
+"chacha20 0.10.2" = ["src/backends/neon.rs#L3-L5"]
+"chardetng 1.0.0" = ["COPYRIGHT", "src/data.rs#L1-L2"]
+"core_detect 1.0.0" = ["README.md#L22-L24"]
+"cpubits 0.1.1" = ["src/lib.rs#L318-L318"]
+"encoding_rs 0.8.44" = ["COPYRIGHT", "LICENSE-WHATWG"]
+"fastrand 2.5.0" = ["@wyrand"]
+"flate2 1.1.11" = ["src/bufreader.rs#L1-L9"]
+"getrandom 0.4.3" = ["src/backends/rdrand.rs#L52-L54"]
+"hashbrown 0.17.1" = ["@abseil-swisstable"]
+"html5ever 0.39.0" = ["src/encoding.rs#L1-L8", "@html5ever-copyright", "@whatwg-html"]
+"libc 0.2.191" = ["src/unix/linux_like/mod.rs#L1727-L1727"]
+"lock_api 0.4.14" = ["src/lib.rs#L1-L7", "src/rwlock.rs#L1-L7"]
+"log 0.4.35" = ["src/lib.rs#L1-L9", "src/macros.rs#L1-L9"]
+"lopdf 0.47.0" = ["@adobe-glyph-list"]
+"markup5ever 0.39.0" = ["@html5ever-copyright"]
+"miniz_oxide 0.9.1" = ["LICENSE"]
+"multiversion_no_op 1.0.0" = ["COPYRIGHT"]
+"new_debug_unreachable 1.0.6" = ["LICENSE-MIT"]
+"parking_lot 0.12.5" = ["src/condvar.rs#L1-L7"]
+"parking_lot_core 0.9.12" = ["src/lib.rs#L1-L7"]
+"percent-encoding 2.3.2" = ["src/ascii_set.rs#L1-L7"]
+"pyo3 0.29.2" = [
+    "pyo3-runtime/LICENSE-APACHE", "pyo3-runtime/LICENSE-MIT", "src/buffer.rs#L4-L20",
+    "src/types/mappingproxy.rs#L1-L1", "src/impl_/pymethods.rs#L450-L450",
+]
+"pyo3-ffi 0.29.2" = ["@pythoncapi-compat", "@cpython-psf"]
+"quick-xml 0.41.0" = ["LICENSE-MIT.md", "@whatwg-html"]
+"r-efi 6.0.0" = ["AUTHORS"]
+"rand 0.10.4" = ["COPYRIGHT"]
+"rand_core 0.10.1" = ["COPYRIGHT"]
+"regex-syntax 0.8.12" = ["src/unicode_tables/LICENSE-UNICODE"]
+"serde_json 1.0.154" = ["src/lexical/mod.rs#L1-L9"]
+"sha2 0.10.9" = ["@mbed-tls"]
+"sha2 0.11.1" = ["@mbed-tls"]
+"simd-adler32 0.3.10" = ["LICENSE.md", "@chromium-zlib-notice", "@chromium-bsd"]
+"simdutf8 0.1.5" = ["LICENSE-Apache", "LICENSE-MIT", "README.md#L153-L166", "@simdjson"]
+"siphasher 1.0.4" = ["COPYING", "src/sip.rs#L1-L9"]
+"string_cache 0.9.0" = ["src/atom.rs#L1-L8"]
+"string_cache_codegen 0.6.1" = ["lib.rs#L1-L8"]
+"stringprep 0.1.5" = ["@rfc-3454"]
+"typenum 1.20.1" = ["LICENSE"]
+"unicode-bidi 0.3.18" = ["AUTHORS", "COPYRIGHT", "src/utf16.rs#L1-L9", "@unicode-16", "@unicode-v3"]
+"unicode-ident 1.0.27" = ["LICENSE-UNICODE"]
+"unicode-normalization 0.1.26" = [
+    "COPYRIGHT", "LICENSE-UNICODE", "src/tables.rs#L1-L9", "src/decompose.rs#L1-L9",
+    "src/lookups.rs#L1-L9",
+]
+"unicode-properties 0.1.5" = ["COPYRIGHT", "LICENSE-UNICODE", "src/lib.rs#L1-L9"]
+"web_atoms 0.2.6" = ["@html5ever-copyright", "@whatwg-html"]
+"windows-link 0.2.1" = ["license-apache-2.0", "license-mit"]
+"zlib-rs 0.6.8" = ["@zlib", "@vector-class-library", "@tokio", "src/adler32/wasm.rs#L1-L1"]
+"zmij 1.0.23" = ["LICENSE-MIT", "@zmij-cpp"]
+
+[note]
+"brotli-decompressor 5.0.3" = "The crate's `LICENSE` contains Dropbox's BSD-3-Clause text; the Rust port also carries Google's MIT attribution in `src/context.rs`."
+"either 1.19.0" = "The upstream MIT text gives a year but leaves the holder unnamed; it is reproduced as shipped."
+"equivalent 1.0.3" = "The upstream MIT text gives years but leaves the holder unnamed; it is reproduced as shipped."
+"getrandom 0.4.3" = "The source credits Linux's RDRAND self-test in the optional `rdrand` backend; the published wheel targets use the default operating-system backends, not this opt-in backend."
+"hashbrown 0.17.1" = "This crate is a Rust port of Google's SwissTable. The Abseil attribution is reproduced with the Apache-2.0 terms in `LICENSE-APACHE`."
+"indexmap 2.14.2" = "The upstream MIT text gives years but leaves the holder unnamed; it is reproduced as shipped."
+"libc 0.2.191" = "The crate credits a [Linux Rust source file marked GPL-2.0](https://github.com/torvalds/linux/blob/8a696a29c6905594e4abf78eaafcb62165ac61f1/rust/kernel/ioctl.rs) for its ioctl-number helpers. No calls to these helpers were found in this extension or its locked dependents. This is an upstream provenance flag, not a change to the crate's declared license."
+"lopdf 0.47.0" = "The upstream README mentions an exception for the Montserrat font; the locked crate archive does not contain the font. The glyph-name data is separately credited to Adobe."
+"pyo3 0.29.2" = "PyO3 credits the Cython traversal code in `src/impl_/pymethods.rs`; its [Apache-2.0 terms](https://github.com/cython/cython/blob/7acfb375fb54a033f021b0982a3cd40c34fb22ac/LICENSE.txt) are the same terms reproduced in `LICENSE-APACHE`."
+"pyo3-ffi 0.29.2" = "PyO3 ports a CPython exception helper to Rust (`src/pyerrors.rs`) and adapts `pythoncapi-compat` for compatibility shims (`src/compat/mod.rs`). This attribution is for the ported code, not the separately installed Python runtime."
+"r-efi 6.0.0" = "This target-specific crate offers three alternatives; the MIT option is used for this notice. The upstream `AUTHORS` file contains the full MIT terms and copyright."
+"sha2 0.10.9" = "The AArch64 backends credit Mbed TLS. For those adaptations see the Mbed TLS notice and the Apache-2.0 terms in `LICENSE-APACHE`."
+"sha2 0.11.1" = "The AArch64 backends credit Mbed TLS. For those adaptations see the Mbed TLS notice and the Apache-2.0 terms in `LICENSE-APACHE`."
+"simd-adler32 0.3.10" = "The AArch64 NEON implementation adapts Chromium's zlib code and retains its attribution and BSD-style license here."
+"simdutf8 0.1.5" = "Upstream credits the Rust simd-json port and C++ simdjson. For the Apache-2.0 terms see `LICENSE-Apache`."
+"zlib-rs 0.6.8" = "This is a Rust port/adaptation of zlib; it also credits the Vector Class Library, Tokio and (for WebAssembly) simd-adler32. See the crate's license, the third-party materials, `simd-adler32`'s `LICENSE.md`, and the Apache-2.0 terms reproduced above for the Vector Class Library."
+
+[supplement.dropbox-allocator]
+source = "https://github.com/dropbox/rust-alloc-no-stdlib/blob/ae42d22078b98549e987d2f03d12df7b984fde47/LICENSE"
+text = '''
+Copyright (c) 2016 Dropbox, Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+'''
+
+[supplement.google-brotli]
+source = "https://github.com/google/brotli/blob/v1.1.0/LICENSE"
+text = '''
+Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+'''
+
+[supplement.wyrand]
+source = "https://github.com/wangyi-fudan/wyhash/blob/wyhash_final4/LICENSE"
+text = '''
+This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or
+distribute this software, either in source code form or as a compiled
+binary, for any purpose, commercial or non-commercial, and by any
+means.
+
+In jurisdictions that recognize copyright laws, the author or authors
+of this software dedicate any and all copyright interest in the
+software to the public domain. We make this dedication for the benefit
+of the public at large and to the detriment of our heirs and
+successors. We intend this dedication to be an overt act of
+relinquishment in perpetuity of all present and future rights to this
+software under copyright law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+
+For more information, please refer to <http://unlicense.org/>
+'''
+
+[supplement.abseil-swisstable]
+source = "https://github.com/abseil/abseil-cpp/blob/20240116.0/absl/container/internal/raw_hash_set.h#L1-L13"
+text = '''
+// Copyright 2018 The Abseil Authors.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      https://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+'''
+
+[supplement.html5ever-copyright]
+source = "https://github.com/servo/html5ever/blob/c1eb09ddba00dd0e7e494c6b7cc068286e658afb/COPYRIGHT"
+text = '''
+This project is Copyright 2014-2017 , The html5ever Project Developers (given in
+the file AUTHORS).
+
+Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+http://www.apache.org/licenses/LICENSE-2.0> or the MIT license <LICENSE-MIT or
+http://opensource.org/licenses/MIT>, at your option. All files in the project
+carrying such notice may not be copied, modified, or distributed except
+according to those terms.
+'''
+
+[supplement.adobe-glyph-list]
+source = "https://github.com/adobe-type-tools/agl-aglfn/blob/0276763a3cdf204a1badc283d90f5bc7ac13130d/glyphlist.txt#L1-L33"
+text = '''
+Copyright 2002-2019 Adobe (http://www.adobe.com/).
+
+Redistribution and use in source and binary forms, with or
+without modification, are permitted provided that the
+following conditions are met:
+
+Redistributions of source code must retain the above
+copyright notice, this list of conditions and the following
+disclaimer.
+
+Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following
+disclaimer in the documentation and/or other materials
+provided with the distribution.
+
+Neither the name of Adobe nor the names of its contributors
+may be used to endorse or promote products derived from this
+software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND
+CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
+MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
+OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+'''
+
+[supplement.pythoncapi-compat]
+source = "https://api.github.com/repos/python/pythoncapi-compat/git/blobs/59a39fb411050556ec1b321a42e870417134671a"
+text = '''
+BSD Zero Clause License
+
+Copyright Contributors to the pythoncapi_compat project.
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY
+AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
+LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR
+OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THIS SOFTWARE.
+'''
+
+[supplement.cpython-psf]
+source = "https://github.com/python/cpython/blob/v3.10.0/LICENSE#L73-L120"
+text = '''
+PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2
+--------------------------------------------
+
+1. This LICENSE AGREEMENT is between the Python Software Foundation
+("PSF"), and the Individual or Organization ("Licensee") accessing and
+otherwise using this software ("Python") in source or binary form and
+its associated documentation.
+
+2. Subject to the terms and conditions of this License Agreement, PSF hereby
+grants Licensee a nonexclusive, royalty-free, world-wide license to reproduce,
+analyze, test, perform and/or display publicly, prepare derivative works,
+distribute, and otherwise use Python alone or in any derivative version,
+provided, however, that PSF's License Agreement and PSF's notice of copyright,
+i.e., "Copyright (c) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2010,
+2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021 Python Software Foundation;
+All Rights Reserved" are retained in Python alone or in any derivative version
+prepared by Licensee.
+
+3. In the event Licensee prepares a derivative work that is based on
+or incorporates Python or any part thereof, and wants to make
+the derivative work available to others as provided herein, then
+Licensee hereby agrees to include in any such work a brief summary of
+the changes made to Python.
+
+4. PSF is making Python available to Licensee on an "AS IS"
+basis.  PSF MAKES NO REPRESENTATIONS OR WARRANTIES, EXPRESS OR
+IMPLIED.  BY WAY OF EXAMPLE, BUT NOT LIMITATION, PSF MAKES NO AND
+DISCLAIMS ANY REPRESENTATION OR WARRANTY OF MERCHANTABILITY OR FITNESS
+FOR ANY PARTICULAR PURPOSE OR THAT THE USE OF PYTHON WILL NOT
+INFRINGE ANY THIRD PARTY RIGHTS.
+
+5. PSF SHALL NOT BE LIABLE TO LICENSEE OR ANY OTHER USERS OF PYTHON
+FOR ANY INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES OR LOSS AS
+A RESULT OF MODIFYING, DISTRIBUTING, OR OTHERWISE USING PYTHON,
+OR ANY DERIVATIVE THEREOF, EVEN IF ADVISED OF THE POSSIBILITY THEREOF.
+
+6. This License Agreement will automatically terminate upon a material
+breach of its terms and conditions.
+
+7. Nothing in this License Agreement shall be deemed to create any
+relationship of agency, partnership, or joint venture between PSF and
+Licensee.  This License Agreement does not grant permission to use PSF
+trademarks or trade name in a trademark sense to endorse or promote
+products or services of Licensee, or any third party.
+
+8. By copying, installing or otherwise using Python, Licensee
+agrees to be bound by the terms and conditions of this License
+Agreement.
+'''
+
+[supplement.whatwg-html]
+source = "https://github.com/whatwg/html/blob/main/LICENSE"
+text = '''
+Copyright © WHATWG (Apple, Google, Mozilla, Microsoft).
+
+This work is licensed under a Creative Commons Attribution 4.0 International
+License. To the extent portions of it are incorporated into source code,
+such portions in the source code are licensed under the BSD 3-Clause License instead.
+
+BSD 3-Clause License
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+'''
+
+[supplement.mbed-tls]
+source = "https://github.com/Mbed-TLS/mbedtls/blob/mbedtls-3.6.0/library/sha256.c#L1-L6"
+text = '''
+Copyright The Mbed TLS Contributors
+SPDX-License-Identifier: Apache-2.0 OR GPL-2.0-or-later
+'''
+
+[supplement.chromium-zlib-notice]
+source = "https://github.com/chromium/chromium/blob/130.0.6723.69/third_party/zlib/adler32_simd.c#L1-L5"
+text = '''
+ * Copyright 2017 The Chromium Authors
+ * Use of this source code is governed by a BSD-style license that can be
+ * found in the Chromium source repository LICENSE file.
+'''
+
+[supplement.chromium-bsd]
+source = "https://github.com/chromium/chromium/blob/130.0.6723.69/LICENSE"
+text = '''
+// Copyright 2015 The Chromium Authors
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions are
+// met:
+//
+//    * Redistributions of source code must retain the above copyright
+// notice, this list of conditions and the following disclaimer.
+//    * Redistributions in binary form must reproduce the above
+// copyright notice, this list of conditions and the following disclaimer
+// in the documentation and/or other materials provided with the
+// distribution.
+//    * Neither the name of Google LLC nor the names of its
+// contributors may be used to endorse or promote products derived from
+// this software without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+'''
+
+[supplement.simdjson]
+source = "https://github.com/simdjson/simdjson/blob/v0.9.7/LICENSE#L189"
+text = '''
+Copyright 2018-2019 The simdjson authors
+'''
+
+[supplement.rfc-3454]
+source = "https://www.rfc-editor.org/rfc/rfc3454.html#page-91"
+text = '''
+Full Copyright Statement
+
+   Copyright (C) The Internet Society (2002).  All Rights Reserved.
+
+   This document and translations of it may be copied and furnished to
+   others, and derivative works that comment on or otherwise explain it
+   or assist in its implementation may be prepared, copied, published
+   and distributed, in whole or in part, without restriction of any
+   kind, provided that the above copyright notice and this paragraph are
+   included on all such copies and derivative works.  However, this
+   document itself may not be modified in any way, such as by removing
+   the copyright notice or references to the Internet Society or other
+   Internet organizations, except as needed for the purpose of
+   developing Internet standards in which case the procedures for
+   copyrights defined in the Internet Standards process must be
+   followed, or as required to translate it into languages other than
+   English.
+
+   The limited permissions granted above are perpetual and will not be
+   revoked by the Internet Society or its successors or assigns.
+
+   This document and the information contained herein is provided on an
+   "AS IS" basis and THE INTERNET SOCIETY AND THE INTERNET ENGINEERING
+   TASK FORCE DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED, INCLUDING
+   BUT NOT LIMITED TO ANY WARRANTY THAT THE USE OF THE INFORMATION
+   HEREIN WILL NOT INFRINGE ANY RIGHTS OR ANY IMPLIED WARRANTIES OF
+   MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+'''
+
+[supplement.unicode-16]
+source = "https://www.unicode.org/Public/16.0.0/ucd/ReadMe.txt"
+text = '''
+# Unicode Character Database
+# Date: 2024-08-25
+# © 2024 Unicode®, Inc.
+# Unicode and the Unicode Logo are registered trademarks of Unicode, Inc. in the U.S. and other countries.
+# For terms of use and license, see https://www.unicode.org/terms_of_use.html
+'''
+
+[supplement.unicode-v3]
+source = "https://www.unicode.org/license.txt"
+text = '''
+UNICODE LICENSE V3
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 1991-2026 Unicode, Inc.
+
+NOTICE TO USER: Carefully read the following legal agreement. BY
+DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of data files and any associated documentation (the "Data Files") or
+software and any associated documentation (the "Software") to deal in the
+Data Files or Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, and/or sell
+copies of the Data Files or Software, and to permit persons to whom the
+Data Files or Software are furnished to do so, provided that either (a)
+this copyright and permission notice appear with all copies of the Data
+Files or Software, or (b) this copyright and permission notice appear in
+associated Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+THIRD PARTY RIGHTS.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
+BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
+OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall
+not be used in advertising or otherwise to promote the sale, use or other
+dealings in these Data Files or Software without prior written
+authorization of the copyright holder.
+'''
+
+[supplement.zlib]
+source = "https://github.com/madler/zlib/blob/v1.3.1/LICENSE"
+text = '''
+Copyright notice:
+
+ (C) 1995-2022 Jean-loup Gailly and Mark Adler
+
+  This software is provided 'as-is', without any express or implied
+  warranty.  In no event will the authors be held liable for any damages
+  arising from the use of this software.
+
+  Permission is granted to anyone to use this software for any purpose,
+  including commercial applications, and to alter it and redistribute it
+  freely, subject to the following restrictions:
+
+  1. The origin of this software must not be misrepresented; you must not
+     claim that you wrote the original software. If you use this software
+     in a product, an acknowledgment in the product documentation would be
+     appreciated but is not required.
+  2. Altered source versions must be plainly marked as such, and must not be
+     misrepresented as being the original software.
+  3. This notice may not be removed or altered from any source distribution.
+
+  Jean-loup Gailly        Mark Adler
+  jloup@gzip.org          madler@alumni.caltech.edu
+'''
+
+[supplement.vector-class-library]
+source = "https://github.com/vectorclass/version2/blob/v2.02.00/vectori256.h#L31-L32"
+text = '''
+(c) Copyright 2012-2022 Agner Fog.
+Apache License version 2.0 or later.
+'''
+
+[supplement.tokio]
+source = "https://docs.rs/crate/tokio/1.53.2/source/LICENSE"
+text = '''
+MIT License
+
+Copyright (c) Tokio Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+'''
+
+[supplement.zmij-cpp]
+source = "https://github.com/vitaut/zmij/blob/b32688a1849d1b8f092c1740c61a6b05ea4679ae/LICENSE"
+text = '''
+MIT License
+
+Copyright (c) 2025 Victor Zverovich
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+'''

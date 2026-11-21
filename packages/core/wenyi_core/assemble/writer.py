@@ -10,7 +10,7 @@ from typing import Literal
 
 from ..i18n.policy.models import PolicyContext, PolicyPlan
 from ..i18n.policy.resolver import resolve_policy
-from .about import append_about_page
+from .about import AboutPage
 from .docx_writer import _assemble_docx
 from .epub_writer import (
     _assemble_epub,
@@ -28,6 +28,7 @@ from .writer_common import (
     _manifest_target_lang,
     default_output_format,
     output_backend,
+    supports_pdf_export,
 )
 
 __all__ = ["assemble"]
@@ -44,7 +45,6 @@ def assemble(
     preserve_source_style: bool = False,
     about_page: bool = True,
     babeldoc_timeout: float = 600.0,
-    punctuation_normalize: bool = False,
     language_policy: PolicyPlan | None = None,
 ) -> str:
     """Generate translated output, defaulting to PDF for BabelDOC state and EPUB otherwise.
@@ -55,8 +55,7 @@ def assemble(
     With bilingual=True, include source text in the requested order. PDF pairs matching pages
     left to right in that order. preserve_source_style reuses
     original styles instead of muted CSS in EPUB/HTML or plain source text in DOCX.
-    about_page appends the translation about page. punctuation_normalize changes only export
-    copies, never chapter target state.
+    about_page appends the translation about page.
     """
     if out_format is not None and out_format not in _OUT_EXT:
         supported = " / ".join(_OUT_EXT)
@@ -74,7 +73,6 @@ def assemble(
                 phase="export",
                 format=out_format,
                 backend=backend,
-                punctuation_normalize=punctuation_normalize,
                 source_identity=m.get("source_sha256", ""),
                 bilingual=bilingual,
                 order=order,
@@ -88,15 +86,16 @@ def assemble(
         or language_policy.context.backend != backend
     ):
         raise ValueError("Export language policy does not match the actual output format")
-    view: AssembleStore
-    if isinstance(store, ExportViewStore):
-        view = store
-    else:
-        view = ExportViewStore(
-            store, punctuation_normalize=punctuation_normalize, plan=language_policy
-        )
+    view = (
+        store
+        if isinstance(store, ExportViewStore)
+        else ExportViewStore(store, plan=language_policy)
+    )
     m = view.load_manifest()
-    view.prepare()
+    # EPUB and PDF writers project all chapters before opening output or making
+    # a bridge request. Prewarming their view would deep-copy the same chapters twice.
+    if out_format not in {"epub", "pdf"}:
+        view.prepare()
     target_lang = _manifest_target_lang(m)
     if out_format == "txt":
         out_path = out_path or _default_out(
@@ -147,36 +146,24 @@ def assemble(
         source_path, "epub", "", bilingual=bilingual, target_lang=target_lang
     )
     _ensure_parent_dir(out_path)
+    about = (
+        AboutPage(language_policy.export.language_tag, language_policy.export.about_locale)
+        if about_page
+        else None
+    )
     if m["fmt"] == "epub":
-        result = _assemble_epub(
-            view,
-            source_path,
-            out_path,
-            bilingual=bilingual,
-            order=order,
-            preserve_source_style=preserve_source_style,
-        )
-    elif m["fmt"] in {"html", "pdf"}:
-        result = _build_epub_from_html_templates(
-            view,
-            source_path,
-            out_path,
-            bilingual=bilingual,
-            order=order,
-            preserve_source_style=preserve_source_style,
-        )
+        writer = _assemble_epub
+    elif m["fmt"] == "html" or (m["fmt"] == "pdf" and not supports_pdf_export(m)):
+        writer = _build_epub_from_html_templates
     else:
-        # FB2/text: build a standard EPUB from chapter data.
-        result = _build_epub_from_chapters(
-            view,
-            source_path,
-            out_path,
-            bilingual=bilingual,
-            order=order,
-            preserve_source_style=preserve_source_style,
-        )
-    if about_page:
-        append_about_page(
-            result, language_policy.export.language_tag, locale=language_policy.export.about_locale
-        )
-    return result
+        # BabelDOC snapshots have paragraph IDs, not MinerU HTML templates or anchors.
+        writer = _build_epub_from_chapters
+    return writer(
+        view,
+        source_path,
+        out_path,
+        bilingual=bilingual,
+        order=order,
+        preserve_source_style=preserve_source_style,
+        about=about,
+    )

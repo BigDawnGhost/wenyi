@@ -98,12 +98,8 @@ def test_academic_polishing_targets_clarity_not_literary_rewriting():
         assert "without changing meaning" in text
 
 
-def test_academic_terminology_does_not_expand_experimental_person_only_discovery():
+def test_academic_glossary_extraction_includes_disciplinary_terms():
     extractor = compose(read_text("tasks/glossary_extractor_system.txt"), genre="academic")
-    discovery = compose(read_text("tasks/terminology_discover_system.txt"), genre="academic")
     assert (
         "discipline-specific concepts, theories, methods, measures and classifications" in extractor
     )
-    assert "Find only people and their source identities" in discovery
-    assert 'with type "person"' in discovery
-    assert "Do not propose places, organizations, technical terms" in discovery

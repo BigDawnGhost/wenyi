@@ -4,11 +4,13 @@ Web and Desktop share the workflow below, but keep separate projects and configu
 
 ## Create a project
 
-1. Choose **Create project**, give the book a name, and select source and target languages. The source language can be detected automatically. Selecting a file suggests its name when the project name is empty.
+1. Choose **Create project** at the top right of **My projects**, give the book a name, and select source and target languages. The source language can be detected automatically. Selecting a file suggests its name when the project name is empty.
 2. Drag in one nonempty EPUB, DOCX, FB2, TXT, Markdown, HTML, or PDF, or choose **Browse files**. For PDF, select the parser before upload: MinerU is the default; BabelDOC is the optional layout-preserving route. See [format support](../reference/formats.md) and [Desktop's BabelDOC plugin](desktop.md#optional-babeldoc-plugin).
 3. Choose **Translation style**: **Literary** is the default; **Academic** emphasizes arguments, conceptual distinctions, qualifications, and citations. The choice applies to preparation, translation, terminology, polishing, and Review.
-4. Decide whether to enable **Three drafts + synthesis** and **Prepare before translating**. Both switches are off by default.
+4. Choose **Three drafts + synthesis**, **Incremental glossary notes**, and **Prepare before translating** independently. All three switches are off by default.
 5. Click **Create project**. Desktop also lets you choose a [project folder](desktop.md#data-locations-and-backups).
+
+**Incremental glossary notes** saves source-backed facts after each translated batch. It works with either translation mode, adds model usage, and is fixed at project creation. Leaving it off keeps ordinary glossary extraction.
 
 With **Three drafts + synthesis** off, the project uses standard translation. With it on, Wenyi produces **three independent drafts from the same source and context, then one synthesis of all three**. It does not select a winning draft. This enables the required polishing step and costs more model usage; there is no separate draft-concurrency setting. Translation method and style are saved with the project and cannot be changed later.
 
@@ -65,7 +67,7 @@ Use **Glossary** to add or edit source terms, translations, aliases, notes, type
 
 Search covers the whole glossary, including aliases, readings, and notes. Type filters apply to the results. Selecting all affects only the current page; changing pages or filters clears the selection. During a queued/running task, **Term details** remains available for reading and copying, but adding, importing, editing, deleting, and resolving conflicts are disabled.
 
-Import **CSV or JSON**. CSV needs `source` and `target` headers. Import checks existing source terms across the complete glossary, not only the visible page or filter. Export CSV/JSON to reuse the glossary; type labels follow the interface language, while stored/exported built-in type IDs remain English.
+Import **CSV or JSON**. The file and the parsed glossary data must both fit within **5 MiB**; if either exceeds the limit, no terms are imported. CSV needs `source` and `target` headers. Import checks existing source terms across the complete glossary, not only the visible page or filter. Export CSV/JSON to reuse the glossary; type labels follow the interface language, while stored/exported built-in type IDs remain English.
 
 ### Anki export
 
@@ -99,7 +101,9 @@ Review may reuse a matching completed result or resume interrupted work. Inspect
 
 Choose a format and, where supported, monolingual or bilingual output. Export reads a consistent snapshot of **saved** project data, so it can run beside translation; unsaved drafts and changes made after that snapshot are not included.
 
-Configure **Export preferences** in **Settings → General** for global defaults, or in **Project settings** for a project override, then **Save configuration**. These preferences control punctuation normalization, bilingual order, the optional EPUB “About this translation” page, and preservation of source formatting in bilingual output (not used for PDF). The export page uses the project's effective saved preferences; it does not provide separate overrides for an individual export. Existing project overrides take precedence over global defaults.
+You can export as soon as source parsing finishes. Before translation preparation, the book contains the parsed original; exporting does not start translation or require a translation model. Once translation state exists, exports use its saved translations and fall back to the source for untranslated passages.
+
+Configure **Export preferences** in **Settings → General** for global defaults, or in **Project settings** for a project override, then **Save configuration**. These preferences control bilingual order, the optional EPUB “About this translation” page, and preservation of source formatting in bilingual output (not used for PDF). The export page uses the project's effective saved preferences; it does not provide separate overrides for an individual export. Existing project overrides take precedence over global defaults.
 
 EPUB, DOCX, HTML, TXT, and Markdown are available for ordinary book projects. **PDF export is only available for projects saved with the BabelDOC parser** and preserves their PDF layout through the bridge. Changing the current default parser does not turn an existing MinerU project into a BabelDOC project. See [format support](../reference/formats.md).
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -22,12 +23,18 @@ from ..glossary.store import (
 from ..i18n.policy.models import content_hash
 from ..llm.base import LLMClient
 from ..llm.json_parser import JsonParseError, parse_json_result
+from ..models.glossary import SOURCE_ONLY_TYPES
 from ..storage.protocol import Storage
 from . import prompts
 from .base import Agent
 
 _LOGGER = logging.getLogger(__name__)
 _HISTORY_VERSION = 1
+_POSSESSIVE_KIN = re.compile(
+    r"(?:my|your|his|her|its|our|their)\s+(?:(?:elder|older|younger|little|big)\s+)?"
+    r"(?:brothers?|sisters?|siblings?|uncles?|aunts?|cousins?|parents?|mothers?|fathers?|sons?|daughters?)",
+    re.IGNORECASE,
+)
 
 
 def _text(value: object, default: str = "") -> str:
@@ -104,12 +111,23 @@ class GlossaryExtractor(Agent):
             source=source_text,
             target=target_text,
         )
+
+        def local_reference(spelling: str) -> bool:
+            return self.src.split("-")[0] == "en" and bool(_POSSESSIVE_KIN.fullmatch(spelling))
+
         raw = self._ask_json(system, user, operation="glossary.extract", key="terms", default=[])
         terms: list[GlossaryTerm] = []
         for d in self.dict_items(raw, operation="glossary.extract", field="terms"):
             source = _text(d.get("source"))
             target = _text(d.get("target"))
             if not source or not target:
+                continue
+            term_type = _text(d.get("type"), TYPE_TERM)
+            if d.get("scope", "stable") != "stable" or (
+                term_type in SOURCE_ONLY_TYPES and d.get("scope") != "stable"
+            ):
+                continue
+            if local_reference(source):
                 continue
             raw_aliases = d.get("aliases")
             aliases = raw_aliases if isinstance(raw_aliases, list) else []
@@ -119,9 +137,11 @@ class GlossaryExtractor(Agent):
                     source=source,
                     target=target,
                     reading=_text(d.get("reading")) if self.src == "ja" else "",
-                    type=_text(d.get("type"), TYPE_TERM),
+                    type=term_type,
                     gender=gender,
-                    aliases=[alias for a in aliases if (alias := _text(a))],
+                    aliases=[
+                        alias for a in aliases if (alias := _text(a)) and not local_reference(alias)
+                    ],
                     note=_text(d.get("note")),
                 )
             )

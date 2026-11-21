@@ -100,25 +100,10 @@ OPERATIONS = register_operations(
         OperationSpec("glossary.extract", "Extract glossary candidates", "fast"),
         OperationSpec("glossary.align_history", "Align terms with earlier translations", "fast"),
         OperationSpec(
-            "terminology.discover",
-            "Discover source-grounded terminology",
-            "strong",
-            workflows=("prepare", "translate"),
-            flags=("terminology_context",),
-        ),
-        OperationSpec(
-            "terminology.evidence",
-            "Extract terminology knowledge from source evidence",
-            "strong",
-            workflows=("prepare", "translate"),
-            flags=("terminology_context",),
-        ),
-        OperationSpec(
-            "terminology.merge",
-            "Merge source-grounded terminology knowledge",
-            "strong",
-            workflows=("prepare", "translate"),
-            flags=("terminology_context",),
+            "glossary.note",
+            "Maintain an incremental glossary note",
+            "fast",
+            flags=("glossary_note_workers",),
         ),
         OperationSpec(
             "annotation.align",
@@ -133,6 +118,7 @@ OPERATIONS = register_operations(
             "cheap",
             workflows=("translate", "review"),
             review=True,
+            protocol_version=2,
         ),
         OperationSpec(
             "review.verify",
@@ -142,6 +128,7 @@ OPERATIONS = register_operations(
             flags=("review_agent_loop",),
             review=True,
             resumable_conversation=True,
+            protocol_version=3,
         ),
         OperationSpec(
             "review.arbitrate",
@@ -151,6 +138,7 @@ OPERATIONS = register_operations(
             flags=("review_agent_loop", "review_conflict_arbitration"),
             review=True,
             resumable_conversation=True,
+            protocol_version=3,
         ),
         OperationSpec(
             "review.fix",
@@ -169,6 +157,7 @@ OPERATIONS = register_operations(
             flags=("review_autofix",),
             review=True,
             resumable_conversation=True,
+            protocol_version=3,
         ),
         OperationSpec(
             "autofix.fix",

@@ -62,8 +62,8 @@ for (const locale of ["en", "zh-CN"] as const) {
           await expect(button).toBeEnabled();
           await expect(button).toHaveText("");
           await expect(button).toHaveAttribute("title", t(label));
-          await expect(button).toHaveCSS("width", "36px");
-          await expect(button).toHaveCSS("height", "36px");
+          await expect(button).toHaveCSS("width", "32px");
+          await expect(button).toHaveCSS("height", "32px");
           await expect(button).toHaveCSS("border-top-width", "1px");
           await expectTokenColor(button, "border-top-color", "border");
           await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
@@ -83,9 +83,9 @@ for (const locale of ["en", "zh-CN"] as const) {
           try {
             await button.press("Enter");
             await expect.poll(() => requests).toEqual([`/projects/${pid}/${command}`]);
-            await expect(button).toBeDisabled();
+            await expect(button).toBeEnabled();
             await expect(button).toHaveAttribute("aria-busy", "true");
-            await expect(button.locator("svg")).toHaveClass(/animate-spin/);
+            await expect(button.locator("svg")).not.toHaveClass(/animate-spin/);
             await page.keyboard.press("Enter");
             expect(requests).toHaveLength(1);
           } finally {
@@ -96,8 +96,11 @@ for (const locale of ["en", "zh-CN"] as const) {
         }
         status = "pausing";
         await page.goto(`/projects/${pid}`);
-        await expect(header.getByRole("button", { name: t("progress.pause"), exact: true }))
-          .toBeDisabled();
+        const pausing = header.getByRole("button", { name: t("progress.pause"), exact: true });
+        await expect(pausing).toHaveAttribute("aria-busy", "true");
+        requests.length = 0;
+        await pausing.press("Enter");
+        expect(requests).toEqual([]);
         status = "parsing";
         await page.goto(`/projects/${pid}`);
         await expect(page.getByRole("heading", { name: "尤利西斯", exact: true })).toBeVisible();

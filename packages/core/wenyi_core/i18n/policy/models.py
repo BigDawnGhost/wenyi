@@ -25,9 +25,7 @@ def used_rule_keys(templates: Iterable[tuple[str, str]]) -> set[str]:
 
 Point = Literal[
     "prompt.compose",
-    "evidence.prepare",
     "candidate.validate",
-    "export.text",
     "export.style",
     "export.metadata",
 ]
@@ -109,14 +107,12 @@ class PolicyContext:
     path: Literal["book"] = "book"
     format: str = ""
     backend: str = "native"
-    punctuation_normalize: bool = True
     source_identity: str = ""
     task_groups: tuple[str, ...] = ()
     bilingual: bool = False
     order: Literal["target_first", "source_first"] = "target_first"
     preserve_source_style: bool = False
     about_page: bool = True
-    terminology_context: bool = False
     genre: Genre = DEFAULT_GENRE
 
 
@@ -180,9 +176,11 @@ class PolicyPlan:
         }
 
     def task_fingerprint(self, prefix: str) -> str:
-        """Bind a derived artifact only to the templates and rules that produced it."""
+        """Bind a derived artifact to an exact template or a task family's templates."""
         templates = tuple(
-            (name, text) for name, text in self.templates if name.startswith(prefix + "_")
+            (name, text)
+            for name, text in self.templates
+            if name == prefix or name.startswith(prefix + "_")
         )
         used = used_rule_keys(templates)
         values = {key: value for key, value in self.prompt_values if key in used}
@@ -200,26 +198,6 @@ class PolicyPlan:
                     (op.id, op.implementation_version, op.contract_version, op.options)
                     for op in self.operations
                     if op.point == "prompt.compose"
-                    or op.point == "evidence.prepare"
-                    # Book preparation has the same inputs and semantics in both modes.
-                    and prefix not in {"analyzer", "chapter_digest", "book_synopsis"}
                 ],
             }
         )
-
-
-@dataclass(frozen=True)
-class ExportTextInput:
-    segment_ids: tuple[int, ...]
-    targets: tuple[str | None, ...]
-    continuations: tuple[bool, ...]
-    logical_ranges: tuple[tuple[int, int], ...]
-
-
-@dataclass(frozen=True)
-class ExportTextResult:
-    segment_ids: tuple[int, ...]
-    targets: tuple[str | None, ...]
-    continuations: tuple[bool, ...]
-    logical_ranges: tuple[tuple[int, int], ...]
-    logical_boundary_maps: tuple[tuple[int, ...], ...]

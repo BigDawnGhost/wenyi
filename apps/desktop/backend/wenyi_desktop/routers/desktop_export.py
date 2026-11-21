@@ -7,8 +7,8 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from wenyi_backend.context import current_context
-from wenyi_backend.errors import EXPORT_NOT_FOUND, SOURCE_NOT_READY, ApiError
-from wenyi_backend.export_plan import export_filename, resolve_export
+from wenyi_backend.errors import EXPORT_NOT_FOUND, ApiError
+from wenyi_backend.export_plan import export_filename, export_input, resolve_export
 from wenyi_backend.export_response import ExportResponse
 from wenyi_backend.routers.dependencies import effective_config, require_project
 from wenyi_backend.schemas import ExportRequest, GlossaryExportFormat
@@ -50,11 +50,9 @@ def plan_glossary(pid: str, format: GlossaryExportFormat = "json") -> NativeExpo
 def plan_export(pid: str, body: ExportRequest) -> NativeExportPlan:
     _backend()
     project = require_project(pid)
-    if not project.get("initialized"):
-        raise ApiError(SOURCE_NOT_READY, 409, "Prepare or translate the source before exporting")
     store = _backend().storage_for(pid, create=False)
     try:
-        fmt, options = resolve_export(project, store.load_manifest(), body)
+        fmt, options = resolve_export(project, export_input(project, store, effective_config), body)
     finally:
         store.close()
     filename = export_filename(

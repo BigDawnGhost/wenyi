@@ -235,7 +235,6 @@ def test_complete_source_survives_public_export_without_changing_state(
         out_format=out_format,
         bilingual=True,
         order=order,
-        punctuation_normalize=True,
         about_page=False,
     )
     if out_format == "epub":

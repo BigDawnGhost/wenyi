@@ -368,10 +368,11 @@ def test_export_render_uses_enqueued_config_snapshot(pg_storage, pg_pool, monkey
         {
             "language": {"source": "en", "target": "zh"},
             "llm": {"preset": "fake"},
-            "output": {"punctuation_normalize": False},
             "pipeline": {"babeldoc_timeout": 123},
         }
     )
+    snapshot = config_document(original_config)
+    snapshot["output"]["punctuation_normalize"] = True
     export_id = dal.create_export(pid, "txt", {})
     job_id = dal.create_job(
         pid,
@@ -379,10 +380,9 @@ def test_export_render_uses_enqueued_config_snapshot(pg_storage, pg_pool, monkey
         "snapshot-export",
         run_id="snapshot-export",
         params={"export_id": export_id},
-        config_snapshot=config_document(original_config),
+        config_snapshot=snapshot,
     )
     changed_config = config_document(original_config)
-    changed_config["output"]["punctuation_normalize"] = True
     changed_config["pipeline"]["babeldoc_timeout"] = 999
     dal.set_project_config(pid, changed_config)
     rendered = []
@@ -393,43 +393,15 @@ def test_export_render_uses_enqueued_config_snapshot(pg_storage, pg_pool, monkey
 
     monkeypatch.setattr(writer, "assemble", assemble)
     exporting.execute(
-        ExportRequest(pid, export_id, "snapshot-export", {"fmt": "txt"}),
+        ExportRequest(
+            pid, export_id, "snapshot-export", {"fmt": "txt", "punctuation_normalize": True}
+        ),
         bindings.export_dependencies(context),
     )
-    assert rendered[0]["punctuation_normalize"] is False
+    assert "punctuation_normalize" not in rendered[0]
     assert rendered[0]["babeldoc_timeout"] == 123
     assert must(dal.get_job(job_id))["status"] == "done"
     assert _export_row(pg_pool, export_id)[0] == "done"
-
-
-def test_cancelled_export_waits_for_render_thread_to_publish(monkeypatch):
-    import threading
-
-    started, release, finished = threading.Event(), threading.Event(), threading.Event()
-
-    def render(*_a, **_kw):
-        started.set()
-        assert release.wait(3)
-        finished.set()
-        return 1
-
-    monkeypatch.setattr(exporting, "execute", render)
-
-    async def run():
-        job = asyncio.create_task(
-            tasks.run_export({"backend": current_context()}, project_id="p", export_id=1)
-        )
-        assert await asyncio.to_thread(started.wait, 2)
-        job.cancel()
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        assert not job.done(), "Cancelled coroutine must retain its worker slot while render lives"
-        release.set()
-        with pytest.raises(asyncio.CancelledError):
-            await job
-        assert finished.is_set()
-
-    asyncio.run(run())
 
 
 def test_pause_monitor_cancels_waiting_model_without_progress_callback(worker_state, monkeypatch):

@@ -10,16 +10,29 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
+        // Inverted key: hover steps the face toward neutral gray so it reads the
+        // same as the surface states. That direction is lighter in the light
+        // theme and darker in the dark theme, which is what --primary-hover
+        // encodes per theme; keep both values opaque.
+        // active: returns to the resting face. Hover lightened it; holding the
+        // key down should read as the face settling back and sinking, not as
+        // staying lit while it depresses.
         default:
-          "bg-gradient-to-b from-primary to-primary/90 text-primary-foreground "
-          + "shadow-[0_1px_2px_rgba(24,26,32,0.20)] hover:shadow-[0_2px_6px_rgba(24,26,32,0.25)]",
+          "bg-primary text-primary-foreground hover:bg-primary-hover active:!bg-primary-pressed "
+          + "shadow-raised-invert hover:shadow-raised-invert-hover active:shadow-pressed-invert",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90 "
-          + "shadow-[0_1px_2px_rgba(24,26,32,0.15)]",
+          + "shadow-raised-invert hover:shadow-raised-invert-hover active:shadow-pressed-invert",
+        // Same physical key in both themes, described only by shadow: a top
+        // highlight plus soft shadows on both sides of the edge, because a
+        // highlight alone vanishes on white and the key fuses with the page.
+        // The face stays opaque; hover never re-alphaes it.
         outline:
-          "bg-card text-foreground shadow-e2 hover:bg-hover hover:text-foreground "
-          + "hover:shadow-e3",
-        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 shadow-none",
+          "bg-card text-foreground hover:bg-card-hover hover:text-foreground active:!bg-card-pressed "
+          + "shadow-raised hover:shadow-raised-hover active:shadow-pressed active:text-foreground",
+        secondary:
+          "bg-secondary text-secondary-foreground hover:bg-secondary-hover hover:text-secondary-foreground active:!bg-secondary-pressed "
+          + "shadow-raised hover:shadow-raised-hover active:shadow-pressed",
         ghost: "hover:bg-hover hover:text-foreground shadow-none",
         link: "text-primary underline-offset-4 hover:underline shadow-none",
       },
@@ -27,7 +40,7 @@ const buttonVariants = cva(
         default: "h-9 px-5 py-2",
         sm: "h-8 rounded-lg px-3.5 text-xs",
         lg: "h-10 rounded-lg px-8",
-        icon: "h-9 w-9",
+        icon: "h-8 w-8",
       },
     },
     defaultVariants: { variant: "default", size: "default" },
@@ -44,4 +57,5 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   )
 );
 Button.displayName = "Button";
+export type ButtonVariant = NonNullable<VariantProps<typeof buttonVariants>["variant"]>;
 export { buttonVariants };

@@ -94,7 +94,9 @@ Apply these query rules:
    change, never show a previous project's metadata, progress or editable state as
    the newly selected one. Keeping the shell is not permission to mix query identities.
 
-Progress subscriptions coalesce ordinary batch refreshes, but reconcile terminal
+Stage-only progress frames update the label directly on both hosts; saved batch
+frames refresh chapter counts and usage, not the project and workflow details.
+Subscriptions coalesce ordinary batch refreshes, but reconcile terminal
 state, errors and reconnects immediately. On the first connection, compare the
 authenticated snapshot with completed initial HTTP reads before requesting them
 again; a partial socket project must never replace a complete HTTP detail.
@@ -121,7 +123,9 @@ not positions, identify edits and deep links.
 The window endpoint accepts at most 256 paragraphs. Translation refresh submits
 known paragraph revisions and receives only changed targets and before-polish
 values, never source text. Apply a response only if its previous revision still
-matches the cached paragraph. Terminal events and Desktop foreground reconciliation
+matches the cached paragraph. When a prefetched block enters the viewport, check
+its revisions even on idle projects; scrolling inside that block needs no new read.
+Terminal events and Desktop foreground reconciliation
 refresh targets, not immutable source windows. Unsaved editor drafts remain separate.
 Review issues load only when expanded.
 
@@ -149,10 +153,8 @@ and primitives define the core vocabulary:
 | `sidebar` | Entire sidebar |
 | `sidebar.logo-row` | Brand/settings heading and collapse control |
 | `sidebar.strata` | Sidebar layers beneath the logo row; `#sidebar-navigation` |
-| `sidebar.action` | Primary action |
-| `sidebar.panels` | Global navigation |
 | `sidebar.region` | Scrollable project navigation |
-| `sidebar.footer` | Bottom navigation/action area |
+| `sidebar.footer` | Global navigation (Projects and Settings), or Back in settings |
 | `content` | Main route-content region |
 | `page.header` | Page title, subtitle and actions |
 | `page.container` | Page body |
@@ -189,6 +191,7 @@ shared [stylesheet](../../packages/ui/src/index.css#L15):
 | `runtime-placeholder` | Desktop runtime pending/closing gate |
 | `route-placeholder` | Quiet in-content route gate |
 | `disclosure-summary`, `disclosure-chevron` | Native disclosure styling |
+| `glass-bar` | Floating action bar glass: translucent tint plus backdrop blur |
 
 These are authoring conventions, not a claim that every dependency or older
 arbitrary utility is px-only. Keep shared theme tokens and reduced-motion behavior

@@ -36,7 +36,7 @@ Core 路径相对于 `packages/core/wenyi_core/`；应用与包路径相对于�
 | 全书审校 | `pipeline/review/review_workflow.py` 协调会话；`review_checkpoint.py`、`review_rounds.py`、`review_chunks.py` 和 `review_results.py` 分别处理恢复、决策、执行和结果。 |
 | 自动修复 | `pipeline/autofix/review_autofix.py` 协调独立发布服务；`autofix_candidates.py`、`autofix_plan.py` 和 `autofix_publish.py` 分离候选、可恢复索引与正式译文写回。 |
 | 审校 Agent | `agents/review_*.py` 负责模型交互；`review/` 提供共享证据、类型和运行产物，不依赖 pipeline 编排。 |
-| EPUB / HTML | `markup/` 负责共享的确定性锚点、注释、ruby 与段落标记处理；Reader 和 Writer 保留在 `ingest/` 与 `assemble/`。`assemble/epub_package.py` 使用本地 XML 序列化和 `zipfile` 打包新生成的 EPUB 3，不依赖 EbookLib。 |
+| EPUB / HTML | `markup/` 定义注释、ruby 与段落状态约定；`packages/core/rust/` 负责 EPUB 解析、模板回填和 EPUB 3 打包。Python 的 HTML 处理及其他格式适配仍在 `ingest/` 与 `assemble/`。 |
 | DOCX | `document_styles/docx.py` 负责纯样式策略；DOCX Reader 和 Writer 负责解析与文档生成。 |
 | 持久化 | 领域服务使用 `storage/protocol.py`；CLI 使用 `storage/file.py`，Desktop 为目录库中已登记项目库位置解析出的各项目目录注入 `storage/sqlite.py`，Web 注入 `apps/api/wenyi_api/storage_pg.py` 保存 PostgreSQL 状态。 |
 | 设置重建 | `config_rebuild.py` 按当前 Core schema 校验已保存字段；`packages/backend/wenyi_backend/config_rebuild.py` 应用全局／项目作用域，各平台拥有备份与替换。 |
@@ -112,22 +112,52 @@ claim、render、publish 和终态写入；渲染自身不发布文件。
 一致导出快照与用量只合并一次等约束适用于所有存储后端。
 检查点、语言策略和提示词资源的详细规则见[流程开发文档](pipeline.md)。
 
-### EPUB CPU worker
+### EPUB 原生引擎
 
-EPUB reader 和模板导出通过 `resource_pool.py` 按物理 XHTML 分配 CPU 工作：
-至少 12 个资源且 XHTML 解压后总大小至少 2 MiB 时，启用最多 6 个 spawn worker，
-并受可用 CPU 数量和亲和性限制。较小输入、daemon 进程和无法重新导入的交互入口
-使用同一套函数串行执行。这些内部阈值独立于 LLM 并发，适用于 CLI、Web 和 Desktop。
+crate 位于 `packages/core/rust/`：`src/lib.rs` 只负责 PyO3 接口，`src/epub/`
+存放引擎。`ingest.rs`、`extract.rs` 负责解析；`export.rs`、`generate.rs`、`html.rs`
+负责导出；容器、DOM、分词、链接和线程调度各有独立模块。
 
-每个父进程共用一个准入槽，避免多个 EPUB 操作叠加进程池；不同应用/worker 进程
-仍拥有独立预算。每个池最多保留每个 worker 两个在途资源，按源文顺序产出结果，
-退出前等待运行中的工作并取消剩余任务，再释放准入槽。worker 只接收显式数据，
-不传递 Storage、数据库连接、凭据或平台上下文。
+Core 内置的 PyO3 扩展读取 ZIP、OPF 和 NAV/NCX，构建 XHTML 树，提取段落与注释，
+再划分逻辑章节。XHTML 分词和容错 HTML 分词都在 Rust 中运行。返回的章节、锚点与
+注释状态沿用现有约定，供翻译和续跑使用。
 
-解析先标注资源，再按目标 XHTML 提取注释上下文，最后构建逻辑章节。
-双语导出先汇总全书原文链接目标，再开始回填，每个资源只接收它实际引用的链接映射。
-EPUB 语言和布局改写在资源任务内执行；ZIP 读写、包级协调与原子发布仍由父进程负责。
-冻结打包的 CLI/Desktop 入口在导入应用前先分流 multiprocessing worker。
+模板导出用原始资源校验已保存的锚点和原文，并在同一棵树上回填译文、注释和样式。
+从冻结快照回填原书时，写入器按章使用独立副本，导出视图不再缓存第二份。
+整章都没有译文时只跳过译文处理，仍校验原文；显式保存的空译文不视为未译。
+双语导出先分配全书的原文 ID，再改写跨文件链接，不需要序列化和重解析标注模板。
+写入时直接复制未修改成员的压缩数据，可选的关于页也在同一次写入中插入。
+EPUB 转 HTML 时，Rust 提取回填后的正文，仅从 ZIP 内查找并内嵌被引用的媒体；
+Python 负责通用 HTML 外壳。其他格式导出 EPUB 时，Python 将已渲染的章节和
+已解析的素材交给同一扩展打包。
+
+原生操作释放 Python GIL。每个进程只准入一个持有整本书解析树的操作；
+资源达到 12 个时，最多由 6 个线程处理，并按源顺序合并。状态快照、语言策略和
+原子替换仍由 Python 管理，原生 worker 不访问应用状态。
+
+同一扩展还包含 `text.rs`（纯文本和 Markdown 的章节、段落与导出格式）和
+`fb2.rs`（FictionBook XML 与资源引用）。Python 适配器保留严格的旧编码判定。
+
+`docx/` 负责导入和重建 WordprocessingML，包括文件包部件、段落和文本样式、
+表格合并与列表编号。Python 应用导出语言策略，按章读取快照；Rust 计算样式范围、
+合并续段并排列双语段落。`python-docx` 仅用于独立测试样例，不是运行时依赖。
+
+独立 HTML 如有显式的规范文档外壳，且正文只有纯文本段落和标题，`html/ingest.rs`
+一次解析就能生成章节、锚点和模板。其余输入保留容错解析，并使用相同的存档标识。
+`html.rs` 划分正文区域，规范化注释偏移，处理正文和属性的回填、
+规范文档外壳及本地媒体引用。规范 HTML 支持两种双语顺序和位置已验证的简单注释。
+复杂链接改写、嵌套或过期注释位置、非规范输入仍由 Python 兼容处理。
+MinerU 共用该模块读取普通结果 ZIP、拼接 HTML 分块并提取符合条件的缓存正文。
+大 PDF 由 `pdf/` 在私有目录内切页，遇不支持的页面特性时改由 pypdf 复制页面。
+Python 负责远程请求、缓存策略和临时文件清理。
+
+PDF 版面抽取与回填仍由独立的 BabelDOC bridge 执行。Core 原生检测扫描件并读取书签，
+遇到无法判定的文字、命名目的地或不常见的书签结构时复用一个 pypdf reader。
+Core 从同一批存档段落生成译文、
+行范围和注释位置，将 HTTP 响应流式写入临时文件，在 `pdf/` 拼版并重映射链接后再原子发布。
+加密 PDF、含非链接
+注释等原生引擎未覆盖的输入回退到 Python 拼版。支持的页面内容直接写入双语页的内容流，
+普通页面文字可以用 pypdf 的 layout 模式提取。
 
 ## 边界验证
 

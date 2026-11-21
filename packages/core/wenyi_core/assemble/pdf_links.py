@@ -84,12 +84,14 @@ def merge_page_with_links(
     destinations: dict[int, tuple[PageObject, Transformation, PageObject]],
 ) -> None:
     """Keep transformed annotations without cloning obsolete destination page trees."""
-    original_annotations = page.get("/Annots") or []
+    original_annotations = page.annotations
     prepared = copy(page)
     prepared.pop("/Annots", None)
     spread.merge_transformed_page(prepared, transform)
     # Merge content separately: pypdf can silently fall back to untransformed
     # annotations when a sanitized direct dictionary lacks an indirect reference.
+    if original_annotations is None or isinstance(original_annotations, NullObject):
+        return
     for reference in original_annotations:
         original = reference.get_object()
         annotation = DictionaryObject(original)

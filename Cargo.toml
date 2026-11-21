@@ -4,3 +4,6 @@
 [workspace]
 members = ["apps/desktop", "native/wenyi-locks"]
 resolver = "2"
+
+[workspace.package]
+license = "GPL-3.0-only"

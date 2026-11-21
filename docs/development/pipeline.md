@@ -153,10 +153,10 @@ description. PDF objects retain their markers in formal targets through Review/A
 missing or damaged markers use the same bounded repair as EPUB.
 Review evidence hashes still bind the actual saved target, with object references
 supplied separately. Annotation offsets/digests bind the marker-free text. Export
-resolves markers only on a disposable chapter copy, then remaps clean offsets during
-punctuation normalization. Failed objects remain pending in state but do not block
-export: Core warns and sends explicit `omitted_protected_objects` IDs to a bridge
-advertising `protected-object-omission-v1`. The bridge retains valid siblings and
+resolves markers only on a disposable chapter copy. Failed objects remain pending
+in state but do not block export: Core warns and sends explicit
+`omitted_protected_objects` IDs to a bridge advertising `protected-object-omission-v1`.
+The bridge retains valid siblings and
 translated prose, recording omissions without modifying frozen source objects.
 Older PDF sessions require a fresh import rather than an in-place source
 rewrite.
@@ -179,9 +179,13 @@ but must not filter inline content by tag or language.
 
 Recent context is derived from formal targets in book order, not an independent
 persisted rolling-context string. Stop at pending text; skip intentionally blank
-completed targets. Lookahead is a read-only source neighbor, excluded from numbered
+completed targets. Lookahead is read-only source text, excluded from numbered
 inputs and output count. BabelDOC role/section boundaries further restrict prose
-context without deleting non-prose translation units.
+context without deleting non-prose translation units. The PDF lookahead skips
+table contents and looks for the next prose paragraph in the same section. If the
+next page opens with a table caption, the caption's first sentence is included
+before that paragraph. If there is no following prose in the section, only the
+caption's first sentence is included.
 
 The full glossary owns name mappings. It retains stable insertion order, and fresh
 Reviewer requests share one complete final snapshot. `pipeline.batch_glossary`
@@ -192,12 +196,7 @@ requests may use relevant subsets. Japanese readings are source metadata support
 by explicit source evidence, not target-language transliterations; non-Japanese
 sources do not inject them through structured glossary rendering.
 
-Experimental terminology evidence requires both configuration and operation-scoped
-permission. Only authorized CLI preparation/translation entry points grant production
-access; preparation itself still does not extract terms. Ordinary Runtime/API callers
-cannot gain permission by setting YAML. Person evidence publication is all-or-nothing
-across required groups, bound to current entry identity, and must preserve protected
-manual fields and authoritative mappings.
+Incremental notes are generated after translation by opted-in CLI or Web/Desktop project workflows. Preparation does not seed glossary entries and Review does not generate glossary notes.
 
 <a id="storage-and-artifacts"></a>
 
@@ -311,6 +310,12 @@ Every Fixer in a round reads the same immutable snapshot; patches are applied
 together afterward. Blind re-review reads the new shadow without earlier issue
 explanations. Evidence and arbitration recommendations do not modify the glossary.
 
+Read-only model tools are declared per consumer in `wenyi_core/agent_tools.py`.
+The same declarations generate prompt help and check request argument names.
+Bind handlers to one conversation's matched terms, translated window, or Review
+snapshot; never expose all handlers to every agent. Handlers enforce data access
+and value limits. Each agent keeps its own turn budget, output validation and replay.
+
 Reviewer output requires a completion receipt matching the exact reviewed-segment
 count. Do not accept truncated output by inventing missing JSON content. Invalid
 receipts split only the affected chunk; single-segment output retries are bounded.
@@ -376,7 +381,7 @@ duration; logs cannot reconstruct events that were never saved.
 
 `i18n/policy/` is the pure typed registry/resolver. Source and target bindings are
 separate; language profiles inherit root-to-leaf, with exact registered pair rules.
-Agents consume frozen prompt plans, domain adapters execute selected text/writer
+Agents consume frozen prompt plans, writer adapters execute selected export
 capabilities, and pipeline services persist phase identities through Storage.
 
 Plans freeze only consumed prompt resources and capabilities. Persist immutable
@@ -387,10 +392,9 @@ digest/style caches; an interrupted rebuild must not prematurely commit the new
 checkpoint. Completed targets and glossary notes remain intact.
 
 Export identity is separate and includes actual format/backend and the consistent
-source/target snapshot. Punctuation, font and source-presentation changes require re-export rather
-than retranslation. Normalize complete logical paragraphs on an export-only copy,
-remap annotation/style offsets once, and validate the complete view before opening
-the output. Preserve pending, intentionally empty, and source-fallback identities.
+source/target snapshot. Font and source-presentation changes require re-export rather
+than retranslation. Export keeps pending, intentionally empty, and source-fallback
+segments distinct.
 
 Task instructions use English. Generated prose and descriptive metadata follow the
 target language; original source names and aliases remain matching identities.
@@ -440,12 +444,7 @@ Distinguish provider/account failures, output-contract failures and persistence
 failures. A transport or quota stop is not evidence that a candidate is wrong.
 Expected user errors should be actionable without a traceback.
 
-For terminology validation, persist operation identifiers, fixed reason codes,
-counts, local indices and request-cache keys rather than rejected names, model prose,
-untrusted references or raw response bodies. Do not relabel a failed request as an
-empty successful result. Cache hits should not emit duplicate rejection audits.
-This safe diagnostic policy does not make full event streams, Review traces or
-precision archives safe to share: those may contain source and translated text.
+Full event streams, Review traces and precision archives may contain source and translated text; do not share them as sanitized diagnostics.
 
 Validate changes at the boundary they affect:
 

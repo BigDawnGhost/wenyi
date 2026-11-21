@@ -1,3 +1,6 @@
 # Bundled language and prompt resources are source files, including .txt templates.
 !wenyi_core/i18n/data/
 !wenyi_core/i18n/data/**
+/rust/target/
+/wenyi_core/markup/_epub_native.abi3.so
+/wenyi_core/markup/_epub_native.pyd

@@ -206,6 +206,7 @@ class ReviewChunkService:
                 # into fallback during recovery. Session-level content fingerprints guard against
                 # ordinary source-content changes.
                 local_issues = [dict(issue) for issue in reused_initial["issues"]]
+                glossary_alerts = reused_initial.get("glossary_alerts", [])
                 repaired = bool(reused_initial.get("json_repaired"))
                 if repaired:
                     buffer_event(
@@ -272,10 +273,12 @@ class ReviewChunkService:
                     else:
                         raise ReviewOutputError("invalid_issue_index")
                 initial_issue_count = len(review_result.issues)
+                glossary_alerts = review_result.glossary_alerts
                 if debug is not None and initial_trace is not None:
                     initial_trace["status"] = "finished"
                     initial_trace["json_repaired"] = repaired
                     initial_trace["issues"] = local_issues
+                    initial_trace["glossary_alerts"] = glossary_alerts
                     debug.write_json(initial_path, initial_trace)
                     if chapter_index is not None:
                         debug.record_initial_issues(
@@ -350,6 +353,10 @@ class ReviewChunkService:
                         "initial_issues": local_issues_before_agent,
                         "dismissed": dismissed,
                         "fallback_reason": fallback_reason,
+                        "glossary_alerts": [
+                            {**a, "chapter": chapter_index, "index": chunk_base + a["index"]}
+                            for a in glossary_alerts
+                        ],
                     },
                 )
             return mapped

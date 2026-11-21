@@ -154,39 +154,39 @@ def _rewrite_toc(
                     label.append(title)
             return soup.encode()
 
-        # EPUB3 nav.xhtml: enumerate direct li entries only within nav elements with epub:type="toc".
         soup = BeautifulSoup(data, "html.parser")
-        toc_navs = [
-            node
-            for node in soup.find_all("nav")
-            if "toc"
-            in (
-                _attr_str(node.get("epub:type"))
-                or _attr_str(node.get("type"))
-                or _attr_str(node.get("role"))
-            ).split()
-            or _attr_str(node.get("role")) == "doc-toc"
-        ]
-        if not toc_navs and not (
-            toc_path and ("nav" in toc_path.lower() or "toc" in toc_path.lower())
-        ):
-            # Avoid rewriting chapter bodies that were mis-detected as TOC.
-            return data
-
-        for node_index, (label, raw_href) in enumerate(_nav_label_nodes(soup)):
-            entry = exact_entries.get(node_index)
-            if entry is None:
-                continue
-            expected = entry.get("raw_href")
-            if isinstance(expected, str) and expected != raw_href:
-                continue
-            title = _translated_toc_title(entry)
-            if title:
-                label.clear()
-                label.append(title)
-        return str(soup).encode("utf-8")
+        return soup.encode() if _rewrite_nav_dom(soup, exact_entries, toc_path) else data
     except (ParserRejectedMarkup, UnicodeError, ValueError):
         return data
+
+
+def _rewrite_nav_dom(
+    soup: BeautifulSoup, entries: dict[int, dict[str, object]], toc_path: str
+) -> bool:
+    """Backfill exact NAV labels on an existing body DOM."""
+    if not any(
+        "toc"
+        in (
+            _attr_str(node.get("epub:type"))
+            or _attr_str(node.get("type"))
+            or _attr_str(node.get("role"))
+        ).split()
+        or _attr_str(node.get("role")) == "doc-toc"
+        for node in soup.find_all("nav")
+    ) and not ("nav" in toc_path.lower() or "toc" in toc_path.lower()):
+        return False
+    for node_index, (label, raw_href) in enumerate(_nav_label_nodes(soup)):
+        entry = entries.get(node_index)
+        if entry is None:
+            continue
+        expected = entry.get("raw_href")
+        if isinstance(expected, str) and expected != raw_href:
+            continue
+        title = _translated_toc_title(entry)
+        if title:
+            label.clear()
+            label.append(title)
+    return True
 
 
 def _is_nav(data: bytes) -> bool:

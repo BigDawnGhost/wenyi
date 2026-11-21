@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import codecs
 import json
 import logging
 from pathlib import Path
@@ -9,11 +10,25 @@ from typing import Any
 
 import httpx
 
-from ..atomicio import publish_bytes
+from ..atomicio import publish_target
 from ..models.errors import IngestError
 from .connection import resolve_connection
 
 logger = logging.getLogger(__name__)
+
+
+def _error_preview(response: httpx.Response, limit: int = 500) -> str:
+    """Read only the displayed prefix of an HTTP error response."""
+    try:
+        decoder = codecs.getincrementaldecoder(response.encoding or "utf-8")(errors="replace")
+    except LookupError:
+        decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    text = ""
+    for chunk in response.iter_bytes(chunk_size=4096):
+        text += decoder.decode(chunk)
+        if len(text) >= limit:
+            return text[:limit]
+    return (text + decoder.decode(b"", final=True))[:limit]
 
 
 class BabeldocBridgeError(IngestError):
@@ -121,20 +136,23 @@ class BabeldocBridgeClient:
         if rows:
             payload["rows"] = rows
         try:
-            response = httpx.post(
+            with httpx.stream(
+                "POST",
                 f"{connection.url}/fillback",
                 headers=connection.headers,
                 trust_env=connection.trust_env,
                 json=payload,
                 timeout=self.timeout,
-            )
-            if response.status_code >= 400:
-                raise BabeldocBridgeError(
-                    f"fillback failed with HTTP {response.status_code}: {response.text[:500]}"
-                )
-            # Publish atomically: a crash must not leave a truncated PDF at the target.
-            publish_bytes(out_path, response.content)
-            raw_statistics = getattr(response, "headers", {}).get("X-Wenyi-PDF-Annotation-Stats")
+            ) as response:
+                if response.status_code >= 400:
+                    raise BabeldocBridgeError(
+                        f"fillback failed with HTTP {response.status_code}: {_error_preview(response)}"
+                    )
+                # A failed download must not replace a previous PDF with a partial response.
+                with publish_target(out_path) as temporary, temporary.open("wb") as output:
+                    for chunk in response.iter_bytes(chunk_size=256 * 1024):
+                        output.write(chunk)
+                raw_statistics = response.headers.get("X-Wenyi-PDF-Annotation-Stats")
             if raw_statistics:
                 try:
                     statistics = json.loads(raw_statistics)

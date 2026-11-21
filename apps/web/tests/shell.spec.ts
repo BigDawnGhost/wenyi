@@ -71,7 +71,7 @@ test("project navigation follows the last opened project across global routes", 
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(projectNav).toBeVisible();
   await page
-    .locator('[data-slot="sidebar.action"] a[href="/projects/new"]')
+    .getByRole("link", { name: "Create project", exact: true })
     .click();
   await expect(page).toHaveURL("/projects/new");
   await expect(page.getByRole("dialog", { name: "Create project", exact: true })).toBeVisible();

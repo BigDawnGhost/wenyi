@@ -12,6 +12,8 @@ import { ErrorNotice } from "../../components/ui/data";
 import { api, isProjectBusy } from "../../api/client";
 import type { ProjectInput } from "../../api/types";
 import { SourcePreview } from "./SourcePreview";
+import { cardSurface } from "../../components/ui/card";
+import { cn } from "../../lib/utils";
 import { SourceFilePicker } from "./SourceFilePicker";
 import { ProjectLocationPicker } from "./ProjectLocationPicker";
 import { releaseSource, type ProjectSource } from "../../platform";
@@ -48,6 +50,7 @@ export default function CreateProjectDialog() {
   const [translationMode, setTranslationMode] = useState<
     NonNullable<ProjectInput["translation_mode"]>
   >("standard");
+  const [glossaryNotes, setGlossaryNotes] = useState(false);
   const [promptGenre, setPromptGenre] = useState<
     NonNullable<ProjectInput["prompt_genre"]>
   >("literary");
@@ -75,6 +78,9 @@ export default function CreateProjectDialog() {
   const displayedMode = pid
     ? String(savedPipeline?.translation_mode ?? "standard")
     : translationMode;
+  const displayedNotes = pid
+    ? Number(savedPipeline?.glossary_note_workers ?? 0) > 0
+    : glossaryNotes;
   const displayedGenre = pid
     ? String(savedPipeline?.prompt_genre ?? "literary")
     : promptGenre;
@@ -127,6 +133,7 @@ export default function CreateProjectDialog() {
             target_lang: target,
             prepare,
             translation_mode: translationMode,
+            glossary_notes: glossaryNotes,
             prompt_genre: promptGenre,
             pdf_backend: extension === "pdf" && pdfBackend ? pdfBackend : null,
             // Omitted rather than sent as null when no folder was chosen: the
@@ -172,8 +179,9 @@ export default function CreateProjectDialog() {
   // only a view of it, so dismissing stays available and the result still
   // arrives in the query cache; `mounted` below decides whether to redirect.
   const close = () => {
-    if (location.state?.fromAppNavigation || location.state?.fromProjectList)
-      navigate(-1);
+    // Return to the existing list entry when opened from its header. A direct
+    // visit has no such entry, so replace the dialog URL instead.
+    if (location.state?.fromProjectList) navigate(-1);
     else navigate("/", { replace: true });
   };
 
@@ -191,18 +199,19 @@ export default function CreateProjectDialog() {
       <Link to={`/projects/${pid}`}>
         <Button variant="outline">{tr("createProject.openProject")}</Button>
       </Link>
-      {interrupted ? (
-        <Button onClick={() => resume.mutate()} disabled={resume.isPending}>
-          {tr("progress.resumeTask")}
-        </Button>
-      ) : (
-        <Button
-          onClick={() => start.mutate()}
-          disabled={!preview || busy || start.isPending}
-        >
-          {start.isPending ? tr("createProject.starting") : tr("common.startTranslation")}
-        </Button>
-      )}
+      {/* One button whose role depends on the project state, rather than two that
+          take turns being mounted: swapping the element under a cursor that has
+          not moved re-mounts it without its hover state. */}
+      <Button
+        onClick={() => {
+          if (interrupted && !resume.isPending) resume.mutate();
+          if (!interrupted && !start.isPending) start.mutate();
+        }}
+        disabled={!interrupted && (!preview || busy)}
+        aria-busy={(interrupted ? resume.isPending : start.isPending) || undefined}
+      >
+        {tr(interrupted ? "progress.resumeTask" : "common.startTranslation")}
+      </Button>
     </>
   ) : (
     <>
@@ -212,10 +221,14 @@ export default function CreateProjectDialog() {
         </p>
       )}
       <Button variant="outline" onClick={close}>
-        {tr(pending ? "common.close" : "common.cancel")}
+        {tr("common.cancel")}
       </Button>
-      <Button onClick={() => create.mutate()} disabled={createDisabled}>
-        {create.isPending ? tr("createProject.uploading") : tr("common.createProject")}
+      <Button
+        onClick={() => { if (!create.isPending) create.mutate(); }}
+        disabled={createDisabled}
+        aria-busy={create.isPending || undefined}
+      >
+        {tr("common.createProject")}
       </Button>
     </>
   );
@@ -226,9 +239,7 @@ export default function CreateProjectDialog() {
       title={tr("common.createProject")}
       onClose={close}
       initialFocus={nameRef}
-      returnFocus={() =>
-        document.getElementById(location.state?.returnFocusId || "create-project-trigger")
-      }
+      returnFocus={() => document.getElementById("create-project-trigger")}
       className="max-w-2xl"
       footer={footer}
     >
@@ -245,7 +256,7 @@ export default function CreateProjectDialog() {
             project?.error
           }
         />
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className={cn(cardSurface, "p-4")}>
           <div className="space-y-2">
             <Label htmlFor="project-name">{tr("createProject.projectName")}</Label>
             <Input
@@ -257,7 +268,7 @@ export default function CreateProjectDialog() {
             />
           </div>
         </div>
-        <div className="rounded-xl border border-border bg-card p-4">
+        <div className={cn(cardSurface, "p-4")}>
           <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-end gap-3 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_minmax(0,1fr)]">
             <div className="min-w-0 space-y-2">
               <Label htmlFor="source-language">{tr("createProject.sourceLanguage")}</Label>
@@ -329,7 +340,7 @@ export default function CreateProjectDialog() {
           }}
         />
         {!pid && extension === "pdf" && (
-          <div className="rounded-xl border border-border bg-card p-4">
+          <div className={cn(cardSurface, "p-4")}>
             <div className="space-y-2">
               <Label htmlFor="pdf-backend">{tr("settings.pdfParser")}</Label>
               <Select
@@ -354,7 +365,7 @@ export default function CreateProjectDialog() {
           />
         )}
         {(!pid || savedPipeline) && (
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+          <div className="grid items-center gap-x-3 gap-y-3 sm:grid-cols-3">
             <div className="flex items-center gap-2">
               <Switch
                 id="precision-translation"
@@ -370,6 +381,23 @@ export default function CreateProjectDialog() {
                 className="cursor-pointer peer-disabled:cursor-default peer-disabled:opacity-50"
               >
                 {tr("createProject.precisionMode")}
+              </Label>
+            </div>
+            <div className="flex items-center gap-2" title={tr("createProject.glossaryNotesHint")}>
+              <Switch
+                id="glossary-notes"
+                checked={displayedNotes}
+                disabled={locked}
+                onCheckedChange={setGlossaryNotes}
+                aria-description={displayedNotes ? undefined : tr("createProject.glossaryNotesHint")}
+                aria-describedby={displayedNotes ? "glossary-notes-hint" : undefined}
+                className="peer"
+              />
+              <Label
+                htmlFor="glossary-notes"
+                className="cursor-pointer peer-disabled:cursor-default peer-disabled:opacity-50"
+              >
+                {tr("createProject.glossaryNotes")}
               </Label>
             </div>
             {!pid && (
@@ -388,6 +416,11 @@ export default function CreateProjectDialog() {
                   {tr("createProject.prepareSource")}
                 </Label>
               </div>
+            )}
+            {displayedNotes && (
+              <p id="glossary-notes-hint" className="text-xs text-muted-foreground sm:col-span-3">
+                {tr("createProject.glossaryNotesHint")}
+              </p>
             )}
           </div>
         )}

@@ -13,6 +13,51 @@ from wenyi_core.pipeline.translate.precision_records import load_precision_call
 from wenyi_desktop.local_backend import LocalBackend
 
 
+def test_glossary_note_switch_runs_posttranslation_notes_with_sqlite(desktop):
+    client, backend, fake = desktop
+    fallback = PrecisionHandler()
+
+    def respond(messages, tier, json_mode):
+        system = messages[0]["content"]
+        if system.startswith("Maintain one glossary note"):
+            packet = json.loads(messages[-1]["content"])
+            return json.dumps(
+                {"updates": [{"text": "旅客已到达。", "refs": [packet["first_evidence"]["ref"]]}]}
+            )
+        if "terminology and forms-of-address extractor" in system:
+            return '{"terms":[{"source":"Ada","target":"艾达","type":"person"}]}'
+        return fallback(messages, tier, json_mode)
+
+    fake.handler = respond
+    created = client.post(
+        "/projects",
+        data={
+            "project": json.dumps(
+                {"name": "Notes", "source_lang": "en", "target_lang": "zh", "glossary_notes": True}
+            )
+        },
+        files={"file": ("book.txt", b"Ada arrived.")},
+    )
+    assert created.status_code == 201, created.text
+    pid = created.json()["id"]
+    assert wait_job(current_context().repository.list_jobs(pid)[0]["run_id"])["status"] == "done"
+    configured = client.put(
+        f"/projects/{pid}/config",
+        json={"yaml": "pipeline: {review: false, book_understanding: false}"},
+    )
+    assert configured.json()["effective"]["pipeline"]["glossary_note_workers"] == 4
+    started = client.post(f"/projects/{pid}/translate")
+    job = wait_job(started.json()["job_id"])
+    assert job["status"] == "done", job
+    assert any(c["operation"] == "glossary.note" for c in fake.calls)
+    store = backend.storage_for(pid)
+    try:
+        term = store.get_term("Ada")
+        assert term is not None and "旅客已到达" in term.note
+    finally:
+        store.close()
+
+
 @pytest.mark.parametrize("stage", ["translate", "synthesis"])
 def test_precision_structural_retry_finishes_without_manual_resume(desktop, stage):
     client, backend, fake = desktop

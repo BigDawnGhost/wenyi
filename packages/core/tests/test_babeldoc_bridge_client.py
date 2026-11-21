@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 from wenyi_core.assemble.pdf_writer import _assemble_pdf
 from wenyi_core.ingest.pdf_babeldoc import _is_image_only_pdf, read_pdf_babeldoc
 from wenyi_core.pdf_bridge.client import BabeldocBridgeClient, BabeldocBridgeError
@@ -30,21 +32,22 @@ class BabeldocBridgeClientTests(unittest.TestCase):
             output = Path(directory) / "output.pdf"
             with (
                 patch.object(client, "health", return_value={"capabilities": capabilities}),
-                patch("wenyi_core.pdf_bridge.client.httpx.post") as post,
+                patch("wenyi_core.pdf_bridge.client.httpx.stream") as stream,
             ):
                 with self.assertRaisesRegex(BabeldocBridgeError, "omission support"):
                     client.fillback(
                         "session", {"0:0": "译文"}, out_path=output, annotations=annotations
                     )
-                post.assert_not_called()
+                stream.assert_not_called()
                 capabilities.append("protected-object-omission-v1")
-                post.return_value.status_code = 200
-                post.return_value.content = b"%PDF-synthetic"
-                post.return_value.headers = {}
+                response = stream.return_value.__enter__.return_value
+                response.status_code = 200
+                response.iter_bytes.return_value = iter([b"%PDF-", b"synthetic"])
+                response.headers = {}
                 client.fillback(
                     "session", {"0:0": "译文"}, out_path=output, annotations=annotations
                 )
-                self.assertEqual(post.call_args.kwargs["json"]["annotations"], annotations)
+                self.assertEqual(stream.call_args.kwargs["json"]["annotations"], annotations)
                 self.assertEqual(output.read_bytes(), b"%PDF-synthetic")
 
     def test_protected_objects_require_bridge_capability_before_publication(self):
@@ -62,7 +65,7 @@ class BabeldocBridgeClientTests(unittest.TestCase):
                         "capabilities": ["annotation-best-effort-v1"],
                     },
                 ),
-                patch("wenyi_core.pdf_bridge.client.httpx.post") as post,
+                patch("wenyi_core.pdf_bridge.client.httpx.stream") as stream,
             ):
                 with self.assertRaisesRegex(BabeldocBridgeError, "protected object"):
                     client.fillback(
@@ -71,8 +74,37 @@ class BabeldocBridgeClientTests(unittest.TestCase):
                         out_path=output,
                         annotations={"0:0": {"protected_objects": True}},
                     )
-                post.assert_not_called()
+                stream.assert_not_called()
                 self.assertEqual(output.read_bytes(), b"unchanged")
+
+    def test_interrupted_pdf_stream_keeps_previous_export(self):
+        import tempfile
+
+        class Interrupted(httpx.SyncByteStream):
+            def __iter__(self):
+                yield b"%PDF-" + b"x" * (256 * 1024)
+                raise httpx.ReadError("interrupted")
+
+        @contextmanager
+        def stream(*args, **kwargs):
+            response = httpx.Response(200, stream=Interrupted())
+            try:
+                yield response
+            finally:
+                response.close()
+
+        client = BabeldocBridgeClient("http://bridge.test")
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "existing.pdf"
+            output.write_bytes(b"unchanged")
+            with (
+                patch.object(client, "health", return_value={}),
+                patch("wenyi_core.pdf_bridge.client.httpx.stream", stream),
+                self.assertRaisesRegex(BabeldocBridgeError, "interrupted"),
+            ):
+                client.fillback("session", {"0:0": "text"}, out_path=output)
+            self.assertEqual(output.read_bytes(), b"unchanged")
+            self.assertEqual(list(Path(directory).iterdir()), [output])
 
     def test_scoped_connection_keeps_saved_url_and_credentials_separate(self):
         from wenyi_core.pdf_bridge.connection import (
@@ -102,8 +134,8 @@ class BabeldocBridgeClientTests(unittest.TestCase):
     def test_fillback_uses_configured_timeout(self):
         with (
             patch(
-                "wenyi_core.assemble.pdf_writer.translations_from_store",
-                return_value=("session", "http://bridge.test", {"0:0": "译文"}),
+                "wenyi_core.assemble.pdf_writer.fillback_from_store",
+                return_value=("session", "http://bridge.test", {"0:0": "译文"}, {}),
             ),
             patch("wenyi_core.assemble.pdf_writer.BabeldocBridgeClient") as client_class,
         ):
@@ -183,7 +215,6 @@ class BabeldocBridgeClientTests(unittest.TestCase):
         fake.extract.return_value = payload
         with (
             patch("wenyi_core.ingest.pdf_babeldoc.BabeldocBridgeClient", return_value=fake),
-            patch("wenyi_core.ingest.pdf_babeldoc.toc_chapter_starts", return_value=[]),
             tempfile_directory() as cache_dir,
         ):
             doc = read_pdf_babeldoc(
@@ -204,21 +235,6 @@ class BabeldocBridgeClientTests(unittest.TestCase):
             self.assertTrue(cache.is_file())
             saved = json.loads(cache.read_text(encoding="utf-8"))
             self.assertEqual(saved["session_id"], "sess1")
-
-    def test_image_only_pdf_is_rejected_before_bridge_request(self):
-        with (
-            patch("wenyi_core.ingest.pdf_babeldoc._is_image_only_pdf", return_value=True),
-            patch("wenyi_core.ingest.pdf_babeldoc.BabeldocBridgeClient") as client,
-            self.assertRaisesRegex(BabeldocBridgeError, "only scanned images.*MinerU"),
-        ):
-            read_pdf_babeldoc(
-                "scan.pdf",
-                "en",
-                "zh",
-                bridge_url="http://bridge.test",
-            )
-
-        client.assert_not_called()
 
     def test_image_only_detection_accepts_an_ocr_text_layer(self):
         page = MagicMock()

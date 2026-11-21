@@ -19,6 +19,7 @@ from threading import Lock
 from typing import TYPE_CHECKING, Any, BinaryIO, Iterator
 
 from fastapi import HTTPException
+from wenyi_backend.config_rebuild import load_bootstrap_defaults
 from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_core.config import Config
 from wenyi_core.errors import SchemaTooNew
@@ -114,6 +115,8 @@ class LocalBackend:
                     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
                     run_id TEXT NOT NULL UNIQUE, arq_job_id TEXT NOT NULL UNIQUE,
                     document TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS workflow_jobs_by_project ON jobs(project_id, id)
+                    WHERE json_extract(document, '$.kind') <> 'export';
                 CREATE TABLE IF NOT EXISTS exports (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
@@ -372,7 +375,7 @@ class LocalBackend:
 
     def defaults(self) -> Config:
         # Config() uses built-in defaults, never the CLI's cwd config.yaml.
-        return Config.load(self.config_path) if self.config_path else Config()
+        return load_bootstrap_defaults(self.config_path) if self.config_path else Config()
 
     def _get(self, table, identity, connection=None):
         with self.transaction(connection, write=False) as conn:
@@ -1046,34 +1049,46 @@ class LocalBackend:
             self._put("jobs", job_id, job, conn)
         return True
 
+    def latest_workflow_job(self, pid: str) -> dict | None:
+        with self.transaction(write=False) as conn:
+            row = conn.execute(
+                """SELECT document FROM jobs WHERE project_id=?
+                   AND json_extract(document, '$.kind') <> 'export' ORDER BY id DESC LIMIT 1""",
+                (pid,),
+            ).fetchone()
+        return json.loads(row[0]) if row else None
+
     def latest_resumable_job(self, pid: str) -> dict | None:
-        job = next((j for j in self.list_jobs(pid) if j["kind"] != "export"), None)
+        job = self.latest_workflow_job(pid)
         return job if job and job["status"] in {"paused", "error", "interrupted"} else None
 
     def is_paused(self, pid: str) -> bool:
         return (self._get("projects", pid) or {}).get("status") in {"paused", "pausing"}
 
     def job_review_id(self, job_id: int) -> str | None:
-        job = self.get_job(job_id)
-        if not job or job["kind"] == "export":
+        with self.transaction(write=False) as conn:
+            row = conn.execute(
+                """SELECT j.project_id, json_extract(j.document, '$.created_at'),
+                   EXISTS(SELECT 1 FROM jobs WHERE project_id=j.project_id AND id<j.id
+                          AND json_extract(document, '$.kind') <> 'export'),
+                   (SELECT json_extract(document, '$.created_at') FROM jobs
+                    WHERE project_id=j.project_id AND id>j.id AND json_extract(document, '$.kind')
+                    <> 'export' ORDER BY id LIMIT 1)
+                   FROM jobs j WHERE j.id=? AND json_extract(j.document, '$.kind') <> 'export'""",
+                (job_id,),
+            ).fetchone()
+        if row is None:
             return None
-        jobs = sorted(
-            (row for row in self.list_jobs(job["project_id"]) if row["kind"] != "export"),
-            key=lambda row: row["id"],
-        )
-        starts = [
-            datetime.fromisoformat(row["created_at"]).astimezone(timezone.utc) for row in jobs
-        ]
-        store = self.storage_for(job["project_id"], create=False)
+        pid, created, has_previous, following = row
+        start = datetime.fromisoformat(created).astimezone(timezone.utc)
+        stop = datetime.fromisoformat(following).astimezone(timezone.utc) if following else None
+        store = self.storage_for(pid, create=False)
         try:
-            events = store.list_events(limit=0)
+            candidates = store.review_event_candidates(start, stop)
         finally:
             store.close()
-        for event in reversed(events):
-            if event.get("event") not in {"review_started", "review_autofix_finished"}:
-                continue
-            raw = event.get("_ts")
-            if not isinstance(raw, str) or not event.get("review_id"):
+        for raw, rid in candidates:
+            if not rid:
                 continue
             try:
                 date = datetime.fromisoformat(raw)
@@ -1084,16 +1099,13 @@ class LocalBackend:
             date = date.astimezone(timezone.utc)
             # Older events truncated fractions. Accept their one-second interval
             # only when it intersects one job window; never guess across runs.
-            legacy = "." not in raw
-            end = date + timedelta(seconds=1) if legacy else date
-            owners = [
-                row["id"]
-                for index, row in enumerate(jobs)
-                if (end > starts[index] if legacy else date >= starts[index])
-                and (index + 1 == len(jobs) or date < starts[index + 1])
-            ]
-            if owners == [job_id]:
-                return event["review_id"]
+            if "." not in raw:
+                end = date + timedelta(seconds=1)
+                if end <= start or (has_previous and date < start) or (stop and end > stop):
+                    continue
+            elif date < start or (stop and date >= stop):
+                continue
+            return rid
         return None
 
     def chapter_summaries(self, pid: str) -> list[dict]:

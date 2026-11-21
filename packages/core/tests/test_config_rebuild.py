@@ -65,6 +65,15 @@ def test_rebuild_prunes_nested_invalid_fields_without_losing_model_registry():
     assert config.llm.preset == "fake"
 
 
+def test_saved_export_preferences_drop_retired_punctuation_setting():
+    original = {"output": {"punctuation_normalize": True, "bilingual_order": "source_first"}}
+    with pytest.raises(ValidationError, match="punctuation_normalize"):
+        Config.from_dict(original)
+    rebuilt = rebuild_config(original)
+    assert rebuilt.document == {"output": {"bilingual_order": "source_first"}}
+    assert rebuilt.removed == ("output.punctuation_normalize",)
+
+
 def test_single_provider_configuration_is_discarded_not_converted():
     original = {
         "llm": {"provider": "deepseek", "tiers": {"fast": {"options": {"thinking": False}}}},

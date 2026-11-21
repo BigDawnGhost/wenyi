@@ -19,7 +19,7 @@ Input preservation and export limitations belong to the
 
 The defaults are standard translation, whole-book understanding, polishing,
 annotation alignment, final Review, and **Autofix publishing enabled**.
-Three-draft precision and whole-book terminology evidence are opt-in.
+Three-draft precision and incremental glossary notes are opt-in.
 The default export is monolingual; a bilingual edition is optional.
 
 <a id="quality-and-cost"></a>
@@ -137,20 +137,7 @@ mappings to check body headings, visible contents and prose. Publishing its revi
 requires Autofix. With Review disabled, navigation terms are still saved, but this
 step does not synchronize body text or visible contents during export.
 
-### Optional whole-book terminology evidence
-
-`pipeline.terminology_context` is an experimental, CLI-only option, off by default.
-It discovers people before pending translation batches and checks person entries
-against matching source passages throughout the book. Other term types retain
-ordinary posttranslation extraction. Preparation still does not seed a glossary.
-
-The feature adds discovery, evidence and merge calls, plus bounded relevant notes in
-translation, polishing, Review and Fixer requests. It preserves authoritative
-translations and protected manual fields; a different proposed translation becomes a
-conflict. Notes are supplementary evidence, not permission to reveal future plot
-details or invent information. One term still has one main target, not independent
-translations for multiple senses. Failed evidence does not publish partial knowledge;
-matching successful stages can be reused on retry.
+No person discovery or whole-book terminology verification runs before translation. Terms are extracted after translation; optional [incremental CLI notes](cli.md#terminology-context) maintain cited facts.
 
 ## Three-draft precision
 
@@ -247,8 +234,8 @@ separate project/state directory for intentional fresh translations or compariso
 
 ## Re-export without translating again
 
-`wenyi assemble` renders saved state **without translation-model calls**. Use it for
-another format, bilingual order, source styling, or export-only punctuation changes.
+`wenyi assemble` renders saved state **without translation-model calls**. Use it to change
+the output format, bilingual order, or source styling.
 It does not rerun preparation, polishing, Review, or annotation repair.
 
 An export uses one consistent snapshot of the saved book.

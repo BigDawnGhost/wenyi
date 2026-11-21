@@ -139,6 +139,22 @@ test("import detects existing terms outside the displayed page and type", async 
 
 test("a superseded search is cancelled and cannot replace current results", async ({ page }, info) => {
   await setup(page, info, []);
+  await page.addInitScript((path) => {
+    const signals: AbortSignal[] = [];
+    Object.defineProperty(window, "oldSearchSignals", { value: signals });
+    const original = window.fetch;
+    window.fetch = (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+      if (url.pathname.endsWith(path) && url.searchParams.get("q") === "old" && init?.signal) {
+        signals.push(init.signal);
+      }
+      return original(input, init);
+    };
+  }, `/projects/${pid}/glossary/terms/page`);
+  const oldSignals = () => page.evaluate(() =>
+    (window as unknown as { oldSearchSignals: AbortSignal[] }).oldSearchSignals
+      .map(signal => signal.aborted),
+  );
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
   await page.route(`**/projects/${pid}/glossary/terms/page?**`, async (route) => {
@@ -148,18 +164,13 @@ test("a superseded search is cancelled and cannot replace current results", asyn
   });
   await page.goto(`/projects/${pid}/glossary`);
   const search = page.getByRole("main").getByRole("textbox");
-  const oldRequest = page.waitForRequest((request) =>
-    new URL(request.url()).searchParams.get("q") === "old",
-  );
-  await search.fill("old");
-  await oldRequest;
-  const cancelled = page.waitForEvent("requestfailed", {
-    predicate: (request) => new URL(request.url()).searchParams.get("q") === "old",
-  });
   try {
+    await search.fill("old");
+    await expect.poll(oldSignals).toContain(false);
     await search.fill("new");
     await expect(page.getByRole("cell", { name: "new", exact: true })).toBeVisible();
-    await cancelled;
+    // WebKit may not emit requestfailed while the intercepted response is held.
+    await expect.poll(oldSignals).toEqual([true]);
   } finally {
     release();
   }

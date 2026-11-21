@@ -22,6 +22,7 @@ class ProjectCreate(RequestModel):
     prepare: bool = False
     pdf_backend: Literal["mineru", "babeldoc"] | None = None
     translation_mode: Literal["standard", "three_draft_synthesis"] = "standard"
+    glossary_notes: bool = Field(default=False, strict=True)
     prompt_genre: Genre = DEFAULT_GENRE
     #: Where the project directory is created, when the host lets a person choose.
     #:
@@ -271,7 +272,6 @@ class ExportRequest(RequestModel):
     order: Literal["target_first", "source_first"] = "target_first"
     about_page: bool = True
     preserve_source_style: bool = False
-    punctuation_normalize: bool | None = None
 
 
 class ExportOut(BaseModel):
@@ -316,9 +316,7 @@ class AssembleEnqueued(JobEnqueued):
 
 
 class GlossaryImport(RequestModel):
-    # A bounded list keeps the single-transaction import from holding the project write
-    # lock for minutes on end (audit Y-4/E-5).
-    terms: list[TermIn] = Field(max_length=1000)
+    terms: list[TermIn]
 
 
 class DigestUpdate(RequestModel):

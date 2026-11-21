@@ -16,6 +16,7 @@ for (const chinese of [false, true]) {
     const expandLabel = chinese ? "展开侧边栏" : "Expand sidebar";
     const projectLabel = chinese ? "项目导航" : "Project navigation";
     const globalLabel = chinese ? "全局导航" : "Global navigation";
+    const globalLinks = chinese ? ["项目列表", "设置"] : ["Projects", "Settings"];
     const proofreadingLabel = chinese ? "人工校阅" : "Manual proofreading";
 
     test.beforeEach(async ({ page }, info) => {
@@ -63,10 +64,11 @@ for (const chinese of [false, true]) {
       await expect(current).toBeVisible();
       await expect(current).toHaveAttribute("aria-current", "page");
       await expect(current).toHaveAttribute("title", proofreadingLabel);
-      await expect(sidebar.getByRole("link")).toHaveCount(12);
+      await expect(sidebar.getByRole("link")).toHaveCount(11);
       const global = page.getByRole("navigation", { name: globalLabel });
-      await expect(global.getByRole("link")).toHaveCount(1);
-      await expect(global.getByRole("link")).toHaveText(chinese ? "项目列表" : "Projects");
+      await expect(global.getByRole("link")).toHaveText(globalLinks);
+      const [projects, settings] = await global.getByRole("link").all();
+      expect((await projects.boundingBox())!.y).toBeLessThan((await settings.boundingBox())!.y);
       for (const link of await sidebar.getByRole("link").all()) {
         await expect(link).toBeInViewport();
       }
@@ -81,8 +83,7 @@ for (const chinese of [false, true]) {
         .click();
       await expect(page).toHaveURL(`/projects/${pid}/settings`);
       await expect(expand).toBeVisible();
-      // Settings lives in the sidebar footer stratum, outside the panels nav.
-      await sidebar
+      await global
         .getByRole("link", { name: chinese ? "设置" : "Settings", exact: true })
         .click();
       await expect(page).toHaveURL("/settings");
@@ -109,8 +110,7 @@ for (const chinese of [false, true]) {
       const navigation = page.getByRole("navigation", { name: projectLabel });
       const global = page.getByRole("navigation", { name: globalLabel });
       await expect(navigation).toBeVisible();
-      await expect(global.getByRole("link")).toHaveCount(1);
-      await expect(global.getByRole("link")).toHaveText(chinese ? "项目列表" : "Projects");
+      await expect(global.getByRole("link")).toHaveText(globalLinks);
       const main = page.getByRole("main");
       const expandedHeight = await main.evaluate(
         (element) => element.clientHeight,

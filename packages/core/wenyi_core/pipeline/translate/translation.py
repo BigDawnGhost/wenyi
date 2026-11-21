@@ -8,9 +8,8 @@ polish-pending marker and hands polishing to a bounded background pool. Finished
 are applied on this thread in submission order; a chapter is published as done only after
 its jobs are applied. Rolling context and glossary extraction may therefore read drafts.
 At chapter end, perform fallback glossary extraction and publish model text plus done
-through save_chapter_with_status. Normalize punctuation only in export copies. If targets
-exist without a glossary checkpoint, extract missing terms without retranslating or
-overwriting targets.
+through save_chapter_with_status. If targets exist without a glossary checkpoint, extract
+missing terms without retranslating or overwriting targets.
 """
 
 from __future__ import annotations
@@ -21,6 +20,7 @@ from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
 from ...agents.glossary_extractor import TranslatedSegmentEvidence
+from ...agents.glossary_note import GlossaryNoteAgent
 from ...config import PipelineConfig
 from ...events import ProgressFn
 from ...glossary.store import GlossaryStore
@@ -33,9 +33,9 @@ from ...storage.run_store import STATUS_DONE
 from ..annotate.docx_styles import DocxStyleService
 from .babeldoc_context import BabeldocContext
 from .context import render_recent_translations
+from .glossary_notes import GlossaryNotes
 from .polish_queue import PolishOutcome, PolishQueue
 from .precision import PrecisionBatchExecutor, PrecisionError
-from .terminology import TerminologyService
 from .title_translation import TitleTranslationService
 from .translation_batch import (
     BatchDraft,
@@ -91,7 +91,7 @@ class TranslationService:
         The caller restores languages, validates only_chapter and prepares the synopsis.
         This method performs body and title translation with restored context.
         """
-        self._runtime.require_terminology_context_access()
+        self._runtime.require_glossary_note_access()
         PipelineConfig.model_validate(self._runtime.config.pipeline.model_dump())
         manifest = store.load_manifest()
         glossary = store
@@ -108,16 +108,6 @@ class TranslationService:
         total, done = self.progress_counts(store, progress_chapters)
         translation_history, source_corpus = self.load_translation_inputs(store)
         annotation_context_registry = store.load_annotation_contexts()
-        policy = self._runtime.config.language_policy("translation")
-        terminology = (
-            TerminologyService.for_store(
-                store,
-                self._runtime.terminology_agent,
-                checkpoint_usage=lambda: self._runtime.usage.flush(store, scope="terminology"),
-            )
-            if policy.enabled("terminology.context")
-            else None
-        )
         store.log_event(
             "translate_run_started",
             only_chapter=only_chapter,
@@ -151,7 +141,6 @@ class TranslationService:
                     done=done,
                     total=total,
                     allow_empty_translations=allow_empty_translations,
-                    terminology=terminology,
                 )
                 self._runtime.usage.flush(store, scope="chapter")
             queue = self._polish_queue
@@ -174,7 +163,7 @@ class TranslationService:
             self._awaiting_polish.clear()
             self._runtime.usage.flush(store, scope="translate")
         if progress and total:
-            progress(total, total, "Translation complete")
+            progress(total, total, "progress.stage.translationDone")
         store.log_event("translate_run_finished", total_segments=total)
         return store
 
@@ -279,7 +268,6 @@ class TranslationService:
         done: int = 0,
         total: int = 0,
         allow_empty_translations: bool = False,
-        terminology: TerminologyService | None = None,
     ) -> int:
         """Translate, polish, extract and persist one chapter; return the updated
         completed-paragraph count.
@@ -287,7 +275,6 @@ class TranslationService:
         with store.state_lock():
             chapter = store.load_chapter(ci)
             self._precision.recover_publications(store, chapter)
-        analysis = store.load_analysis()
         text_segs = chapter.text_segments
         if not text_segs:
             store.set_chapter_status(ci, STATUS_DONE)
@@ -302,6 +289,16 @@ class TranslationService:
         )
 
         batches = self._chapter_batches(chapter)
+        notes = (
+            GlossaryNotes(
+                GlossaryNoteAgent(self._runtime.client, self._runtime.config),
+                store,
+                translation_history,
+            )
+            if self._runtime.config.pipeline.glossary_note_workers
+            else None
+        )
+        covered_notes: set[str] = set()
         label = self.chapter_progress_label(chapter.title, ci)
         # Preparation often ends with a parsing label, but resume may first restore glossary terms.
         # Refresh at chapter start so the whole model call is not incorrectly labeled as source parsing.
@@ -335,7 +332,7 @@ class TranslationService:
                     for s in b:
                         s.meta.pop(POLISH_PENDING, None)
                     store.save_chapter(chapter)
-                self._align_batch_context(store, chapter, batch_start, len(b))
+                self._align_batch_context(store, chapter, text_segs, batch_start, len(b))
                 if glossary_key in glossary_checkpoints or (
                     context_policy is not None
                     and self._glossary_checkpoint_covers(glossary_checkpoints, batch_start, len(b))
@@ -357,9 +354,12 @@ class TranslationService:
                         b,
                         translation_history,
                         source_corpus,
-                        terminology=terminology,
+                        admission=notes,
                     )
                     glossary_checkpoints.add(glossary_key)
+                    term_snapshot_stale = True
+                if notes is not None:
+                    covered_notes.update(notes.maintain(ci, batch_start, b))
                     term_snapshot_stale = True
                 store.log_event(
                     "batch_skipped",
@@ -404,7 +404,7 @@ class TranslationService:
                                     )
                                 )
                             ),
-                            self._batch_style(analysis, style, term_snapshot),
+                            style,
                             polish_next_source,
                             # A target edited since the draft no longer matches and is kept.
                             BatchDraft(
@@ -422,19 +422,9 @@ class TranslationService:
                     progress(done, total, label)
                 continue
 
-            if terminology is not None:
-                terminology.prepare_batch(
-                    ci,
-                    b,
-                    extractor=self._runtime.extractor,
-                    history=translation_history.values(),
-                    before=(ci, batch_start),
-                )
-                term_snapshot_stale = True
             if term_snapshot_stale:
                 term_snapshot = glossary.all_terms()
                 term_snapshot_stale = False
-            batch_style = self._batch_style(analysis, style, term_snapshot)
 
             polish_job: PolishJob | None = None
             next_index = batch_start + len(b)
@@ -463,7 +453,7 @@ class TranslationService:
                     next_source=next_source,
                 ),
                 ctx_text,
-                batch_style,
+                style,
                 book_synopsis if body_context else "",
                 batch_digest,
                 batch_annotations,
@@ -486,6 +476,7 @@ class TranslationService:
                     ),
                 )
                 chapter = self.save_precision_batch(store, plan, result)
+                # Precision publication reloads the chapter; alignment must use its segments.
                 text_segs = chapter.text_segments
                 b = text_segs[batch_start : batch_start + len(b)]
                 self._precision.mark_published(store, result)
@@ -507,7 +498,7 @@ class TranslationService:
                 store.save_chapter(chapter)
             # Align drafts now so later context never depends on polish timing; applying a
             # polish aligns the polished text again.
-            self._align_batch_context(store, chapter, batch_start, len(b))
+            self._align_batch_context(store, chapter, text_segs, batch_start, len(b))
             store.log_event(
                 "batch_translated",
                 chapter=ci,
@@ -544,8 +535,10 @@ class TranslationService:
                 b,
                 translation_history,
                 source_corpus,
-                terminology=terminology,
+                admission=notes,
             )
+            if notes is not None:
+                covered_notes.update(notes.maintain(ci, batch_start, b))
             self.update_translation_history(translation_history, ci, batch_start, b)
             glossary_checkpoints.add(glossary_key)
             # The glossary may have changed; refresh before the next real translation, not after the final batch.
@@ -570,8 +563,10 @@ class TranslationService:
             history=translation_history.values(),
             before=(ci, len(text_segs)),
             source_corpus=source_corpus,
-            **({"admit": terminology.admit} if terminology is not None else {}),
+            **({"admit": notes.admit} if notes is not None else {}),
         )
+        if notes is not None:
+            notes.maintain(ci, 0, text_segs, exclude=covered_notes)
         store.log_event(
             "chapter_glossary_extracted",
             chapter=ci,
@@ -621,16 +616,6 @@ class TranslationService:
         parts.extend((next_source, chapter_digest))
         return GlossaryStore.terms_in(snapshot, "\n".join(part for part in parts if part))
 
-    def _batch_style(
-        self, analysis: dict[str, Any] | None, style: str, terms: list[GlossaryTerm]
-    ) -> str:
-        if analysis is None:
-            return style
-        return self._runtime.analyzer.style_brief(
-            analysis,
-            terms=terms if self._runtime.config.pipeline.terminology_context else None,
-        )
-
     def _schedule_polish(self, store: Storage, job: PolishJob) -> None:
         """Queue a pending polish, or polish inline when no background pool is active."""
         queue = self._polish_queue
@@ -671,7 +656,9 @@ class TranslationService:
                 segment.target = polished
                 changed += 1
         store.save_chapter(chapter)
-        self._align_batch_context(store, chapter, job.start_index, len(job.sources))
+        self._align_batch_context(
+            store, chapter, chapter.text_segments, job.start_index, len(job.sources)
+        )
         self._runtime.usage.flush(store, scope="polish")
         if outcome.polished is None:
             store.log_event(
@@ -707,6 +694,7 @@ class TranslationService:
         self,
         store: Storage,
         chapter: Chapter,
+        segments: list[Segment],
         start: int,
         count: int,
     ) -> None:
@@ -715,8 +703,12 @@ class TranslationService:
         Alignment handles touched logical paragraphs in source order, waiting for their
         final continuation. It can also update targets from earlier batches.
         """
-        self._annotations.align_annotations_after_batch(chapter.index, chapter, start, count, store)
-        self._docx_styles.align_styles_after_batch(chapter.index, chapter, start, count, store)
+        self._annotations.align_annotations_after_batch(
+            chapter.index, chapter, start, count, store, segments=segments
+        )
+        self._docx_styles.align_styles_after_batch(
+            chapter.index, chapter, start, count, store, segments=segments
+        )
 
     @staticmethod
     def save_precision_batch(store: Storage, plan: BatchPlan, result: BatchResult) -> Chapter:
@@ -761,7 +753,7 @@ class TranslationService:
         visible numbering.
         """
         title = (title or "").strip()
-        return title or f"Chapter {index + 1}"
+        return title or f"progress.stage.chapter:{index + 1}"
 
     def extract_batch_glossary(
         self,
@@ -773,7 +765,7 @@ class TranslationService:
         translation_history: dict[tuple[int, int], TranslatedSegmentEvidence],
         source_corpus: str,
         *,
-        terminology: TerminologyService | None = None,
+        admission: GlossaryNotes | None = None,
     ) -> dict[str, int]:
         """Extract terms immediately after translating or resuming a batch for use by later
         chapter batches.
@@ -788,7 +780,7 @@ class TranslationService:
             history=translation_history.values(),
             before=(chapter, start_index),
             source_corpus=source_corpus,
-            **({"admit": terminology.admit} if terminology is not None else {}),
+            **({"admit": admission.admit} if admission is not None else {}),
         )
         store.log_event(
             "batch_glossary_extracted",

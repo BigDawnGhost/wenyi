@@ -1,6 +1,7 @@
 {
   "name": "@wenyi/ui",
   "private": true,
+  "license": "GPL-3.0-only",
   "type": "module",
   "description": "Shared Wenyi interface and platform capability contracts.",
   "exports": {

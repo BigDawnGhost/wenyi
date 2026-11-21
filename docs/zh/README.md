@@ -143,7 +143,8 @@ Desktop 与 Web 共用校阅工作台，可查看实时进度、编辑段落并�
 
 ## 许可证
 
-文译采用 [GNU 通用公共许可证 v3.0（GPLv3）](../../LICENSE)。
+文译自有代码采用 [GNU 通用公共许可证 v3.0](../../LICENSE)（`GPL-3.0-only`）。
+第三方组件保留各自的上游许可证。Core 原生扩展随附 [Rust 依赖许可与版权声明](https://github.com/BigDawnGhost/wenyi/blob/main/packages/core/THIRD_PARTY_NOTICES.md)。
 
 可选的 BabelDOC bridge 是独立采用 AGPL 许可的服务，在独立进程中通过 HTTP 调用。
 详见 [PDF 支持](reference/formats.md#pdf)。

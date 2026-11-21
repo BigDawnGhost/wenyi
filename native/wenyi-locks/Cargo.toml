@@ -3,7 +3,7 @@ name = "wenyi-locks"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.89"
-license = "MIT"
+license.workspace = true
 publish = false
 description = "Cross-process exclusive file locks for Wenyi's local state stores."
 

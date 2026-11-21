@@ -42,7 +42,7 @@ class AssemblyService:
         from ...assemble.writer_common import bilingual_out_path
 
         if progress:
-            progress(0, 0, "Assembling translation…")
+            progress(0, 0, "progress.stage.assembling")
         out_cfg = self._runtime.config.output
         do_mono, do_bilingual = out_cfg.mono, out_cfg.bilingual
         if not do_mono and not do_bilingual:
@@ -52,7 +52,6 @@ class AssemblyService:
             plans[bilingual] = export_plan(
                 store,
                 out_format,
-                punctuation_normalize=out_cfg.punctuation_normalize,
                 bilingual=bilingual,
                 order=out_cfg.bilingual_order if bilingual else "target_first",
                 preserve_source_style=out_cfg.bilingual_preserve_source_style
@@ -74,7 +73,6 @@ class AssemblyService:
                     bilingual=False,
                     about_page=out_cfg.about_page,
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
-                    punctuation_normalize=out_cfg.punctuation_normalize,
                     language_policy=plans[False],
                 )
             )
@@ -91,7 +89,6 @@ class AssemblyService:
                     preserve_source_style=out_cfg.bilingual_preserve_source_style,
                     about_page=out_cfg.about_page,
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
-                    punctuation_normalize=out_cfg.punctuation_normalize,
                     language_policy=plans[True],
                 )
             )

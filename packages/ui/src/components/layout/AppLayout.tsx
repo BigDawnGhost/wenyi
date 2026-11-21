@@ -1,5 +1,5 @@
 import { useI18n } from "../../i18n";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Link, Outlet, useLocation, useMatch, useParams } from "react-router-dom";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { cn } from "../../lib/utils";
@@ -25,7 +25,7 @@ export function Brand() {
   return (
     <Link
       to="/"
-      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md"
     >
       <img
         src={emblemUrl}
@@ -108,37 +108,20 @@ export function AppLayout() {
   // format would build the wrong menu for the newly selected project.
   const project = projectDetails ?? projects.data?.find((item) => item.id === recalledPid);
 
-  // One layered column: logo row → primary action → global panels → scrollable
-  // project region → footer, instead of three bordered blocks.
   const globalNav = navEntries
     .filter((entry) => entry.group === "global")
     .sort((a, b) => a.order - b.order);
-  const renderGlobal = (slot: "action" | "panel" | "foot") =>
-    globalNav
-      .filter((entry) =>
-        slot === "panel" ? !entry.slot || entry.slot === "panel" : entry.slot === slot,
-      )
-      .map((entry) => (
-        <NavigationLink
-          key={entry.to}
-          to={entry.to}
-          icon={entry.icon}
-          label={tr(entry.label)}
-          collapsed={collapsed}
-          end={entry.end}
-          prefetch={entry.loader}
-          id={slot === "action" ? "create-project-trigger" : undefined}
-          state={slot === "action"
-            ? { fromAppNavigation: true }
-            : entry.to === "/settings"
-              ? { settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }
-              : undefined}
-          className={slot === "action" ? "w-full" : undefined}
-        />
-      ));
 
+  // The floating action bar is fixed to the viewport, so it needs the sidebar's
+  // width to centre on the content pane rather than the window. Publish it as a
+  // rendered style, not from an effect: an effect lands one commit later, which
+  // is exactly the frame in which the bar would be positioned with a stale
+  // width and visibly jump.
   return (
-    <div className="flex h-dvh w-full overflow-hidden">
+    <div
+      className="flex h-dvh w-full overflow-hidden"
+      style={{ "--sidebar-w": collapsed ? "64px" : "240px" } as CSSProperties}
+    >
       <aside
         data-slot="sidebar"
         data-collapsed={collapsed}
@@ -161,7 +144,11 @@ export function AppLayout() {
             )}
           >
             {settings
-              ? <span className="text-lg font-semibold">{tr("settings.title")}</span>
+              // nowrap matters more for CJK than for Latin text: a single Latin
+              // word cannot break, so it simply clips, but every CJK character is
+              // its own break opportunity, so the label would turn into a vertical
+              // stack as the container collapses.
+              ? <span className="whitespace-nowrap text-lg font-semibold">{tr("settings.title")}</span>
               : <Brand />}
           </div>
           <Button
@@ -201,25 +188,6 @@ export function AppLayout() {
           ) : (
             <>
               <div
-                data-slot="sidebar.action"
-                className={cn(
-                  "shrink-0 px-3 pt-3 pb-1 transition-[padding] duration-sidebar ease-sidebar",
-                  collapsed && "p-2",
-                )}
-              >
-                {renderGlobal("action")}
-              </div>
-              <nav
-                data-slot="sidebar.panels"
-                aria-label={tr("navigation.global")}
-                className={cn(
-                  "shrink-0 space-y-1 px-3 py-1 transition-[padding] duration-sidebar ease-sidebar",
-                  collapsed && "p-2",
-                )}
-              >
-                {renderGlobal("panel")}
-              </nav>
-              <div
                 data-slot="sidebar.region"
                 className="relative flex min-h-0 flex-1 flex-col"
               >
@@ -241,15 +209,29 @@ export function AppLayout() {
                   )}
                 </div>
               </div>
-              <div
+              <nav
                 data-slot="sidebar.footer"
+                aria-label={tr("navigation.global")}
                 className={cn(
-                  "shrink-0 px-3 pt-1 pb-3 transition-[padding] duration-sidebar ease-sidebar",
+                  "shrink-0 space-y-1 px-3 pt-1 pb-3 transition-[padding] duration-sidebar ease-sidebar",
                   collapsed && "p-2",
                 )}
               >
-                {renderGlobal("foot")}
-              </div>
+                {globalNav.map((entry) => (
+                  <NavigationLink
+                    key={entry.to}
+                    to={entry.to}
+                    icon={entry.icon}
+                    label={tr(entry.label)}
+                    collapsed={collapsed}
+                    end={entry.end}
+                    prefetch={entry.loader}
+                    state={entry.to === "/settings"
+                      ? { settingsReturnTo: `${location.pathname}${location.search}${location.hash}` }
+                      : undefined}
+                  />
+                ))}
+              </nav>
             </>
           )}
         </div>

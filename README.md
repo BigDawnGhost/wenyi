@@ -144,7 +144,9 @@ Wenyi is a personal project created to help bring books and long-form writing ac
 
 ## License
 
-Wenyi is licensed under the [GNU General Public License v3.0 (GPLv3)](LICENSE).
+Wenyi's own code is licensed under the [GNU General Public License v3.0](LICENSE)
+(`GPL-3.0-only`). Third-party components retain their upstream licenses. The
+Core native extension ships with [notices for its Rust dependencies](packages/core/THIRD_PARTY_NOTICES.md).
 
 The optional BabelDOC bridge is a separately licensed AGPL service, accessed over
 HTTP in a separate process. See [PDF support](docs/reference/formats.md#pdf).

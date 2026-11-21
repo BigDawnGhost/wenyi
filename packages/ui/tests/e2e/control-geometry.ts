@@ -37,10 +37,9 @@ for (const theme of ["light", "dark"]) {
       await expect(page.getByRole("switch")).toHaveCount(0);
       await page.getByRole("link", { name: "Project settings", exact: true }).click();
       const preferences = page.getByRole("region", { name: "Export preferences", exact: true });
-      await expect(preferences.getByRole("switch")).toHaveCount(3);
+      await expect(preferences.getByRole("switch")).toHaveCount(2);
       await expect(page.getByRole("checkbox")).toHaveCount(0);
       for (const [name, checked] of [
-        ["Normalize punctuation on export", true],
         ["Include an “About this translation” page", true],
         ["Preserve source formatting in bilingual output", false],
       ] as const) {
@@ -56,10 +55,8 @@ for (const theme of ["light", "dark"]) {
         const label = page.locator(`label[for="${await control.getAttribute("id")}"]`);
         await label.click();
         await expect(control).toBeChecked({ checked: !checked });
+        await expect(control).toHaveCSS("outline-style", "none");
       }
-      const punctuation = preferences.getByRole("switch", { name: "Normalize punctuation on export", exact: true });
-      await expect(punctuation).not.toBeChecked();
-      await expect(punctuation).toHaveCSS("outline-style", "none");
     });
   }
 }

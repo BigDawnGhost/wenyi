@@ -40,7 +40,8 @@ test("the library offers an import entry that adopts the chosen folder", async (
     });
   });
   await page.goto("/");
-  await page.getByRole("button", { name: "Import existing project", exact: true }).click();
+  const body = page.locator('[data-slot="page.container"]');
+  await body.getByRole("button", { name: "Import existing project", exact: true }).click();
   await expect(page).toHaveURL("/projects/book-9");
   expect(importedPath).toBe("D:/Downloads/book-1");
 });
