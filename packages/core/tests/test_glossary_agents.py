@@ -475,13 +475,21 @@ class TestExtractor(unittest.TestCase):
                         "type": "organization",
                         "note": "Formal governing body, not a club",
                     },
+                    {
+                        "source": "王",
+                        "target": "王",
+                        "type": "person",
+                        "note": "不是王子，而是姓氏",
+                    },
                 ]
             },
             ensure_ascii=False,
         )
         extractor = GlossaryExtractor(FakeClient(handler=lambda *args: payload), _cfg())
-        result = extractor.extract("兄弟会和议会开会。", "The fraternity and Council met.", [])
-        self.assertEqual([t.source for t in result], ["议会"])
+        result = extractor.extract(
+            "兄弟会、议会和王开会。", "The fraternity, Council, and Wang met.", []
+        )
+        self.assertEqual([t.source for t in result], ["议会", "王"])
 
 
 if __name__ == "__main__":

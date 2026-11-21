@@ -584,9 +584,9 @@ def test_glossary_growth_aliases_and_unrelated_terms_reuse_synopsis_on_resume(tm
     store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="female"))
     store.upsert_term(GlossaryTerm("Unrelated", "无关", type="place"))
     assert service.ensure_understanding(store) == "Whole-book synopsis."
-    # Adding terms, notes, aliases, gender changes, or editing unmatched terms all reuse the synopsis.
+    # Adding terms, notes, aliases, or editing/removing unmatched terms all reuse the synopsis.
     store.upsert_term(GlossaryTerm("Bob", "鲍勃", type="person"))
-    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="male", note="Lead."))
+    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", note="Lead."))
     store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", aliases=["Ally"]))
     store.resolve_term("Unrelated", "其他地方")
     store.delete_term("Unrelated")
@@ -603,9 +603,13 @@ def test_glossary_growth_aliases_and_unrelated_terms_reuse_synopsis_on_resume(tm
             store.delete_term("Alice"),
             store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="place")),
         ),
+        lambda store: (
+            store.delete_term("Alice"),
+            store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="male")),
+        ),
         lambda store: store.delete_term("Alice"),
     ],
-    ids=["target", "type", "removed"],
+    ids=["target", "type", "gender", "removed"],
 )
 def test_changed_or_removed_digest_matched_mapping_invalidates_cache(tmp_path, revise):
     service, store, runtime = _service(tmp_path)

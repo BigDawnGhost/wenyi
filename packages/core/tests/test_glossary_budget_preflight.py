@@ -139,3 +139,46 @@ def test_changing_glossary_budget_on_resume_does_not_retranslate_completed_batch
     resume_client = FakeClient(handler=routing_handler)
     Orchestrator(config, client=resume_client).run(txt)
     assert not [c for c in resume_client.calls if c["operation"] == "translation.body"]
+
+
+def test_preflight_checks_smallest_configured_fallback_context_window():
+    cfg = Config.from_dict(
+        {
+            "llm": {
+                "preset": "fake",
+                "models": {
+                    "big": {
+                        "provider": "default",
+                        "model": "fake-big",
+                        "context_window": 128000,
+                        "max_output_tokens": 4096,
+                    },
+                    "small": {
+                        "provider": "default",
+                        "model": "fake-small",
+                        "context_window": 400,
+                        "max_output_tokens": 100,
+                    },
+                },
+                "tiers": {"strong": "big", "cheap": "big", "fast": "big"},
+                "routes": {"translation.body": {"model": "big", "fallbacks": ["small"]}},
+            }
+        }
+    )
+    terms = [
+        GlossaryTerm(source=f"Term{i}", target=f"Long translation value number {i}")
+        for i in range(60)
+    ]
+    _sys, _user, kept, shrunk = fit_prompt_to_context_window(
+        config=cfg,
+        operation="translation.body",
+        terms=terms,
+        match_text="Term0",
+        render_messages=lambda current: (
+            "System header.",
+            "Glossary:\n" + "\n".join(f"- {t.source} -> {t.target}" for t in current),
+        ),
+    )
+    assert shrunk is True
+    assert len(kept) < len(terms)
+    assert any(t.source == "Term0" for t in kept)

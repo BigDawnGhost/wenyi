@@ -162,3 +162,41 @@ def test_quote_style_applies_at_export_only_and_keeps_bilingual_source_unchanged
     # Saved state is completely untouched!
     assert store.load_chapter(0).segments[0].target == raw_target
     assert store.load_manifest()["chapters"][0]["title_translated"] == raw_title
+
+
+def test_normalize_quotes_preserves_gt_inside_quoted_html_attributes():
+    html = '<a title="x > y">"Hello," she said.</a>'
+    assert normalize_quotes(html, "typographic", target_lang="en") == (
+        '<a title="x > y">“Hello,” she said.</a>'
+    )
+
+
+def test_export_view_normalizes_quotes_across_continuation_segments(tmp_path):
+    from wenyi_core.assemble.export_view import ExportViewStore
+
+    src_file = tmp_path / "split.txt"
+    src_file.write_text("甲乙\n", encoding="utf-8")
+    store = FileStorage(str(tmp_path / "state"))
+    store.init_from_document(
+        Document(
+            title="Split",
+            source_lang="zh",
+            target_lang="en",
+            fmt="txt",
+            source_path=str(src_file),
+            chapters=[
+                Chapter(
+                    index=0,
+                    title="Ch 1",
+                    segments=[
+                        Segment(index=0, source="甲", target='"First half ', cont=False),
+                        Segment(index=1, source="乙", target='second half."', cont=True),
+                    ],
+                )
+            ],
+        )
+    )
+    view = ExportViewStore(store, quote_style="typographic")
+    chapter = view.load_chapter(0)
+    assert chapter.segments[0].target == "“First half "
+    assert chapter.segments[1].target == "second half.”"

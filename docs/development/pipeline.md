@@ -47,10 +47,10 @@ before body work. A failed chunk or merge cannot publish a partial chapter diges
 A failed synopsis group invalidates the whole synopsis; if regeneration fails while
 a previously saved non-empty synopsis exists, the run logs the failure and falls
 back to the saved stale synopsis without updating cache metadata so the next run
-retries regeneration. The synopsis keeps a snapshot of the `[target, type]`
+retries regeneration. The synopsis keeps a snapshot of the `[target, type, gender]`
 mappings for terms matched in the chapter digests (accepting legacy version-3
 snapshots without forcing regeneration). Terms added later, unmatched terms, and
-note, alias or gender edits reuse it; changing a matched term's target or type,
+note or alias edits reuse it; changing a matched term's target, type or gender,
 or removing a matched term, regenerates it. Preparation never extracts or seeds
 glossary entries.
 

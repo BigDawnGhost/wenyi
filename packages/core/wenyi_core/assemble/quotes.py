@@ -10,7 +10,7 @@ QuoteStyle = Literal["preserve", "typographic", "straight"]
 # Latin-script targets where English/typographic curly vs straight quotes apply.
 LATIN_SCRIPT_TARGETS = frozenset({"en", "fr", "de", "es", "it", "pt", "vi"})
 
-_MARKUP_TOKEN_RE = re.compile(r"(<[^>]+>|〘[^〙]*〙)")
+_MARKUP_TOKEN_RE = re.compile(r"""(<(?:[^>"']|"[^"]*"|'[^']*')*>|〘[^〙]*〙)""")
 
 # Leading word/decade elisions that always take a right single quotation mark (apostrophe).
 _ELISION_WORDS = frozenset(

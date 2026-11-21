@@ -27,13 +27,13 @@ _SYNOPSIS_OPERATION = "synopsis.book"
 
 
 def _synopsis_mappings(terms: list[GlossaryTerm], digests: list[str]) -> dict[str, list[str]]:
-    """Keep only the rendered ``[target, type]`` fields for terms matched in chapter digests."""
+    """Keep only the prompt-relevant ``[target, type, gender]`` fields for digest-matched terms."""
     matched = GlossaryStore.terms_in(terms, "\n".join(digests))
-    return {term.source: [term.target, term.type] for term in matched}
+    return {term.source: [term.target, term.type, term.gender] for term in matched}
 
 
 def _legacy_v3_mappings(saved: dict, digests: list[str]) -> dict[str, list[str]] | None:
-    """Project a version-3 all-term snapshot onto the digest-matched ``[target, type]`` view."""
+    """Project a version-3 all-term snapshot onto the digest-matched ``[target, type, gender]`` view."""
     terms: list[GlossaryTerm] = []
     for source, fields in saved.items():
         if (
@@ -42,6 +42,7 @@ def _legacy_v3_mappings(saved: dict, digests: list[str]) -> dict[str, list[str]]
             or len(fields) < 4
             or not isinstance(fields[0], str)
             or not isinstance(fields[1], str)
+            or not isinstance(fields[2], str)
             or not isinstance(fields[3], list)
             or not all(isinstance(alias, str) for alias in fields[3])
         ):
@@ -51,6 +52,7 @@ def _legacy_v3_mappings(saved: dict, digests: list[str]) -> dict[str, list[str]]
                 source=source,
                 target=fields[0],
                 type=fields[1],
+                gender=fields[2],
                 aliases=list(fields[3]),
             )
         )
@@ -64,7 +66,7 @@ def _mappings_unchanged(
     version: int,
     digests: list[str],
 ) -> bool:
-    """Accept added terms and alias/gender edits, but not changed target/type or removed digest terms."""
+    """Accept added terms and alias/note edits, but not changed target/type/gender or removed digest terms."""
     if not isinstance(saved, dict):
         return False
     projected: dict[str, list[str]] | None = (
@@ -119,8 +121,9 @@ class BookUnderstandingService:
 
         analysis = store.load_analysis() or {}
         terms = sorted(store.all_terms(), key=lambda term: term.source)
-        style = self._analyzer.style_brief(analysis, terms=terms)
-        mappings = _synopsis_mappings(terms, digests)
+        matched_terms = GlossaryStore.terms_in(terms, "\n".join(digests))
+        style = self._analyzer.style_brief(analysis, terms=matched_terms)
+        mappings = {term.source: [term.target, term.type, term.gender] for term in matched_terms}
         inputs = {
             "language_policy": self._config.language_policy("analysis").task_fingerprint(
                 "book_synopsis"

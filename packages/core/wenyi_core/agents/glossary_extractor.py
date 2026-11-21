@@ -43,6 +43,9 @@ _EN_CONTRADICTION_PREFIX = (
     r"don't\s+(?:use|translate\s+as)|never\s+(?:use|translate\s+as)|avoid|not)"
 )
 _ZH_CONTRADICTION_PREFIX = r"(?:区别于|不同于|并非|不是|非|勿译为|不要译为|不可译为)"
+_ZH_TARGET_BOUNDARY = (
+    r"(?:$|[\s\"'”’」』》），。、；：！？,.!?;:()（）—\-/]|的|等|或|和|与|及|而|但|却|才|就|也|是)"
+)
 
 
 def _note_contradicts_target(target: str, note: str) -> bool:
@@ -58,7 +61,10 @@ def _note_contradicts_target(target: str, note: str) -> bool:
     )
     if en_pattern.search(cleaned_note):
         return True
-    zh_pattern = re.compile(rf"{_ZH_CONTRADICTION_PREFIX}\s*[\"'“‘「『]?{escaped}")
+    trailing = r"(?![A-Za-z0-9_])" if cleaned_target.isascii() else _ZH_TARGET_BOUNDARY
+    zh_pattern = re.compile(
+        rf"{_ZH_CONTRADICTION_PREFIX}\s*[\"'“‘「『《]?{escaped}[\"'”’」』》]?{trailing}"
+    )
     return zh_pattern.search(cleaned_note) is not None
 
 

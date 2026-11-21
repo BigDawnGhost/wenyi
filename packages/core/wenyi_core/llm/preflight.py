@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from ..glossary.prompt_scope import estimate_term_tokens, fit_terms_to_budget
 from ..ingest.tokens import count_tokens
 from ..models.glossary import GlossaryTerm
-from .routing import resolve_routes
+from .routing import model_route, resolve_routes
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -41,12 +41,27 @@ def fit_prompt_to_context_window(
     """
     system, user = render_messages(terms)
     route = resolve_routes(config.llm).get(operation)
-    window = route.context_window if route is not None else None
-    if window is None:
+    if route is None:
+        return system, user, terms, False
+    candidate_routes = [route]
+    for profile in route.fallbacks:
+        candidate_routes.append(model_route(config.llm, operation, profile, origin="fallback"))
+
+    # Enforce the tightest input budget across primary and configured fallback models so
+    # failover during a provider outage cannot hit a terminal over-context 4xx.
+    bounded = [
+        (
+            r.context_window - _output_reserve(r.max_output_tokens, r.context_window),
+            r.context_window,
+            _output_reserve(r.max_output_tokens, r.context_window),
+        )
+        for r in candidate_routes
+        if r.context_window is not None
+    ]
+    if not bounded:
         return system, user, terms, False
 
-    reserve = _output_reserve(route.max_output_tokens if route is not None else None, window)
-    available = window - reserve
+    available, window, reserve = min(bounded, key=lambda item: item[0])
     prompt_tokens = count_tokens(system) + count_tokens(user)
     if prompt_tokens <= available:
         return system, user, terms, False

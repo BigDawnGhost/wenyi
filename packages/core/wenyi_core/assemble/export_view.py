@@ -113,23 +113,30 @@ class ExportViewStore(RunStore):
                 end += 1
             group = segments[position:end]
             position = end
-            old_joined = "".join(seg.target or "" for seg in group if seg.target is not None)
-            changed = False
-            for seg in group:
-                if seg.target is None:
-                    continue
-                updated = normalize_quotes(
-                    seg.target, self._quote_style, target_lang=self._target_lang
-                )
-                if updated != seg.target:
-                    seg.target = updated
-                    changed = True
-            if not changed:
+            translated = [seg for seg in group if seg.target is not None]
+            if not translated:
                 continue
-            # Quote normalization is 1-to-1 (same code-point length), so keep aligned offsets valid
-            # by refreshing any digest bound to the pre-normalization target text.
+            old_joined = "".join(seg.target or "" for seg in translated)
+            new_joined = normalize_quotes(
+                old_joined, self._quote_style, target_lang=self._target_lang
+            )
+            if new_joined == old_joined:
+                continue
+            # Quote normalization is 1-to-1 (same code-point length), so normalize across
+            # the joined paragraph to preserve quote direction across cont=True boundaries.
+            if len(new_joined) == len(old_joined):
+                offset = 0
+                for seg in translated:
+                    length = len(seg.target or "")
+                    seg.target = new_joined[offset : offset + length]
+                    offset += length
+            else:
+                for seg in translated:
+                    seg.target = normalize_quotes(
+                        seg.target or "", self._quote_style, target_lang=self._target_lang
+                    )
+                new_joined = "".join(seg.target or "" for seg in translated)
             old_digest = hashlib.sha256(old_joined.encode("utf-8")).hexdigest()
-            new_joined = "".join(seg.target or "" for seg in group if seg.target is not None)
             new_digest = hashlib.sha256(new_joined.encode("utf-8")).hexdigest()
             for key in ("annotations", "epub_annotations", "pdf_annotations", "docx_styles"):
                 block = group[0].meta.get(key)
