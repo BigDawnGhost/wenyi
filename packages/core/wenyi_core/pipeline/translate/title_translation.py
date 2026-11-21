@@ -163,9 +163,11 @@ def plan_titles(manifest: dict[str, Any], chapters: Mapping[int, Chapter]) -> Ti
         and not row.get("toc_entry_id")
     )
 
-    if copied.get("fmt") == "epub":
-        if not isinstance(copied.get("meta"), dict):
-            copied["meta"] = {}
+    if (
+        copied.get("fmt") == "epub"
+        and isinstance(copied.get("meta"), dict)
+        and copied["meta"].get("opf_path")
+    ):
         epub_meta = copied["meta"]
         book_title = _flat(copied.get("title"))
         if book_title and not _flat(epub_meta.get("book_title_translated")):

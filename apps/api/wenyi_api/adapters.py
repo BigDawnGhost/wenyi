@@ -270,11 +270,18 @@ def create_context(settings: Settings, *, loop=None) -> BackendContext:
             asyncio.run(coro)
 
     def cancel_auto_resume(pid: str) -> None:
-        cache = telemetry.connect()
+        cache = None
         try:
+            cache = telemetry.connect()
             cache.set(f"project:{pid}:auto_resume", "", ex=604800)
+        except Exception:
+            pass
         finally:
-            telemetry.release(cache)
+            if cache is not None:
+                try:
+                    telemetry.release(cache)
+                except Exception:
+                    pass
 
     return BackendContext(
         repository=repository,

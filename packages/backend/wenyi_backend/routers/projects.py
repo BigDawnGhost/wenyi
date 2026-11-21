@@ -204,7 +204,10 @@ def preview(pid: str) -> dict:
 def _cancel_pending_auto_resume(pid: str) -> None:
     context = current_context()
     if context.cancel_auto_resume is not None:
-        context.cancel_auto_resume(pid)
+        try:
+            context.cancel_auto_resume(pid)
+        except Exception:
+            pass
     cache = None
     try:
         cache = context.telemetry.connect()
