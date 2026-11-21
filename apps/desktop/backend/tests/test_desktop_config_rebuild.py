@@ -128,6 +128,30 @@ def test_new_catalog_loads_legacy_bootstrap_defaults_without_rewriting_yaml(tmp_
     assert seed.read_text(encoding="utf-8") == original
 
 
+@pytest.mark.parametrize("occupied", [False, True])
+def test_rebuilt_preset_keeps_the_vault_reference_without_overwriting_another(tmp_path, occupied):
+    from wenyi_desktop.local_credentials import CredentialStore
+
+    backend = LocalBackend(tmp_path / "workspace")
+    store = CredentialStore(backend.workspace)
+    raw = {
+        "preset": "deepseek",
+        "providers": {"default": {"kind": "deepseek"}},
+        "models": {"default_strong": {"provider": "default", "model": "deepseek-flash"}},
+    }
+    with backend.transaction() as conn:
+        backend.save_settings({"config": {"llm": raw}, "revision": 1}, conn)
+        records = {"default": {"mode": "manual", "storage": "system", "reference": "old-ref"}}
+        if occupied:
+            records["deepseek"] = {**records["default"], "reference": "other-ref"}
+        store._commit(records, conn)
+    backend.close()
+    LocalBackend(backend.workspace).close()
+    assert store._records()["deepseek"]["reference"] == ("other-ref" if occupied else "old-ref")
+    if not occupied:
+        assert "default" not in store._records()
+
+
 @pytest.mark.parametrize("failure", ["backup", "replacement"])
 @pytest.mark.parametrize("scope", ["global", "project"])
 def test_backup_and_replacement_roll_back_together(saved_catalog, failure, scope):

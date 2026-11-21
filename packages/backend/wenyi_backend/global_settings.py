@@ -56,12 +56,23 @@ def registered_models(config: Config) -> dict[str, Any]:
         provider, model = split_model_ref(ref)
         connection = config.llm.providers[provider]
         spec = provider_spec(connection.kind)
-        control = spec.adapter_type().route_thinking(connection, model)
-        choices = control.choices(settings.options) if control else ()
+        adapter = spec.adapter_type()
+        control = adapter.route_thinking(connection, model)
+        choices = []
+        if control:
+            for level in control.choices(settings.options):
+                options = spec.validate_model(
+                    settings, options=control.apply(settings.options, level)
+                )
+                try:
+                    adapter.output_limit(options, None, settings.max_output_tokens)
+                except ValueError:
+                    continue
+                choices.append(level)
         result[ref] = {
             "provider": provider,
             "model": model,
-            "thinking_levels": list(choices),
+            "thinking_levels": choices,
             "thinking_value": (
                 control.read(spec.validate_model(settings).model_dump())
                 if control and choices

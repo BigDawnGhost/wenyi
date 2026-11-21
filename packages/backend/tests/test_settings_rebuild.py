@@ -42,6 +42,19 @@ def test_model_metadata_exposes_configured_thinking(preset, ref, options, expect
     assert registered_models(config)[ref]["thinking_value"] == expected
 
 
+def test_thinking_picker_excludes_levels_rejected_by_the_models_token_limit():
+    ref = "deepseek/short"
+    config = Config.from_dict(
+        {
+            "llm": {
+                "preset": "deepseek",
+                "models": {ref: {"max_output_tokens": 1024, "options": {"thinking": False}}},
+            }
+        }
+    )
+    assert registered_models(config)[ref]["thinking_levels"] == ["off"]
+
+
 def test_global_settings_drop_removed_and_project_only_fields():
     original = {
         "llm": {"preset": "fake"},

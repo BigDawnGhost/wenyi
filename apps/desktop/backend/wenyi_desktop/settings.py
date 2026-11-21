@@ -70,6 +70,9 @@ class DesktopSettings:
                 {"config": document, "template": default_template, "revision": revision + 1},
                 conn,
             )
-            removed = store.reconcile(set(new_providers), renames, conn)
+            # A newly created connection must never adopt an orphaned credential
+            # merely because it reuses a retired connection's name.
+            retained = old_providers.keys() & new_providers.keys() | set(renames.values())
+            removed = store.reconcile(retained, renames, conn)
         store.discard_detached(removed)
         return GlobalSettings(config, default_template, revision + 1)
