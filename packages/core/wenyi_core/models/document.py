@@ -45,7 +45,7 @@ class Chapter(BaseModel):
     @property
     def text_segments(self) -> list[Segment]:
         """Nonempty segments that need translation."""
-        return [s for s in self.segments if s.source.strip()]
+        return [s for s in self.segments if s.source.strip() and not s.meta.get("skip")]
 
 
 class Document(BaseModel):

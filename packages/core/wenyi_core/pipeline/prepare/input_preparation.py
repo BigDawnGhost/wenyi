@@ -12,6 +12,7 @@ from typing import Any
 
 from ...config import Config
 from ...events import ProgressFn
+from ...ingest.boilerplate import mark_boilerplate_segments
 from ...ingest.epub_reader import peek_epub_title
 from ...ingest.fb2_reader import peek_fb2_title
 from ...ingest.segmenter import load_document
@@ -31,6 +32,8 @@ def ingest_config(config: Config) -> dict[str, Any]:
         "babeldoc_bridge_url": config.pipeline.babeldoc_bridge_url,
         "babeldoc_pages": config.pipeline.babeldoc_pages,
         "babeldoc_timeout": config.pipeline.babeldoc_timeout,
+        "skip_boilerplate": config.pipeline.skip_boilerplate,
+        "boilerplate_patterns": list(config.pipeline.boilerplate_patterns),
     }
 
 
@@ -87,6 +90,11 @@ def parse_document(
             babeldoc_pages=pipeline.babeldoc_pages,
             babeldoc_timeout=pipeline.babeldoc_timeout,
             mineru_token_resolver=mineru_token_resolver,
+        )
+        mark_boilerplate_segments(
+            document,
+            enabled=pipeline.skip_boilerplate,
+            custom_patterns=pipeline.boilerplate_patterns,
         )
     if source_sha256(input_path) != digest:
         raise ValueError("Source changed during parsing; ensure the file is stable and retry.")

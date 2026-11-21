@@ -168,7 +168,10 @@ def _export_book_title(
 def _seg_text(seg) -> str:
     """Return the saved translation (including an intentional empty string), falling back to
     source only when the segment is still untranslated (``target is None``).
+    Skipped boilerplate segments always export empty.
     """
+    if seg.meta.get("skip"):
+        return ""
     return seg.source if seg.target is None else seg.target
 
 
@@ -196,10 +199,12 @@ def _merged_paragraphs(chapter: Chapter) -> list[tuple[str, str, str, int]]:
     kinds: list[str] = []
     levels: list[int] = []
     attribute_continuation = False
+    skip_continuation = False
     for s in chapter.segments:
         if not s.cont:
             attribute_continuation = HTML_ATTRIBUTE_META_KEY in s.meta
-        if attribute_continuation:
+            skip_continuation = bool(s.meta.get("skip"))
+        if attribute_continuation or skip_continuation or s.meta.get("skip"):
             continue
         if not s.source.strip():
             continue

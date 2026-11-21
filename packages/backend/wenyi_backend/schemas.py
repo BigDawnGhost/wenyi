@@ -84,6 +84,13 @@ class PreviewChapter(BaseModel):
     word_count: int
 
 
+class SkippedBoilerplateItem(BaseModel):
+    chapter_index: int
+    segment_index: int
+    rule: str
+    source: str
+
+
 class UploadPreview(BaseModel):
     title: str
     fmt: str
@@ -91,6 +98,8 @@ class UploadPreview(BaseModel):
     total_word_count: int
     source_lang: Optional[str] = None
     chapters: list[PreviewChapter] = Field(default_factory=list)
+    skipped_boilerplate_count: int = 0
+    skipped_boilerplate: list[SkippedBoilerplateItem] = Field(default_factory=list)
 
 
 class StartTranslation(RequestModel):

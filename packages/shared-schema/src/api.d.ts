@@ -1771,6 +1771,17 @@ export interface components {
             /** Created At */
             created_at: string | null;
         };
+        /** SkippedBoilerplateItem */
+        SkippedBoilerplateItem: {
+            /** Chapter Index */
+            chapter_index: number;
+            /** Segment Index */
+            segment_index: number;
+            /** Rule */
+            rule: string;
+            /** Source */
+            source: string;
+        };
         /** StartTranslation */
         StartTranslation: {
             /** Strategy */
@@ -1933,6 +1944,13 @@ export interface components {
             source_lang?: string | null;
             /** Chapters */
             chapters?: components["schemas"]["PreviewChapter"][];
+            /**
+             * Skipped Boilerplate Count
+             * @default 0
+             */
+            skipped_boilerplate_count: number;
+            /** Skipped Boilerplate */
+            skipped_boilerplate?: components["schemas"]["SkippedBoilerplateItem"][];
         };
         /** ValidationError */
         ValidationError: {

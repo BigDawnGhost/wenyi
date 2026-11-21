@@ -28,6 +28,9 @@ pipeline:
   # Glossary token budget per request (cl100k_base). In all mode, keeps the append-stable
   # leading run within the budget plus matching later entries; in relevant mode, caps matched entries.
   glossary_prompt_tokens: 4000
+  # Optional ingest-time filter for scraped-site watermarks, ad markers and stray fragments.
+  skip_boilerplate: false
+  boilerplate_patterns: []
   review: true # Run final review after whole-book translation; disable with --no-review
   # Additional structural retries for standard translation and each precision stage; 0 disables retries.
   align_retry_limit: 2

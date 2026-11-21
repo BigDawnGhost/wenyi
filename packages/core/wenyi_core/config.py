@@ -51,6 +51,8 @@ pipeline:
   # Glossary token budget per request (cl100k_base). In all mode, keeps the append-stable
   # leading run within the budget plus matching later entries; in relevant mode, caps matched entries.
   glossary_prompt_tokens: 4000
+  skip_boilerplate: false
+  boilerplate_patterns: []
   review: true # Run final review after whole-book translation; disable with --no-review
   # Additional structural retries for standard translation and each precision stage; 0 disables retries.
   align_retry_limit: 2
@@ -140,6 +142,27 @@ class PipelineConfig(BaseModel):
     batch_glossary: Literal["all", "relevant"] = "all"
     # Per-request glossary token budget (cl100k_base); 0 keeps only matching entries.
     glossary_prompt_tokens: int = Field(default=4000, ge=0)
+    # Optional ingest-time scraped-site boilerplate filter (off by default).
+    skip_boilerplate: bool = False
+    boilerplate_patterns: list[str] = Field(default_factory=list)
+
+    @field_validator("boilerplate_patterns")
+    @classmethod
+    def validate_boilerplate_patterns(cls, value: list[str]) -> list[str]:
+        import re
+
+        for index, raw in enumerate(value):
+            if not isinstance(raw, str) or not raw.strip():
+                raise ValueError(
+                    f"pipeline.boilerplate_patterns[{index}] must be a non-empty regular expression"
+                )
+            try:
+                re.compile(raw)
+            except re.error as exc:
+                raise ValueError(
+                    f"Invalid regex in pipeline.boilerplate_patterns[{index}] ({raw!r}): {exc}"
+                ) from exc
+        return value
 
     review: bool = True
     # Additional structural retries for standard translation and precision generation/synthesis.

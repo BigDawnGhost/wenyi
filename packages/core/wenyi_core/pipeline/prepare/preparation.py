@@ -251,6 +251,7 @@ class PreparationService:
             source_lang=doc.source_lang,
             target_lang=doc.target_lang,
             chapters=len(doc.chapters),
+            skipped_boilerplate_count=int(doc.meta.get("skipped_boilerplate_count") or 0),
             config={
                 "review": self._runtime.config.pipeline.review,
                 "polish": self._runtime.config.pipeline.polish,
