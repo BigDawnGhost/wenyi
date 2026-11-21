@@ -660,23 +660,26 @@ class TranslationService:
         unpolished = any(segment.meta.get(POLISH_FAILED) for segment in chapter.text_segments)
         if unpolished:
             chapter.meta["unpolished"] = True
+            # Persist the manifest retry marker before marking the chapter done so a crash
+            # between the two writes never leaves an unpolished chapter silently skipped.
+            with store.state_lock():
+                manifest = store.load_manifest()
+                for row in manifest.get("chapters", []):
+                    if row.get("index") == ci and not row.get("unpolished"):
+                        row["unpolished"] = True
+                        store.save_manifest(manifest)
+                        break
         else:
             chapter.meta.pop("unpolished", None)
         store.save_chapter_with_status(chapter, STATUS_DONE)
-        with store.state_lock():
-            manifest = store.load_manifest()
-            changed = False
-            for row in manifest.get("chapters", []):
-                if row.get("index") == ci:
-                    if unpolished and not row.get("unpolished"):
-                        row["unpolished"] = True
-                        changed = True
-                    elif not unpolished and row.get("unpolished"):
+        if not unpolished:
+            with store.state_lock():
+                manifest = store.load_manifest()
+                for row in manifest.get("chapters", []):
+                    if row.get("index") == ci and row.get("unpolished"):
                         row.pop("unpolished", None)
-                        changed = True
-                    break
-            if changed:
-                store.save_manifest(manifest)
+                        store.save_manifest(manifest)
+                        break
         store.log_event(
             "chapter_done",
             chapter=ci,

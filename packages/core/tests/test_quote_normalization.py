@@ -171,6 +171,18 @@ def test_normalize_quotes_preserves_gt_inside_quoted_html_attributes():
     )
 
 
+def test_normalize_quotes_respects_block_boundaries_and_explicit_single_openers():
+    assert normalize_quotes('<p>"Hello"</p><p>"World"</p>', "typographic", target_lang="en") == (
+        "<p>“Hello”</p><p>“World”</p>"
+    )
+    assert normalize_quotes("‘Round the world,’ she read.", "typographic", target_lang="en") == (
+        "‘Round the world,’ she read."
+    )
+    assert normalize_quotes("'round the corner", "typographic", target_lang="en") == (
+        "’round the corner"
+    )
+
+
 def test_export_view_normalizes_quotes_across_continuation_segments(tmp_path):
     from wenyi_core.assemble.export_view import ExportViewStore
 

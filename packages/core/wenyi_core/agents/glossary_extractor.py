@@ -56,7 +56,8 @@ def _note_contradicts_target(target: str, note: str) -> bool:
         return False
     escaped = re.escape(cleaned_target)
     en_pattern = re.compile(
-        rf"\b{_EN_CONTRADICTION_PREFIX}\s+(?:(?:the|a|an)\s+)?[\"'“‘`]?{escaped}[\"'”’`]?(?!\w)",
+        rf"\b{_EN_CONTRADICTION_PREFIX}\s+(?:(?:the|a|an)\s+)?"
+        rf"(?:[\"'“‘`]{escaped}[\"'”’`]|{escaped}(?![\w'’]|\s+[A-Z]))",
         re.IGNORECASE,
     )
     if en_pattern.search(cleaned_note):

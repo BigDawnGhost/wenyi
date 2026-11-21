@@ -11,6 +11,11 @@ QuoteStyle = Literal["preserve", "typographic", "straight"]
 LATIN_SCRIPT_TARGETS = frozenset({"en", "fr", "de", "es", "it", "pt", "vi"})
 
 _MARKUP_TOKEN_RE = re.compile(r"""(<(?:[^>"']|"[^"]*"|'[^']*')*>|〘[^〙]*〙)""")
+_BLOCK_TAG_RE = re.compile(
+    r"^</?(?:p|div|li|blockquote|h[1-6]|tr|td|th|dt|dd|section|article|"
+    r"header|footer|aside|main|nav|figure|figcaption|br|hr)\b",
+    re.IGNORECASE,
+)
 
 # Leading word/decade elisions that always take a right single quotation mark (apostrophe).
 _ELISION_WORDS = frozenset(
@@ -70,27 +75,20 @@ def _is_leading_elision(after_text: str) -> bool:
     return False
 
 
-def _normalize_typographic(text: str) -> str:
-    """Convert straight/curly quotes to unified typographic “ ” ‘ ’ while preserving markup."""
-    # Split into alternating (plain_text, markup_token) segments so attributes inside HTML tags
-    # and protected-object markers are never altered, while neighbor lookup crosses tag boundaries.
-    tokens = _MARKUP_TOKEN_RE.split(text)
-    plain_indices = [i for i in range(0, len(tokens), 2)]
-    # Normalize any pre-existing curly quotes in plain segments first so output is idempotent.
-    normalized_plain: list[str] = []
-    for i in plain_indices:
-        chunk = (
-            tokens[i]
-            .replace("\u201c", '"')
-            .replace("\u201d", '"')
-            .replace("\u2018", "'")
-            .replace("\u2019", "'")
-        )
-        normalized_plain.append(chunk)
-
+def _normalize_typographic_block(tokens: list[str], plain_indices: list[int]) -> None:
+    """Normalize one block-bounded slice of plain text tokens in place."""
+    raw_plain = [tokens[i] for i in plain_indices]
+    normalized_plain = [
+        chunk.replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+        for chunk in raw_plain
+    ]
+    raw_joined = "".join(raw_plain)
     joined_plain = "".join(normalized_plain)
     if '"' not in joined_plain and "'" not in joined_plain:
-        return text
+        return
 
     out_chars = list(joined_plain)
     total = len(out_chars)
@@ -98,7 +96,7 @@ def _normalize_typographic(text: str) -> str:
         prev_ch = out_chars[idx - 1] if idx > 0 else ""
         next_ch = out_chars[idx + 1] if idx + 1 < total else ""
         if ch == '"':
-            # Decide opening vs closing double quote using immediate neighbors across tag boundaries.
+            # Decide opening vs closing double quote using immediate neighbors across inline tags.
             if prev_ch in ("", "\u2018", "'") or (
                 prev_ch in _OPENING_PREDECESSORS
                 and next_ch != ""
@@ -117,10 +115,14 @@ def _normalize_typographic(text: str) -> str:
             if _is_word_char(prev_ch) and _is_word_char(next_ch):
                 out_chars[idx] = "\u2019"
                 continue
-            # Leading elision: 'em, '90s, 'tis, 'cause.
+            # Leading elision: 'em, '90s, 'tis, 'cause. Preserve an existing explicit opener (‘).
             if (
-                prev_ch == "" or prev_ch in _OPENING_PREDECESSORS or prev_ch in ("\u201c", '"')
-            ) and _is_leading_elision(joined_plain[idx + 1 :]):
+                raw_joined[idx] != "\u2018"
+                and (
+                    prev_ch == "" or prev_ch in _OPENING_PREDECESSORS or prev_ch in ("\u201c", '"')
+                )
+                and _is_leading_elision(joined_plain[idx + 1 :])
+            ):
                 out_chars[idx] = "\u2019"
                 continue
             # Opening single quote when preceded by start/space/opening punct/opening double quote
@@ -141,14 +143,30 @@ def _normalize_typographic(text: str) -> str:
             else:
                 out_chars[idx] = "\u2019"
 
-    # Reassemble plain segments with untouched markup tokens.
-    rebuilt = list(tokens)
     cursor = 0
     for seg_pos, token_index in enumerate(plain_indices):
         length = len(normalized_plain[seg_pos])
-        rebuilt[token_index] = "".join(out_chars[cursor : cursor + length])
+        tokens[token_index] = "".join(out_chars[cursor : cursor + length])
         cursor += length
-    return "".join(rebuilt)
+
+
+def _normalize_typographic(text: str) -> str:
+    """Convert straight/curly quotes to unified typographic “ ” ‘ ’ while preserving markup."""
+    # Split into alternating (plain_text, markup_token) segments so attributes inside HTML tags
+    # and protected-object markers are never altered. Inline tags stay transparent to neighbor
+    # lookup while block-level tags reset paragraph boundaries.
+    tokens = _MARKUP_TOKEN_RE.split(text)
+    block_indices: list[int] = []
+    for idx, token in enumerate(tokens):
+        if idx % 2 == 0:
+            block_indices.append(idx)
+        elif _BLOCK_TAG_RE.match(token):
+            if block_indices:
+                _normalize_typographic_block(tokens, block_indices)
+                block_indices = []
+    if block_indices:
+        _normalize_typographic_block(tokens, block_indices)
+    return "".join(tokens)
 
 
 def _normalize_straight(text: str) -> str:
