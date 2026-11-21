@@ -99,6 +99,55 @@ def _ch_title(c: dict) -> str:
     return (c.get("title_translated") or c.get("title") or "").strip()
 
 
+def _translated_book_title(manifest: dict) -> str:
+    """Resolve a translated book title from manifest metadata or chapter 0 when available."""
+    direct = manifest.get("title_translated")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    meta = manifest.get("meta")
+    if isinstance(meta, dict):
+        meta_title = meta.get("book_title_translated")
+        if isinstance(meta_title, str) and meta_title.strip():
+            return meta_title.strip()
+    source_title = manifest.get("title")
+    chapters = manifest.get("chapters")
+    if (
+        isinstance(source_title, str)
+        and source_title.strip()
+        and isinstance(chapters, list)
+        and chapters
+        and isinstance(chapters[0], dict)
+    ):
+        first = chapters[0]
+        if (
+            isinstance(first.get("title"), str)
+            and " ".join(first["title"].split()) == " ".join(source_title.split())
+            and isinstance(first.get("title_translated"), str)
+            and first["title_translated"].strip()
+        ):
+            return first["title_translated"].strip()
+    return ""
+
+
+def _resolve_export_title(
+    manifest: dict,
+    target_lang: str | None,
+    *,
+    bilingual: bool,
+) -> tuple[str, str]:
+    """Return ``(export_title, original_title)``.
+
+    Prefer the translated book title for ``dc:title`` when available (retaining the source
+    title as metadata), falling back to ``<source>-wenyi-<lang>`` when untranslated.
+    """
+    raw_title = manifest.get("title")
+    source_title = raw_title.strip() if isinstance(raw_title, str) else ""
+    translated = _translated_book_title(manifest)
+    if translated:
+        return translated, source_title
+    return _export_book_title(source_title or "translated", target_lang, bilingual=bilingual), ""
+
+
 def _export_book_title(
     title: str | None,
     target_lang: str | None,

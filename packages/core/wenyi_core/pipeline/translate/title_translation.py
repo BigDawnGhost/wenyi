@@ -26,6 +26,9 @@ class TitleRequest:
 
     record: dict[str, Any]
     source: str
+    field: str = "title_translated"
+    list_index: int | None = None
+    list_size: int = 0
 
 
 @dataclass
@@ -56,7 +59,15 @@ class TitlePlan:
     def apply(self, batch: list[TitleRequest], translated: list[str]) -> None:
         """Apply a validated batch, including source fallback for empty titles."""
         for item, target in zip(batch, translated):
-            item.record["title_translated"] = target or item.source
+            value = target or item.source
+            if item.list_index is not None:
+                bucket = item.record.get(item.field)
+                if not isinstance(bucket, list) or len(bucket) != item.list_size:
+                    bucket = [""] * item.list_size
+                    item.record[item.field] = bucket
+                bucket[item.list_index] = value
+            else:
+                item.record[item.field] = value
         self.sync_chapter_titles()
 
 
@@ -151,6 +162,63 @@ def plan_titles(manifest: dict[str, Any], chapters: Mapping[int, Chapter]) -> Ti
         and not row.get("title_translated")
         and not row.get("toc_entry_id")
     )
+
+    if copied.get("fmt") == "epub":
+        if not isinstance(copied.get("meta"), dict):
+            copied["meta"] = {}
+        epub_meta = copied["meta"]
+        book_title = _flat(copied.get("title"))
+        if book_title and not _flat(epub_meta.get("book_title_translated")):
+            # Reuse chapter 0's translated title when it already matches the book title.
+            first_chapter = copied.get("chapters", [None])[0] if copied.get("chapters") else None
+            if (
+                isinstance(first_chapter, dict)
+                and _flat(first_chapter.get("title")) == book_title
+                and _flat(first_chapter.get("title_translated"))
+            ):
+                epub_meta["book_title_translated"] = _flat(first_chapter["title_translated"])
+                plan.changed = True
+            else:
+                plan.pending.append(
+                    TitleRequest(epub_meta, book_title, field="book_title_translated")
+                )
+        raw_desc = epub_meta.get("epub_description")
+        if (
+            isinstance(raw_desc, str)
+            and _flat(raw_desc)
+            and not _flat(epub_meta.get("epub_description_translated"))
+        ):
+            plan.pending.append(
+                TitleRequest(epub_meta, _flat(raw_desc), field="epub_description_translated")
+            )
+        raw_subjects = epub_meta.get("epub_subjects")
+        if isinstance(raw_subjects, list) and raw_subjects:
+            subjects = [
+                _flat(item) for item in raw_subjects if isinstance(item, str) and _flat(item)
+            ]
+            existing_subjects = epub_meta.get("epub_subjects_translated")
+            if subjects and (
+                not isinstance(existing_subjects, list)
+                or len(existing_subjects) != len(subjects)
+                or any(not isinstance(item, str) or not item.strip() for item in existing_subjects)
+            ):
+                for idx, subject in enumerate(subjects):
+                    if (
+                        isinstance(existing_subjects, list)
+                        and idx < len(existing_subjects)
+                        and isinstance(existing_subjects[idx], str)
+                        and existing_subjects[idx].strip()
+                    ):
+                        continue
+                    plan.pending.append(
+                        TitleRequest(
+                            epub_meta,
+                            subject,
+                            field="epub_subjects_translated",
+                            list_index=idx,
+                            list_size=len(subjects),
+                        )
+                    )
     return plan
 
 

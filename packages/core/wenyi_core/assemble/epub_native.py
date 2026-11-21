@@ -43,6 +43,10 @@ def options(
     preserve_source_style: bool,
     target_lang: str | None = None,
     export_title: str = "",
+    original_title: str | None = None,
+    description: str | None = None,
+    subjects: list[str] | None = None,
+    resource_titles: dict[str, str] | None = None,
     horizontal: bool = False,
     about: str | None = None,
 ) -> bytes:
@@ -101,12 +105,16 @@ def options(
             "segments": [record for page in merged.values() for record in page.values()],
             "about": about,
             "package_path": package_path if isinstance(package_path, str) else None,
+            "resource_titles": resource_titles or {},
             "presentation": (
                 {
                     "lang": target_lang,
                     "title": export_title,
                     "css": _BILINGUAL_CSS,
                     "horizontal": horizontal,
+                    "original_title": original_title,
+                    "description": description,
+                    "subjects": subjects or [],
                 }
                 if target_lang is not None
                 else None

@@ -41,6 +41,8 @@ pub struct Options {
     pub package_path: Option<String>,
     #[serde(default)]
     pub about: Option<String>,
+    #[serde(default)]
+    pub resource_titles: HashMap<String, String>,
 }
 
 #[derive(Deserialize)]
@@ -50,6 +52,12 @@ pub struct Presentation {
     pub css: String,
     #[serde(default)]
     pub horizontal: bool,
+    #[serde(default)]
+    pub original_title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub subjects: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -764,12 +772,32 @@ pub fn style(dom: &mut Dom, id: &str, css: &str, html: Id) {
 
 const HORIZONTAL: &str = "html, body { writing-mode: horizontal-tb !important; -epub-writing-mode: horizontal-tb !important; -webkit-writing-mode: horizontal-tb !important; direction: ltr !important; text-orientation: mixed !important; } .vrtl, .vertical, [class*=\"vrtl\"] { writing-mode: horizontal-tb !important; -epub-writing-mode: horizontal-tb !important; -webkit-writing-mode: horizontal-tb !important; direction: ltr !important; }";
 
-fn present(dom: &mut Dom, p: &Presentation, options: &Options) -> bool {
+fn present(dom: &mut Dom, href: &str, p: &Presentation, options: &Options) -> bool {
     let Some(html) = dom.find(0, "html") else {
         return false;
     };
     dom.set(html, "lang", p.lang.clone());
     dom.set(html, "xml:lang", p.lang.clone());
+    if let Some(title) = options
+        .resource_titles
+        .get(href)
+        .map(|s| strip(s))
+        .filter(|s| !s.is_empty())
+    {
+        let head = dom.find(0, "head").unwrap_or_else(|| {
+            let head = dom.tag("head");
+            dom.prepend(html, head);
+            head
+        });
+        if let Some(title_node) = dom.find(head, "title") {
+            dom.clear(title_node);
+            dom.append_text(title_node, title);
+        } else {
+            let title_node = dom.tag("title");
+            dom.append_text(title_node, title);
+            dom.prepend(head, title_node);
+        }
+    }
     if let Some(classes) = dom
         .attr(html, "class")
         .filter(|s| s.split_whitespace().any(|class| class == "vrtl"))
@@ -905,7 +933,7 @@ fn output<T>(
     }
     let presented = if let Some(p) = &options.presentation {
         rewrite_nav(dom, &page.href, options);
-        present(dom, p, options)
+        present(dom, &page.href, p, options)
     } else {
         false
     };
@@ -1073,6 +1101,47 @@ fn rewrite_xml(
         if !p.title.is_empty() {
             if let Some(n) = field("title") {
                 edits.push(xml_contents(&text, n, &p.title));
+                if let Some(orig) = p
+                    .original_title
+                    .as_deref()
+                    .map(strip)
+                    .filter(|s| !s.is_empty() && *s != p.title)
+                {
+                    if let Some(meta) = doc.descendants().find(|n| n.has_tag_name("metadata")) {
+                        let mut escaped_orig = String::new();
+                        escape(&mut escaped_orig, orig, true);
+                        edits.push(xml_append(
+                            &text,
+                            meta,
+                            &format!(
+                                "<meta name=\"wenyi:source-title\" content=\"{escaped_orig}\"/>"
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(desc) = p.description.as_deref().map(strip).filter(|s| !s.is_empty()) {
+            if let Some(n) = field("description") {
+                edits.push(xml_contents(&text, n, desc));
+            }
+        }
+        if !p.subjects.is_empty() {
+            let mut subject_nodes: Vec<_> = doc
+                .descendants()
+                .filter(|n| n.has_tag_name((DC, "subject")))
+                .collect();
+            if subject_nodes.is_empty() {
+                subject_nodes = doc
+                    .descendants()
+                    .filter(|n| n.has_tag_name("subject"))
+                    .collect();
+            }
+            for (node, translated) in subject_nodes.into_iter().zip(p.subjects.iter()) {
+                let value = strip(translated);
+                if !value.is_empty() {
+                    edits.push(xml_contents(&text, node, value));
+                }
             }
         }
         if let Some(n) = field("language") {
@@ -1294,7 +1363,7 @@ pub fn export(source: &Path, destination: &Path, mut options: Options) -> Result
                 let text = decode_xhtml_for_export(&data);
                 let mut dom = Dom::parse(&text);
                 rewrite_nav(&mut dom, href, &options);
-                present(&mut dom, options.presentation.as_ref().unwrap(), &options)
+                present(&mut dom, href, options.presentation.as_ref().unwrap(), &options)
                     .then(|| dom.epub_html())
             } else {
                 None
