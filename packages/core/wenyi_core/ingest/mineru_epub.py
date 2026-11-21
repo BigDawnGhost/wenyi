@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import argparse
 import io
 import json
 import logging
@@ -16,7 +15,7 @@ from typing import Any
 from unicodedata import name as unicode_name
 from urllib.parse import quote, unquote, urlsplit
 from xml.etree.ElementTree import Element, SubElement, tostring
-from zipfile import BadZipFile, ZipFile
+from zipfile import ZipFile
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 from latex2mathml.converter import Converter
@@ -232,7 +231,7 @@ def _table_html(html: str) -> Tag | None:
             "colgroup": ("span",),
         }.get(name, ())
         tag.attrs = {key: tag[key] for key in keep if key in tag.attrs}
-        if name == "a" and not _safe_href(tag.get("href", "")):
+        if name == "a" and not _safe_href(_attribute(tag, "href")):
             tag.unwrap()
     for equation in table.find_all("eq"):
         equation.replace_with(
@@ -259,6 +258,11 @@ def _fragment(markup: str) -> BeautifulSoup:
     return BeautifulSoup(markup, "html.parser")
 
 
+def _attribute(tag: Tag, key: str) -> str:
+    value = tag.get(key)
+    return value if isinstance(value, str) else ""
+
+
 def _image(content: dict[str, Any], *, alt: str) -> str:
     path = (content.get("image_source") or {}).get("path")
     return f'<img src="{escape(path)}" alt="{escape(alt)}"/>' if path else ""
@@ -272,7 +276,9 @@ def _visual(kind: str, content: dict[str, Any]) -> str:
     table = _table_html(raw_table) if raw_table and kind in {"chart", "table"} else None
     if kind == "table" and table is not None:
         if caption and not table.find("caption", recursive=False):
-            table.insert(0, _fragment(f"<caption>{caption}</caption>").caption)
+            node = _fragment(f"<caption>{caption}</caption>").caption
+            assert node is not None
+            table.insert(0, node)
         else:
             # Do not discard either caption if both are independently supplied.
             notes = " ".join(filter(None, (caption, notes)))
@@ -280,7 +286,7 @@ def _visual(kind: str, content: dict[str, Any]) -> str:
         # changing extraction identities in already initialized EPUB projects.
         caption_node = table.find("caption", recursive=False)
         if caption_node is not None and not caption_node.find(["p", "div"]):
-            paragraph = _fragment("<p></p>").p
+            paragraph = _fragment("").new_tag("p")
             for child in list(caption_node.contents):
                 paragraph.append(child.extract())
             caption_node.append(paragraph)
@@ -368,16 +374,19 @@ def _render_document(pages: list[list[dict[str, Any]]]) -> BeautifulSoup:
                 if not anchor and kind == "page_footnote":
                     anchor = f"footnote-p{page_index}-{block_index}"
                 if anchor:
-                    rendered.find(True)["id"] = anchor
+                    node = rendered.find(True)
+                    if node is None:
+                        raise ValueError("An anchored block must render an element")
+                    node["id"] = anchor
                 parts.append(rendered.decode())
             except (AttributeError, KeyError, TypeError, ValueError) as error:
                 raise ValueError(f"MinerU {where}: {error}") from error
     body = _fragment("".join(parts))
     anchored = body.select("[id]")
-    ids = Counter(node["id"] for node in anchored)
-    notes = {node["id"] for node in anchored if node.get("epub:type") == "footnote"}
+    ids = Counter(_attribute(node, "id") for node in anchored)
+    notes = {_attribute(node, "id") for node in anchored if node.get("epub:type") == "footnote"}
     for link in body.select('a[href^="#"]'):
-        target = unquote(link["href"][1:])
+        target = unquote(_attribute(link, "href")[1:])
         if ids[target] != 1:
             link.unwrap()
         elif target in notes:
@@ -411,8 +420,10 @@ def _format_math_paragraphs(body: Tag) -> None:
         tokens = [False, *_math_prose_tokens(paragraph), False]
         if not any(isinstance(token, NavigableString) and token.strip() for token in tokens):
             continue
-        if "inline-math" not in (classes := paragraph.get("class", [])):
-            paragraph["class"] = [*classes, "inline-math"]
+        value = paragraph.get("class")
+        classes = value.split() if isinstance(value, str) else list(value or ())
+        if "inline-math" not in classes:
+            paragraph["class"] = " ".join([*classes, "inline-math"])
         for index, token in enumerate(tokens[1:-1], 1):
             if not isinstance(token, NavigableString):
                 continue
@@ -425,7 +436,7 @@ def _format_math_paragraphs(body: Tag) -> None:
 def _build_toc(body: Tag) -> list[EpubTocEntry]:
     toc: list[EpubTocEntry] = []
     stack: list[tuple[int, EpubTocEntry]] = []
-    used_ids = {tag["id"] for tag in body.select("[id]")}
+    used_ids = {_attribute(tag, "id") for tag in body.select("[id]")}
     for heading in body.select("h1, h2, h3, h4, h5, h6"):
         title = " ".join(
             text.strip()
@@ -434,7 +445,7 @@ def _build_toc(body: Tag) -> list[EpubTocEntry]:
         )
         if not title:
             continue
-        anchor = heading.get("id")
+        anchor = _attribute(heading, "id")
         if not anchor:
             index = len(used_ids) + 1
             while (anchor := f"section-{index}") in used_ids:
@@ -476,9 +487,9 @@ def _write_source_epub(
             # Separately parsed chunks can contain the same local IDs and image paths.
             prefix = f"chunk-{index}-"
             for node in fragment.select("[id]"):
-                node["id"] = prefix + node["id"]
+                node["id"] = prefix + _attribute(node, "id")
             for node in fragment.select('a[href^="#"]'):
-                node["href"] = "#" + prefix + node["href"][1:]
+                node["href"] = "#" + prefix + _attribute(node, "href")[1:]
         resources.extend(_collect_images(fragment, read_image, start=len(resources)))
         for node in list(fragment.contents):
             body.append(node.extract())
@@ -533,21 +544,3 @@ def convert_json(source: Path, output: Path, *, title: str | None = None, lang: 
             title=title,
             lang=lang,
         )
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("source", type=Path, help="MinerU result ZIP or extracted Content List V2")
-    parser.add_argument("output", type=Path, help="Destination .epub file")
-    parser.add_argument("--title", help="Override the first heading as the book title")
-    parser.add_argument("--lang", default="en", help="Source language tag (default: en)")
-    args = parser.parse_args()
-    try:
-        convert_json(args.source, args.output, title=args.title, lang=args.lang)
-    except (BadZipFile, OSError, RuntimeError, ValueError) as error:
-        parser.exit(1, f"Conversion failed: {error}\n")
-    print(f"Wrote {args.output}")
-
-
-if __name__ == "__main__":
-    main()

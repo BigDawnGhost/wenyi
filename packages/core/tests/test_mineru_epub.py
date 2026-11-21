@@ -44,6 +44,12 @@ def _xml(archive, suffix):
     )
 
 
+def _find(element: ET.Element, path: str) -> ET.Element:
+    node = element.find(path, NS)
+    assert node is not None, path
+    return node
+
+
 @pytest.mark.parametrize("storage_type", [FileStorage, SqliteStorage])
 def test_pdf_uses_ordered_json_and_exports_against_frozen_epub(
     tmp_path, monkeypatch, storage_type, request
@@ -129,7 +135,7 @@ def test_pdf_uses_ordered_json_and_exports_against_frozen_epub(
         headings = chapter.findall(".//x:th", NS)
         assert [h.get("colspan") for h in headings] == ["2", "2"]
         assert [h.findtext("x:div", namespaces=NS) for h in headings] == ["One cell", "Two cell"]
-        assert all(h.find("x:div", NS).get("colspan") is None for h in headings)
+        assert all(_find(h, "x:div").get("colspan") is None for h in headings)
         assert all(
             "译文" in "".join(node.itertext()) for node in chapter.findall(".//x:caption", NS)
         )
@@ -222,8 +228,8 @@ def test_zip_converts_json_without_using_markdown_or_exported_html(tmp_path):
         ]
         assert content.findtext(".//x:td/x:code", namespaces=NS) == "$not_math$"
         assert content.find(".//x:script", NS) is None
-        assert content.find(".//x:table", NS).attrib == {}
-        assert content.find(".//x:td", NS).get("colspan") == "2"
+        assert _find(content, ".//x:table").attrib == {}
+        assert _find(content, ".//x:td").get("colspan") == "2"
         assert content.findtext(".//x:caption/x:p", namespaces=NS) == "Conditions"
         assert len(content.findall(".//x:figcaption", NS)) == 2
         assert (
@@ -243,7 +249,8 @@ def test_zip_converts_json_without_using_markdown_or_exported_html(tmp_path):
         assert len(images) == 2 and images[0].get("src") == images[1].get("src")
         assert len([name for name in archive.namelist() if name.endswith(".gif")]) == 1
         opf = _xml(archive, ".opf")
-        assert "mathml" in opf.find(".//o:item[@href='source.xhtml']", NS).get("properties").split()
+        item = _find(opf, ".//o:item[@href='source.xhtml']")
+        assert "mathml" in item.attrib["properties"].split()
 
     doc = read_epub(str(output), "en", "zh-CN")
     segments = [segment for chapter in doc.chapters for segment in chapter.segments]
@@ -293,12 +300,13 @@ def test_inline_math_spacing_and_alignment_preserve_formula_source(tmp_path):
         prose, cjk, math_only, plain = content.findall(".//x:p", NS)
         assert prose.get("class") == cjk.get("class") == "inline-math"
         assert math_only.get("class") is None and plain.get("class") is None
-        assert "p.inline-math { text-align: left; text-align: start; }" in content.findtext(
-            ".//x:style", namespaces=NS
+        style = _find(content, ".//x:style").text
+        assert (
+            style is not None and "p.inline-math { text-align: left; text-align: start; }" in style
         )
         first, second, third = prose.findall("m:math", NS)
         assert prose.text == "The standard "
-        assert prose.find("x:em", NS).text == " scheme uses "
+        assert _find(prose, "x:em").text == " scheme uses "
         assert second.tail == " and " and third.tail == "."
         assert first.tail is None
         assert cjk.text == "当("
@@ -332,8 +340,8 @@ def test_nav_and_ncx_use_explicit_json_title_levels(tmp_path):
     convert_json(source, output, title="Original PDF filename")
 
     with ZipFile(output) as archive:
-        nav = _xml(archive, "/nav.xhtml").find(".//x:nav", NS)
-        ncx = _xml(archive, ".ncx").find("n:navMap", NS)
+        nav = _find(_xml(archive, "/nav.xhtml"), ".//x:nav")
+        ncx = _find(_xml(archive, ".ncx"), "n:navMap")
         child = "x:ol/x:li"
         links = nav.findall(f"{child}/{child}", NS)
         assert [li.findtext("x:a", namespaces=NS) for li in links] == [
@@ -351,7 +359,7 @@ def test_nav_and_ncx_use_explicit_json_title_levels(tmp_path):
         assert [a.get("href") for a in nav.findall(".//x:a", NS)] == [
             c.get("src") for c in ncx.findall(".//n:content", NS)
         ]
-        assert all(a.get("href").split("#")[1] in anchors for a in nav.findall(".//x:a", NS))
+        assert all(a.attrib["href"].split("#")[1] in anchors for a in nav.findall(".//x:a", NS))
 
     doc = read_epub(str(output), "en", "zh")
     assert [c.title for c in doc.chapters] == [text for _, text in titles]
@@ -386,7 +394,7 @@ def test_translated_figure_has_one_bilingual_caption(tmp_path, order):
     )
     epub_native.export(str(epub), out, state)
     with ZipFile(out) as archive:
-        figure = _xml(archive, "/source.xhtml").find(".//x:figure", NS)
+        figure = _find(_xml(archive, "/source.xhtml"), ".//x:figure")
         assert [node.tag.split("}")[-1] for node in figure] == ["img", "figcaption"]
         expected = ["图表。", "One chart."] if order == "target_first" else ["One chart.", "图表。"]
         assert list(figure[-1].itertext()) == expected
@@ -415,7 +423,7 @@ def test_code_and_algorithm_v2_spans_preserve_lines_math_and_captions(tmp_path):
         assert chapter.findtext(".//x:pre/x:code", namespaces=NS) == code + "return x"
         captions = chapter.findall(".//x:figcaption", NS)
         assert ["".join(c.itertext()) for c in captions] == ["Listing 1", "Algorithm 1"]
-        algorithm = chapter.find(".//x:figure/x:p", NS)
+        algorithm = _find(chapter, ".//x:figure/x:p")
         assert algorithm.text == "Start\n  set "
         assert algorithm.findtext(".//m:annotation", namespaces=NS) == "x^2"
     doc = read_epub(str(output), "en", "zh")
@@ -447,11 +455,12 @@ def test_unrenderable_formula_keeps_visible_number_and_uses_crop(tmp_path):
 
     with ZipFile(output) as archive:
         chapter = _xml(archive, "/source.xhtml")
-        assert "\ufffd" in chapter.findtext(".//x:p", namespaces=NS)
-        image = chapter.find(".//x:img", NS)
-        assert r"\begin{aligned}" in image.get("alt")
-        assert image.tail.strip() == "(4)"
-        assert archive.read("EPUB/" + image.get("src")) == GIF
+        text = _find(chapter, ".//x:p").text
+        assert text is not None and "\ufffd" in text
+        image = _find(chapter, ".//x:img")
+        assert r"\begin{aligned}" in image.attrib["alt"]
+        assert image.tail is not None and image.tail.strip() == "(4)"
+        assert archive.read("EPUB/" + image.attrib["src"]) == GIF
 
 
 @pytest.mark.parametrize(
