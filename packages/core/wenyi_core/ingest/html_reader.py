@@ -1,7 +1,7 @@
 """Read static HTML as prose regions with semantic inline ranges and local attribute slots.
 
 Preserve the original layout template; translate complete inline runs rather than
-individual DOM text nodes. Converted PDFs can retain the established EPUB block policy.
+individual DOM text nodes. Older saved templates can use the EPUB block policy.
 """
 
 from __future__ import annotations
@@ -35,16 +35,6 @@ def _extract_chapter(
     preserve_inline_markup: bool = True,
 ) -> tuple[str, list[Segment], str]:
     """Extract a fragment using the selected markup policy and prefer its explicit title."""
-    if not preserve_inline_markup:
-        native = _epub_native.mineru_annotate_plain(html, chapter_index)
-        if native is not None:
-            detected_title, packed, template = native
-            segments = [
-                Segment.model_validate({**segment, "resource_href": None})
-                for segment in json.loads(packed)
-            ]
-            return chapter_title.strip() or detected_title, segments, template
-
     detected_title, segments, template = annotate_epub_resource(
         html,
         chapter_index,
@@ -79,7 +69,7 @@ def read_html(
     Headings (h1-h6 by default) begin chapters; consecutive headings stay together. Body
     blocks before the first heading form front matter. With chapter_tags=None, use one
     chapter for the entire document. Protect inert, hidden, editable and opted-out content.
-    preserve_inline_markup=False retains the EPUB extraction policy for converted PDFs.
+    preserve_inline_markup=False uses the legacy EPUB block extraction policy.
     path is the HTML file, source_lang and target_lang are language codes, chapter_tags
     selects boundary tags or disables splitting, and encoding defaults to UTF-8.
     """

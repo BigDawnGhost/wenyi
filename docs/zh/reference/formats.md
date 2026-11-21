@@ -16,7 +16,7 @@
 | Markdown | EPUB | TXT、HTML、Markdown、DOCX | 标题层级和段落，不是完整 Markdown 语法往返 |
 | HTML / XHTML | HTML | EPUB、TXT、Markdown、DOCX | 回填静态原文件，不执行浏览器逻辑 |
 | DOCX | DOCX | EPUB、TXT、HTML、Markdown | 重建受支持的段落、表格、列表与样式 |
-| PDF，经 MinerU | EPUB | TXT、HTML、Markdown、DOCX | 重排转换后的 HTML，不恢复原 PDF 页面 |
+| PDF，经 MinerU | EPUB | TXT、HTML、Markdown、DOCX | 从转换出的原文 EPUB 重排，不恢复原 PDF 页面 |
 | PDF，经 BabelDOC | PDF | EPUB、TXT、HTML、Markdown、DOCX | 将译文回填至外部 bridge 已保存的会话 |
 
 CLI 的 `--format epub|txt|html|markdown|pdf|docx` 覆盖默认选择。
@@ -172,7 +172,7 @@ DOCX 与其他书籍共享准备、术语、润色、Review 和续跑流程。
 | | MinerU | BabelDOC |
 | --- | --- | --- |
 | 默认使用 | 是 | 需开启 |
-| 主要目标 | 经 HTML 提取、重排文本 | 尽可能保留原页面布局 |
+| 主要目标 | 提取结构化内容，生成可重排 EPUB | 尽可能保留原页面布局 |
 | 服务边界 | 外部转换服务 | 外部 AGPL bridge，独立仓库／进程，仅 HTTP |
 | 纯扫描图片输入 | 使用此路径或先 OCR | 需要可提取文本层 |
 | CLI 默认输出 | EPUB | PDF |
@@ -181,14 +181,14 @@ DOCX 与其他书籍共享准备、术语、润色、Review 和续跑流程。
 ### MinerU
 
 CLI 首次转换要求环境变量 `MINERU_API_KEY`。
-转换后的 HTML 缓存在
-`state/<book>/targets/<target-language>/source/<source-sha256>/converted.html`。
-匹配的重试复用转换结果，不会因文件名相同就复用另一份 PDF。
-开始长篇翻译前先检查提取质量；OCR／转换质量会限制后续全部阶段。
+文译通过 MinerU 的 Content List V2 和图片生成原文 EPUB，再走常规 EPUB 翻译流程。
+项目原件仍是 PDF。CLI 的派生 EPUB 缓存在
+`state/<book>/targets/<target-language>/source/<source-sha256>/converted.epub`。
+请随项目保留该文件：匹配的重试及 EPUB／HTML 导出会复用它，不再调用 MinerU。
+开始长篇翻译前先检查提取质量；此流程不会纠正识别错误或补造缺失的链接。
 
-MinerU 状态支持重排导出，不支持重建 PDF。
-部分解析单元允许有意保存空译文，不自动视为待译。
-之后改为 BabelDOC 配置，也不能补出缺失的版面会话。
+此前用 HTML 流程初始化的项目需要把原 PDF 重新导入为新项目。
+MinerU 不支持重建 PDF；之后改为 BabelDOC 配置，也不能补出版面会话。
 
 ### BabelDOC
 
@@ -201,7 +201,7 @@ MinerU 状态支持重排导出，不支持重建 PDF。
 调用 bridge 前，文译会检查所选页面是否只有图像。
 没有可提取文本层时应使用 MinerU 或先 OCR。
 章节按 PDF 书签组织，无目录时退为单章。
-显式导出 EPUB 时直接用已保存的章节重排正文，不联系 Bridge，也不需要 MinerU 的 HTML 缓存；
+显式导出 EPUB 时直接用已保存的章节重排正文，不联系 Bridge，也不使用 MinerU 转换缓存；
 该格式不复刻 PDF 的分页和版式。
 
 使用支持行结构的 bridge 时，具有对齐编号、点引导线和页码的目录条目，以及能可靠识别、

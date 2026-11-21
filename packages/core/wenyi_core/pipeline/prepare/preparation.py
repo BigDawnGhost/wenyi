@@ -11,6 +11,7 @@ import os
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from ...assemble.writer_common import validate_pdf_source_format
 from ...events import ProgressFn
 from ...i18n.languages import normalize_language
 from ...i18n.policy.models import Phase, content_hash
@@ -115,7 +116,7 @@ class PreparationService:
     ) -> Storage:
         """Parse input and locate state; initialize first runs under the book lock.
         PDF state follows the filename, allowing manifest checks before repeated external
-        conversion. Cache the initial converted HTML within that state directory.
+        conversion. The derived source EPUB is stored separately from the original PDF.
         """
         self._runtime.require_glossary_note_access()
         if self._runtime.storage is not None:
@@ -129,10 +130,7 @@ class PreparationService:
 
         with store.lock():
             if store.exists():
-                self._runtime.ensure_store_source(store, input_path)
-                refresh_epub_objects(store, input_path)
-                store.log_event("run_resumed", input_path=input_path, run_dir=store.run_dir)
-                return store
+                return self._resume_existing(store, input_path)
             if os.path.splitext(input_path)[1].lower() == ".pdf":
                 # Preserve the source identity and event history when conversion fails.
                 store.begin_initialization(source_hash)
@@ -152,6 +150,15 @@ class PreparationService:
                 source_hash=source_hash,
             )
 
+    def _resume_existing(
+        self, store: Storage, input_path: str, *, document: Document | None = None
+    ) -> Storage:
+        self._runtime.ensure_store_source(store, input_path)
+        validate_pdf_source_format(store.load_manifest())
+        refresh_epub_objects(store, input_path, document=document)
+        store.log_event("run_resumed", input_path=input_path, run_dir=store.run_dir)
+        return store
+
     def _prepare_locked(
         self,
         doc,
@@ -165,10 +172,7 @@ class PreparationService:
         manifest.
         """
         if store.exists():
-            self._runtime.ensure_store_source(store, input_path)
-            refresh_epub_objects(store, input_path, document=doc)
-            store.log_event("run_resumed", input_path=input_path, run_dir=store.run_dir)
-            return store  # Resume existing progress without reset; run() restores languages from the manifest.
+            return self._resume_existing(store, input_path, document=doc)
 
         store.begin_initialization(source_hash)
 

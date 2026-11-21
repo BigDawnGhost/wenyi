@@ -10,14 +10,16 @@ import os
 from collections.abc import Callable
 from typing import Any
 
+from ...assemble.writer_common import validate_pdf_source_format
 from ...config import Config
 from ...events import ProgressFn
 from ...ingest.epub_reader import peek_epub_title
 from ...ingest.fb2_reader import peek_fb2_title
+from ...ingest.pdf_reader import cached_epub_source
 from ...ingest.segmenter import load_document
 from ...markup.objects import OBJECT_SCHEMA_VERSION
-from ...models.document import Document
-from ...storage.protocol import ArtifactStorage, Storage
+from ...models.document import MINERU_EPUB_DIGEST, Document, uses_epub_template
+from ...storage.protocol import Storage
 from ...storage.run_store import source_sha256, translation_run_dir
 
 
@@ -35,7 +37,7 @@ def ingest_config(config: Config) -> dict[str, Any]:
 
 
 def load_parsed_document(
-    storage: ArtifactStorage, input_path: str, config: Config, *, actual_sha256: str | None = None
+    storage: Storage, input_path: str, config: Config, *, actual_sha256: str | None = None
 ) -> Document | None:
     """Return source chapters only when their content and parsing settings match."""
     cached = storage.read_artifact("parsed_document.json")
@@ -47,7 +49,18 @@ def load_parsed_document(
     ):
         return None
     document = Document.model_validate(cached["document"])
-    if document.fmt == "epub" and document.meta.get("epub_objects") != OBJECT_SCHEMA_VERSION:
+    if (
+        os.path.splitext(input_path)[1].lower() == ".pdf"
+        and config.pipeline.pdf_backend == "mineru"
+    ):
+        if MINERU_EPUB_DIGEST not in document.meta:
+            return None
+        cached_epub_source(storage.source_dir, digest, document.meta[MINERU_EPUB_DIGEST])
+        document.fmt = "pdf"
+    if (
+        uses_epub_template(document.fmt, document.meta)
+        and document.meta.get("epub_objects") != OBJECT_SCHEMA_VERSION
+    ):
         return None
     document.source_path = input_path
     return document
@@ -68,6 +81,17 @@ def parse_document(
         raise ValueError("Source changed during parsing; ensure the file is stable and retry.")
     if storage.exists():
         storage.ensure_source_identity(input_path, actual_sha256=digest)
+        manifest = storage.load_manifest()
+        validate_pdf_source_format(manifest)
+        if os.path.splitext(input_path)[1].lower() == ".pdf":
+            meta = manifest.get("meta") or {}
+            saved_mineru = MINERU_EPUB_DIGEST in meta
+            if saved_mineru != (config.pipeline.pdf_backend == "mineru"):
+                raise ValueError(
+                    "Changing the PDF parser requires importing the PDF as a new project."
+                )
+            if saved_mineru:
+                cached_epub_source(storage.source_dir, digest, meta[MINERU_EPUB_DIGEST])
     cached = load_parsed_document(storage, input_path, config, actual_sha256=digest)
     if cached is not None:
         document = cached

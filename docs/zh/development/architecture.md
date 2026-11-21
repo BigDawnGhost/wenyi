@@ -147,9 +147,24 @@ Python 负责通用 HTML 外壳。其他格式导出 EPUB 时，Python 将已渲
 `html.rs` 划分正文区域，规范化注释偏移，处理正文和属性的回填、
 规范文档外壳及本地媒体引用。规范 HTML 支持两种双语顺序和位置已验证的简单注释。
 复杂链接改写、嵌套或过期注释位置、非规范输入仍由 Python 兼容处理。
-MinerU 共用该模块读取普通结果 ZIP、拼接 HTML 分块并提取符合条件的缓存正文。
-大 PDF 由 `pdf/` 在私有目录内切页，遇不支持的页面特性时改由 pypdf 复制页面。
-Python 负责远程请求、缓存策略和临时文件清理。
+MinerU 大 PDF 由 `pdf/` 在私有目录内切页，遇不支持的页面特性时改由 pypdf 复制页面。
+Python 按分块顺序读取 Content List V2 结果 ZIP，生成一个 `converted.epub`。
+新项目使用常规 EPUB 读写流程；manifest 绑定原 PDF 和派生 EPUB 的哈希。
+项目和预览的 `fmt` 始终为 `pdf`。需要模板的操作读取派生 EPUB，导出不会重新请求 MinerU。
+
+已有 MinerU 结果包可用同一转换器离线检查：
+
+```bash
+uv run --no-sync wenyi mineru-epub path/to/mineru-result.zip path/to/source.epub
+```
+
+转换器只读取 Content List V2 和引用的本地素材，不读取 Markdown 或 HTML 导出文件。
+它沿用块顺序，保留页面脚注、图表及说明、参考文献，省略页眉、页脚和页码。
+公式输出为 MathML 并显示编号，独立公式无法渲染时使用可用裁图。
+混排段落会补齐行内公式与相邻拉丁字母或数字之间缺失的空格，并按行首对齐，避免公式换行时拉宽词距。
+这两项调整不改变 LaTeX。代码保留原始空白；算法正文和题注可翻译，内联公式受保护。
+派生 EPUB 将每个显式目录标题（含子节）标记为逻辑章节边界；导航文档不占正文阅读顺序。
+目录仍沿用 MinerU 的标题层级，不影响普通 EPUB 的既有分章规则。只保留 JSON 中已有的链接。
 
 PDF 版面抽取与回填仍由独立的 BabelDOC bridge 执行。Core 原生检测扫描件并读取书签，
 遇到无法判定的文字、命名目的地或不常见的书签结构时复用一个 pypdf reader。

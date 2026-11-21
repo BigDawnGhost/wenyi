@@ -102,7 +102,11 @@ def test_chapter_service_limits_blank_allowance_and_resumes_without_retranslatio
     store = _store(str(tmp_path))
     manifest = store.load_manifest()
     manifest["fmt"] = "text" if backend == "text" else "pdf"
-    manifest["meta"] = {"babeldoc": True} if backend == "babeldoc" else {}
+    manifest["meta"] = {
+        "text": {},
+        "babeldoc": {"babeldoc": True},
+        "mineru": {"mineru_epub_sha256": "a" * 64},
+    }[backend]
     manifest["chapters"][0]["status"] = STATUS_PENDING
     store.save_manifest(manifest)
     chapter = store.load_chapter(0)
@@ -120,16 +124,12 @@ def test_chapter_service_limits_blank_allowance_and_resumes_without_retranslatio
 
     client = FakeClient(handler=handler)
     service = Orchestrator(config, client)._translation
-    if backend != "mineru":
-        with pytest.raises(AlignmentError):
-            service.run(store, book_synopsis="")
-        assert store.load_chapter(0).text_segments[0].target is None
-        return
-
-    service.run(store, book_synopsis="")
-    assert store.load_chapter(0).text_segments[0].target == ""
-    assert service.progress_counts(store, [0]) == (1, 1)
-    store.set_chapter_status(0, STATUS_PENDING)
+    with pytest.raises(AlignmentError):
+        service.run(store, book_synopsis="")
+    chapter = store.load_chapter(0)
+    assert chapter.text_segments[0].target is None
+    chapter.text_segments[0].target = ""
+    store.save_chapter(chapter)
     resumed_client = FakeClient(handler=handler)
     Orchestrator(config, resumed_client)._translation.run(store, book_synopsis="")
     assert store.load_chapter(0).text_segments[0].target == ""

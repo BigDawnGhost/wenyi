@@ -1,27 +1,20 @@
-"""Differential coverage for standalone HTML and cached MinerU HTML."""
+"""Differential coverage for standalone HTML."""
 
 from __future__ import annotations
 
-import io
 import zipfile
-from pathlib import Path
 
 import pytest
 from bs4 import BeautifulSoup
-from pypdf import PdfWriter
 from wenyi_core.assemble.html_renderer import _render_plain_native, _render_segments_html
 from wenyi_core.assemble.html_resources import _embed_html_resources
 from wenyi_core.assemble.html_writer import _html_presentation
 from wenyi_core.assemble.writer import assemble
-from wenyi_core.ingest import pdf_to_html
 from wenyi_core.ingest.html_reader import _extract_chapter, annotate_html_document, read_html
-from wenyi_core.ingest.pdf_reader import pdf_cache_html_path, read_pdf
-from wenyi_core.ingest.source_hash import source_sha256
 from wenyi_core.markup import _epub_native
 from wenyi_core.markup.html import html_translation_targets
 from wenyi_core.markup.segments import _normalize_html_text, annotate_epub_resource
 from wenyi_core.models.document import Segment
-from wenyi_core.models.errors import MinerUError
 from wenyi_core.storage.file import FileStorage
 
 
@@ -63,8 +56,7 @@ def test_region_plan_preserves_nested_barriers_and_ruby():
         "<section><p> </p></section>",
     ],
 )
-def test_mineru_native_plain_templates_match_legacy(fragment):
-    assert _epub_native.mineru_annotate_plain(fragment, 3) is not None
+def test_legacy_block_templates_match_epub_extraction(fragment):
     title, expected, template = annotate_epub_resource(fragment, 3, "html-chapter-3.xhtml")
     for segment in expected:
         segment.resource_href = None
@@ -77,7 +69,6 @@ def test_mineru_native_plain_templates_match_legacy(fragment):
 
 def test_rich_fragments_keep_legacy_annotation_and_rendering():
     fragment = '<p id="start">💬 <a href="#fn1">label <sup>1</sup></a></p><p id="fn1">Note.</p>'
-    assert _epub_native.mineru_annotate_plain(fragment, 0) is None
     title, expected, parsed_template = annotate_epub_resource(fragment, 0, "html-chapter-0.xhtml")
     for segment in expected:
         segment.resource_href = None
@@ -218,76 +209,14 @@ def test_read_html_keeps_chapter_templates_without_rebuilding_shell(
     )
 
 
-def _zip(*members: tuple[str, str | bytes], compression: int = zipfile.ZIP_DEFLATED) -> bytes:
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", compression) as archive:
-        for name, payload in members:
-            archive.writestr(name, payload)
-    return output.getvalue()
-
-
-@pytest.mark.parametrize("compression", [zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED])
-def test_mineru_standard_zip_selects_first_case_sensitive_html(monkeypatch, compression):
-    members = (("SKIP.HTML", "wrong"), ("nested/输出.htm", "first"), ("other.html", "second"))
-    payload = _zip(*members, compression=compression)
-    assert _epub_native.mineru_html_from_zip(payload) == "first"
-    monkeypatch.setattr(
-        zipfile, "ZipFile", lambda *_, **__: pytest.fail("standard ZIP should stay native")
-    )
-    assert pdf_to_html._html_from_zip(payload) == "first"
-
-
-def test_mineru_response_zip_compatibility_and_errors_are_unchanged():
-    with pytest.warns(UserWarning, match="Duplicate name"):
-        duplicate = _zip(("output.html", "old"), ("other.html", "second"), ("output.html", "new"))
-    assert _epub_native.mineru_html_from_zip(duplicate) is None
-    assert pdf_to_html._html_from_zip(duplicate) == "new"
-    bzip = _zip(("output.html", "other codec"), compression=zipfile.ZIP_BZIP2)
-    assert _epub_native.mineru_html_from_zip(bzip) is None
-    assert pdf_to_html._html_from_zip(bzip) == "other codec"
-    prefixed = b"prefix" + _zip(("output.html", "prefixed"))
-    assert _epub_native.mineru_html_from_zip(prefixed) is None
-    assert pdf_to_html._html_from_zip(prefixed) == "prefixed"
-    with pytest.raises(MinerUError, match="No HTML file in result ZIP"):
-        pdf_to_html._html_from_zip(_zip(("plain.txt", "no HTML")))
-    with pytest.raises(UnicodeDecodeError):
-        pdf_to_html._html_from_zip(_zip(("output.html", b"\xff")))
-    with pytest.raises(zipfile.BadZipFile, match="Bad CRC"):
-        corrupt = _zip(("output.html", "correct original"), compression=zipfile.ZIP_STORED)
-        pdf_to_html._html_from_zip(corrupt.replace(b"correct original", b"corrupt original"))
-    mismatch = _zip(("output.html", "content")).replace(b"output.html", b"wrong_.html", 1)
-    assert _epub_native.mineru_html_from_zip(mismatch) is None
-    with pytest.raises(zipfile.BadZipFile, match="differ"):
-        pdf_to_html._html_from_zip(mismatch)
-
-
-@pytest.mark.parametrize("source_format", ["html", "mineru"])
 @pytest.mark.parametrize("bilingual", [False, True])
 def test_html_templates_to_epub_backfill_canonical_paragraphs_natively(
-    tmp_path, monkeypatch, source_format, bilingual
+    tmp_path, monkeypatch, bilingual
 ):
     store = FileStorage(str(tmp_path / "state"))
-    source = tmp_path / ("source.html" if source_format == "html" else "source.pdf")
-    if source_format == "html":
-        html = source
-    else:
-        with PdfWriter() as writer:
-            writer.add_blank_page(width=144, height=144)
-            writer.write(source)
-        html = Path(pdf_cache_html_path(store.source_dir, source_sha256(str(source))))
-        html.parent.mkdir(parents=True)
-    html.write_text('<p id="greeting">Greeting</p>', encoding="utf-8")
-    doc = (
-        read_html(str(source), "en", "zh")
-        if source_format == "html"
-        else read_pdf(
-            str(source),
-            "en",
-            "zh",
-            cache_dir=store.source_dir,
-            mineru_token_resolver=lambda: pytest.fail("cached HTML must not resolve credentials"),
-        )
-    )
+    source = tmp_path / "source.html"
+    source.write_text('<p id="greeting">Greeting</p>', encoding="utf-8")
+    doc = read_html(str(source), "en", "zh")
     store.init_from_document(doc)
     chapter = store.load_chapter(0)
     chapter.segments[0].target = "First line\nSecond line"
@@ -319,80 +248,4 @@ def test_html_templates_to_epub_backfill_canonical_paragraphs_natively(
         assert calls == [golden]
         assert not soup.select(".tn-source")
     assert store.load_chapter(0) == chapter
-    assert html.read_text() == '<p id="greeting">Greeting</p>'
-
-
-def test_mineru_chunk_assembly_cache_and_html_export(tmp_path, monkeypatch):
-    source = tmp_path / "Book.pdf"
-    with PdfWriter() as writer:
-        writer.add_blank_page(width=144, height=144)
-        writer.add_blank_page(width=144, height=144)
-        writer.write(source)
-    store = FileStorage(str(tmp_path / "state"))
-    cache = Path(pdf_cache_html_path(store.source_dir, source_sha256(str(source))))
-    calls = []
-
-    class OfflineApi:
-        def __init__(self, token):
-            assert token == "synthetic"
-
-        def submit_batch(self, paths):
-            calls.append(len(paths))
-            return [
-                _zip(
-                    (
-                        "parts/first.html",
-                        "<HTML><HEAD><TITLE>old</TITLE><META CHARSET='x'/>"
-                        "<style>p { color: red }</style></HEAD>"
-                        "<BODY><h1>One</h1><p id='p1'>First.</p></BODY></HTML>",
-                    )
-                ),
-                _zip(("second.htm", "<h2>Two</h2><p id='p2'>Second.</p>")),
-            ]
-
-        def close(self):
-            pass
-
-    monkeypatch.setattr(pdf_to_html, "MinerUApi", OfflineApi)
-    monkeypatch.setattr(pdf_to_html, "MAX_PAGES", 1)
-
-    def read(**kwargs):
-        return read_pdf(str(source), "en", "zh", cache_dir=store.source_dir, **kwargs)
-
-    original = read(api_token="synthetic")
-    frozen = (
-        '<!DOCTYPE html>\n<html>\n<head>\n    <meta charset="utf-8">\n'
-        "    <title>Book.pdf</title>\n<style>p { color: red }</style>\n"
-        "</head>\n<body>\n<h1>One</h1><p id='p1'>First.</p>"
-        "<h2>Two</h2><p id='p2'>Second.</p>\n</body>\n</html>"
-    )
-    assert cache.read_text() == frozen
-    assert (
-        original.model_dump()
-        == read(
-            mineru_token_resolver=lambda: pytest.fail("cached HTML must not resolve credentials")
-        ).model_dump()
-    )
-    assert calls == [2]
-    assert original.fmt == "pdf"
-    assert original.source_path == str(source)
-    assert [s.anchor for ch in original.chapters for s in ch.segments] == [
-        "tn0_0",
-        "tn0_1",
-        "tn1_0",
-        "tn1_1",
-    ]
-    store.init_from_document(original)
-    for chapter in original.chapters:
-        chapter.segments[0].target = f"Chapter {chapter.index}"
-        chapter.segments[1].target = "" if chapter.index == 0 else "译文"
-        store.save_chapter(chapter)
-    out = tmp_path / "output.html"
-    assemble(store, str(source), out_path=str(out), out_format="html")
-    soup = BeautifulSoup(out.read_text(), "html.parser")
-    p1, p2 = soup.find(id="p1"), soup.find(id="p2")
-    assert p1 is not None and p1.get_text() == "First."
-    assert p2 is not None and p2.get_text() == "译文"
-    assert not soup.select("[data-tn-id]")
-    assert store.load_chapter(0).segments[1].target == ""
-    assert cache.read_text() == frozen
+    assert source.read_text() == '<p id="greeting">Greeting</p>'

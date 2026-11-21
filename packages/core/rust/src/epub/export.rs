@@ -832,7 +832,12 @@ fn output<T>(
                 continue;
             }
             let line = dom.attr(node, LINE).is_some();
-            let nested = matches!(dom.name(node), "li" | "blockquote");
+            // Keep the copy inside structural containers: rows admit only cells,
+            // and a figure's caption must remain its first or last child.
+            let nested = matches!(
+                dom.name(node),
+                "li" | "blockquote" | "td" | "th" | "figcaption"
+            );
             let copy = dom.tag(if line {
                 "span"
             } else if nested {
@@ -845,6 +850,11 @@ fn output<T>(
                     unreachable!()
                 };
                 *dom.attrs_mut(copy) = attrs.clone();
+            }
+            if matches!(dom.name(node), "td" | "th") {
+                for attr in ["colspan", "rowspan", "headers", "scope", "abbr"] {
+                    dom.attrs_mut(copy).remove(attr);
+                }
             }
             if !options.source_lang.is_empty() && dom.attr(copy, "lang").is_none() {
                 dom.set(copy, "lang", options.source_lang.clone());

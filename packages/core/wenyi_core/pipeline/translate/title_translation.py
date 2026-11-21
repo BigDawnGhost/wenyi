@@ -10,7 +10,7 @@ from typing import Any
 from ...agents import prompts
 from ...agents.title_translator import TitleOutputError, TitleTranslator
 from ...glossary.store import GlossaryStore
-from ...models.document import Chapter
+from ...models.document import Chapter, uses_epub_template
 from ...models.glossary import GlossaryTerm
 from ...storage.protocol import Storage
 
@@ -173,7 +173,9 @@ def title_batches(pending: list[TitleRequest]) -> list[list[TitleRequest]]:
 
 def _store_navigation_terms(plan: TitlePlan, glossary: Storage | GlossaryStore) -> None:
     """Publish all saved EPUB navigation pairs, including reused and resumed titles."""
-    if plan.manifest.get("fmt") != "epub" or not plan.entries:
+    if not plan.entries or not uses_epub_template(
+        plan.manifest.get("fmt"), plan.manifest.get("meta")
+    ):
         return
     targets = {term.source: term.target for term in glossary.all_terms()}
     conflicts = {

@@ -7,15 +7,17 @@ import os
 import tempfile
 import unittest
 import zipfile
+from pathlib import Path
 from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from bs4.element import Comment
 from wenyi_cli.commands.validation import runstore_for
+from wenyi_core.assemble.epub_package import EpubChapter, EpubTocEntry, write_epub
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
-from wenyi_core.ingest.pdf_reader import pdf_cache_html_path
+from wenyi_core.ingest.pdf_reader import pdf_cache_epub_path
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.document import Document
@@ -62,16 +64,40 @@ class TestPdfIngest(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
 
-    def test_pdf_reuses_state_html_without_api_call(self):
+    @staticmethod
+    def _source_epub(output, first="First paragraph."):
+        Path(output).parent.mkdir(parents=True, exist_ok=True)
+        write_epub(
+            output,
+            title="sample",
+            lang="en",
+            chapters=[
+                EpubChapter(
+                    "one.xhtml",
+                    "Chapter One",
+                    f"<html><body><h1>Chapter One</h1><p>{first}</p></body></html>",
+                ),
+                EpubChapter(
+                    "two.xhtml",
+                    "Chapter Two",
+                    "<html><body><h2>Chapter Two</h2><p>Second.</p></body></html>",
+                ),
+            ],
+            toc=[
+                EpubTocEntry("one.xhtml", "Chapter One"),
+                EpubTocEntry("two.xhtml", "Chapter Two"),
+            ],
+            resources=[],
+        )
+
+    def test_pdf_reuses_source_epub_without_api_call(self):
         with tempfile.TemporaryDirectory() as directory:
             pdf_path = os.path.join(directory, "sample.pdf")
             with open(pdf_path, "wb") as file:
-                file.write(b"not accessed when cached HTML exists")
+                file.write(b"not accessed when source EPUB exists")
             cache_dir = os.path.join(directory, "state", "sample", "source")
-            cached_html = pdf_cache_html_path(cache_dir, source_sha256(pdf_path))
-            os.makedirs(os.path.dirname(cached_html))
-            with open(cached_html, "w", encoding="utf-8") as file:
-                file.write(_HTML)
+            cached_epub = pdf_cache_epub_path(cache_dir, source_sha256(pdf_path))
+            self._source_epub(cached_epub)
 
             document = load_document(
                 pdf_path,
@@ -87,10 +113,10 @@ class TestPdfIngest(unittest.TestCase):
         self.assertNotIn("pdf_path", document.meta)
         self.assertNotIn("converted_html_path", document.meta)
         self.assertEqual(
-            [chapter.title for chapter in document.chapters],
+            [chapter.title for chapter in document.chapters[-2:]],
             ["Chapter One", "Chapter Two"],
         )
-        self.assertTrue(all(chapter.template for chapter in document.chapters))
+        self.assertIn("mineru_epub_sha256", document.meta)
 
     def test_pdf_wraps_external_conversion_errors(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -101,7 +127,7 @@ class TestPdfIngest(unittest.TestCase):
 
             with (
                 patch(
-                    "wenyi_core.ingest.pdf_to_html.convert_pdf_to_html",
+                    "wenyi_core.ingest.pdf_reader.convert_pdf_to_epub",
                     side_effect=RuntimeError("connection reset"),
                 ),
                 self.assertRaisesRegex(MinerUError, "PDF conversion failed") as raised,
@@ -132,7 +158,7 @@ class TestPdfIngest(unittest.TestCase):
 
             with (
                 patch(
-                    "wenyi_core.ingest.pdf_to_html.convert_pdf_to_html",
+                    "wenyi_core.ingest.pdf_reader.convert_pdf_to_epub",
                     side_effect=write_partial_then_fail,
                 ),
                 self.assertRaises(MinerUError),
@@ -140,12 +166,10 @@ class TestPdfIngest(unittest.TestCase):
                 load_document(pdf_path, "en", "zh", cache_dir=cache_dir, pdf_backend="mineru")
 
             def convert_fresh(_input: str, output: str, **_kwargs) -> None:
-                os.makedirs(os.path.dirname(output), exist_ok=True)
-                with open(output, "w", encoding="utf-8") as file:
-                    file.write(_HTML.replace("First paragraph.", "Fresh retry."))
+                self._source_epub(output, "Fresh retry.")
 
             with patch(
-                "wenyi_core.ingest.pdf_to_html.convert_pdf_to_html",
+                "wenyi_core.ingest.pdf_reader.convert_pdf_to_epub",
                 side_effect=convert_fresh,
             ) as conversion:
                 document = load_document(
@@ -153,7 +177,7 @@ class TestPdfIngest(unittest.TestCase):
                 )
 
             conversion.assert_called_once()
-            self.assertIn("Fresh retry.", document.chapters[0].segments[1].source)
+            self.assertIn("Fresh retry.", [s.source for c in document.chapters for s in c.segments])
 
     def test_pdf_failed_preparation_preserves_identity_for_retry(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -172,7 +196,7 @@ class TestPdfIngest(unittest.TestCase):
 
             with (
                 patch(
-                    "wenyi_core.ingest.pdf_to_html.convert_pdf_to_html",
+                    "wenyi_core.ingest.pdf_reader.convert_pdf_to_epub",
                     side_effect=RuntimeError("temporary outage"),
                 ),
                 self.assertRaises(MinerUError),
@@ -184,12 +208,10 @@ class TestPdfIngest(unittest.TestCase):
             self.assertTrue(os.path.isfile(partial.initialization_path))
 
             def convert_fresh(_input: str, output: str, **_kwargs) -> None:
-                os.makedirs(os.path.dirname(output), exist_ok=True)
-                with open(output, "w", encoding="utf-8") as file:
-                    file.write(_HTML)
+                self._source_epub(output)
 
             with patch(
-                "wenyi_core.ingest.pdf_to_html.convert_pdf_to_html",
+                "wenyi_core.ingest.pdf_reader.convert_pdf_to_epub",
                 side_effect=convert_fresh,
             ):
                 store = require_file_storage(
@@ -207,10 +229,8 @@ class TestPdfIngest(unittest.TestCase):
                 file.write(b"not accessed when cached HTML exists")
             state_dir = os.path.join(directory, "state")
             cache_dir = os.path.join(state_dir, "sample", "targets", "zh", "source")
-            cached_html = pdf_cache_html_path(cache_dir, source_sha256(pdf_path))
-            os.makedirs(os.path.dirname(cached_html))
-            with open(cached_html, "w", encoding="utf-8") as file:
-                file.write(_HTML)
+            cached_epub = pdf_cache_epub_path(cache_dir, source_sha256(pdf_path))
+            self._source_epub(cached_epub)
             config = Config.from_dict(
                 {
                     "language": {"source": "en", "target": "zh"},
@@ -222,15 +242,15 @@ class TestPdfIngest(unittest.TestCase):
             orchestrator = Orchestrator(config, client=FakeClient(handler=routing_handler))
 
             store = require_file_storage(orchestrator.prepare(pdf_path))
-            os.remove(cached_html)
-            resumed = orchestrator.prepare(pdf_path)
+            with patch("wenyi_core.ingest.pdf_reader.convert_pdf_to_epub") as convert:
+                resumed = orchestrator.prepare(pdf_path)
+                convert.assert_not_called()
             serialized_manifest = str(store.load_manifest())
 
         self.assertEqual(store.run_dir, os.path.join(state_dir, "sample", "targets", "zh"))
         self.assertEqual(resumed.run_dir, store.run_dir)
-        self.assertFalse(os.path.exists(cached_html))
         self.assertNotIn(os.path.abspath(pdf_path), serialized_manifest)
-        self.assertNotIn(os.path.abspath(cached_html), serialized_manifest)
+        self.assertNotIn(os.path.abspath(cached_epub), serialized_manifest)
 
     def test_pdf_cache_isolated_by_source_hash_after_interrupted_initialization(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -240,10 +260,7 @@ class TestPdfIngest(unittest.TestCase):
             state_dir = os.path.join(directory, "state")
             cache_root = os.path.join(state_dir, "sample", "targets", "zh", "source")
             stale_hash = source_sha256(pdf_path)
-            stale_html = pdf_cache_html_path(cache_root, stale_hash)
-            os.makedirs(os.path.dirname(stale_html))
-            with open(stale_html, "w", encoding="utf-8") as file:
-                file.write(_HTML.replace("First paragraph.", "Stale body."))
+            self._source_epub(pdf_cache_epub_path(cache_root, stale_hash), "Stale body.")
             config = Config.from_dict(
                 {
                     "language": {"source": "en", "target": "zh"},
@@ -268,12 +285,10 @@ class TestPdfIngest(unittest.TestCase):
             fresh_hash = source_sha256(pdf_path)
 
             def convert(_input: str, output: str, **_kwargs) -> None:
-                os.makedirs(os.path.dirname(output), exist_ok=True)
-                with open(output, "w", encoding="utf-8") as file:
-                    file.write(_HTML.replace("First paragraph.", "Fresh body."))
+                self._source_epub(output, "Fresh body.")
 
             with patch(
-                "wenyi_core.ingest.pdf_to_html.convert_pdf_to_html",
+                "wenyi_core.ingest.pdf_reader.convert_pdf_to_epub",
                 side_effect=convert,
             ) as conversion:
                 store = require_file_storage(
@@ -284,7 +299,13 @@ class TestPdfIngest(unittest.TestCase):
 
             conversion.assert_called_once()
             self.assertEqual(store.load_manifest()["source_sha256"], fresh_hash)
-            self.assertIn("Fresh body.", store.load_chapter(0).segments[1].source)
+            self.assertTrue(
+                any(
+                    s.source == "Fresh body."
+                    for chapter in store.load_manifest()["chapters"]
+                    for s in store.load_chapter(chapter["index"]).segments
+                )
+            )
             glossary = GlossaryStore(store.glossary_path)
             try:
                 self.assertIsNone(glossary.get_term("OldBook"))
@@ -302,9 +323,7 @@ class TestPdfIngest(unittest.TestCase):
             def convert(_input: str, output: str, **_kwargs) -> None:
                 with open(pdf_path, "wb") as file:
                     file.write(b"PDF replaced during conversion")
-                os.makedirs(os.path.dirname(output), exist_ok=True)
-                with open(output, "w", encoding="utf-8") as file:
-                    file.write(_HTML)
+                self._source_epub(output)
 
             config = Config.from_dict(
                 {
@@ -316,18 +335,16 @@ class TestPdfIngest(unittest.TestCase):
             )
             with (
                 patch(
-                    "wenyi_core.ingest.pdf_to_html.convert_pdf_to_html",
+                    "wenyi_core.ingest.pdf_reader.convert_pdf_to_epub",
                     side_effect=convert,
                 ),
                 self.assertRaisesRegex(ValueError, "changed during conversion or parsing"),
             ):
                 Orchestrator(config, client=FakeClient()).prepare(pdf_path)
 
-            stale_cache = os.path.dirname(
-                pdf_cache_html_path(
-                    os.path.join(state_dir, "sample", "targets", "zh", "source"),
-                    original_hash,
-                )
+            stale_cache = pdf_cache_epub_path(
+                os.path.join(state_dir, "sample", "targets", "zh", "source"),
+                original_hash,
             )
             self.assertFalse(os.path.exists(stale_cache))
             self.assertFalse(
@@ -357,57 +374,32 @@ class TestPdfIngest(unittest.TestCase):
 
         self.assertEqual(store.run_dir, os.path.join(state_dir, "sample", "targets", "zh"))
 
-    def test_pdf_generated_epub_packages_images_from_converted_html(self):
+    def test_legacy_pdf_is_not_reparsed_or_exported(self):
         with tempfile.TemporaryDirectory() as directory:
             pdf_path = os.path.join(directory, "sample.pdf")
             with open(pdf_path, "wb") as file:
-                file.write(b"not accessed when cached HTML exists")
-            cache_dir = os.path.join(directory, "state", "sample", "source")
-            cached_html = pdf_cache_html_path(cache_dir, source_sha256(pdf_path))
-            image_dir = os.path.join(os.path.dirname(cached_html), "images")
-            os.makedirs(image_dir)
-            with open(os.path.join(image_dir, "chart.svg"), "w", encoding="utf-8") as file:
-                file.write(
-                    '<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>'
-                )
-            with open(cached_html, "w", encoding="utf-8") as file:
-                file.write(
-                    """<html><body><h1>Chapter</h1>
-                    <p><img src="images/chart.svg"/>Before text.</p>
-                    </body></html>"""
-                )
-            document = load_document(
-                pdf_path,
-                "en",
-                "zh",
-                cache_dir=cache_dir,
-                pdf_backend="mineru",
-            )
+                file.write(b"original PDF")
             store = FileStorage(os.path.join(directory, "state", "sample"))
-            _initialize_test_store(store, document)
-            _set_test_targets(store)
-            output_path = os.path.join(directory, "translated.epub")
-
-            assemble(
-                store,
-                pdf_path,
-                out_path=output_path,
-                out_format="epub",
+            document = Document(
+                title="sample",
+                fmt="pdf",
+                source_path=pdf_path,
+                source_lang="en",
+                target_lang="zh",
+                chapters=[],
             )
-
-            with zipfile.ZipFile(output_path) as archive:
-                names = archive.namelist()
-                self.assertIn("EPUB/trans-novel-about.xhtml", names)
-                chapter_name = next(name for name in names if name.endswith("/ch0.xhtml"))
-                chapter = BeautifulSoup(archive.read(chapter_name), "html.parser")
-                image = chapter.find("img")
-                self.assertIsNotNone(image)
-                assert image is not None
-                src = image.get("src")
-                self.assertIsInstance(src, str)
-                assert isinstance(src, str)
-                asset_name = next(name for name in names if name.endswith(src))
-                self.assertIn(b"<svg", archive.read(asset_name))
+            _initialize_test_store(store, document)
+            output_path = os.path.join(directory, "translated.epub")
+            config = Config.from_dict(
+                {"language": {"source": "en", "target": "zh"}, "llm": {"preset": "fake"}}
+            )
+            before = store.load_manifest()
+            with self.assertRaisesRegex(ValueError, "retired HTML format"):
+                Orchestrator(config, client=FakeClient(), storage=store).prepare(pdf_path)
+            with self.assertRaisesRegex(ValueError, "retired HTML format"):
+                assemble(store, pdf_path, out_path=output_path, out_format="epub")
+            self.assertEqual(store.load_manifest(), before)
+            self.assertFalse(os.path.exists(output_path))
 
 
 class TestHtmlAndMarkdownIntegration(unittest.TestCase):

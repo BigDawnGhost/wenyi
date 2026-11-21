@@ -36,15 +36,6 @@ if TYPE_CHECKING:
     from ..run.runtime import PipelineRuntime
 
 
-def _is_mineru_pdf(manifest: dict[str, Any]) -> bool:
-    """True for MinerU PDF state (fmt=pdf without BabelDOC markers)."""
-    if manifest.get("fmt") != "pdf":
-        return False
-    raw_meta = manifest.get("meta")
-    meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
-    return not bool(meta.get("babeldoc")) and meta.get("pdf_export") != "babeldoc"
-
-
 class TranslationService:
     """Domain service for body translation, glossary extraction and chapter/TOC titles."""
 
@@ -73,7 +64,6 @@ class TranslationService:
         manifest = store.load_manifest()
         glossary = store
         style = self._runtime.analyzer.style_brief(store.load_analysis() or {})
-        allow_empty_translations = _is_mineru_pdf(manifest)
 
         if only_chapter is not None:
             targets = [only_chapter]
@@ -90,7 +80,6 @@ class TranslationService:
             only_chapter=only_chapter,
             chapters=targets,
             total_segments=total,
-            allow_empty_translations=allow_empty_translations,
         )
         try:
             for ci in targets:
@@ -106,7 +95,6 @@ class TranslationService:
                     progress=progress,
                     done=done,
                     total=total,
-                    allow_empty_translations=allow_empty_translations,
                 )
                 self._runtime.usage.flush(store, scope="chapter")
             # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
@@ -273,7 +261,7 @@ class TranslationService:
             glossary_key = store.batch_glossary_key(batch_start, len(b))
             if all(s.target is not None for s in b):
                 # Reuse a batch translated at this position/context, rebuild rolling context and skip it.
-                # Blank "" is a completed MinerU allowance; only None means not yet translated.
+                # Only None means not yet translated.
                 self._align_batch_context(store, chapter, text_segs, batch_start, len(b))
                 if glossary_key in glossary_checkpoints or (
                     context_policy is not None
