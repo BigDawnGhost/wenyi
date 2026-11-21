@@ -3,10 +3,26 @@
 !include "nsDialogs.nsh"
 !define WENYI_REPARSE_POINT 0x400
 
-LangString WenyiWelcome ${LANG_ENGLISH} "Wenyi installs program files separately from your data.$\r$\n$\r$\nDefault program folder:$\r$\n%LOCALAPPDATA%\Programs\Wenyi Desktop$\r$\n$\r$\nDefault data folder:$\r$\n%LOCALAPPDATA%\Wenyi\Desktop$\r$\n$\r$\nThis is a breaking data-format change. Old settings and projects are not imported or migrated. Old data stays where it is."
-LangString WenyiWelcome ${LANG_SIMPCHINESE} "Wenyi 的程序与数据分开存放。$\r$\n$\r$\n默认程序目录：$\r$\n%LOCALAPPDATA%\Programs\Wenyi Desktop$\r$\n$\r$\n默认数据目录：$\r$\n%LOCALAPPDATA%\Wenyi\Desktop$\r$\n$\r$\n本次包含不兼容的数据格式变更，不导入或迁移旧设置及项目，旧数据保留原位。"
-LangString WenyiElevated ${LANG_ENGLISH} "Close this installer and run it normally, not as administrator. Wenyi installs for the current user only."
-LangString WenyiElevated ${LANG_SIMPCHINESE} "请关闭安装器并以普通方式运行，不要使用管理员身份。Wenyi 仅为当前用户安装。"
+LangString WenyiWelcome ${LANG_ENGLISH} "Wenyi installs program files separately from your data. Each Windows account keeps its own data in %LOCALAPPDATA%\Wenyi\Desktop.$\r$\n$\r$\nOld settings and projects are not imported or migrated. Old data stays where it is."
+LangString WenyiWelcome ${LANG_SIMPCHINESE} "Wenyi 的程序与数据分开存放。各 Windows 账户的数据分别保存在各自的 %LOCALAPPDATA%\Wenyi\Desktop。$\r$\n$\r$\n旧设置及项目不会自动导入或迁移，旧数据保留原位。"
+LangString WenyiScopeTitle ${LANG_ENGLISH} "Installation scope"
+LangString WenyiScopeTitle ${LANG_SIMPCHINESE} "安装范围"
+LangString WenyiScopeHint ${LANG_ENGLISH} "Choose who can use this installation."
+LangString WenyiScopeHint ${LANG_SIMPCHINESE} "选择哪些用户可以使用此安装。"
+LangString WenyiScopeCurrent ${LANG_ENGLISH} "Install for the current user only"
+LangString WenyiScopeCurrent ${LANG_SIMPCHINESE} "仅为当前用户安装"
+LangString WenyiScopeAll ${LANG_ENGLISH} "Install for all users (requires administrator approval)"
+LangString WenyiScopeAll ${LANG_SIMPCHINESE} "为所有用户安装（需要管理员批准）"
+LangString WenyiMachineAdmin ${LANG_ENGLISH} "Installing or uninstalling Wenyi for all users requires administrator approval."
+LangString WenyiMachineAdmin ${LANG_SIMPCHINESE} "为所有用户安装或卸载 Wenyi 需要管理员批准。"
+LangString WenyiMachineDirectory ${LANG_ENGLISH} "All-users setup must use the fixed Program Files folder. Run the release installer to update an all-users installation."
+LangString WenyiMachineDirectory ${LANG_SIMPCHINESE} "为所有用户安装时必须使用 Program Files 下的固定目录。请运行发行版安装器更新为所有用户安装的 Wenyi。"
+LangString WenyiUserToken ${LANG_ENGLISH} "Windows could not start setup with standard permissions for this account. Start it normally, or choose the all-users installation."
+LangString WenyiUserToken ${LANG_SIMPCHINESE} "Windows 无法以此账户的普通权限启动安装程序。请以普通方式运行，或选择为所有用户安装。"
+LangString WenyiKeepBusyData ${LANG_ENGLISH} "Wenyi could not obtain exclusive access to your data. Nothing was deleted. Continue uninstalling the program only?"
+LangString WenyiKeepBusyData ${LANG_SIMPCHINESE} "无法独占访问文译数据，未删除用户数据。是否仅卸载程序？"
+LangString WenyiCleanupFailed ${LANG_ENGLISH} "Could not complete the selected data cleanup. Setup has not removed the program."
+LangString WenyiCleanupFailed ${LANG_SIMPCHINESE} "未能完成所选的数据清理，程序尚未卸载。"
 LangString WenyiSetupBusy ${LANG_ENGLISH} "Another Wenyi installation or uninstallation is running. Finish it before retrying."
 LangString WenyiSetupBusy ${LANG_SIMPCHINESE} "另一个 Wenyi 安装或卸载程序正在运行，请等待其结束后重试。"
 LangString WenyiRunning ${LANG_ENGLISH} "Wenyi or its translation engine is still running. Quit Wenyi from the tray menu, wait for its tasks to stop, then Retry. Setup will not force-stop translations."
@@ -36,16 +52,161 @@ LangString WenyiDeleteProjects ${LANG_SIMPCHINESE} "永久删除默认项目文�
   Quit
 !macroend
 
-!macro WenyiRequireUser
+; Tauri ships an x86 Unicode NSIS stub even for the x64 payload.
+!if ${NSIS_PTR_SIZE} != 4
+  !error "Review the Win32 process structure layouts before changing the NSIS stub architecture."
+!endif
+
+; Both privilege handoffs own the child handle and propagate its exit status.
+!macro WenyiWaitAndQuit HANDLE
+  HideWindow
+  System::Call 'kernel32::WaitForSingleObject(p ${HANDLE}, i -1) i .r8'
+  ${If} $8 == 0
+    System::Call 'kernel32::GetExitCodeProcess(p ${HANDLE}, *i .r7) i .r8'
+    ${IfThen} $8 == 0 ${|} StrCpy $7 2 ${|}
+  ${Else}
+    StrCpy $7 2
+  ${EndIf}
+  System::Call 'kernel32::CloseHandle(p ${HANDLE})'
+  SetErrorLevel $7
+  Quit
+!macroend
+
+; $1 contains only switches selected here, never the caller's raw command line.
+!macro WenyiElevateAndWait FILE
+  StrCpy $0 "${FILE}"
+  System::Call '*(&w6 "runas") p .r2'
+  System::Call '*(&w${NSIS_MAX_STRLEN} r0) p .r6'
+  System::Call '*(&w${NSIS_MAX_STRLEN} r1) p .r7'
+  ; SHELLEXECUTEINFOW: NOCLOSEPROCESS | NOASYNC | FLAG_NO_UI.
+  System::Call '*(&l4, i 0x540, p $HWNDPARENT, p r2, p r6, p r7, p 0, i 1, p 0, p 0, p 0, p 0, i 0, p 0, p 0) p .r3'
+  System::Call 'shell32::ShellExecuteExW(p r3) i .r4 ?e'
+  Pop $8
+  System::Call '*$3(&v56, p .r5)'
+  System::Free $3
+  System::Free $7
+  System::Free $6
+  System::Free $2
+  ${If} $4 == 0
+  ${AndIf} $8 == 1223
+    SetErrorLevel 1223
+    Quit
+  ${EndIf}
+  ${If} $4 == 0
+  ${OrIf} $5 == 0
+    !insertmacro WenyiFail "$(WenyiMachineAdmin)"
+  ${EndIf}
+  !insertmacro WenyiWaitAndQuit r5
+!macroend
+
+; Re-run as the SAME account before consulting the previous installation.
+; A linked token is not necessarily a usable primary token, and built-in
+; Administrator may not have one. Derive a normal-user token from this process
+; instead of borrowing Explorer's (potentially different account's) identity.
+!macro WenyiRunCurrentUser ACTION
   System::Call 'shell32::IsUserAnAdmin() i .r0'
   ${If} $0 != 0
-    !insertmacro WenyiFail "$(WenyiElevated)"
+    ${GetOptions} $CMDLINE "/WenyiReduced" $0
+    ${IfNot} ${Errors}
+      !insertmacro WenyiFail "$(WenyiUserToken)"
+    ${EndIf}
+    System::Call 'advapi32::SaferCreateLevel(i 2, i 0x20000, i 1, *p .r1, p 0) i .r0'
+    ${If} $0 != 0
+      System::Call 'advapi32::SaferComputeTokenFromLevel(p r1, p 0, *p .r2, i 0, p 0) i .r0'
+      System::Call 'advapi32::SaferCloseLevel(p r1)'
+    ${EndIf}
+    ${If} $0 != 0
+      System::Call 'advapi32::ConvertStringSidToSidW(w "S-1-16-8192", *p .r3) i .r0'
+      ${If} $0 != 0
+        System::Call '*(p r3, i 0x20) p .r4'
+        System::Call 'advapi32::GetLengthSid(p r3) i .r0'
+        IntOp $0 $0 + 8
+        System::Call 'advapi32::SetTokenInformation(p r2, i 25, p r4, i r0) i .r0'
+        System::Free $4
+        System::Call 'kernel32::LocalFree(p r3)'
+      ${EndIf}
+    ${EndIf}
+    ${If} $0 == 0
+      !insertmacro WenyiFail "$(WenyiUserToken)"
+    ${EndIf}
+    ${GetParameters} $3
+    !if "${ACTION}" == "install"
+      StrCpy $4 "$EXEPATH"
+      StrCpy $3 '"$4" /WenyiReduced /CurrentUser /LANG=$LANGUAGE $3'
+      ${IfThen} $RequestedDirectory != "" ${|} StrCpy $3 "$3 /D=$RequestedDirectory" ${|}
+    !else
+      ; Use the installed executable, not the admin-only temp clone. NSIS
+      ; creates its own standard-user temp clone for interactive self-removal.
+      StrCpy $4 "$INSTDIR\uninstall.exe"
+      StrCpy $3 '"$4" /WenyiReduced $3'
+      ${IfThen} $EXEPATH == $4 ${|} StrCpy $3 "$3 _?=$INSTDIR" ${|}
+    !endif
+    StrLen $0 $3
+    IntOp $0 $0 + 1
+    ${If} $0 >= ${NSIS_MAX_STRLEN}
+      !insertmacro WenyiFail "$(WenyiUserToken)"
+    ${EndIf}
+    ; STARTUPINFOW (cb and zeroed fields), PROCESS_INFORMATION.
+    System::Call '*(&l4, &v64) p .r5'
+    System::Call '*(p 0, p 0, i 0, i 0) p .r6'
+    System::Call 'advapi32::CreateProcessAsUserW(p r2, w r4, w r3, p 0, p 0, i 0, i 0, p 0, w "$SYSDIR", p r5, p r6) i .r0'
+    System::Call 'kernel32::CloseHandle(p r2)'
+    System::Call '*$6(p .r1, p .r2)'
+    System::Free $5
+    System::Free $6
+    ${If} $0 == 0
+      !insertmacro WenyiFail "$(WenyiUserToken)"
+    ${EndIf}
+    System::Call 'kernel32::CloseHandle(p r2)'
+    !insertmacro WenyiWaitAndQuit r1
   ${EndIf}
 !macroend
 
+Function ChooseScope
+  ${If} $PassiveMode == 1
+  ${OrIf} $ScopeFromCommand == 1
+  ${OrIf} $UpdateMode == 1
+    Abort
+  ${EndIf}
+  !insertmacro MUI_HEADER_TEXT "$(WenyiScopeTitle)" "$(WenyiScopeHint)"
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    !insertmacro WenyiFail "$(WenyiUninstallFailed)"
+  ${EndIf}
+  ${NSD_CreateRadioButton} 0 12u 100% 24u "$(WenyiScopeCurrent)"
+  Pop $1
+  ${NSD_CreateRadioButton} 0 48u 100% 24u "$(WenyiScopeAll)"
+  Pop $AllUsersRadio
+  ; Prefer the one existing scope for manual reinstalls. If both exist,
+  ; deliberately default to the current user, just as for a fresh install.
+  ReadRegStr $0 HKCU "${UNINSTKEY}" "UninstallString"
+  ReadRegStr $2 HKLM "${MANUPRODUCTKEY}" ""
+  ${If} $0 == ""
+  ${AndIf} $2 == "${MACHINE_DIR}"
+    StrCpy $AllUsers 1
+  ${EndIf}
+  ${If} $AllUsers == 1
+    ${NSD_Check} $AllUsersRadio
+  ${Else}
+    ${NSD_Check} $1
+  ${EndIf}
+  nsDialogs::Show
+FunctionEnd
+
+Function ChooseScopeLeave
+  ${NSD_GetState} $AllUsersRadio $AllUsers
+  Call LoadInstallScope
+FunctionEnd
+
 !macro WenyiMutexFunction PREFIX
 Function ${PREFIX}AcquireSetupMutex
-  System::Call 'kernel32::CreateMutexW(p 0, i 0, w "Local\org.wenyi.desktop.setup") p .r0 ?e'
+  ${If} $AllUsers == 1
+    StrCpy $2 "Global\org.wenyi.desktop.machine.setup"
+  ${Else}
+    StrCpy $2 "Local\org.wenyi.desktop.setup"
+  ${EndIf}
+  System::Call 'kernel32::CreateMutexW(p 0, i 0, w r2) p .r0 ?e'
   Pop $1
   StrCpy $SetupMutex $0
   ${If} $0 == 0
@@ -149,13 +310,19 @@ FunctionEnd
     !insertmacro WenyiFail "$(WenyiDirectory)$\r$\n$INSTDIR"
   ${EndIf}
   !insertmacro WenyiNoLinkedParents "$INSTDIR"
-  !insertmacro WenyiDisjoint "${DATA_ROOT}"
-  !insertmacro WenyiDisjoint "$LOCALAPPDATA\Wenyi Desktop"
-  !insertmacro WenyiDisjoint "$PROFILE\Wenyi"
-  !insertmacro WenyiDisjoint "$PROFILE\.wenyi"
   !insertmacro WenyiDisjoint "$WINDIR"
-  !insertmacro WenyiDisjoint "$PROGRAMFILES32"
-  !insertmacro WenyiDisjoint "$PROGRAMFILES64"
+  ${If} $AllUsers == 1
+    ${If} $INSTDIR != "${MACHINE_DIR}"
+      !insertmacro WenyiFail "$(WenyiMachineDirectory)"
+    ${EndIf}
+  ${Else}
+    !insertmacro WenyiDisjoint "${DATA_ROOT}"
+    !insertmacro WenyiDisjoint "$LOCALAPPDATA\Wenyi Desktop"
+    !insertmacro WenyiDisjoint "$PROFILE\Wenyi"
+    !insertmacro WenyiDisjoint "$PROFILE\.wenyi"
+    !insertmacro WenyiDisjoint "$PROGRAMFILES32"
+    !insertmacro WenyiDisjoint "$PROGRAMFILES64"
+  ${EndIf}
   ; .onInit captured ownership while holding the setup mutex and excluded
   ; stale location preferences. Keep that identity across the old uninstaller,
   ; which deletes its registry entries but deliberately preserves extra files.
@@ -232,6 +399,7 @@ FunctionEnd
 Function un.DataPage
   ${If} $PassiveMode == 1
   ${OrIf} $UpdateMode == 1
+  ${OrIf} $AllUsers == 1
     Abort
   ${EndIf}
   !insertmacro MUI_HEADER_TEXT "$(WenyiDataTitle)" ""
@@ -252,41 +420,23 @@ Function un.DataPageLeave
   ${NSD_GetState} $ProjectsCheckbox $DeleteProjects
 FunctionEnd
 
-!macro WenyiRemoveTree PATH
-  Push "${PATH}"
-  Call un.RemoveTree
-!macroend
-; Recursion examines EACH entry. RMDir /r would follow a nested junction even
-; when the root itself is ordinary. Links are removed, their targets are kept.
-Function un.RemoveTree
-  Exch $0
-  Push $1
-  Push $2
-  Push $3
-  System::Call 'kernel32::GetFileAttributesW(w r0) i .r1'
-  ${If} $1 != -1
-    IntOp $2 $1 & 0x10
-    IntOp $3 $1 & ${WENYI_REPARSE_POINT}
-    ${If} $2 == 0
-      Delete "$0"
-    ${ElseIf} $3 != 0
-      RMDir "$0"
-    ${Else}
-      FindFirst $1 $2 "$0\*"
-      ${DoWhile} $2 != ""
-        ${If} $2 != "."
-        ${AndIf} $2 != ".."
-          Push "$0\$2"
-          Call un.RemoveTree
-        ${EndIf}
-        FindNext $1 $2
-      ${Loop}
-      FindClose $1
-      RMDir "$0"
+Function un.CleanUserData
+  StrCpy $1 "projects"
+  ${If} $DeleteSettings == 1
+    StrCpy $1 "settings"
+    ${IfThen} $DeleteProjects == 1 ${|} StrCpy $1 "both" ${|}
+  ${EndIf}
+  ClearErrors
+  ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --uninstall-user-data $1' $0
+  ${IfNot} ${Errors}
+    ${If} $0 == 0
+      Return
+    ${ElseIf} $0 == 3
+      MessageBox MB_YESNO|MB_DEFBUTTON2|MB_ICONEXCLAMATION "$(WenyiKeepBusyData)" /SD IDNO IDYES keep_data
+      SetErrorLevel 2
+      Quit
     ${EndIf}
   ${EndIf}
-  Pop $3
-  Pop $2
-  Pop $1
-  Pop $0
+  !insertmacro WenyiFail "$(WenyiCleanupFailed)"
+  keep_data:
 FunctionEnd

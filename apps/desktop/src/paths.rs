@@ -176,7 +176,7 @@ fn env_path(name: &str) -> Option<PathBuf> {
 }
 
 #[cfg(windows)]
-fn local_app_data() -> Option<PathBuf> {
+pub(crate) fn local_app_data() -> Option<PathBuf> {
     use std::ffi::OsString;
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::System::Com::CoTaskMemFree;
