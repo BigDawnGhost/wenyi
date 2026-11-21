@@ -126,6 +126,7 @@ export const effective = {
   },
   segment: { max_tokens_per_batch: 1800, max_tokens_per_segment: 1200 },
   pipeline: {
+    batch_glossary: "all",
     book_understanding: true,
     polish: true,
     review: true,

@@ -521,6 +521,11 @@ const en = {
   "providerSettings.fastTier": "Fast tier",
   "settings.bookUnderstanding": "Book understanding",
   "settings.polishing": "Polishing",
+  "settings.batchGlossary": "Batch glossary",
+  "settings.batchGlossaryHelp":
+    "Full sends every glossary term to each translation and polish batch. Relevant sends only entries matching the batch's source, following-source reference, annotations, and chapter digest (recommended for long books); whole-book review still receives the full glossary.",
+  "settings.batchGlossaryAll": "Full glossary",
+  "settings.batchGlossaryRelevant": "Relevant to each batch",
   "settings.applyAutofixesToTheSavedTranslation":
     "Apply autofixes to the saved translation after review",
   "settings.paragraphAnnotationAlignment": "Paragraph annotation alignment",

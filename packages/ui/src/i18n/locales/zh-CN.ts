@@ -500,6 +500,11 @@ const zhCN = {
   "providerSettings.fastTier": "快速档位",
   "settings.bookUnderstanding": "全书预理解",
   "settings.polishing": "润色",
+  "settings.batchGlossary": "批次术语范围",
+  "settings.batchGlossaryHelp":
+    "“全量术语表”会向每个翻译与润色批次发送完整术语表；“仅当前批次相关”只发送命中该批原文、后文参考、注释及章节摘要的条目（推荐用于长篇），全书审校仍接收完整术语表。",
+  "settings.batchGlossaryAll": "全量术语表",
+  "settings.batchGlossaryRelevant": "仅当前批次相关",
   "settings.applyAutofixesToTheSavedTranslation":
     "审校后自动修复并写回正式译文",
   "settings.paragraphAnnotationAlignment": "逐段注释定位",

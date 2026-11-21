@@ -63,7 +63,7 @@ Pause active work, open a paragraph, edit it, and **save**. Automatic refresh do
 
 ## Manage the glossary
 
-Use **Glossary** to add or edit source terms, translations, aliases, notes, types, and gender. Manage character names through the **Person** filter rather than a separate character list. Japanese-source projects also expose readings; translating *into* Japanese does not by itself enable that field.
+Use **Glossary** to add or edit source terms, translations, aliases, notes, types, and gender. Manage character names through the **Person** filter rather than a separate character list. Japanese-source projects also expose readings; translating *into* Japanese does not by itself enable that field. Under **Settings → Workflow** (global defaults) or **Project settings → Workflow**, choose **Batch glossary** (`Full glossary` or `Relevant to each batch`) to control whether each translation and polish batch sends the whole glossary or only matching entries; long books benefit from `Relevant to each batch` while whole-book Review still receives the full glossary.
 
 Search covers the whole glossary, including aliases, readings, and notes. Type filters apply to the results. Selecting all affects only the current page; changing pages or filters clears the selection. During a queued/running task, **Term details** remains available for reading and copying, but adding, importing, editing, deleting, and resolving conflicts are disabled.
 
