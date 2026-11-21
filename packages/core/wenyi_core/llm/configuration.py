@@ -72,6 +72,7 @@ class ModelConfig(BaseModel):
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     max_output_tokens: int | None = Field(default=None, gt=0)
+    context_window: int | None = Field(default=None, gt=0)
     options: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("model", "provider")
@@ -80,6 +81,24 @@ class ModelConfig(BaseModel):
         if not value.strip():
             raise ValueError("Model and provider names cannot be blank")
         return value
+
+
+def effective_context_window(provider_kind: str, model: str, configured: int | None) -> int | None:
+    """Return explicit ``context_window``, or a conservative documented default when known."""
+    if configured is not None:
+        return configured
+    kind = provider_kind.lower()
+    name = model.lower()
+    if kind == "deepseek":
+        return 128_000
+    if kind == "gemini" and name.startswith(("gemini-1.5", "gemini-2", "gemini-3")):
+        return 1_000_000
+    if kind == "openai":
+        if name.startswith(("o1", "o3", "o4", "gpt-5")):
+            return 200_000
+        if name.startswith(("gpt-4o", "gpt-4-turbo", "gpt-4.1")):
+            return 128_000
+    return None
 
 
 class RouteConfig(BaseModel):

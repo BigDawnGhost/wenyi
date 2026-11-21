@@ -289,3 +289,156 @@ def test_export_failure_keeps_error_writes_under_the_lock(export_execution, stag
         exporting.execute(request, dependencies)
     assert sequence[-3:] == ["job:error", "export:error", "unlock"]
     storage.close.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError("provider timed out"),
+        ConnectionError("connection reset"),
+    ],
+)
+def test_resumable_provider_outage_pauses_and_schedules_auto_resume(execution, error):
+    from wenyi_backend.execution.outage import AUTO_RESUME_ATTEMPT_PARAM
+
+    request, dependencies, storage = execution
+    scheduled = []
+    deps = replace(
+        dependencies,
+        schedule_resume=lambda req, attempt, delay, retry_at: scheduled.append(
+            (req, attempt, delay, retry_at)
+        ),
+    )
+    deps.operation.side_effect = error
+
+    # First outage pauses cleanly with a 60s delay.
+    runner.execute(request, deps)
+
+    deps.projects.set_project_status.assert_called_once_with("project", "paused", error=str(error))
+    deps.jobs.set_job_status.assert_any_call(1, "paused", error=str(error))
+    assert deps.metrics.snapshot()["tasks"] == {("paused", "pipeline_failed"): 1}
+    assert any(
+        call.args and call.args[0] == "task_paused_outage"
+        for call in storage.log_event.call_args_list
+    )
+    assert len(scheduled) == 1
+    assert scheduled[0][1] == 1
+    assert scheduled[0][2] == 60
+
+    # Subsequent auto-resume attempts back off through 120, 300, 600, 900, 900.
+    expected_delays = [120, 300, 600, 900, 900]
+    for index, expected in enumerate(expected_delays, start=1):
+        scheduled.clear()
+        retry_request = ExecutionRequest(
+            "translation", "project", "run", {AUTO_RESUME_ATTEMPT_PARAM: index}
+        )
+        runner.execute(retry_request, deps)
+        assert scheduled[0][1] == index + 1
+        assert scheduled[0][2] == expected
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 403, 404])
+def test_terminal_client_and_config_errors_stay_error_not_paused(execution, status_code):
+    from wenyi_core.llm.retrying import ProviderRequestError
+
+    request, dependencies, _storage = execution
+    scheduled = []
+    deps = replace(
+        dependencies,
+        schedule_resume=lambda *args: scheduled.append(args),
+    )
+    error = ProviderRequestError(
+        provider="openai-compatible",
+        operation="translation.body",
+        error_type=f"http_{status_code}",
+        status_code=status_code,
+        reason=None,
+        resumable=False,
+    )
+    deps.operation.side_effect = error
+
+    with pytest.raises(ProviderRequestError):
+        runner.execute(request, deps)
+
+    deps.projects.set_project_status.assert_called_once_with("project", "error", error=str(error))
+    deps.jobs.set_job_status.assert_any_call(1, "error", error=str(error))
+    assert scheduled == []
+
+
+def test_resumable_http_500_provider_error_pauses_and_schedules_resume(execution):
+    from wenyi_core.llm.retrying import ProviderRequestError
+
+    request, dependencies, _storage = execution
+    scheduled = []
+    deps = replace(
+        dependencies,
+        schedule_resume=lambda *args: scheduled.append(args),
+    )
+    error = ProviderRequestError(
+        provider="openai-compatible",
+        operation="translation.body",
+        error_type="http_500",
+        status_code=500,
+        reason="http_500",
+        resumable=True,
+    )
+    deps.operation.side_effect = error
+
+    runner.execute(request, deps)
+
+    deps.projects.set_project_status.assert_called_once_with("project", "paused", error=str(error))
+    deps.jobs.set_job_status.assert_any_call(1, "paused", error=str(error))
+    assert len(scheduled) == 1
+    assert scheduled[0][1] == 1
+    assert scheduled[0][2] == 60
+
+
+def test_run_auto_resume_resumes_paused_job_and_respects_cancellation(backend_context, monkeypatch):
+    from wenyi_backend import job_service
+    from wenyi_backend.execution.outage import AUTO_RESUME_ATTEMPT_PARAM
+    from wenyi_backend.workers import tasks
+
+    cache = {"project:p1:auto_resume": "run-1"}
+    backend_context.telemetry.connect = lambda: SimpleNamespace(
+        get=lambda key: cache.get(key),
+        set=lambda key, value, **kwargs: cache.__setitem__(key, value),
+    )
+    backend_context.repository.get_project.return_value = {
+        "id": "p1",
+        "status": "paused",
+        "source_path": "/tmp/book.txt",
+        "source_lang": "zh",
+        "target_lang": "en",
+    }
+    backend_context.repository.latest_resumable_job.return_value = {
+        "id": 7,
+        "project_id": "p1",
+        "kind": "translation",
+        "run_id": "run-1",
+        "status": "paused",
+        "params": {"autofix": False},
+    }
+    started = []
+
+    async def fake_start_job(pid, kind, **kwargs):
+        started.append((pid, kind, kwargs["params"]))
+        return {"job_id": "run-2", "project_id": pid, "kind": kind}
+
+    monkeypatch.setattr(job_service, "start_job", fake_start_job)
+
+    assert asyncio.run(
+        tasks.run_auto_resume(
+            {"backend": backend_context}, project_id="p1", expected_run_id="run-1", attempt=2
+        )
+    )
+    assert started == [("p1", "translation", {"autofix": False, AUTO_RESUME_ATTEMPT_PARAM: 2})]
+
+    # Cleared marker (manual resume / pause / delete) cancels the scheduled retry.
+    started.clear()
+    cache["project:p1:auto_resume"] = ""
+    assert not asyncio.run(
+        tasks.run_auto_resume(
+            {"backend": backend_context}, project_id="p1", expected_run_id="run-1", attempt=2
+        )
+    )
+    assert started == []

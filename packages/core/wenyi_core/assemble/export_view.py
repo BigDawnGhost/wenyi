@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterable, Iterator
+from copy import deepcopy
 from typing import Any, TypeAlias
 
 from ..alignment.objects import resolve_objects
@@ -14,6 +15,7 @@ from ..markup.objects import export_object_placements, object_anchors
 from ..models.document import Chapter
 from ..storage.protocol import Storage
 from ..storage.run_store import ExportSnapshotStore, RunStore
+from .quotes import QuoteStyle, normalize_quotes
 from .writer_common import _manifest_target_lang
 
 
@@ -25,15 +27,18 @@ class ExportViewStore(RunStore):
         store: Storage | ExportSnapshotStore,
         *,
         plan: PolicyPlan | None = None,
+        quote_style: QuoteStyle = "preserve",
     ) -> None:
         super().__init__(store.run_dir, create=False)
         self._store = store
         self._chapters: dict[int, Chapter] = {}
+        self._quote_style: QuoteStyle = quote_style
         manifest = store.load_manifest()
+        self._target_lang = _manifest_target_lang(manifest)
         self.language_policy = plan or resolve_policy(
             PolicyContext(
                 manifest.get("source_lang", "auto"),
-                _manifest_target_lang(manifest),
+                self._target_lang,
                 phase="export",
                 format="epub",
                 source_identity=manifest.get("source_sha256", ""),
@@ -41,13 +46,44 @@ class ExportViewStore(RunStore):
         )
 
     def load_manifest(self) -> dict:
-        return self._store.load_manifest()
+        manifest = self._store.load_manifest()
+        if self._quote_style == "preserve":
+            return manifest
+        copied = deepcopy(manifest)
+        for row in copied.get("chapters", []):
+            if isinstance(row.get("title_translated"), str):
+                row["title_translated"] = normalize_quotes(
+                    row["title_translated"], self._quote_style, target_lang=self._target_lang
+                )
+        meta = copied.get("meta")
+        if isinstance(meta, dict):
+            for key in ("book_title_translated", "epub_description_translated"):
+                if isinstance(meta.get(key), str):
+                    meta[key] = normalize_quotes(
+                        meta[key], self._quote_style, target_lang=self._target_lang
+                    )
+            if isinstance(meta.get("epub_subjects_translated"), list):
+                meta["epub_subjects_translated"] = [
+                    normalize_quotes(item, self._quote_style, target_lang=self._target_lang)
+                    if isinstance(item, str)
+                    else item
+                    for item in meta["epub_subjects_translated"]
+                ]
+            for entry in (
+                meta.get("toc_entries", []) if isinstance(meta.get("toc_entries"), list) else []
+            ):
+                if isinstance(entry, dict) and isinstance(entry.get("title_translated"), str):
+                    entry["title_translated"] = normalize_quotes(
+                        entry["title_translated"], self._quote_style, target_lang=self._target_lang
+                    )
+        return copied
 
     def load_chapter(self, ci: int) -> Chapter:
         if ci in self._chapters:
             return self._chapters[ci].model_copy(deep=True)
         chapter = self._store.load_chapter(ci).model_copy(deep=True)
         self._resolve_protected_objects(chapter)
+        self._normalize_chapter_quotes(chapter)
         self._chapters[ci] = chapter.model_copy(deep=True)
         return chapter
 
@@ -62,7 +98,50 @@ class ExportViewStore(RunStore):
             chapter = self._store.load_chapter(ci)
             if any(segment.target is not None for segment in chapter.segments):
                 self._resolve_protected_objects(chapter)
+                self._normalize_chapter_quotes(chapter)
             yield chapter
+
+    def _normalize_chapter_quotes(self, chapter: Chapter) -> None:
+        """Apply export-only quote normalization to target text without mutating source text."""
+        if self._quote_style == "preserve":
+            return
+        segments = chapter.segments
+        position = 0
+        while position < len(segments):
+            end = position + 1
+            while end < len(segments) and segments[end].cont:
+                end += 1
+            group = segments[position:end]
+            position = end
+            translated = [seg for seg in group if seg.target is not None]
+            if not translated:
+                continue
+            old_joined = "".join(seg.target or "" for seg in translated)
+            new_joined = normalize_quotes(
+                old_joined, self._quote_style, target_lang=self._target_lang
+            )
+            if new_joined == old_joined:
+                continue
+            # Quote normalization is 1-to-1 (same code-point length), so normalize across
+            # the joined paragraph to preserve quote direction across cont=True boundaries.
+            if len(new_joined) == len(old_joined):
+                offset = 0
+                for seg in translated:
+                    length = len(seg.target or "")
+                    seg.target = new_joined[offset : offset + length]
+                    offset += length
+            else:
+                for seg in translated:
+                    seg.target = normalize_quotes(
+                        seg.target or "", self._quote_style, target_lang=self._target_lang
+                    )
+                new_joined = "".join(seg.target or "" for seg in translated)
+            old_digest = hashlib.sha256(old_joined.encode("utf-8")).hexdigest()
+            new_digest = hashlib.sha256(new_joined.encode("utf-8")).hexdigest()
+            for key in ("annotations", "epub_annotations", "pdf_annotations", "docx_styles"):
+                block = group[0].meta.get(key)
+                if isinstance(block, dict) and block.get("target_digest") == old_digest:
+                    block["target_digest"] = new_digest
 
     def _resolve_protected_objects(self, chapter: Chapter) -> None:
         """Restore object placements without changing saved translations."""

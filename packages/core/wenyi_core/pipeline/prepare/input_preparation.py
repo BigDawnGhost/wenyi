@@ -12,6 +12,7 @@ from typing import Any
 
 from ...config import Config
 from ...events import ProgressFn
+from ...ingest.boilerplate import mark_boilerplate_segments
 from ...ingest.epub_reader import peek_epub_title
 from ...ingest.fb2_reader import peek_fb2_title
 from ...ingest.segmenter import load_document
@@ -23,7 +24,7 @@ from ...storage.run_store import source_sha256, translation_run_dir
 
 def ingest_config(config: Config) -> dict[str, Any]:
     """Fingerprint the parsing inputs shared by preview and initialization."""
-    return {
+    data: dict[str, Any] = {
         "source_lang": config.source_lang,
         "target_lang": config.target_lang,
         "max_tokens_per_segment": config.segment.max_tokens_per_segment,
@@ -32,6 +33,10 @@ def ingest_config(config: Config) -> dict[str, Any]:
         "babeldoc_pages": config.pipeline.babeldoc_pages,
         "babeldoc_timeout": config.pipeline.babeldoc_timeout,
     }
+    if config.pipeline.skip_boilerplate:
+        data["skip_boilerplate"] = True
+        data["boilerplate_patterns"] = list(config.pipeline.boilerplate_patterns)
+    return data
 
 
 def load_parsed_document(
@@ -87,6 +92,11 @@ def parse_document(
             babeldoc_pages=pipeline.babeldoc_pages,
             babeldoc_timeout=pipeline.babeldoc_timeout,
             mineru_token_resolver=mineru_token_resolver,
+        )
+        mark_boilerplate_segments(
+            document,
+            enabled=pipeline.skip_boilerplate,
+            custom_patterns=pipeline.boilerplate_patterns,
         )
     if source_sha256(input_path) != digest:
         raise ValueError("Source changed during parsing; ensure the file is stable and retry.")

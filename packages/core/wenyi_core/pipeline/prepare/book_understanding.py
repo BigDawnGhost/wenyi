@@ -11,6 +11,7 @@ from ...agents.analyzer import Analyzer
 from ...agents.synopsis import Synopsizer
 from ...config import Config
 from ...events import ProgressFn
+from ...glossary.store import GlossaryStore
 from ...i18n.policy.models import content_hash
 from ...llm.routing import inference_snapshot
 from ...models.document import Chapter
@@ -20,22 +21,60 @@ from ..run.runtime_usage import UsageCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 _DIGEST_VERSION = 2
-_SYNOPSIS_VERSION = 3
+_SYNOPSIS_VERSION = 4
+_LEGACY_SYNOPSIS_VERSION = 3
 _SYNOPSIS_OPERATION = "synopsis.book"
 
 
-def _synopsis_mappings(terms: list[GlossaryTerm]) -> dict[str, list]:
-    """Keep only the term fields the synopsis prompt and its style brief can read."""
-    return {
-        term.source: [term.target, term.type, term.gender, sorted(term.aliases)] for term in terms
-    }
+def _synopsis_mappings(terms: list[GlossaryTerm], digests: list[str]) -> dict[str, list[str]]:
+    """Keep only the prompt-relevant ``[target, type, gender]`` fields for digest-matched terms."""
+    matched = GlossaryStore.terms_in(terms, "\n".join(digests))
+    return {term.source: [term.target, term.type, term.gender] for term in matched}
 
 
-def _mappings_unchanged(saved: object, current: dict[str, list]) -> bool:
-    """Accept added terms, but not a changed or removed mapping the synopsis was built with."""
-    return isinstance(saved, dict) and all(
-        current.get(source) == fields for source, fields in saved.items()
+def _legacy_v3_mappings(saved: dict, digests: list[str]) -> dict[str, list[str]] | None:
+    """Project a version-3 all-term snapshot onto the digest-matched ``[target, type, gender]`` view."""
+    terms: list[GlossaryTerm] = []
+    for source, fields in saved.items():
+        if (
+            not isinstance(source, str)
+            or not isinstance(fields, list)
+            or len(fields) < 4
+            or not isinstance(fields[0], str)
+            or not isinstance(fields[1], str)
+            or not isinstance(fields[2], str)
+            or not isinstance(fields[3], list)
+            or not all(isinstance(alias, str) for alias in fields[3])
+        ):
+            return None
+        terms.append(
+            GlossaryTerm(
+                source=source,
+                target=fields[0],
+                type=fields[1],
+                gender=fields[2],
+                aliases=list(fields[3]),
+            )
+        )
+    return _synopsis_mappings(terms, digests)
+
+
+def _mappings_unchanged(
+    saved: object,
+    current: dict[str, list[str]],
+    *,
+    version: int,
+    digests: list[str],
+) -> bool:
+    """Accept added terms and alias/note edits, but not changed target/type/gender or removed digest terms."""
+    if not isinstance(saved, dict):
+        return False
+    projected: dict[str, list[str]] | None = (
+        _legacy_v3_mappings(saved, digests) if version == _LEGACY_SYNOPSIS_VERSION else saved
     )
+    if projected is None:
+        return False
+    return all(current.get(source) == fields for source, fields in projected.items())
 
 
 def _digest_complete(chapter: Chapter) -> bool:
@@ -82,8 +121,9 @@ class BookUnderstandingService:
 
         analysis = store.load_analysis() or {}
         terms = sorted(store.all_terms(), key=lambda term: term.source)
-        style = self._analyzer.style_brief(analysis, terms=terms)
-        mappings = _synopsis_mappings(terms)
+        matched_terms = GlossaryStore.terms_in(terms, "\n".join(digests))
+        style = self._analyzer.style_brief(analysis, terms=matched_terms)
+        mappings = {term.source: [term.target, term.type, term.gender] for term in matched_terms}
         inputs = {
             "language_policy": self._config.language_policy("analysis").task_fingerprint(
                 "book_synopsis"
@@ -103,15 +143,23 @@ class BookUnderstandingService:
             json.dumps(inputs, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
         synopsis = analysis.get("book_synopsis", "")
+        previous_synopsis = (
+            synopsis.strip() if isinstance(synopsis, str) and synopsis.strip() else ""
+        )
         saved = analysis.get("book_synopsis_meta")
+        saved_version = saved.get("version") if isinstance(saved, dict) else None
         if (
-            isinstance(synopsis, str)
-            and synopsis.strip()
+            previous_synopsis
             and isinstance(saved, dict)
-            and saved.get("version") == _SYNOPSIS_VERSION
+            and saved_version in {_SYNOPSIS_VERSION, _LEGACY_SYNOPSIS_VERSION}
             and saved.get("inputs_sha256") == fingerprint
             and isinstance(saved.get("glossary"), str)
-            and _mappings_unchanged(store.read_artifact(saved["glossary"]), mappings)
+            and _mappings_unchanged(
+                store.read_artifact(saved["glossary"]),
+                mappings,
+                version=saved_version,
+                digests=digests,
+            )
         ):
             return synopsis
         snapshot = "preparation/synopsis-glossary/" + content_hash(mappings) + ".json"
@@ -130,12 +178,23 @@ class BookUnderstandingService:
             analysis["book_synopsis_meta"] = metadata
             store.save_analysis(analysis)
             store.log_event("book_synopsis_saved", synopsis=synopsis)
-        else:
-            store.log_event("book_synopsis_failed", reason="generation_failed")
-            _LOGGER.warning(
-                "Whole-book synopsis generation failed; translation continues with chapter digests. "
-                "The synopsis will be retried on the next prepare/translate run."
+            return synopsis
+        if previous_synopsis:
+            store.log_event(
+                "book_synopsis_failed",
+                reason="generation_failed",
+                fallback="stale_saved",
             )
+            _LOGGER.warning(
+                "Whole-book synopsis regeneration failed; continuing this run with the previously "
+                "saved (stale) synopsis. Regeneration will be retried on the next prepare/translate run."
+            )
+            return previous_synopsis
+        store.log_event("book_synopsis_failed", reason="generation_failed")
+        _LOGGER.warning(
+            "Whole-book synopsis generation failed; translation continues with chapter digests. "
+            "The synopsis will be retried on the next prepare/translate run."
+        )
         return synopsis
 
     def ensure_chapter_digests(

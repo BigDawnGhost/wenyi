@@ -12,6 +12,8 @@ from wenyi_core.assemble.writer_common import output_formats
 
 from ..config_documents import project_document
 from ..context import current_context
+from ..emitters import clear_auto_resume_marker
+from ..execution.outage import AUTO_RESUME_ATTEMPT_PARAM
 from ..global_settings import load_settings, registry_guard
 from ..schemas import (
     AssembleEnqueued,
@@ -199,6 +201,27 @@ def preview(pid: str) -> dict:
     return result
 
 
+def _cancel_pending_auto_resume(pid: str) -> None:
+    context = current_context()
+    if context.cancel_auto_resume is not None:
+        try:
+            context.cancel_auto_resume(pid)
+        except Exception:
+            pass
+    cache = None
+    try:
+        cache = context.telemetry.connect()
+        clear_auto_resume_marker(cache, pid)
+    except Exception:
+        pass
+    finally:
+        if cache is not None:
+            try:
+                context.telemetry.release(cache)
+            except Exception:
+                pass
+
+
 @router.post("/{pid}/translate", response_model=JobEnqueued)
 async def start_translation(pid: str, body: StartTranslation | None = None) -> dict:
     if body and body.strategy is not None:
@@ -216,12 +239,14 @@ async def start_translation(pid: str, body: StartTranslation | None = None) -> d
             repository.set_project_strategy(pid, body.strategy, connection=conn)
             repository.set_project_config(pid, project_document(config), connection=conn)
     require_project(pid)
+    _cancel_pending_auto_resume(pid)
     return await start_job(pid, "translation")
 
 
 @router.post("/{pid}/prepare", response_model=JobEnqueued)
 async def prepare_only(pid: str) -> dict:
     require_project(pid)
+    _cancel_pending_auto_resume(pid)
     return await start_job(pid, "prepare")
 
 
@@ -236,6 +261,7 @@ async def assemble_output(pid: str) -> dict:
 @router.post("/{pid}/pause", response_model=Message)
 def pause(pid: str) -> dict:
     require_project(pid)
+    _cancel_pending_auto_resume(pid)
     repository = current_context().repository
     job = next((row for row in repository.list_jobs(pid) if row["kind"] != "export"), None)
     if job is None or not repository.request_pause(pid, job["run_id"]):
@@ -251,11 +277,14 @@ async def resume(pid: str) -> dict:
     previous = current_context().repository.latest_resumable_job(pid)
     if previous is None:
         raise HTTPException(409, "Project has no resumable task")
+    _cancel_pending_auto_resume(pid)
     params = dict(previous.get("params") or {})
+    params.pop(AUTO_RESUME_ATTEMPT_PARAM, None)
     return await start_job(pid, previous["kind"], params=params)
 
 
 @router.delete("/{pid}", response_model=Message)
 def delete_project(pid: str) -> dict:
+    _cancel_pending_auto_resume(pid)
     current_context().remove_project(pid)
     return {"message": "deleted"}

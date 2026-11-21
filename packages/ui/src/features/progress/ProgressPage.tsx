@@ -155,6 +155,8 @@ export default function ProgressPage() {
           failure={failure}
           connected={connected}
           busy={busy}
+          onResumeNow={() => action.mutate("resume")}
+          resuming={action.isPending}
         />
         <Card className="flex flex-wrap items-center justify-between gap-2 p-4 text-xs text-muted-foreground">
           <p>

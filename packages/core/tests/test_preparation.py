@@ -190,7 +190,7 @@ def test_synopsis_interrupt_resumes_without_repeating_prescan_or_style(tmp_path)
     assert [call["operation"] for call in client.calls] == ["synopsis.book"]
     resumed_analysis = store.load_analysis() or {}
     metadata = resumed_analysis.pop("book_synopsis_meta")
-    assert metadata["version"] == 3
+    assert metadata["version"] == 4
     assert len(metadata["inputs_sha256"]) == 64
     assert store.read_artifact(metadata["glossary"]) == {}
     assert resumed_analysis == {

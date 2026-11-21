@@ -136,6 +136,7 @@ llm:
 | `llm.models.<id>.provider` | 必填连接 ID。 |
 | `llm.models.<id>.model` | 必填远端模型名。 |
 | `llm.models.<id>.max_output_tokens` | 默认不设置；设置时为正整数。 |
+| `llm.models.<id>.context_window` | 默认不设置（对 DeepSeek/OpenAI/Gemini 已知模型使用保守默认值）；设置时为正整数。发送前预检在接近窗口上限时自动缩减术语表或给出可执行报错。 |
 | `llm.models.<id>.options` | `{}`，下文的适配器专属字段。 |
 | `llm.tiers` | 恰好包含 `strong`、`cheap`、`fast`，各自映射到模型配置。 |
 | `llm.routes.<operation>.model` / `.tier` | 每条显式路由必须且只能选择一个；省略路由则使用操作默认值。 |
@@ -353,6 +354,9 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | `pipeline.polish` | `true` | 润色已译批次，增加较多模型工作。 |
 | `pipeline.polish_concurrency` | `1` | 标准模式润色并发，整数 ≥ 1。`1` 在下一批开始前润色当前批；大于 `1` 时先保存初稿，在后台润色并继续翻译，最多排队该值两倍的批次。provider `max_concurrency` 仍然生效。`three_draft_synthesis` 忽略此项。见[后台润色](../guide/pipeline.md#deferred-polishing)。 |
 | `pipeline.batch_glossary` | `all` | `all` 向每个正文翻译、润色和精翻请求发送全量术语；`relevant` 只向每批发送与其文本匹配的词条，并让抽取只看到被抽取文本中出现的已有词条。见[翻译上下文与术语库](../guide/pipeline.md#context-and-glossary)。 |
+| `pipeline.glossary_prompt_tokens` | `4000` | 单次请求的术语表 token 预算（`cl100k_base`，整数 ≥ 0）。`all` 模式下超出预算时保留追加稳定的前导词条加命中本批的后续词条；`relevant` 模式下限制命中词条总量。 |
+| `pipeline.skip_boilerplate` | `false` | 可选的导入时清理开关：将抓取站点的水印、广告标记和零散残片标记为 `meta.skip = true` 而非删除，从而跳过翻译与导出同时保持段落索引与锚点稳定。 |
+| `pipeline.boilerplate_patterns` | `[]` | 启用 `pipeline.skip_boilerplate` 时额外匹配的自定义正则表达式列表。 |
 | `pipeline.align_retry_limit` | `2` | 额外结构输出尝试次数；`0` 关闭。 |
 | `pipeline.rolling_context_tokens` | `512` | 前文译文预算，整数 ≥ 0，按 `cl100k_base` 计数。 |
 | `pipeline.book_understanding` | `true` | 生成覆盖完整原文的章节梗概和全书概览。 |
@@ -457,6 +461,7 @@ BabelDOC 是可选的独立 AGPL 服务，用于尽量保留 PDF 版式。
 | `output.bilingual_order` | `target_first` | `target_first` 或 `source_first`；选择按段配对格式中在前的版本，以及 PDF 并列页中位于左侧的版本。 |
 | `output.bilingual_preserve_source_style` | `false` | 保留已记录的原文样式，替代该格式的默认原文显示方式。 |
 | `output.about_page` | `true` | 为 EPUB 添加“关于此翻译”项目说明页。 |
+| `output.quote_style` | `preserve` | `preserve`、`typographic`（`“ ” ‘ ’`）或 `straight`（`" '`）。仅在拉丁字母目标语言导出时生效，不修改已保存译文及双语中的原文。 |
 
 `bilingual_preserve_source_style` 与顺序独立。
 EPUB/HTML 中，`true` 用正常书籍样式替代淡化原文。

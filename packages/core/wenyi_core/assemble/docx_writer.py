@@ -57,12 +57,13 @@ def _chapters(store: AssembleStore, rows: list[dict[str, Any]]) -> Iterator[byte
                 "segments": [
                     {
                         "source": seg.source,
-                        "target": seg.target,
+                        "target": "" if seg.meta.get("skip") else seg.target,
                         "cont": seg.cont,
                         "heading": seg.kind == KIND_HEADING,
                         "meta": {key: seg.meta[key] for key in _SEGMENT_FIELDS if key in seg.meta},
                     }
                     for seg in chapter.segments
+                    if not (seg.meta.get("skip") and "table_id" not in seg.meta)
                 ],
             }
         )

@@ -1141,6 +1141,11 @@ export interface components {
             chapter: number | null;
             /** Note */
             note?: string | null;
+            /**
+             * Conflict Count
+             * @default 1
+             */
+            conflict_count: number;
         };
         /** DigestUpdate */
         DigestUpdate: {
@@ -1628,7 +1633,7 @@ export interface components {
              * Decision
              * @enum {string}
              */
-            decision: "current" | "proposed" | "custom";
+            decision: "current" | "proposed" | "custom" | "context_dependent";
             /** Target */
             target?: string | null;
         };
@@ -1771,6 +1776,17 @@ export interface components {
             /** Created At */
             created_at: string | null;
         };
+        /** SkippedBoilerplateItem */
+        SkippedBoilerplateItem: {
+            /** Chapter Index */
+            chapter_index: number;
+            /** Segment Index */
+            segment_index: number;
+            /** Rule */
+            rule: string;
+            /** Source */
+            source: string;
+        };
         /** StartTranslation */
         StartTranslation: {
             /** Strategy */
@@ -1867,6 +1883,12 @@ export interface components {
              * @default
              */
             note: string;
+            /**
+             * Status
+             * @default ok
+             * @enum {string}
+             */
+            status: "ok" | "context_dependent";
         };
         /** TermLookup */
         TermLookup: {
@@ -1933,6 +1955,13 @@ export interface components {
             source_lang?: string | null;
             /** Chapters */
             chapters?: components["schemas"]["PreviewChapter"][];
+            /**
+             * Skipped Boilerplate Count
+             * @default 0
+             */
+            skipped_boilerplate_count: number;
+            /** Skipped Boilerplate */
+            skipped_boilerplate?: components["schemas"]["SkippedBoilerplateItem"][];
         };
         /** ValidationError */
         ValidationError: {

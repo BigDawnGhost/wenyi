@@ -19,6 +19,12 @@ TYPE_HONORIFIC = "honorific"
 TYPE_SPEECH = "speech"
 TYPE_FIXED_EXPR = "fixed_expression"
 
+# Canonical glossary statuses.
+STATUS_OK = "ok"
+STATUS_CONFLICT = "conflict"
+STATUS_CONTEXT_DEPENDENT = "context_dependent"
+VALID_STATUSES = frozenset({STATUS_OK, STATUS_CONFLICT, STATUS_CONTEXT_DEPENDENT})
+
 SOURCE_ONLY_TYPES = frozenset({TYPE_APPELLATION, TYPE_HONORIFIC, TYPE_SPEECH, TYPE_FIXED_EXPR})
 
 
@@ -26,6 +32,31 @@ def normalize_term_type(value: str) -> str:
     """Normalize known types without discarding custom categories."""
     value = value.strip()
     return value or TYPE_TERM
+
+
+def normalize_term_status(value: str) -> str:
+    """Normalize glossary entry status; fall back to ``ok`` for unknown values."""
+    cleaned = value.strip().lower()
+    return cleaned if cleaned in VALID_STATUSES else STATUS_OK
+
+
+def merge_context_senses(*targets: str) -> str:
+    """Combine candidate translations for a context-dependent entry without duplicates."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for raw in targets:
+        if not isinstance(raw, str):
+            continue
+        for piece in raw.split("|"):
+            cleaned = piece.strip()
+            if not cleaned:
+                continue
+            key = cleaned.casefold()
+            if key in seen:
+                continue
+            seen.add(key)
+            ordered.append(cleaned)
+    return " | ".join(ordered)
 
 
 def normalize_gender(value: str) -> str:
@@ -49,6 +80,7 @@ class GlossaryTerm:
     def __post_init__(self) -> None:
         self.type = normalize_term_type(self.type)
         self.gender = normalize_gender(self.gender)
+        self.status = normalize_term_status(self.status)
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> GlossaryTerm:
@@ -68,13 +100,19 @@ class GlossaryTerm:
 
 __all__ = [
     "SOURCE_ONLY_TYPES",
+    "STATUS_CONFLICT",
+    "STATUS_CONTEXT_DEPENDENT",
+    "STATUS_OK",
     "TYPE_APPELLATION",
     "TYPE_FIXED_EXPR",
     "TYPE_HONORIFIC",
     "TYPE_PERSON",
     "TYPE_SPEECH",
     "TYPE_TERM",
+    "VALID_STATUSES",
     "GlossaryTerm",
+    "merge_context_senses",
     "normalize_gender",
+    "normalize_term_status",
     "normalize_term_type",
 ]

@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import type { ProgressMessage } from "../../lib/ws";
 import { ErrorNotice } from "../../components/ui/data";
+import { Button } from "../../components/ui/button";
 import { cardSurface } from "../../components/ui/card";
 import { cn } from "../../lib/utils";
 import { progressInterval } from "../../lib/runtime";
@@ -16,6 +17,8 @@ export function WorkflowPanel({
   failure,
   connected = false,
   busy,
+  onResumeNow,
+  resuming = false,
 }: {
   pid: string;
   msg: ProgressMessage | null;
@@ -23,6 +26,8 @@ export function WorkflowPanel({
   failure?: ProgressMessage | null;
   connected?: boolean;
   busy: boolean;
+  onResumeNow?: () => void;
+  resuming?: boolean;
 }) {
   const { t: tr } = useI18n();
   const headingId = useId();
@@ -56,6 +61,23 @@ export function WorkflowPanel({
   const live = active || workflow?.status === "paused" || workflow?.status === "error"
     ? stage
     : null;
+  const nextRetryRaw =
+    workflow?.status === "paused" &&
+    live?.payload &&
+    typeof live.payload === "object" &&
+    typeof (live.payload as Record<string, unknown>).next_retry_at === "string"
+      ? String((live.payload as Record<string, unknown>).next_retry_at)
+      : null;
+  const nextRetryTime = (() => {
+    if (!nextRetryRaw) return null;
+    const parsed = new Date(nextRetryRaw);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+  })();
 
   return (
     <section aria-labelledby={headingId} className={cn(cardSurface, "space-y-3 p-4")}>
@@ -96,6 +118,26 @@ export function WorkflowPanel({
                 </span>
               )}
             </p>
+            {nextRetryTime && (
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-muted-foreground">
+                <span>
+                  {tr("workflowPanel.autoResumeScheduled", {
+                    time: nextRetryTime,
+                  })}
+                </span>
+                {onResumeNow && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={resuming}
+                    onClick={onResumeNow}
+                  >
+                    {tr("progress.resumeNow")}
+                  </Button>
+                )}
+              </div>
+            )}
           </>
         ) : (
           // Placeholder rather than nothing, so the card does not grow a row when

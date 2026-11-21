@@ -126,6 +126,7 @@ export const effective = {
   },
   segment: { max_tokens_per_batch: 1800, max_tokens_per_segment: 1200 },
   pipeline: {
+    batch_glossary: "all",
     book_understanding: true,
     polish: true,
     review: true,
@@ -185,6 +186,8 @@ export const preview = {
     { index: 1, title: "Two", word_count: 400 },
     { index: 2, title: "Three", word_count: 400 },
   ],
+  skipped_boilerplate_count: 0,
+  skipped_boilerplate: [],
 } satisfies Output<"UploadPreview">;
 
 function tableData(): Record<string, unknown> {

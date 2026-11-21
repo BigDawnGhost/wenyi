@@ -28,7 +28,7 @@ from tests.sample_data import write_sample_epub, write_sample_txt
 
 @pytest.mark.parametrize("order", ["target_first", "source_first"])
 @pytest.mark.parametrize("preserve_source_style", [False, True])
-@pytest.mark.parametrize("target", [None, "", "漢字〘かんじ〙です"])
+@pytest.mark.parametrize("target", [None, "漢字〘かんじ〙です"])
 def test_untranslated_ruby_paragraph_keeps_only_original_markup(
     order, preserve_source_style, target
 ):

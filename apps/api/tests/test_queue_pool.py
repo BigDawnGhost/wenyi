@@ -10,9 +10,11 @@ import wenyi_api.queue as queue_module
 class FakePool:
     def __init__(self) -> None:
         self.jobs: list[tuple[str, str]] = []
+        self.calls: list[tuple[str, str, dict]] = []
 
     async def enqueue_job(self, name, _queue_name, **kwargs):
         self.jobs.append((name, _queue_name))
+        self.calls.append((name, _queue_name, kwargs))
         return f"job:{name}"
 
 
@@ -62,3 +64,36 @@ def test_export_jobs_route_to_export_queue(monkeypatch):
         queue_module.EXPORT_QUEUE,
         queue_module.WORKFLOW_QUEUE,
     ]
+
+
+def test_web_auto_resume_enqueues_deferred_workflow_task(monkeypatch, tmp_path):
+    from wenyi_api.adapters import create_context
+    from wenyi_api.config import Settings
+    from wenyi_backend.execution.contracts import ExecutionRequest
+
+    _install_fake_pools(monkeypatch)
+    context = create_context(
+        Settings(
+            database_url="postgresql://localhost/wenyi_test",
+            redis_url="redis://one",
+            data_dir=str(tmp_path),
+            config_path=str(tmp_path / "config.yaml"),
+        )
+    )
+    assert context.schedule_auto_resume is not None
+    context.schedule_auto_resume(
+        ExecutionRequest("translation", "proj-1", "run-1"),
+        2,
+        120,
+        "2026-11-21T12:00:00+00:00",
+    )
+    pool = next(iter(queue_module._pools.values()))
+    assert isinstance(pool, FakePool)
+    assert len(pool.calls) == 1
+    name, queue_name, kwargs = pool.calls[0]
+    assert name == "run_auto_resume"
+    assert queue_name == queue_module.WORKFLOW_QUEUE
+    assert kwargs["_defer_by"] == 120
+    assert kwargs["project_id"] == "proj-1"
+    assert kwargs["expected_run_id"] == "run-1"
+    assert kwargs["attempt"] == 2

@@ -131,9 +131,21 @@ export function TermTable({
                   </span>
                 </td>
                 <td className="px-4 py-3.5">
-                  <span className="block truncate" title={t.target}>
-                    {t.target}
-                  </span>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="block truncate" title={t.target}>
+                      {t.target}
+                    </span>
+                    {t.status === "context_dependent" && (
+                      <Badge variant="secondary" className="shrink-0">
+                        {tr("glossary.contextDependent")}
+                      </Badge>
+                    )}
+                    {t.status === "conflict" && (
+                      <Badge variant="warning" className="shrink-0">
+                        {tr("glossary.conflictBadge")}
+                      </Badge>
+                    )}
+                  </div>
                 </td>
                 <td className="px-4 py-3.5">
                   <Badge variant="outline">

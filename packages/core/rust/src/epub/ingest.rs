@@ -27,6 +27,8 @@ pub struct Spec {
 pub struct Package {
     pub opf: String,
     pub title: String,
+    pub description: String,
+    pub subjects: Vec<String>,
     pub spine: Vec<Spec>,
     pub manifest: Vec<String>,
     pub toc_paths: Vec<String>,
@@ -66,12 +68,23 @@ pub fn package(zip: &mut Archive) -> Result<Package> {
     let text = decode_xml(&bytes);
     let root = xml(&text).context("Invalid EPUB package document")?;
     let mut title = String::new();
+    let mut description = String::new();
+    let mut subjects = Vec::new();
     let mut items = IndexMap::new();
     let (mut spine_ids, mut toc_ids, mut manifest) = (Vec::new(), Vec::new(), Vec::new());
     let mut seen = HashSet::new();
     for n in root.descendants().filter(|n| n.is_element()) {
         match n.tag_name().name() {
             "title" if title.is_empty() => title = strip(n.text().unwrap_or("")).to_owned(),
+            "description" if description.is_empty() => {
+                description = strip(n.text().unwrap_or("")).to_owned();
+            }
+            "subject" => {
+                let text = strip(n.text().unwrap_or(""));
+                if !text.is_empty() {
+                    subjects.push(text.to_owned());
+                }
+            }
             "item" => {
                 let raw = n.attribute("href").unwrap_or("");
                 let media = n.attribute("media-type").unwrap_or("");
@@ -135,6 +148,8 @@ pub fn package(zip: &mut Archive) -> Result<Package> {
     Ok(Package {
         opf,
         title,
+        description,
+        subjects,
         spine,
         manifest,
         toc_paths,
@@ -740,6 +755,17 @@ pub fn ingest(path: &Path, source_lang: &str, target_lang: &str) -> Result<Vec<u
             push(title, href, chunk, e.map(|e| e.entry_id.as_str()));
         }
     }
+    let mut meta = json!({"epub_schema": 5, "epub_objects": 1, "opf_path": package.opf, "toc_paths": package.toc_paths,
+        "toc_entries": toc, "epub_resources": &specs[..spine], "epub_split_strategy": strategy,
+        "epub_split_toc_path": canonical, "epub_annotation_contexts": contexts});
+    if let Some(obj) = meta.as_object_mut() {
+        if !package.description.is_empty() {
+            obj.insert("epub_description".to_owned(), json!(package.description));
+        }
+        if !package.subjects.is_empty() {
+            obj.insert("epub_subjects".to_owned(), json!(package.subjects));
+        }
+    }
     Ok(serde_json::to_vec(&Document {
         title: book_title(path, &package),
         source_lang,
@@ -747,8 +773,6 @@ pub fn ingest(path: &Path, source_lang: &str, target_lang: &str) -> Result<Vec<u
         fmt: "epub",
         source_path: path,
         chapters,
-        meta: json!({"epub_schema": 5, "epub_objects": 1, "opf_path": package.opf, "toc_paths": package.toc_paths,
-            "toc_entries": toc, "epub_resources": &specs[..spine], "epub_split_strategy": strategy,
-            "epub_split_toc_path": canonical, "epub_annotation_contexts": contexts}),
+        meta,
     })?)
 }

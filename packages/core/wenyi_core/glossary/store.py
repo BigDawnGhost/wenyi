@@ -19,6 +19,9 @@ from typing import Any
 
 from ..models.glossary import (
     SOURCE_ONLY_TYPES,
+    STATUS_CONFLICT,
+    STATUS_CONTEXT_DEPENDENT,
+    STATUS_OK,
     TYPE_APPELLATION,
     TYPE_FIXED_EXPR,
     TYPE_HONORIFIC,
@@ -26,6 +29,8 @@ from ..models.glossary import (
     TYPE_SPEECH,
     TYPE_TERM,
     GlossaryTerm,
+    merge_context_senses,
+    normalize_term_status,
 )
 
 # The term record and its type tags moved to wenyi_core.models.glossary. They stay
@@ -33,6 +38,9 @@ from ..models.glossary import (
 _SOURCE_ONLY_TYPES = SOURCE_ONLY_TYPES
 
 __all__ = [
+    "STATUS_CONFLICT",
+    "STATUS_CONTEXT_DEPENDENT",
+    "STATUS_OK",
     "TYPE_APPELLATION",
     "TYPE_FIXED_EXPR",
     "TYPE_HONORIFIC",
@@ -42,6 +50,7 @@ __all__ = [
     "GlossaryOccurrenceMatcher",
     "GlossaryStore",
     "GlossaryTerm",
+    "merge_context_senses",
     "search_term_page",
     "source_matches_text",
     "term_match_sources",
@@ -358,6 +367,25 @@ class GlossaryStore:
                     ),
                 )
                 result = "inserted"
+            elif existing.status == STATUS_CONTEXT_DEPENDENT:
+                # Context-dependent terms accept multiple senses without raising conflicts.
+                merged_target = merge_context_senses(existing.target, term.target)
+                merged_aliases = sorted(set(existing.aliases) | set(term.aliases))
+                self.conn.execute(
+                    """UPDATE glossary SET target=?, reading=COALESCE(NULLIF(?,''),reading),
+                       gender=COALESCE(NULLIF(?,''),gender), aliases=?,
+                       note=COALESCE(NULLIF(?,''),note), updated_at=? WHERE source=?""",
+                    (
+                        merged_target or existing.target,
+                        term.reading,
+                        term.gender,
+                        json.dumps(merged_aliases, ensure_ascii=False),
+                        term.note,
+                        now,
+                        term.source,
+                    ),
+                )
+                result = "unchanged"
             elif existing.target == term.target:
                 # Merging aliases or filling missing fields is not a conflict.
                 merged_aliases = sorted(set(existing.aliases) | set(term.aliases))
@@ -400,13 +428,14 @@ class GlossaryStore:
             (source, existing_target, proposed_target, chapter, time.time()),
         )
 
-    def resolve_term(self, source: str, target: str) -> bool:
-        """Resolve the final translation and restore normal status; report whether the term
-        exists.
-        """
+    def resolve_term(self, source: str, target: str, *, status: str = STATUS_OK) -> bool:
+        """Resolve the final translation and status; report whether the term exists."""
+        resolved_status = normalize_term_status(status)
+        if resolved_status == STATUS_CONFLICT:
+            resolved_status = STATUS_OK
         cur = self.conn.execute(
-            "UPDATE glossary SET target=?, status='ok', updated_at=? WHERE source=?",
-            (target, time.time(), source),
+            "UPDATE glossary SET target=?, status=?, updated_at=? WHERE source=?",
+            (target, resolved_status, time.time(), source),
         )
         if self._owns_connection:
             self.conn.commit()

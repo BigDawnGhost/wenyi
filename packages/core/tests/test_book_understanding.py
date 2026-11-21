@@ -187,15 +187,20 @@ def test_changed_digest_invalidates_book_cache(tmp_path):
     )
 
 
-def test_failed_regeneration_keeps_existing_analysis_but_does_not_inject_stale_synopsis(tmp_path):
+def test_failed_regeneration_falls_back_to_saved_synopsis_and_retries_next_run(tmp_path):
     service, store, runtime = _service(tmp_path)
     service.ensure_understanding(store)
     runtime.analyzer.style_brief.return_value = "New style."
     runtime.synopsizer.book_synopsis.return_value = ""
-    assert service.ensure_understanding(store) == ""
+    assert service.ensure_understanding(store) == "Whole-book synopsis."
     analysis = store.load_analysis()
     assert analysis is not None
     assert analysis["book_synopsis"] == "Whole-book synopsis."
+    events = [
+        event for event in store.list_events() if event.get("event") == "book_synopsis_failed"
+    ]
+    assert events and events[-1]["fallback"] == "stale_saved"
+    # Metadata was not updated, so the next run retries regeneration.
     runtime.synopsizer.book_synopsis.return_value = "Revised synopsis."
     assert service.ensure_understanding(store) == "Revised synopsis."
 
@@ -503,7 +508,7 @@ def test_legacy_sampled_cache_is_rebuilt_without_touching_targets_or_terms(tmp_p
     )
     analysis = store.load_analysis()
     assert analysis is not None
-    assert analysis["book_synopsis_meta"]["version"] == 3
+    assert analysis["book_synopsis_meta"]["version"] == 4
     assert store.all_terms() == terms
     assert all(store.load_chapter(i).segments[0].target == "Saved target." for i in range(2))
 
@@ -573,13 +578,18 @@ def test_analysis_uses_digest_context_and_resumes_paid_result(tmp_path, enabled)
     assert "Full digest." in agent._ask_json.call_args.args[1]
 
 
-def test_glossary_growth_reuses_synopsis_on_resume(tmp_path):
+def test_glossary_growth_aliases_and_unrelated_terms_reuse_synopsis_on_resume(tmp_path):
     service, store, runtime = _service(tmp_path)
+    runtime.synopsizer.digest_chapter.return_value = "Alice meets an envoy."
     store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="female"))
+    store.upsert_term(GlossaryTerm("Unrelated", "无关", type="place"))
     assert service.ensure_understanding(store) == "Whole-book synopsis."
-    # Translation adds terms and notes between pauses; neither reaches the synopsis prompt.
+    # Adding terms, notes, aliases, or editing/removing unmatched terms all reuse the synopsis.
     store.upsert_term(GlossaryTerm("Bob", "鲍勃", type="person"))
-    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="female", note="Lead."))
+    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", note="Lead."))
+    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", aliases=["Ally"]))
+    store.resolve_term("Unrelated", "其他地方")
+    store.delete_term("Unrelated")
     runtime.synopsizer.reset_mock()
     assert service.ensure_understanding(store) == "Whole-book synopsis."
     runtime.synopsizer.book_synopsis.assert_not_called()
@@ -589,14 +599,21 @@ def test_glossary_growth_reuses_synopsis_on_resume(tmp_path):
     "revise",
     [
         lambda store: store.resolve_term("Alice", "艾丽斯"),
-        lambda store: store.upsert_term(GlossaryTerm("Alice", "爱丽丝", gender="male")),
-        lambda store: store.upsert_term(GlossaryTerm("Alice", "爱丽丝", aliases=["Ally"])),
+        lambda store: (
+            store.delete_term("Alice"),
+            store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="place")),
+        ),
+        lambda store: (
+            store.delete_term("Alice"),
+            store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="male")),
+        ),
         lambda store: store.delete_term("Alice"),
     ],
-    ids=["target", "gender", "aliases", "removed"],
+    ids=["target", "type", "gender", "removed"],
 )
-def test_changed_or_removed_synopsis_mapping_invalidates_cache(tmp_path, revise):
+def test_changed_or_removed_digest_matched_mapping_invalidates_cache(tmp_path, revise):
     service, store, runtime = _service(tmp_path)
+    runtime.synopsizer.digest_chapter.return_value = "Alice arrives."
     store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="female"))
     service.ensure_understanding(store)
     revise(store)
@@ -604,6 +621,44 @@ def test_changed_or_removed_synopsis_mapping_invalidates_cache(tmp_path, revise)
     runtime.synopsizer.book_synopsis.return_value = "Revised synopsis."
     assert service.ensure_understanding(store) == "Revised synopsis."
     runtime.synopsizer.book_synopsis.assert_called_once()
+
+
+def test_version_3_synopsis_snapshot_is_reused_across_alias_and_unmatched_changes(tmp_path):
+    service, store, runtime = _service(tmp_path)
+    runtime.synopsizer.digest_chapter.return_value = "Alice arrives."
+    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="female"))
+    store.upsert_term(GlossaryTerm("Other", "他人", type="person"))
+    assert service.ensure_understanding(store) == "Whole-book synopsis."
+    analysis = store.load_analysis()
+    assert analysis is not None
+    # Simulate a legacy version-3 snapshot storing [target, type, gender, aliases] for all terms.
+    v3_snapshot = "preparation/synopsis-glossary/legacy-v3.json"
+    store.write_artifact(
+        v3_snapshot,
+        {
+            "Alice": ["爱丽丝", "person", "female", []],
+            "Other": ["他人", "person", "", []],
+        },
+    )
+    analysis["book_synopsis_meta"]["version"] = 3
+    analysis["book_synopsis_meta"]["glossary"] = v3_snapshot
+    store.save_analysis(analysis)
+
+    # Alias growth and unmatched term deletion keep reusing the v3 synopsis.
+    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", aliases=["Ally"]))
+    store.delete_term("Other")
+    runtime.synopsizer.reset_mock()
+    assert service.ensure_understanding(store) == "Whole-book synopsis."
+    runtime.synopsizer.book_synopsis.assert_not_called()
+
+    # Changing a digest-matched term's target regenerates and upgrades to version 4.
+    store.resolve_term("Alice", "艾丽斯")
+    runtime.synopsizer.book_synopsis.return_value = "Upgraded synopsis."
+    assert service.ensure_understanding(store) == "Upgraded synopsis."
+    runtime.synopsizer.book_synopsis.assert_called_once()
+    upgraded = store.load_analysis()
+    assert upgraded is not None
+    assert upgraded["book_synopsis_meta"]["version"] == 4
 
 
 def test_unrelated_route_change_reuses_synopsis(tmp_path):

@@ -37,6 +37,9 @@ class WorkflowOperation(Protocol):
         ...
 
 
+ResumeScheduler = Callable[[ExecutionRequest, int, int, str], None]
+
+
 @dataclass(frozen=True)
 class ExecutionDependencies:
     projects: ProjectRepository
@@ -46,6 +49,7 @@ class ExecutionDependencies:
     operation: WorkflowOperation
     run_sync: WorkflowDispatcher
     metrics: Metrics = field(default_factory=Metrics)
+    schedule_resume: ResumeScheduler | None = None
 
 
 @dataclass(frozen=True)

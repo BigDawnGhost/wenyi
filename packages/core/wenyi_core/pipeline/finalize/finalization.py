@@ -72,6 +72,7 @@ class AssemblyService:
                     out_format=out_format,
                     bilingual=False,
                     about_page=out_cfg.about_page,
+                    quote_style=out_cfg.quote_style,
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
                     language_policy=plans[False],
                 )
@@ -88,6 +89,7 @@ class AssemblyService:
                     order=out_cfg.bilingual_order,
                     preserve_source_style=out_cfg.bilingual_preserve_source_style,
                     about_page=out_cfg.about_page,
+                    quote_style=out_cfg.quote_style,
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
                     language_policy=plans[True],
                 )

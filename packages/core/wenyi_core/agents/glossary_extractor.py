@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from ..config import Config
+from ..glossary.prompt_scope import prompt_terms
 from ..glossary.store import (
     TYPE_TERM,
     GlossaryOccurrenceMatcher,
@@ -23,6 +24,7 @@ from ..glossary.store import (
 from ..i18n.policy.models import content_hash
 from ..llm.base import LLMClient
 from ..llm.json_parser import JsonParseError, parse_json_result
+from ..llm.preflight import fit_prompt_to_context_window
 from ..models.glossary import SOURCE_ONLY_TYPES
 from ..storage.protocol import Storage
 from . import prompts
@@ -35,6 +37,72 @@ _POSSESSIVE_KIN = re.compile(
     r"(?:brothers?|sisters?|siblings?|uncles?|aunts?|cousins?|parents?|mothers?|fathers?|sons?|daughters?)",
     re.IGNORECASE,
 )
+_EN_CONTRADICTION_PREFIX = (
+    r"(?:distinct\s+from|different\s+from|not\s+to\s+be\s+confused\s+with|unlike|"
+    r"not\s+the\s+same\s+as|rather\s+than|instead\s+of|do\s+not\s+(?:use|translate\s+as)|"
+    r"don't\s+(?:use|translate\s+as)|never\s+(?:use|translate\s+as)|avoid|not)"
+)
+_ZH_CONTRADICTION_PREFIX = r"(?:区别于|不同于|并非|不是|非|勿译为|不要译为|不可译为)"
+_ZH_TARGET_BOUNDARY = (
+    r"(?:$|[\s\"'”’」』》），。、；：！？,.!?;:()（）—\-/]|的|等|或|和|与|及|而|但|却|才|就|也|是)"
+)
+
+
+def _note_contradicts_target(target: str, note: str) -> bool:
+    """Return True when the note explicitly distinguishes the entry from its own target."""
+    cleaned_target = target.strip()
+    cleaned_note = note.strip()
+    if not cleaned_target or not cleaned_note:
+        return False
+    escaped = re.escape(cleaned_target)
+    en_pattern = re.compile(
+        rf"\b{_EN_CONTRADICTION_PREFIX}\s+(?:(?:the|a|an)\s+)?"
+        rf"(?:[\"'“‘`]{escaped}[\"'”’`]|{escaped}(?![\w'’]|\s+[A-Z]))",
+        re.IGNORECASE,
+    )
+    if en_pattern.search(cleaned_note):
+        return True
+    trailing = r"(?![A-Za-z0-9_])" if cleaned_target.isascii() else _ZH_TARGET_BOUNDARY
+    zh_pattern = re.compile(
+        rf"{_ZH_CONTRADICTION_PREFIX}\s*[\"'“‘「『《]?{escaped}[\"'”’」』》]?{trailing}"
+    )
+    return zh_pattern.search(cleaned_note) is not None
+
+
+def _is_shadowed_or_unbounded_source(
+    term: GlossaryTerm,
+    source_text: str,
+    candidate_longer_keys: Iterable[str],
+) -> bool:
+    """Reject a source key that only appears inside a longer word or a longer batch/known term."""
+    source = term.source.strip()
+    if not source or not source_text:
+        return False
+    lowered_text = source_text.casefold()
+    lowered_source = source.casefold()
+    if lowered_source not in lowered_text:
+        return False
+    # For space-delimited scripts, require a token boundary rather than matching inside a word.
+    if not source_matches_text(source, source_text):
+        return True
+    longer = sorted(
+        {
+            key.strip()
+            for key in candidate_longer_keys
+            if (stripped := key.strip())
+            and len(stripped.casefold()) > len(lowered_source)
+            and lowered_source in stripped.casefold()
+            and source_matches_text(stripped, source_text)
+        },
+        key=len,
+        reverse=True,
+    )
+    if not longer:
+        return False
+    masked = source_text
+    for key in longer:
+        masked = re.sub(re.escape(key), " ", masked, flags=re.IGNORECASE)
+    return not source_matches_text(source, masked)
 
 
 def _text(value: object, default: str = "") -> str:
@@ -102,14 +170,27 @@ class GlossaryExtractor(Agent):
         self, source_text: str, target_text: str, existing: list[GlossaryTerm]
     ) -> list[GlossaryTerm]:
         """Extract valid terms from source/target pairs and normalize model field types."""
-        system = self.render("glossary_extractor_system", src=self.src, tgt=self.tgt)
-        user = self.render(
-            "glossary_extractor_user",
-            src=self.src,
-            tgt=self.tgt,
-            glossary=prompts.render_glossary(existing, source_lang=self.src),
-            source=source_text,
-            target=target_text,
+        system_template = self.render("glossary_extractor_system", src=self.src, tgt=self.tgt)
+
+        def _render(terms_for_prompt: list[GlossaryTerm]) -> tuple[str, str]:
+            return (
+                system_template,
+                self.render(
+                    "glossary_extractor_user",
+                    src=self.src,
+                    tgt=self.tgt,
+                    glossary=prompts.render_glossary(terms_for_prompt, source_lang=self.src),
+                    source=source_text,
+                    target=target_text,
+                ),
+            )
+
+        system, user, _effective_existing, _shrunk = fit_prompt_to_context_window(
+            config=self.config,
+            operation="glossary.extract",
+            terms=existing,
+            match_text=source_text,
+            render_messages=_render,
         )
 
         def local_reference(spelling: str) -> bool:
@@ -145,7 +226,26 @@ class GlossaryExtractor(Agent):
                     note=_text(d.get("note")),
                 )
             )
-        return terms
+        all_keys: list[str] = []
+        for item in (*terms, *existing):
+            all_keys.append(item.source)
+            all_keys.extend(item.aliases)
+        filtered: list[GlossaryTerm] = []
+        for term in terms:
+            if _note_contradicts_target(term.target, term.note):
+                _LOGGER.warning(
+                    "Rejected glossary extraction with self-contradictory note: source=%r",
+                    term.source,
+                )
+                continue
+            if _is_shadowed_or_unbounded_source(term, source_text, all_keys):
+                _LOGGER.warning(
+                    "Rejected glossary extraction shadowed by longer term or word boundary: source=%r",
+                    term.source,
+                )
+                continue
+            filtered.append(term)
+        return filtered
 
     @staticmethod
     def _first_occurrences(
@@ -355,9 +455,12 @@ class GlossaryExtractor(Agent):
             if source_corpus is not None
             else all_existing
         )
-        if self.config.pipeline.batch_glossary == "relevant":
-            # Duplicates and conflicts only concern entries present in this batch.
-            existing = GlossaryStore.terms_in(existing, source_text)
+        existing = prompt_terms(
+            existing,
+            source_text,
+            budget=self.config.pipeline.glossary_prompt_tokens,
+            mode=self.config.pipeline.batch_glossary,
+        )
         terms = self.extract(source_text, target_text, existing)
         occurrences = (
             self._first_occurrences(terms, store, history, before) if before is not None else {}

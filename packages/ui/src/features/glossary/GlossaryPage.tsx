@@ -189,6 +189,14 @@ export default function GlossaryPage() {
       <PageContainer className="mx-auto w-full max-w-5xl space-y-4">
         <ErrorNotice error={termsError || conflictsError} />
         {busy && <ReadOnlyNotice />}
+        {conflicts && conflicts.length > 0 && (
+          <ConflictList
+            pid={pid}
+            conflicts={conflicts}
+            busy={busy}
+            onResolved={invalidate}
+          />
+        )}
         <Card className="flex flex-wrap items-center gap-2 p-4">
           <Input
             placeholder={tr(
@@ -244,15 +252,6 @@ export default function GlossaryPage() {
           onEdit={setEditTerm}
           onDelete={(source) => del.mutate(source)}
         />
-
-        {conflicts && conflicts.length > 0 && (
-          <ConflictList
-            pid={pid}
-            conflicts={conflicts}
-            busy={busy}
-            onResolved={invalidate}
-          />
-        )}
 
         <SelectDismissScope dismissKey={busy ? "read-only" : "editable"}>
           <TermDetailsDialog

@@ -83,3 +83,72 @@ def publish_error(
         redis.publish(f"project:{project_id}", json.dumps(payload, ensure_ascii=False))
     except Exception as exc:
         log.warning("Failed to publish error for project %s: %s", project_id, exc, exc_info=False)
+
+
+def publish_outage_pause(
+    redis: StatisticsCache,
+    project_id: str,
+    *,
+    kind: str,
+    run_id: str | None,
+    next_retry_at: str,
+    delay_seconds: int,
+    attempt: int,
+    message: str,
+) -> None:
+    """Persist and broadcast a scheduled automatic retry after a provider outage."""
+    channel = f"project:{project_id}"
+    done = 0
+    total = 0
+    elapsed_seconds = 0.0
+    try:
+        raw = redis.get(f"{channel}:progress")
+        if isinstance(raw, str) and raw:
+            previous = json.loads(raw)
+            if isinstance(previous, dict) and previous.get("run_id") == run_id:
+                done = int(previous.get("done") or 0)
+                total = int(previous.get("total") or 0)
+                elapsed_seconds = float(previous.get("elapsed_seconds") or 0.0)
+    except Exception:
+        pass
+    event_payload = {
+        "run_id": run_id,
+        "project_id": project_id,
+        "kind": kind,
+        "done": done,
+        "total": total,
+        "label": "progress.stage.outagePaused",
+        "payload": {
+            "next_retry_at": next_retry_at,
+            "delay_seconds": delay_seconds,
+            "attempt": attempt,
+            "reason": message,
+        },
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "elapsed_seconds": elapsed_seconds,
+    }
+    try:
+        encoded = json.dumps(event_payload, ensure_ascii=False)
+        redis.set(f"{channel}:progress", encoded, ex=604800)
+        redis.set(f"{channel}:auto_resume", run_id or "pending", ex=604800)
+        redis.publish(channel, encoded)
+    except Exception as exc:
+        log.warning(
+            "Failed to publish outage pause for project %s: %s",
+            project_id,
+            exc,
+            exc_info=False,
+        )
+
+
+def clear_auto_resume_marker(redis: StatisticsCache, project_id: str) -> None:
+    """Mark any pending automatic resume for ``project_id`` as cancelled."""
+    try:
+        redis.set(f"project:{project_id}:auto_resume", "", ex=604800)
+    except Exception as exc:
+        log.warning(
+            "Failed to clear auto-resume marker for project %s: %s",
+            project_id,
+            exc,
+            exc_info=False,
+        )

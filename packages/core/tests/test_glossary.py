@@ -222,6 +222,58 @@ class TestGlossary(unittest.TestCase):
             ["乙", "甲", "丙"],
         )
 
+    def test_context_dependent_status_merges_senses_and_renders_as_guidance(self):
+        from wenyi_core.agents import prompts
+        from wenyi_core.glossary.store import STATUS_CONTEXT_DEPENDENT
+
+        self.store.upsert_term(GlossaryTerm(source="洗白", target="go legit"), chapter=0)
+        self.assertEqual(
+            self.store.upsert_term(GlossaryTerm(source="洗白", target="whitewash"), chapter=1),
+            "conflict",
+        )
+        self.assertEqual(len(self.store.open_conflicts()), 1)
+
+        self.assertTrue(
+            self.store.resolve_term(
+                "洗白",
+                "go legit | whitewash | launder",
+                status=STATUS_CONTEXT_DEPENDENT,
+            )
+        )
+        self.store.mark_conflicts_resolved("洗白")
+        term = self.store.get_term("洗白")
+        assert term is not None
+        self.assertEqual(term.status, STATUS_CONTEXT_DEPENDENT)
+        self.assertEqual(term.target, "go legit | whitewash | launder")
+        self.assertEqual(self.store.open_conflicts(), [])
+
+        # Subsequent extractions append new senses instead of re-opening conflicts.
+        self.assertEqual(
+            self.store.upsert_term(GlossaryTerm(source="洗白", target="go legit"), chapter=2),
+            "unchanged",
+        )
+        self.assertEqual(
+            self.store.upsert_term(GlossaryTerm(source="洗白", target="rehabilitate"), chapter=3),
+            "unchanged",
+        )
+        updated = self.store.get_term("洗白")
+        assert updated is not None
+        self.assertEqual(updated.status, STATUS_CONTEXT_DEPENDENT)
+        self.assertEqual(updated.target, "go legit | whitewash | launder | rehabilitate")
+        self.assertEqual(self.store.open_conflicts(), [])
+
+        # Shared prompt renderer (used by Translator, Polisher, Reviewer, ReviewFixer) renders
+        # context-dependent entries as guidance rather than a fixed "→" mapping.
+        fixed = GlossaryTerm(source="少将", target="major general", type="term")
+        rendered = prompts.render_glossary([fixed, updated], source_lang="zh")
+        self.assertIn("- 少将 → major general(term)", rendered)
+        self.assertIn(
+            "- 洗白: go legit | whitewash | launder | rehabilitate"
+            "(term, context-dependent; choose by context)",
+            rendered,
+        )
+        self.assertNotIn("- 洗白 →", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

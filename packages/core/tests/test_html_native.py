@@ -391,7 +391,7 @@ def test_mineru_chunk_assembly_cache_and_html_export(tmp_path, monkeypatch):
     assemble(store, str(source), out_path=str(out), out_format="html")
     soup = BeautifulSoup(out.read_text(), "html.parser")
     p1, p2 = soup.find(id="p1"), soup.find(id="p2")
-    assert p1 is not None and p1.get_text() == "First."
+    assert p1 is not None and p1.get_text() == ""
     assert p2 is not None and p2.get_text() == "译文"
     assert not soup.select("[data-tn-id]")
     assert store.load_chapter(0).segments[1].target == ""

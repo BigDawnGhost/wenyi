@@ -62,6 +62,42 @@ def test_precision_project_yaml_validates_mode_and_required_polish():
         assert restored.pipeline.polish is True
 
 
+def test_batch_glossary_persists_in_global_and_project_settings():
+    from wenyi_backend.config_documents import global_document, project_document
+
+    defaults = Config.from_dict(
+        {"llm": {"preset": "fake"}, "pipeline": {"batch_glossary": "relevant"}}
+    )
+    assert global_document(defaults)["pipeline"]["batch_glossary"] == "relevant"
+
+    project = {
+        "id": "batch-glossary-test",
+        "source_lang": "zh",
+        "target_lang": "en",
+        "config": {},
+    }
+    inherited = effective_config(project, defaults=defaults, state_dir="unused")
+    assert inherited.pipeline.batch_glossary == "relevant"
+    assert project_document(inherited)["pipeline"]["batch_glossary"] == "relevant"
+
+    overridden = effective_config(
+        project,
+        defaults=defaults,
+        state_dir="unused",
+        document={"pipeline": {"batch_glossary": "all"}},
+    )
+    assert overridden.pipeline.batch_glossary == "all"
+    assert project_document(overridden)["pipeline"]["batch_glossary"] == "all"
+
+    with pytest.raises(ValueError):
+        effective_config(
+            project,
+            defaults=defaults,
+            state_dir="unused",
+            document={"pipeline": {"batch_glossary": "invalid"}},
+        )
+
+
 @pytest.mark.parametrize(
     "strategy",
     [

@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 from functools import wraps
 
 from wenyi_core.pdf_bridge.connection import use_bridge_connection
 
-from ..context import current_context, use_context
+from .. import job_service
+from ..context import BackendContext, current_context, use_context
 from ..execution import exporting, runner
 from ..execution.bindings import export_dependencies, workflow_dependencies
 from ..execution.contracts import ExecutionRequest, ExportRequest, WorkflowKind
+from ..execution.outage import AUTO_RESUME_ATTEMPT_PARAM
+from ..project_service import effective_config
 
 
 def _worker_entry(function):
@@ -64,3 +68,66 @@ async def run_export(
         ExportRequest(project_id, export_id, run_id, params),
         export_dependencies(current_context()),
     )
+
+
+def _auto_resume_still_pending(
+    context: BackendContext, project_id: str, expected_run_id: str | None
+) -> bool:
+    if not expected_run_id:
+        return True
+    cache = None
+    try:
+        cache = context.telemetry.connect()
+        marker = cache.get(f"project:{project_id}:auto_resume")
+    except Exception:
+        return True
+    finally:
+        if cache is not None:
+            try:
+                context.telemetry.release(cache)
+            except Exception:
+                pass
+    if marker is None:
+        return True
+    return marker == expected_run_id
+
+
+@_worker_entry
+async def run_auto_resume(
+    ctx,
+    *,
+    project_id: str,
+    expected_run_id: str | None = None,
+    attempt: int = 1,
+) -> bool:
+    """Resume a paused workflow after a provider outage if it was not superseded or cancelled."""
+    context = current_context()
+    project = await asyncio.to_thread(context.repository.get_project, project_id)
+    if project is None or project.get("status") != "paused":
+        return False
+    latest = await asyncio.to_thread(context.repository.latest_resumable_job, project_id)
+    if latest is None or latest.get("status") != "paused":
+        return False
+    if expected_run_id and latest.get("run_id") != expected_run_id:
+        return False
+    if not await asyncio.to_thread(
+        _auto_resume_still_pending, context, project_id, expected_run_id
+    ):
+        return False
+    params = dict(latest.get("params") or {})
+    params[AUTO_RESUME_ATTEMPT_PARAM] = max(1, int(attempt))
+    await job_service.start_job(
+        project_id,
+        latest["kind"],
+        projects=context.repository,
+        jobs=context.repository,
+        storage_for=context.storage_for,
+        config_for=lambda proj: effective_config(
+            proj,
+            defaults=context.settings_store.load().config,
+            state_dir=context.project_dir(proj["id"]),
+        ),
+        enqueue=context.enqueue,
+        params=params,
+    )
+    return True

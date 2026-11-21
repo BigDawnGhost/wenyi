@@ -144,6 +144,7 @@ Presets do not query the remote service for capabilities.
 | `llm.models.<id>.provider` | Required connection ID. |
 | `llm.models.<id>.model` | Required remote model name. |
 | `llm.models.<id>.max_output_tokens` | Unset; positive integer if supplied. |
+| `llm.models.<id>.context_window` | Unset (uses conservative known defaults for DeepSeek/OpenAI/Gemini where documented); positive integer if supplied. Preflight shrinks the glossary or fails with a clear message before overflowing the window. |
 | `llm.models.<id>.options` | `{}`; adapter-specific fields below. |
 | `llm.tiers` | Exactly `strong`, `cheap`, and `fast`, each mapped to a profile. |
 | `llm.routes.<operation>.model` / `.tier` | Exactly one selection on each explicit route. Omitted routes use the operation defaults. |
@@ -372,6 +373,9 @@ described under [scope](#scope).
 | `pipeline.polish` | `true` | Polish translated batches; adds substantial model work. |
 | `pipeline.polish_concurrency` | `1` | Standard-mode polish workers, integer ≥ 1. `1` polishes each batch before the next one; above `1`, drafts are saved and polished in the background while translation continues, with at most twice this many batches queued. Provider `max_concurrency` still applies. Ignored by `three_draft_synthesis`. See [deferred polishing](../guide/pipeline.md#deferred-polishing). |
 | `pipeline.batch_glossary` | `all` | `all` sends the full glossary to every body translation, polish and precision request; `relevant` sends each batch only the entries matching its text and limits extraction to existing entries in the extracted text. See [translation context and the glossary](../guide/pipeline.md#context-and-glossary). |
+| `pipeline.glossary_prompt_tokens` | `4000` | Per-request glossary token budget (`cl100k_base`, integer ≥ 0). In `all` mode, glossaries beyond the budget keep their append-stable leading prefix plus matching later entries; in `relevant` mode, caps matched entries. |
+| `pipeline.skip_boilerplate` | `false` | Optional ingest-time filter that marks scraped-site watermarks, ad markers and stray fragments with `meta.skip = true` instead of deleting segments, excluding them from translation and export while preserving segment indices and anchors. |
+| `pipeline.boilerplate_patterns` | `[]` | Additional regular expressions matched when `pipeline.skip_boilerplate` is `true`. |
 | `pipeline.align_retry_limit` | `2` | Additional structural-output attempts; `0` disables them. |
 | `pipeline.rolling_context_tokens` | `512` | Preceding translation budget, integer ≥ 0, counted with `cl100k_base`. |
 | `pipeline.book_understanding` | `true` | Generate full-source chapter digests and a book synopsis. |
@@ -484,6 +488,7 @@ for choosing the backend.
 | `output.bilingual_order` | `target_first` | `target_first` or `source_first`; selects the first version in paragraph-paired formats and the left-hand version in PDF spreads. |
 | `output.bilingual_preserve_source_style` | `false` | Preserve recorded source styles rather than the format's default source presentation. |
 | `output.about_page` | `true` | Add the project “About this translation” page to EPUB output. |
+| `output.quote_style` | `preserve` | `preserve`, `typographic` (`“ ” ‘ ’`), or `straight` (`" '`). Applied at export only for Latin-script targets; saved translations and bilingual source text are unchanged. |
 
 `bilingual_preserve_source_style` is independent of ordering. In EPUB/HTML,
 `true` inherits normal book styling instead of subdued source text. In DOCX,

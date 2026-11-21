@@ -106,14 +106,17 @@ earlier translations. The glossary is authoritative for name mappings, while sty
 guidance retains source identities and descriptive character information.
 
 By default (`pipeline.batch_glossary: all`) each pending body batch receives all
-current mappings, including terms absent from its chapter. This favors book-wide
-consistency at the cost of larger prompts: on a long book the glossary can become the
-largest part of every translation and polish request. With `all`, the glossary sits
-before the chapter digest, so providers with prefix caching can reuse it across
-batches. With `batch_glossary: relevant`, each batch instead receives only entries
-whose source or aliases occur in its source paragraphs, the following-source
-reference, its annotation contexts or the chapter digest, and glossary extraction sees
-only existing entries that occur in the extracted text. A paragraph that names a
+current mappings up to `pipeline.glossary_prompt_tokens` (4,000 tokens by default).
+When a long book's glossary grows past that budget, `all` keeps its append-stable
+leading entries within the budget (preserving prefix caches) plus only the later
+entries matching that batch. With `batch_glossary: relevant`, each batch instead
+receives only entries whose source or aliases occur in its source paragraphs, the
+following-source reference, its annotation contexts or the chapter digest (also
+capped by `glossary_prompt_tokens`), and glossary extraction sees only existing
+entries that occur in the extracted text. Before sending a request, Wenyi also checks
+estimated prompt tokens plus output reserve against the model's `context_window`,
+shrinking the glossary or raising an actionable error rather than overflowing the
+provider limit. A paragraph that names a
 character only by pronoun or title then relies on the digest and recent translations
 for that mapping. Fresh Reviewer requests always receive the complete final glossary.
 Evidence queries and individual Fixers can use relevant subsets. Each

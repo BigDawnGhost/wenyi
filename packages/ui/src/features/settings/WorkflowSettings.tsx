@@ -1,6 +1,7 @@
 import { useI18n } from "../../i18n";
 import { Label, Switch } from "../../components/ui/form";
-import { SettingsRow } from "./SettingsRow";
+import { Select, SelectItem } from "../../components/ui/select";
+import { SettingsRow, SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
 import { cardSurface } from "../../components/ui/card";
 import { cn } from "../../lib/utils";
 
@@ -94,6 +95,23 @@ export function WorkflowSettings({
             }
           />
         ))}
+        <SettingsRow
+          label={tr("settings.batchGlossary")}
+          htmlFor="pipeline-batch-glossary"
+          description={tr("settings.batchGlossaryHelp")}
+          control={
+            <Select
+              id="pipeline-batch-glossary"
+              className={SETTINGS_CONTROL_CLASSNAME}
+              disabled={disabled}
+              value={section(config, "pipeline").batch_glossary === "relevant" ? "relevant" : "all"}
+              onValueChange={(value) => onField("pipeline", "batch_glossary", value)}
+            >
+              <SelectItem value="all">{tr("settings.batchGlossaryAll")}</SelectItem>
+              <SelectItem value="relevant">{tr("settings.batchGlossaryRelevant")}</SelectItem>
+            </Select>
+          }
+        />
       </div>}
     </fieldset>
   );

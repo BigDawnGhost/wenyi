@@ -29,6 +29,9 @@ def book_preview(document: Document, fmt: str) -> dict:
         {"index": chapter.index, "title": chapter.title, "word_count": len(chapter.text_segments)}
         for chapter in document.chapters
     ]
+    skipped = document.meta.get("skipped_boilerplate")
+    skipped_items = skipped if isinstance(skipped, list) else []
+    skipped_count = int(document.meta.get("skipped_boilerplate_count") or len(skipped_items))
     return {
         "title": document.title,
         "fmt": fmt,
@@ -36,6 +39,8 @@ def book_preview(document: Document, fmt: str) -> dict:
         "total_word_count": sum(chapter["word_count"] for chapter in chapters),
         "source_lang": document.source_lang,
         "chapters": chapters,
+        "skipped_boilerplate_count": skipped_count,
+        "skipped_boilerplate": skipped_items,
     }
 
 

@@ -236,8 +236,8 @@ class FileStorage(FileArtifacts):
     def terms_in(self, terms: list[GlossaryTerm], text: str) -> list[GlossaryTerm]:
         return GlossaryStore.terms_in(terms, text)
 
-    def resolve_term(self, source: str, target: str) -> bool:
-        return self._g.resolve_term(source, target)
+    def resolve_term(self, source: str, target: str, *, status: str = "ok") -> bool:
+        return self._g.resolve_term(source, target, status=status)
 
     def delete_term(self, source: str) -> bool:
         cursor = self._g.conn.execute("DELETE FROM glossary WHERE source=?", (source,))

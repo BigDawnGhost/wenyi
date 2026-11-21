@@ -99,6 +99,55 @@ def _ch_title(c: dict) -> str:
     return (c.get("title_translated") or c.get("title") or "").strip()
 
 
+def _translated_book_title(manifest: dict) -> str:
+    """Resolve a translated book title from manifest metadata or chapter 0 when available."""
+    direct = manifest.get("title_translated")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    meta = manifest.get("meta")
+    if isinstance(meta, dict):
+        meta_title = meta.get("book_title_translated")
+        if isinstance(meta_title, str) and meta_title.strip():
+            return meta_title.strip()
+    source_title = manifest.get("title")
+    chapters = manifest.get("chapters")
+    if (
+        isinstance(source_title, str)
+        and source_title.strip()
+        and isinstance(chapters, list)
+        and chapters
+        and isinstance(chapters[0], dict)
+    ):
+        first = chapters[0]
+        if (
+            isinstance(first.get("title"), str)
+            and " ".join(first["title"].split()) == " ".join(source_title.split())
+            and isinstance(first.get("title_translated"), str)
+            and first["title_translated"].strip()
+        ):
+            return first["title_translated"].strip()
+    return ""
+
+
+def _resolve_export_title(
+    manifest: dict,
+    target_lang: str | None,
+    *,
+    bilingual: bool,
+) -> tuple[str, str]:
+    """Return ``(export_title, original_title)``.
+
+    Prefer the translated book title for ``dc:title`` when available (retaining the source
+    title as metadata), falling back to ``<source>-wenyi-<lang>`` when untranslated.
+    """
+    raw_title = manifest.get("title")
+    source_title = raw_title.strip() if isinstance(raw_title, str) else ""
+    translated = _translated_book_title(manifest)
+    if translated:
+        return translated, source_title
+    return _export_book_title(source_title or "translated", target_lang, bilingual=bilingual), ""
+
+
 def _export_book_title(
     title: str | None,
     target_lang: str | None,
@@ -117,8 +166,13 @@ def _export_book_title(
 
 
 def _seg_text(seg) -> str:
-    """Return a nonempty translation, falling back to source to prevent content loss."""
-    return seg.target if (seg.target and seg.target.strip()) else seg.source
+    """Return the saved translation (including an intentional empty string), falling back to
+    source only when the segment is still untranslated (``target is None``).
+    Skipped boilerplate segments always export empty.
+    """
+    if seg.meta.get("skip"):
+        return ""
+    return seg.source if seg.target is None else seg.target
 
 
 def _heading_level(chapter: Chapter, segment: Segment | None = None) -> int:
@@ -145,10 +199,12 @@ def _merged_paragraphs(chapter: Chapter) -> list[tuple[str, str, str, int]]:
     kinds: list[str] = []
     levels: list[int] = []
     attribute_continuation = False
+    skip_continuation = False
     for s in chapter.segments:
         if not s.cont:
             attribute_continuation = HTML_ATTRIBUTE_META_KEY in s.meta
-        if attribute_continuation:
+            skip_continuation = bool(s.meta.get("skip"))
+        if attribute_continuation or skip_continuation or s.meta.get("skip"):
             continue
         if not s.source.strip():
             continue
@@ -174,7 +230,7 @@ def _bilingual_source(source: str, target: str) -> str:
     from wenyi_core.markup.ruby import strip_ruby_markers
 
     # Source fallbacks still include pronunciation markers, so compare before stripping them.
-    if source == target:
+    if source == target or not target.strip():
         return ""
     source = strip_ruby_markers(source)
     return source if (source.strip() and source != target) else ""

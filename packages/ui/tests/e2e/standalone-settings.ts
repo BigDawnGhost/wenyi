@@ -250,7 +250,7 @@ for (const chinese of [false, true]) {
     const yaml = page.getByRole("textbox", { name: advancedName, exact: true });
     await expect(yaml).toBeVisible();
     await expect(page.getByRole("link", { name: advancedName, exact: true })).toHaveCount(0);
-    await expect(main.getByRole("combobox")).toHaveCount(4);
+    await expect(main.getByRole("combobox")).toHaveCount(5);
     await expect(main.getByRole("switch")).toHaveCount(6);
     await expect(main.getByRole("spinbutton", { includeHidden: true })).toHaveCount(0);
     await expect(page.getByLabel(chinese ? "分批翻译章节" : "Translate chapters in batches", { exact: true })).toHaveCount(0);
@@ -264,6 +264,11 @@ for (const chinese of [false, true]) {
     const polish = page.getByLabel(chinese ? "润色" : "Polishing", { exact: true });
     await polish.uncheck();
     expect(JSON.parse(await yaml.inputValue()).pipeline.polish).toBe(false);
+    await chooseOption(
+      page.getByRole("combobox", { name: chinese ? "批次术语范围" : "Batch glossary", exact: true }),
+      chinese ? "仅当前批次相关" : "Relevant to each batch",
+    );
+    expect(JSON.parse(await yaml.inputValue()).pipeline.batch_glossary).toBe("relevant");
     expect(routeRequests).toEqual([]);
     const advanced = main.getByRole("region", { name: advancedName, exact: true });
     const workflow = main.getByRole("region", { name: chinese ? "翻译流程" : "Workflow", exact: true });

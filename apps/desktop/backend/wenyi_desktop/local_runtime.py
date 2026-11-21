@@ -204,6 +204,7 @@ class LocalRuntime:
         self._active: dict[str, asyncio.Task] = {}
         self._cancelling: set[asyncio.Task] = set()
         self._workflows: set[asyncio.Task] = set()
+        self._auto_resumes: dict[str, asyncio.Task] = {}
         self._consumers: list[asyncio.Task] = []
         self._maintenance: asyncio.Task | None = None
         self._stopping = asyncio.Event()
@@ -261,6 +262,78 @@ class LocalRuntime:
             self._submitted.discard(run_id)
             raise
         return LocalJob(run_id)
+
+    def schedule_auto_resume(
+        self, request: Any, attempt: int, delay_seconds: int, next_retry_at: str
+    ) -> None:
+        if not self.accepting or self._stopping.is_set():
+            return
+        self.hub.loop.call_soon_threadsafe(
+            self._schedule_auto_resume_on_loop,
+            request.project_id,
+            request.run_id,
+            attempt,
+            delay_seconds,
+        )
+
+    def _schedule_auto_resume_on_loop(
+        self,
+        project_id: str,
+        expected_run_id: str | None,
+        attempt: int,
+        delay_seconds: int,
+    ) -> None:
+        if not self.accepting or self._stopping.is_set():
+            return
+        self._cancel_auto_resume_on_loop(project_id)
+        task = asyncio.create_task(
+            self._auto_resume_after(project_id, expected_run_id, attempt, delay_seconds),
+            name=f"desktop-auto-resume:{project_id}",
+        )
+        self._auto_resumes[project_id] = task
+
+    def cancel_auto_resume(self, project_id: str) -> None:
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is self.hub.loop:
+            self._cancel_auto_resume_on_loop(project_id)
+        elif not self.hub.loop.is_closed():
+            self.hub.loop.call_soon_threadsafe(self._cancel_auto_resume_on_loop, project_id)
+
+    def _cancel_auto_resume_on_loop(self, project_id: str) -> None:
+        existing = self._auto_resumes.pop(project_id, None)
+        if existing is not None and not existing.done():
+            existing.cancel()
+
+    async def _auto_resume_after(
+        self,
+        project_id: str,
+        expected_run_id: str | None,
+        attempt: int,
+        delay_seconds: int,
+    ) -> None:
+        from wenyi_backend.workers import tasks
+
+        current = asyncio.current_task()
+        try:
+            await asyncio.sleep(max(0.0, float(delay_seconds)))
+            if not self.accepting or self._stopping.is_set():
+                return
+            await tasks.run_auto_resume(
+                {"backend": self.context},
+                project_id=project_id,
+                expected_run_id=expected_run_id,
+                attempt=attempt,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("Desktop automatic resume failed: project_id=%s", project_id)
+        finally:
+            if self._auto_resumes.get(project_id) is current:
+                self._auto_resumes.pop(project_id, None)
 
     def _workflow_finished(self, task: asyncio.Task) -> None:
         self._workflows.discard(task)
@@ -501,6 +574,11 @@ class LocalRuntime:
                     await asyncio.to_thread(self._interrupt, item[2], "Desktop is shutting down.")
                     self._submitted.discard(item[2])
                 self.export_queue.task_done()
+            for task in tuple(self._auto_resumes.values()):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tuple(self._auto_resumes.values()), return_exceptions=True)
+            self._auto_resumes.clear()
             for task in tuple(self._active.values()):
                 self._cancel(task)
             await asyncio.gather(*tuple(self._active.values()), return_exceptions=True)
