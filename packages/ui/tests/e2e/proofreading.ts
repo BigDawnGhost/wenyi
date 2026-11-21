@@ -201,6 +201,8 @@ test("Chinese desktop navigation opens proofreading and distinguishes saved empt
   });
   await page.goto(`/projects/${pid}/review`);
   await page.getByRole("link", { name: "人工校阅", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "人工校阅", exact: true })).toBeVisible();
+  await expect(page.getByText("人工逐章校阅", { exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: /Chapter One/ }).click();
   await expect(page.getByText("等待译文落盘", { exact: true })).toHaveCount(0);
   await expect(
