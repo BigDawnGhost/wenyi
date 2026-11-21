@@ -354,7 +354,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | `pipeline.polish` | `true` | 润色已译批次，增加较多模型工作。 |
 | `pipeline.polish_concurrency` | `1` | 标准模式润色并发，整数 ≥ 1。`1` 在下一批开始前润色当前批；大于 `1` 时先保存初稿，在后台润色并继续翻译，最多排队该值两倍的批次。provider `max_concurrency` 仍然生效。`three_draft_synthesis` 忽略此项。见[后台润色](../guide/pipeline.md#deferred-polishing)。 |
 | `pipeline.batch_glossary` | `all` | `all` 向每个正文翻译、润色和精翻请求发送全量术语；`relevant` 只向每批发送与其文本匹配的词条，并让抽取只看到被抽取文本中出现的已有词条。见[翻译上下文与术语库](../guide/pipeline.md#context-and-glossary)。 |
-| `pipeline.glossary_prompt_tokens` | `4000` | 单次请求的术语表 token 预算（`cl100k_base`，整数 ≥ 0）。`all` 模式下超出预算时保留追加稳定的前导词条加命中本批的后续词条；`relevant` 模式下限制命中词条总量。 |
+| `pipeline.glossary_prompt_tokens` | `0` | 可选的单次请求术语表 token 上限（`cl100k_base`，整数 ≥ 0）。`0` 表示不设上限，发送内容只由 `batch_glossary` 决定。设置上限后，`all` 保留追加稳定的前导词条加命中本批的后续词条，`relevant` 限制命中词条总量。 |
 | `pipeline.skip_boilerplate` | `false` | 可选的导入时清理开关：将抓取站点的水印、广告标记和零散残片标记为 `meta.skip = true` 而非删除，从而跳过翻译与导出同时保持段落索引与锚点稳定。 |
 | `pipeline.boilerplate_patterns` | `[]` | 启用 `pipeline.skip_boilerplate` 时额外匹配的自定义正则表达式列表。 |
 | `pipeline.align_retry_limit` | `2` | 额外结构输出尝试次数；`0` 关闭。 |

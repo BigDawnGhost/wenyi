@@ -16,7 +16,13 @@ from wenyi_core.llm.limits import RequestCancelled, RequestStopped
 from ..emitters import publish_error, publish_outage_pause, redis_progress_fn
 from ..live_statistics import LiveStatistics
 from .contracts import ExecutionDependencies, ExecutionRequest
-from .outage import auto_resume_schedule, is_outage_interrupt, outage_attempt
+from .outage import (
+    ProviderOutageExhausted,
+    auto_resume_exhausted,
+    auto_resume_schedule,
+    is_outage_interrupt,
+    outage_attempt,
+)
 
 log = logging.getLogger(__name__)
 
@@ -119,12 +125,19 @@ def execute(
 
         resources.callback(stop_watcher)
         emitter = redis_progress_fn(cache, pid, kind=kind, run_id=run_id)
+        # First count reported per stage; a later, higher count means this job got work done,
+        # which ends any outage streak carried in from earlier automatic resumes.
+        progress_baseline: dict[str, int] = {}
+        progressed = False
 
         def progress(done: int, total: int, label: str) -> None:
+            nonlocal progressed
             if stop.is_set() or projects.is_paused(pid):
                 if client is not None:
                     client.cancel()
                 raise PauseRequested(pid)
+            if done > progress_baseline.setdefault(label, done):
+                progressed = True
             emitter(done, total, label)
 
         job = None
@@ -182,8 +195,12 @@ def execute(
                     status="paused", code="none", identity=metric_identity
                 )
         except Exception as error:
-            if is_outage_interrupt(error):
-                attempt = outage_attempt(request.params)
+            original = error
+            outage = is_outage_interrupt(error)
+            attempt = 0 if progressed else outage_attempt(request.params)
+            if outage and auto_resume_exhausted(attempt):
+                error = ProviderOutageExhausted(original, attempts=attempt)
+            elif outage:
                 delay_seconds, next_retry_at = auto_resume_schedule(attempt)
                 log.warning(
                     "Pipeline paused after resumable provider outage: kind=%s run_id=%s "
@@ -252,7 +269,9 @@ def execute(
                 dependencies.metrics.record_task(
                     status="error", code=error_code(error), identity=metric_identity
                 )
-            raise
+            if error is original:
+                raise
+            raise error from original
         finally:
             stop_watcher()
             try:

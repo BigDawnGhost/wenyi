@@ -325,8 +325,8 @@ def test_resumable_provider_outage_pauses_and_schedules_auto_resume(execution, e
     assert scheduled[0][1] == 1
     assert scheduled[0][2] == 60
 
-    # Subsequent auto-resume attempts back off through 120, 300, 600, 900, 900.
-    expected_delays = [120, 300, 600, 900, 900]
+    # Subsequent auto-resume attempts back off through 120, 240 and 480 seconds.
+    expected_delays = [120, 240, 480]
     for index, expected in enumerate(expected_delays, start=1):
         scheduled.clear()
         retry_request = ExecutionRequest(
@@ -335,9 +335,90 @@ def test_resumable_provider_outage_pauses_and_schedules_auto_resume(execution, e
         runner.execute(retry_request, deps)
         assert scheduled[0][1] == index + 1
         assert scheduled[0][2] == expected
+    assert sum([60, *expected_delays]) == 15 * 60
 
 
-@pytest.mark.parametrize("status_code", [400, 401, 403, 404])
+def test_outage_stops_auto_resuming_after_about_fifteen_minutes_without_progress(execution):
+    from wenyi_backend.execution.outage import (
+        AUTO_RESUME_ATTEMPT_PARAM,
+        MAX_AUTO_RESUME_ATTEMPTS,
+        ProviderOutageExhausted,
+    )
+
+    _request, dependencies, storage = execution
+    scheduled = []
+    deps = replace(dependencies, schedule_resume=lambda *args: scheduled.append(args))
+    deps.operation.side_effect = TimeoutError("provider timed out")
+    request = ExecutionRequest(
+        "translation", "project", "run", {AUTO_RESUME_ATTEMPT_PARAM: MAX_AUTO_RESUME_ATTEMPTS}
+    )
+
+    with pytest.raises(ProviderOutageExhausted, match="about 15 minutes") as raised:
+        runner.execute(request, deps)
+
+    assert isinstance(raised.value.__cause__, TimeoutError)
+    assert scheduled == []
+    deps.projects.set_project_status.assert_called_once_with(
+        "project", "error", error=str(raised.value)
+    )
+    assert deps.metrics.snapshot()["tasks"] == {("error", "provider_unavailable"): 1}
+    assert not any(
+        call.args and call.args[0] == "task_paused_outage"
+        for call in storage.log_event.call_args_list
+    )
+
+
+def test_outage_after_progress_restarts_the_retry_streak(execution):
+    from wenyi_backend.execution.outage import AUTO_RESUME_ATTEMPT_PARAM, MAX_AUTO_RESUME_ATTEMPTS
+
+    _request, dependencies, _storage = execution
+    scheduled = []
+    deps = replace(
+        dependencies,
+        schedule_resume=lambda req, attempt, delay, retry_at: scheduled.append((attempt, delay)),
+    )
+
+    def translate_one_batch_then_fail(_request, _storage, progress, _bind):
+        progress(10, 100, "Chapter 3")
+        progress(20, 100, "Chapter 3")
+        raise TimeoutError("provider timed out")
+
+    deps.operation.side_effect = translate_one_batch_then_fail
+    request = ExecutionRequest(
+        "translation", "project", "run", {AUTO_RESUME_ATTEMPT_PARAM: MAX_AUTO_RESUME_ATTEMPTS}
+    )
+
+    runner.execute(request, deps)
+
+    assert scheduled == [(1, 60)]
+
+
+def test_outage_without_progress_keeps_the_retry_streak(execution):
+    from wenyi_backend.execution.outage import AUTO_RESUME_ATTEMPT_PARAM
+
+    _request, dependencies, _storage = execution
+    scheduled = []
+    deps = replace(
+        dependencies,
+        schedule_resume=lambda req, attempt, delay, retry_at: scheduled.append((attempt, delay)),
+    )
+
+    def skip_finished_batches_then_fail(_request, _storage, progress, _bind):
+        # Resume reports the already-finished count again for each stage it passes through.
+        progress(20, 100, "Chapter 3")
+        progress(20, 100, "Chapter 3")
+        progress(20, 100, "Chapter 4")
+        raise TimeoutError("provider timed out")
+
+    deps.operation.side_effect = skip_finished_batches_then_fail
+    request = ExecutionRequest("translation", "project", "run", {AUTO_RESUME_ATTEMPT_PARAM: 2})
+
+    runner.execute(request, deps)
+
+    assert scheduled == [(3, 240)]
+
+
+@pytest.mark.parametrize("status_code", [400, 401, 402, 403, 404])
 def test_terminal_client_and_config_errors_stay_error_not_paused(execution, status_code):
     from wenyi_core.llm.retrying import ProviderRequestError
 
@@ -353,7 +434,7 @@ def test_terminal_client_and_config_errors_stay_error_not_paused(execution, stat
         error_type=f"http_{status_code}",
         status_code=status_code,
         reason=None,
-        resumable=False,
+        resumable=status_code == 402,
     )
     deps.operation.side_effect = error
 
