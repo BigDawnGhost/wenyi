@@ -13,12 +13,11 @@ from wenyi_core.atomicio import publish_target
 from wenyi_core.markup import _epub_native
 from wenyi_core.markup.html import html_document_soup
 
-from ..models.document import KIND_HEADING
+from ..models.document import KIND_HEADING, uses_epub_template
 from .export_view import AssembleStore
 from .html_resources import (
     _MEDIA_SUFFIXES,
     _embed_html_resources,
-    _template_resource_source,
 )
 from .html_source import _render_html_source
 from .writer_common import (
@@ -26,7 +25,6 @@ from .writer_common import (
     _epub_lang,
     _manifest_target_lang,
     _merged_paragraphs,
-    supports_pdf_export,
 )
 
 
@@ -79,8 +77,8 @@ def _assemble_html(
     m = store.load_manifest()
     raw_meta = m.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
-    mineru = m.get("fmt") == "pdf" and not supports_pdf_export(m)
-    prefer_native = m.get("fmt") == "html" or mineru
+    epub_template = uses_epub_template(m.get("fmt"), meta)
+    prefer_native = m.get("fmt") == "html"
     raw_head_html = meta.get("head_html", "")
     head_html = raw_head_html if isinstance(raw_head_html, str) else ""
 
@@ -96,7 +94,7 @@ def _assemble_html(
             order=order,
             preserve_source_style=preserve_source_style,
         )
-    elif m.get("fmt") == "epub" and epub_native.resource_specs(meta):
+    elif epub_template and epub_native.resource_specs(meta):
         body_parts = epub_native.render_html_bodies(
             source_path,
             epub_native.options(
@@ -127,7 +125,6 @@ def _assemble_html(
                     bilingual=bilingual,
                     order=order,
                     preserve_source_style=preserve_source_style,
-                    prefer_native=mineru,
                 )
             )
             continue
@@ -170,11 +167,11 @@ def _assemble_html(
         preserve_source_style=preserve_source_style,
         prefer_native=prefer_native,
     )
-    if m.get("fmt") != "epub":
+    if not epub_template:
         # EPUB references were already resolved in the container, with no disk fallback.
         full_html = _embed_html_resources(
             full_html,
-            source_dir=os.path.dirname(_template_resource_source(store, m, source_path)),
+            source_dir=os.path.dirname(source_path),
             prefer_native=prefer_native,
         )
 

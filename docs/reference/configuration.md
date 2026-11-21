@@ -453,7 +453,7 @@ standalone command with `--no-autofix`. See [Review and Autofix](../guide/pipeli
 | `pipeline.babeldoc_timeout` | `600` | Extract/fillback HTTP timeout in seconds. |
 | `pipeline.babeldoc_pages` | Unset (`null`) | Optional 1-based selection, such as `"15"` or `"6-8"`; unset means all pages. |
 
-MinerU converts PDF to HTML and requires its separate credential for uncached
+MinerU converts PDF to a source EPUB and requires its separate credential for uncached
 imports. BabelDOC is an optional independent AGPL service for layout-preserving
 PDF work. Saved parser identity determines export eligibility/defaults;
 changing this setting does not convert an existing project's backend.

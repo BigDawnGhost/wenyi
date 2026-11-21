@@ -5,10 +5,10 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 from wenyi_cli.cli import app
+from wenyi_core.assemble.epub_package import EpubChapter, EpubTocEntry, write_epub
 from wenyi_core.config import Config
 from wenyi_core.ingest.fb2_reader import peek_fb2_title, read_fb2
 from wenyi_core.llm.providers.fake import FakeClient
-from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pipeline import input_preparation
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
@@ -254,25 +254,33 @@ def test_parse_then_prepare_reuses_artifact_and_preserves_initialized_state(tmp_
     if pdf:
         source = tmp_path / "book.pdf"
         source.write_bytes(b"%PDF-1.4 offline mock")
-        document = Document(
+        from wenyi_core.ingest.pdf_reader import pdf_cache_epub_path
+
+        store, digest = input_preparation.locate_input_storage(str(source), config, FileStorage)
+        epub = pdf_cache_epub_path(store.source_dir, digest)
+        epub.parent.mkdir(parents=True)
+        write_epub(
+            epub,
             title="book",
-            fmt="pdf",
-            source_path=str(source),
-            source_lang="en",
-            target_lang="zh",
+            lang="en",
             chapters=[
-                Chapter(index=0, title="First", segments=[Segment(index=0, source="A story.")])
+                EpubChapter("chapter.xhtml", "First", "<html><body><p>A story.</p></body></html>")
             ],
+            toc=[EpubTocEntry("chapter.xhtml", "First")],
+            resources=[],
         )
-        with patch.object(input_preparation, "load_document", return_value=document) as load:
-            store, digest = input_preparation.locate_input_storage(str(source), config, FileStorage)
-            with store.lock():
-                input_preparation.parse_document(store, str(source), config, expected_sha256=digest)
-                input_preparation.parse_document(store, str(source), config)
-            load.assert_called_once()
-            assert load.call_args.kwargs["cache_dir"] == store.source_dir
-            assert load.call_args.kwargs["source_hash"] == digest
-            assert load.call_args.kwargs["pdf_backend"] == config.pipeline.pdf_backend
+        with (
+            store.lock(),
+            patch.object(
+                input_preparation, "load_document", wraps=input_preparation.load_document
+            ) as load,
+        ):
+            input_preparation.parse_document(store, str(source), config, expected_sha256=digest)
+            input_preparation.parse_document(store, str(source), config)
+        load.assert_called_once()
+        assert load.call_args.kwargs["cache_dir"] == store.source_dir
+        assert load.call_args.kwargs["source_hash"] == digest
+        assert load.call_args.kwargs["pdf_backend"] == config.pipeline.pdf_backend
     else:
         with store.lock():
             input_preparation.parse_document(store, str(source), config)

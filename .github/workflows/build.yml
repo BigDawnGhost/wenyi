@@ -21,6 +21,9 @@ on:
       - scripts/release/package_release.py
       - scripts/release/check_backend_packages.py
       - scripts/release/check_wheel_resources.py
+      - scripts/release/check_mineru_cli.py
+      - packages/core/wenyi_core/ingest/mineru_epub.py
+      - packages/cli/wenyi_cli/commands/workflows.py
       - scripts/dev/cli_entry.py
       - packages/core/tests/test_release_packaging.py
       - packages/core/hatch_build.py
@@ -114,6 +117,7 @@ jobs:
           --collect-all wenyi_core --collect-all tiktoken --collect-all tiktoken_ext
           --collect-all google.genai
           --collect-data wenyi_core.i18n
+          --collect-data latex2mathml
           --copy-metadata wenyi-core --copy-metadata wenyi-cli
           --workpath build/pyinstaller --specpath build/pyinstaller-spec
           --distpath dist scripts/dev/cli_entry.py
@@ -125,6 +129,7 @@ jobs:
           ${{ matrix.binary }} --help
           ${{ matrix.binary }} --version
           ${{ matrix.binary }} languages
+          python scripts/release/check_mineru_cli.py "${{ matrix.binary }}"
 
       - name: Verify packaged CLI version
         shell: bash

@@ -50,6 +50,8 @@ pub struct Input {
     about: Option<String>,
     #[serde(default)]
     bilingual_css: Option<String>,
+    #[serde(default)]
+    split_nested_toc: bool,
 }
 
 #[derive(Deserialize)]
@@ -472,6 +474,20 @@ pub fn generate(destination: &Path, mut input: Input, assets: Vec<Asset>) -> Res
         ],
     );
     let meta = child(&mut dom, package, "metadata", "", &[("xmlns:dc", DC)]);
+    if input.split_nested_toc {
+        dom.set(
+            package,
+            "prefix",
+            "wenyi: https://bigdawnghost.github.io/wenyi/vocab#",
+        );
+        child(
+            &mut dom,
+            meta,
+            "meta",
+            super::ingest::ALL_TOC_HEADINGS,
+            &[("property", super::ingest::BOUNDARY_POLICY)],
+        );
+    }
     child(
         &mut dom,
         meta,
@@ -505,7 +521,11 @@ pub fn generate(destination: &Path, mut input: Input, assets: Vec<Asset>) -> Res
     };
     item(&mut dom, "nav", "nav.xhtml", "application/xhtml+xml", "nav");
     item(&mut dom, "ncx", "toc.ncx", "application/x-dtbncx+xml", "");
-    child(&mut dom, spine, "itemref", "", &[("idref", "nav")]);
+    if !input.split_nested_toc {
+        // A generated source edition uses the NAV for navigation only. Its
+        // display title must not become a chapter preceding the actual book.
+        child(&mut dom, spine, "itemref", "", &[("idref", "nav")]);
+    }
     let mut out = ZipWriter::new(BufWriter::new(File::create(destination)?));
     write_mimetype(&mut out, b"application/epub+zip")?;
     let mut put = |name: &str, data: &[u8]| -> Result<()> {

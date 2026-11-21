@@ -30,7 +30,13 @@ pub struct Package {
     pub spine: Vec<Spec>,
     pub manifest: Vec<String>,
     pub toc_paths: Vec<String>,
+    pub split_nested_toc: bool,
 }
+
+// Opt-in for generated source editions; ordinary EPUBs keep their existing
+// chapter identities even when their publisher uses a deeply nested TOC.
+pub(super) const BOUNDARY_POLICY: &str = "wenyi:chapter-boundaries";
+pub(super) const ALL_TOC_HEADINGS: &str = "all-toc-headings";
 
 pub fn xml(data: &str) -> Result<roxmltree::Document<'_>> {
     // Allow legacy DOCTYPE declarations; roxmltree never loads external entities.
@@ -66,11 +72,18 @@ pub fn package(zip: &mut Archive) -> Result<Package> {
     let text = decode_xml(&bytes);
     let root = xml(&text).context("Invalid EPUB package document")?;
     let mut title = String::new();
+    let mut split_nested_toc = false;
     let mut items = IndexMap::new();
     let (mut spine_ids, mut toc_ids, mut manifest) = (Vec::new(), Vec::new(), Vec::new());
     let mut seen = HashSet::new();
     for n in root.descendants().filter(|n| n.is_element()) {
         match n.tag_name().name() {
+            "meta"
+                if n.attribute("property") == Some(BOUNDARY_POLICY)
+                    && n.text() == Some(ALL_TOC_HEADINGS) =>
+            {
+                split_nested_toc = true;
+            }
             "title" if title.is_empty() => title = strip(n.text().unwrap_or("")).to_owned(),
             "item" => {
                 let raw = n.attribute("href").unwrap_or("");
@@ -138,6 +151,7 @@ pub fn package(zip: &mut Archive) -> Result<Package> {
         spine,
         manifest,
         toc_paths,
+        split_nested_toc,
     })
 }
 
@@ -525,6 +539,7 @@ fn locate_boundaries(
     specs: &[Spec],
     indices: &[FragmentIndex<'_>],
     entries: &mut [Toc],
+    split_nested_toc: bool,
 ) -> (String, BTreeMap<usize, usize>) {
     let mut count = 0;
     let mut locations = HashMap::new();
@@ -588,7 +603,7 @@ fn locate_boundaries(
         let mut resolved = 0;
         for i in group {
             let e = &entries[i];
-            if e.depth != 0 || e.external {
+            if (!split_nested_toc && e.depth != 0) || e.external {
                 continue;
             }
             if let Some(position) = e.boundary_position {
@@ -670,6 +685,7 @@ pub fn ingest(path: &Path, source_lang: &str, target_lang: &str) -> Result<Vec<u
         &specs[..spine],
         &indices[..spine],
         &mut toc,
+        package.split_nested_toc,
     );
     drop(indices);
     for (ri, si, ii) in updates {
@@ -679,6 +695,8 @@ pub fn ingest(path: &Path, source_lang: &str, target_lang: &str) -> Result<Vec<u
     resources.truncate(spine);
     let strategy = if boundaries.is_empty() {
         "spine-fallback"
+    } else if package.split_nested_toc {
+        ALL_TOC_HEADINGS
     } else {
         "top-level-toc"
     };
