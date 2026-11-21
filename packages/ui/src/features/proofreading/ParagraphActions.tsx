@@ -1,5 +1,7 @@
 import { MoreHorizontal } from "lucide-react";
 import { useI18n } from "../../i18n";
+import { cn } from "../../lib/utils";
+import { bookTextFont } from "./bookText";
 import type { ParagraphMenuAnchor } from "./ParagraphMenu";
 
 export function ParagraphActions({
@@ -45,7 +47,7 @@ export function ParagraphActions({
         data-testid="translation-text"
         data-reader-text="target"
         lang={target ? targetLanguage : undefined}
-        className="select-text whitespace-pre-wrap p-4 pr-10 text-sm leading-relaxed [overflow-wrap:anywhere]"
+        className={cn("select-text whitespace-pre-wrap p-4 pr-10 text-sm leading-relaxed [overflow-wrap:anywhere]", bookTextFont(target))}
       >
         {target == null ? (
           <span className="text-muted-foreground">

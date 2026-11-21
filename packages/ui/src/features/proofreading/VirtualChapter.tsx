@@ -6,6 +6,7 @@ import { useI18n } from "../../i18n";
 import { cn } from "../../lib/utils";
 import { cardSurface } from "../../components/ui/card";
 import { ErrorNotice } from "../../components/ui/data";
+import { bookTextFont } from "./bookText";
 import { ParagraphActions } from "./ParagraphActions";
 import { ParagraphMenu, type ParagraphMenuAnchor } from "./ParagraphMenu";
 import { ParagraphEditor } from "./ParagraphEditor";
@@ -29,7 +30,8 @@ const ParagraphRow = memo(function ParagraphRow({
       className={cn("grid", sourceOnly ? "" : "grid-cols-2", "border-b border-subtle")}
     >
       <div className="min-w-0 border-r border-subtle p-4 text-sm">
-        <p data-reader-text="source" lang={sourceLanguage} className="whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]">
+        <p data-reader-text="source" lang={sourceLanguage}
+          className={cn("whitespace-pre-wrap leading-relaxed [overflow-wrap:anywhere]", bookTextFont(segment.source))}>
           {segment.source}
         </p>
       </div>

@@ -22,6 +22,9 @@ export default {
     extend: {
       spacing: pxScale,
       translate: pxScale,
+      fontFamily: {
+        "book-latin": ["Arial", '"Liberation Sans"', '"DejaVu Sans"', "sans-serif"],
+      },
       lineHeight: {
         3: "12px",
         4: "16px",

@@ -6,6 +6,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { cardSurface } from "../../components/ui/card";
 import { cn } from "../../lib/utils";
+import { bookTextFont } from "./bookText";
 
 export function PrecisionDrafts({
   pid,
@@ -63,7 +64,7 @@ export function PrecisionDrafts({
       </div>
     );
   const text = (value: string | null | undefined) => (
-    <p lang={value ? language : undefined} className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+    <p lang={value ? language : undefined} className={cn("whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]", bookTextFont(value))}>
       {value === ""
         ? t("review.emptyTranslation")
         : value ?? t("proofreading.waitingForTranslation")}

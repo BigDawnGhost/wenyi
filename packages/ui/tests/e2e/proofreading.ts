@@ -9,28 +9,45 @@ import { fakeApi, mockChapter, pid, project, chapter } from "../../sandbox/fixtu
 export const desktopHostSensitive = false;
 
 export function registerTests() {
-test("book text keeps its language and punctuation in a Chinese interface", async ({ page }) => {
+for (const sourceLanguage of ["en", "auto"]) {
+test(`book text keeps proportional apostrophes in a Chinese interface (${sourceLanguage})`, async ({ page }) => {
   const source = "‘He’d go,’ she said.  ‘Wouldn’t you?’";
   const target = "« J’irais », dit-elle.";
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
-  await fakeApi(page, { [`/projects/${pid}`]: { ...project, source_lang: "en", target_lang: "fr" } });
+  await fakeApi(page, { [`/projects/${pid}`]: { ...project, source_lang: sourceLanguage, target_lang: "fr" } });
   await mockChapter(page, 0, () => ({
-    index: 0, segments: [{ index: 0, kind: "text", source, target }],
+    index: 0, segments: [
+      { index: 0, kind: "text", source, target },
+      { index: 1, kind: "text", source: "她说：“Hello。”", target: null },
+    ],
   }));
   await page.goto(`/projects/${pid}/proofreading/0`);
-  const original = page.locator('[data-reader-text="source"]');
-  const translation = page.getByTestId("translation-text");
-  await expect(original).toHaveAttribute("lang", "en");
+  const paragraph = page.locator("#paragraph-0");
+  const original = paragraph.locator('[data-reader-text="source"]');
+  const translation = paragraph.getByTestId("translation-text");
+  // Do not depend on the CI runner having a particular CJK system font:
+  // simulate an inherited wide glyph and measure the apostrophe inside the word.
+  await page.addStyleTag({ content: '[data-testid="chapter-reader"] { font-family: monospace; }' });
+  await expect(original).toHaveAttribute("lang", sourceLanguage === "auto" ? "" : sourceLanguage);
+  const advance = await original.evaluate(p => {
+    const range = document.createRange();
+    range.setStart(p.firstChild!, 3);
+    range.setEnd(p.firstChild!, 4);
+    return range.getBoundingClientRect().width / parseFloat(getComputedStyle(p).fontSize);
+  });
+  expect(advance).toBeLessThan(0.5);
+  await expect(page.locator('#paragraph-1 [data-reader-text="source"]')).toHaveCSS("font-family", "monospace");
   await expect(translation).toHaveAttribute("lang", "fr");
   expect(await original.textContent()).toBe(source);
-  await page.getByRole("button", { name: "段落操作" }).click();
+  await paragraph.getByRole("button", { name: "段落操作" }).click();
   await page.getByRole("menuitem", { name: "编辑译文" }).click();
   const editor = page.getByRole("dialog");
-  await expect(editor.getByText(source, { exact: true })).toHaveAttribute("lang", "en");
+  await expect(editor.getByText(source, { exact: true })).toHaveAttribute("lang", sourceLanguage === "auto" ? "" : sourceLanguage);
   await expect(editor.getByRole("textbox")).toHaveAttribute("lang", "fr");
   await expect(editor.getByRole("textbox")).toHaveValue(target);
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
 });
+}
 
 test("proofreading is separate and refreshes saved batches before a chapter finishes", async ({
   page,
