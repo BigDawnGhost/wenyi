@@ -47,6 +47,21 @@ LangString WenyiDeleteProjects ${LANG_ENGLISH} "Permanently delete default proje
 LangString WenyiDeleteProjects ${LANG_SIMPCHINESE} "永久删除默认项目文件及升级备份"
 
 !macro WenyiFail MESSAGE
+  ; Silent installs have no log pane. Write the refusal to inherited stderr
+  ; when available, including when launched by another installer or CI.
+  ${If} ${Silent}
+    StrCpy $R0 "${MESSAGE}"
+    System::Call 'kernel32::GetStdHandle(i -12) p .R1'
+    System::Call 'kernel32::WideCharToMultiByte(i 65001, i 0, w R0, i -1, p 0, i 0, p 0, p 0) i .R2'
+    ${If} $R2 > 1
+      System::Alloc $R2
+      Pop $R3
+      System::Call 'kernel32::WideCharToMultiByte(i 65001, i 0, w R0, i -1, p R3, i R2, p 0, p 0) i .R2'
+      IntOp $R2 $R2 - 1
+      System::Call 'kernel32::WriteFile(p R1, p R3, i R2, *i .R4, p 0)'
+      System::Free $R3
+    ${EndIf}
+  ${EndIf}
   MessageBox MB_OK|MB_ICONSTOP "${MESSAGE}" /SD IDOK
   SetErrorLevel 2
   Quit
@@ -110,24 +125,42 @@ LangString WenyiDeleteProjects ${LANG_SIMPCHINESE} "永久删除默认项目文�
     ${IfNot} ${Errors}
       !insertmacro WenyiFail "$(WenyiUserToken)"
     ${EndIf}
-    System::Call 'advapi32::SaferCreateLevel(i 2, i 0x20000, i 1, *p .r1, p 0) i .r0'
-    ${If} $0 != 0
-      System::Call 'advapi32::SaferComputeTokenFromLevel(p r1, p 0, *p .r2, i 0, p 0) i .r0'
-      System::Call 'advapi32::SaferCloseLevel(p r1)'
-    ${EndIf}
-    ${If} $0 != 0
-      System::Call 'advapi32::ConvertStringSidToSidW(w "S-1-16-8192", *p .r3) i .r0'
-      ${If} $0 != 0
-        System::Call '*(p r3, i 0x20) p .r4'
-        System::Call 'advapi32::GetLengthSid(p r3) i .r0'
-        IntOp $0 $0 + 8
-        System::Call 'advapi32::SetTokenInformation(p r2, i 25, p r4, i r0) i .r0'
-        System::Free $4
-        System::Call 'kernel32::LocalFree(p r3)'
-      ${EndIf}
-    ${EndIf}
+    ; The derived token needs QUERY | DUPLICATE | ASSIGN_PRIMARY to launch
+    ; the process, and ADJUST_DEFAULT to lower its integrity level.
+    System::Call 'advapi32::OpenProcessToken(p -1, i 0x8B, *p .r1) i .r0 ?e'
+    Pop $9
     ${If} $0 == 0
-      !insertmacro WenyiFail "$(WenyiUserToken)"
+      !insertmacro WenyiFail "$(WenyiUserToken) (OpenProcessToken: $9)"
+    ${EndIf}
+    ; Remove privileges and mark BUILTIN\Administrators deny-only.
+    System::Call 'advapi32::ConvertStringSidToSidW(w "S-1-5-32-544", *p .r3) i .r0 ?e'
+    Pop $9
+    ${If} $0 == 0
+      !insertmacro WenyiFail "$(WenyiUserToken) (Administrators SID: $9)"
+    ${EndIf}
+    System::Call '*(p r3, i 0) p .r4'
+    System::Call 'advapi32::CreateRestrictedToken(p r1, i 1, i 1, p r4, i 0, p 0, i 0, p 0, *p .r2) i .r0 ?e'
+    Pop $9
+    System::Free $4
+    System::Call 'kernel32::LocalFree(p r3)'
+    System::Call 'kernel32::CloseHandle(p r1)'
+    ${If} $0 == 0
+      !insertmacro WenyiFail "$(WenyiUserToken) (CreateRestrictedToken: $9)"
+    ${EndIf}
+    System::Call 'advapi32::ConvertStringSidToSidW(w "S-1-16-8192", *p .r3) i .r0 ?e'
+    Pop $9
+    ${If} $0 == 0
+      !insertmacro WenyiFail "$(WenyiUserToken) (Medium integrity SID: $9)"
+    ${EndIf}
+    System::Call '*(p r3, i 0x20) p .r4'
+    System::Call 'advapi32::GetLengthSid(p r3) i .r0'
+    IntOp $0 $0 + 8
+    System::Call 'advapi32::SetTokenInformation(p r2, i 25, p r4, i r0) i .r0 ?e'
+    Pop $9
+    System::Free $4
+    System::Call 'kernel32::LocalFree(p r3)'
+    ${If} $0 == 0
+      !insertmacro WenyiFail "$(WenyiUserToken) (SetTokenInformation: $9)"
     ${EndIf}
     ${GetParameters} $3
     !if "${ACTION}" == "install"
@@ -149,13 +182,20 @@ LangString WenyiDeleteProjects ${LANG_SIMPCHINESE} "永久删除默认项目文�
     ; STARTUPINFOW (cb and zeroed fields), PROCESS_INFORMATION.
     System::Call '*(&l4, &v64) p .r5'
     System::Call '*(p 0, p 0, i 0, i 0) p .r6'
-    System::Call 'advapi32::CreateProcessAsUserW(p r2, w r4, w r3, p 0, p 0, i 0, i 0, p 0, w "$SYSDIR", p r5, p r6) i .r0'
+    System::Call 'advapi32::CreateProcessAsUserW(p r2, w r4, w r3, p 0, p 0, i 0, i 0, p 0, w "$SYSDIR", p r5, p r6) i .r0 ?e'
+    Pop $9
+    ${If} $0 == 0
+      ; Some sessions allow token assignment through Secondary Logon instead.
+      System::Call 'advapi32::CreateProcessWithTokenW(p r2, i 0, w r4, w r3, i 0, p 0, w "$SYSDIR", p r5, p r6) i .r0 ?e'
+      Pop $8
+      StrCpy $9 "$9 / $8"
+    ${EndIf}
     System::Call 'kernel32::CloseHandle(p r2)'
     System::Call '*$6(p .r1, p .r2)'
     System::Free $5
     System::Free $6
     ${If} $0 == 0
-      !insertmacro WenyiFail "$(WenyiUserToken)"
+      !insertmacro WenyiFail "$(WenyiUserToken) (CreateProcessAsUser / CreateProcessWithTokenW: $9)"
     ${EndIf}
     System::Call 'kernel32::CloseHandle(p r2)'
     !insertmacro WenyiWaitAndQuit r1
