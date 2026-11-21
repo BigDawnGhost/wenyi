@@ -32,7 +32,7 @@ class Polisher(Agent):
         )
         return list(targets) if polished is None else polished
 
-    def polish_or_none(
+    def _polish_once(
         self,
         targets: list[str],
         *,
@@ -41,9 +41,7 @@ class Polisher(Agent):
         next_source: str = "",
         sources: list[str] | None = None,
     ) -> list[str] | None:
-        """Polish an aligned list in a fresh conversation; return ``None`` on misalignment."""
-        if not targets:
-            return []
+        """Send one standalone polish request and return the aligned list or ``None``."""
         n = len(targets)
         system = self.render(
             "polisher_system", src=self.src, tgt=self.tgt, n=n
@@ -76,6 +74,55 @@ class Polisher(Agent):
         if isinstance(items, list) and len(items) == n:
             return items
         return None
+
+    def polish_or_none(
+        self,
+        targets: list[str],
+        *,
+        glossary_terms: list[GlossaryTerm] | None = None,
+        style: str = "",
+        next_source: str = "",
+        sources: list[str] | None = None,
+    ) -> list[str] | None:
+        """Polish an aligned list, retrying misalignment and splitting halves before giving up."""
+        if not targets:
+            return []
+        attempts = max(0, self.config.pipeline.align_retry_limit) + 1
+        for _ in range(attempts):
+            items = self._polish_once(
+                targets,
+                glossary_terms=glossary_terms,
+                style=style,
+                next_source=next_source,
+                sources=sources,
+            )
+            if items is not None:
+                return items
+        if len(targets) <= 1:
+            return None
+        mid = len(targets) // 2
+        left_sources = sources[:mid] if sources is not None else None
+        right_sources = sources[mid:] if sources is not None else None
+        left_next = sources[mid] if sources is not None and mid < len(sources) else ""
+        left = self.polish_or_none(
+            targets[:mid],
+            glossary_terms=glossary_terms,
+            style=style,
+            next_source=left_next,
+            sources=left_sources,
+        )
+        if left is None:
+            return None
+        right = self.polish_or_none(
+            targets[mid:],
+            glossary_terms=glossary_terms,
+            style=style,
+            next_source=next_source,
+            sources=right_sources,
+        )
+        if right is None:
+            return None
+        return [*left, *right]
 
     def polish_continue(
         self,

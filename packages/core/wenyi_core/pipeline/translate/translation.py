@@ -14,6 +14,7 @@ missing terms without retranslating or overwriting targets.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Iterator
 from copy import deepcopy
@@ -43,12 +44,15 @@ from .translation_batch import (
     BatchResult,
     PolishJob,
     TranslationBatchExecutor,
+    keep_nonempty_drafts,
     resume_batches,
 )
 
 if TYPE_CHECKING:
     from ..annotate.annotations import AnnotationService
     from ..run.runtime import PipelineRuntime
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _is_mineru_pdf(manifest: dict[str, Any]) -> bool:
@@ -62,6 +66,8 @@ def _is_mineru_pdf(manifest: dict[str, Any]) -> bool:
 
 # Segment meta marker saved with a draft whose polish has not been applied yet.
 POLISH_PENDING = "polish_pending"
+# Segment meta marker saved when polish failed after retries/splitting so resume can re-polish it.
+POLISH_FAILED = "polish_failed"
 
 
 class TranslationService:
@@ -98,11 +104,22 @@ class TranslationService:
         style = self._runtime.analyzer.style_brief(store.load_analysis() or {})
         allow_empty_translations = _is_mineru_pdf(manifest)
 
+        pipeline = self._runtime.config.pipeline
         if only_chapter is not None:
             targets = [only_chapter]
             progress_chapters = targets
         else:
             targets = store.pending_chapters()
+            if pipeline.polish and pipeline.translation_mode == "standard":
+                unpolished = [
+                    chapter["index"]
+                    for chapter in manifest.get("chapters", [])
+                    if chapter.get("unpolished") and chapter["index"] not in targets
+                ]
+                if unpolished:
+                    order = [chapter["index"] for chapter in manifest.get("chapters", [])]
+                    needed = set(targets) | set(unpolished)
+                    targets = [idx for idx in order if idx in needed]
             progress_chapters = [chapter["index"] for chapter in manifest.get("chapters", [])]
 
         total, done = self.progress_counts(store, progress_chapters)
@@ -115,7 +132,6 @@ class TranslationService:
             total_segments=total,
             allow_empty_translations=allow_empty_translations,
         )
-        pipeline = self._runtime.config.pipeline
         if (
             pipeline.polish
             and pipeline.translation_mode == "standard"
@@ -164,7 +180,16 @@ class TranslationService:
             self._runtime.usage.flush(store, scope="translate")
         if progress and total:
             progress(total, total, "progress.stage.translationDone")
-        store.log_event("translate_run_finished", total_segments=total)
+        final_manifest = store.load_manifest()
+        unpolished_chapters = [
+            row["index"] for row in final_manifest.get("chapters", []) if row.get("unpolished")
+        ]
+        store.log_event(
+            "translate_run_finished",
+            total_segments=total,
+            unpolished_chapters=unpolished_chapters,
+            unpolished_chapter_count=len(unpolished_chapters),
+        )
         return store
 
     @staticmethod
@@ -322,7 +347,7 @@ class TranslationService:
             if all(s.target is not None for s in b):
                 # Reuse a batch translated at this position/context, rebuild rolling context and skip it.
                 # Blank "" is a completed MinerU allowance; only None means not yet translated.
-                marked = any(s.meta.get(POLISH_PENDING) for s in b)
+                marked = any(s.meta.get(POLISH_PENDING) or s.meta.get(POLISH_FAILED) for s in b)
                 polish_pending = marked and (
                     self._runtime.config.pipeline.polish
                     and self._runtime.config.pipeline.translation_mode == "standard"
@@ -331,6 +356,7 @@ class TranslationService:
                     # Polishing is now off; the saved draft is final.
                     for s in b:
                         s.meta.pop(POLISH_PENDING, None)
+                        s.meta.pop(POLISH_FAILED, None)
                     store.save_chapter(chapter)
                 self._align_batch_context(store, chapter, text_segs, batch_start, len(b))
                 if glossary_key in glossary_checkpoints or (
@@ -494,8 +520,35 @@ class TranslationService:
                 for segment, target, before_polish in zip(b, result.targets, result.before_polish):
                     segment.target = target
                     segment.target_before_polish = before_polish
+                    if result.polish_failed:
+                        segment.meta[POLISH_FAILED] = True
+                    else:
+                        segment.meta.pop(POLISH_FAILED, None)
                 # Persist translations incrementally so interruption resumes after this batch.
                 store.save_chapter(chapter)
+                if result.polish_empty_reverted:
+                    _LOGGER.warning(
+                        "Polish returned empty output for %d non-empty segment(s) in chapter %d "
+                        "batch %d; kept the translation draft.",
+                        len(result.polish_empty_reverted),
+                        ci,
+                        batch_start,
+                    )
+                    store.log_event(
+                        "batch_polish_empty_kept",
+                        chapter=ci,
+                        start_index=batch_start,
+                        count=len(b),
+                        reverted_indices=list(result.polish_empty_reverted),
+                    )
+                if result.polish_failed:
+                    store.log_event(
+                        "batch_polish_failed",
+                        chapter=ci,
+                        start_index=batch_start,
+                        count=len(b),
+                        reason="misaligned_output",
+                    )
             # Align drafts now so later context never depends on polish timing; applying a
             # polish aligns the polished text again.
             self._align_batch_context(store, chapter, text_segs, batch_start, len(b))
@@ -504,7 +557,14 @@ class TranslationService:
                 chapter=ci,
                 start_index=batch_start,
                 count=len(b),
-                polished=self._runtime.config.pipeline.polish and polish_job is None,
+                polished=(
+                    self._runtime.config.pipeline.polish
+                    and polish_job is None
+                    and not (
+                        self._runtime.config.pipeline.translation_mode == "standard"
+                        and result.polish_failed
+                    )
+                ),
                 **({"polish_deferred": True} if polish_job is not None else {}),
                 translation_mode=self._runtime.config.pipeline.translation_mode,
                 glossary_terms=len(plan.terms),
@@ -585,12 +645,32 @@ class TranslationService:
     def _publish_chapter(self, store: Storage, ci: int) -> None:
         chapter = self._open_chapters.pop(ci)
         self._awaiting_polish.discard(ci)
+        unpolished = any(segment.meta.get(POLISH_FAILED) for segment in chapter.text_segments)
+        if unpolished:
+            chapter.meta["unpolished"] = True
+        else:
+            chapter.meta.pop("unpolished", None)
         store.save_chapter_with_status(chapter, STATUS_DONE)
+        with store.state_lock():
+            manifest = store.load_manifest()
+            changed = False
+            for row in manifest.get("chapters", []):
+                if row.get("index") == ci:
+                    if unpolished and not row.get("unpolished"):
+                        row["unpolished"] = True
+                        changed = True
+                    elif not unpolished and row.get("unpolished"):
+                        row.pop("unpolished", None)
+                        changed = True
+                    break
+            if changed:
+                store.save_manifest(manifest)
         store.log_event(
             "chapter_done",
             chapter=ci,
             title=chapter.title,
             segment_count=len(chapter.text_segments),
+            **({"unpolished": True} if unpolished else {}),
         )
 
     def batch_terms(
@@ -643,16 +723,25 @@ class TranslationService:
         if tuple(segment.index for segment in segments) != job.segment_indices:
             raise RuntimeError("A polish job no longer matches its chapter batch")
         changed = 0
-        for segment, polished in zip(segments, outcome.polished or job.draft.targets):
+        reverted_indices: list[int] = []
+        raw_polished = outcome.polished
+        if raw_polished is not None:
+            cleaned, reverted = keep_nonempty_drafts(job.draft.targets, raw_polished)
+            reverted_indices = list(reverted)
+        else:
+            cleaned = list(job.draft.targets)
+        for segment, polished in zip(segments, cleaned):
             pending = segment.meta.pop(POLISH_PENDING, None)
+            failed_before = segment.meta.pop(POLISH_FAILED, None)
+            eligible = bool(pending or failed_before)
+            if outcome.polished is None:
+                if eligible:
+                    segment.meta[POLISH_FAILED] = True
+                continue
             # Only marked drafts change. Alignment updates target and target_before_polish
             # together, so equality means the target is still the (aligned) draft; keep any
             # target edited since then.
-            if (
-                pending
-                and outcome.polished is not None
-                and segment.target == segment.target_before_polish
-            ):
+            if eligible and segment.target == segment.target_before_polish:
                 segment.target = polished
                 changed += 1
         store.save_chapter(chapter)
@@ -660,6 +749,21 @@ class TranslationService:
             store, chapter, chapter.text_segments, job.start_index, len(job.sources)
         )
         self._runtime.usage.flush(store, scope="polish")
+        if reverted_indices:
+            _LOGGER.warning(
+                "Polish returned empty output for %d non-empty segment(s) in chapter %d "
+                "batch %d; kept the translation draft.",
+                len(reverted_indices),
+                job.chapter,
+                job.start_index,
+            )
+            store.log_event(
+                "batch_polish_empty_kept",
+                chapter=job.chapter,
+                start_index=job.start_index,
+                count=len(job.sources),
+                reverted_indices=reverted_indices,
+            )
         if outcome.polished is None:
             store.log_event(
                 "batch_polish_failed",

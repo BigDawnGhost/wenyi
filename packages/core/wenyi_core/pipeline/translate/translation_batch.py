@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 
@@ -69,6 +70,23 @@ class BatchResult:
     targets: tuple[str, ...]
     before_polish: tuple[str | None, ...]
     precision_key: str | None = None
+    polish_failed: bool = False
+    polish_empty_reverted: tuple[int, ...] = ()
+
+
+def keep_nonempty_drafts(
+    drafts: Sequence[str], polished: Sequence[str]
+) -> tuple[list[str], tuple[int, ...]]:
+    """Never let polish blank a non-empty draft; keep the draft and record reverted indices."""
+    cleaned: list[str] = []
+    reverted: list[int] = []
+    for index, (draft, item) in enumerate(zip(drafts, polished)):
+        if draft.strip() and not item.strip():
+            cleaned.append(draft)
+            reverted.append(index)
+        else:
+            cleaned.append(item)
+    return cleaned, tuple(reverted)
 
 
 @dataclass(frozen=True)
@@ -117,20 +135,29 @@ class TranslationBatchExecutor:
         draft = self.translate(plan)
         targets = list(draft.targets)
         before_polish: tuple[str | None, ...] = (None,) * len(targets)
+        polish_failed = False
+        polish_empty_reverted: tuple[int, ...] = ()
         if polish:
             before_polish = tuple(targets)
             polished = self._continue_polish(draft, plan.next_source)
             if polished is None:
-                polished = self._polisher.polish(
+                polished = self._polisher.polish_or_none(
                     targets,
                     glossary_terms=list(plan.terms),
                     style=plan.style,
                     next_source=plan.next_source,
                     sources=list(plan.sources),
                 )
-            if len(polished) == len(targets):
-                targets = polished
-        return BatchResult(tuple(targets), before_polish)
+            if polished is not None and len(polished) == len(targets):
+                targets, polish_empty_reverted = keep_nonempty_drafts(targets, polished)
+            else:
+                polish_failed = True
+        return BatchResult(
+            tuple(targets),
+            before_polish,
+            polish_failed=polish_failed,
+            polish_empty_reverted=polish_empty_reverted,
+        )
 
     def translate(self, plan: BatchPlan) -> BatchDraft:
         """Translate one batch and copy the per-call transcript before the next batch."""

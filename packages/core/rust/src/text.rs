@@ -100,7 +100,7 @@ pub(crate) fn write(
                 block(&target)?;
                 continue;
             }
-            if bilingual && source != target {
+            if bilingual && source != target && !strip(&target).is_empty() {
                 let plain = RUBY.replace_all(&source, |m: &regex::Captures<'_>| {
                     if m[0].starts_with("〘object:") {
                         m[0].to_owned()
