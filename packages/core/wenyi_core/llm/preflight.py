@@ -112,6 +112,6 @@ def fit_prompt_to_context_window(
     raise ValueError(
         f"Prompt for {operation} (~{prompt_tokens} tokens) plus output reserve ({reserve} tokens) "
         f"exceeds context_window ({window} tokens) even after shrinking the glossary. "
-        "Lower pipeline.glossary_prompt_tokens, set pipeline.batch_glossary=relevant, "
+        "Set or lower pipeline.glossary_prompt_tokens, set pipeline.batch_glossary=relevant, "
         "reduce segment.max_tokens_per_batch, or increase the model's context_window."
     )

@@ -48,9 +48,10 @@ pipeline:
   # and chapter digest; glossary extraction then sees only entries present in its batch.
   # Reviewer requests always use the full glossary.
   batch_glossary: all # all | relevant
-  # Glossary token budget per request (cl100k_base). In all mode, keeps the append-stable
-  # leading run within the budget plus matching later entries; in relevant mode, caps matched entries.
-  glossary_prompt_tokens: 4000
+  # Optional glossary token cap per request (cl100k_base); 0 means no cap, so batch_glossary
+  # alone decides what is sent. With a cap, all mode keeps the append-stable leading run within
+  # it plus matching later entries, and relevant mode caps matched entries.
+  glossary_prompt_tokens: 0
   skip_boilerplate: false
   boilerplate_patterns: []
   review: true # Run final review after whole-book translation; disable with --no-review
@@ -140,8 +141,8 @@ class PipelineConfig(BaseModel):
     # Glossary sent to body translation, polish, precision and extraction requests:
     # "all" keeps book-wide consistency; "relevant" sends only entries matching each batch.
     batch_glossary: Literal["all", "relevant"] = "all"
-    # Per-request glossary token budget (cl100k_base); 0 keeps only matching entries.
-    glossary_prompt_tokens: int = Field(default=4000, ge=0)
+    # Optional per-request glossary token cap (cl100k_base); 0 means no cap.
+    glossary_prompt_tokens: int = Field(default=0, ge=0)
     # Optional ingest-time scraped-site boilerplate filter (off by default).
     skip_boilerplate: bool = False
     boilerplate_patterns: list[str] = Field(default_factory=list)

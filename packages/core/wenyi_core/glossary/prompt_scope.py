@@ -30,11 +30,13 @@ def prompt_terms(
 ) -> list[GlossaryTerm]:
     """Return the glossary entries one request carries, in stable insertion order.
 
-    - In ``relevant`` mode, keeps entries matching ``text`` up to ``budget`` tokens (if
-      ``budget == 0``, keeps all matching entries).
+    ``budget == 0`` means no cap: ``all`` sends the whole glossary and ``relevant`` sends
+    every entry matching ``text``. A positive ``budget`` is an opt-in cap:
+
+    - In ``relevant`` mode, keeps entries matching ``text`` up to ``budget`` tokens.
     - In ``all`` mode, sends the whole glossary while it fits ``budget`` tokens. When larger,
       keeps the append-stable leading run that fits ``budget`` tokens, plus any later entries
-      matching ``text``. When ``budget == 0``, keeps only entries matching ``text``.
+      matching ``text``.
     """
     if not terms:
         return []
@@ -53,7 +55,7 @@ def prompt_terms(
         return selected
 
     if budget <= 0:
-        return GlossaryStore.terms_in(terms, text)
+        return terms
     spent = 0
     for position, term in enumerate(terms):
         spent += estimate_term_tokens(term)

@@ -44,6 +44,15 @@ def test_prompt_terms_relevant_mode_respects_budget_cap():
     assert len(prompt_terms(terms, text, budget=0, mode="relevant")) == 10
 
 
+def test_glossary_has_no_token_cap_by_default_so_all_mode_sends_everything():
+    from wenyi_core.config import PipelineConfig
+
+    assert PipelineConfig().glossary_prompt_tokens == 0
+    terms = [GlossaryTerm(source=f"Name{i}", target=f"名{i}") for i in range(500)]
+    selected = prompt_terms(terms, "Only Name7 appears here.", budget=0, mode="all")
+    assert selected == terms
+
+
 def test_fit_terms_to_budget_prioritizes_matching_terms_in_insertion_order():
     terms = [
         GlossaryTerm(source="Alpha", target="阿尔法"),
