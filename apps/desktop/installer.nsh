@@ -46,25 +46,23 @@ LangString WenyiDeleteSettings ${LANG_SIMPCHINESE} "删除目录库、设置、�
 LangString WenyiDeleteProjects ${LANG_ENGLISH} "Permanently delete default project files and upgrade backups"
 LangString WenyiDeleteProjects ${LANG_SIMPCHINESE} "永久删除默认项目文件及升级备份"
 
-!macro WenyiFail MESSAGE
-  ; Silent installs have no log pane. Write the refusal to inherited stderr
-  ; when available, including when launched by another installer or CI.
-  ${If} ${Silent}
-    StrCpy $R0 "${MESSAGE}"
-    System::Call 'kernel32::GetStdHandle(i -12) p .R1'
-    System::Call 'kernel32::WideCharToMultiByte(i 65001, i 0, w R0, i -1, p 0, i 0, p 0, p 0) i .R2'
-    ${If} $R2 > 1
-      System::Alloc $R2
-      Pop $R3
-      System::Call 'kernel32::WideCharToMultiByte(i 65001, i 0, w R0, i -1, p R3, i R2, p 0, p 0) i .R2'
-      IntOp $R2 $R2 - 1
-      System::Call 'kernel32::WriteFile(p R1, p R3, i R2, *i .R4, p 0)'
-      System::Free $R3
-    ${EndIf}
-  ${EndIf}
+!macro WenyiFailWithStatus MESSAGE STATUS
   MessageBox MB_OK|MB_ICONSTOP "${MESSAGE}" /SD IDOK
-  SetErrorLevel 2
+  SetErrorLevel ${STATUS}
   Quit
+!macroend
+
+!macro WenyiFail MESSAGE
+  !insertmacro WenyiFailWithStatus "${MESSAGE}" 2
+!macroend
+
+; The reduced child need not inherit the parent's handles. Report Win32
+; errors via the process status too: 100000 + stage * 10000 + Win32 error.
+!macro WenyiTokenFailure STAGE OPERATION ERROR
+  IntOp $6 ${STAGE} * 10000
+  IntOp $6 $6 + 100000
+  IntOp $6 $6 + ${ERROR}
+  !insertmacro WenyiFailWithStatus "$(WenyiUserToken) (${OPERATION}: ${ERROR})" $6
 !macroend
 
 ; Tauri ships an x86 Unicode NSIS stub even for the x64 payload.
@@ -123,20 +121,20 @@ LangString WenyiDeleteProjects ${LANG_SIMPCHINESE} "永久删除默认项目文�
   ${If} $0 != 0
     ${GetOptions} $CMDLINE "/WenyiReduced" $0
     ${IfNot} ${Errors}
-      !insertmacro WenyiFail "$(WenyiUserToken)"
+      !insertmacro WenyiTokenFailure 0 "Verify reduced token" 0
     ${EndIf}
     ; The derived token needs QUERY | DUPLICATE | ASSIGN_PRIMARY to launch
     ; the process, and ADJUST_DEFAULT to lower its integrity level.
     System::Call 'advapi32::OpenProcessToken(p -1, i 0x8B, *p .r1) i .r0 ?e'
     Pop $9
     ${If} $0 == 0
-      !insertmacro WenyiFail "$(WenyiUserToken) (OpenProcessToken: $9)"
+      !insertmacro WenyiTokenFailure 1 "OpenProcessToken" $9
     ${EndIf}
     ; Remove privileges and mark BUILTIN\Administrators deny-only.
     System::Call 'advapi32::ConvertStringSidToSidW(w "S-1-5-32-544", *p .r3) i .r0 ?e'
     Pop $9
     ${If} $0 == 0
-      !insertmacro WenyiFail "$(WenyiUserToken) (Administrators SID: $9)"
+      !insertmacro WenyiTokenFailure 2 "Administrators SID" $9
     ${EndIf}
     System::Call '*(p r3, i 0) p .r4'
     System::Call 'advapi32::CreateRestrictedToken(p r1, i 1, i 1, p r4, i 0, p 0, i 0, p 0, *p .r2) i .r0 ?e'
@@ -145,12 +143,12 @@ LangString WenyiDeleteProjects ${LANG_SIMPCHINESE} "永久删除默认项目文�
     System::Call 'kernel32::LocalFree(p r3)'
     System::Call 'kernel32::CloseHandle(p r1)'
     ${If} $0 == 0
-      !insertmacro WenyiFail "$(WenyiUserToken) (CreateRestrictedToken: $9)"
+      !insertmacro WenyiTokenFailure 3 "CreateRestrictedToken" $9
     ${EndIf}
     System::Call 'advapi32::ConvertStringSidToSidW(w "S-1-16-8192", *p .r3) i .r0 ?e'
     Pop $9
     ${If} $0 == 0
-      !insertmacro WenyiFail "$(WenyiUserToken) (Medium integrity SID: $9)"
+      !insertmacro WenyiTokenFailure 4 "Medium integrity SID" $9
     ${EndIf}
     System::Call '*(p r3, i 0x20) p .r4'
     System::Call 'advapi32::GetLengthSid(p r3) i .r0'
@@ -160,7 +158,7 @@ LangString WenyiDeleteProjects ${LANG_SIMPCHINESE} "永久删除默认项目文�
     System::Free $4
     System::Call 'kernel32::LocalFree(p r3)'
     ${If} $0 == 0
-      !insertmacro WenyiFail "$(WenyiUserToken) (SetTokenInformation: $9)"
+      !insertmacro WenyiTokenFailure 5 "SetTokenInformation" $9
     ${EndIf}
     ${GetParameters} $3
     !if "${ACTION}" == "install"
@@ -177,7 +175,7 @@ LangString WenyiDeleteProjects ${LANG_SIMPCHINESE} "永久删除默认项目文�
     StrLen $0 $3
     IntOp $0 $0 + 1
     ${If} $0 >= ${NSIS_MAX_STRLEN}
-      !insertmacro WenyiFail "$(WenyiUserToken)"
+      !insertmacro WenyiTokenFailure 6 "Command line length" 0
     ${EndIf}
     ; STARTUPINFOW (cb and zeroed fields), PROCESS_INFORMATION.
     System::Call '*(&l4, &v64) p .r5'
@@ -188,14 +186,13 @@ LangString WenyiDeleteProjects ${LANG_SIMPCHINESE} "永久删除默认项目文�
       ; Some sessions allow token assignment through Secondary Logon instead.
       System::Call 'advapi32::CreateProcessWithTokenW(p r2, i 0, w r4, w r3, i 0, p 0, w "$SYSDIR", p r5, p r6) i .r0 ?e'
       Pop $8
-      StrCpy $9 "$9 / $8"
     ${EndIf}
     System::Call 'kernel32::CloseHandle(p r2)'
     System::Call '*$6(p .r1, p .r2)'
     System::Free $5
     System::Free $6
     ${If} $0 == 0
-      !insertmacro WenyiFail "$(WenyiUserToken) (CreateProcessAsUser / CreateProcessWithTokenW: $9)"
+      !insertmacro WenyiTokenFailure 7 "CreateProcessAsUser / CreateProcessWithTokenW" $8
     ${EndIf}
     System::Call 'kernel32::CloseHandle(p r2)'
     !insertmacro WenyiWaitAndQuit r1
@@ -394,29 +391,41 @@ FunctionEnd
 
 ; Restart Manager checks the actual installed files, including the sidecar.
 ; Never force-kill a translation or silently continue after a failed check.
+!macro WenyiRegisterExisting FILE
+  System::Call 'kernel32::GetFileAttributesW(w "${FILE}") i .r0 ?e'
+  Pop $1
+  ${If} $0 != -1
+    ${If} $R8 == ""
+      !insertmacro RestartManager_StartSession $R8
+      ${If} $R8 == ""
+        !insertmacro WenyiFailWithStatus "$(WenyiProcessCheckFailed)" 9
+      ${EndIf}
+    ${EndIf}
+    !insertmacro RestartManager_RegisterFile $R8 "${FILE}"
+    ${If} $0 != 0
+      !insertmacro RestartManager_EndSession $R8
+      !insertmacro WenyiFailWithStatus "$(WenyiProcessCheckFailed)" 9
+    ${EndIf}
+  ${ElseIf} $1 != 2
+  ${AndIf} $1 != 3
+    ${If} $R8 != ""
+      !insertmacro RestartManager_EndSession $R8
+    ${EndIf}
+    !insertmacro WenyiFailWithStatus "$(WenyiProcessCheckFailed)" 9
+  ${EndIf}
+!macroend
+
 !macro WenyiRequireStopped DIRECTORY
   !define WENYI_CHECK_ID ${__LINE__}
   wenyi_check_${WENYI_CHECK_ID}:
-  !insertmacro RestartManager_StartSession $R8
-  ${If} $R8 == ""
-    !insertmacro WenyiFail "$(WenyiProcessCheckFailed)"
-  ${EndIf}
-  !insertmacro RestartManager_RegisterFile $R8 "${DIRECTORY}\${MAINBINARYNAME}.exe"
-  ${If} $0 != 0
-    !insertmacro RestartManager_EndSession $R8
-    !insertmacro WenyiFail "$(WenyiProcessCheckFailed)"
-  ${EndIf}
-  !insertmacro RestartManager_RegisterFile $R8 "${DIRECTORY}\sidecar\wenyi-engine\wenyi-engine.exe"
-  ${If} $0 != 0
-    !insertmacro RestartManager_EndSession $R8
-    !insertmacro WenyiFail "$(WenyiProcessCheckFailed)"
-  ${EndIf}
+  StrCpy $R8 ""
+  !insertmacro WenyiRegisterExisting "${DIRECTORY}\${MAINBINARYNAME}.exe"
+  !insertmacro WenyiRegisterExisting "${DIRECTORY}\sidecar\wenyi-engine\wenyi-engine.exe"
   ${If} $PreviousBinary != "${MAINBINARYNAME}.exe"
-    !insertmacro RestartManager_RegisterFile $R8 "${DIRECTORY}\$PreviousBinary"
-    ${If} $0 != 0
-      !insertmacro RestartManager_EndSession $R8
-      !insertmacro WenyiFail "$(WenyiProcessCheckFailed)"
-    ${EndIf}
+    !insertmacro WenyiRegisterExisting "${DIRECTORY}\$PreviousBinary"
+  ${EndIf}
+  ${If} $R8 == ""
+    Goto wenyi_checked_${WENYI_CHECK_ID}
   ${EndIf}
   System::Call 'rstrtmgr::RmGetList(p R8, *i .r1, *i .r2, p 0, *i .r3) i .r0'
   Push $0
@@ -431,8 +440,9 @@ FunctionEnd
     SetErrorLevel 2
     Quit
   ${ElseIf} $0 != 0
-    !insertmacro WenyiFail "$(WenyiProcessCheckFailed)"
+    !insertmacro WenyiFailWithStatus "$(WenyiProcessCheckFailed)" 9
   ${EndIf}
+  wenyi_checked_${WENYI_CHECK_ID}:
   !undef WENYI_CHECK_ID
 !macroend
 

@@ -29,7 +29,13 @@ def main() -> None:
         command = " ".join([f'"{exe}"', *args])
         code = subprocess.run(command, executable=str(exe), timeout=240).returncode
         if code != expected:
-            raise AssertionError(f"{exe.name} {args!r}: expected {expected}, got {code}")
+            detail = ""
+            if 100_000 <= code < 180_000:
+                stage, win32_error = divmod(code - 100_000, 10_000)
+                detail = f" (restricted-token stage {stage}, Win32 error {win32_error})"
+            elif code == 9:
+                detail = " (Restart Manager could not verify the installed files)"
+            raise AssertionError(f"{exe.name} {args!r}: expected {expected}, got {code}{detail}")
 
     (setup,) = Path("target/release/bundle/nsis").resolve().glob("*-setup.exe")
     machine = Path(os.environ["ProgramFiles"]) / product
