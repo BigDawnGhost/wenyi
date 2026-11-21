@@ -457,6 +457,7 @@ BabelDOC 是可选的独立 AGPL 服务，用于尽量保留 PDF 版式。
 | `output.bilingual_order` | `target_first` | `target_first` 或 `source_first`；选择按段配对格式中在前的版本，以及 PDF 并列页中位于左侧的版本。 |
 | `output.bilingual_preserve_source_style` | `false` | 保留已记录的原文样式，替代该格式的默认原文显示方式。 |
 | `output.about_page` | `true` | 为 EPUB 添加“关于此翻译”项目说明页。 |
+| `output.quote_style` | `preserve` | `preserve`、`typographic`（`“ ” ‘ ’`）或 `straight`（`" '`）。仅在拉丁字母目标语言导出时生效，不修改已保存译文及双语中的原文。 |
 
 `bilingual_preserve_source_style` 与顺序独立。
 EPUB/HTML 中，`true` 用正常书籍样式替代淡化原文。

@@ -20,6 +20,7 @@ from .epub_writer import (
 from .export_view import AssembleStore, ExportViewStore
 from .html_writer import _assemble_html
 from .pdf_writer import _assemble_pdf
+from .quotes import QuoteStyle
 from .text_writer import _assemble_markdown, _assemble_text
 from .writer_common import (
     _OUT_EXT,
@@ -44,6 +45,7 @@ def assemble(
     order: Literal["target_first", "source_first"] = "target_first",
     preserve_source_style: bool = False,
     about_page: bool = True,
+    quote_style: QuoteStyle = "preserve",
     babeldoc_timeout: float = 600.0,
     language_policy: PolicyPlan | None = None,
 ) -> str:
@@ -89,7 +91,7 @@ def assemble(
     view = (
         store
         if isinstance(store, ExportViewStore)
-        else ExportViewStore(store, plan=language_policy)
+        else ExportViewStore(store, plan=language_policy, quote_style=quote_style)
     )
     m = view.load_manifest()
     # EPUB and PDF writers project all chapters before opening output or making

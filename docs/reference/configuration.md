@@ -484,6 +484,7 @@ for choosing the backend.
 | `output.bilingual_order` | `target_first` | `target_first` or `source_first`; selects the first version in paragraph-paired formats and the left-hand version in PDF spreads. |
 | `output.bilingual_preserve_source_style` | `false` | Preserve recorded source styles rather than the format's default source presentation. |
 | `output.about_page` | `true` | Add the project “About this translation” page to EPUB output. |
+| `output.quote_style` | `preserve` | `preserve`, `typographic` (`“ ” ‘ ’`), or `straight` (`" '`). Applied at export only for Latin-script targets; saved translations and bilingual source text are unchanged. |
 
 `bilingual_preserve_source_style` is independent of ordering. In EPUB/HTML,
 `true` inherits normal book styling instead of subdued source text. In DOCX,

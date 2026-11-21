@@ -93,6 +93,7 @@ output:
   # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
   bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page
+  quote_style: preserve # preserve | typographic | straight (export-only, Latin-script targets)
 """
 
 
@@ -208,6 +209,7 @@ class OutputConfig(BaseModel):
     )
     bilingual_preserve_source_style: bool = False  # EPUB/HTML styling and DOCX source metadata
     about_page: bool = True  # Append the project about page
+    quote_style: Literal["preserve", "typographic", "straight"] = "preserve"
 
 
 class LanguageConfig(BaseModel):
