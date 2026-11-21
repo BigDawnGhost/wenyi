@@ -35,10 +35,17 @@ def main() -> None:
                 detail = f" (restricted-token stage {stage}, Win32 error {win32_error})"
             else:
                 reason = {
-                    7: "installation path rejected",
                     8: "WebView2 setup failed",
                     9: "Restart Manager could not verify the installed files",
                     10: "setup could not acquire the installation lock",
+                    11: "could not resolve the absolute installation path",
+                    12: "expanded installation path exceeds NSIS capacity",
+                    13: "could not find an existing ancestor when normalizing a path",
+                    14: "installation path overlaps a protected or data directory",
+                    15: "installation path has a reparse-point ancestor",
+                    16: "installation path is a drive, share, or user profile root",
+                    17: "unregistered installation path is not empty",
+                    18: "installation path is not writable",
                 }.get(code)
                 if reason:
                     detail = f" ({reason})"
