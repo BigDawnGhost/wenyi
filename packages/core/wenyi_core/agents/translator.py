@@ -1,4 +1,4 @@
-"""Translation agent using the strong tier.
+"""Translation agent using the body translation route.
 Guarantee paragraph alignment: N source paragraphs must produce N corresponding
 translations. Request an equal-length JSON array, retry count mismatches up to
 align_retry_limit, then translate paragraphs individually. This final fallback prevents

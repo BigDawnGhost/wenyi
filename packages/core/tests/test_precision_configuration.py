@@ -63,18 +63,17 @@ def test_precision_reuses_standard_translation_and_polish_routes_without_output_
         assert not body_operations.intersection(configured_operations(precision, workflow))
     routes = resolve_routes(precision.llm)
     for operation in body_operations:
-        assert OPERATIONS[operation].tier == "strong"
         assert OPERATIONS[operation].protocol_version == 2
         assert routes[operation].max_output_tokens is None
-        assert routes[operation].tier == "strong"
+        assert routes[operation].profile == precision.llm.routes[operation].model
 
 
 @pytest.mark.parametrize("operation", sorted(REMOVED_OPERATIONS))
 def test_obsolete_precision_routes_fail_explicitly_without_rewriting_settings(operation):
-    document = {"llm": {"preset": "fake", "routes": {operation: {"tier": "strong"}}}}
+    document = {"llm": {"preset": "fake", "routes": {operation: {"model": "fake/fake"}}}}
     with pytest.raises(ValidationError, match=f"Unknown model operation: {operation}"):
         Config.from_dict(document)
-    assert document == {"llm": {"preset": "fake", "routes": {operation: {"tier": "strong"}}}}
+    assert document == {"llm": {"preset": "fake", "routes": {operation: {"model": "fake/fake"}}}}
 
 
 def test_precision_freezes_every_consumed_prompt_and_configured_guidance():

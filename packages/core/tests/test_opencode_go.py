@@ -25,13 +25,8 @@ class TestOpenCodeGoProvider(unittest.TestCase):
             {
                 "llm": {
                     "providers": {"go": {"kind": "opencode-go"}},
-                    "models": {
-                        "writer": {
-                            "provider": "go",
-                            "model": "deepseek-v4-flash",
-                        }
-                    },
-                    "tiers": {"strong": "writer", "cheap": "writer", "fast": "writer"},
+                    "models": {"go/deepseek-v4-flash": {}},
+                    "routes": {op: {"model": "go/deepseek-v4-flash"} for op in Config().llm.routes},
                 }
             }
         )

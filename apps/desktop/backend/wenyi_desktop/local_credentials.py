@@ -377,9 +377,9 @@ class CredentialStore:
             "requires_key": adapter.requires_api_key,
         }
 
-    def resolve(self, connection: str, provider: ProviderConfig) -> str | None:
+    def resolve(self, connection: str | None, provider: ProviderConfig) -> str | None:
         """Return one connection's effective key for local display or a draft model listing."""
-        return self._resolve(self._records().get(connection, {}), provider)
+        return self._resolve(self._records().get(connection, {}) if connection else {}, provider)
 
     def manual_secret(self, connection: str, provider: ProviderConfig) -> str | None:
         """Return a manually saved key for display; environment values are never revealed."""

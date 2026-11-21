@@ -23,9 +23,9 @@ const RULES = [
     hint: "compose class names with cn() instead of template strings",
   },
   {
-    id: "arbitrary-px",
-    pattern: /\[[0-9]+px\]/,
-    hint: "extend the shared token scale instead of writing arbitrary [Npx] values",
+    id: "arbitrary-fixed-length",
+    pattern: /\[[\d.]+(?:px|rem|em)\]/,
+    hint: "use the shared px-based scale instead of a literal fixed length",
   },
   {
     id: "raw-palette",

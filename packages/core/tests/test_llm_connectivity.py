@@ -22,11 +22,13 @@ from wenyi_core.llm.connectivity import (
 from wenyi_core.llm.providers._openai_compatible import OpenAICompatibleBaseClient
 from wenyi_core.llm.router import RoutedLLMClient
 
+from .model_fixtures import routes_for
+
 SECRET = "fake-probe-secret-not-a-real-key"
 _NO_THINKING = {"thinking": False}
 
 
-def _config(**extra) -> LLMConfig:
+def _config(*, routes=None, **extra) -> LLMConfig:
     return LLMConfig.model_validate(
         {
             "providers": {
@@ -38,11 +40,19 @@ def _config(**extra) -> LLMConfig:
                 },
             },
             "models": {
-                "strong": {"provider": "main", "model": "big", "options": _NO_THINKING},
-                "small": {"provider": "main", "model": "small", "options": _NO_THINKING},
-                "spare": {"provider": "backup", "model": "spare"},
+                "main/big": {"options": _NO_THINKING},
+                "main/small": {"options": _NO_THINKING},
+                "backup/spare": {},
             },
-            "tiers": {"strong": "strong", "cheap": "small", "fast": "small"},
+            "routes": routes_for(
+                "main/big",
+                {
+                    op: {"model": "main/small"}
+                    for op in ("glossary.extract", "annotation.align", "review.scan")
+                }
+                if routes is None
+                else routes,
+            ),
             **extra,
         }
     )
@@ -100,18 +110,23 @@ def sdk(monkeypatch, request):
 
 
 def test_targets_deduplicate_profiles_and_include_fallbacks():
-    config = _config(routes={"translation.body": {"tier": "strong", "fallbacks": ["spare"]}})
+    config = _config(
+        routes={
+            "translation.body": {"model": "main/big", "fallbacks": ["backup/spare"]},
+            "glossary.extract": {"model": "main/small"},
+        }
+    )
     targets = probe_targets(config, ("translation.body", "translation.title", "glossary.extract"))
-    assert list(targets) == ["strong", "spare", "small"]
-    assert targets["strong"] == ("translation.body", "translation.title")
-    assert targets["spare"] == ("translation.body",)
-    assert targets["small"] == ("glossary.extract",)
+    assert list(targets) == ["main/big", "backup/spare", "main/small"]
+    assert targets["main/big"] == ("translation.body", "translation.title")
+    assert targets["backup/spare"] == ("translation.body",)
+    assert targets["main/small"] == ("glossary.extract",)
 
 
 @pytest.mark.parametrize("sdk", [False, True], indirect=True, ids=["normal", "reversed"])
 def test_probe_sends_one_minimal_request_per_profile(sdk):
     results = probe_connections(_config(), ("translation.body", "glossary.extract"), timeout=5)
-    assert [result.profile for result in results] == ["strong", "small"]
+    assert [result.profile for result in results] == ["main/big", "main/small"]
     assert all(result.ok and result.category == "ok" for result in results)
     assert all(result.latency_ms is not None for result in results)
     assert sorted(call["model"] for call in sdk.calls) == ["big", "small"]
@@ -177,9 +192,9 @@ def test_injected_credentials_are_used_per_connection(sdk, monkeypatch):
 def test_thinking_profiles_keep_their_minimum_output(sdk):
     config = _config(
         models={
-            "strong": {"provider": "main", "model": "big", "options": {"thinking": True}},
-            "small": {"provider": "main", "model": "small", "options": _NO_THINKING},
-            "spare": {"provider": "backup", "model": "spare"},
+            "main/big": {"options": {"thinking": True}},
+            "main/small": {"options": _NO_THINKING},
+            "backup/spare": {},
         }
     )
     probe_connections(config, ("translation.body",))
@@ -189,11 +204,13 @@ def test_thinking_profiles_keep_their_minimum_output(sdk):
 @pytest.mark.parametrize("sdk", [False, True], indirect=True, ids=["normal", "reversed"])
 def test_profile_probes_cover_unrouted_profiles_in_registry_order(sdk):
     results = probe_profiles(_config())
-    assert [result.profile for result in results] == ["strong", "small", "spare"]
+    assert [result.profile for result in results] == ["main/big", "main/small", "backup/spare"]
     assert results[2].operations == ()
     assert results[2].endpoint == "https://backup.invalid/v1"
     assert sorted(call["model"] for call in sdk.calls) == ["big", "small", "spare"]
-    assert [result.profile for result in probe_profiles(_config(), ["spare"])] == ["spare"]
+    assert [result.profile for result in probe_profiles(_config(), ["backup/spare"])] == [
+        "backup/spare"
+    ]
     with pytest.raises(ValueError, match="Unknown model profile"):
         probe_profiles(_config(), ["missing"])
 
@@ -202,8 +219,8 @@ def test_routed_client_probes_with_its_credential_snapshot(sdk, monkeypatch):
     monkeypatch.delenv("PROBE_MAIN_KEY")
     client = RoutedLLMClient(_config(), credentials={"main": "snapshot-key", "backup": None})
     results = {result.profile: result for result in client.probe_profiles(timeout=3)}
-    assert results["strong"].ok and results["small"].ok
-    assert results["spare"].category == "missing_credential"
+    assert results["main/big"].ok and results["main/small"].ok
+    assert results["backup/spare"].category == "missing_credential"
     assert sdk.clients == [{"timeout": 3, "max_retries": 0}] * 2
 
 
@@ -222,7 +239,7 @@ def test_cli_ping_reports_results_and_exit_code(tmp_path, sdk):
     raw = {"llm": _config().model_dump(mode="json", exclude_none=True)}
     passed = _invoke(tmp_path, raw, "--for", "review", "--json")
     assert passed.exit_code == 0, passed.output
-    assert [item["profile"] for item in json.loads(passed.stdout)] == ["small", "strong"]
+    assert [item["profile"] for item in json.loads(passed.stdout)] == ["main/small", "main/big"]
     assert passed.stderr == ""
 
     sdk.behaviors["big"] = _status_error(401)
@@ -232,7 +249,7 @@ def test_cli_ping_reports_results_and_exit_code(tmp_path, sdk):
     assert "Diagnostic log:" in failed.stderr
     table = _invoke(tmp_path, raw, "--for", "review")
     assert table.exit_code == 1
-    assert "1 of 2 model profiles unreachable" in table.output
+    assert "1 of 2 models unreachable" in table.output
     for output in (failed.output, table.output):
         assert SECRET not in output
         assert "Traceback" not in output

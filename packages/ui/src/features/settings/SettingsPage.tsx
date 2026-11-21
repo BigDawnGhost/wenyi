@@ -134,7 +134,7 @@ export default function SettingsPage() {
         <div className={SETTINGS_CONTENT_CLASSNAME}>
           <ErrorNotice error={config.error || configurationError} />
           {busy && <ReadOnlyNotice />}
-          <SettingsSection title={tr("settings.sectionDefaultModels")} className="py-0" grouped>
+          <SettingsSection title={tr("settings.stageModels")} className="py-0" grouped>
             <ModelSelection
               llm={section(effective, "llm")}
               models={config.data?.registered_models || {}}

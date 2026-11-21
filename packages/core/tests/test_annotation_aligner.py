@@ -73,7 +73,9 @@ def test_production_routes_one_annotation_per_request_without_editing_target():
     ]
     assert len(client.calls) == 2
     assert all(call["stage"] == "annotation.align" for call in client.calls)
-    assert all(call["tier"] == "cheap" and call["json_mode"] for call in client.calls)
+    assert all(
+        call["operation"] == "annotation.align" and call["json_mode"] for call in client.calls
+    )
     assert all(call["max_tokens"] is None for call in client.calls)
 
 

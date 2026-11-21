@@ -14,6 +14,7 @@ from wenyi_backend.config_rebuild import (
     rebuild_settings,
     rebuild_strategy,
 )
+from wenyi_backend.global_settings import registered_models
 from wenyi_core.config import Config
 
 
@@ -22,6 +23,23 @@ def test_valid_global_settings_are_not_rewritten():
     result = rebuild_settings(document)
     assert not result.changed
     assert result.document == document
+
+
+@pytest.mark.parametrize(
+    ("preset", "ref", "options", "expected"),
+    [
+        ("deepseek", "deepseek/deepseek-flash", {}, "high"),
+        ("deepseek", "deepseek/deepseek-flash", {"reasoning_effort": "max"}, "max"),
+        ("deepseek", "deepseek/deepseek-flash", {"thinking": False}, "off"),
+        ("gemini", "gemini/gemini-3.6-flash", {"thinking_level": "LOW"}, "low"),
+        ("gemini", "gemini/gemini-3.6-flash", {"thinking_budget": 4000}, "4000 tokens"),
+        ("gemini", "gemini/gemini-3.6-flash", {}, None),
+        ("fake", "fake/fake", {}, None),
+    ],
+)
+def test_model_metadata_exposes_configured_thinking(preset, ref, options, expected):
+    config = Config.from_dict({"llm": {"preset": preset, "models": {ref: {"options": options}}}})
+    assert registered_models(config)[ref]["thinking_value"] == expected
 
 
 def test_global_settings_drop_removed_and_project_only_fields():
@@ -43,13 +61,13 @@ def test_global_settings_drop_removed_and_project_only_fields():
 
 def test_project_rebuild_keeps_valid_custom_model_selections_and_genre():
     fake = Config.from_dict({"llm": {"preset": "fake"}})
-    model = fake.llm.models[fake.llm.tiers["strong"]].model_dump(mode="json")
-    defaults = Config.from_dict({"llm": {"preset": "fake", "models": {"custom": model}}})
+    model = fake.llm.models["fake/fake"].model_dump(mode="json")
+    defaults = Config.from_dict({"llm": {"preset": "fake", "models": {"fake/custom": model}}})
     original = {
         "llm": {
             "providers": {"private": {"kind": "fake"}},
             "tiers": {"strong": "custom", "cheap": "removed-model"},
-            "routes": {"translation.body": {"model": "custom"}},
+            "routes": {"translation.body": {"model": "fake/custom"}},
             "budget": {"max_requests": 29},
         },
         "pipeline": {
@@ -63,9 +81,9 @@ def test_project_rebuild_keeps_valid_custom_model_selections_and_genre():
     before = deepcopy(original)
     result = rebuild_settings(original, defaults=defaults, project=True)
     config = config_from_document(merge_project(config_document(defaults), result.document))
-    assert config.llm.tiers["strong"] == "custom"
-    assert config.llm.tiers["cheap"] == defaults.llm.tiers["cheap"]
-    assert config.llm.routes["translation.body"].model == "custom"
+    assert "tiers" not in result.document["llm"]
+    assert config.llm.routes["review.scan"] == defaults.llm.routes["review.scan"]
+    assert config.llm.routes["translation.body"].model == "fake/custom"
     assert config.llm.budget.max_requests == 29
     assert config.pipeline.translation_mode == "three_draft_synthesis"
     assert config.prompt_genre == "academic"

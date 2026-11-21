@@ -1,4 +1,4 @@
-"""Review agent using the cheap tier.
+"""Review agent using the review scan route.
 Compare source and translation paragraph by paragraph for omissions, additions,
 mistranslations, glossary violations and pronoun errors.
 """

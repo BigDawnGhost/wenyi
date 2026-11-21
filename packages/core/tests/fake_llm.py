@@ -100,7 +100,7 @@ class MeteredFakeClient(FakeClient):
         max_tokens=None,
     ):
         self.usage.record(
-            self.routes[operation].tier or "direct",
+            "direct",
             UsageSample(
                 prompt_tokens=5,
                 completion_tokens=3,

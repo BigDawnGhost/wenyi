@@ -10,6 +10,7 @@ import pytest
 from openai import APIStatusError
 from wenyi_core.llm.configuration import LLMConfig
 from wenyi_core.llm.limits import RequestCancelled, RequestStopped
+from wenyi_core.llm.operation_names import OPERATION_NAMES
 from wenyi_core.llm.retrying import (
     ProviderRequestError,
     TruncatedResponseError,
@@ -25,8 +26,8 @@ def client_with_failure(*, credentials=True, status=503, other_secret=None):
         LLMConfig.model_validate(
             {
                 "providers": {"default": {"kind": "openai", "max_retries": 1}},
-                "models": {"one": {"provider": "default", "model": "offline"}},
-                "tiers": {"strong": "one", "cheap": "one", "fast": "one"},
+                "models": {"default/offline": {}},
+                "routes": {op: {"model": "default/offline"} for op in OPERATION_NAMES},
             }
         ),
         credentials={"default": SECRET, "other": other_secret} if credentials else None,
@@ -170,8 +171,11 @@ def test_fallback_still_sees_original_provider_classification():
     client, calls = client_with_failure()
     data = client.config.model_dump()
     data["providers"]["other"] = {"kind": "openai", "max_retries": 0}
-    data["models"]["two"] = {"provider": "other", "model": "fallback"}
-    data["routes"]["translation.body"] = {"model": "one", "fallbacks": ["two"]}
+    data["models"]["other/fallback"] = {}
+    data["routes"]["translation.body"] = {
+        "model": "default/offline",
+        "fallbacks": ["other/fallback"],
+    }
     routed = RoutedLLMClient(
         LLMConfig.model_validate(data), credentials={"default": SECRET, "other": "fake-other-key"}
     )

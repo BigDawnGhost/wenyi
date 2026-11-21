@@ -46,7 +46,7 @@ class TestOrchestrator(unittest.TestCase):
 
             def handler(messages, tier, json_mode):
                 if "SEARCH/REPLACE PATCH" in messages[0]["content"]:
-                    self.assertEqual(tier, "cheap")
+                    self.assertEqual(tier, "annotation.align")
                     payload = json.loads(messages[-1]["content"].split("INPUT JSON:\n", 1)[1])
                     return json.dumps(
                         {
@@ -2712,9 +2712,9 @@ class TestFullGlossary(unittest.TestCase):
             orch.run_review(txt)
 
 
-class TestTierRouting(unittest.TestCase):
-    def test_task_tiers(self):
-        """Route tasks to their tiers without implicit output caps."""
+class TestOperationRouting(unittest.TestCase):
+    def test_tasks_use_registered_operations(self):
+        """Route tasks by operation without implicit output caps."""
         with tempfile.TemporaryDirectory() as d:
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
@@ -2725,18 +2725,18 @@ class TestTierRouting(unittest.TestCase):
             orch.run_review(txt)
 
             expect = {
-                "chapter digest writer": "fast",
-                "whole-book synopsis writer": "fast",
-                "terminology and forms-of-address extractor": "fast",
-                "translation reviewer": "cheap",
-                "literary translator": "strong",
+                "chapter digest writer": {"synopsis.chapter"},
+                "whole-book synopsis writer": {"synopsis.book"},
+                "terminology and forms-of-address extractor": {"glossary.extract"},
+                "translation reviewer": {"review.scan"},
+                "literary translator": {"translation.body", "polish.body"},
             }
             seen = set()
             for c in client.calls:
                 system = c["messages"][0]["content"]
-                for marker, tier in expect.items():
+                for marker, operations in expect.items():
                     if marker in system:
-                        self.assertEqual(c["tier"], tier, f"{marker} 应走 {tier} 档")
+                        self.assertIn(c["operation"], operations, marker)
                         seen.add(marker)
                         self.assertIsNone(c["max_tokens"])
             self.assertEqual(seen, set(expect), "各类调用都应出现")

@@ -74,6 +74,47 @@ def test_startup_backs_up_global_and_project_settings_once(saved_catalog):
         assert connection.execute("SELECT count(*) FROM configuration_backups").fetchone()[0] == 2
 
 
+@pytest.mark.parametrize("preset", ["deepseek", None])
+def test_reopening_catalog_removes_old_choices_from_both_model_pickers(tmp_path, preset):
+    from fastapi.testclient import TestClient
+    from wenyi_desktop.main import create_app, create_context
+
+    workspace = tmp_path / "workspace"
+    backend = LocalBackend(workspace)
+    pid = backend.create_project("Book", "en", "zh", {"template": "标准翻译"})
+    profile = {"provider": "default", "model": "deepseek-flash"}
+    names = ["default", "default_strong", "default_cheap", "default_fast"]
+    llm = {
+        "preset": preset,
+        "providers": {"default": {"kind": "deepseek"}},
+        "default_model": "default",
+        "models": dict.fromkeys(names, profile),
+    }
+    with backend.transaction() as connection:
+        backend.save_settings({"config": {"llm": llm}, "revision": 1}, connection)
+    backend.set_project_config(pid, {"llm": {"default_model": "default_fast"}})
+    backend.close()
+
+    context = create_context(workspace)
+    with TestClient(create_app(context=context)) as client:
+        settings = client.get("/settings").json()["effective"]["llm"]
+        project = client.get(f"/projects/{pid}/config").json()
+        assert list(settings["providers"]) == ["deepseek"]
+        assert list(settings["models"]) == ["deepseek/deepseek-flash"]
+        assert project["registered_models"] == {
+            "deepseek/deepseek-flash": {
+                "provider": "deepseek",
+                "model": "deepseek-flash",
+                "thinking_levels": ["off", "low", "high", "max"],
+                "thinking_value": "high",
+            }
+        }
+        assert "default_model" not in project["effective"]["llm"]
+        assert {route["model"] for route in project["effective"]["llm"]["routes"].values()} == {
+            "deepseek/deepseek-flash"
+        }
+
+
 @pytest.mark.parametrize("failure", ["backup", "replacement"])
 @pytest.mark.parametrize("scope", ["global", "project"])
 def test_backup_and_replacement_roll_back_together(saved_catalog, failure, scope):

@@ -10,7 +10,7 @@ import {
 
 const models = {
   ...configuration.registered_models,
-  editor: { provider: "second", model: "editor-model" },
+  "second/editor-model": { provider: "second", model: "editor-model", thinking_levels: [], thinking_value: null },
 };
 
 test("global workflow has no project precision controls or polishing constraint", async ({ page }) => {
@@ -32,7 +32,7 @@ test("global workflow has no project precision controls or polishing constraint"
   await expect(page.getByLabel("Parallel initial drafts (1–3)", { exact: true })).toHaveCount(0);
 });
 
-test("projects select registered tiers without operation controls", async ({
+test("projects select registered models independently for each operation", async ({
   page,
 }) => {
   let saved = structuredClone(configuration);
@@ -52,10 +52,8 @@ test("projects select registered tiers without operation controls", async ({
   ).toHaveCount(0);
   await expect(page.getByLabel("API provider", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Model name", { exact: true })).toHaveCount(0);
-  await chooseOption(page.getByLabel("Quality tier"), "second / editor-model");
-  await expect(
-    page.getByLabel("Translate chapters in batches", { exact: true }),
-  ).toHaveCount(0);
+  const translation = page.getByRole("combobox", { name: "Model: Translate chapters in batches" });
+  await chooseOption(translation, "second / editor-model");
   await page
     .getByRole("button", { name: "Save configuration", exact: true })
     .click();
@@ -65,12 +63,15 @@ test("projects select registered tiers without operation controls", async ({
   expect(Object.keys(saved.effective.llm).sort()).toEqual([
     "budget",
     "routes",
-    "tiers",
   ]);
-  expect(saved.effective.llm.tiers.strong).toBe("editor");
-  expect(saved.effective.llm.routes).toEqual({});
+  expect(saved.effective.llm.routes).toEqual({
+    ...configuration.effective.llm.routes, "translation.body": { model: "second/editor-model" },
+  });
   await page.reload();
-  await expect(page.getByLabel("Quality tier")).toHaveText("second / editor-model");
+  await expect(translation).toHaveText("second / editor-model");
+  await chooseOption(translation, "deepseek / deepseek-flash");
+  const yaml = page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true });
+  expect(JSON.parse(await yaml.inputValue()).llm.routes).toEqual(configuration.effective.llm.routes);
   await page
     .getByRole("link", {
       name: "Manage models in global Settings",
@@ -83,7 +84,7 @@ test("projects select registered tiers without operation controls", async ({
       exact: true,
     }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Default models", exact: true }).click();
+  await page.getByRole("link", { name: "Stage models", exact: true }).click();
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page).toHaveURL(`/projects/${pid}/settings`);
 });
@@ -175,10 +176,12 @@ test("global model registration works in Chinese in a compact desktop window", a
   await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
   await fakeApi(page);
   await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "编辑提供商 deepseek" }).click();
   await expect(
     page.getByLabel("API Key 环境变量", { exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "添加模型", exact: true }).click();
+  await expect(page.getByLabel("模型 ID", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("模型名称", { exact: true })).toHaveCount(2);
   await page.screenshot({
     path: testInfo.outputPath("compact-global-models.png"),
@@ -191,77 +194,70 @@ test("global model registration works in Chinese in a compact desktop window", a
   ).toBe(true);
 });
 
-test("registry IDs can be renamed with references and new registrations removed", async ({
+test("provider and remote model changes update references; unused registrations can be removed", async ({
   page,
 }) => {
   await fakeApi(page);
   let submitted: Record<string, unknown> | undefined;
+  let current = globalConfiguration;
   await page.route("**/api/settings", async (route) => {
     if (route.request().method() === "PUT") {
       submitted = route.request().postDataJSON();
-      await route.fulfill({
-        json: {
-          ...globalConfiguration,
-          ...submitted,
-          effective: JSON.parse(String(submitted!.yaml)),
-          revision: 1,
-        },
-      });
-    } else await route.fulfill({ json: globalConfiguration });
+      current = {
+        ...current, yaml: String(submitted!.yaml),
+        effective: JSON.parse(String(submitted!.yaml)), revision: current.revision + 1,
+      };
+    }
+    await route.fulfill({ json: current });
   });
   await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
   await expect(
     page.getByRole("button", {
-      name: "Delete connection default",
+      name: "Delete connection deepseek",
       exact: true,
     }),
   ).toBeDisabled();
   await expect(
     page.getByRole("button", {
-      name: "Delete model default_model",
+      name: "Delete model deepseek-flash",
       exact: true,
     }),
   ).toBeDisabled();
   await page.getByLabel("Connection ID", { exact: true }).fill("my_provider");
-  await page.getByLabel("Connection ID", { exact: true }).press("Enter");
-  await page.getByLabel("Model ID", { exact: true }).fill("my_model");
-  await page.getByLabel("Model ID", { exact: true }).press("Enter");
-  await page.getByLabel("Model ID", { exact: true }).fill("final_model");
-  await page.getByLabel("Model ID", { exact: true }).press("Enter");
-  await page.getByRole("link", { name: "Default models", exact: true }).click();
-  await expect(page.getByLabel("Quality tier", { exact: true })).toHaveText(
-    "my_provider / deepseek-flash",
+  await page.getByLabel("Model name", { exact: true }).fill("my-model");
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await page.getByRole("button", { name: "Edit provider my_provider" }).click();
+  await page.getByLabel("Model name", { exact: true }).fill("vendor/final-model:v2");
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(submitted!.model_renames).toEqual({ "my_provider/my-model": "my_provider/vendor/final-model:v2" });
+  await page.getByRole("link", { name: "Stage models", exact: true }).click();
+  await expect(page.getByRole("combobox", { name: "Model: Translate chapters in batches", exact: true })).toHaveText(
+    "my_provider / vendor/final-model:v2",
   );
   await page.getByRole("link", { name: "Models & connections", exact: true }).click();
   await page
-    .getByRole("button", { name: "Add API connection", exact: true })
+    .getByRole("button", { name: "Add provider", exact: true })
     .click();
-  await expect(page.getByLabel("Connection ID", { exact: true })).toHaveCount(
-    2,
-  );
-  await page
-    .getByRole("button", { name: "Delete connection provider1", exact: true })
-    .click();
+  await expect(page.getByLabel("Connection ID", { exact: true })).toHaveValue("provider1");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.getByRole("button", { name: "Edit provider my_provider" }).click();
   await page.getByRole("button", { name: "Add model", exact: true }).click();
-  await expect(page.getByLabel("Model ID", { exact: true })).toHaveCount(2);
+  await expect(page.getByLabel("Model name", { exact: true })).toHaveCount(2);
   await page
-    .getByRole("button", { name: "Delete model model1", exact: true })
+    .getByRole("button", { name: "Delete model", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "Save configuration", exact: true })
-    .click();
-  await expect(
-    page.getByText("Global settings saved", { exact: true }),
-  ).toBeVisible();
-  expect(submitted!.model_renames).toEqual({ default_model: "final_model" });
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   const saved = JSON.parse(String(submitted!.yaml));
   expect(Object.keys(saved.llm.providers)).toEqual(["my_provider"]);
   expect(saved.llm.models).toEqual({
-    final_model: { provider: "my_provider", model: "deepseek-flash" },
+    "my_provider/vendor/final-model:v2": {},
   });
 });
 
-test("invalid or duplicate IDs cannot overwrite registrations and defaults restore the draft", async ({
+test("duplicate model names cannot overwrite registrations and defaults restore the draft", async ({
   page,
 }) => {
   await fakeApi(page);
@@ -271,17 +267,16 @@ test("invalid or duplicate IDs cannot overwrite registrations and defaults resto
     await route.fulfill({ json: globalConfiguration });
   });
   await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
   await page.getByRole("button", { name: "Add model", exact: true }).click();
-  const newId = page.getByLabel("Model ID", { exact: true }).last();
-  await newId.fill("default_model");
-  await newId.press("Enter");
-  await expect(page.getByRole("alert")).toHaveText("This ID already exists.");
-  await expect(
-    page.getByRole("button", { name: "Save configuration", exact: true }),
-  ).toBeDisabled();
-  await newId.fill("invalid id");
-  await newId.press("Enter");
-  await expect(page.getByRole("alert")).toContainText("Start with a letter");
+  const newModel = page.getByLabel("Model name", { exact: true }).last();
+  await newModel.fill("deepseek-flash");
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByRole("alert")).toContainText("deepseek/deepseek-flash is already registered.");
+  await newModel.fill("");
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByRole("alert")).toContainText("Enter a remote model name");
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page
     .getByRole("button", { name: "Restore defaults", exact: true })
     .click();
@@ -291,7 +286,7 @@ test("invalid or duplicate IDs cannot overwrite registrations and defaults resto
     }),
   ).toBeVisible();
   expect(writes).toBe(0);
-  await expect(page.getByLabel("Model ID", { exact: true })).toHaveCount(1);
+  await expect(page.getByRole("button", { name: "Edit provider deepseek" })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Save configuration", exact: true }),
   ).toBeEnabled();
@@ -322,7 +317,7 @@ test("project defaults load without registering models or saving automatically",
   await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
 });
 
-test("adding and renaming another model preserves the original model's rename", async ({
+test("adding another model preserves a previously saved model rename", async ({
   page,
 }) => {
   const registry = globalConfiguration.effective.llm;
@@ -330,42 +325,34 @@ test("adding and renaming another model preserves the original model's rename", 
     ...globalConfiguration.effective,
     llm: {
       ...registry,
-      models: { model1: registry.models.default_model },
-      tiers: { strong: "model1", cheap: "model1", fast: "model1" },
+      models: { "deepseek/deepseek-flash": {} },
     },
   };
-  const initial = {
+  let current = {
     ...globalConfiguration,
     effective: document,
     yaml: JSON.stringify(document),
   };
   await fakeApi(page);
-  let renames = {};
+  const renames: unknown[] = [];
   await page.route("**/api/settings", async (route) => {
     if (route.request().method() === "PUT") {
       const body = route.request().postDataJSON();
-      renames = body.model_renames;
-      await route.fulfill({
-        json: {
-          ...initial,
-          effective: JSON.parse(body.yaml),
-          yaml: body.yaml,
-          revision: 1,
-        },
-      });
-    } else await route.fulfill({ json: initial });
+      renames.push(body.model_renames);
+      current = { ...current, effective: JSON.parse(body.yaml), yaml: body.yaml, revision: current.revision + 1 };
+    }
+    await route.fulfill({ json: current });
   });
   await page.goto("/settings/providers");
-  await page.getByLabel("Model ID", { exact: true }).fill("editor");
-  await page.getByLabel("Model ID", { exact: true }).press("Enter");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+  await page.getByLabel("Model name", { exact: true }).fill("editor");
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
   await page.getByRole("button", { name: "Add model", exact: true }).click();
-  await page.getByLabel("Model ID", { exact: true }).last().fill("writer");
-  await page.getByLabel("Model ID", { exact: true }).last().press("Enter");
-  await page
-    .getByRole("button", { name: "Save configuration", exact: true })
-    .click();
-  await expect(
-    page.getByText("Global settings saved", { exact: true }),
-  ).toBeVisible();
-  expect(renames).toEqual({ model1: "editor" });
+  await page.getByLabel("Model name", { exact: true }).last().fill("writer-v1");
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(renames).toEqual([{ "deepseek/deepseek-flash": "deepseek/editor" }, {}]);
+  expect(Object.keys(current.effective.llm.models)).toEqual(["deepseek/editor", "deepseek/writer-v1"]);
 });

@@ -214,10 +214,7 @@ class TestPdfIngest(unittest.TestCase):
             config = Config.from_dict(
                 {
                     "language": {"source": "en", "target": "zh"},
-                    "llm": {
-                        "preset": "fake",
-                        "models": {"default_strong": {"provider": "default", "model": "fake"}},
-                    },
+                    "llm": {"preset": "fake"},
                     "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
                 }
@@ -250,10 +247,7 @@ class TestPdfIngest(unittest.TestCase):
             config = Config.from_dict(
                 {
                     "language": {"source": "en", "target": "zh"},
-                    "llm": {
-                        "preset": "fake",
-                        "models": {"default_strong": {"provider": "default", "model": "fake"}},
-                    },
+                    "llm": {"preset": "fake"},
                     "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
                 }
@@ -349,10 +343,7 @@ class TestPdfIngest(unittest.TestCase):
             config = Config.from_dict(
                 {
                     "language": {"source": "en", "target": "zh"},
-                    "llm": {
-                        "preset": "fake",
-                        "models": {"default_strong": {"provider": "default", "model": "fake"}},
-                    },
+                    "llm": {"preset": "fake"},
                     "pipeline": {"pdf_backend": "mineru"},
                     "paths": {"state_dir": state_dir},
                 }
