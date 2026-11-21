@@ -45,8 +45,10 @@ Parsing and initialized translation are distinct states.
 With book understanding enabled, every nonempty chapter needs a complete digest
 before body work. A failed chunk or merge cannot publish a partial chapter digest.
 A failed synopsis group invalidates the whole synopsis; stale retained analysis must
-not be injected as a current synopsis. Preparation never extracts or seeds glossary
-entries.
+not be injected as a current synopsis. The synopsis keeps a snapshot of the mappings
+it read (target, type, gender and aliases). Terms added later, and note edits, reuse it;
+changing or removing a snapshot mapping regenerates it. Preparation never extracts or
+seeds glossary entries.
 
 Prescan content budgets use the shared `cl100k_base` token estimator, not character
 counts or a provider-specific tokenizer. The source and reduction limits come from
@@ -242,7 +244,8 @@ fails; never reinterpret a diagnostic as successful work.
 | Cached work | Inputs that matter |
 | --- | --- |
 | Parsed source | Source content and parsing configuration |
-| Chapter digest/style/synopsis | Consumed source or summaries, task policy, and model configuration; synopsis also binds its actual guidance inputs |
+| Chapter digest/style | Consumed source or summaries, task policy, and model configuration |
+| Book synopsis | Chapter digests, synopsis policy, style guidance, languages, the `synopsis.book` inference identity, and its glossary mapping snapshot |
 | Translation precision | Source and stable segment plan, context, glossary, translation policy and effective inference identity |
 | Annotation/style placement | Complete logical target digest and source item identities |
 | Review | Reviewed content, ordered full glossary including all metadata, guidance, policy, Review options and reachable inference identities |
