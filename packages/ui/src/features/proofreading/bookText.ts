@@ -1,9 +1,7 @@
-/** A CJK system font can give curly apostrophes a full cell even with lang="en".
- * Style Latin prose, including before language detection, without changing its text
- * or narrowing punctuation in CJK and mixed-script paragraphs.
- */
+// Without inline language metadata, keep the font's punctuation conventions
+// for East Asian and mixed CJK paragraphs rather than guessing who owns a quote.
+const eastAsianText = /[\p{scx=Han}\p{scx=Hiragana}\p{scx=Katakana}\p{scx=Hangul}\p{scx=Bopomofo}]/u;
+
 export function bookTextFont(text: string | null | undefined) {
-  return text && /\p{Script=Latin}/u.test(text) &&
-    !/[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(text)
-    ? "font-book-latin" : undefined;
+  return text && /\p{Letter}/u.test(text) && !eastAsianText.test(text) ? "font-book-quotes" : undefined;
 }

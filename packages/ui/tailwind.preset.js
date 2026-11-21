@@ -23,7 +23,7 @@ export default {
       spacing: pxScale,
       translate: pxScale,
       fontFamily: {
-        "book-latin": ["Arial", '"Liberation Sans"', '"DejaVu Sans"', "sans-serif"],
+        "book-quotes": ['"Wenyi Proportional Quotes"', "theme(fontFamily.sans)"],
       },
       lineHeight: {
         3: "12px",

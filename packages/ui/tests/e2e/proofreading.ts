@@ -9,6 +9,40 @@ import { fakeApi, mockChapter, pid, project, chapter } from "../../sandbox/fixtu
 export const desktopHostSensitive = false;
 
 export function registerTests() {
+test("quote widths follow the writing system without changing book content", async ({ page }) => {
+  const prose = [
+    "«\u202fL’heure\u202f»", "„Привет“", "‘Ελληνικά’", "‘مرحبا’", "‘Paris — Москва’",
+  ];
+  const cjk = ["她说：“Hello。”", "「こんにちは」", "그는 ‘안녕’이라고 했다."];
+  await page.addInitScript(() => localStorage.setItem("wenyi.locale", "zh-CN"));
+  await fakeApi(page, { [`/projects/${pid}`]: { ...project, source_lang: "auto" } });
+  await mockChapter(page, 0, () => ({
+    index: 0, segments: [...prose, ...cjk].map((source, index) => ({ index, source, target: null, kind: "text" })),
+  }));
+  await page.goto(`/projects/${pid}/proofreading/0`);
+  // Make inheritance observable without relying on installed CJK fonts.
+  await page.addStyleTag({ content: 'html { font-family: monospace; }' });
+  for (const text of [...prose, ...cjk]) {
+    const paragraph = page.getByText(text, { exact: true });
+    await expect(paragraph).toBeVisible();
+    expect(await paragraph.textContent()).toBe(text);
+    if (cjk.includes(text)) {
+      await expect(paragraph).toHaveCSS("font-family", "monospace");
+    } else {
+      await expect(paragraph).toHaveCSS("font-family", /Wenyi Proportional Quotes/);
+    }
+  }
+  // The quote face must not claim letters, combining marks or real spaces.
+  const coverage = await page.evaluate(async () => {
+    const font = '14px "Wenyi Proportional Quotes"';
+    return [
+      (await document.fonts.load(font, "’«")).length,
+      (await document.fonts.load(font, "AéЖΩم\u0301 \u202f")).length,
+    ];
+  });
+  expect(coverage).toEqual([1, 0]);
+});
+
 for (const sourceLanguage of ["en", "auto"]) {
 test(`book text keeps proportional apostrophes in a Chinese interface (${sourceLanguage})`, async ({ page }) => {
   const source = "‘He’d go,’ she said.  ‘Wouldn’t you?’";
