@@ -360,6 +360,15 @@ class TranslationService:
                     for s in b:
                         s.meta.pop(POLISH_PENDING, None)
                         s.meta.pop(POLISH_FAILED, None)
+                    if not any(seg.meta.get(POLISH_FAILED) for seg in chapter.text_segments):
+                        chapter.meta.pop("unpolished", None)
+                        with store.state_lock():
+                            manifest_now = store.load_manifest()
+                            for row in manifest_now.get("chapters", []):
+                                if row.get("index") == ci and row.get("unpolished"):
+                                    row["unpolished"] = False
+                                    store.save_manifest(manifest_now)
+                                    break
                     store.save_chapter(chapter)
                 self._align_batch_context(store, chapter, text_segs, batch_start, len(b))
                 if glossary_key in glossary_checkpoints or (

@@ -116,6 +116,29 @@ def test_polisher_retries_misalignment_and_splits_before_giving_up():
     # Tries 4 (x2), then left half 2 (x2), then left leaf 1 (x2), and short-circuits.
     assert always_calls == [4, 4, 2, 2, 1, 1]
 
+    # Case 4: non-resumable provider error fails fast after 1 call without retrying or splitting.
+    err_calls = {"n": 0}
+
+    def fail_runtime(*_args):
+        err_calls["n"] += 1
+        raise RuntimeError("503 Service Unavailable")
+
+    polisher_err = Polisher(FakeClient(handler=fail_runtime), config)
+    assert polisher_err.polish_or_none([f"p{i}" for i in range(16)]) is None
+    assert err_calls["n"] == 1
+
+    # Case 5: resumable provider outage propagates after 1 call so runner pauses & auto-resumes.
+    outage_calls = {"n": 0}
+
+    def fail_outage(*_args):
+        outage_calls["n"] += 1
+        raise TimeoutError("provider timed out")
+
+    polisher_outage = Polisher(FakeClient(handler=fail_outage), config)
+    with pytest.raises(TimeoutError, match="provider timed out"):
+        polisher_outage.polish_or_none([f"p{i}" for i in range(16)])
+    assert outage_calls["n"] == 1
+
 
 def test_unpolished_chapter_is_marked_and_repolished_on_resume_without_retranslating(tmp_path):
     txt = os.path.join(tmp_path, "novel.txt")

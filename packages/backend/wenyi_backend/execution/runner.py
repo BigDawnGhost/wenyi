@@ -39,19 +39,23 @@ def record_terminal_status(
     error: BaseException | None = None,
     *,
     status: str = "error",
-) -> None:
-    """A late Future or duplicate delivery may update only its own task's project."""
+) -> bool:
+    """A late Future or duplicate delivery may update only its own task's project.
+
+    Returns True when this run still owns the project's latest non-export job.
+    """
     projects, jobs = dependencies.projects, dependencies.jobs
     pid, run_id = request.project_id, request.run_id
     message = str(error) if error is not None else None
     job = jobs.get_job_by_arq_id(run_id) if run_id else None
     if job:
         if job["project_id"] != pid:
-            return
+            return False
+        owned = False
         try:
             latest = next((item for item in jobs.list_jobs(pid) if item["kind"] != "export"), None)
             if not latest or latest["id"] != job["id"]:
-                return
+                return False
             project = projects.get_project(pid)
             if (
                 job["status"] == status
@@ -59,7 +63,7 @@ def record_terminal_status(
                 and project["status"] == status
                 and project.get("error") == message
             ):
-                return
+                return True
             # Wait for a brief API write boundary rather than dropping the terminal status.
             with closing(dependencies.storage_for(pid)) as storage, storage.lock():
                 latest = next(
@@ -67,10 +71,14 @@ def record_terminal_status(
                 )
                 if latest and latest["id"] == job["id"]:
                     projects.set_project_status(pid, status, error=message)
+                    owned = True
         finally:
             jobs.set_job_status(job["id"], status, error=message)
+        return owned
     elif not run_id:
         projects.set_project_status(pid, status, error=message)
+        return True
+    return False
 
 
 def execute(
@@ -186,7 +194,7 @@ def execute(
                     delay_seconds,
                     error,
                 )
-                record_terminal_status(request, dependencies, error, status="paused")
+                owned = record_terminal_status(request, dependencies, error, status="paused")
                 storage.log_event(
                     "task_paused_outage",
                     kind=kind,
@@ -197,21 +205,22 @@ def execute(
                     delay_seconds=delay_seconds,
                     next_retry_at=next_retry_at,
                 )
-                publish_outage_pause(
-                    cache,
-                    pid,
-                    kind=kind,
-                    run_id=run_id,
-                    next_retry_at=next_retry_at,
-                    delay_seconds=delay_seconds,
-                    attempt=attempt + 1,
-                    message=str(error),
-                )
+                if owned:
+                    publish_outage_pause(
+                        cache,
+                        pid,
+                        kind=kind,
+                        run_id=run_id,
+                        next_retry_at=next_retry_at,
+                        delay_seconds=delay_seconds,
+                        attempt=attempt + 1,
+                        message=str(error),
+                    )
                 if job or not run_id:
                     dependencies.metrics.record_task(
                         status="paused", code=error_code(error), identity=metric_identity
                     )
-                if dependencies.schedule_resume is not None:
+                if owned and dependencies.schedule_resume is not None:
                     try:
                         dependencies.schedule_resume(
                             request, attempt + 1, delay_seconds, next_retry_at

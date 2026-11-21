@@ -24,7 +24,7 @@ from ...storage.run_store import source_sha256, translation_run_dir
 
 def ingest_config(config: Config) -> dict[str, Any]:
     """Fingerprint the parsing inputs shared by preview and initialization."""
-    return {
+    data: dict[str, Any] = {
         "source_lang": config.source_lang,
         "target_lang": config.target_lang,
         "max_tokens_per_segment": config.segment.max_tokens_per_segment,
@@ -32,9 +32,11 @@ def ingest_config(config: Config) -> dict[str, Any]:
         "babeldoc_bridge_url": config.pipeline.babeldoc_bridge_url,
         "babeldoc_pages": config.pipeline.babeldoc_pages,
         "babeldoc_timeout": config.pipeline.babeldoc_timeout,
-        "skip_boilerplate": config.pipeline.skip_boilerplate,
-        "boilerplate_patterns": list(config.pipeline.boilerplate_patterns),
     }
+    if config.pipeline.skip_boilerplate:
+        data["skip_boilerplate"] = True
+        data["boilerplate_patterns"] = list(config.pipeline.boilerplate_patterns)
+    return data
 
 
 def load_parsed_document(

@@ -7,10 +7,16 @@ polishing cannot drop paragraphs.
 
 from __future__ import annotations
 
+import json
+
 from ..llm.preflight import fit_prompt_to_context_window
+from ..llm.retrying import TruncatedResponseError, is_resumable_provider_interrupt
 from ..models.glossary import GlossaryTerm
 from . import prompts
-from .base import Agent, Messages
+from .base import _LOGGER, Agent, Messages
+
+_MISALIGNED = object()
+_PROVIDER_ERROR = object()
 
 
 class Polisher(Agent):
@@ -41,8 +47,8 @@ class Polisher(Agent):
         style: str = "",
         next_source: str = "",
         sources: list[str] | None = None,
-    ) -> list[str] | None:
-        """Send one standalone polish request and return the aligned list or ``None``."""
+    ) -> list[str] | object:
+        """Send one standalone polish request and distinguish misalignment from provider failure."""
         n = len(targets)
         system_template = self.render(
             "polisher_system", src=self.src, tgt=self.tgt, n=n
@@ -79,17 +85,28 @@ class Polisher(Agent):
             match_text=match_text,
             render_messages=_render,
         )
-        items = self._ask_json(
-            system,
-            user,
-            operation="polish.body",
-            key="polished",
-            default=None,
-            item_type=str,
-        )
+        try:
+            items = self._ask_json(
+                system,
+                user,
+                operation="polish.body",
+                key="polished",
+                item_type=str,
+            )
+        except (json.JSONDecodeError, ValueError, TruncatedResponseError):
+            return _MISALIGNED
+        except Exception as error:
+            if is_resumable_provider_interrupt(error):
+                raise
+            _LOGGER.warning(
+                "Agent call failed; returning fallback (operation=polish.body): %s: %s",
+                type(error).__name__,
+                error,
+            )
+            return _PROVIDER_ERROR
         if isinstance(items, list) and len(items) == n:
             return items
-        return None
+        return _MISALIGNED
 
     def polish_or_none(
         self,
@@ -105,15 +122,17 @@ class Polisher(Agent):
             return []
         attempts = max(0, self.config.pipeline.align_retry_limit) + 1
         for _ in range(attempts):
-            items = self._polish_once(
+            result = self._polish_once(
                 targets,
                 glossary_terms=glossary_terms,
                 style=style,
                 next_source=next_source,
                 sources=sources,
             )
-            if items is not None:
-                return items
+            if result is _PROVIDER_ERROR:
+                return None
+            if isinstance(result, list):
+                return result
         if len(targets) <= 1:
             return None
         mid = len(targets) // 2
