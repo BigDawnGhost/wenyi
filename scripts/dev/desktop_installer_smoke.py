@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 
 
@@ -33,6 +35,9 @@ def main() -> None:
             if 100_000 <= code < 180_000:
                 stage, win32_error = divmod(code - 100_000, 10_000)
                 detail = f" (restricted-token stage {stage}, Win32 error {win32_error})"
+            elif 200_000 <= code < 210_000:
+                win32_error = code - 200_000
+                detail = f" (GetTempFileNameW: {win32_error}, {ctypes.FormatError(win32_error)})"
             else:
                 reason = {
                     8: "WebView2 setup failed",
@@ -45,7 +50,6 @@ def main() -> None:
                     15: "installation path has a reparse-point ancestor",
                     16: "installation path is a drive, share, or user profile root",
                     17: "unregistered installation path is not empty",
-                    18: "installation path is not writable",
                 }.get(code)
                 if reason:
                     detail = f" ({reason})"
@@ -58,34 +62,38 @@ def main() -> None:
     if any((location(cu), location(lm), root.exists(), machine.exists())):
         raise SystemExit("Refusing to use an existing Wenyi installation or workspace.")
 
-    with tempfile.TemporaryDirectory() as temp:
-        user = Path(temp).resolve() / "Current User"
-        run(setup, "/S", "/NS", f"/D={user}")
-        assert location(cu) == user and location(lm) is None
-        run(setup, "/AllUsers", "/S", "/NS")
-        assert location(cu) == user and location(lm) == machine
-        run(setup, "/S", "/P", "/UPDATE", "/NS", f"/D={user}")
-        run(setup, "/S", "/UPDATE", "/NS", f"/D={temp}", expected=2)
-        assert location(cu) == user and location(lm) == machine
+    # Python's TemporaryDirectory applies a protected Windows ACL (SYSTEM,
+    # Administrators and owner only). Its owner can be Administrators when
+    # created here, so the same account's reduced token cannot write there.
+    # Let setup create its target under the regular per-user temp folder.
+    temp = Path(tempfile.gettempdir()).resolve()
+    user = temp / f"Wenyi Current User {uuid.uuid4().hex}"
+    run(setup, "/S", "/NS", f"/D={user}")
+    assert location(cu) == user and location(lm) is None
+    run(setup, "/AllUsers", "/S", "/NS")
+    assert location(cu) == user and location(lm) == machine
+    run(setup, "/S", "/P", "/UPDATE", "/NS", f"/D={user}")
+    run(setup, "/S", "/UPDATE", "/NS", f"/D={temp}", expected=2)
+    assert location(cu) == user and location(lm) == machine
 
-        # A lease held by another program using the same profile prevents *all*
-        # selected deletions, including the first one (the catalog).
-        (root / "locks").mkdir(parents=True)
-        (root / "projects").mkdir()
-        catalog = root / "catalog.sqlite3"
-        catalog.write_bytes(b"fixture")
-        app = user / "wenyi-desktop.exe"
-        with (root / "locks/.desktop-profile.lock").open("w+b") as lease:
-            msvcrt.locking(lease.fileno(), msvcrt.LK_NBLCK, 1)
-            run(app, "--uninstall-user-data", "both", expected=3)
-        assert catalog.read_bytes() == b"fixture" and (root / "projects").is_dir()
-        run(app, "--uninstall-user-data", "projects")
-        assert catalog.exists() and not (root / "projects").exists()
+    # A lease held by another program using the same profile prevents *all*
+    # selected deletions, including the first one (the catalog).
+    (root / "locks").mkdir(parents=True)
+    (root / "projects").mkdir()
+    catalog = root / "catalog.sqlite3"
+    catalog.write_bytes(b"fixture")
+    app = user / "wenyi-desktop.exe"
+    with (root / "locks/.desktop-profile.lock").open("w+b") as lease:
+        msvcrt.locking(lease.fileno(), msvcrt.LK_NBLCK, 1)
+        run(app, "--uninstall-user-data", "both", expected=3)
+    assert catalog.read_bytes() == b"fixture" and (root / "projects").is_dir()
+    run(app, "--uninstall-user-data", "projects")
+    assert catalog.exists() and not (root / "projects").exists()
 
-        run(machine / "uninstall.exe", "/S", f"_?={machine}")
-        assert location(lm) is None and location(cu) == user and app.exists()
-        run(user / "uninstall.exe", "/S", f"_?={user}")
-        assert location(cu) is None and not app.exists() and catalog.exists()
+    run(machine / "uninstall.exe", "/S", f"_?={machine}")
+    assert location(lm) is None and location(cu) == user and app.exists()
+    run(user / "uninstall.exe", "/S", f"_?={user}")
+    assert location(cu) is None and not app.exists() and catalog.exists()
 
 
 if __name__ == "__main__":

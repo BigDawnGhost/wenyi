@@ -400,12 +400,13 @@ FunctionEnd
   ${EndIf}
   ; A unique probe never overwrites an existing user file.
   CreateDirectory "$INSTDIR"
-  ClearErrors
-  GetTempFileName $0 "$INSTDIR"
-  ${If} ${Errors}
-    !insertmacro WenyiBadDirectory "$INSTDIR" 18
+  System::Call 'kernel32::GetTempFileNameW(w "$INSTDIR", w "wny", i 0, w .r1) i .r0 ?e'
+  Pop $2
+  ${If} $0 == 0
+    IntOp $2 $2 + 200000
+    !insertmacro WenyiBadDirectory "$INSTDIR" $2
   ${EndIf}
-  Delete "$0"
+  Delete "$1"
 !macroend
 
 ; Restart Manager checks the actual installed files, including the sidecar.
