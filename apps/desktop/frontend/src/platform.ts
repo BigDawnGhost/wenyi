@@ -5,12 +5,7 @@ import { apiBase, authToken, progressInterval, progressUrl } from "./runtime";
 import { request, download } from "./transport";
 import { bindSourceDrop } from "./nativeDrop";
 import { saveNativeExport } from "./nativeExport";
-import {
-  credentialDrafts,
-  credentialForListing,
-  credentialQuery,
-  useCredentialDraftsPending,
-} from "./credentials";
+import { credentialQuery, saveCredential } from "./credentials";
 import { activity } from "./activity";
 import { library } from "./library";
 import { DesktopDiagnostics, DiagnosticExportButton } from "./DesktopDiagnostics";
@@ -80,11 +75,7 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
       credentials: {
         Field: DesktopCredential,
         refresh: () => queryClient.refetchQueries({ queryKey: credentialQuery.queryKey }),
-        prepareCommit: () => credentialDrafts.prepareCommit(queryClient),
-        retain: credentialDrafts.retain,
-        rename: credentialDrafts.rename,
-        usePending: useCredentialDraftsPending,
-        forListing: credentialForListing,
+        save: (connection, edit) => saveCredential(queryClient, connection, edit),
       },
     },
   };

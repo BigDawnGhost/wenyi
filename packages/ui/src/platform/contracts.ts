@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType } from "react";
 import type { ProjectDetail, ProjectInput, ExportOptions } from "../api/types";
 
 export type { ProjectInput, ExportOptions } from "../api/types";
@@ -21,7 +21,10 @@ export interface SourceDropCallbacks {
 
 export interface CredentialFieldProps {
   connection: string;
-  children?: ReactNode;
+  storedConnection?: string;
+  /** Undefined leaves the stored key unchanged; an empty edit clears it on save. */
+  edit?: string;
+  onEdit: (edit: string | undefined) => void;
 }
 
 export interface ActivityServices {
@@ -106,16 +109,8 @@ export interface OptionalCapabilities {
   credentials?: {
     Field: ComponentType<CredentialFieldProps>;
     refresh: () => Promise<unknown>;
-    /** Capture entered keys now; invoke the returned write after configuration is saved. */
-    prepareCommit: () => (connections: string[]) => Promise<void>;
-    /** Discards entered keys for connections that are no longer in the draft. */
-    retain: (connections: string[]) => void;
-    /** Keeps an entered key attached to a connection whose ID is renamed before saving. */
-    rename: (from: string, to: string) => void;
-    /** True while entered keys have not been written yet. */
-    usePending: () => boolean;
-    /** The key currently in a connection's field, used to list models before saving. */
-    forListing: (connection: string) => string | undefined;
+    /** Write only this dialog's credential, after its connection exists. */
+    save: (connection: string, key: string) => Promise<void>;
   };
 }
 

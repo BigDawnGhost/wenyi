@@ -14,8 +14,10 @@ from wenyi_core.llm.router import RoutedLLMClient
 from wenyi_core.llm.routing import inference_snapshot, resolve_routes
 from wenyi_core.llm.usage import UsageSample
 
+from .model_fixtures import routes_for
 
-def _graph(**extra):
+
+def _graph(*, model="a/first", routes=None, **extra):
     return LLMConfig.model_validate(
         {
             "providers": {
@@ -23,10 +25,15 @@ def _graph(**extra):
                 "b": {"kind": "fake", "base_url": "https://other.invalid", "max_retries": 0},
             },
             "models": {
-                "one": {"provider": "a", "model": "first", "max_output_tokens": 128},
-                "two": {"provider": "b", "model": "second", "max_output_tokens": 256},
+                "a/first": {"max_output_tokens": 128},
+                "b/second": {"max_output_tokens": 256},
             },
-            "tiers": {"strong": "one", "cheap": "two", "fast": "one"},
+            "routes": routes_for(
+                model,
+                {"review.scan": {"model": "b/second"}, "annotation.align": {"model": "b/second"}}
+                if routes is None
+                else routes,
+            ),
             **extra,
         }
     )
@@ -35,15 +42,22 @@ def _graph(**extra):
 @pytest.mark.parametrize(
     "override, message",
     [
-        ({"tiers": {"strong": "one"}}, "exactly strong"),
-        ({"tiers": {"strong": "one", "cheap": "missing", "fast": "one"}}, "unknown model"),
-        ({"models": {"one": {"provider": "missing", "model": "x"}}}, "unknown connection"),
-        ({"models": {"one": {"provider": "a", "model": ""}}}, "at least 1"),
-        ({"routes": {"translation.body": {"tier": "strnog"}}}, "Unknown tier"),
-        ({"routes": {"translation.body": {}}}, "exactly one"),
-        ({"routes": {"translation.body": {"model": "missing"}}}, "unknown model"),
-        ({"routes": {"translation.body": {"model": "one", "fallbacks": ["one"]}}}, "duplicate"),
-        ({"routes": {"review.verify": {"model": "one", "fallbacks": ["two"]}}}, "resumable"),
+        ({"tiers": {"strong": "one", "cheap": "two", "fast": "one"}}, "Extra inputs"),
+        ({"default_model": "a/first"}, "Extra inputs"),
+        ({"models": {"missing/x": {}}}, "unknown connection"),
+        ({"models": {"a/": {}}}, "Expected connection/model"),
+        ({"models": {"alias": {"provider": "a", "model": "first"}}}, "Expected connection/model"),
+        ({"routes": {"translation.body": {"tier": "strong"}}}, "Extra inputs"),
+        ({"routes": {"translation.body": {}}}, "Field required"),
+        ({"routes": {"translation.body": {"model": "a/missing"}}}, "unknown model"),
+        (
+            {"routes": {"translation.body": {"model": "a/first", "fallbacks": ["a/first"]}}},
+            "duplicate",
+        ),
+        (
+            {"routes": {"review.verify": {"model": "a/first", "fallbacks": ["b/second"]}}},
+            "resumable",
+        ),
         ({"providers": {"a": {"kind": "fake", "api_key": "forbidden"}}}, "Extra inputs"),
         (
             {
@@ -64,28 +78,33 @@ def test_invalid_graphs_fail_offline(override, message):
         _graph(**override)
 
 
-def test_preset_entries_replace_whole_profiles():
-    with pytest.raises(ValueError, match="model"):
-        LLMConfig.model_validate(
-            {
-                "preset": "deepseek",
-                "models": {
-                    "default_strong": {"provider": "default", "options": {"thinking": False}}
-                },
-            }
-        )
+def test_same_remote_name_on_different_connections_is_independently_routable():
+    config = _graph(
+        models={"a/org/chat:v2": {}, "b/org/chat:v2": {}},
+        model="a/org/chat:v2",
+        routes={"translation.body": {"model": "b/org/chat:v2", "fallbacks": ["a/org/chat:v2"]}},
+    )
+    routes = resolve_routes(config)
+    assert (routes["translation.body"].provider, routes["translation.body"].model) == (
+        "b",
+        "org/chat:v2",
+    )
+    assert routes["translation.body"].fallbacks == ("a/org/chat:v2",)
+    assert routes["review.scan"].provider == "a"
+
+
+def test_explicit_registry_requires_all_operation_routes():
+    raw = _graph().model_dump()
+    del raw["routes"]["autofix.verify"]
+    with pytest.raises(ValueError, match=r"autofix\.verify"):
+        LLMConfig.model_validate(raw)
 
 
 @pytest.mark.parametrize(
     "specs, message",
     [
-        ([OperationSpec("x.a", "a", "strong"), OperationSpec("x.a", "b", "cheap")], "Duplicate"),
-        ([OperationSpec("x.a", "a", inherits="x.b")], "Unknown inherited"),
-        (
-            [OperationSpec("x.a", "a", inherits="x.b"), OperationSpec("x.b", "b", inherits="x.a")],
-            "cycle",
-        ),
-        ([OperationSpec("x.a", "a", "strong", inherits="x.b")], "exactly one"),
+        ([OperationSpec("x.a", "a"), OperationSpec("x.a", "b")], "Duplicate"),
+        ([OperationSpec("x.a", "a", protocol_version=0)], "protocol version"),
     ],
 )
 def test_registration_rejects_ambiguous_defaults(specs, message):
@@ -94,8 +113,8 @@ def test_registration_rejects_ambiguous_defaults(specs, message):
 
 
 def test_registration_is_immutable_and_accepts_new_operations():
-    specs = register_operations([OperationSpec("context.retrieve", "Retrieve context", "fast")])
-    assert specs["context.retrieve"].tier == "fast"
+    specs = register_operations([OperationSpec("context.retrieve", "Retrieve context")])
+    assert specs["context.retrieve"].id == "context.retrieve"
     with pytest.raises(TypeError):
         # Deliberately attempt an unsupported mutation to test runtime immutability.
         cast(dict[str, OperationSpec], specs)["other.operation"] = specs["context.retrieve"]
@@ -108,9 +127,7 @@ def test_raw_extensions_cannot_override_transport_or_reveal_secrets(field):
             {
                 "preset": "deepseek",
                 "models": {
-                    "default_strong": {
-                        "provider": "default",
-                        "model": "m",
+                    "deepseek/m": {
                         "options": {"extra_body": {field: "secret-value-must-not-appear"}},
                     }
                 },
@@ -124,9 +141,7 @@ def test_invalid_credentials_field_is_redacted_and_empty_list_is_not_a_preset():
         LLMConfig.model_validate(
             {
                 "preset": "fake",
-                "providers": {
-                    "default": {"kind": "fake", "api_key": "secret-value-must-not-appear"}
-                },
+                "providers": {"fake": {"kind": "fake", "api_key": "secret-value-must-not-appear"}},
             }
         )
     assert "secret-value-must-not-appear" not in str(caught.value)
@@ -143,13 +158,11 @@ def test_native_and_compatible_adapters_can_run_together():
             "preset": "deepseek",
             "providers": {"native": {"kind": "gemini"}},
             "models": {
-                "editor": {
-                    "provider": "native",
-                    "model": "native-editor",
+                "native/native-editor": {
                     "max_output_tokens": 2000,
                 }
             },
-            "routes": {"polish.body": {"model": "editor"}},
+            "routes": {"polish.body": {"model": "native/native-editor"}},
         }
     )
     client = RoutedLLMClient(config)
@@ -172,7 +185,7 @@ def test_native_and_compatible_adapters_can_run_together():
             ),
         )
 
-    client.adapter("default")._client = NS(chat=NS(completions=NS(create=compatible)))
+    client.adapter("deepseek")._client = NS(chat=NS(completions=NS(create=compatible)))
     client.adapter("native")._client = NS(models=NS(generate_content=native))
     with ThreadPoolExecutor(2) as pool:
         first = pool.submit(
@@ -263,12 +276,12 @@ def test_concurrent_connections_share_usage_without_mixing_requests(monkeypatch)
 
 
 def test_router_freezes_original_config_and_direct_selection(monkeypatch):
-    config = _graph(routes={"translation.body": {"model": "two"}})
+    config = _graph(routes={"translation.body": {"model": "b/second"}})
     client = RoutedLLMClient(config)
     config.models.clear()
     monkeypatch.setattr(FakeProvider, "_request", lambda self, messages, model, **kw: model.model)
     assert client.complete([], operation="translation.body") == "second"
-    assert client.routes["translation.body"].tier is None
+    assert client.routes["translation.body"].profile == "b/second"
     with pytest.raises(ValueError, match="Unknown model operation"):
         client.complete([], operation="translation.typo")
 
@@ -293,9 +306,7 @@ def test_dynamic_output_hint_respects_explicit_profile_cap(monkeypatch):
                 "llm": {
                     "preset": "deepseek",
                     "models": {
-                        "default_fast": {
-                            "provider": "default",
-                            "model": "x",
+                        "deepseek/x": {
                             "max_output_tokens": 600,
                         }
                     },
@@ -311,9 +322,7 @@ def test_summary_uses_provider_defaults_and_respects_explicit_profile_limits(thi
             "llm": {
                 "preset": "deepseek",
                 "models": {
-                    "default_fast": {
-                        "provider": "default",
-                        "model": "summary-model",
+                    "deepseek/deepseek-flash": {
                         "options": {"thinking": thinking},
                     }
                 },
@@ -323,7 +332,7 @@ def test_summary_uses_provider_defaults_and_respects_explicit_profile_limits(thi
     for operation in ("synopsis.chapter", "synopsis.book"):
         assert resolve_routes(config.llm)[operation].max_output_tokens is None
     raw = config.llm.model_dump()
-    raw["models"]["default_fast"]["max_output_tokens"] = 4096
+    raw["models"]["deepseek/deepseek-flash"]["max_output_tokens"] = 4096
     limited = LLMConfig.model_validate(raw)
     for operation in ("synopsis.chapter", "synopsis.book"):
         assert resolve_routes(limited)[operation].max_output_tokens == 4096
@@ -336,13 +345,11 @@ def test_workflow_wire_limits_match_profile_or_provider_defaults(kind, explicit)
         {
             "providers": {"remote": {"kind": kind, "base_url": "https://offline.invalid"}},
             "models": {
-                "shared": {
-                    "provider": "remote",
-                    "model": "test-model",
+                "remote/test-model": {
                     "max_output_tokens": explicit,
                 }
             },
-            "tiers": {"strong": "shared", "cheap": "shared", "fast": "shared"},
+            "routes": routes_for("remote/test-model"),
         }
     )
     client = RoutedLLMClient(config)
@@ -411,7 +418,7 @@ def test_retry_releases_permit_and_records_every_returned_usage(monkeypatch):
 
 
 def test_only_explicit_stateless_failover_is_used(monkeypatch):
-    config = _graph(routes={"translation.body": {"model": "one", "fallbacks": ["two"]}})
+    config = _graph(routes={"translation.body": {"model": "a/first", "fallbacks": ["b/second"]}})
     client = RoutedLLMClient(config)
     calls = []
 
@@ -438,7 +445,7 @@ class _ProviderDeniedError(Exception):
     "error", [_ProviderDeniedError, ValueError], ids=["http-401", "local-value-error"]
 )
 def test_non_retryable_errors_neither_retry_nor_fail_over(monkeypatch, error):
-    config = _graph(routes={"translation.body": {"model": "one", "fallbacks": ["two"]}})
+    config = _graph(routes={"translation.body": {"model": "a/first", "fallbacks": ["b/second"]}})
     client = RoutedLLMClient(config)
     calls = []
 
@@ -454,10 +461,10 @@ def test_non_retryable_errors_neither_retry_nor_fail_over(monkeypatch, error):
 
 def test_token_preflight_checks_fallback_caps():
     raw = _graph(
-        routes={"translation.body": {"model": "one", "fallbacks": ["two"]}},
+        routes={"translation.body": {"model": "a/first", "fallbacks": ["b/second"]}},
         budget={"max_tokens": 10000},
     ).model_dump()
-    raw["models"]["two"]["max_output_tokens"] = None
+    raw["models"]["b/second"]["max_output_tokens"] = None
     client = RoutedLLMClient(LLMConfig.model_validate(raw))
     with pytest.raises(ValueError, match="max_output_tokens"):
         client.validate_credentials(("translation.body",))
@@ -470,7 +477,9 @@ def test_http402_emits_one_safe_failure_without_retry_or_fallback(monkeypatch, c
     from openai import APIStatusError
     from wenyi_core.llm.retrying import is_retryable_provider_error
 
-    raw = _graph(routes={"translation.body": {"model": "one", "fallbacks": ["two"]}}).model_dump()
+    raw = _graph(
+        routes={"translation.body": {"model": "a/first", "fallbacks": ["b/second"]}}
+    ).model_dump()
     raw["providers"]["a"]["max_retries"] = 3
     client = RoutedLLMClient(LLMConfig.model_validate(raw))
     events = []
@@ -605,13 +614,18 @@ def test_inference_fingerprint_ignores_aliases_credentials_and_transport_control
         "max_retries": 99,
         "max_concurrency": 20,
     }
-    raw["models"]["renamed"] = {**raw["models"].pop("one"), "provider": "renamed"}
-    raw["tiers"]["strong"] = raw["tiers"]["fast"] = "renamed"
+    raw["models"]["renamed/first"] = raw["models"].pop("a/first")
+    for route in raw["routes"].values():
+        if route["model"] == "a/first":
+            route["model"] = "renamed/first"
     after = LLMConfig.model_validate(raw)
     assert inference_snapshot(before, ("translation.body",)) == inference_snapshot(
         after, ("translation.body",)
     )
-    raw["models"]["renamed"]["model"] = "different"
+    raw["models"]["renamed/different"] = raw["models"].pop("renamed/first")
+    for route in raw["routes"].values():
+        if route["model"] == "renamed/first":
+            route["model"] = "renamed/different"
     changed = LLMConfig.model_validate(raw)
     assert inference_snapshot(before, ("translation.body",)) != inference_snapshot(
         changed, ("translation.body",)
@@ -626,32 +640,39 @@ def test_preset_and_operation_override_are_independent():
             "llm": {
                 "preset": "deepseek",
                 "providers": {"local": {"kind": "fake"}},
-                "models": {"editor": {"provider": "local", "model": "editor-v1"}},
-                "routes": {"review.verify": {"model": "editor"}},
+                "models": {"local/editor-v1": {}},
+                "routes": {"review.verify": {"model": "local/editor-v1"}},
             }
         }
     )
     routes = resolve_routes(cfg.llm)
     assert routes["review.verify"].model == "editor-v1"
     assert routes["review.scan"].provider_kind == "deepseek"
-    assert routes["autofix.verify"].model == "editor-v1"
+    assert routes["autofix.verify"].provider_kind == "deepseek"
     assert routes["review.fix"].provider_kind == "deepseek"
 
 
 def test_unknown_operation_fails_before_constructing_clients():
     with pytest.raises(ValueError, match="review.verfy"):
         Config.from_dict(
-            {"llm": {"preset": "deepseek", "routes": {"review.verfy": {"tier": "strong"}}}}
+            {
+                "llm": {
+                    "preset": "deepseek",
+                    "routes": {"review.verfy": {"model": "deepseek/deepseek-flash"}},
+                }
+            }
         )
 
 
-def test_route_rejects_ambiguous_selection():
-    with pytest.raises(ValueError, match="exactly one"):
+def test_direct_selection_does_not_accept_a_legacy_tier():
+    with pytest.raises(ValueError, match="Extra inputs"):
         Config.from_dict(
             {
                 "llm": {
                     "preset": "deepseek",
-                    "routes": {"review.verify": {"tier": "strong", "model": "default_strong"}},
+                    "routes": {
+                        "review.verify": {"tier": "strong", "model": "deepseek/deepseek-flash"}
+                    },
                 }
             }
         )

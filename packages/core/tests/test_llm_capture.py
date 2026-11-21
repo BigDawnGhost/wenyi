@@ -16,8 +16,8 @@ def test_request_snapshot_is_authoritative_and_independent(monkeypatch):
     config = LLMConfig.model_validate(
         {
             "preset": "fake",
-            "models": {"backup": {"provider": "default", "model": "backup"}},
-            "routes": {"translation.body": {"tier": "strong", "fallbacks": ["backup"]}},
+            "models": {"fake/backup": {}},
+            "routes": {"translation.body": {"model": "fake/fake", "fallbacks": ["fake/backup"]}},
         }
     )
     client = RoutedLLMClient(config)
@@ -28,7 +28,7 @@ def test_request_snapshot_is_authoritative_and_independent(monkeypatch):
     snapshot = client.request_snapshot("translation.body")
     assert snapshot["primary"]["fingerprint"] == client.routes["translation.body"].fingerprint
     assert snapshot["fallbacks"][0]["model"] == "backup"
-    assert snapshot["adapter_protocols"] == {"default": FakeProvider.protocol_version}
+    assert snapshot["adapter_protocols"] == {"fake": FakeProvider.protocol_version}
     snapshot["primary"]["options"]["changed"] = True
     snapshot["connections"].clear()
     assert client.request_snapshot("translation.body")["connections"]
@@ -144,11 +144,9 @@ def test_usage_matches_retry_and_failover_attempts(monkeypatch):
     config = LLMConfig.model_validate(
         {
             "preset": "fake",
-            "providers": {"default": {"kind": "fake", "max_retries": 1}},
-            "models": {
-                "backup": {"provider": "default", "model": "backup", "max_output_tokens": 50}
-            },
-            "routes": {"translation.body": {"tier": "strong", "fallbacks": ["backup"]}},
+            "providers": {"fake": {"kind": "fake", "max_retries": 1}},
+            "models": {"fake/backup": {"max_output_tokens": 50}},
+            "routes": {"translation.body": {"model": "fake/fake", "fallbacks": ["fake/backup"]}},
         }
     )
     client = RoutedLLMClient(config)
@@ -176,6 +174,6 @@ def test_usage_matches_retry_and_failover_attempts(monkeypatch):
         for key in ("call_id", "operation", "model", "provider", "profile", "attempt"):
             assert data[key] == start[key]
         assert all(data[key] == value for key, value in asdict(sample).items())
-    assert started[-1]["profile"] == "backup"
+    assert started[-1]["profile"] == "fake/backup"
     assert len({data["call_id"] for _, data in events}) == 1
     assert client.usage_summary()["totals"]["total_tokens"] == 12

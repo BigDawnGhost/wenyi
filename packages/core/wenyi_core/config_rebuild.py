@@ -19,6 +19,7 @@ from pydantic import BaseModel, ValidationError
 
 from .atomicio import publish_target
 from .config import CONFIG_SECTIONS, Config, parse_config_yaml
+from .llm.configuration import ProviderConfig, merge_llm_settings
 
 logger = logging.getLogger(__name__)
 
@@ -33,23 +34,14 @@ class RebuiltConfig:
         return bool(self.removed)
 
 
-def merge_section(name: str, base: dict, override: dict) -> dict:
-    """Match project override semantics, including partial tier selections."""
-    merged = {**base, **override}
-    if name == "llm" and isinstance(override.get("tiers"), dict):
-        merged["tiers"] = {**base.get("tiers", {}), **override["tiers"]}
-    return merged
-
-
 def _remove_location(value: dict, location: tuple) -> tuple | None:
     """Remove the closest supplied ancestor when validation reports a missing child."""
     current: Any = value
     ancestors = []
     for part in location:
-        if isinstance(current, dict) and part in current:
-            ancestors.append((current, part))
-            current = current[part]
-        elif isinstance(current, list) and isinstance(part, int) and 0 <= part < len(current):
+        if (isinstance(current, dict) and part in current) or (
+            isinstance(current, list) and isinstance(part, int) and 0 <= part < len(current)
+        ):
             ancestors.append((current, part))
             current = current[part]
         else:
@@ -66,19 +58,29 @@ def _rebuild_section(
 ) -> tuple[dict, list[str]]:
     candidate = deepcopy(value)
     removed = []
+    merge = merge_llm_settings if name == "llm" else lambda base, value: {**base, **value}
     while True:
         try:
-            model.model_validate(merge_section(name, base, candidate))
+            model.model_validate(merge(base, candidate))
             return candidate, removed
         except ValidationError as error:
-            locations = [tuple(item["loc"]) for item in error.errors(include_input=False)]
+            locations = [
+                tuple(item["loc"])
+                for item in error.errors(include_input=False)
+                if not (
+                    name == "llm"
+                    and item["type"] == "missing"
+                    and len(item["loc"]) == 2
+                    and item["loc"][0] == "routes"
+                )
+            ]
         for location in locations:
             deleted = _remove_location(candidate, location)
             if deleted is not None:
                 removed.append(".".join((name, *map(str, deleted))))
                 break
         else:
-            # Once a broken registry loses its preset or required tiers, restore
+            # Once a broken registry loses required routes, restore
             # the built-in registry without throwing away independent valid budgets.
             if name == "llm" and not base and candidate.get("preset") is None:
                 preset = model.model_validate({}).model_dump()["preset"]
@@ -97,7 +99,7 @@ def _rebuild_section(
                     continue
                 reduced = {field: item for field, item in candidate.items() if field != key}
                 try:
-                    model.model_validate(merge_section(name, base, reduced))
+                    model.model_validate(merge(base, reduced))
                 except ValidationError:
                     continue
                 removed.append(f"{name}.{key}")
@@ -105,6 +107,22 @@ def _rebuild_section(
             # Do not invent replacements or leave dangling provider/model references.
             model.model_validate(base)
             return {}, [*removed, name]
+
+
+def _discard_unused_legacy_connection(llm: dict, removed: list[str]) -> None:
+    """Retire the old preset's generated connection, not a customized connection."""
+    if not any(path.startswith("llm.models.") and "/" not in path for path in removed):
+        return
+    preset = llm.get("preset")
+    providers = llm.get("providers", {})
+    if (
+        preset
+        and "default" in providers
+        and ProviderConfig.model_validate(providers["default"]) == ProviderConfig(kind=preset)
+        and not any(ref.startswith("default/") for ref in llm.get("models", {}))
+    ):
+        del providers["default"]
+        removed.append("llm.providers.default")
 
 
 def rebuild_config(raw: Any, *, base: dict | None = None) -> RebuiltConfig:
@@ -120,11 +138,16 @@ def rebuild_config(raw: Any, *, base: dict | None = None) -> RebuiltConfig:
             removed.append(str(name))
             continue
         section, discarded = _rebuild_section(name, model, value, defaults.get(name, {}))
+        if name == "llm" and "llm" not in defaults:
+            _discard_unused_legacy_connection(section, discarded)
         document[name] = section
         removed.extend(discarded)
     effective = deepcopy(defaults)
     for name, value in document.items():
-        effective[name] = merge_section(name, effective.get(name, {}), value)
+        inherited = effective.get(name, {})
+        effective[name] = (
+            merge_llm_settings(inherited, value) if name == "llm" else {**inherited, **value}
+        )
     Config.from_dict(effective)
     return RebuiltConfig(document, tuple(dict.fromkeys(removed)))
 

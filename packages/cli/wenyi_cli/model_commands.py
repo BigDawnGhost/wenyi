@@ -38,8 +38,6 @@ def register_model_commands(
         table = Table(
             "Operation",
             "Selection",
-            "Tier",
-            "Profile",
             "Connection / adapter",
             "Model",
             "Output",
@@ -50,8 +48,6 @@ def register_model_commands(
             table.add_row(
                 operation,
                 route.origin,
-                route.tier or "direct",
-                route.profile,
                 f"{route.provider} / {route.provider_kind}",
                 route.model,
                 str(route.max_output_tokens or "provider default"),
@@ -96,7 +92,7 @@ def register_model_commands(
         ),
         as_json: bool = typer.Option(False, "--json", help="Print structured probe results"),
     ):
-        """Send one short live request per reachable model profile; uses a few tokens."""
+        """Send one short live request per reachable model; uses a few tokens."""
         from wenyi_core.llm.connectivity import probe_connections
 
         try:
@@ -109,10 +105,9 @@ def register_model_commands(
         if as_json:
             typer.echo(json.dumps([result.describe() for result in results], indent=2))
         else:
-            table = Table("Profile", "Connection / adapter", "Model", "Status", "Latency", "Detail")
+            table = Table("Connection / adapter", "Model", "Status", "Latency", "Detail")
             for result in results:
                 table.add_row(
-                    result.profile,
                     f"{result.connection} / {result.provider}",
                     result.model,
                     "[green]ok[/]" if result.ok else f"[red]{result.category}[/]",
@@ -123,10 +118,10 @@ def register_model_commands(
         failed = sum(not result.ok for result in results)
         if failed:
             if not as_json:
-                console.print(f"[red]{failed} of {len(results)} model profiles unreachable.[/]")
+                console.print(f"[red]{failed} of {len(results)} models unreachable.[/]")
             raise typer.Exit(1)
         if not as_json:
-            console.print(f"All {len(results)} model profiles reachable for {workflow}.")
+            console.print(f"All {len(results)} models reachable for {workflow}.")
 
     @models.command("migrate-usage")
     def migrate_usage(run_dir: Path = typer.Argument(..., exists=True, file_okay=False)):

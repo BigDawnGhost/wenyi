@@ -143,7 +143,7 @@ def _probe(
     operation = operations[0] if operations else _DEFAULT_PROBE_OPERATION
     route = model_route(config, operation, profile, origin="probe")
     connection = config.providers[route.provider]
-    adapter_type = provider_spec(connection.kind).adapter_type()
+    adapter_type = provider_spec(route.provider_kind).adapter_type()
     request_model = route.request_model()
     # Probe settings replace workflow retries and long generation timeouts for this call only.
     probe_config = connection.model_copy(
@@ -177,7 +177,7 @@ def _probe(
 
     context = RequestContext(
         operation=operation,
-        tier="probe",
+        profile=profile,
         # Respect provider rules such as the minimum output size for thinking modes.
         max_tokens=adapter_type.output_limit(request_model.options, PROBE_OUTPUT_TOKENS, None),
         emit=lambda event, **data: None,

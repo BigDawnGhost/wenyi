@@ -6,13 +6,14 @@ import { registerDesktopSetup } from "./shared-setup";
 
 registerDesktopSetup();
 registerTests({
+  manualKeys: true,
   categories: {
     en: [
-      "General", "Models & connections", "Default models", "Workflow", "PDF",
+      "General", "Models & connections", "Stage models", "Workflow", "PDF",
       "Advanced", "Diagnostics and feedback", "About",
     ],
     "zh-CN": [
-      "通用", "模型与接口", "默认模型", "翻译流程", "PDF",
+      "通用", "模型与接口", "各阶段模型", "翻译流程", "PDF",
       "高级", "诊断与反馈", "关于",
     ],
   },

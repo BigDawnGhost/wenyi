@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..thinking import effort_control
 from ..transport import Messages, ResolvedModel
 from ._openai_compatible import (
     OpenAICompatibleBaseClient,
@@ -34,7 +35,7 @@ def build_request_kwargs(
     json_mode: bool = False,
     max_tokens: int | None = None,
 ) -> dict[str, Any]:
-    """Convert tier options into an OpenRouter reasoning request body."""
+    """Convert model options into an OpenRouter reasoning request body."""
     kwargs = base_request_kwargs(model_config.model, messages, json_mode=json_mode)
     extra_body = {
         "reasoning": (
@@ -52,6 +53,7 @@ def build_request_kwargs(
 
 
 class OpenRouterClient(OpenAICompatibleBaseClient[OpenRouterOptions]):
+    thinking_control = effort_control("off", "minimal", "low", "medium", "high", "xhigh")
     default_base_url = DEFAULT_BASE_URL
     default_api_key_env = DEFAULT_API_KEY_ENV
     requires_api_key = True
@@ -64,7 +66,7 @@ class OpenRouterClient(OpenAICompatibleBaseClient[OpenRouterOptions]):
         json_mode: bool,
         max_tokens: int | None,
     ) -> dict[str, Any]:
-        """Build final request arguments for the selected OpenRouter tier."""
+        """Build final request arguments for the selected OpenRouter model."""
         return build_request_kwargs(
             model_config,
             messages,

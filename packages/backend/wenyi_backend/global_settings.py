@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from wenyi_core.config import Config
+from wenyi_core.llm.configuration import split_model_ref
+from wenyi_core.llm.registry import provider_spec
 
 from .config_documents import PROJECT_PIPELINE_FIELDS, parse_yaml
 from .context import current_context
@@ -49,7 +51,32 @@ def save_settings(
 
 
 def registered_models(config: Config) -> dict[str, Any]:
-    return {
-        key: {"model": profile.model, "provider": profile.provider}
-        for key, profile in config.llm.models.items()
-    }
+    result = {}
+    for ref, settings in config.llm.models.items():
+        provider, model = split_model_ref(ref)
+        connection = config.llm.providers[provider]
+        spec = provider_spec(connection.kind)
+        adapter = spec.adapter_type()
+        control = adapter.route_thinking(connection, model)
+        choices = []
+        if control:
+            for level in control.choices(settings.options):
+                options = spec.validate_model(
+                    settings, options=control.apply(settings.options, level)
+                )
+                try:
+                    adapter.output_limit(options, None, settings.max_output_tokens)
+                except ValueError:
+                    continue
+                choices.append(level)
+        result[ref] = {
+            "provider": provider,
+            "model": model,
+            "thinking_levels": choices,
+            "thinking_value": (
+                control.read(spec.validate_model(settings).model_dump())
+                if control and choices
+                else None
+            ),
+        }
+    return result

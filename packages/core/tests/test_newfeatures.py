@@ -24,13 +24,7 @@ class TestModelLanguageDetection(unittest.TestCase):
         return Config.from_dict(
             {
                 "language": {"source": "auto", "target": "zh"},
-                "llm": {
-                    "preset": "fake",
-                    "models": {
-                        "default_strong": {"provider": "default", "model": "p"},
-                        "default_cheap": {"provider": "default", "model": "f"},
-                    },
-                },
+                "llm": {"preset": "fake"},
                 "pipeline": {"book_understanding": False},
                 "paths": {"state_dir": state},
             }
@@ -112,13 +106,7 @@ class TestStandaloneExport(unittest.TestCase):
             config = Config.from_dict(
                 {
                     "language": {"source": "en", "target": "zh"},
-                    "llm": {
-                        "preset": "fake",
-                        "models": {
-                            "default_strong": {"provider": "default", "model": "p"},
-                            "default_cheap": {"provider": "default", "model": "f"},
-                        },
-                    },
+                    "llm": {"preset": "fake"},
                     "pipeline": {
                         "book_understanding": False,
                         "polish": False,
@@ -165,13 +153,7 @@ class TestRunAll(unittest.TestCase):
             cfg = Config.from_dict(
                 {
                     "language": {"source": "auto", "target": "zh"},
-                    "llm": {
-                        "preset": "fake",
-                        "models": {
-                            "default_strong": {"provider": "default", "model": "p"},
-                            "default_cheap": {"provider": "default", "model": "f"},
-                        },
-                    },
+                    "llm": {"preset": "fake"},
                     "pipeline": {
                         "review": True,
                         "review_autofix": False,

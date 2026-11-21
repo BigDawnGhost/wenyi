@@ -9,6 +9,7 @@ test("Web keeps environment-variable-only settings", async ({ page }) => {
   }));
   await fakeApi(page);
   await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
   await expect(page.getByLabel("API key environment variable", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Credential source", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("API key", { exact: true })).toHaveCount(0);

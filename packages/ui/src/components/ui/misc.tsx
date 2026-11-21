@@ -42,7 +42,7 @@ export function Dialog({
         <Primitive.Content
           {...(!description ? { "aria-describedby": undefined } : {})}
           className={cn(
-            "dialog-content fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh_-_2rem)] w-[calc(100%_-_2rem)] max-w-lg -translate-x-1/2 -translate-y-[round(nearest,50%,1px)] flex-col overflow-hidden rounded-2xl bg-card shadow-e4",
+            "dialog-content fixed left-1/2 top-1/2 z-50 flex max-h-[calc(100dvh_-_theme(spacing.8))] w-[calc(100%_-_theme(spacing.8))] max-w-lg -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl bg-card shadow-e4",
             className,
           )}
           onOpenAutoFocus={(event) => {
@@ -60,7 +60,12 @@ export function Dialog({
             if (target?.isConnected) target.focus();
           }}
           onEscapeKeyDown={(event) => {
-            if (closeDisabled) event.preventDefault();
+            // Radix observes Escape before the input does. An open editable
+            // combobox gets the first Escape to dismiss its own suggestions.
+            if (closeDisabled || (event.target instanceof HTMLInputElement &&
+              event.target.matches('[role="combobox"][aria-expanded="true"]'))) {
+              event.preventDefault();
+            }
           }}
           onPointerDownOutside={(event) => {
             // Dismissing a notification must not also dismiss the active form.

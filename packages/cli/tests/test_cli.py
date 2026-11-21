@@ -113,10 +113,7 @@ class TestCliConfig(unittest.TestCase):
     def test_translate_defaults_keep_config_switches(self):
         cfg = Config.from_dict(
             {
-                "llm": {
-                    "preset": "fake",
-                    "models": {"default_strong": {"provider": "default", "model": "p"}},
-                },
+                "llm": {"preset": "fake"},
                 "pipeline": {"polish": True},
                 "output": {"mono": True, "bilingual": True},
             }
@@ -159,10 +156,7 @@ class TestCliConfig(unittest.TestCase):
     def test_translate_flags_override_config_switches(self):
         cfg = Config.from_dict(
             {
-                "llm": {
-                    "preset": "fake",
-                    "models": {"default_strong": {"provider": "default", "model": "p"}},
-                },
+                "llm": {"preset": "fake"},
                 "pipeline": {"polish": True, "review": False},
                 "output": {"mono": True, "bilingual": False},
             }
@@ -212,10 +206,7 @@ class TestCliConfig(unittest.TestCase):
     def test_prepare_stops_before_translation(self):
         cfg = Config.from_dict(
             {
-                "llm": {
-                    "preset": "fake",
-                    "models": {"default_strong": {"provider": "default", "model": "p"}},
-                },
+                "llm": {"preset": "fake"},
             }
         )
         captured = {}
@@ -266,10 +257,7 @@ class TestCliConfig(unittest.TestCase):
     def test_translate_chapter_rejects_finish_options(self):
         cfg = Config.from_dict(
             {
-                "llm": {
-                    "preset": "fake",
-                    "models": {"default_strong": {"provider": "default", "model": "p"}},
-                },
+                "llm": {"preset": "fake"},
             }
         )
         with (
@@ -374,10 +362,7 @@ class TestCliConfig(unittest.TestCase):
     def test_review_command_runs_full_read_only_review(self):
         cfg = Config.from_dict(
             {
-                "llm": {
-                    "preset": "fake",
-                    "models": {"default_strong": {"provider": "default", "model": "p"}},
-                },
+                "llm": {"preset": "fake"},
                 "pipeline": {"glossary_note_workers": 1},
             }
         )
@@ -430,10 +415,7 @@ class TestCliConfig(unittest.TestCase):
     def test_review_autofix_option_overrides_config_and_reports_writeback(self):
         cfg = Config.from_dict(
             {
-                "llm": {
-                    "preset": "fake",
-                    "models": {"default_strong": {"provider": "default", "model": "p"}},
-                },
+                "llm": {"preset": "fake"},
                 "pipeline": {"review_autofix": False},
             }
         )
@@ -540,14 +522,7 @@ class TestCliConfig(unittest.TestCase):
         orchestrator.assert_not_called()
 
     def test_translate_expected_errors_are_printed_without_traceback(self):
-        cfg = Config.from_dict(
-            {
-                "llm": {
-                    "preset": "fake",
-                    "models": {"default_strong": {"provider": "default", "model": "p"}},
-                }
-            }
-        )
+        cfg = Config.from_dict({"llm": {"preset": "fake"}})
 
         for error in (
             MinerUError("未设置 MINERU_API_KEY"),

@@ -1013,9 +1013,7 @@ export interface components {
             /** Providers */
             providers: string[];
             /** Operations */
-            operations: {
-                [key: string]: unknown;
-            }[];
+            operations: components["schemas"]["OperationSpec"][];
         };
         /** ChapterDigest */
         ChapterDigest: {
@@ -1247,6 +1245,10 @@ export interface components {
             default_template: "标准翻译";
             /** Revision */
             revision: number;
+            /** Registered Models */
+            registered_models: {
+                [key: string]: components["schemas"]["RegisteredModel"];
+            };
         };
         /** GlossaryImport */
         GlossaryImport: {
@@ -1321,6 +1323,8 @@ export interface components {
         };
         /** ModelPingRequest */
         ModelPingRequest: {
+            /** Connection */
+            connection?: string | null;
             /**
              * Timeout
              * @default 30
@@ -1351,6 +1355,43 @@ export interface components {
             status_code?: number | null;
             /** Latency Ms */
             latency_ms?: number | null;
+        };
+        /**
+         * OperationSpec
+         * @description Declare routing and workflow reachability together.
+         */
+        OperationSpec: {
+            /** Id */
+            id: string;
+            /** Description */
+            description: string;
+            /**
+             * Workflows
+             * @default [
+             *       "translate"
+             *     ]
+             */
+            workflows: string[];
+            /**
+             * Flags
+             * @default []
+             */
+            flags: string[];
+            /**
+             * Review
+             * @default false
+             */
+            review: boolean;
+            /**
+             * Resumable Conversation
+             * @default false
+             */
+            resumable_conversation: boolean;
+            /**
+             * Protocol Version
+             * @default 1
+             */
+            protocol_version: number;
         };
         /** PDFCapabilities */
         PDFCapabilities: {
@@ -1474,7 +1515,7 @@ export interface components {
             editable: boolean;
             /** Registered Models */
             registered_models: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["RegisteredModel"];
             };
         };
         /** ProjectCreate */
@@ -1621,6 +1662,17 @@ export interface components {
             position: number;
             /** Revision */
             revision: string;
+        };
+        /** RegisteredModel */
+        RegisteredModel: {
+            /** Provider */
+            provider: string;
+            /** Model */
+            model: string;
+            /** Thinking Levels */
+            thinking_levels: string[];
+            /** Thinking Value */
+            thinking_value: string | null;
         };
         /** ResolveConflict */
         ResolveConflict: {

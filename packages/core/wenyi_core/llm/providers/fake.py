@@ -16,8 +16,8 @@ class FakeOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
 
 
-def preset_models() -> dict[str, ResolvedModel[FakeOptions]]:
-    return {tier: ResolvedModel("fake", FakeOptions()) for tier in ("strong", "cheap", "fast")}
+def preset_model() -> ResolvedModel[FakeOptions]:
+    return ResolvedModel("fake", FakeOptions())
 
 
 class FakeProvider(ProviderAdapter):
@@ -60,26 +60,18 @@ class FakeClient(LLMClient):
         max_tokens: int | None = None,
     ) -> str:
         from ..operations import require_operation
-        from ..routing import model_route
+        from ..routing import operation_route
 
         require_operation(operation)
         route = self.routes[operation]
         if max_tokens is not None:
-            route = model_route(
-                self.config,
-                operation,
-                route.profile,
-                origin=route.origin,
-                tier=route.tier,
-                output_hint=max_tokens,
-            )
-        tier = route.tier or "direct"
+            route = operation_route(self.config, operation, output_hint=max_tokens)
         self.calls.append(
             {
                 "messages": [dict(message) for message in messages],
                 "operation": operation,
                 "stage": operation,
-                "tier": tier,
+                "profile": route.profile,
                 "json_mode": json_mode,
                 "max_tokens": route.max_output_tokens,
                 "model": route.model,
@@ -87,5 +79,5 @@ class FakeClient(LLMClient):
             }
         )
         if self.handler is not None:
-            return self.handler(messages, tier, json_mode)
+            return self.handler(messages, operation, json_mode)
         return "[]" if json_mode else ""

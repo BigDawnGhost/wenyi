@@ -1,5 +1,17 @@
 import { expect, test } from "@playwright/test";
-import { fakeApi, project } from "../../../packages/ui/sandbox/fixtures";
+import { fakeApi, globalConfiguration, project } from "../../../packages/ui/sandbox/fixtures";
+
+async function saveProviderSettings(page: import("@playwright/test").Page) {
+  let saved = globalConfiguration;
+  await page.route("**/api/settings", async route => {
+    if (route.request().method() === "PUT") {
+      const { yaml } = route.request().postDataJSON();
+      saved = { ...saved, yaml, effective: JSON.parse(yaml), revision: saved.revision + 1 };
+    }
+    await route.fulfill({ json: saved });
+  });
+  return () => saved;
+}
 
 for (const chinese of [false, true]) {
   for (const populated of [false, true]) {
@@ -29,7 +41,7 @@ for (const chinese of [false, true]) {
 test("settings category links survive reload and unknown categories fall back to General", async ({ page }) => {
   await fakeApi(page);
   for (const [path, title] of [
-    ["providers", "Models & connections"], ["defaults", "Default models"], ["advanced", "Advanced"],
+    ["providers", "Models & connections"], ["defaults", "Stage models"], ["advanced", "Advanced"],
     ["interface", "General"], ["not-a-category", "General"],
   ]) {
     await page.goto(`/settings/${path}`);
@@ -43,21 +55,17 @@ test("settings category links survive reload and unknown categories fall back to
   }
 });
 
-test("structured, registry ID and YAML drafts survive category switches", async ({ page }) => {
+test("structured, model name and YAML drafts survive category switches", async ({ page }) => {
   await fakeApi(page);
+  const saved = await saveProviderSettings(page);
   await page.goto("/settings/workflow");
   await page.getByLabel("Polishing", { exact: true }).uncheck();
   await page.getByRole("link", { name: "Models & connections", exact: true }).click();
-  await page.getByLabel("Model ID", { exact: true }).fill("pending model");
-  await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
-  await expect(page.getByRole("button", { name: "Save configuration", exact: true })).toBeDisabled();
-  await page.getByRole("link", { name: "General", exact: true }).click();
-  await expect(page).toHaveURL("/settings");
-  await page.getByRole("link", { name: "Apply or discard the ID edits before saving.", exact: true }).click();
-  await expect(page).toHaveURL("/settings/providers");
-  await expect(page.getByLabel("Model ID", { exact: true })).toHaveValue("pending model");
-  await page.getByLabel("Model ID", { exact: true }).fill("pending_model");
-  await page.getByLabel("Model ID", { exact: true }).press("Enter");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+  await page.getByLabel("Model name", { exact: true }).fill("pending_model");
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(saved().effective.pipeline.polish).toBe(true);
   await page.getByRole("link", { name: "Advanced", exact: true }).click();
   const yaml = page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true });
   await expect(yaml).toBeVisible();
@@ -68,7 +76,8 @@ test("structured, registry ID and YAML drafts survive category switches", async 
   await page.getByRole("link", { name: /Advanced YAML has unvalidated changes/ }).click();
   await expect(page).toHaveURL("/settings/advanced");
   await expect(yaml).toHaveValue(draft);
-  await expect(page.getByLabel("Model ID", { exact: true })).toHaveValue("pending_model");
+  expect(draft).toContain('"deepseek/pending_model"');
+  expect(JSON.parse(draft.split("\n# unsaved draft")[0]).pipeline.polish).toBe(false);
 });
 
 test("compact desktop dashboard cards and settings categories remain scrollable without overflow", async ({ page }) => {
@@ -91,16 +100,21 @@ test("compact desktop dashboard cards and settings categories remain scrollable 
 
 test("history navigation dismisses dropdowns without discarding same-page drafts", async ({ page }) => {
   await fakeApi(page);
+  await saveProviderSettings(page);
   await page.goto("/settings/workflow");
   await page.getByLabel("Polishing", { exact: true }).uncheck();
   await page.getByRole("link", { name: "Models & connections", exact: true }).click();
-  await page.getByLabel("Model ID", { exact: true }).fill("pending model");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+  await page.getByLabel("Model name", { exact: true }).fill("editor");
+  await page.getByRole("button", { name: "Save provider" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("link", { name: "General", exact: true }).click();
   await expect(page).toHaveURL("/settings");
   await expect(page.getByLabel("Interface language", { exact: true })).toBeVisible();
-  await page.getByRole("link", { name: "Apply or discard the ID edits before saving.", exact: true }).click();
+  await page.getByRole("link", { name: "Models & connections", exact: true }).click();
   await expect(page.getByRole("link", { name: "Models & connections", exact: true })).toHaveAttribute("aria-current", "page");
-  await page.locator("#provider-models").getByLabel("API provider", { exact: true }).click();
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+  await page.getByLabel("API provider", { exact: true }).click();
   await expect(page.getByRole("listbox")).toBeVisible();
   await page.goBack();
   await expect(page).toHaveURL("/settings");
@@ -111,5 +125,6 @@ test("history navigation dismisses dropdowns without discarding same-page drafts
   await page.goForward();
   await expect(page).toHaveURL("/settings/providers");
   await expect(page.getByRole("listbox")).toHaveCount(0);
-  await expect(page.getByLabel("Model ID", { exact: true })).toHaveValue("pending model");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+  await expect(page.getByLabel("Model name", { exact: true })).toHaveValue("editor");
 });
