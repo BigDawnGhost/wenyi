@@ -18,8 +18,6 @@ from bs4 import BeautifulSoup
 
 from wenyi_core.markup import _epub_native
 
-from .export_view import AssembleStore
-
 # File kinds that travel inside the source container and must be packaged beside the
 # export. XHTML/OPF/NCX stay out so the whole book is never resident in memory.
 _MEDIA_SUFFIXES = frozenset(
@@ -244,19 +242,3 @@ def _embed_html_resources(
         inline=True,
     )
     return rewritten
-
-
-def _template_resource_source(
-    store: AssembleStore,
-    manifest: dict,
-    source_path: str,
-) -> str:
-    """Return the HTML file whose directory resolves template media references."""
-    if manifest.get("fmt") == "pdf":
-        from ..ingest.pdf_reader import pdf_cache_html_path
-
-        source_hash = manifest.get("source_sha256")
-        if not isinstance(source_hash, str):
-            raise ValueError("PDF manifest has no valid source_sha256")
-        return pdf_cache_html_path(store.source_dir, source_hash)
-    return source_path

@@ -2,9 +2,9 @@
 
 import os
 import traceback
-from pathlib import Path
 
 import pytest
+from wenyi_core.assemble.epub_package import EpubChapter, EpubTocEntry, write_epub
 from wenyi_core.config import Config
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
@@ -17,13 +17,22 @@ from tests.fake_llm import routing_handler
 
 
 def _conversion(monkeypatch, seen):
-    monkeypatch.setattr("wenyi_core.ingest.pdf_reader._check_deps", lambda: None)
-
-    def convert(source, output, *, api_token):
+    def convert(source, output, *, api_token, title, lang):
         seen.append(api_token)
-        Path(output).write_text("<html><body><p>Sample source text.</p></body></html>")
+        write_epub(
+            output,
+            title=title,
+            lang=lang,
+            chapters=[
+                EpubChapter(
+                    "source.xhtml", title, "<html><body><p>Sample source text.</p></body></html>"
+                )
+            ],
+            toc=[EpubTocEntry("source.xhtml", title)],
+            resources=[],
+        )
 
-    monkeypatch.setattr("wenyi_core.ingest.pdf_to_html.convert_pdf_to_html", convert)
+    monkeypatch.setattr("wenyi_core.ingest.pdf_reader.convert_pdf_to_epub", convert)
 
 
 def test_load_document_resolves_only_uncached_pdf(monkeypatch, tmp_path):
@@ -54,7 +63,6 @@ def test_load_document_resolves_only_uncached_pdf(monkeypatch, tmp_path):
 @pytest.mark.parametrize("token", [None, ""])
 def test_resolved_absence_does_not_reread_environment(monkeypatch, tmp_path, token):
     monkeypatch.setenv("MINERU_API_KEY", "ambient")
-    monkeypatch.setattr("wenyi_core.ingest.pdf_reader._check_deps", lambda: None)
     source = tmp_path / "book.pdf"
     source.write_bytes(b"fake pdf")
     with pytest.raises(MinerUError, match="MINERU_API_KEY"):
@@ -68,7 +76,6 @@ def test_resolved_absence_does_not_reread_environment(monkeypatch, tmp_path, tok
 
 
 def test_resolver_error_never_exposes_secret(monkeypatch, tmp_path):
-    monkeypatch.setattr("wenyi_core.ingest.pdf_reader._check_deps", lambda: None)
     source = tmp_path / "book.pdf"
     source.write_bytes(b"fake pdf")
 
@@ -108,12 +115,11 @@ def test_missing_token_fails_safely_before_conversion(monkeypatch, tmp_path, exp
         monkeypatch.delenv("MINERU_API_KEY", raising=False)
     else:
         monkeypatch.setenv("MINERU_API_KEY", "must-not-be-used")
-    monkeypatch.setattr("wenyi_core.ingest.pdf_reader._check_deps", lambda: None)
 
     def convert(*args, **kwargs):
         pytest.fail("Missing credentials must not invoke conversion")
 
-    monkeypatch.setattr("wenyi_core.ingest.pdf_to_html.convert_pdf_to_html", convert)
+    monkeypatch.setattr("wenyi_core.ingest.pdf_reader.convert_pdf_to_epub", convert)
     source = tmp_path / "book.pdf"
     source.write_bytes(b"fake pdf")
     with pytest.raises(MinerUError, match="API token not provided and MINERU_API_KEY not set"):
@@ -131,20 +137,19 @@ def test_conversion_errors_never_expose_credentials(
     token = "private-token\nwith-tab\tand-quote'"
     ambient = token if credential_source == "environment" else "ambient-unused"
     monkeypatch.setenv("MINERU_API_KEY", ambient)
-    monkeypatch.setattr("wenyi_core.ingest.pdf_reader._check_deps", lambda: None)
     source = tmp_path / "book.pdf"
     source.write_bytes(b"fake pdf")
     cache = tmp_path / "cache"
     seen = []
 
-    def convert(source, output, *, api_token):
+    def convert(source, output, *, api_token, **_):
         seen.append(api_token)
         effective = os.getenv("MINERU_API_KEY") if api_token is None else api_token
         assert effective is not None
         reflected = repr(effective.encode()) if escaped else effective
         raise error_type(f"Illegal header value: {reflected}")
 
-    monkeypatch.setattr("wenyi_core.ingest.pdf_to_html.convert_pdf_to_html", convert)
+    monkeypatch.setattr("wenyi_core.ingest.pdf_reader.convert_pdf_to_epub", convert)
     from wenyi_core.ingest.pdf_reader import read_pdf
 
     kwargs = {}
@@ -166,7 +171,7 @@ def test_conversion_errors_never_expose_credentials(
     assert repr(token.encode()) not in rendered
     assert "private-token" not in caplog.text
     assert os.environ["MINERU_API_KEY"] == ambient
-    assert not list(cache.rglob("*.html"))
+    assert not list(cache.rglob("*.epub"))
 
 
 def test_parse_artifact_skips_resolver_on_reuse(monkeypatch, tmp_path):

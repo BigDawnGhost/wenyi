@@ -51,6 +51,7 @@ def write_epub(
     resources: list[EpubResource],
     about: AboutPage | None = None,
     styled_bilingual: bool = False,
+    split_nested_toc: bool = False,
 ) -> None:
     """Publish a finished EPUB 3 atomically."""
     state = json.dumps(
@@ -62,6 +63,7 @@ def write_epub(
             "toc": [asdict(entry) for entry in toc],
             "about": about.render().decode("utf-8") if about is not None else None,
             "bilingual_css": _BILINGUAL_CSS if styled_bilingual else None,
+            "split_nested_toc": split_nested_toc,
         },
         ensure_ascii=False,
         separators=(",", ":"),

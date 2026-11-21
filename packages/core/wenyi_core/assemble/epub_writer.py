@@ -19,7 +19,6 @@ from wenyi_core.assemble.html_renderer import (
 from wenyi_core.assemble.html_resources import (
     _IMAGE_EXTENSION_BY_TYPE,
     _package_html_resources,
-    _template_resource_source,
 )
 from wenyi_core.assemble.writer_common import (
     _ch_title,
@@ -219,8 +218,6 @@ def _build_epub_from_html_templates(
     about: AboutPage | None = None,
 ) -> str:
     """Build EPUB from rendered HTML templates and package their media resources."""
-    from .writer_common import supports_pdf_export
-
     manifest = store.load_manifest()
     target_lang_code = _manifest_target_lang(manifest)
     raw_title = manifest.get("title", "translated")
@@ -232,18 +229,12 @@ def _build_epub_from_html_templates(
     lang = _epub_lang(target_lang_code)
     raw_meta = manifest.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
-    source_format = manifest.get("fmt")
-    prefer_native = source_format == "html" or (
-        source_format == "pdf" and not supports_pdf_export(manifest)
-    )
     head_html = meta.get("head_html", "")
     head_html = head_html if isinstance(head_html, str) else ""
     # Carry inline styles, not unbundled external head resources or source scripts.
     head_html = "".join(
         str(style) for style in BeautifulSoup(head_html, "html.parser").find_all("style")
     )
-    resource_source = _template_resource_source(store, manifest, source_path)
-
     chapters: list[EpubChapter] = []
     toc: list[EpubTocEntry] = []
     packaged_assets: dict[str, tuple[str, bytes]] = {}
@@ -256,11 +247,11 @@ def _build_epub_from_html_templates(
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
-            prefer_native=prefer_native,
+            prefer_native=True,
         )
         rendered, assets = _package_html_resources(
             rendered,
-            source_dir=os.path.dirname(os.path.abspath(resource_source)),
+            source_dir=os.path.dirname(os.path.abspath(source_path)),
             href_prefix="assets",
         )
         packaged_assets.update(assets)

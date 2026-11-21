@@ -1,8 +1,6 @@
-"""Golden parity for the native subset of standalone HTML and MinerU backfill."""
+"""Golden parity for the native subset of standalone HTML backfill."""
 
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 from bs4 import BeautifulSoup
@@ -10,8 +8,6 @@ from wenyi_core.alignment import target_digest
 from wenyi_core.assemble import html_renderer
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.ingest.html_reader import annotate_html_document, read_html
-from wenyi_core.ingest.pdf_reader import pdf_cache_html_path, read_pdf
-from wenyi_core.ingest.source_hash import source_sha256
 from wenyi_core.markup import _epub_native
 from wenyi_core.markup.contracts import ANNOTATION_META_KEY, HTML_ATTRIBUTE_META_KEY
 from wenyi_core.models.document import Segment
@@ -146,27 +142,18 @@ def test_standalone_export_uses_native_and_matches_old_dom(
 
 
 @pytest.mark.parametrize("order", ["source_first", "target_first"])
-def test_cached_mineru_uses_native_with_media_and_nested_pairs(tmp_path, monkeypatch, order):
-    source = tmp_path / "sample.pdf"
-    source.write_bytes(b"synthetic PDF identity; unused on cache hit")
+def test_html_uses_native_with_media_and_nested_pairs(tmp_path, monkeypatch, order):
+    source = tmp_path / "sample.html"
     store = FileStorage(str(tmp_path / "state"))
-    cache = Path(pdf_cache_html_path(store.source_dir, source_sha256(str(source))))
-    cache.parent.mkdir(parents=True)
-    cache.write_text(
+    source.write_text(
         '<html><body><h1>Heading</h1><p id="media"><img src="edge.png"/>Left '
         '<img src="inside.png"/> right</p><ul><li class="entry">Item</li></ul>'
         "<blockquote>Quote</blockquote><p>Untranslated</p></body></html>",
         encoding="utf-8",
     )
     for name in ("edge.png", "inside.png"):
-        (cache.parent / name).write_bytes(name.encode())
-    doc = read_pdf(
-        str(source),
-        "en",
-        "zh",
-        cache_dir=store.source_dir,
-        mineru_token_resolver=lambda: pytest.fail("cache hit contacted the service"),
-    )
+        (source.parent / name).write_bytes(name.encode())
+    doc = read_html(str(source), "en", "zh", preserve_inline_markup=False)
     store.init_from_document(doc)
     chapter = doc.chapters[0]
     for segment in chapter.segments:

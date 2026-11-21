@@ -274,6 +274,8 @@ def build() -> None:
             "wenyi-desktop",
             "--collect-data",
             "wenyi_core",
+            "--collect-data",
+            "latex2mathml",
             "--collect-submodules",
             "wenyi_core.llm.providers",
             "--collect-submodules",

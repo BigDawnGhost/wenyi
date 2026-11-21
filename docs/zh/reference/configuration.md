@@ -428,7 +428,7 @@ Autofix 发布折叠后的 Review 修订，并可对更新后的文本核查、�
 | `pipeline.babeldoc_timeout` | `600` | 抽取／回填 HTTP 超时秒数。 |
 | `pipeline.babeldoc_pages` | 不设置（`null`） | 可选的 1-based 页码，如 `"15"`、`"6-8"`；不设置即全书。 |
 
-MinerU 将 PDF 转成 HTML，未缓存的导入需要单独凭据。
+MinerU 将 PDF 转成原文 EPUB，未缓存的导入需要单独凭据。
 BabelDOC 是可选的独立 AGPL 服务，用于尽量保留 PDF 版式。
 导出资格与默认格式由保存的解析身份决定；修改当前设置不会转换已有项目的后端。
 选择后端时请查阅 [PDF 要求与限制](formats.md#pdf)，而不是模型路由表。

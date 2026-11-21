@@ -6,10 +6,13 @@ epub_writer.
 
 from __future__ import annotations
 
+import os
 from typing import Literal
 
 from ..i18n.policy.models import PolicyContext, PolicyPlan
 from ..i18n.policy.resolver import resolve_policy
+from ..ingest.pdf_reader import cached_epub_source, pdf_cache_epub_path
+from ..models.document import MINERU_EPUB_DIGEST, uses_epub_template
 from .about import AboutPage
 from .docx_writer import _assemble_docx
 from .epub_writer import (
@@ -28,7 +31,7 @@ from .writer_common import (
     _manifest_target_lang,
     default_output_format,
     output_backend,
-    supports_pdf_export,
+    validate_pdf_source_format,
 )
 
 __all__ = ["assemble"]
@@ -62,6 +65,7 @@ def assemble(
         raise ValueError(f"Unsupported output format: {out_format} (supported: {supported})")
 
     m = store.load_manifest()
+    validate_pdf_source_format(m)
     if out_format is None:
         out_format = default_output_format(m)
     backend = output_backend(m, out_format)
@@ -92,6 +96,18 @@ def assemble(
         else ExportViewStore(store, plan=language_policy)
     )
     m = view.load_manifest()
+    template_source = source_path
+    meta = m.get("meta") or {}
+    protected_paths = {os.path.realpath(source_path)}
+    if MINERU_EPUB_DIGEST in meta:
+        cached = pdf_cache_epub_path(store.source_dir, m["source_sha256"])
+        protected_paths.add(os.path.realpath(cached))
+        if out_format in {"epub", "html"}:
+            template_source = cached_epub_source(
+                store.source_dir, m["source_sha256"], meta[MINERU_EPUB_DIGEST]
+            )
+    if out_path is not None and os.path.realpath(out_path) in protected_paths:
+        raise ValueError("--out must not point at the source file; choose a different output path")
     # EPUB and PDF writers project all chapters before opening output or making
     # a bridge request. Prewarming their view would deep-copy the same chapters twice.
     if out_format not in {"epub", "pdf"}:
@@ -110,7 +126,7 @@ def assemble(
         _ensure_parent_dir(out_path)
         return _assemble_html(
             view,
-            source_path,
+            template_source,
             out_path,
             bilingual=bilingual,
             order=order,
@@ -151,16 +167,15 @@ def assemble(
         if about_page
         else None
     )
-    if m["fmt"] == "epub":
+    if uses_epub_template(m["fmt"], meta):
         writer = _assemble_epub
-    elif m["fmt"] == "html" or (m["fmt"] == "pdf" and not supports_pdf_export(m)):
+    elif m["fmt"] == "html":
         writer = _build_epub_from_html_templates
     else:
-        # BabelDOC snapshots have paragraph IDs, not MinerU HTML templates or anchors.
         writer = _build_epub_from_chapters
     return writer(
         view,
-        source_path,
+        template_source,
         out_path,
         bilingual=bilingual,
         order=order,
