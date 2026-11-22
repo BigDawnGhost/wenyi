@@ -15,9 +15,11 @@ from rich.console import Console
 from typer.core import TyperGroup
 from wenyi_core.config import Config
 from wenyi_core.i18n.genres import DEFAULT_GENRE
+from wenyi_core.observability import current_run_id
 
 from ..logging_config import CliLoggingError, invocation_logging
 from .context import CommandContext, current_context
+from .error_pointer import unexpected_error_message
 
 
 class PromptGenre(str, Enum):
@@ -87,8 +89,10 @@ def initializing_group(console: Console) -> type[TyperGroup]:
                 raise SystemExit(1) from None
             from wenyi_core.llm.limits import RequestStopped
 
+            run_id: str | None = None
             try:
                 with invocation_logging(config_path):
+                    run_id = current_run_id()
                     if explicit_path is None:
                         try:
                             Config.create_default_file(config_path)
@@ -102,6 +106,11 @@ def initializing_group(console: Console) -> type[TyperGroup]:
                         raise SystemExit(1) from None
             except CliLoggingError as error:
                 typer.echo(f"Error: {error}", err=True)
+                raise SystemExit(1) from None
+            except Exception as error:
+                # Unexpected failure: keep the traceback in the diagnostic log and
+                # show a concise pointer instead of leaking it to the console.
+                typer.echo(unexpected_error_message(error, config_path, run_id), err=True)
                 raise SystemExit(1) from None
 
     return ConfigInitializingGroup
