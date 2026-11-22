@@ -676,6 +676,48 @@ class TestExtractor(unittest.TestCase):
         self.assertNotIn("Brothers gang", message)
         self.assertNotIn("兄弟会", message)
 
+    def test_keeps_negated_comparison_notes_that_affirm_target(self):
+        payload = json.dumps(
+            {
+                "terms": [
+                    {
+                        "source": "春",
+                        "target": "Spring",
+                        "type": "term",
+                        "note": "Usage is not different from Spring",
+                    },
+                    {
+                        "source": "夏",
+                        "target": "Summer",
+                        "type": "term",
+                        "note": "This term isn't distinct from Summer",
+                    },
+                    {
+                        "source": "秋",
+                        "target": "Autumn",
+                        "type": "term",
+                        "note": "Sense is no different from Autumn, and not unlike Autumn",
+                    },
+                    {
+                        "source": "冬",
+                        "target": "冬天",
+                        "type": "term",
+                        "note": "此处含义并非不同于冬天",
+                    },
+                    {
+                        "source": "冰",
+                        "target": "Ice",
+                        "type": "term",
+                        "note": "Not different from frost; rather than Ice",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        )
+        extractor = GlossaryExtractor(FakeClient(handler=lambda *args: payload), _cfg())
+        result = extractor.extract("春、夏、秋、冬和冰。", "Text.", [])
+        self.assertEqual([t.source for t in result], ["春", "夏", "秋", "冬"])
+
 
 if __name__ == "__main__":
     unittest.main()

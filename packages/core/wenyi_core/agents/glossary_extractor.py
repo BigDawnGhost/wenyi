@@ -47,6 +47,8 @@ _EN_CONTRADICTION_PREFIX = (
     r"never\s+(?:use|translate\s+as|render\s+as)|"
     r"avoid|not)"
 )
+_EN_CONTRAST_PREDICATES = re.compile(r"^(?i:distinct\s+from|different\s+from|unlike)\b")
+_EN_NEGATED_CONTRAST = re.compile(r"(?i:(?:\b(?:not|no|never)|n['’]t)\s+)$")
 _EN_TARGET_BOUNDARY = (
     r"(?:$|\s*[,.;:!?)\]}—–/]|"
     r"\s+(?:when|while|because|since|although|though|but|however|instead)\b)"
@@ -54,6 +56,8 @@ _EN_TARGET_BOUNDARY = (
 _ZH_CONTRADICTION_PREFIX = (
     r"(?:区别于|不同于|勿译为|不要译为|不可译为|勿翻为|不要翻为|并非|(?<!是)不是|而非)"
 )
+_ZH_CONTRAST_PREDICATES = re.compile(r"^(?:区别于|不同于)")
+_ZH_NEGATED_CONTRAST = re.compile(r"(?:并非|不是|毫不|绝不|并无|不)$")
 _ZH_TARGET_BOUNDARY = r"(?:$|\s*[，。、；：！？,.!?;:)）\]】—–/]|(?:而|但|却))"
 
 
@@ -74,12 +78,22 @@ def _note_contradicts_target(target: str, note: str) -> bool:
         rf"\b(?i:{_EN_CONTRADICTION_PREFIX})\s+(?:(?i:the|a|an)\s+)?"
         rf"(?:{quoted}(?!['’]s\b)|(?i:{escaped})(?={_EN_TARGET_BOUNDARY}))"
     )
-    if en_pattern.search(cleaned_note):
+    for match in en_pattern.finditer(cleaned_note):
+        if _EN_CONTRAST_PREDICATES.match(match.group(0)) and _EN_NEGATED_CONTRAST.search(
+            cleaned_note[: match.start()]
+        ):
+            continue
         return True
     zh_pattern = re.compile(
         rf"{_ZH_CONTRADICTION_PREFIX}\s*(?:{quoted}|(?i:{escaped})(?={_ZH_TARGET_BOUNDARY}))"
     )
-    return zh_pattern.search(cleaned_note) is not None
+    for match in zh_pattern.finditer(cleaned_note):
+        if _ZH_CONTRAST_PREDICATES.match(match.group(0)) and _ZH_NEGATED_CONTRAST.search(
+            cleaned_note[: match.start()]
+        ):
+            continue
+        return True
+    return False
 
 
 def _is_shadowed_or_unbounded_source(
