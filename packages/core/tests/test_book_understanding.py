@@ -435,20 +435,6 @@ def test_synopsis_cache_tracks_the_model_configuration(tmp_path):
     runtime.synopsizer.book_synopsis.assert_called_once()
 
 
-def test_glossary_change_invalidates_synopsis_cache(tmp_path):
-    service, store, runtime = _service(tmp_path)
-    service.ensure_understanding(store)
-    term = GlossaryTerm(source="Citadel", target="城堡", type="place", note="Location")
-    store.upsert_term(term, chapter=0)
-    runtime.synopsizer.reset_mock()
-    service.ensure_understanding(store)
-    runtime.synopsizer.digest_chapter.assert_not_called()
-    runtime.synopsizer.book_synopsis.assert_called_once_with(
-        ["Chapter digest.", "Chapter digest."], "Restrained.", glossary=store.all_terms()
-    )
-    runtime.analyzer.style_brief.assert_called_with(store.load_analysis(), terms=store.all_terms())
-
-
 @pytest.mark.parametrize("change", ["version", "source"])
 @pytest.mark.parametrize("enabled", [False, True])
 def test_full_coverage_cache_requires_version_and_source_hash(tmp_path, change, enabled):
@@ -517,7 +503,7 @@ def test_legacy_sampled_cache_is_rebuilt_without_touching_targets_or_terms(tmp_p
     )
     analysis = store.load_analysis()
     assert analysis is not None
-    assert analysis["book_synopsis_meta"]["version"] == 2
+    assert analysis["book_synopsis_meta"]["version"] == 3
     assert store.all_terms() == terms
     assert all(store.load_chapter(i).segments[0].target == "Saved target." for i in range(2))
 
@@ -585,3 +571,111 @@ def test_analysis_uses_digest_context_and_resumes_paid_result(tmp_path, enabled)
     agent._ask_json = Mock(return_value={})
     agent.analyze("Source prose.", chapter_digests=["Full digest."])
     assert "Full digest." in agent._ask_json.call_args.args[1]
+
+
+def test_glossary_growth_aliases_and_unrelated_terms_reuse_synopsis_on_resume(tmp_path):
+    service, store, runtime = _service(tmp_path)
+    runtime.synopsizer.digest_chapter.return_value = "Alice meets an envoy."
+    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="female"))
+    store.upsert_term(GlossaryTerm("Unrelated", "无关", type="place"))
+    assert service.ensure_understanding(store) == "Whole-book synopsis."
+    # Adding terms, notes, aliases, gender changes, or editing unmatched terms all reuse the synopsis.
+    store.upsert_term(GlossaryTerm("Bob", "鲍勃", type="person"))
+    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="male", note="Lead."))
+    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", aliases=["Ally"]))
+    store.resolve_term("Unrelated", "其他地方")
+    store.delete_term("Unrelated")
+    runtime.synopsizer.reset_mock()
+    assert service.ensure_understanding(store) == "Whole-book synopsis."
+    runtime.synopsizer.book_synopsis.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "revise",
+    [
+        lambda store: store.resolve_term("Alice", "艾丽斯"),
+        lambda store: (
+            store.delete_term("Alice"),
+            store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="place")),
+        ),
+        lambda store: store.delete_term("Alice"),
+    ],
+    ids=["target", "type", "removed"],
+)
+def test_changed_or_removed_digest_matched_mapping_invalidates_cache(tmp_path, revise):
+    service, store, runtime = _service(tmp_path)
+    runtime.synopsizer.digest_chapter.return_value = "Alice arrives."
+    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="female"))
+    service.ensure_understanding(store)
+    revise(store)
+    runtime.synopsizer.reset_mock()
+    runtime.synopsizer.book_synopsis.return_value = "Revised synopsis."
+    assert service.ensure_understanding(store) == "Revised synopsis."
+    runtime.synopsizer.digest_chapter.assert_not_called()
+    runtime.synopsizer.book_synopsis.assert_called_once_with(
+        ["Alice arrives.", "Alice arrives."], "Restrained.", glossary=store.all_terms()
+    )
+    runtime.analyzer.style_brief.assert_called_with(store.load_analysis(), terms=store.all_terms())
+
+
+def test_removing_only_matching_alias_invalidates_synopsis_cache(tmp_path):
+    service, store, runtime = _service(tmp_path)
+    runtime.synopsizer.digest_chapter.return_value = "Ally arrives."
+    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", aliases=["Ally"]))
+    assert service.ensure_understanding(store) == "Whole-book synopsis."
+    # Replacing the term without the alias drops it from digest-matched mappings.
+    store.delete_term("Alice")
+    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person"))
+    runtime.synopsizer.reset_mock()
+    runtime.synopsizer.book_synopsis.return_value = "Revised synopsis."
+    assert service.ensure_understanding(store) == "Revised synopsis."
+    runtime.synopsizer.book_synopsis.assert_called_once()
+
+
+def test_unrelated_route_change_reuses_synopsis_but_synopsis_thinking_change_invalidates(tmp_path):
+    ref = "deepseek/deepseek-flash"
+    service, store, runtime = _service(tmp_path)
+    runtime.config.llm = Config.from_dict(
+        {
+            "llm": {
+                "preset": "deepseek",
+                "routes": {
+                    "synopsis.book": {"model": ref, "thinking": "off"},
+                    "translation.body": {"model": ref, "thinking": "off"},
+                },
+            }
+        }
+    ).llm
+    assert service.ensure_understanding(store) == "Whole-book synopsis."
+
+    # Changing another operation's model or thinking effort reuses the synopsis.
+    runtime.config.llm = Config.from_dict(
+        {
+            "llm": {
+                "preset": "deepseek",
+                "routes": {
+                    "synopsis.book": {"model": ref, "thinking": "off"},
+                    "translation.body": {"model": ref, "thinking": "max"},
+                },
+            }
+        }
+    ).llm
+    runtime.synopsizer.reset_mock()
+    assert service.ensure_understanding(store) == "Whole-book synopsis."
+    runtime.synopsizer.book_synopsis.assert_not_called()
+
+    # Changing synopsis.book's own thinking effort invalidates the synopsis cache.
+    runtime.config.llm = Config.from_dict(
+        {
+            "llm": {
+                "preset": "deepseek",
+                "routes": {
+                    "synopsis.book": {"model": ref, "thinking": "max"},
+                    "translation.body": {"model": ref, "thinking": "max"},
+                },
+            }
+        }
+    ).llm
+    runtime.synopsizer.book_synopsis.return_value = "Deeper synopsis."
+    assert service.ensure_understanding(store) == "Deeper synopsis."
+    runtime.synopsizer.book_synopsis.assert_called_once()

@@ -12,12 +12,31 @@ from ...agents.synopsis import Synopsizer
 from ...config import Config
 from ...events import ProgressFn
 from ...i18n.policy.models import content_hash
+from ...llm.routing import inference_snapshot
 from ...models.document import Chapter
+from ...models.glossary import GlossaryTerm
 from ...storage.protocol import Storage
 from ..run.runtime_usage import UsageCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 _DIGEST_VERSION = 2
+_SYNOPSIS_VERSION = 3
+_SYNOPSIS_OPERATION = "synopsis.book"
+
+
+def _synopsis_mappings(
+    store: Storage, terms: list[GlossaryTerm], digests: list[str]
+) -> dict[str, list[str]]:
+    """Keep only the rendered ``[target, type]`` fields for terms matched in chapter digests."""
+    matched = store.terms_in(terms, "\n".join(digests))
+    return {term.source: [term.target, term.type] for term in matched}
+
+
+def _mappings_unchanged(saved: object, current: dict[str, list[str]]) -> bool:
+    """Accept added terms and non-mapping edits, not changed target/type or removed digest terms."""
+    return isinstance(saved, dict) and all(
+        current.get(source) == fields for source, fields in saved.items()
+    )
 
 
 def _digest_complete(chapter: Chapter) -> bool:
@@ -64,7 +83,7 @@ class BookUnderstandingService:
 
         analysis = store.load_analysis() or {}
         terms = sorted(store.all_terms(), key=lambda term: term.source)
-        style = self._analyzer.style_brief(analysis, terms=terms)
+        mappings = _synopsis_mappings(store, terms, digests)
         inputs = {
             "language_policy": self._config.language_policy("analysis").task_fingerprint(
                 "book_synopsis"
@@ -74,29 +93,41 @@ class BookUnderstandingService:
                 for chapter in loaded
                 if chapter.text_segments
             ],
-            "style": style,
+            # Glossary-derived character lines are excluded here; digest-matched mappings are
+            # bound separately through the snapshot artifact below.
+            "style": self._analyzer.style_brief(analysis, terms=[]),
             "source_lang": self._config.source_lang,
             "target_lang": self._config.target_lang,
-            "glossary": [
-                [term.source, term.target, term.type, term.gender, term.note] for term in terms
-            ],
-            "routing": self._config.llm.model_dump(mode="json"),
+            "routing": inference_snapshot(self._config.llm, (_SYNOPSIS_OPERATION,)),
         }
         fingerprint = hashlib.sha256(
             json.dumps(inputs, ensure_ascii=False, sort_keys=True).encode("utf-8")
         ).hexdigest()
-        metadata = {"version": 2, "inputs_sha256": fingerprint}
         synopsis = analysis.get("book_synopsis", "")
+        saved = analysis.get("book_synopsis_meta")
         if (
             isinstance(synopsis, str)
             and synopsis.strip()
-            and analysis.get("book_synopsis_meta") == metadata
+            and isinstance(saved, dict)
+            and saved.get("version") == _SYNOPSIS_VERSION
+            and saved.get("inputs_sha256") == fingerprint
+            and isinstance(saved.get("glossary"), str)
+            and _mappings_unchanged(store.read_artifact(saved["glossary"]), mappings)
         ):
             return synopsis
+        snapshot = "preparation/synopsis-glossary/" + content_hash(mappings) + ".json"
+        metadata = {
+            "version": _SYNOPSIS_VERSION,
+            "inputs_sha256": fingerprint,
+            "glossary": snapshot,
+        }
         if progress:
             progress(0, 0, "progress.stage.synopsis")
+        style = self._analyzer.style_brief(analysis, terms=terms)
         synopsis = self._synopsizer.book_synopsis(digests, style, glossary=terms)
         if synopsis:
+            # The snapshot is derived state; write it before the analysis that references it.
+            store.write_artifact(snapshot, mappings)
             analysis["book_synopsis"] = synopsis
             analysis["book_synopsis_meta"] = metadata
             store.save_analysis(analysis)
