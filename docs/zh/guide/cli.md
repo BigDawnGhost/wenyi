@@ -51,7 +51,8 @@ wenyi models list
 wenyi languages
 ```
 
-缺少配置时，CLI 会创建带注释的 `config.yaml`，帮助和版本命令也会执行此检查。
+默认位置的 `config.yaml` 缺失时，CLI 会创建带注释的配置文件，帮助和版本命令也会执行此检查。
+显式指定的 `--config` 路径必须已存在：文件缺失时 CLI 会报配置错误并退出，不会自动创建。
 `models list` 只预览实际模型路由，不发送请求。
 翻译前检查提供商、语言、流程与输出设置。
 

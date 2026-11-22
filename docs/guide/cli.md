@@ -54,10 +54,12 @@ wenyi models list
 wenyi languages
 ```
 
-The CLI creates a documented `config.yaml` if it is missing, including on help
-and version invocations. `models list` previews effective model routes without
-making requests. Review the model provider, languages, workflow, and output
-settings before translating.
+The CLI creates a documented `config.yaml` at the default location if it is
+missing, including on help and version invocations. An explicit `--config` path
+must already exist: a missing file is reported as a configuration error and the
+command exits. `models list` previews effective model routes without making
+requests. Review the model provider, languages, workflow, and output settings
+before translating.
 
 Use a different file with the root option `--config` (`-c`), before the command:
 
