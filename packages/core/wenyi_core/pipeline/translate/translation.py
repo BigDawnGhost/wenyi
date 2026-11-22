@@ -404,6 +404,9 @@ class TranslationService:
                     context_policy is not None
                     and self._glossary_checkpoint_covers(glossary_checkpoints, batch_start, len(b))
                 ):
+                    # Store a pending extraction now, so a skip never widens the lag.
+                    if self._extraction_queue is not None and self._extraction_queue.settle():
+                        term_snapshot_stale = True
                     summary = {
                         "inserted": 0,
                         "conflict": 0,

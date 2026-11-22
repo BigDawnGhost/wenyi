@@ -248,3 +248,19 @@ def test_a_chapter_is_done_only_after_its_chapter_extraction_is_stored(
         if call["operation"] == "translation.body"
     ]
     assert translated == [["Two"], ["Name2 came."], ["Name2 left."]]
+
+
+def test_a_checkpointed_batch_between_pending_ones_does_not_widen_the_lag(tmp_path):
+    book = Book(tmp_path, BOOK)
+    orchestrator, client = book.orchestrator()
+    store = orchestrator.prepare(str(book.source))
+    chapter = store.load_chapter(0)
+    chapter.text_segments[1].target = "名2 met 名1."
+    store.save_chapter(chapter)
+    store.log_event(
+        "batch_glossary_extracted", chapter=0, start_index=1, count=1, summary={"inserted": 0}
+    )
+    store._batch_glossary_event_cache = None
+    orchestrator.run(str(book.source))
+    # Batch 2 comes two batches after batch 0, so it has batch 0's entries.
+    assert _prompt_glossaries(client) == [[], ["Name1"], ["Name1"]]
