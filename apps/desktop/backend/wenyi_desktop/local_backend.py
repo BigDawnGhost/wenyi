@@ -23,7 +23,7 @@ from wenyi_backend.config_rebuild import load_bootstrap_defaults
 from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_core.config import Config
 from wenyi_core.errors import SchemaTooNew
-from wenyi_core.storage.io_path import plain_path
+from wenyi_core.storage.io_path import plain_path, to_io_path
 
 from . import catalog, library_location, paths
 
@@ -1237,9 +1237,9 @@ class LocalBackend:
         root, name = self._export_location(pid)
         with self._export_history_lock(pid):
             file = export_path(root, name, str(Path(output).absolute()))
-            if file is None or not file.is_file():
+            if file is None or not Path(to_io_path(file)).is_file():
                 raise ValueError("Export output must be a file in the project's export directory")
-            size = file.stat().st_size
+            size = Path(to_io_path(file)).stat().st_size
             # Publish and retire atomically, before any destructive filesystem operation.
             with self.transaction() as conn:
                 export = self._get("exports", export_id, conn)
@@ -1290,9 +1290,9 @@ class LocalBackend:
                     assets = old_file.with_name(f"{old_file.stem}.assets")
                     if export_path(root, name, str(assets)) is None:
                         raise OSError("Export assets resolve outside their owned directory")
-                    if assets.exists():
-                        shutil.rmtree(assets)
-                old_file.unlink(missing_ok=True)
+                    if Path(to_io_path(assets)).exists():
+                        shutil.rmtree(to_io_path(assets))
+                Path(to_io_path(old_file)).unlink(missing_ok=True)
             except OSError:
                 log.warning("Could not remove expired export %s", old["id"], exc_info=True)
                 continue
@@ -1338,11 +1338,15 @@ class LocalBackend:
                 and export["path"]
                 else None
             )
-            if file is None or not file.is_file():
+            if file is None or not Path(to_io_path(file)).is_file():
                 raise FileNotFoundError("Completed export not found")
             # Convert legacy multi-file history without changing published artifacts.
             # Keep owned assets alive during conversion, without a catalog transaction.
-            if inline_html and file.suffix == ".html" and file.with_suffix(".assets").exists():
+            if (
+                inline_html
+                and file.suffix == ".html"
+                and Path(to_io_path(file.with_suffix(".assets"))).exists()
+            ):
                 return html_document(file), file
             stream = open_regular(file)
             try:

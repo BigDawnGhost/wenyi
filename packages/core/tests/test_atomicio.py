@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from wenyi_core.atomicio import PublishError, publish_bytes, publish_target
+from wenyi_core.storage.io_path import plain_path, to_io_path
 
 
 class TestPublishBytes(unittest.TestCase):
@@ -34,13 +35,13 @@ class TestPublishBytes(unittest.TestCase):
 
     def test_publish_to_long_destination_uses_short_sibling(self):
         target = self.dir / ("a" * 230 + ".zh.epub")
-        target.write_bytes(b"old")
+        Path(to_io_path(target)).write_bytes(b"old")
         with publish_target(target) as temp:
-            self.assertEqual(temp.parent, target.parent)
+            self.assertEqual(Path(plain_path(temp.parent)), target.parent)
             self.assertLessEqual(len(temp.name.encode("utf-8")), 255)
             temp.write_bytes(b"new")
-            self.assertEqual(target.read_bytes(), b"old")
-        self.assertEqual(target.read_bytes(), b"new")
+            self.assertEqual(Path(to_io_path(target)).read_bytes(), b"old")
+        self.assertEqual(Path(to_io_path(target)).read_bytes(), b"new")
         self.assertEqual(self._residue(), [])
 
     def test_failure_keeps_previous_target_and_cleans_temp(self):

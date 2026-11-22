@@ -10,6 +10,7 @@ from typing import BinaryIO, Iterator
 from psycopg import Connection
 from psycopg_pool import ConnectionPool
 from wenyi_backend.export_paths import EXPORT_LIMIT, export_path, log
+from wenyi_core.storage.io_path import to_io_path
 
 
 def export_history_lock(connection: Connection, pid: str, *, shared: bool = False) -> None:
@@ -60,10 +61,10 @@ def publish_export(
     after the commit leaves at most a logged orphan file with no history row.
     """
     file = export_path(data_dir, pid, str(Path(output).absolute()))
-    if file is None or not file.is_file():
+    if file is None or not Path(to_io_path(file)).is_file():
         raise ValueError("Export output must be a file in the project's export directory")
     stored = file.relative_to(Path(data_dir).resolve()).as_posix()
-    size = file.stat().st_size
+    size = Path(to_io_path(file)).stat().st_size
     with pool.connection() as conn:
         export_history_lock(conn, pid)
         published = conn.execute(
@@ -102,11 +103,11 @@ def _remove_expired_files(
             try:
                 if fmt == "html":
                     assets = old_file.with_name(f"{old_file.stem}.assets")
-                    if assets.exists():
+                    if Path(to_io_path(assets)).exists():
                         if export_path(data_dir, pid, str(assets)) is None:
                             raise OSError("Export assets resolve outside their owned directory")
-                        shutil.rmtree(assets)
-                old_file.unlink(missing_ok=True)
+                        shutil.rmtree(to_io_path(assets))
+                Path(to_io_path(old_file)).unlink(missing_ok=True)
             except OSError:
                 # The history row is already gone; keep the orphan visible in logs.
                 log.warning("Could not remove expired export %s", old_id, exc_info=True)
@@ -124,6 +125,6 @@ def open_export(
             (export_id, pid),
         ).fetchone()
         file = export_path(data_dir, pid, row[0]) if row and row[0] else None
-        if file is None or not file.is_file():
+        if file is None or not Path(to_io_path(file)).is_file():
             raise FileNotFoundError("Completed export not found")
-        return file.open("rb"), file
+        return Path(to_io_path(file)).open("rb"), file

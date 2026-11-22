@@ -299,14 +299,8 @@ jobs:
       - name: Platform-sensitive file-handling tests
         env:
           PYTHONUTF8: "1"
-        # test_publish_to_long_destination_uses_short_sibling cannot even set up
-        # on Windows: creating its 230-character target under the default temp
-        # directory exceeds MAX_PATH. That is the known long-path defect
-        # 01-1.3; deselect it here until it is fixed so the remaining
-        # atomic-IO and file-storage coverage stays green on this tier.
         run: >-
           uv run --no-sync pytest -q -n auto
-          -k "not test_publish_to_long_destination_uses_short_sibling"
           packages/core/tests/test_atomicio.py packages/core/tests/test_file_storage.py
 
   web:

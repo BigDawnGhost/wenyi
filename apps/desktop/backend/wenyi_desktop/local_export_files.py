@@ -11,6 +11,8 @@ from pathlib import Path
 from threading import Lock
 from typing import BinaryIO, Callable, Iterator
 
+from wenyi_core.storage.io_path import to_io_path
+
 
 class ExportLease(BufferedReader):
     """Release an export lease exactly once, after its file handle is closed."""
@@ -58,7 +60,7 @@ def _windows_handle(path: Path, *, directory: bool) -> int:
     ]
     create.restype = wintypes.HANDLE
     handle = create(
-        str(path),
+        to_io_path(path),
         0x80 if directory else 0x80000000,  # FILE_READ_ATTRIBUTES / GENERIC_READ
         0x3,  # Share reads/writes, but not deletion or renaming.
         None,
@@ -123,12 +125,14 @@ class _Directory:
             os.close(self.handle)
 
     def names(self) -> list[str]:
-        return sorted(os.listdir(self.path if os.name == "nt" else self.handle))
+        if os.name == "nt":
+            return sorted(os.listdir(to_io_path(self.path)))
+        return sorted(os.listdir(self.handle))
 
     def metadata(self, name: str) -> os.stat_result:
         _component(name)
         if os.name == "nt":
-            return (self.path / name).lstat()
+            return os.lstat(to_io_path(self.path / name))
         return os.stat(name, dir_fd=self.handle, follow_symlinks=False)
 
     def open_file(self, name: str) -> BinaryIO:
