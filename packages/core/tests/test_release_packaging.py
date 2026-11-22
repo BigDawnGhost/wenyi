@@ -429,7 +429,8 @@ def test_desktop_rebuild_preflight_requires_an_existing_stable_release(
         # PATH may resolve bash to the WSL launcher rather than Git for Windows.
         git_root = Path(git(ROOT, "--exec-path")).parents[2]
         git_bash = git_root / "bin" / "bash.exe"
-        assert git_bash.is_file(), "Git for Windows Bash is required for workflow checks"
+        if not git_bash.is_file():
+            pytest.skip("Git for Windows Bash is required for workflow checks")
         bash = str(git_bash)
     # Override gh in this shell so the actual workflow guard runs entirely offline.
     fake_gh = 'gh() { printf "%s\\n" "$PUBLISHED_STABLE"; return "$GH_EXIT_CODE"; }\n'
