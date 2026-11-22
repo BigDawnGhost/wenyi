@@ -71,7 +71,11 @@ pythonpath = ["packages/core", "packages/cli"]
 # one known place. Without it, tempfile falls back to the working directory when
 # the system temp root is unusable, leaving pytest-of-* beside the sources, where
 # tests that scan the repository root collect a different set per worker.
-addopts = "--strict-markers --basetemp=.pytest-tmp"
+# --dist loadgroup honors xdist_group marks in every pytest run, matching CI: tests
+# that share one resource (a book/slug workspace, the desktop runtime, subprocess
+# shutdown cases) stay on one worker. Unmarked tests keep per-test distribution, so
+# -n auto parallelism is unchanged.
+addopts = "--strict-markers --basetemp=.pytest-tmp --dist loadgroup"
 markers = [
     "integration: requires isolated PostgreSQL/Redis or opt-in Docker test services",
     "packaging: builds distributions or inspects bundled resources; release workflows run it",
