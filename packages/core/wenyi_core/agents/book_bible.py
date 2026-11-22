@@ -69,29 +69,46 @@ class BibleResult:
     divergent_count: int
 
 
+def _match_index(corpus: str) -> tuple[str, list[int]]:
+    """Normalize ``corpus`` for matching and map each normalized offset to its raw offset.
+
+    Readings are dropped and each remaining character is normalized on its own, so a span
+    found in the result can be cut from the original text with its case intact.
+    """
+    pieces: list[str] = []
+    offsets: list[int] = []
+    for match in re.finditer(r"〘[^〙]*〙|.", corpus, re.DOTALL):
+        if match.group(0).startswith("〘") and len(match.group(0)) > 1:
+            continue
+        piece = normalize_match_text(match.group(0))
+        pieces.append(piece)
+        offsets.extend([match.start()] * len(piece))
+    offsets.append(len(corpus))
+    return "".join(pieces), offsets
+
+
 def _extract_distant_snippets(
     source: str,
-    normalized_corpus: str,
+    corpus: str,
+    match_index: tuple[str, list[int]],
     *,
     radius: int = 38,
 ) -> tuple[str, str]:
-    """Return two distant context snippets (first and ~2/3rd occurrence) for ``source``."""
-    spans = source_occurrence_spans(source, normalized_corpus)
+    """Return two distant raw-text snippets (first and ~2/3rd occurrence) for ``source``."""
+    normalized, offsets = match_index
+    spans = source_occurrence_spans(source, normalized)
     if not spans:
         return source, source
-    first_pos = spans[0][0]
     second_idx = max(1, (len(spans) * 2) // 3) if len(spans) > 1 else 0
-    second_pos = spans[min(second_idx, len(spans) - 1)][0]
+    first, second = spans[0], spans[min(second_idx, len(spans) - 1)]
 
-    # Spans index the normalized corpus, whose offsets differ once reading annotations go.
-    width = len(normalize_match_text(source))
+    def _slice(span: tuple[int, int]) -> str:
+        # Map the normalized span back to raw offsets so the model sees original case.
+        lo = max(0, offsets[span[0]] - radius)
+        hi = min(len(corpus), offsets[span[1]] + radius)
+        return " ".join(corpus[lo:hi].split())
 
-    def _slice(pos: int) -> str:
-        lo = max(0, pos - radius)
-        hi = min(len(normalized_corpus), pos + width + radius)
-        return " ".join(normalized_corpus[lo:hi].split())
-
-    return _slice(first_pos), _slice(second_pos)
+    return _slice(first), _slice(second)
 
 
 def _is_generic_target(target: str, generic_words: frozenset[str]) -> bool:
@@ -214,9 +231,10 @@ def mine_bible_candidates(
             break
 
     candidates: list[BibleCandidate] = []
+    match_index = _match_index(source_corpus)
     for cand in kept_keys:
         count, from_digest = raw_scored[cand]
-        snip_a, snip_b = _extract_distant_snippets(cand, normalized_corpus)
+        snip_a, snip_b = _extract_distant_snippets(cand, source_corpus, match_index)
         candidates.append(
             BibleCandidate(
                 source=cand,

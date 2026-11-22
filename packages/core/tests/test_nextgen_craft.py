@@ -27,6 +27,9 @@ from wenyi_core.pipeline.translate.quote_memory import QuoteMemory
         "Txt,Epub,Mobi www.qinkan.net",
         "更多精彩小说下载 https://www.example.net/book",
         "www.qinkan.net 全文免费阅读",
+        "免费下载www.foo.com全文阅读",
+        "【阅读 www.foo.com 下载】",
+        "好书尽在www.qinkan.net，第一时间更新",
     ],
 )
 def test_boilerplate_catches_embedded_domain_watermarks(text: str):
@@ -39,6 +42,9 @@ def test_boilerplate_catches_embedded_domain_watermarks(text: str):
         "他在浏览器里打开了 www.example.com，仔细查看着上面的新闻报道。",
         "She typed https://example.org into the terminal and waited.",
         "他打开www.example.com阅读那封信，随后关掉了电脑。",
+        "小说里提到的网址是www.example.com。",
+        "PDF version at https://example.org.",
+        "https://example.org 值得仔细阅读。",
     ],
 )
 def test_boilerplate_ignores_normal_prose_with_urls(text: str):

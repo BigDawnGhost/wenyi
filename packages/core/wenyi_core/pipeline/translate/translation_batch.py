@@ -245,7 +245,10 @@ class TranslationBatchExecutor:
                 # A dropped or mangled marker loses its entity; translate the plain source once.
                 plain_context = context_for_model.replace(mask_plan.legend_block, "").strip()
                 targets, turn, indices = run(list(plan.sources), plain_context)
-                cleaned_targets = [strip_ruby_markers(target) for target in targets]
+                # Fill any marker the plain call still echoes, rather than publish it.
+                cleaned_targets, _filled, _unresolved = unmask_batch_entities(
+                    [strip_ruby_markers(target) for target in targets], mask_plan
+                )
         return BatchDraft(
             tuple(cleaned_targets),
             turn if turn is not None and indices is not None else None,

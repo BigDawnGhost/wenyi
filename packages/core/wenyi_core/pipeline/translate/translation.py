@@ -34,6 +34,7 @@ from ...glossary.adherence import GlossaryAdherence
 from ...glossary.prompt_scope import prompt_terms
 from ...glossary.store import GlossaryStore
 from ...ingest.tokens import count_tokens
+from ...llm.retrying import is_resumable_provider_interrupt
 from ...markup.contexts import annotation_contexts_for_segments
 from ...models.document import Chapter, Segment
 from ...models.glossary import GlossaryTerm
@@ -136,6 +137,17 @@ class _WaveBatchOutcome:
     glossary_tokens: int
 
 
+def _set_hygienic_target(segment: Segment, cleaned: str) -> None:
+    """Apply a hygiene fix; a target still equal to its draft keeps that equality, so an
+    unpolished draft remains eligible when a resumed run repolishes it.
+    """
+    if cleaned == segment.target:
+        return
+    if segment.target_before_polish == segment.target:
+        segment.target_before_polish = cleaned
+    segment.target = cleaned
+
+
 def _format_source_lookbehind(prev_digest: str, prev_sources: list[str]) -> str:
     """Build deterministic positional cross-chapter context from immutable source text."""
     parts: list[str] = []
@@ -168,6 +180,9 @@ class TranslationService:
         # In-memory chapters this run still writes, including those awaiting polish results.
         self._open_chapters: dict[int, Chapter] = {}
         self._awaiting_polish: set[int] = set()
+        # Hygiene terms fixed when a chapter's text and terms are final, used if it publishes
+        # later once its polish lands, so job timing never changes the published text.
+        self._publish_terms: dict[int, list[GlossaryTerm] | None] = {}
         # Extracted mappings the translator keeps overriding are left out of later prompts.
         self._adherence = GlossaryAdherence()
         self._left_out: frozenset[str] = frozenset()
@@ -343,6 +358,7 @@ class TranslationService:
             self._polish_queue = None
             self._open_chapters.clear()
             self._awaiting_polish.clear()
+            self._publish_terms.clear()
             self._quote_memory = None
             self._runtime.usage.flush(store, scope="translate")
         if progress and total:
@@ -842,6 +858,7 @@ class TranslationService:
             # The chapter is done only once its terms are stored and its polish is applied.
             if self._polish_queue is not None and ci in self._polish_queue.pending_chapters():
                 self._awaiting_polish.add(ci)
+                self._publish_terms[ci] = terms
             else:
                 self._publish_chapter(store, ci, terms=terms)
 
@@ -863,7 +880,8 @@ class TranslationService:
             if notes is not None:
                 notes.maintain(ci, 0, chapter_segments, exclude=covered_notes)
             store.log_event("chapter_glossary_extracted", chapter=ci, summary=summary)
-            publish_when_polished(term_snapshot)
+            # Read the glossary once its last extraction for this chapter is stored.
+            publish_when_polished(glossary.all_terms())
 
         self._extract(
             glossary,
@@ -898,8 +916,7 @@ class TranslationService:
             ch_pairs = [(seg.source, seg.target or "") for seg in text_segs]
             cleaned_targets, typo_fixes = normalize_chapter_latin_typography(ch_pairs)
             for seg, cleaned in zip(text_segs, cleaned_targets):
-                if cleaned != seg.target:
-                    seg.target = cleaned
+                _set_hygienic_target(seg, cleaned)
 
         effective_terms = list(terms) if terms is not None else store.all_terms()
         variants_by_source: dict[str, list[str]] = {
@@ -922,8 +939,7 @@ class TranslationService:
             target_lang=target_lang,
         )
         for seg, updated in zip(text_segs, normalized_targets):
-            if updated != seg.target:
-                seg.target = updated
+            _set_hygienic_target(seg, updated)
 
         if typo_fixes or name_subs:
             store.log_event(
@@ -938,7 +954,7 @@ class TranslationService:
         self,
         spec: _ParallelWaveSpec,
         polish_executor: ThreadPoolExecutor | None = None,
-    ) -> tuple[int, int, list[_WaveBatchOutcome], Exception | None]:
+    ) -> tuple[int, int, list[_WaveBatchOutcome], BaseException | None]:
         """Execute one chapter/wave's batches serially in a worker thread (model calls only).
 
         Never reads or writes Storage, SQLite, adherence or usage ledgers. Rolling context
@@ -960,9 +976,22 @@ class TranslationService:
             ]
         ] = []
         wave_drafts: list[str] = []
-        error: Exception | None = None
+        error: BaseException | None = None
+
+        def polish_interrupt() -> BaseException | None:
+            """Return a finished polish job's provider interrupt, which stops the run."""
+            for _, _, fut, _, _, _ in pending_outcomes:
+                if fut is not None and fut.done() and not fut.cancelled():
+                    exc = fut.exception()
+                    if exc is not None and is_resumable_provider_interrupt(exc):
+                        return exc
+            return None
+
         try:
             for batch_idx, bspec in enumerate(spec.batches):
+                if not bspec.already_done and polish_interrupt() is not None:
+                    # Spend nothing more on a wave whose run is stopping.
+                    break
                 if bspec.already_done:
                     if bspec.body_context:
                         wave_drafts.extend(t or "" for t in bspec.existing_targets)
@@ -1038,6 +1067,9 @@ class TranslationService:
                             glossary_tokens,
                         )
                     )
+                    if result.polish_interrupted is not None:
+                        error = result.polish_interrupted
+                        break
         except Exception as exc:  # noqa: BLE001 - returned so drafted batches are saved first.
             error = exc
 
@@ -1054,8 +1086,6 @@ class TranslationService:
                 try:
                     polished = fut.result() if fut is not None else None
                 except Exception as exc:  # noqa: BLE001
-                    from ...llm.retrying import is_resumable_provider_interrupt
-
                     polish_failed = True
                     if is_resumable_provider_interrupt(exc):
                         polish_interrupted = exc
@@ -1071,6 +1101,9 @@ class TranslationService:
                     polish_empty_reverted=polish_empty_reverted,
                     polish_interrupted=polish_interrupted,
                 )
+            if error is None and res.polish_interrupted is not None:
+                # Report it so the writer starts no further waves.
+                error = res.polish_interrupted
             outcomes.append(
                 _WaveBatchOutcome(
                     batch_start=bspec.batch_start,
@@ -1371,6 +1404,8 @@ class TranslationService:
             if polish_workers > 0
             else None
         )
+        collected: set[tuple[int, int]] = set()
+        interrupted: BaseException | None = None
         try:
             with ThreadPoolExecutor(
                 max_workers=max_workers, thread_name_prefix="wenyi-chapter"
@@ -1384,16 +1419,38 @@ class TranslationService:
                     ): wave
                     for wave in waves
                 }
-                for future in as_completed(futures):
-                    if future.cancelled():
+                try:
+                    for future in as_completed(futures):
+                        if future.cancelled():
+                            continue
+                        ci, wave_idx, outcomes, error = future.result()
+                        collected.add((ci, wave_idx))
+                        completed_by_key[(ci, wave_idx)] = (outcomes, error)
+                        _flush_ready()
+                        if error is not None or failure is not None:
+                            # Start no new waves; running ones finish and are saved below.
+                            for pending in futures:
+                                pending.cancel()
+                except BaseException as exc:
+                    # A writer error or Ctrl-C: start no new waves either.
+                    interrupted = exc
+                    for pending in futures:
+                        pending.cancel()
+            if interrupted is not None:
+                # Waves that finished while the pool shut down are paid for; keep them.
+                for future, wave in futures.items():
+                    key = (wave.chapter, wave.wave_index)
+                    if key in collected or not future.done() or future.cancelled():
                         continue
-                    ci, wave_idx, outcomes, error = future.result()
-                    completed_by_key[(ci, wave_idx)] = (outcomes, error)
-                    _flush_ready()
-                    if error is not None or failure is not None:
-                        # Start no new waves; running ones finish and are saved below.
-                        for pending in futures:
-                            pending.cancel()
+                    if future.exception() is None:
+                        _, _, outcomes, error = future.result()
+                        completed_by_key[key] = (outcomes, error)
+                failure = failure or interrupted
+                try:
+                    _flush_ready(final=True)
+                except Exception:  # noqa: BLE001 - report the original error.
+                    _LOGGER.exception("Could not save drafted batches after a failure")
+                raise interrupted
         finally:
             if polish_pool is not None:
                 polish_pool.shutdown(wait=True)
@@ -1586,7 +1643,9 @@ class TranslationService:
         if job.chapter in self._awaiting_polish and (
             queue is None or job.chapter not in queue.pending_chapters()
         ):
-            self._publish_chapter(store, job.chapter)
+            self._publish_chapter(
+                store, job.chapter, terms=self._publish_terms.pop(job.chapter, None)
+            )
 
     def _align_batch_context(
         self,

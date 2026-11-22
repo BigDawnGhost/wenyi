@@ -9,7 +9,6 @@ every token is deterministically filled from the frozen glossary table.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -17,7 +16,6 @@ from ...glossary.store import STATUS_OK, raw_source_pattern, source_matches_text
 from ...models.glossary import GlossaryTerm
 
 _ENTITY_MARKER_TYPES = frozenset({"person", "place"})
-_MARKER_TOKEN_RE = re.compile(r"⟦N(\d+)⟧")
 
 
 @dataclass(frozen=True)
@@ -118,8 +116,9 @@ def unmask_batch_entities(
     """Deterministically fill every ``⟦N#⟧`` token with its frozen canonical target.
 
     Returns ``(filled_targets, filled_count, unresolved_count)``. Unresolved counts unknown
-    tokens left in a target and every expected marker the model dropped from its segment,
-    so a caller can retranslate instead of saving a translation that lost an entity.
+    or mangled tokens left in a target, plus each marker the batch's source uses that no
+    target returns at all, so a caller can retranslate instead of losing an entity. A
+    marker kept once and rendered as a pronoun elsewhere is natural and not counted.
     """
     if not plan.active:
         return list(targets), 0, 0
@@ -127,16 +126,21 @@ def unmask_batch_entities(
     filled_count = 0
     unresolved_count = 0
     out: list[str] = []
-    for index, text in enumerate(targets):
+    for text in targets:
         updated = text
-        source = plan.masked_sources[index] if index < len(plan.masked_sources) else ""
         for marker, term in plan.marker_to_term.items():
             hits = updated.count(marker)
-            unresolved_count += max(0, source.count(marker) - hits)
             if hits:
                 updated = updated.replace(marker, term.target.strip())
                 filled_count += hits
-        leftovers = _MARKER_TOKEN_RE.findall(updated)
-        unresolved_count += len(leftovers)
+        # Any bracket left after filling is an unknown or mangled marker.
+        unresolved_count += updated.count("⟦")
         out.append(updated)
+    joined_targets = "\n".join(targets)
+    joined_sources = "\n".join(plan.masked_sources)
+    unresolved_count += sum(
+        1
+        for marker in plan.marker_to_term
+        if marker in joined_sources and marker not in joined_targets
+    )
     return out, filled_count, unresolved_count

@@ -430,14 +430,22 @@ def test_benchmark_metrics_script_analyzes_completed_run(tmp_path: Path):
 
 
 def test_book_bible_snippets_follow_normalized_offsets_after_readings():
-    from wenyi_core.agents.book_bible import _extract_distant_snippets
-    from wenyi_core.glossary.store import normalize_match_text
+    from wenyi_core.agents.book_bible import _extract_distant_snippets, _match_index
 
     corpus = (
         "漢〘かん〙字〘じ〙" * 30 + "孫悟空が来た。" + "平〘へい〙和〘わ〙" * 30 + "孫悟空が笑う。"
     )
-    snip_a, snip_b = _extract_distant_snippets("孫悟空", normalize_match_text(corpus))
-    assert "孫悟空" in snip_a and "孫悟空" in snip_b
+    snip_a, snip_b = _extract_distant_snippets("孫悟空", corpus, _match_index(corpus))
+    assert "孫悟空が来た" in snip_a and "孫悟空が笑う" in snip_b
+
+
+def test_book_bible_snippets_keep_the_original_case():
+    from wenyi_core.agents.book_bible import _extract_distant_snippets, _match_index
+
+    corpus = "Then Will said hello. " + "\ufb01ne words. " * 10 + "Will left the Hall."
+    snip_a, snip_b = _extract_distant_snippets("will", corpus, _match_index(corpus))
+    assert "Will said hello" in snip_a
+    assert "Will left the Hall" in snip_b
 
 
 def _bible_agent(handler, target: str = "en") -> BookBibleAgent:
@@ -506,6 +514,16 @@ def test_entity_markers_count_dropped_markers_as_unresolved():
     plan = mask_batch_entities(["孫悟空回來了。"], terms)
     _, _, unresolved = unmask_batch_entities(["He came back."], plan)
     assert unresolved == 1
+
+
+def test_entity_markers_accept_a_pronoun_for_a_repeated_name():
+    terms = [GlossaryTerm(source="孫悟空", target="Sun Wukong", type="person")]
+    plan = mask_batch_entities(["孫悟空說了話。", "孫悟空笑了。"], terms)
+    filled, _, unresolved = unmask_batch_entities(["⟦N0⟧ spoke.", "He laughed."], plan)
+    assert filled == ["Sun Wukong spoke.", "He laughed."]
+    assert unresolved == 0
+    _, _, mangled = unmask_batch_entities(["⟦N0⟧ spoke.", "⟦N7⟧ laughed."], plan)
+    assert mangled == 1
 
 
 def test_batch_translation_retranslates_plain_source_when_a_marker_is_dropped():
@@ -640,35 +658,42 @@ def test_parallel_chapters_need_compiled_glossary(tmp_path: Path):
     assert calls == []
 
 
-def test_parallel_resume_repolishes_marked_drafts(tmp_path: Path):
+def test_parallel_resume_repolishes_drafts_whose_polish_failed(tmp_path: Path):
     from wenyi_core.pipeline.translate.translation import POLISH_FAILED
-    from wenyi_core.storage.run_store import STATUS_PENDING
 
     book = tmp_path / "novel.txt"
     book.write_text(_PARALLEL_BOOK, encoding="utf-8")
-    store = Orchestrator(
-        _parallel_config(tmp_path), client=FakeClient(handler=_parallel_handler([]))
-    ).run(str(book))
-    for ci in (1, 2):
-        chapter = store.load_chapter(ci)
-        chapter.text_segments[1].meta[POLISH_FAILED] = True
-        store.save_chapter(chapter)
-        store.set_chapter_status(ci, STATUS_PENDING)
-
-    edits: list[str] = []
     base = _parallel_handler([])
 
-    def handler(messages, tier, json_mode):
+    def drafting(messages, tier, json_mode):
         if "bilingual literary editor" in messages[0]["content"]:
-            edits.append(messages[-1]["content"])
-            return json.dumps({"patches": []})
+            raise RuntimeError("editor down")
+        if "literary translator" in messages[0]["content"]:
+            n = len(re.findall(r"^\[\d+\]", messages[-1]["content"], re.MULTILINE))
+            # Hygiene rewrites "--", so the published text differs from the raw draft.
+            return json.dumps({"translations": [f"Draft -- {i}." for i in range(n)]})
         return base(messages, tier, json_mode)
 
     cfg = _parallel_config(tmp_path, polish=True, polish_mode="sparse")
-    store = Orchestrator(cfg, client=FakeClient(handler=handler)).run(str(book))
-    assert len(edits) == 2
-    for ci in (1, 2):
-        assert not any(s.meta.get(POLISH_FAILED) for s in store.load_chapter(ci).text_segments)
+    store = Orchestrator(cfg, client=FakeClient(handler=drafting)).run(str(book))
+    first = store.load_chapter(1).text_segments
+    assert all(s.meta.get(POLISH_FAILED) for s in first)
+    assert [s.target for s in first] == ["Draft—0."] * len(first)
+
+    edits: list[str] = []
+
+    def editing(messages, tier, json_mode):
+        if "bilingual literary editor" in messages[0]["content"]:
+            edits.append(messages[-1]["content"])
+            return json.dumps({"patches": [{"index": 0, "reason": "fix", "text": "Polished."}]})
+        return base(messages, tier, json_mode)
+
+    store = Orchestrator(cfg, client=FakeClient(handler=editing)).run(str(book))
+    assert edits
+    for ci in range(3):
+        segments = store.load_chapter(ci).text_segments
+        assert not any(s.meta.get(POLISH_FAILED) for s in segments)
+        assert all(s.target == "Polished." for s in segments)
 
 
 def test_parallel_worker_gives_non_body_batches_no_context(tmp_path: Path):
@@ -739,3 +764,99 @@ def test_compiled_only_chapter_compiles_from_every_chapter_digest(tmp_path: Path
     orch._translation._bible_seed.ensure_seeded = spy
     orch.run(str(book), only_chapter=1)
     assert seen == [3]
+
+
+def _count_translations(handler, calls: list[str]):
+    def counting(messages, tier, json_mode):
+        if "literary translator" in messages[0]["content"]:
+            calls.append(messages[-1]["content"])
+        return handler(messages, tier, json_mode)
+
+    return counting
+
+
+def test_parallel_writer_error_saves_finished_waves_and_starts_no_more(tmp_path: Path):
+    import pytest
+    from wenyi_core.storage.file import FileStorage
+
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    cfg = _parallel_config(tmp_path, chapter_concurrency=2)
+    calls: list[str] = []
+    orch = Orchestrator(
+        cfg, client=FakeClient(handler=_count_translations(_parallel_handler([]), calls))
+    )
+    real_save = FileStorage.save_chapter_with_status
+
+    def failing_publish(self, chapter, status):
+        if chapter.index == 0:
+            raise OSError("disk full")
+        return real_save(self, chapter, status)
+
+    FileStorage.save_chapter_with_status = failing_publish
+    try:
+        with pytest.raises(OSError, match="disk full"):
+            orch.run(str(book))
+    finally:
+        FileStorage.save_chapter_with_status = real_save
+    spent = len(calls)
+
+    resumed: list[str] = []
+    store = Orchestrator(
+        cfg, client=FakeClient(handler=_count_translations(_parallel_handler([]), resumed))
+    ).run(str(book))
+    # Every batch translated before the failure was saved, so none is paid for twice.
+    assert spent + len(resumed) == 9
+    for ci in range(3):
+        assert all(s.target for s in store.load_chapter(ci).text_segments)
+
+
+def test_parallel_worker_stops_its_wave_on_a_polish_interrupt(tmp_path: Path):
+    from wenyi_core.llm.limits import RequestStopped
+    from wenyi_core.pipeline.translate.translation import _ParallelWaveSpec, _WaveBatchSpec
+    from wenyi_core.pipeline.translate.translation_batch import BatchResult
+
+    orch = Orchestrator(
+        _parallel_config(tmp_path), client=FakeClient(handler=_parallel_handler([]))
+    )
+    service = orch._translation
+    stop = RequestStopped("budget exhausted")
+    plans = []
+
+    def execute(plan, *, polish, polish_mode):
+        plans.append(plan)
+        return BatchResult(("T",), ("T",), polish_failed=True, polish_interrupted=stop)
+
+    service._batches.execute = execute
+    batches = tuple(
+        _WaveBatchSpec(
+            batch_start=i,
+            segment_indices=(i,),
+            sources=(f"S{i}",),
+            terms=(),
+            annotation_contexts=[[]],
+            next_source="",
+            already_done=False,
+            existing_targets=(None,),
+        )
+        for i in range(3)
+    )
+    spec = _ParallelWaveSpec(
+        chapter=0,
+        wave_index=0,
+        chapter_digest="",
+        opening_source_lookbehind="",
+        style="",
+        book_synopsis="",
+        batches=batches,
+        quote_references_by_batch=("", "", ""),
+        polish=True,
+        polish_mode="full",
+        entity_markers=False,
+        rolling_context_tokens=1000,
+    )
+    _, _, outcomes, error = service._translate_wave_worker(spec)
+    # The interrupted batch is returned for saving, the error stops the run, and no
+    # further batch is translated.
+    assert error is stop
+    assert len(plans) == 1 and len(outcomes) == 1
