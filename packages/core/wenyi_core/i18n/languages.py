@@ -66,6 +66,25 @@ def _profile(language: str, ancestors: tuple[str, ...], *, genre: str) -> dict[s
     return {**base, **data, "policy": inherited, "_policy_origins": origins}
 
 
+def glossary_context_dependent_sources(code: str) -> frozenset[str]:
+    """Return source forms whose translation depends on speaker and listener.
+
+    Self-references and forms of address such as Chinese 孤 or 大人 have no stable
+    book-wide rendering, so automatic glossary extraction must not store them.
+    """
+    if not normalize_language(code):
+        return frozenset()
+    values = profile(code).get("glossary_context_dependent_sources", [])
+    return frozenset(value for value in values if isinstance(value, str) and value.strip())
+
+
+def glossary_single_character_names_only(code: str) -> bool:
+    """Return True when one-character sources are mostly words, not names (e.g. Chinese)."""
+    return bool(normalize_language(code)) and (
+        profile(code).get("glossary_single_character_names_only") is True
+    )
+
+
 def label(code: str) -> str:
     return profile(code)["label"] if normalize_language(code) else "the source language"
 

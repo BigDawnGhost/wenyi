@@ -36,7 +36,7 @@ def test_glossary_note_switch_runs_posttranslation_notes_with_sqlite(desktop):
                 {"name": "Notes", "source_lang": "en", "target_lang": "zh", "glossary_notes": True}
             )
         },
-        files={"file": ("book.txt", b"Ada arrived.")},
+        files={"file": ("book.txt", b"Ada arrived. Ada smiled.")},
     )
     assert created.status_code == 201, created.text
     pid = created.json()["id"]

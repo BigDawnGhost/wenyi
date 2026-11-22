@@ -19,10 +19,15 @@ from ..glossary.store import (
     GlossaryOccurrenceMatcher,
     GlossaryStore,
     GlossaryTerm,
+    equivalent_targets,
     normalize_match_text,
     source_matches_text,
     source_occurrence_spans,
     term_match_sources,
+)
+from ..i18n.languages import (
+    glossary_context_dependent_sources,
+    glossary_single_character_names_only,
 )
 from ..i18n.policy.models import content_hash
 from ..llm.base import LLMClient
@@ -189,6 +194,62 @@ def _filter_shadowed_sources(
     return filtered
 
 
+_NAME_TYPES = frozenset({"person", "place", "organization"})
+
+
+def _has_uppercase(text: str) -> bool:
+    return any(char.isupper() for char in text)
+
+
+def _is_lowercase_only(text: str) -> bool:
+    """Return True for cased-script wording without capitals, such as "lay across the river"."""
+    return any(char.islower() for char in text) and not _has_uppercase(text)
+
+
+def _is_single_character_source(source: str) -> bool:
+    """Return True for a one-character source such as Chinese 孤 or 胜.
+
+    One character is too ambiguous to locate by substring: 孤 also occurs in 孤舟 and
+    胜 in 胜利, so such sources are neither aligned with history nor kept unless named.
+    """
+    return len(normalize_match_text(source).strip()) == 1
+
+
+def _filter_context_dependent_sources(
+    terms: list[GlossaryTerm],
+    context_sources: frozenset[str],
+    *,
+    single_character_names_only: bool,
+) -> list[GlossaryTerm]:
+    """Drop self-references, forms of address and, where the source language profile asks,
+    one-character common words.
+
+    Their rendering depends on speaker, listener or the surrounding word, so a single
+    book-wide mapping is wrong more often than it helps. Such forms are also removed from
+    aliases, where they would match every later form of address. One-character names are
+    kept: a person, place or organization, or a target with a capital letter (晋 "Jin").
+    """
+    filtered: list[GlossaryTerm] = []
+    dropped = 0
+    for term in terms:
+        if term.source.strip() in context_sources or (
+            single_character_names_only
+            and _is_single_character_source(term.source)
+            and term.type not in _NAME_TYPES
+            and not _has_uppercase(term.target)
+        ):
+            dropped += 1
+            continue
+        aliases = [alias for alias in term.aliases if alias.strip() not in context_sources]
+        filtered.append(term if aliases == term.aliases else replace(term, aliases=aliases))
+    if dropped:
+        _LOGGER.info(
+            "Skipped %d context-dependent glossary extraction(s) (operation=glossary.extract)",
+            dropped,
+        )
+    return filtered
+
+
 def _text(value: object, default: str = "") -> str:
     """Normalize scalar model fields to strings."""
     if isinstance(value, str):
@@ -249,6 +310,42 @@ class GlossaryExtractor(Agent):
             for term in terms
             if self._recurrence_cache[(term.source, term.type, tuple(term.aliases))]
         ]
+
+    def _drop_single_occurrence_new_terms(
+        self,
+        terms: list[GlossaryTerm],
+        store: Storage | GlossaryStore,
+        source_corpus: str,
+    ) -> list[GlossaryTerm]:
+        """Drop new terms whose source and aliases occur only once in the whole book.
+
+        A term that never recurs cannot be translated inconsistently, so storing it only
+        enlarges every later prompt. Repeats of stored terms still pass so the store can
+        merge aliases or record conflicts.
+        """
+        new_indices = [
+            index for index, term in enumerate(terms) if store.get_term(term.source) is None
+        ]
+        if not new_indices:
+            return terms
+        recurring = self._recurring_existing_terms(
+            [terms[index] for index in new_indices], source_corpus
+        )
+        recurring_keys = {(term.source, term.type, tuple(term.aliases)) for term in recurring}
+        single = {
+            index
+            for index in new_indices
+            if (terms[index].source, terms[index].type, tuple(terms[index].aliases))
+            not in recurring_keys
+        }
+        if not single:
+            return terms
+        _LOGGER.info(
+            "Skipped %d glossary extraction(s) that occur once in the book "
+            "(operation=glossary.extract)",
+            len(single),
+        )
+        return [term for index, term in enumerate(terms) if index not in single]
 
     def extract(
         self, source_text: str, target_text: str, existing: list[GlossaryTerm]
@@ -323,7 +420,12 @@ class GlossaryExtractor(Agent):
                 "(operation=glossary.extract)",
                 contradicted,
             )
-        return _filter_shadowed_sources(non_contradictory, source_text, (*terms, *existing))
+        bounded = _filter_shadowed_sources(non_contradictory, source_text, (*terms, *existing))
+        return _filter_context_dependent_sources(
+            bounded,
+            glossary_context_dependent_sources(self.src),
+            single_character_names_only=glossary_single_character_names_only(self.src),
+        )
 
     @staticmethod
     def _first_occurrences(
@@ -333,9 +435,14 @@ class GlossaryExtractor(Agent):
         before: tuple[int, int],
     ) -> dict[str, TranslatedSegmentEvidence]:
         """Find the first translated paragraph before the given position for terms not yet
-        stored.
+        stored. One-character sources are skipped: a substring hit such as 孤 in 孤舟 is
+        usually a different word, so the batch's own translation is kept instead.
         """
-        pending = {term.source for term in terms if store.get_term(term.source) is None}
+        pending = {
+            term.source
+            for term in terms
+            if not _is_single_character_source(term.source) and store.get_term(term.source) is None
+        }
         if not pending:
             return {}
 
@@ -469,6 +576,10 @@ class GlossaryExtractor(Agent):
     ) -> tuple[list[GlossaryTerm], int, int]:
         """Align candidates with their first translations; defer terms whose historical mapping
         is uncertain.
+        A name aligned to cased-script wording without any capital letter, while the batch
+        rendered it with one, matched a different word (横江 in 白露横江 "white dew lay
+        across the river"). Such a match keeps the batch's own target and is removed from
+        occurrences. Caseless targets such as Chinese are never rejected this way.
         """
         if not occurrences:
             return terms, 0, 0
@@ -494,6 +605,7 @@ class GlossaryExtractor(Agent):
         resolved = self._history_mappings(candidates, store=store)
         aligned: list[GlossaryTerm] = []
         unresolved = 0
+        rejected = 0
         for term in terms:
             if term.source not in occurrences:
                 aligned.append(term)
@@ -502,8 +614,23 @@ class GlossaryExtractor(Agent):
             if not target:
                 unresolved += 1
                 continue
+            if (
+                term.type in _NAME_TYPES
+                and _has_uppercase(term.target)
+                and _is_lowercase_only(target)
+            ):
+                rejected += 1
+                del occurrences[term.source]
+                aligned.append(term)
+                continue
             aligned.append(replace(term, target=target))
-        return aligned, len(resolved), unresolved
+        if rejected:
+            _LOGGER.warning(
+                "Kept %d batch name translation(s) whose historical match was not a name "
+                "(operation=glossary.align_history)",
+                rejected,
+            )
+        return aligned, len(resolved) - rejected, unresolved
 
     def extract_and_store(
         self,
@@ -525,7 +652,7 @@ class GlossaryExtractor(Agent):
         subsequent text.
         With source_corpus, inject only existing terms occurring at least twice in the
         source. Low-frequency terms remain stored but do not repeatedly consume extraction
-        context.
+        context, and new terms occurring only once in the book are not stored.
         """
         all_existing = store.all_terms()
         existing = (
@@ -542,6 +669,8 @@ class GlossaryExtractor(Agent):
         terms = self.extract(source_text, target_text, existing)
         if len(existing) < len(all_existing):
             terms = _filter_shadowed_sources(terms, source_text, (*terms, *all_existing))
+        if source_corpus is not None:
+            terms = self._drop_single_occurrence_new_terms(terms, store, source_corpus)
         occurrences = (
             self._first_occurrences(terms, store, history, before) if before is not None else {}
         )
@@ -557,6 +686,14 @@ class GlossaryExtractor(Agent):
             "history_unresolved": unresolved,
         }
         for t in terms:
+            stored = store.get_term(t.source)
+            if (
+                stored is not None
+                and stored.target != t.target
+                and equivalent_targets(stored.target, t.target)
+            ):
+                # Case, spacing, a leading "the" or a final stop is not a new translation.
+                t.target = stored.target
             evidence = occurrences.get(t.source)
             t.first_chapter = evidence.chapter if evidence is not None else chapter
             result = admit(t, chapter) if admit else store.upsert_term(t, chapter=chapter)

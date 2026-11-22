@@ -126,7 +126,15 @@ estimate of the glossary block's `cl100k_base` tokens (`glossary_tokens`).
 
 Extraction therefore keeps the glossary selective: names, book-specific terms,
 recurring forms of address and fixed expressions, not everyday vocabulary, one-off
-descriptions or single lines. It runs after every batch and once per chapter, with the
+descriptions or single lines. Wenyi also enforces this without the model: a new entry
+whose source occurs only once in the whole book is not stored, and for Chinese sources
+self-references and forms of address whose wording depends on speaker and listener
+(such as 孤, 本王, 大人 or 公子) and one-character common words are not stored either;
+one-character names such as 蜀 are kept. An extracted translation that differs from the
+stored one only in case, spacing, a leading "the" or a final stop is not recorded as a
+conflict; glossary imports and manual edits still compare exactly.
+
+Extraction runs after every batch and once per chapter, with the
 `fast` profile's reasoning setting. A lighter profile of the same model, such as
 `reasoning_effort: low`, usually suffices; route `glossary.extract` and
 `glossary.align_history` to it as shown in

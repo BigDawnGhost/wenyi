@@ -50,6 +50,7 @@ __all__ = [
     "GlossaryOccurrenceMatcher",
     "GlossaryStore",
     "GlossaryTerm",
+    "equivalent_targets",
     "merge_context_senses",
     "normalize_match_text",
     "search_term_page",
@@ -106,6 +107,24 @@ def normalize_match_text(text: str) -> str:
 
 
 _match_text = normalize_match_text
+
+_LEADING_ARTICLE = re.compile(r"^the\s+")
+_TRAILING_PUNCTUATION = re.compile(r"[\s.!?。！？]+$")
+
+
+def equivalent_targets(left: str, right: str) -> bool:
+    """Treat targets differing only by case, spacing, a leading English "the" or a final
+    stop as the same translation, so automatic extraction does not log them as conflicts.
+    Only "the" is stripped: "A" and "An" also romanize Chinese names (阿紫, 安禄山).
+    """
+    if left == right:
+        return True
+
+    def key(value: str) -> str:
+        normalized = " ".join(normalize_match_text(value).split())
+        return _TRAILING_PUNCTUATION.sub("", _LEADING_ARTICLE.sub("", normalized))
+
+    return bool(key(left)) and key(left) == key(right)
 
 
 _WORD_BOUNDARY_SCRIPTS = ("LATIN", "GREEK", "CYRILLIC")
