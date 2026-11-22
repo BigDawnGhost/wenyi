@@ -18,14 +18,17 @@ from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from ..alignment.objects import ObjectResolution, object_marker, resolve_objects
+from ..events import ProgressFn
 from ..markup.objects import OBJECT_RELATION, export_object_placements, object_anchors
 from ..pdf_bridge import BabeldocBridgeClient, BabeldocBridgeError
 from .models import KIND_HEADING, KIND_TEXT, Chapter, Document, Segment
 
 BABELDOC_META = "babeldoc"
 BABELDOC_ID_META = "babeldoc_id"
+FILLBACK_CHUNK_SIZE = 32
 
 
 def _selected_page_indices(pages: str | None, page_count: int) -> list[int]:
@@ -631,6 +634,57 @@ def fillback_from_store(store) -> tuple[str, str, dict[str, str], dict[str, Any]
     if rows := _row_ranges(groups, translations):
         options["rows"] = rows
     return session_id, bridge_url, translations, options
+
+
+def _fillback_scratch_path(target: Path) -> Path:
+    """Return a private sibling path that keeps an intermediate chunk render unpublished."""
+    return target.with_name(f".wenyi-fillback-{uuid4().hex}.tmp")
+
+
+def fillback_chunked(
+    client: BabeldocBridgeClient,
+    session_id: str,
+    translations: dict[str, str],
+    *,
+    out_path: str | Path,
+    progress: ProgressFn | None = None,
+    chunk_size: int = FILLBACK_CHUNK_SIZE,
+    **options: Any,
+) -> str:
+    """Fill back translations in bounded chunks of one bridge request each.
+
+    The bridge accumulates translations for the session across requests, so the chunks
+    follow the document order of "translations" and only the final response carries the
+    completed PDF. Intermediate chunks render into private scratch files so "out_path"
+    only ever receives the finished translation; an interrupted export resumes by
+    replaying every chunk from the start.
+    """
+    if chunk_size < 1:
+        raise ValueError("chunk_size must be at least 1")
+    items = list(translations.items())
+    chunks = [items[start : start + chunk_size] for start in range(0, len(items), chunk_size)]
+    if not chunks:
+        raise BabeldocBridgeError(
+            "No translated paragraphs with babeldoc_id are available for backfill"
+        )
+    total = len(chunks)
+    if progress is not None:
+        progress(0, total, "progress.stage.assembling")
+    target_path = Path(out_path)
+    result = ""
+    for done, chunk in enumerate(chunks, start=1):
+        if done == total:
+            target = out_path
+        else:
+            target = _fillback_scratch_path(target_path)
+        try:
+            result = client.fillback(session_id, dict(chunk), out_path=target, **options)
+        finally:
+            if done != total:
+                target.unlink(missing_ok=True)
+        if progress is not None:
+            progress(done, total, "progress.stage.assembling")
+    return result
 
 
 def _segment_annotations(segment: Segment, text: str) -> dict[str, Any] | None:

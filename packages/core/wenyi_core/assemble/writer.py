@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from typing import Literal
 
+from ..events import ProgressFn
 from ..i18n.policy.models import PolicyContext, PolicyPlan
 from ..i18n.policy.resolver import resolve_policy
 from ..ingest.pdf_reader import cached_epub_source, pdf_cache_epub_path
@@ -60,6 +61,7 @@ def assemble(
     about_page: bool = True,
     babeldoc_timeout: float = 600.0,
     language_policy: PolicyPlan | None = None,
+    progress: ProgressFn | None = None,
     warnings: list[str] | None = None,
 ) -> str:
     """Generate translated output, defaulting to PDF for BabelDOC state and EPUB otherwise.
@@ -158,7 +160,13 @@ def assemble(
         )
         _ensure_parent_dir(out_path)
         return _assemble_pdf(
-            view, source_path, out_path, timeout=babeldoc_timeout, bilingual=bilingual, order=order
+            view,
+            source_path,
+            out_path,
+            timeout=babeldoc_timeout,
+            bilingual=bilingual,
+            order=order,
+            progress=progress,
         )
     if out_format == "docx":
         out_path = out_path or _default_out(

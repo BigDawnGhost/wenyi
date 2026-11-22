@@ -74,6 +74,7 @@ class AssemblyService:
                     about_page=out_cfg.about_page,
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
                     language_policy=plans[False],
+                    progress=progress,
                 )
             )
         if do_bilingual:
@@ -90,6 +91,7 @@ class AssemblyService:
                     about_page=out_cfg.about_page,
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
                     language_policy=plans[True],
+                    progress=progress,
                 )
             )
         return outputs

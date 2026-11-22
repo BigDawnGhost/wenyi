@@ -11,7 +11,8 @@ from pypdf import PageObject, PdfReader, PdfWriter, Transformation
 from pypdf.errors import PdfReadError
 
 from ..atomicio import publish_target
-from ..ingest.pdf_babeldoc import _selected_page_indices, fillback_from_store
+from ..events import ProgressFn
+from ..ingest.pdf_babeldoc import _selected_page_indices, fillback_chunked, fillback_from_store
 from ..markup import _epub_native
 from ..pdf_bridge import BabeldocBridgeClient, BabeldocBridgeError
 from .export_view import AssembleStore
@@ -89,12 +90,15 @@ def _assemble_pdf(
     timeout: float,
     bilingual: bool = False,
     order: Literal["target_first", "source_first"] = "target_first",
+    progress: ProgressFn | None = None,
 ) -> str:
     """Fill back translations, placing the first bilingual version on the left."""
     session_id, bridge_url, mapping, annotation_options = fillback_from_store(store)
     client = BabeldocBridgeClient(bridge_url, timeout=timeout)
     if not bilingual:
-        return client.fillback(session_id, mapping, out_path=out_path, **annotation_options)
+        return fillback_chunked(
+            client, session_id, mapping, out_path=out_path, progress=progress, **annotation_options
+        )
 
     try:
         manifest = store.load_manifest()
@@ -117,7 +121,9 @@ def _assemble_pdf(
             raise BabeldocBridgeError("The saved BabelDOC page selection contains no PDF pages")
         # Keep both the bridge result and any failed composition private until the spread is complete.
         with publish_target(out_path) as temp:
-            client.fillback(session_id, mapping, out_path=temp, **annotation_options)
+            fillback_chunked(
+                client, session_id, mapping, out_path=temp, progress=progress, **annotation_options
+            )
             fallback = (
                 native
                 if isinstance(native, str)
