@@ -44,15 +44,28 @@ class ExportViewStore(RunStore):
         return self._store.load_manifest()
 
     def load_chapter(self, ci: int) -> Chapter:
-        if ci in self._chapters:
-            return self._chapters[ci].model_copy(deep=True)
-        chapter = self._store.load_chapter(ci).model_copy(deep=True)
-        self._resolve_protected_objects(chapter)
-        self._chapters[ci] = chapter.model_copy(deep=True)
-        return chapter
+        """Return the prepared read-only chapter, resolving it on first request.
+
+        The view keeps one resolved chapter per requested index and hands the same
+        instance to every reader, so exports stop paying repeated full-chapter deep
+        copies. Stores return independent chapter objects per call, so storage stays
+        untouched; callers that need to mutate a chapter copy it first with
+        ``model_copy(deep=True)``.
+        """
+        cached = self._chapters.get(ci)
+        if cached is None:
+            cached = self._store.load_chapter(ci)
+            self._resolve_protected_objects(cached)
+            self._chapters[ci] = cached
+        return cached
 
     def iter_chapters_once(self, indices: Iterable[int]) -> Iterator[Chapter]:
-        """Yield independent render copies without retaining a second book in the view."""
+        """Yield chapters for one render pass without retaining a second book.
+
+        Snapshot stores copy each chapter per call, so those yields stay independent
+        across passes. Live storage and previously prepared chapters share the view
+        read-only copy instead of copying again per reader.
+        """
         for ci in indices:
             if not isinstance(self._store, ExportSnapshotStore) or ci in self._chapters:
                 # Live storage and any previously prepared view keep their cached-read semantics.
