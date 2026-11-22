@@ -102,6 +102,8 @@ def read_pdf(
                     title=Path(path).stem,
                     lang=source_lang if source_lang not in ("", "auto") else "und",
                 )
+            except MinerUError:
+                raise
             except Exception:
                 failed = True
             # A service exception might include credentials or presigned URLs.

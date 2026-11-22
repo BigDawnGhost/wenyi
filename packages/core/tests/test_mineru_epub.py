@@ -14,6 +14,7 @@ from wenyi_core.ingest.epub_reader import read_epub
 from wenyi_core.ingest.mineru_epub import convert_json
 from wenyi_core.ingest.pdf_reader import pdf_cache_epub_path
 from wenyi_core.ingest.source_hash import source_sha256
+from wenyi_core.models.errors import MinerUError
 from wenyi_core.pipeline.prepare.input_preparation import parse_document
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
@@ -489,5 +490,18 @@ def test_unhandled_source_fails_without_publishing(tmp_path, data, message):
     source.write_text(json.dumps(data), encoding="utf-8")
     output = tmp_path / "source.epub"
     with pytest.raises(ValueError, match=message):
+        convert_json(source, output)
+    assert not output.exists()
+
+
+def test_image_only_content_list_reports_missing_text_layer(tmp_path):
+    (tmp_path / "scan.gif").write_bytes(GIF)
+    source = tmp_path / "example_content_list_v2.json"
+    source.write_text(
+        json.dumps([[_block("image", image_source={"path": "scan.gif"})]]),
+        encoding="utf-8",
+    )
+    output = tmp_path / "source.epub"
+    with pytest.raises(MinerUError, match="no text from the PDF"):
         convert_json(source, output)
     assert not output.exists()

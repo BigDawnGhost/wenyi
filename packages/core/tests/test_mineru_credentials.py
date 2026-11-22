@@ -147,6 +147,8 @@ def test_conversion_errors_never_expose_credentials(
         effective = os.getenv("MINERU_API_KEY") if api_token is None else api_token
         assert effective is not None
         reflected = repr(effective.encode()) if escaped else effective
+        if error_type is MinerUError:
+            raise error_type("Extraction failed for book.pdf: server refused the task")
         raise error_type(f"Illegal header value: {reflected}")
 
     monkeypatch.setattr("wenyi_core.ingest.pdf_reader.convert_pdf_to_epub", convert)
@@ -160,15 +162,18 @@ def test_conversion_errors_never_expose_credentials(
     with pytest.raises(MinerUError) as caught:
         read_pdf(str(source), "en", "zh", cache_dir=str(cache), **kwargs)
     assert seen == [token]
-    assert str(caught.value) == (
-        "PDF conversion failed. Check MinerU credentials, service availability, "
-        "and the input PDF, then retry."
-    )
-    assert caught.value.__cause__ is None
-    assert caught.value.__context__ is None
-    rendered = "".join(traceback.format_exception(caught.type, caught.value, caught.tb))
-    assert token not in rendered
-    assert repr(token.encode()) not in rendered
+    if error_type is MinerUError:
+        assert str(caught.value) == "Extraction failed for book.pdf: server refused the task"
+    else:
+        assert str(caught.value) == (
+            "PDF conversion failed. Check MinerU credentials, service availability, "
+            "and the input PDF, then retry."
+        )
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+        rendered = "".join(traceback.format_exception(caught.type, caught.value, caught.tb))
+        assert token not in rendered
+        assert repr(token.encode()) not in rendered
     assert "private-token" not in caplog.text
     assert os.environ["MINERU_API_KEY"] == ambient
     assert not list(cache.rglob("*.epub"))
