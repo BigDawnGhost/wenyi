@@ -379,6 +379,9 @@ uv run wenyi language-policy --source ja --format docx --backend native
   提交处中断，验证幂等恢复。
 - 检查内容、术语、策略和模型变化仅使相应范围失效。
 - 存储改动覆盖 File、SQLite 和 PostgreSQL 适配器，包括锁与并发导出快照。
+  离线锁验证可用 `WENYI_LOCKS_BACKEND=python` 强制纯 Python 后端、用
+  `WENYI_LOCKS_MODE=error` 在原生库缺失时显式失败，或用 `WENYI_LOCKS_LIB`
+  指向已构建的库；开关语义见[架构](architecture.md#locks-backend)。
 - 使用 fake 模型／解析服务和临时数据，遵循仓库要求的架构、编排、存储及受影响领域测试。
 
 离线检查验证契约，不验证模型质量。

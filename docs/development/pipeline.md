@@ -451,7 +451,11 @@ Validate changes at the boundary they affect:
   Autofix index and usage-journal commits; verify idempotent recovery.
 - Check content, glossary, policy and model changes invalidate only compatible scopes.
 - Exercise File, SQLite and PostgreSQL adapters for storage changes, including locks
-  and concurrent export snapshots.
+  and concurrent export snapshots. Offline lock runs can force the pure-Python
+  backend with `WENYI_LOCKS_BACKEND=python`, fail loudly when the native library is
+  missing with `WENYI_LOCKS_MODE=error`, or point `WENYI_LOCKS_LIB` at a built
+  library; the switches are specified in
+  [architecture](architecture.md#locks-backend).
 - Use fake model/parser services and temporary data. Follow the repository's required
   architecture, orchestration, storage and affected-domain tests.
 

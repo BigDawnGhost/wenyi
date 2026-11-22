@@ -88,6 +88,34 @@ The creator of a per-operation Storage instance closes it on success and failure
 Read routes use explicit close scopes; runners register cleanup immediately after each
 resource acquisition, including failures while starting telemetry.
 
+<a id="locks-backend"></a>
+
+### Cross-process file locks
+
+Local stores serialize workflow-critical sections with cross-process advisory file
+locks (`packages/core/wenyi_core/storage/locks.py`). Two interchangeable backends
+satisfy one contract (`packages/core/tests/test_locks_contract.py`): the optional
+`wenyi-locks` native library loaded through ctypes and a pure-Python fallback.
+The backend is probed once per process:
+
+- `WENYI_LOCKS_BACKEND` selects `auto` (default), `rust` or `python`. `auto` and
+  `rust` prefer the native library; `python` always uses the fallback. Unknown
+  values raise `ValueError`.
+- `WENYI_LOCKS_LIB` names an explicit shared library (`wenyi_locks.dll`,
+  `libwenyi_locks.dylib` or `libwenyi_locks.so`) and is tried first; if it fails
+  to load, the override is ignored with an error log and the search continues.
+  Without it the loader probes the PyInstaller bundle directory,
+  `$CARGO_TARGET_DIR/{release,debug}` and the repository-root
+  `target/{release,debug}` — native crates share the root Cargo workspace, so a
+  checkout build is found without an override.
+- `WENYI_LOCKS_MODE` decides what a failed native load means: `warn` (default)
+  logs one warning naming the tried paths and keeps the Python fallback, `error`
+  fails lock acquisition with those reasons, and `silent` keeps the fallback
+  without the warning. Unknown values raise `ValueError`.
+
+Build the library with `cargo build -p wenyi-locks` (or `--release`); how release
+packaging bundles it is described in [Desktop releases](releasing.md).
+
 ### Saved settings reconstruction
 
 Reconstruction is separate from book-state or ledger migration. It runs when CLI
