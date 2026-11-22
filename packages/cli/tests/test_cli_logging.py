@@ -7,12 +7,15 @@ import typer
 from typer.testing import CliRunner
 from wenyi_cli.cli import create_app
 from wenyi_cli.commands.context import current_context
+from wenyi_cli.logging_config import invocation_log_dir
 from wenyi_core.observability import bind_request_id, reset_request_id
 
 
 def test_cli_saves_application_and_transport_logs_without_console_noise(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     config = tmp_path / "settings" / "custom.yaml"
+    config.parent.mkdir(parents=True)
+    config.write_text("", encoding="utf-8")
     app = create_app()
 
     @app.command()
@@ -49,6 +52,7 @@ def test_repeated_invocations_close_files_and_restore_existing_handlers(tmp_path
     root = logging.getLogger()
     before, level = list(root.handlers), root.level
     app = create_app()
+    (tmp_path / "config.yaml").write_text("", encoding="utf-8")
     installed = []
 
     @app.command()
@@ -73,6 +77,7 @@ def test_repeated_invocations_close_files_and_restore_existing_handlers(tmp_path
 
 def test_json_log_files_keep_correlation_and_exception_details(tmp_path, monkeypatch):
     monkeypatch.setenv("WENYI_LOG_FORMAT", "json")
+    (tmp_path / "config.yaml").write_text("", encoding="utf-8")
     app = create_app()
 
     @app.command()
@@ -97,6 +102,7 @@ def test_json_log_files_keep_correlation_and_exception_details(tmp_path, monkeyp
 
 
 def test_failed_commands_keep_visible_error_and_point_to_saved_log(tmp_path):
+    (tmp_path / "config.yaml").write_text("", encoding="utf-8")
     app = create_app()
 
     @app.command()
@@ -116,6 +122,7 @@ def test_failed_commands_keep_visible_error_and_point_to_saved_log(tmp_path):
 
 def test_unwritable_log_destination_fails_clearly_without_console_fallback(tmp_path):
     (tmp_path / "logs").write_text("not a directory", encoding="utf-8")
+    (tmp_path / "config.yaml").write_text("", encoding="utf-8")
     app = create_app()
     invoked = []
 
@@ -131,6 +138,7 @@ def test_unwritable_log_destination_fails_clearly_without_console_fallback(tmp_p
 
 
 def test_unexpected_failure_keeps_traceback_in_diagnostic_log(tmp_path):
+    (tmp_path / "config.yaml").write_text("", encoding="utf-8")
     app = create_app()
 
     @app.command()
@@ -145,6 +153,7 @@ def test_unexpected_failure_keeps_traceback_in_diagnostic_log(tmp_path):
 
 
 def test_config_creation_failure_is_concise_and_logging_is_restored(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     app = create_app()
     root = logging.getLogger()
     before, level = list(root.handlers), root.level
@@ -153,9 +162,49 @@ def test_config_creation_failure_is_concise_and_logging_is_restored(tmp_path, mo
         raise PermissionError("config directory is read-only")
 
     monkeypatch.setattr("wenyi_cli.commands.bootstrap.Config.create_default_file", fail)
-    result = CliRunner().invoke(app, ["-c", str(tmp_path / "config.yaml"), "--help"])
+    result = CliRunner().invoke(app, ["--help"])
     assert result.exit_code == 1
     assert "Configuration error: config directory is read-only" in result.output
     assert "Traceback" not in result.output
     assert root.handlers == before
     assert root.level == level
+
+
+def test_missing_explicit_config_fails_fast_without_side_effects(tmp_path):
+    config_path = tmp_path / "settings" / "missing.yaml"
+    app = create_app()
+
+    @app.command()
+    def probe():
+        raise AssertionError("command must not run")
+
+    result = CliRunner().invoke(app, ["--config", str(config_path), "probe"])
+    assert result.exit_code == 1
+    assert f"Configuration error: config file not found: {config_path}" in result.output
+    assert "Traceback" not in result.output
+    assert not config_path.parent.exists()
+    assert not (tmp_path / "config.yaml").exists()
+    assert not (tmp_path / "logs").exists()
+
+
+def test_explicit_existing_config_runs_without_creation_or_rewrite(tmp_path):
+    config_path = tmp_path / "settings" / "custom.yaml"
+    config_path.parent.mkdir(parents=True)
+    original = "language: {source: en, target: zh}\n"
+    config_path.write_text(original, encoding="utf-8")
+    app = create_app()
+
+    @app.command()
+    def probe():
+        current_context().console.print("probe ran")
+
+    result = CliRunner().invoke(app, ["-c", str(config_path), "probe"])
+    assert result.exit_code == 0, result.output
+    assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_invocation_log_dir_lands_in_the_selected_data_dir(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    config_path = tmp_path / "settings" / "custom.yaml"
+    assert invocation_log_dir(str(config_path)) == tmp_path / "settings" / "logs"
+    assert invocation_log_dir("config.yaml") == tmp_path / "logs"

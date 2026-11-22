@@ -71,6 +71,7 @@ def test_help_advertises_translation_style_as_a_supported_option(
     tmp_path, monkeypatch, force_terminal
 ):
     monkeypatch.setattr("typer.rich_utils.FORCE_TERMINAL", force_terminal)
+    (tmp_path / "config.yaml").write_text("language: {source: en, target: zh}\n", encoding="utf-8")
     result = CliRunner().invoke(app, ["--config", str(tmp_path / "config.yaml"), "--help"])
     assert result.exit_code == 0, result.output
     if force_terminal:

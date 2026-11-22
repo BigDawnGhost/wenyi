@@ -18,6 +18,16 @@ class CliLoggingError(OSError):
     """A diagnostic file could not be opened before running the command."""
 
 
+def invocation_log_dir(config_path: str) -> Path:
+    """Return the diagnostic log directory inside the selected project data directory.
+
+    The CLI data directory is the folder holding the selected configuration file
+    (next to the ``state/`` tree), so diagnostics always land in ``<data-dir>/logs/``
+    instead of loose files in the working directory.
+    """
+    return Path(config_path).resolve().parent / "logs"
+
+
 @contextmanager
 def invocation_logging(config_path: str) -> Iterator[Path]:
     """Install a private file sink for this invocation, then restore its caller's logging."""
@@ -26,7 +36,7 @@ def invocation_logging(config_path: str) -> Iterator[Path]:
     for handler in previous:
         if getattr(handler, "_wenyi_handler", False):
             root.removeHandler(handler)
-    directory = Path(config_path).resolve().parent / "logs"
+    directory = invocation_log_dir(config_path)
     try:
         try:
             directory.mkdir(parents=True, exist_ok=True)
