@@ -59,7 +59,7 @@
     --secondary-hover: 0.953 0.0013 286.38;
     --secondary-pressed: var(--secondary);
     --muted: 0.9676 0.0013 286.38;
-    --muted-foreground: 0.5519 0.0137 285.94;
+    --muted-foreground: 0.5441 0.0137 285.94;
     /* Ink anchor for alpha-derived interaction surfaces: fixed near-black in
        the light theme, near-white in dark. Deliberately not var(--foreground),
        which carries the 240 hue; state surfaces stay neutral so one alpha step
@@ -81,8 +81,8 @@
     --accent-foreground: 0.2103 0.0059 285.88;
     /* Third text tier: placeholder and disabled copy sit one step below the
        secondary text (muted-foreground). */
-    --text-placeholder: var(--ink) / 0.35;
-    --destructive: 0.6368 0.2078 25.33;
+    --text-placeholder: var(--ink) / 0.65;
+    --destructive: 0.5347 0.2078 25.33;
     --destructive-foreground: 0.9848 0 0;
     --warning: 0.5542 0.1447 49.16;
     --warning-foreground: 0.9848 0 0;
@@ -104,11 +104,11 @@
     --status-info-border: 0.8605 0.0668 255.25;
     /* Chart hues retain their meaning; the dark palette reduces saturation and glare. */
     --chart-track: var(--muted);
-    --chart-1: 0.8273 0.1014 230.38;
-    --chart-2: 0.7686 0.1646 70.11;
+    --chart-1: 0.6398 0.1014 230.38;
+    --chart-2: 0.6532 0.1646 70.11;
     --chart-3: 0.5875 0.1388 241.95;
-    --chart-4: 0.8688 0.0198 252.85;
-    --chart-5: 0.7038 0.123 182.48;
+    --chart-4: 0.6453 0.0198 252.85;
+    --chart-5: 0.6265 0.123 182.48;
     --chart-6: 0.5547 0.0407 257.44;
     --diff-removed-bg: 0.9355 0.031 17.72;
     --diff-removed-foreground: 0.3959 0.1331 25.72;
@@ -119,7 +119,7 @@
        group boundaries) so dense lists do not fog up like the standard
        hairline does. */
     --border-subtle: var(--ink) / 0.055;
-    --input: 0.9197 0.004 286.32;
+    --input: 0.6459 0.004 286.32;
     --ring: 0.2103 0.0059 285.88;
     --radius: 8px;
     /* Elevation scale: e0 wells, e1-e2 resting surfaces, e3 hover lift, e4
