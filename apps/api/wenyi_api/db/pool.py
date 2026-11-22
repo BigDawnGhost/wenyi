@@ -15,11 +15,19 @@ from wenyi_backend.context import current_context
 
 _SCHEMA_SQL = (pathlib.Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
 
+# Default shared-pool depth for short request and state connections.
+DEFAULT_POOL_MAX_SIZE = 16
 
-def init_pool(dsn: str) -> ConnectionPool[Any]:
-    """Create an application-owned pool and initialize the schema transactionally."""
+
+def init_pool(dsn: str, *, max_size: int = DEFAULT_POOL_MAX_SIZE) -> ConnectionPool[Any]:
+    """Create an application-owned pool and initialize the schema transactionally.
+
+    The pool serves only short request and state connections: workflow, export
+    and assembly locks use dedicated connections (see storage_pg). Keep the
+    depth aligned with worker max_jobs plus the request thread pool.
+    """
     pool = ConnectionPool(
-        dsn, min_size=1, max_size=16, open=True, kwargs={"client_encoding": "UTF8"}
+        dsn, min_size=1, max_size=max_size, open=True, kwargs={"client_encoding": "UTF8"}
     )
     try:
         with pool.connection() as conn:

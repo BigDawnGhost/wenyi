@@ -1,8 +1,10 @@
 """PostgreSQL implementation of the core storage port.
 
 All mutable run state lives in PostgreSQL. ``run_dir`` contains only source resources
-and exported artifacts. Long workflow locks use session advisory locks, while state
-writes and export snapshots use short transactions with no model calls inside them.
+and exported artifacts. Long workflow locks use session advisory locks held on
+dedicated connections, so waiting or running tasks never pin shared pool connections,
+while state writes and export snapshots use short transactions with no model calls
+inside them.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import time
 from contextlib import contextmanager
 from typing import Any, Iterator, Literal
 
+import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
@@ -73,6 +76,16 @@ class PostgresStorage:
         digest = hashlib.blake2b(f"wenyi:{scope}:{self.project_id}".encode(), digest_size=8)
         return int.from_bytes(digest.digest(), "big", signed=True)
 
+    def _lock_connection(self) -> psycopg.Connection[Any]:
+        """Open a dedicated connection for one session advisory lock.
+
+        A session lock must stay on a single connection for its whole span.
+        Using a dedicated connection instead of the shared pool keeps waiting
+        and running tasks from pinning pooled connections, and the database
+        releases the lock automatically if this process dies.
+        """
+        return psycopg.connect(self._pool.conninfo, **self._pool.kwargs)
+
     @contextmanager
     def _session_lock(self, scope: str, *, blocking: bool = True) -> Iterator[None]:
         depths = getattr(self._local, "lock_depths", None)
@@ -86,7 +99,7 @@ class PostgresStorage:
                 depths[scope] -= 1
             return
         key = self._lock_key(scope)
-        with self._pool.connection() as conn:
+        with self._lock_connection() as conn:
             acquired = False
             try:
                 if blocking:

@@ -65,7 +65,7 @@ class PostgresRepository:
         return self._pool
 
     def start(self):
-        self._pool = init_pool(self.settings.psycopg_dsn)
+        self._pool = init_pool(self.settings.psycopg_dsn, max_size=self.settings.db_pool_max_size)
         try:
             from .config_rebuild import rebuild_saved_settings
 

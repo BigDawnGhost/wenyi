@@ -13,6 +13,11 @@ def _env(name: str, default: str) -> str:
 @dataclass(frozen=True)
 class Settings:
     database_url: str = _env("DATABASE_URL", "postgresql://wenyi:wenyi@localhost:5432/wenyi")
+    # Depth of the shared pool used by short request and state connections.
+    # Long workflow/export locks use dedicated connections, so this must cover
+    # request threads plus every concurrent job's brief state writes; raise it
+    # together with worker max_jobs (workflow + export concurrency).
+    db_pool_max_size: int = int(_env("WENYI_DB_POOL_MAX_SIZE", "16"))
     redis_url: str = _env("REDIS_URL", "redis://localhost:6379/0")
     data_dir: str = _env("DATA_DIR", "./data")
     # Optional static token for deployments without individual user accounts.

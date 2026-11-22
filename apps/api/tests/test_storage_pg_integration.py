@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import pytest
@@ -573,3 +573,24 @@ def test_postgres_initialization_preserves_only_matching_preview(pg_storage, pg_
     assert pg_storage.read_artifact("preview.json") == {"title": "Book"}
     assert set(pg_storage.list_artifacts()) == {"parsed_document.json", "preview.json"}
     assert pg_storage.read_artifact("reviews/review-obsolete/result.json") is None
+
+
+def test_locks_do_not_starve_shared_pool_connections(pg_pool, tmp_path):
+    """Nine concurrent project locks must leave the shared pool fully usable."""
+    holders = []
+    with ExitStack() as held:
+        for index in range(9):  # One more holder than the fixture pool's max_size.
+            pid = uuid.uuid4().hex
+            with pg_pool.connection() as conn:
+                conn.execute("INSERT INTO projects(id,name) VALUES(%s,'lock-load')", (pid,))
+            storage = PostgresStorage(pid, pg_pool, run_dir=str(tmp_path / f"hold-{index}"))
+            holders.append(storage)
+            held.enter_context(storage.lock())
+        # Every lock above sits on its own dedicated connection, so the shared
+        # pool still serves state reads and accepts new checkouts instantly.
+        with pg_pool.connection(timeout=2) as conn:
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+        assert holders[0].exists()
+        extra = PostgresStorage(uuid.uuid4().hex, pg_pool, run_dir=str(tmp_path / "extra"))
+        with extra.lock(blocking=False):
+            pass
