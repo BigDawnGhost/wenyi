@@ -86,7 +86,10 @@ def routing_handler(messages, tier, json_mode):
     if "whole-book synopsis writer" in system:
         return "全书概览：主线与人物关系，整体基调。"
 
-    return "{}" if json_mode else ""
+    raise AssertionError(
+        f"routing_handler has no branch for operation {tier!r}: "
+        f"unrecognized system prompt {system[:160]!r}"
+    )
 
 
 class MeteredFakeClient(FakeClient):
