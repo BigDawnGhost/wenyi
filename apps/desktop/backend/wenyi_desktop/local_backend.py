@@ -1218,6 +1218,7 @@ class LocalBackend:
         try:
             directory = directory.resolve()
         except OSError:
+            # Keep the recorded spelling; containment checks fail closed later.
             pass
         return str(directory.parent), directory.name
 

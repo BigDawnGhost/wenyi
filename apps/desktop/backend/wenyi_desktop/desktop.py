@@ -149,6 +149,7 @@ def watch_parent(server: uvicorn.Server) -> None:
             if json.loads(line) == {"command": "shutdown"}:
                 break
         except (ValueError, TypeError):
+            # Only a well-formed shutdown command matters; ignore the rest.
             continue
     server.should_exit = True
     # EOF means the owner may already be gone and cannot enforce its own deadline.

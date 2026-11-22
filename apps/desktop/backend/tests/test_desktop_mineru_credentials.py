@@ -1,7 +1,9 @@
 """MinerU credentials are independent of LLM connections and never persisted as values."""
 
 import json
+import logging
 import sqlite3
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from threading import Event, current_thread
 
@@ -12,6 +14,7 @@ from wenyi_desktop.local_credentials import (
     CredentialConflict,
     CredentialStore,
     CredentialUnavailable,
+    system_keyring,
 )
 from wenyi_desktop.main import create_app
 
@@ -402,3 +405,29 @@ def test_model_key_reveal_never_returns_environment_values(tmp_path, monkeypatch
     assert store.manual_secret("one", cfg) is None
     store.update("one", mode="manual", secret="fake-manual-model", storage="session")
     assert store.manual_secret("one", cfg) == "fake-manual-model"
+
+
+def test_vault_read_failure_logs_class_name_only(tmp_path, caplog):
+    class ExplodingVault(FakeVault):
+        def get_password(self, service, reference):
+            raise RuntimeError("vault backend exploded: internal-vault-details")
+
+    store = CredentialStore(tmp_path, vault=ExplodingVault())
+    store.save_mineru(secret="fake-service", storage="system")
+    with caplog.at_level(logging.WARNING, logger="wenyi_desktop.local_credentials"):
+        assert store.resolve_mineru_token() is None
+    assert "RuntimeError" in caplog.text
+    assert "internal-vault-details" not in caplog.text
+    assert "fake-service" not in caplog.text
+
+
+def test_system_keyring_probe_failure_returns_none(monkeypatch, caplog):
+    class ExplodingKeyring:
+        @staticmethod
+        def get_keyring():
+            raise RuntimeError("keyring probe exploded")
+
+    monkeypatch.setitem(sys.modules, "keyring", ExplodingKeyring)
+    with caplog.at_level(logging.DEBUG, logger="wenyi_desktop.local_credentials"):
+        assert system_keyring() is None
+    assert "RuntimeError" in caplog.text

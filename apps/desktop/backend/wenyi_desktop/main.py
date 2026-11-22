@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.metadata
 import json
+import logging
 import os
 import sqlite3
 import sys
@@ -39,6 +40,8 @@ from .updates import (
     restore_latest_backup,
 )
 from .updates import router as updates_router
+
+log = logging.getLogger(__name__)
 
 # A local run can legitimately publish nothing for minutes (one long model call),
 # and an idle socket looks exactly like a dead one to the renderer. The frame is
@@ -98,6 +101,7 @@ def legacy_data_report(workspace: str | Path) -> dict:
         try:
             entries = sorted(projects.iterdir())
         except OSError:
+            # An unreadable projects directory still yields a usable report.
             entries = []
         for entry in entries:
             try:
@@ -134,7 +138,9 @@ def _report_legacy_data(workspace: str | Path) -> None:
     """
     try:
         report = legacy_data_report(workspace)
-    except OSError:
+    except OSError as error:
+        # Guidance is best effort; never block startup on it.
+        log.warning("Legacy data report failed: %s", error)
         return
     if report["legacy_catalog"] or report["legacy_database"] or report["old_project_folders"]:
         print(LEGACY_DATA_GUIDANCE, file=sys.stderr, flush=True)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import secrets
 import shutil
@@ -18,6 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from starlette.responses import JSONResponse
 
 from .routers.credentials import desktop_only
+
+log = logging.getLogger(__name__)
 
 CONTROL_PATHS = frozenset(
     {
@@ -209,8 +212,13 @@ def restore_latest_backup(workspace: str | Path) -> RestoreOutcome:
     root = Path(workspace).expanduser().resolve() / BACKUPS_DIR
     try:
         candidates = [entry for entry in root.iterdir() if entry.is_dir()]
-    except OSError:
+    except FileNotFoundError:
         return RestoreOutcome("absent")
+    except OSError as error:
+        # A missing backups directory means "never backed up"; an unreadable
+        # one is a real failure the shell must see instead of an absent state.
+        log.warning("Backups directory is unreadable: %s", error)
+        return RestoreOutcome("failed", detail=f"backups directory is unreadable: {error}")
     if not candidates:
         return RestoreOutcome("absent")
     # Only the newest backup is considered: falling back to an older snapshot
@@ -371,7 +379,12 @@ def prune_backups(
             key=lambda entry: entry.name,
             reverse=True,
         )
-    except OSError:
+    except FileNotFoundError:
+        return PruneOutcome()
+    except OSError as error:
+        # Retention is best effort; an unreadable backups directory must not
+        # silently keep every snapshot forever.
+        log.warning("Backups directory scan failed: %s", error)
         return PruneOutcome()
     if not candidates:
         return PruneOutcome()
@@ -478,5 +491,7 @@ def _recycle_delete(path: Path) -> bool:
         )
         code = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(operation))
     except Exception:
+        # The recycle-bin API fails in arbitrary win32 ways; every failure
+        # just falls back to the trash move in the caller.
         return False
     return code == 0 and not operation.fAnyOperationsAborted

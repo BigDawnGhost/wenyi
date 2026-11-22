@@ -161,6 +161,7 @@ class ProjectDirectoryIndex:
         try:
             entries = sorted(root.iterdir())
         except FileNotFoundError:
+            # A missing library root simply has no projects to index.
             return
         for entry in entries:
             named, _ = split_project_name(entry.name)

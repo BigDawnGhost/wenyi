@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import logging
 import shutil
 import threading
 from pathlib import Path
@@ -18,6 +19,7 @@ from wenyi_desktop.main import create_app, create_context
 from wenyi_desktop.updates import (
     RETENTION_KEEP_BACKUPS,
     RETENTION_MAX_BYTES,
+    PruneOutcome,
     UpdateAdmissionMiddleware,
     UpdateGuard,
     prune_backups,
@@ -443,6 +445,22 @@ def test_restore_without_a_backup_reports_absent(tmp_path):
     assert outcome.files == 0
 
 
+def test_restore_reports_failure_when_backups_directory_is_unreadable(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    original_iterdir = Path.iterdir
+
+    def failing_iterdir(self):
+        if self.name == "backups":
+            raise PermissionError(13, "backups denied")
+        return original_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", failing_iterdir)
+    outcome = restore_latest_backup(workspace)
+    assert outcome.status == "failed"
+    assert outcome.detail is not None and "unreadable" in outcome.detail
+
+
 def test_restore_never_clobbers_data_after_a_backup_was_consumed(tmp_path):
     workspace, _, catalog, _ = _seed_migration_failure(tmp_path)
     assert restore_latest_backup(workspace).status == "restored"
@@ -528,6 +546,23 @@ def _seed_backups(workspace: Path, names: list[str], payload: bytes = b"payload"
         backup.mkdir(parents=True, exist_ok=True)
         (backup / "catalog.sqlite3").write_bytes(payload)
         (backup / "MANIFEST.json").write_text("{}", encoding="utf-8")
+
+
+def test_prune_reports_unreadable_backups_directory(tmp_path, monkeypatch, caplog):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    original_iterdir = Path.iterdir
+
+    def failing_iterdir(self):
+        if self.name == "backups":
+            raise PermissionError(13, "backups denied")
+        return original_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", failing_iterdir)
+    with caplog.at_level(logging.WARNING, logger="wenyi_desktop.updates"):
+        outcome = prune_backups(workspace)
+    assert outcome == PruneOutcome()
+    assert "Backups directory scan failed" in caplog.text
 
 
 def test_prune_keeps_the_newest_and_the_configured_count(tmp_path):

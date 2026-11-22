@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 from collections.abc import Callable, Mapping
@@ -21,6 +22,8 @@ from wenyi_core.llm.router import RoutedLLMClient
 
 from . import catalog, paths
 from .diagnostic_client import DesktopLLMClient
+
+log = logging.getLogger(__name__)
 
 SERVICE = "org.wenyi.desktop"
 
@@ -65,7 +68,10 @@ def system_keyring():
             ),
             None,
         )
-    except Exception:
+    except Exception as error:
+        # Keyring backends raise unrelated types; no usable OS vault simply
+        # means the store falls back to session-only secrets.
+        log.debug("OS keyring probe failed: %s", type(error).__name__)
         return None
 
 
@@ -200,6 +206,7 @@ class CredentialStore:
             try:
                 self._validate_mineru_token(secret)
             except ValueError:
+                # A malformed stored reference reports unavailable, not fatal.
                 available = False
         return {
             "mode": record.get("mode", "manual"),
@@ -223,7 +230,8 @@ class CredentialStore:
                 elif self.vault is not None:
                     try:
                         secret = self.vault.get_password(SERVICE, reference)
-                    except Exception:
+                    except Exception as error:
+                        log.warning("MinerU vault read failed: %s", type(error).__name__)
                         secret = None
             if self._mineru_source() == (record, revision):
                 return secret
@@ -252,7 +260,8 @@ class CredentialStore:
                 elif self.vault is not None:
                     try:
                         secret = self.vault.get_password(SERVICE, reference)
-                    except Exception:
+                    except Exception as error:
+                        log.warning("MinerU vault read failed: %s", type(error).__name__)
                         secret = None
             if self._mineru_source() == (record, revision):
                 return record, secret
@@ -335,9 +344,9 @@ class CredentialStore:
         if record.get("storage") == "system" and self.vault is not None:
             try:
                 self.vault.delete_password(SERVICE, reference)
-            except Exception:
+            except Exception as error:
                 # Detached references can never be reused by another connection.
-                pass
+                log.debug("MinerU vault delete failed: %s", type(error).__name__)
 
     def _resolve(self, record: dict, provider: ProviderConfig) -> str | None:
         if record.get("mode", "environment") == "environment":
@@ -354,7 +363,8 @@ class CredentialStore:
             return None
         try:
             return self.vault.get_password(SERVICE, reference)
-        except Exception:
+        except Exception as error:
+            log.warning("Provider vault read failed: %s", type(error).__name__)
             return None
 
     def status(
