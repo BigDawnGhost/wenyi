@@ -212,10 +212,10 @@ def test_review_persists_only_safe_errors(tmp_path, caplog):
     assert len(calls) == 2
     artifacts = [path for path in tmp_path.rglob("*.json") if "review" in str(path)]
     assert artifacts
-    documents = "\n".join(path.read_text() for path in artifacts)
+    documents = "\n".join(path.read_text(encoding="utf-8") for path in artifacts)
     assert "Model request failed:" in documents
     assert '"interrupted"' in documents
     assert SECRET not in documents
     for path in tmp_path.rglob("*.jsonl"):
-        assert SECRET not in path.read_text()
+        assert SECRET not in path.read_text(encoding="utf-8")
     assert SECRET not in caplog.text
