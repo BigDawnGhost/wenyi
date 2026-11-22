@@ -7,9 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
   schedule:
-    # A nightly full run is what replaced the unconditional push run (T-35): a
-    # stale path filter is caught within a day instead of on every merge. The
-    # end-to-end specs and the Docker proxy suite ride along here too.
+    # The nightly run is the safety net for the filtered pull-request tier: a
+    # stale path filter is caught within a day instead of on every merge. It is
+    # also the only tier that carries the Docker proxy suite.
     - cron: "0 18 * * *"
 
 permissions:
@@ -145,11 +145,11 @@ jobs:
 
   python:
     needs: changes
-    # A manual or scheduled run is always the full suite. A push and a pull
-    # request are both filtered: the merged commit was already tested on the pull
-    # request ref, and the nightly run covers what a stale filter could miss.
-    # `force` is the paths that invalidate the filter itself.
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.python == 'true' || needs.changes.outputs.force == 'true'
+    # A push, manual or scheduled run is always the full suite: the merge was
+    # already tested on the pull request ref, and the push tier must catch what
+    # a stale filter or a broken merge could miss. A pull request is filtered,
+    # with `force` as the paths that invalidate the filter itself.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.python == 'true' || needs.changes.outputs.force == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -276,7 +276,7 @@ jobs:
     # Windows, and crash-class defects such as 01-1.3 only surfaced there.
     # This tier stays a smoke sample within the time budget: install, style,
     # and the platform-sensitive file-handling tests instead of the full suite.
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.python == 'true' || needs.changes.outputs.force == 'true'
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.python == 'true' || needs.changes.outputs.force == 'true'
     runs-on: windows-latest
     timeout-minutes: 25
     steps:
@@ -311,10 +311,11 @@ jobs:
 
   web:
     needs: [changes, contract]
-    # A manual or scheduled run is always full; a filtered run is decided here.
+    # A push, manual or scheduled run is always full; a filtered run is decided here.
     if: |
       always() &&
-      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' ||
+       github.event_name == 'workflow_dispatch' ||
        github.event_name == 'schedule' ||
        needs.changes.outputs.web == 'true' ||
        needs.changes.outputs.e2e == 'true' ||
