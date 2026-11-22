@@ -7,13 +7,12 @@ the event loop. Scope lookup never creates or selects a process-global pool.
 
 from __future__ import annotations
 
-import pathlib
-from typing import Any, cast
+from typing import Any
 
 from psycopg_pool import ConnectionPool
 from wenyi_backend.context import current_context
 
-_SCHEMA_SQL = (pathlib.Path(__file__).parent / "schema.sql").read_text(encoding="utf-8")
+from .migrations import run_migrations
 
 # Default shared-pool depth for short request and state connections.
 DEFAULT_POOL_MAX_SIZE = 16
@@ -32,7 +31,7 @@ def init_pool(dsn: str, *, max_size: int = DEFAULT_POOL_MAX_SIZE) -> ConnectionP
     try:
         with pool.connection() as conn:
             conn.execute("SELECT pg_advisory_xact_lock(hashtextextended('wenyi:schema',0))")
-            conn.execute(cast(Any, _SCHEMA_SQL))
+            run_migrations(conn)
     except BaseException:
         pool.close()
         raise
