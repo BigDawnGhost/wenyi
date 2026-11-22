@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -27,7 +29,7 @@ from .local_runtime import (
     statistics_snapshot,
 )
 from .settings import DesktopSettings
-from .updates import UpdateAdmissionMiddleware, UpdateGuard
+from .updates import UpdateAdmissionMiddleware, UpdateGuard, restore_latest_backup
 from .updates import router as updates_router
 
 # A local run can legitimately publish nothing for minutes (one long model call),
@@ -119,12 +121,29 @@ def create_context(
     library_root: str | Path | None = None,
     install_root: str | Path | None = None,
 ) -> BackendContext:
-    backend = LocalBackend(
-        workspace,
-        config_path,
-        library_root=library_root,
-        install_root=install_root,
-    )
+    try:
+        backend = LocalBackend(
+            workspace,
+            config_path,
+            library_root=library_root,
+            install_root=install_root,
+        )
+    except (RuntimeError, ValueError, sqlite3.Error, SchemaTooNew) as error:
+        # The upgraded engine refused this workspace's data. Roll it back to the
+        # snapshot the shell wrote before the update, and report the outcome on
+        # stdout so the native shell can tell the user, instead of leaving the
+        # data half-migrated behind a generic bootstrap timeout.
+        outcome = restore_latest_backup(workspace)
+        payload = json.dumps(
+            {
+                "reason": "migration",
+                "restored": outcome.status == "restored",
+                "detail": outcome.detail or str(error)[:200],
+            },
+            separators=(",", ":"),
+        )
+        print(f"WENYI_FAILED {payload}", flush=True)
+        raise
     credentials = credentials or CredentialStore(backend.workspace, vault_factory=system_keyring)
     if credentials.database != backend.database:
         raise ValueError("Desktop credentials must belong to the selected data root")

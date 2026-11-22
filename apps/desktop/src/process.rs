@@ -19,6 +19,7 @@ pub enum Failure {
     ProtocolEof,
     ReadyTimeout,
     ChannelClosed,
+    Migration { restored: bool },
 }
 
 impl Failure {
@@ -31,6 +32,7 @@ impl Failure {
             Self::ProtocolEof => "protocol_eof",
             Self::ReadyTimeout => "ready_timeout",
             Self::ChannelClosed => "channel_closed",
+            Self::Migration { .. } => "migration_failed",
         }
     }
 
@@ -48,6 +50,14 @@ impl Failure {
             Self::Spawn(_) => "Could not start local engine.",
             Self::ReadyTimeout => {
                 "The local engine timed out during startup. Export a diagnostic report."
+            }
+            Self::Migration { restored: true } => {
+                "The update could not be applied. Your data was restored to its previous \
+                 state; install the previous Wenyi version to continue."
+            }
+            Self::Migration { restored: false } => {
+                "The update could not be applied, and the automatic data restore did not \
+                 complete. Export a diagnostic report."
             }
             _ => "The local engine did not become ready. Export a diagnostic report.",
         }
@@ -71,6 +81,22 @@ fn ready(line: &str, pid: u32) -> Result<u16, &'static str> {
         return Err("Invalid ready identity");
     }
     Ok(value.port)
+}
+
+#[derive(serde::Deserialize)]
+struct Failed {
+    reason: String,
+    #[serde(default)]
+    restored: bool,
+}
+
+fn failed_protocol(payload: &str) -> Failure {
+    match serde_json::from_str::<Failed>(payload) {
+        Ok(failed) if failed.reason == "migration" => Failure::Migration {
+            restored: failed.restored,
+        },
+        _ => Failure::InvalidProtocol,
+    }
 }
 
 fn token() -> Result<String, &'static str> {
@@ -389,6 +415,13 @@ fn receive_protocol(
             if sent {
                 notifications.submit_payload(payload);
             }
+        } else if let Some(payload) = line.strip_prefix("WENYI_FAILED ") {
+            // A bootstrap failure is reported exactly once; the shell decides
+            // how to present recovery instead of learning it from raw output.
+            if !sent {
+                let _ = tx.send(Err(failed_protocol(payload)));
+                sent = true;
+            }
         } else if !sent {
             let result = ready(line, pid).map_err(|_| Failure::InvalidProtocol).map(|port| {
                 serde_json::json!({"apiBase": format!("http://127.0.0.1:{port}"), "token": token}).to_string()
@@ -504,6 +537,55 @@ mod tests {
                 "ready_timeout",
                 "channel_closed"
             ],
+        );
+    }
+
+    #[test]
+    fn engine_failure_line_reports_migration_recovery() {
+        let diagnostics = Diagnostics::new(None);
+        let notifications = crate::notifications::Center::silent(diagnostics.clone());
+        for (payload, expected) in [
+            (
+                r#"{"reason":"migration","restored":true}"#,
+                Failure::Migration { restored: true },
+            ),
+            (
+                r#"{"reason":"migration","restored":false}"#,
+                Failure::Migration { restored: false },
+            ),
+            (
+                r#"{"reason":"migration"}"#,
+                Failure::Migration { restored: false },
+            ),
+            (r#"{"reason":"unknown"}"#, Failure::InvalidProtocol),
+            ("not-json", Failure::InvalidProtocol),
+        ] {
+            assert_eq!(failed_protocol(payload), expected);
+            let line = format!("WENYI_FAILED {payload}\n");
+            let (tx, rx) = mpsc::channel();
+            receive_protocol(
+                line.as_bytes(),
+                9,
+                "fake-private-token",
+                &diagnostics,
+                &notifications,
+                tx,
+            );
+            assert_eq!(wait_ready(&rx, Duration::ZERO), Err(expected));
+            assert!(rx.try_recv().is_err());
+        }
+        for restored in [true, false] {
+            let failure = Failure::Migration { restored };
+            assert_eq!(failure.reason(), "migration_failed");
+            failure.report(&diagnostics);
+        }
+        let records = native_records(&diagnostics);
+        assert_eq!(
+            records
+                .iter()
+                .map(|row| row["attributes"]["reason"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["migration_failed", "migration_failed"],
         );
     }
 

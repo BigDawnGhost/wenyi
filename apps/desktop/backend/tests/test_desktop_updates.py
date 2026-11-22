@@ -1,16 +1,21 @@
 """Update admission uses temporary catalogs and mock tasks, never real providers."""
 
 import asyncio
+import hashlib
+import json
+import shutil
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from wenyi_desktop import paths
+from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.local_runtime import LocalRuntime
 from wenyi_desktop.main import create_app, create_context
-from wenyi_desktop.updates import UpdateAdmissionMiddleware, UpdateGuard
+from wenyi_desktop.updates import UpdateAdmissionMiddleware, UpdateGuard, restore_latest_backup
 
 
 @pytest.fixture
@@ -343,3 +348,167 @@ def test_failed_check_reopens_without_cancel_request(context, monkeypatch, cance
         assert not guard.closed
 
     asyncio.run(run())
+
+
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_backup(workspace: Path, version: str, sources: dict[str, Path]) -> Path:
+    """Mimic the native snapshot: hashed per-source copies, manifest written last."""
+    backup = workspace / "backups" / f"{version}-20261120-000000"
+    entries = []
+    for name, source in sources.items():
+        pairs = (
+            [(source, name)]
+            if source.is_file()
+            else [
+                (file, f"{name}/{file.relative_to(source).as_posix()}")
+                for file in sorted(source.rglob("*"))
+                if file.is_file() and not file.name.endswith(".lock")
+            ]
+        )
+        for file, relative in pairs:
+            target = backup / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(file, target)
+            entries.append({"path": relative, "size": file.stat().st_size, "sha256": _digest(file)})
+    manifest = {
+        "schema_version": 2,
+        "source_path": "",
+        "created_at": "2026-11-20T00:00:00Z",
+        "version": version,
+        "files": entries,
+        "sources": [{"name": name, "path": str(path)} for name, path in sources.items()],
+    }
+    (backup / "MANIFEST.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return backup
+
+
+def _seed_migration_failure(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+    workspace = tmp_path / "workspace"
+    catalog = workspace / "catalog.sqlite3"
+    project = workspace / "projects" / "0"
+    project.mkdir(parents=True)
+    catalog.write_bytes(b"pre-upgrade catalog")
+    (project / "book.epub").write_bytes(b"pre-upgrade project")
+    (project / "run.lock").write_bytes(b"runtime lock")
+    backup = _write_backup(workspace, "1.4.0", {"catalog.sqlite3": catalog, "projects/0": project})
+    # The upgrade half-migrated the live data before the new engine gave up.
+    catalog.write_bytes(b"half-migrated catalog")
+    (project / "book.epub").write_bytes(b"half-migrated project")
+    return workspace, backup, catalog, project
+
+
+def test_restore_recovers_the_workspace_after_a_failed_migration(tmp_path):
+    workspace, backup, catalog, project = _seed_migration_failure(tmp_path)
+
+    outcome = restore_latest_backup(workspace)
+
+    assert outcome.status == "restored"
+    assert outcome.files == 2
+    assert catalog.read_bytes() == b"pre-upgrade catalog"
+    assert (project / "book.epub").read_bytes() == b"pre-upgrade project"
+    # Runtime locks are never part of the snapshot and stay untouched.
+    assert (project / "run.lock").read_bytes() == b"runtime lock"
+    assert (backup / "MANIFEST.restored.json").is_file()
+    assert not (backup / "MANIFEST.json").exists()
+
+
+def test_restore_refuses_a_damaged_backup_without_touching_the_workspace(tmp_path):
+    workspace, backup, catalog, project = _seed_migration_failure(tmp_path)
+    (backup / "catalog.sqlite3").write_bytes(b"tampered catalog!!!")
+
+    outcome = restore_latest_backup(workspace)
+
+    assert outcome.status == "failed"
+    assert "checksum mismatch" in outcome.detail
+    assert catalog.read_bytes() == b"half-migrated catalog"
+    assert (project / "book.epub").read_bytes() == b"half-migrated project"
+    assert (backup / "MANIFEST.json").is_file()
+    assert not (backup / "MANIFEST.restored.json").exists()
+
+
+def test_restore_without_a_backup_reports_absent(tmp_path):
+    outcome = restore_latest_backup(tmp_path / "workspace")
+
+    assert outcome.status == "absent"
+    assert outcome.files == 0
+
+
+def test_restore_never_clobbers_data_after_a_backup_was_consumed(tmp_path):
+    workspace, _, catalog, _ = _seed_migration_failure(tmp_path)
+    assert restore_latest_backup(workspace).status == "restored"
+    catalog.write_bytes(b"new attempt bytes")
+
+    outcome = restore_latest_backup(workspace)
+
+    assert outcome.status == "absent"
+    assert catalog.read_bytes() == b"new attempt bytes"
+
+
+def test_restore_resumes_after_an_interrupted_copy(tmp_path, monkeypatch):
+    workspace, backup, catalog, project = _seed_migration_failure(tmp_path)
+    original = shutil.copyfile
+    attempts = {"count": 0}
+
+    def interrupted(source, target):
+        attempts["count"] += 1
+        if attempts["count"] == 2:
+            raise OSError("simulated interruption")
+        return original(source, target)
+
+    monkeypatch.setattr(shutil, "copyfile", interrupted)
+    assert restore_latest_backup(workspace).status == "failed"
+    # Work completed before the interruption stays; the manifest survives.
+    assert catalog.read_bytes() == b"pre-upgrade catalog"
+    assert (backup / "MANIFEST.json").is_file()
+
+    monkeypatch.setattr(shutil, "copyfile", original)
+    assert restore_latest_backup(workspace).status == "restored"
+    assert (project / "book.epub").read_bytes() == b"pre-upgrade project"
+    assert (backup / "MANIFEST.restored.json").is_file()
+
+
+def test_restore_rejects_entries_outside_the_declared_sources(tmp_path):
+    workspace, backup, catalog, _ = _seed_migration_failure(tmp_path)
+    manifest = json.loads((backup / "MANIFEST.json").read_text(encoding="utf-8"))
+    manifest["files"].append({"path": "projects/9/extra.epub", "size": 3, "sha256": "0" * 64})
+    (backup / "MANIFEST.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    outcome = restore_latest_backup(workspace)
+
+    assert outcome.status == "failed"
+    assert "outside declared sources" in outcome.detail
+    assert catalog.read_bytes() == b"half-migrated catalog"
+
+
+def test_restore_covers_project_directories_outside_the_data_root(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    library = tmp_path / "library" / "0"
+    library.mkdir(parents=True)
+    (library / "book.epub").write_bytes(b"pre-upgrade project")
+    _write_backup(workspace, "1.4.0", {"projects/0": library})
+    (library / "book.epub").write_bytes(b"half-migrated project")
+
+    outcome = restore_latest_backup(workspace)
+
+    assert outcome.status == "restored"
+    assert (library / "book.epub").read_bytes() == b"pre-upgrade project"
+
+
+def test_failed_bootstrap_restores_and_tells_the_shell(tmp_path, capsys, monkeypatch):
+    workspace, _, catalog, _ = _seed_migration_failure(tmp_path)
+
+    def refused(self, *args, **kwargs):
+        raise RuntimeError("This is not a current-format Desktop catalog.")
+
+    monkeypatch.setattr(LocalBackend, "__init__", refused)
+    with pytest.raises(RuntimeError):
+        create_context(workspace, api_token="test-token")
+    output = capsys.readouterr().out
+    assert output.startswith("WENYI_FAILED ")
+    assert '"reason":"migration"' in output
+    assert '"restored":true' in output
+    assert catalog.read_bytes() == b"pre-upgrade catalog"
