@@ -550,6 +550,204 @@ class TestAssembleEpub(unittest.TestCase):
                 self.assertEqual(paragraph.get_text().replace("1", ""), "边境隧道通了。")
             self.assertEqual(len(client.calls), 1)
 
+    def test_bilingual_epub_keeps_footnotes_from_continuation_slices(self):
+        """Footnotes inside long-paragraph continuation slices survive bilingual export."""
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "split-notes.epub")
+            container = """<?xml version="1.0" encoding="UTF-8"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf"
+    media-type="application/oebps-package+xml"/></rootfiles>
+</container>"""
+            opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Split Notes</dc:title><dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="body" href="text/body.xhtml" media-type="application/xhtml+xml"/>
+    <item id="notes" href="notes/notes.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="body"/><itemref idref="notes"/></spine>
+</package>"""
+            head = " ".join(f"Sentence {i} continues the tale." for i in range(1, 11))
+            tail = " ".join(f"Sentence {i} continues the tale." for i in range(11, 17))
+            body = (
+                '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>'
+                + head
+                + ' <a href="../notes/notes.xhtml#note-1">alpha<sup id="key-1">1</sup></a> '
+                + tail
+                + ' <a href="../notes/notes.xhtml#note-2">beta<sup id="key-2">2</sup></a>'
+                + "</p></body></html>"
+            )
+            notes = (
+                '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+                '<p id="note-1"><a href="../text/body.xhtml#key-1">1 alpha</a>: first note.</p>'
+                '<p id="note-2"><a href="../text/body.xhtml#key-2">2 beta</a>: second note.</p>'
+                "</body></html>"
+            )
+            with zipfile.ZipFile(source_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr("META-INF/container.xml", container)
+                archive.writestr("OEBPS/content.opf", opf)
+                archive.writestr("OEBPS/text/body.xhtml", body)
+                archive.writestr("OEBPS/notes/notes.xhtml", notes)
+
+            document = load_document(source_path, "en", "zh", split_segments=2)
+            store = FileStorage(os.path.join(directory, "state"))
+            manifest = store.stage_document(document)
+            config = _config(os.path.join(directory, "state"))
+            config.source_lang = "en"
+
+            def handler(messages, tier, json_mode):
+                payload = json.loads(messages[-1]["content"].split("INPUT JSON:\n", 1)[1])
+                focus = payload.get("source_with_focus", "")
+                quote = "alpha" if "alpha" in focus else "beta"
+                return json.dumps({"target_quote": quote, "context": quote})
+
+            orchestrator = Orchestrator(config, client=FakeClient(handler=handler))
+            for chapter_meta in manifest["chapters"]:
+                chapter = store.load_chapter(chapter_meta["index"])
+                assert chapter.href is not None
+                is_body = chapter.href.endswith("text/body.xhtml")
+                for segment in chapter.segments:
+                    segment.target = (
+                        segment.source.replace("Sentence", "句子") if is_body else "注释译文。"
+                    )
+                store.save_chapter(chapter)
+                if is_body:
+                    # The footnotes sit in the continuation slices; the anchor slice must
+                    # have absorbed their metadata before alignment.
+                    self.assertTrue(any(segment.cont for segment in chapter.segments))
+                    orchestrator._annotations.align_annotations_after_batch(
+                        chapter.index, chapter, 0, len(chapter.text_segments), store
+                    )
+                    saved = store.load_chapter(chapter.index).segments[0].meta["epub_annotations"]
+                    self.assertEqual(len(saved["items"]), 2)
+                    self.assertEqual(len(saved["placements"]), 2)
+            manifest["initialized"] = True
+            store.save_manifest(manifest)
+
+            output_path = os.path.join(directory, "output-bi.epub")
+            assemble(
+                store,
+                source_path,
+                out_path=output_path,
+                out_format="epub",
+                bilingual=True,
+                about_page=False,
+            )
+            with zipfile.ZipFile(output_path) as archive:
+                rendered = BeautifulSoup(archive.read("OEBPS/text/body.xhtml"), "html.parser")
+                notes_soup = BeautifulSoup(archive.read("OEBPS/notes/notes.xhtml"), "html.parser")
+            paragraph = rendered.select_one("p:not(.tn-source)")
+            self.assertIsNotNone(paragraph)
+            assert isinstance(paragraph, Tag)
+            text = paragraph.get_text()
+            self.assertIn("句子 1 continues", text)
+            self.assertIn("句子 16 continues", text)
+            for note_id, key_id in (("note-1", "key-1"), ("note-2", "key-2")):
+                link = paragraph.find("a", href=f"../notes/notes.xhtml#{note_id}")
+                self.assertIsNotNone(link)
+                self.assertIsNotNone(paragraph.find("sup", id=key_id))
+                self.assertIsNotNone(notes_soup.find("a", href=f"../text/body.xhtml#{key_id}"))
+
+    def test_epub_export_survives_href_starting_with_continuation(self):
+        """An href whose first slice is a continuation no longer crashes export: the
+        original template block (footnote markup included) and the notes page survive."""
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "orphan-notes.epub")
+            container = """<?xml version="1.0" encoding="UTF-8"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf"
+    media-type="application/oebps-package+xml"/></rootfiles>
+</container>"""
+            opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Orphan Notes</dc:title><dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="body" href="text/body.xhtml" media-type="application/xhtml+xml"/>
+    <item id="notes" href="notes/notes.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="body"/><itemref idref="notes"/></spine>
+</package>"""
+            head = " ".join(f"Sentence {i} continues the tale." for i in range(1, 11))
+            tail = " ".join(f"Sentence {i} continues the tale." for i in range(11, 17))
+            body = (
+                '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>'
+                + head
+                + ' <a href="../notes/notes.xhtml#note-1">alpha<sup id="key-1">1</sup></a>'
+                + " "
+                + tail
+                + "</p></body></html>"
+            )
+            notes = (
+                '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+                '<p id="note-1"><a href="../text/body.xhtml#key-1">1 alpha</a>: first note.</p>'
+                "</body></html>"
+            )
+            with zipfile.ZipFile(source_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr("META-INF/container.xml", container)
+                archive.writestr("OEBPS/content.opf", opf)
+                archive.writestr("OEBPS/text/body.xhtml", body)
+                archive.writestr("OEBPS/notes/notes.xhtml", notes)
+
+            document = load_document(source_path, "en", "zh", split_segments=2)
+            body_chapter = next(
+                chapter
+                for chapter in document.chapters
+                if (chapter.href or "").endswith("text/body.xhtml")
+            )
+            anchor_slice = body_chapter.segments[0]
+            self.assertTrue(anchor_slice.anchor)
+            self.assertFalse(anchor_slice.cont)
+            self.assertTrue(any(segment.cont for segment in body_chapter.segments))
+            # Simulate state that lost the anchor slice: the href now starts with a
+            # continuation, which used to raise ValueError inside options().
+            anchor_slice.anchor = None
+            anchor_slice.cont = True
+
+            store = FileStorage(os.path.join(directory, "state"))
+            manifest = store.stage_document(document)
+            for chapter_meta in manifest["chapters"]:
+                chapter = store.load_chapter(chapter_meta["index"])
+                assert chapter.href is not None
+                is_body = chapter.href.endswith("text/body.xhtml")
+                for segment in chapter.segments:
+                    segment.target = (
+                        segment.source.replace("Sentence", "句子") if is_body else "注释译文。"
+                    )
+                store.save_chapter(chapter)
+            manifest["initialized"] = True
+            store.save_manifest(manifest)
+
+            output_path = os.path.join(directory, "output-bi.epub")
+            assemble(
+                store,
+                source_path,
+                out_path=output_path,
+                out_format="epub",
+                bilingual=True,
+                about_page=False,
+            )
+            with zipfile.ZipFile(output_path) as archive:
+                rendered = BeautifulSoup(archive.read("OEBPS/text/body.xhtml"), "html.parser")
+                notes_soup = BeautifulSoup(archive.read("OEBPS/notes/notes.xhtml"), "html.parser")
+            paragraph = rendered.select_one("p:not(.tn-source)")
+            self.assertIsNotNone(paragraph)
+            assert isinstance(paragraph, Tag)
+            # No saved block matches the orphaned continuation, so the template
+            # paragraph keeps its original text and its footnote markup.
+            self.assertIn("Sentence 1 continues", paragraph.get_text())
+            self.assertIsNotNone(paragraph.find("a", href="../notes/notes.xhtml#note-1"))
+            self.assertIsNotNone(paragraph.find("sup", id="key-1"))
+            # The note itself still lands on the notes page.
+            self.assertIsNotNone(notes_soup.find("p", id="note-1"))
+            self.assertIn("注释译文。", notes_soup.get_text())
+
     def test_nested_fragment_id_survives_textual_markup_flattening(self):
         html = '<html><body><h2><span id="inside">Section</span></h2></body></html>'
         title, segments, template = annotate_epub_resource(html, 0, "chapter.xhtml")
