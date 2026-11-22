@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\].*?\x07|\r")
+
+
+_CORE_TESTS_DIR = Path(__file__).resolve().parent
 
 
 def plain_text(value: str) -> str:
@@ -29,3 +33,28 @@ def _plain_rich_console(monkeypatch: pytest.MonkeyPatch) -> None:
         return RichConsole(*args, **kwargs)
 
     monkeypatch.setattr("rich.console.Console", console_factory)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Turn warnings into errors for the core test suite.
+
+    The repository-wide ``filterwarnings`` ini only pins individual messages
+    to errors. This hook adds a blanket warnings-as-errors filter to the core
+    domain first, so new warnings fail loudly here; other domains can adopt
+    the same policy incrementally. Tests that declare their own
+    ``filterwarnings`` marks keep control of their warning filters.
+
+    ``PytestUnraisableExceptionWarning`` stays recording-only: it is raised for
+    garbage-collected leftovers of earlier tests, so failing the currently
+    running test would attribute the failure to the wrong test.
+    """
+    for item in items:
+        if not item.path.is_relative_to(_CORE_TESTS_DIR):
+            continue
+        if item.get_closest_marker("filterwarnings") is None:
+            item.add_marker(
+                pytest.mark.filterwarnings(
+                    "error",
+                    "always::pytest.PytestUnraisableExceptionWarning",
+                )
+            )
