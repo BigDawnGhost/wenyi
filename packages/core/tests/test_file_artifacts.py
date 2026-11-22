@@ -107,12 +107,12 @@ def test_posix_backslashes_do_not_allow_artifact_escape(tmp_path, root_name, key
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Backslashes are filename characters on POSIX")
-def test_posix_backslashes_are_preserved_in_artifact_names(tmp_path):
+def test_posix_backslash_keys_are_rejected_as_non_portable(tmp_path):
+    """A backslash key names a different artifact per platform, so no backend accepts it."""
     storage = FileArtifacts(str(tmp_path / "run\\"))
-    key = "draft\\"
-    storage.write_artifact(key, {"target": "translation"})
-    assert storage.read_artifact(key) == {"target": "translation"}
-    assert storage.list_artifacts() == [key]
+    with pytest.raises(ValueError, match="Artifact key must be a portable relative path"):
+        storage.write_artifact("draft\\", {"target": "translation"})
+    assert storage.list_artifacts() == []
 
 
 @pytest.mark.parametrize("key", ["../outside.json", "../../outside.json"])
@@ -320,3 +320,79 @@ def test_long_run_directory_round_trips_through_the_extended_length_form(tmp_pat
 
     assert RunStore._read_json(str(path)) == {"target": "translation"}
     assert FileArtifacts(str(run_dir)).read_artifact("manifest.json") == {"target": "translation"}
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["a//b.json", "a/./b.json", "./a.json", "media/../secret.json", "dir/", "/absolute.json"],
+)
+def test_artifact_keys_reject_non_run_relative_forms(tmp_path, key):
+    """Only canonical run-relative keys are accepted; look-alike aliases must not rename."""
+    storage = FileArtifacts(str(tmp_path / "run"))
+    with pytest.raises(ValueError, match="Artifact key must remain within the run"):
+        storage.write_artifact(key, {})
+    assert storage.list_artifacts() == []
+
+
+@pytest.mark.parametrize("key", ["a\x00b.json"])
+def test_artifact_keys_reject_embedded_nul(tmp_path, key):
+    """NUL is rejected before path resolution, matching the other storage backends."""
+    storage = FileArtifacts(str(tmp_path / "run"))
+    with pytest.raises(ValueError, match="Artifact key must be a portable relative path"):
+        storage.write_artifact(key, {})
+    with pytest.raises(ValueError, match="Artifact key must be a portable relative path"):
+        storage.list_artifacts(key)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Drive spellings take another parse path on Windows")
+def test_posix_colon_keys_are_rejected_as_non_portable(tmp_path):
+    """A drive-colon key is a Windows path alias, not a portable artifact key."""
+    storage = FileArtifacts(str(tmp_path / "run"))
+    with pytest.raises(ValueError, match="Artifact key must be a portable relative path"):
+        storage.write_artifact("a:b.json", {})
+    assert storage.list_artifacts() == []
+
+
+@pytest.mark.parametrize("key", [r"reviews\ch0.json", r"media\image.png"])
+def test_windows_artifact_keys_reject_separator_backslashes(windows_paths, key):
+    """On Windows a backslash would act as a separator and silently rename the key."""
+    storage = FileArtifacts(r"C:\state\run")
+    with pytest.raises(ValueError, match="Artifact key must be a portable relative path"):
+        storage.write_artifact(key, {})
+    with pytest.raises(ValueError, match="Artifact key must be a portable relative path"):
+        storage.read_artifact(key)
+    with pytest.raises(ValueError, match="Artifact key must be a portable relative path"):
+        storage.list_artifacts(key.rpartition("\\")[0] + "\\")
+
+
+def test_artifact_keys_reject_absolute_paths_inside_the_run(tmp_path):
+    """An absolute spelling of a key inside the run is still not a relative key."""
+    root = tmp_path / "run"
+    storage = FileArtifacts(str(root))
+    with pytest.raises(ValueError, match="Artifact key must"):
+        storage.write_artifact(str(root / "inside.json"), {})
+    assert storage.list_artifacts() == []
+
+
+@pytest.mark.parametrize("prefix", ["a//b/", "a/./b/", "reviews/../..//"])
+def test_artifact_listing_rejects_non_canonical_prefixes(tmp_path, prefix):
+    """Prefix scans validate the prefix with the same portable-key contract."""
+    storage = FileArtifacts(str(tmp_path / "run"))
+    with pytest.raises(ValueError, match="Artifact key must remain within the run"):
+        storage.list_artifacts(prefix)
+
+
+def test_artifact_key_rejection_covers_every_access_path(tmp_path):
+    """Reads, deletes, record appends and scans all enforce the same key contract."""
+    storage = FileArtifacts(str(tmp_path / "run"))
+    operations = (
+        lambda: storage.read_artifact("a//b.json"),
+        lambda: storage.delete_artifact("a//b.json"),
+        lambda: storage.append_artifact_record("a//b.json", {}),
+        lambda: storage.read_artifact_records("a//b.json"),
+        lambda: storage.list_artifacts("a//b/"),
+    )
+    for operation in operations:
+        with pytest.raises(ValueError, match="Artifact key must remain within the run"):
+            operation()
+    assert storage.list_artifacts() == []
