@@ -85,6 +85,32 @@ def test_initialization_retry_recovers_first_usage_commit(tmp_path, published):
             assert storage.read_artifact("usage-pending.json") is None
 
 
+def test_stale_initialization_marker_cleared_once_manifest_committed(tmp_path):
+    storage = FileStorage(str(tmp_path))
+    with storage.lock():
+        storage.begin_initialization("a" * 64)
+        storage.save_manifest({"source_sha256": "a" * 64, "initialized": True})
+        # No finish_initialization: a crash after the manifest commit leaves the marker.
+        assert os.path.isfile(storage.initialization_path)
+
+    reopened = FileStorage(str(tmp_path))
+    assert reopened.exists()
+    assert not os.path.exists(reopened.initialization_path)
+
+
+def test_initialization_marker_without_manifest_survives_for_recovery(tmp_path):
+    storage = FileStorage(str(tmp_path))
+    with storage.lock():
+        storage.begin_initialization("a" * 64)
+        assert os.path.isfile(storage.initialization_path)
+
+    # A marker without a committed manifest is the recovery anchor for the next
+    # initialization attempt, so reopening the store must not discard it.
+    reopened = FileStorage(str(tmp_path), create=False)
+    assert not reopened.exists()
+    assert os.path.isfile(reopened.initialization_path)
+
+
 @pytest.mark.parametrize(
     ("directory", "io_directory"),
     [

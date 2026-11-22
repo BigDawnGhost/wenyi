@@ -72,6 +72,7 @@ class RunStore(FileArtifacts):
         self._state_local = local()
         if create:
             self.ensure_dirs()
+        self.clear_stale_initialization()
 
     def ensure_dirs(self) -> None:
         """Create run and chapter-state directories."""
@@ -278,6 +279,22 @@ class RunStore(FileArtifacts):
     def finish_initialization(self) -> None:
         """Remove temporary initialization identity after the manifest commits successfully."""
         self._remove(self.initialization_path)
+
+    def clear_stale_initialization(self) -> bool:
+        """Drop an initialization marker left behind by a completed initialization.
+
+        A crash between the manifest commit and `finish_initialization` leaves
+        `.initializing.json` in place even though initialization succeeded, and
+        resumed runs never touch it. The committed manifest is the completion
+        authority, so such a marker is removable garbage; the unlink is idempotent
+        and needs no lock. A marker without a manifest is not stale: it carries the
+        source identity `begin_initialization` needs to recover pending usage, so
+        it is kept until that takeover. Returns True when a marker was removed.
+        """
+        if not self._exists(self.manifest_path) or not self._exists(self.initialization_path):
+            return False
+        self._remove(self.initialization_path)
+        return True
 
     # ── manifest ──────────────────────────────────────────────────────────
     def stage_document(
