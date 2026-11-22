@@ -29,7 +29,12 @@ from .local_runtime import (
     statistics_snapshot,
 )
 from .settings import DesktopSettings
-from .updates import UpdateAdmissionMiddleware, UpdateGuard, restore_latest_backup
+from .updates import (
+    UpdateAdmissionMiddleware,
+    UpdateGuard,
+    prune_backups,
+    restore_latest_backup,
+)
 from .updates import router as updates_router
 
 # A local run can legitimately publish nothing for minutes (one long model call),
@@ -144,6 +149,9 @@ def create_context(
         )
         print(f"WENYI_FAILED {payload}", flush=True)
         raise
+    # Retention runs only on a healthy start: a failed migration must keep
+    # every snapshot it may still need to roll back to.
+    prune_backups(workspace)
     credentials = credentials or CredentialStore(backend.workspace, vault_factory=system_keyring)
     if credentials.database != backend.database:
         raise ValueError("Desktop credentials must belong to the selected data root")

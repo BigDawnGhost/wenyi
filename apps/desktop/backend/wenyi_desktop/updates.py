@@ -8,6 +8,9 @@ import json
 import os
 import secrets
 import shutil
+import sys
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -162,6 +165,17 @@ SINGLE_SOURCE_SCHEMA_VERSION = 1
 MULTI_SOURCE_SCHEMA_VERSION = 2
 EXCLUDED_SUFFIX = ".lock"
 _HASH_CHUNK_BYTES = 1024 * 1024
+# Retention: the newest snapshot is the restore anchor after a failed upgrade;
+# three copies cover it plus one failed-upgrade cycle and one in-flight or
+# same-second duplicate snapshot. Restoring never looks past the newest, so
+# more copies add no recovery value. 5 GiB mirrors a whole data root (catalog
+# plus project sources and exports) with headroom, so the size cap only bites
+# once snapshots have genuinely piled up, never on one legitimate snapshot.
+RETENTION_KEEP_BACKUPS = 3
+RETENTION_MAX_BYTES = 5 * 1024**3
+# Expired snapshots are moved here when the OS recycle bin is unavailable, so
+# a retention mistake stays recoverable instead of destroying the only copy.
+TRASH_DIR = "backups-trash"
 
 
 @dataclass(frozen=True)
@@ -190,7 +204,7 @@ def restore_latest_backup(workspace: str | Path) -> RestoreOutcome:
     rather than partially restored. On success the manifest is renamed to
     ``MANIFEST.restored.json``: an interrupted restore leaves it in place and
     converges on the next launch, and an already-consumed backup never
-    clobbers newer data. Retention of consumed backups is task 9.2.
+    clobbers newer data. Superseded and consumed backups are reclaimed by :func:`prune_backups`.
     """
     root = Path(workspace).expanduser().resolve() / BACKUPS_DIR
     try:
@@ -313,3 +327,156 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(_HASH_CHUNK_BYTES), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class PruneOutcome:
+    """Which upgrade snapshots survived retention and which were cleared."""
+
+    kept: tuple[str, ...] = ()
+    evicted: tuple[str, ...] = ()
+    failed: tuple[str, ...] = ()
+
+
+def prune_backups(
+    workspace: str | Path,
+    *,
+    keep: int = RETENTION_KEEP_BACKUPS,
+    max_bytes: int = RETENTION_MAX_BYTES,
+    delete: Callable[[Path], None] | None = None,
+) -> PruneOutcome:
+    """Keep the pre-upgrade snapshots bounded by count and total size.
+
+    Every upgrade writes a fresh snapshot and nothing removed the old ones, so
+    the backups directory grows without limit. Retention walks the snapshot
+    directories newest first, in the same name order restore_latest_backup()
+    uses. The newest directory is always kept: it is the snapshot a failed
+    upgrade would roll back to, and deleting it could either drop the only
+    recovery point or turn "no usable backup" into an unintended fallback to
+    an older snapshot. Older snapshots stay while they fit both the count
+    limit (keep) and the cumulative size budget (max_bytes); the rest are
+    cleared through a recoverable delete (the Windows recycle bin, else a move
+    to <workspace>/backups-trash), never a permanent erase. Pruning is best
+    effort: individual failures are reported in PruneOutcome.failed and never
+    prevent engine startup.
+    """
+    root = Path(workspace).expanduser().resolve()
+    try:
+        candidates = sorted(
+            (
+                entry
+                for entry in (root / BACKUPS_DIR).iterdir()
+                if entry.is_dir() and not entry.name.startswith(".")
+            ),
+            key=lambda entry: entry.name,
+            reverse=True,
+        )
+    except OSError:
+        return PruneOutcome()
+    if not candidates:
+        return PruneOutcome()
+    trash_root = root / TRASH_DIR
+
+    def remove(path: Path) -> None:
+        if delete is not None:
+            delete(path)
+        else:
+            _recoverable_delete(path, trash_root)
+
+    kept: list[Path] = []
+    evicted: list[Path] = []
+    failed: list[Path] = []
+    budget = 0
+    for index, entry in enumerate(candidates):
+        size = _tree_size(entry)
+        if index == 0 or (len(kept) < keep and budget + size <= max_bytes):
+            kept.append(entry)
+            budget += size
+            continue
+        try:
+            remove(entry)
+        except OSError:
+            failed.append(entry)
+        else:
+            evicted.append(entry)
+    return PruneOutcome(
+        kept=tuple(entry.name for entry in kept),
+        evicted=tuple(entry.name for entry in evicted),
+        failed=tuple(entry.name for entry in failed),
+    )
+
+
+def _tree_size(root: Path) -> int:
+    """Total size of the files below root; symlinks and unreadable parts are skipped."""
+    total = 0
+    stack = [root]
+    while stack:
+        try:
+            entries = list(os.scandir(stack.pop()))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.is_symlink():
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(Path(entry.path))
+                else:
+                    total += entry.stat(follow_symlinks=False).st_size
+            except OSError:
+                continue
+    return total
+
+
+def _recoverable_delete(path: Path, trash_root: Path) -> None:
+    """Delete through a recoverable path: the OS recycle bin, else a trash move.
+
+    A retention mistake must never destroy the only copy of a snapshot. On
+    Windows the directory goes to the recycle bin (FOF_ALLOWUNDO), where the
+    user can restore it; anywhere else, or when that fails, it is moved to
+    'backups-trash' beside the backups it came from. Permanent deletion is
+    never attempted: if both recoverable paths fail, the backup stays in place
+    and the caller reports it as failed.
+    """
+    if _recycle_delete(path):
+        return
+    trash_root.mkdir(parents=True, exist_ok=True)
+    target = trash_root / path.name
+    if target.exists():
+        target = trash_root / f"{path.name}-{time.time_ns()}"
+    os.replace(path, target)
+
+
+def _recycle_delete(path: Path) -> bool:
+    """Move path into the Windows recycle bin; False when unavailable or refused."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class SHFILEOPSTRUCTW(ctypes.Structure):
+            _fields_ = [
+                ("hwnd", wintypes.HWND),
+                ("wFunc", ctypes.c_uint),
+                ("pFrom", wintypes.LPCWSTR),
+                ("pTo", wintypes.LPCWSTR),
+                ("fFlags", ctypes.c_ushort),
+                ("fAnyOperationsAborted", wintypes.BOOL),
+                ("hNameMappings", ctypes.c_void_p),
+                ("lpszProgressTitle", wintypes.LPCWSTR),
+            ]
+
+        # FO_DELETE with FOF_ALLOWUNDO | FOF_SILENT | FOF_NOCONFIRMATION: the
+        # directory becomes restorable from the recycle bin, without dialogs.
+        operation = SHFILEOPSTRUCTW(
+            hwnd=None,
+            wFunc=3,
+            pFrom=str(path) + "\0",
+            pTo=None,
+            fFlags=0x40 | 0x4 | 0x10,
+        )
+        code = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(operation))
+    except Exception:
+        return False
+    return code == 0 and not operation.fAnyOperationsAborted

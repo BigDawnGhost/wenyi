@@ -15,7 +15,14 @@ from wenyi_desktop import paths
 from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.local_runtime import LocalRuntime
 from wenyi_desktop.main import create_app, create_context
-from wenyi_desktop.updates import UpdateAdmissionMiddleware, UpdateGuard, restore_latest_backup
+from wenyi_desktop.updates import (
+    RETENTION_KEEP_BACKUPS,
+    RETENTION_MAX_BYTES,
+    UpdateAdmissionMiddleware,
+    UpdateGuard,
+    prune_backups,
+    restore_latest_backup,
+)
 
 
 @pytest.fixture
@@ -512,3 +519,147 @@ def test_failed_bootstrap_restores_and_tells_the_shell(tmp_path, capsys, monkeyp
     assert '"reason":"migration"' in output
     assert '"restored":true' in output
     assert catalog.read_bytes() == b"pre-upgrade catalog"
+
+
+def _seed_backups(workspace: Path, names: list[str], payload: bytes = b"payload") -> None:
+    """Create fake upgrade snapshots: one payload file, manifest written last."""
+    for name in names:
+        backup = workspace / "backups" / name
+        backup.mkdir(parents=True, exist_ok=True)
+        (backup / "catalog.sqlite3").write_bytes(payload)
+        (backup / "MANIFEST.json").write_text("{}", encoding="utf-8")
+
+
+def test_prune_keeps_the_newest_and_the_configured_count(tmp_path):
+    workspace = tmp_path / "workspace"
+    names = [f"1.4.0-2026112{day}-000000" for day in range(1, 6)]
+    _seed_backups(workspace, names)
+    outcome = prune_backups(workspace, keep=3, delete=shutil.rmtree)
+    # Eviction follows the newest-first traversal, so the older of the two
+    # surplus snapshots is reported last.
+    assert outcome.evicted == (names[1], names[0])
+    assert outcome.kept == (names[4], names[3], names[2])
+    assert outcome.failed == ()
+    assert not (workspace / "backups" / names[0]).exists()
+    assert (workspace / "backups" / names[-1]).exists()
+
+
+def test_prune_enforces_the_size_budget(tmp_path):
+    workspace = tmp_path / "workspace"
+    old, middle, newest = (
+        "1.4.0-20261121-000000",
+        "1.4.0-20261122-000000",
+        "1.4.0-20261123-000000",
+    )
+    _seed_backups(workspace, [old], payload=b"o" * 50)
+    _seed_backups(workspace, [middle], payload=b"m" * 40)
+    _seed_backups(workspace, [newest], payload=b"n" * 30)
+    outcome = prune_backups(workspace, keep=10, max_bytes=100, delete=lambda path: None)
+    assert outcome.kept == (newest, middle)
+    assert outcome.evicted == (old,)
+
+
+def test_prune_never_deletes_the_newest_backup_even_over_budget(tmp_path):
+    workspace = tmp_path / "workspace"
+    name = "1.4.0-20261123-000000"
+    _seed_backups(workspace, [name], payload=b"huge" * 100)
+    outcome = prune_backups(workspace, keep=1, max_bytes=10, delete=lambda path: None)
+    assert outcome.kept == (name,)
+    assert outcome.evicted == ()
+    assert outcome.failed == ()
+    assert (workspace / "backups" / name).exists()
+
+
+def test_prune_defaults_are_pinned():
+    # The newest backup is the restore anchor; three copies cover it plus one
+    # failed-upgrade cycle and one in-flight or duplicate snapshot. 5 GiB
+    # bounds disk use while staying far above any single real snapshot, so the
+    # cap never evicts the newest backup in normal use.
+    assert RETENTION_KEEP_BACKUPS == 3
+    assert RETENTION_MAX_BYTES == 5 * 1024**3
+
+
+def test_prune_moves_to_trash_when_the_recycle_bin_is_unavailable(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    _seed_backups(workspace, ["1.4.0-20261121-000000", "1.4.0-20261122-000000"])
+    monkeypatch.setattr("wenyi_desktop.updates._recycle_delete", lambda path: False)
+    outcome = prune_backups(workspace, keep=1)
+    evicted = workspace / "backups" / "1.4.0-20261121-000000"
+    trashed = workspace / "backups-trash" / "1.4.0-20261121-000000"
+    assert outcome.evicted == ("1.4.0-20261121-000000",)
+    assert not evicted.exists()
+    assert (trashed / "MANIFEST.json").is_file()
+
+
+def test_prune_uses_the_recycle_bin_when_available(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    _seed_backups(workspace, ["1.4.0-20261121-000000", "1.4.0-20261122-000000"])
+    recycled = []
+
+    def recycle(path):
+        recycled.append(path)
+        return True
+
+    monkeypatch.setattr("wenyi_desktop.updates._recycle_delete", recycle)
+    outcome = prune_backups(workspace, keep=1)
+    assert outcome.evicted == ("1.4.0-20261121-000000",)
+    assert [path.name for path in recycled] == ["1.4.0-20261121-000000"]
+    assert not (workspace / "backups-trash").exists()
+
+
+def test_prune_failure_is_reported_and_keeps_the_backup(tmp_path):
+    workspace = tmp_path / "workspace"
+    _seed_backups(workspace, ["1.4.0-20261121-000000", "1.4.0-20261122-000000"])
+
+    def denied(path):
+        raise OSError("permission denied")
+
+    outcome = prune_backups(workspace, keep=1, delete=denied)
+    assert outcome.failed == ("1.4.0-20261121-000000",)
+    assert outcome.evicted == ()
+    assert (workspace / "backups" / "1.4.0-20261121-000000").exists()
+
+
+def test_prune_never_removes_the_snapshot_restore_would_use(tmp_path):
+    workspace = tmp_path / "workspace"
+    interrupted = workspace / "backups" / "1.5.0-20261123-000000"
+    interrupted.mkdir(parents=True)
+    (interrupted / "catalog.sqlite3").write_bytes(b"partial copy")
+    _seed_backups(workspace, ["1.4.0-20261122-000000"])
+    # Restore only ever considers the newest directory. Deleting the
+    # manifest-less newest one would make a failed upgrade fall back to the
+    # older snapshot, so retention must keep it even though it is unusable.
+    assert restore_latest_backup(workspace).status == "absent"
+    outcome = prune_backups(workspace, keep=1, delete=lambda path: None)
+    assert outcome.kept == ("1.5.0-20261123-000000",)
+    assert outcome.evicted == ("1.4.0-20261122-000000",)
+    assert restore_latest_backup(workspace).status == "absent"
+
+
+def test_prune_ignores_hidden_entries_and_missing_roots(tmp_path):
+    workspace = tmp_path / "workspace"
+    outcome = prune_backups(workspace)
+    assert outcome.kept == () and outcome.evicted == () and outcome.failed == ()
+    _seed_backups(workspace, ["1.4.0-20261121-000000", "1.4.0-20261122-000000"])
+    hidden = workspace / "backups" / ".junk"
+    hidden.mkdir()
+    (hidden / "catalog.sqlite3").write_bytes(b"junk")
+    outcome = prune_backups(workspace, keep=1, delete=lambda path: None)
+    assert outcome.kept == ("1.4.0-20261122-000000",)
+    assert outcome.evicted == ("1.4.0-20261121-000000",)
+    assert hidden.is_dir()
+
+
+def test_create_context_prunes_upgrade_backups_on_startup(tmp_path, monkeypatch):
+    workspace = tmp_path / "workspace"
+    names = [f"1.4.0-2026112{day}-000000" for day in range(1, 6)]
+    _seed_backups(workspace, names)
+    monkeypatch.setattr("wenyi_desktop.updates._recycle_delete", lambda path: False)
+    context = create_context(workspace, api_token="test-token")
+    try:
+        remaining = sorted(entry.name for entry in (workspace / "backups").iterdir())
+        assert remaining == names[2:]
+        trashed = sorted(entry.name for entry in (workspace / "backups-trash").iterdir())
+        assert trashed == names[:2]
+    finally:
+        context.repository.close()
