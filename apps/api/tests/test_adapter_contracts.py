@@ -186,17 +186,24 @@ def test_a_silent_progress_channel_still_proves_the_link_is_alive(monkeypatch):
         async def aclose(self):
             return None
 
+    heartbeats = asyncio.Event()
+
+    def signal_heartbeat() -> None:
+        if sum(frame.get("kind") == "heartbeat" for frame in sent) >= 2:
+            heartbeats.set()
+
     class Socket:
         async def send_json(self, payload):
             sent.append(payload)
+            signal_heartbeat()
 
         async def send_text(self, payload):
             sent.append(json.loads(payload))
+            signal_heartbeat()
 
         async def receive(self):
             # Heartbeats alone end the relay, so no peer is needed to close it.
-            while sum(frame.get("kind") == "heartbeat" for frame in sent) < 2:
-                await asyncio.sleep(0.01)
+            await asyncio.wait_for(heartbeats.wait(), 5)
             return {"type": "websocket.disconnect"}
 
     class Projects:

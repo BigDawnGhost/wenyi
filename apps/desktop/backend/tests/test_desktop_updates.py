@@ -206,7 +206,7 @@ def test_actual_runtime_ownership_blocks_even_terminal_catalog(context, owned):
         pid = context.repository.create_project("terminal", "en", "zh", {})
         job = context.repository.create_job(pid, "export", "mock", run_id="mock")
         context.repository.set_job_status(job, "done")
-        task = asyncio.create_task(asyncio.sleep(60))
+        task = asyncio.create_task(asyncio.Event().wait())
         if owned == "_active":
             runtime._active["mock"] = task
         else:

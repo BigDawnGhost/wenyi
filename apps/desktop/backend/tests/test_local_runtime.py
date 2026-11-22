@@ -759,17 +759,23 @@ def test_an_idle_progress_hub_still_sends_a_heartbeat(catalog, monkeypatch):
         # A short deadline keeps the test fast; the relay reads this constant.
         monkeypatch.setattr(module, "HEARTBEAT_SECONDS", 0.05)
         sent = []
+        heartbeats = asyncio.Event()
+
+        def signal_heartbeat() -> None:
+            if sum(frame.get("kind") == "heartbeat" for frame in sent) >= 2:
+                heartbeats.set()
 
         async def send_json(payload):
             sent.append(payload)
+            signal_heartbeat()
 
         async def send_text(payload):
             sent.append(json.loads(payload))
+            signal_heartbeat()
 
         async def receive():
             # Heartbeats alone end the relay, so no peer is needed to close it.
-            while sum(frame.get("kind") == "heartbeat" for frame in sent) < 2:
-                await asyncio.sleep(0.01)
+            await asyncio.wait_for(heartbeats.wait(), 5)
             return {"type": "websocket.disconnect"}
 
         await services.relay(
@@ -943,13 +949,15 @@ def test_workflow_cached_progress_rejects_other_project_and_old_run(desktop):
 def test_run_workflow_sync_abandons_thread_that_ignores_cancellation(monkeypatch):
     monkeypatch.setattr(local_runtime, "CANCEL_DRAIN_TIMEOUT_SECONDS", 0.05)
     release = threading.Event()
+    started = threading.Event()
 
     def operation():
+        started.set()
         release.wait(5.0)
 
     async def scenario():
         task = asyncio.create_task(local_runtime.run_workflow_sync(operation))
-        await asyncio.sleep(0.02)
+        assert await asyncio.to_thread(started.wait, 5.0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 5.0)

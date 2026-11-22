@@ -337,21 +337,23 @@ def test_export_native_panic_keeps_error_writes_under_the_lock(export_execution)
 def test_cancelled_workflow_drains_checkpoint_and_reports_drained(execution):
     request, dependencies, _ = execution
     release = asyncio.Event()
+    entered = asyncio.Event()
 
     def operation(request, store, progress, bind_client):
         return "done"
 
     async def run_sync(operation):
         operation()
+        entered.set()
         await release.wait()
 
     async def scenario():
         task = asyncio.create_task(
             runner.run(request, replace(dependencies, operation=operation, run_sync=run_sync))
         )
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(entered.wait(), 5.0)
         task.cancel()
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0)
         release.set()
         with pytest.raises(asyncio.CancelledError):
             await asyncio.wait_for(task, 5.0)
@@ -364,19 +366,21 @@ def test_cancelled_workflow_forces_paused_status_when_drain_expires(execution, m
     request, dependencies, _ = execution
     monkeypatch.setattr(runner, "CANCEL_DRAIN_TIMEOUT_SECONDS", 0.05)
     stuck = asyncio.Event()
+    entered = asyncio.Event()
 
     def operation(request, store, progress, bind_client):
         return "done"
 
     async def run_sync(operation):
         operation()
+        entered.set()
         await stuck.wait()
 
     async def scenario():
         task = asyncio.create_task(
             runner.run(request, replace(dependencies, operation=operation, run_sync=run_sync))
         )
-        await asyncio.sleep(0.05)
+        await asyncio.wait_for(entered.wait(), 5.0)
         started = time.monotonic()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
