@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from collections.abc import Iterable, Iterator
+from copy import deepcopy
 from typing import Any, TypeAlias
 
 from ..alignment.objects import resolve_objects
@@ -29,7 +31,9 @@ class ExportViewStore(RunStore):
         super().__init__(store.run_dir, create=False)
         self._store = store
         self._chapters: dict[int, Chapter] = {}
-        manifest = store.load_manifest()
+        self._manifest: dict | None = None
+        self._manifest_lock = threading.Lock()
+        manifest = self.load_manifest()
         self.language_policy = plan or resolve_policy(
             PolicyContext(
                 manifest.get("source_lang", "auto"),
@@ -41,7 +45,18 @@ class ExportViewStore(RunStore):
         )
 
     def load_manifest(self) -> dict:
-        return self._store.load_manifest()
+        """Return the export-session manifest, querying storage once per view."""
+        if self._manifest is None:
+            with self._manifest_lock:
+                if self._manifest is None:
+                    self._manifest = self._store.load_manifest()
+        return deepcopy(self._manifest)
+
+    def save_manifest(self, manifest: dict) -> None:
+        """Delegate the save and drop this session's stale copy."""
+        self._store.save_manifest(manifest)
+        with self._manifest_lock:
+            self._manifest = None
 
     def load_chapter(self, ci: int) -> Chapter:
         """Return the prepared read-only chapter, resolving it on first request.
