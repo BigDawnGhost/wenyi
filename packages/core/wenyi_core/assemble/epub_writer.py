@@ -23,10 +23,10 @@ from wenyi_core.assemble.html_resources import (
 from wenyi_core.assemble.writer_common import (
     _ch_title,
     _epub_lang,
-    _export_book_title,
     _heading_level,
     _manifest_target_lang,
     _merged_paragraphs,
+    _resolve_export_title,
     _sanitize_filename,
 )
 from wenyi_core.atomicio import publish_target
@@ -59,6 +59,21 @@ def _assemble_epub(
     raw_meta = m.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     source_title = m.get("title", "") if isinstance(m.get("title"), str) else ""
+    export_title, original_title = _resolve_export_title(m, target_lang_code, bilingual=bilingual)
+    description = meta.get("epub_description_translated")
+    raw_subjects = meta.get("epub_subjects_translated")
+    subjects = (
+        [item for item in raw_subjects if isinstance(item, str) and item.strip()]
+        if isinstance(raw_subjects, list)
+        else []
+    )
+    chapter_titles = {
+        c["index"]: title.strip()
+        for c in m["chapters"]
+        if isinstance(c.get("index"), int)
+        and isinstance(title := c.get("title_translated"), str)
+        and title.strip()
+    }
     state = epub_native.options(
         store.iter_chapters_once(c["index"] for c in m["chapters"]),
         meta,
@@ -68,7 +83,11 @@ def _assemble_epub(
         order=order,
         preserve_source_style=preserve_source_style,
         target_lang=_epub_lang(target_lang_code),
-        export_title=_export_book_title(source_title, target_lang_code, bilingual=bilingual),
+        export_title=export_title,
+        original_title=original_title or None,
+        description=description if isinstance(description, str) else None,
+        subjects=subjects,
+        chapter_titles=chapter_titles,
         about=about.render().decode("utf-8") if about is not None else None,
     )
     with publish_target(out_path) as temp_out:
@@ -89,11 +108,7 @@ def _build_epub_from_chapters(
     """Build a standard EPUB3 from chapters when no original EPUB template exists."""
     m = store.load_manifest()
     target_lang_code = _manifest_target_lang(m)
-    title = _export_book_title(
-        m.get("title", "translated") if isinstance(m.get("title"), str) else "translated",
-        target_lang_code,
-        bilingual=bilingual,
-    )
+    title, _ = _resolve_export_title(m, target_lang_code, bilingual=bilingual)
     lang = _epub_lang(target_lang_code)
 
     chapters: list[EpubChapter] = []
@@ -220,12 +235,7 @@ def _build_epub_from_html_templates(
     """Build EPUB from rendered HTML templates and package their media resources."""
     manifest = store.load_manifest()
     target_lang_code = _manifest_target_lang(manifest)
-    raw_title = manifest.get("title", "translated")
-    title = _export_book_title(
-        raw_title if isinstance(raw_title, str) else "translated",
-        target_lang_code,
-        bilingual=bilingual,
-    )
+    title, _ = _resolve_export_title(manifest, target_lang_code, bilingual=bilingual)
     lang = _epub_lang(target_lang_code)
     raw_meta = manifest.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}

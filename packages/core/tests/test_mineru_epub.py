@@ -491,3 +491,45 @@ def test_unhandled_source_fails_without_publishing(tmp_path, data, message):
     with pytest.raises(ValueError, match=message):
         convert_json(source, output)
     assert not output.exists()
+
+
+def test_mineru_epub_export_updates_head_title_from_translated_chapter(tmp_path):
+    source_json = tmp_path / "paper_content_list_v2.json"
+    source_json.write_text(
+        json.dumps(
+            [
+                [
+                    _block("title", level=1, title_content=[_span("Quantum Notes")]),
+                    _block("paragraph", paragraph_content=[_span("Body paragraph.")]),
+                ]
+            ]
+        ),
+        encoding="utf-8",
+    )
+    pdf_path = tmp_path / "paper-2026.pdf"
+    pdf_path.write_bytes(pdf_bytes(["page one"]))
+    store = FileStorage(str(tmp_path / "state"))
+    cache = pdf_cache_epub_path(store.source_dir, source_sha256(pdf_path))
+    cache.parent.mkdir(parents=True)
+    convert_json(source_json, cache, title=pdf_path.stem, lang="en")
+
+    doc = read_epub(str(cache), "en", "zh")
+    doc.fmt = "pdf"
+    doc.source_path = str(pdf_path)
+    doc.meta["mineru_epub_sha256"] = source_sha256(cache)
+    manifest = store.init_from_document(doc)
+    chapter = store.load_chapter(0)
+    chapter.segments[0].target = "量子笔记"
+    chapter.segments[1].target = "正文段落。"
+    store.save_chapter(chapter)
+    manifest["chapters"][0]["title_translated"] = "量子笔记"
+    store.save_manifest(manifest)
+
+    out = tmp_path / "translated.epub"
+    assemble(store, str(pdf_path), str(out), "epub", about_page=False)
+    with ZipFile(out) as archive:
+        opf_name = next(name for name in archive.namelist() if name.endswith(".opf"))
+        opf = archive.read(opf_name).decode("utf-8")
+        xhtml = archive.read("EPUB/source.xhtml").decode("utf-8")
+    assert "<dc:title>paper-2026-wenyi-zh</dc:title>" in opf
+    assert "<title>量子笔记</title>" in xhtml
