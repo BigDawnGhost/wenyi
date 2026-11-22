@@ -271,7 +271,16 @@ def _filter_generic_targets(
     """Drop extractions whose target is only pronouns and generic titles (target profile)."""
     if not generic_words:
         return terms
-    kept = [term for term in terms if not _is_generic_target(term.target, generic_words)]
+
+    def generic(term: GlossaryTerm) -> bool:
+        words = _WORD.findall(term.target)
+        # A one-word capitalized name such as "Grace" or "King" is a person, not a title.
+        if term.type in _NAME_TYPES and len(words) == 1 and len(words[0]) > 1:
+            if words[0][0].isupper():
+                return False
+        return _is_generic_target(term.target, generic_words)
+
+    kept = [term for term in terms if not generic(term)]
     if len(kept) < len(terms):
         _LOGGER.info(
             "Skipped %d glossary extraction(s) with a pronoun or bare-title target "

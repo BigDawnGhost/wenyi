@@ -272,9 +272,12 @@ request is built, so they change its cache key; the capital-letter guard runs af
 cached or fresh decision and leaves cached requests valid.
 
 Leaving overridden entries out of prompts (`glossary/adherence.py`) is derived state, not a
-glossary write. The counts come only from saved source/target pairs: the run seeds them
-from `load_translation_inputs` and adds each batch after its targets are saved, so a
-resumed run reaches the same decision without a checkpoint. Only extracted entries
+glossary write. The counts come only from saved source and draft pairs, reading
+`target_before_polish` when present so background polish timing cannot change them: the
+run seeds them from `load_translation_inputs` and adds each batch after its targets are
+saved, so a resumed run reaches the same decision without a checkpoint. Only the entry's
+own source is counted, not aliases, and counting starts at the first paragraph that uses
+the current target, so a user's correction is not judged on text written before it. Only extracted entries
 (`first_chapter` set) qualify; imported, manual and context-dependent entries are always
 sent. The decision filters the snapshot that body translation and polish receive; glossary
 extraction and Review still read the full glossary.

@@ -59,6 +59,16 @@ class TestGenericTargets:
         ]
         assert [t.source for t in _extract(payload, "Master.", "Maître.", "en", "fr")] == ["Master"]
 
+    def test_one_word_capitalized_names_are_kept(self):
+        payload = [
+            {"source": "格蕾丝", "target": "Grace", "type": "person"},
+            {"source": "金", "target": "King", "type": "person"},
+            {"source": "俺", "target": "I", "type": "person"},
+            {"source": "圣上", "target": "Majesty", "type": "appellation"},
+        ]
+        result = _extract(payload, "格蕾丝与金面见圣上，俺曰可。", "Text.")
+        assert [t.source for t in result] == ["格蕾丝", "金"]
+
     def test_regional_english_inherits_the_word_list(self):
         payload = [{"source": "大人", "target": "Your Excellency", "type": "honorific"}]
         assert _extract(payload, "李大人到。", "Text.", "ja", "en-GB") == []
@@ -73,43 +83,75 @@ class TestGlossaryAdherence:
         tracker = GlossaryAdherence()
         lone = _term("孤", "lone", type="appellation")
         name = _term("江哲", "Jiang Zhe", type="person")
+        # Extraction learned "lone" from 孤舟; later paragraphs use 孤 as "I".
+        tracker.observe([("孤舟一叶，江哲独坐。", "A lone boat; Jiang Zhe sat alone.")])
         tracker.observe([("孤意已决。", "My mind is made up.")] * 3)
-        tracker.observe([("江哲与孤同行。", "Jiang Zhe walked with me.")])
         # Four occurrences are not enough evidence yet.
         assert tracker.filter([lone, name]) == ([lone, name], [])
-        tracker.observe([("孤舟一叶，江哲独坐。", "A lone boat; Jiang Zhe sat alone.")])
+        tracker.observe([("江哲与孤同行。", "Jiang Zhe walked with me.")])
         tracker.observe([("孤问江哲。", "I asked Jiang Zhe.")])
         # 孤: used in 1 of 6 paragraphs. 江哲: used in all 3.
         assert tracker.filter([lone, name]) == ([name], ["孤"])
 
     def test_user_terms_and_context_dependent_terms_are_always_sent(self):
         tracker = GlossaryAdherence()
+        tracker.observe([("大人请。", "Your Excellency, please.")])
         tracker.observe([("大人请。", "Please, my lord.")] * 6)
         imported = GlossaryTerm(source="大人", target="Your Excellency")
         senses = _term("大人", "Your Excellency; adults", status=STATUS_CONTEXT_DEPENDENT)
+        assert tracker.ignored(_term("大人", "Your Excellency"))
         assert tracker.filter([imported]) == ([imported], [])
         assert tracker.filter([senses]) == ([senses], [])
 
     def test_target_matches_whole_words_case_insensitively_without_article(self):
         tracker = GlossaryAdherence()
+        tracker.observe([("禄山来了。", "Lu came.")])
         tracker.observe([("禄山来了。", "An Lushan came.")] * 6)
         assert tracker.ignored(_term("禄山", "Lu"))
         assert not tracker.ignored(_term("禄山", "the  an lushan"))
 
+    def test_unspaced_scripts_match_targets_inside_running_text(self):
+        tracker = GlossaryAdherence()
+        tracker.observe(
+            [
+                ("Alice met the Doctor.", "爱丽丝见到了医生。"),
+                ("Then Alice smiled.", "然后爱丽丝笑了。"),
+            ]
+            * 3
+        )
+        tracker.observe([("Harry looked up.", "ハリーは顔を上げた。")] * 5)
+        assert not tracker.ignored(_term("Alice", "爱丽丝", type="person"))
+        assert not tracker.ignored(_term("Harry", "ハリー", type="person"))
+
+    def test_counting_starts_at_the_first_paragraph_using_the_current_target(self):
+        tracker = GlossaryAdherence()
+        tracker.observe([("林风走进来。", "Lin Feng walked in.")] * 20)
+        # A user correction is not judged on paragraphs written before it.
+        assert not tracker.ignored(_term("林风", "Lin Fung", type="person"))
+        tracker.observe([("林风笑了。", "Lin Fung smiled.")] + [("林风走了。", "He left.")] * 3)
+        assert not tracker.ignored(_term("林风", "Lin Fung", type="person"))
+        tracker.observe([("林风走了。", "He left.")] * 2)
+        assert tracker.ignored(_term("林风", "Lin Fung", type="person"))
+
     def test_a_new_target_is_judged_from_scratch_on_earlier_paragraphs(self):
         tracker = GlossaryAdherence()
+        tracker.observe([("白露横江。", "White dew lay across the river.")])
         tracker.observe([("横江在望。", "Hengjiang was in sight.")] * 5)
         assert tracker.ignored(_term("横江", "lay across the river"))
         assert not tracker.ignored(_term("横江", "Hengjiang"))
 
-    def test_aliases_count_as_occurrences_for_named_entities(self):
+    def test_aliases_do_not_count_against_the_main_name(self):
         tracker = GlossaryAdherence()
-        tracker.observe([("随云笑了。", "Suiyun smiled.")] * 5)
-        assert tracker.ignored(_term("江哲", "Jiang Zhe", type="person", aliases=["随云"]))
+        tracker.observe([("孙悟空来了。", "Sun Wukong came.")])
+        tracker.observe([("大圣笑了。", "The Great Sage laughed.")] * 6)
+        assert not tracker.ignored(_term("孙悟空", "Sun Wukong", type="person", aliases=["大圣"]))
 
 
 BOOK = "\n\n".join(
-    ["Alice met the Doctor."] * 6 + ["Alice thanked the Doctor again."] + ["The end."]
+    ["Alice met the Doctor, a physician."]
+    + ["Alice met the Doctor."] * 5
+    + ["Alice thanked the Doctor again."]
+    + ["The end."]
 )
 _NUMBERED = re.compile(r"^\[(\d+)\] (.*)$", re.MULTILINE)
 
@@ -121,15 +163,20 @@ def _handler(messages, tier, json_mode):
         return json.dumps({"terms": []})
     if "literary translator" in system and "previous JSON response" not in user:
         block = user.split("paragraphs to translate]", 1)[1].split("\n\n", 1)[0]
-        # The translator always writes 爱丽丝 for Alice and never 医生 for the Doctor.
+        # The translator always writes 爱丽丝 for Alice and 大夫 for the Doctor ...
         sources = [text for _, text in _NUMBERED.findall(block)]
-        targets = [text.replace("Alice", "爱丽丝").replace("Doctor", "大夫") for text in sources]
+        # ... except in the first paragraph, where extraction would have learned 医生.
+        targets = [
+            text.replace("Alice", "爱丽丝").replace(
+                "Doctor", "医生" if "physician" in text else "大夫"
+            )
+            for text in sources
+        ]
         return json.dumps({"translations": targets}, ensure_ascii=False)
     return routing_handler(messages, tier, json_mode)
 
 
-@pytest.fixture
-def run(tmp_path):
+def _setup(tmp_path, **pipeline):
     config = Config.from_dict(
         {
             "language": {"source": "en", "target": "zh"},
@@ -142,6 +189,7 @@ def run(tmp_path):
                 "book_understanding": False,
                 "annotation_alignment": False,
                 "align_retry_limit": 1,
+                **pipeline,
             },
         }
     )
@@ -153,6 +201,11 @@ def run(tmp_path):
     store.upsert_term(GlossaryTerm(source="Alice", target="爱丽丝", type="person"), chapter=0)
     store.upsert_term(GlossaryTerm(source="Doctor", target="医生", type="term"), chapter=0)
     return orchestrator, store, source, client
+
+
+@pytest.fixture
+def run(tmp_path):
+    return _setup(tmp_path)
 
 
 def _prompt_entries(client) -> list[list[str]]:
@@ -186,11 +239,22 @@ def test_translation_stops_sending_an_extracted_mapping_it_keeps_overriding(run)
     ]
 
 
+@pytest.mark.parametrize("polish_concurrency", [1, 2])
+def test_polished_text_does_not_change_the_decision(tmp_path, polish_concurrency):
+    # The fake polisher rewrites every paragraph without 爱丽丝; drafts are what count.
+    orchestrator, store, source, client = _setup(
+        tmp_path, polish=True, polish_concurrency=polish_concurrency
+    )
+    orchestrator.run(str(source))
+    assert _prompt_entries(client) == [["Alice", "Doctor"]] * 5 + [["Alice"]] * 3
+
+
 def test_resumed_run_recomputes_the_decision_from_saved_translations(run, tmp_path):
     orchestrator, store, source, client = run
     chapter = store.load_chapter(0)
     for segment in chapter.text_segments[:6]:
-        segment.target = segment.source.replace("Alice", "爱丽丝").replace("Doctor", "大夫")
+        doctor = "医生" if "physician" in segment.source else "大夫"
+        segment.target = segment.source.replace("Alice", "爱丽丝").replace("Doctor", doctor)
     store.save_chapter(chapter)
     orchestrator.run(str(source))
     assert _prompt_entries(client) == [["Alice"]] * 2
