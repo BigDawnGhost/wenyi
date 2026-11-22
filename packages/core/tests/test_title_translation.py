@@ -199,13 +199,12 @@ def test_plan_titles_scopes_opf_metadata_and_handles_subject_resume():
     plan = plan_titles(manifest, {})
     assert [(item.field, item.source, item.list_index) for item in plan.pending] == [
         ("book_title_translated", "Shadow Empire", None),
-        ("epub_description_translated", "A story.", None),
         ("epub_subjects_translated", "Drama", 1),
     ]
-    plan.apply(plan.pending, ["阴影帝国", "一个故事。", "剧情"])
+    plan.apply(plan.pending, ["阴影帝国", "剧情"])
     assert plan.manifest["title"] == "Shadow Empire"
     assert plan.manifest["meta"]["book_title_translated"] == "阴影帝国"
-    assert plan.manifest["meta"]["epub_description_translated"] == "一个故事。"
+    assert "epub_description_translated" not in plan.manifest["meta"]
     assert plan.manifest["meta"]["epub_subjects_translated"] == ["小说", "剧情"]
 
     # Truncated subject list must re-plan all entries rather than wiping skipped prefix slots.

@@ -184,15 +184,6 @@ def plan_titles(manifest: dict[str, Any], chapters: Mapping[int, Chapter]) -> Ti
                 plan.pending.append(
                     TitleRequest(epub_meta, book_title, field="book_title_translated")
                 )
-        raw_desc = epub_meta.get("epub_description")
-        if (
-            isinstance(raw_desc, str)
-            and _flat(raw_desc)
-            and not _flat(epub_meta.get("epub_description_translated"))
-        ):
-            plan.pending.append(
-                TitleRequest(epub_meta, _flat(raw_desc), field="epub_description_translated")
-            )
         raw_subjects = epub_meta.get("epub_subjects")
         if isinstance(raw_subjects, list) and raw_subjects:
             subjects = [

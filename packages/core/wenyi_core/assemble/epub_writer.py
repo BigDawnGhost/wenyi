@@ -63,7 +63,7 @@ def _assemble_epub(
     description = meta.get("epub_description_translated")
     raw_subjects = meta.get("epub_subjects_translated")
     subjects = (
-        [item for item in raw_subjects if isinstance(item, str) and item.strip()]
+        [item.strip() if isinstance(item, str) else "" for item in raw_subjects]
         if isinstance(raw_subjects, list)
         else []
     )

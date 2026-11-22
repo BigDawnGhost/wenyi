@@ -1814,14 +1814,29 @@ class TestTitleTranslation(unittest.TestCase):
                 self.assertIn("<dc:title>Shadow Empire</dc:title>", opf)
                 self.assertIn('<meta name="wenyi:source-title" content="阴影帝国"/>', opf)
                 self.assertIn("<dc:creator>Original Author</dc:creator>", opf)
-                self.assertIn(
-                    "<dc:description>An alternate-history business novel.</dc:description>", opf
-                )
+                # Prose dc:description is not routed through the chapter-title prompt.
+                self.assertIn("<dc:description>一部架空商战小说。</dc:description>", opf)
                 self.assertIn("<dc:subject>Alternate History</dc:subject>", opf)
                 self.assertIn("<dc:subject>Business Warfare</dc:subject>", opf)
                 self.assertNotIn("<title>第1章 初遇</title>", ch1)
                 self.assertIn("<title>", ch1)
                 self.assertEqual("tn-source" in ch1, bilingual)
+
+            # Partial subject translations preserve positional slots rather than shifting later items.
+            manifest = store.load_manifest()
+            manifest["meta"]["epub_subjects_translated"] = ["", "Business Warfare"]
+            manifest["meta"]["epub_description_translated"] = "An alternate-history business novel."
+            store.save_manifest(manifest)
+            partial_out = os.path.join(d, "partial.epub")
+            assemble(store, ep, out_path=partial_out, out_format="epub")
+            with zipfile.ZipFile(partial_out) as z:
+                partial_opf = z.read("OEBPS/content.opf").decode("utf-8")
+            self.assertIn("<dc:subject>架空</dc:subject>", partial_opf)
+            self.assertIn("<dc:subject>Business Warfare</dc:subject>", partial_opf)
+            self.assertIn(
+                "<dc:description>An alternate-history business novel.</dc:description>",
+                partial_opf,
+            )
 
             # Verify fallback to chapter 0's title_translated when book_title_translated is absent.
             manifest = store.load_manifest()
