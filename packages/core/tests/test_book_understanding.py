@@ -504,7 +504,7 @@ def test_legacy_sampled_cache_is_rebuilt_without_touching_targets_or_terms(tmp_p
     assert service.ensure_understanding(store) == "Whole-book synopsis."
     assert runtime.synopsizer.digest_chapter.call_count == 2
     runtime.synopsizer.book_synopsis.assert_called_once_with(
-        ["Chapter digest.", "Chapter digest."], "Restrained.", glossary=terms
+        ["Chapter digest.", "Chapter digest."], "Restrained.", glossary=[]
     )
     analysis = store.load_analysis()
     assert analysis is not None

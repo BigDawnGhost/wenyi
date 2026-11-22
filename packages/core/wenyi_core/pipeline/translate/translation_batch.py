@@ -10,6 +10,7 @@ from ...agents.base import Messages
 from ...agents.polisher import Polisher
 from ...agents.translator import Translator
 from ...ingest.segmenter import batch_segments
+from ...llm.retrying import is_resumable_provider_interrupt
 from ...markup.ruby import strip_ruby_markers
 from ...models.document import Segment
 from ...models.glossary import GlossaryTerm
@@ -72,6 +73,7 @@ class BatchResult:
     precision_key: str | None = None
     polish_failed: bool = False
     polish_empty_reverted: tuple[int, ...] = ()
+    polish_interrupted: BaseException | None = None
 
 
 def keep_nonempty_drafts(
@@ -137,26 +139,35 @@ class TranslationBatchExecutor:
         before_polish: tuple[str | None, ...] = (None,) * len(targets)
         polish_failed = False
         polish_empty_reverted: tuple[int, ...] = ()
+        polish_interrupted: BaseException | None = None
         if polish:
             before_polish = tuple(targets)
-            polished = self._continue_polish(draft, plan.next_source)
-            if polished is None:
-                polished = self._polisher.polish_or_none(
-                    targets,
-                    glossary_terms=list(plan.terms),
-                    style=plan.style,
-                    next_source=plan.next_source,
-                    sources=list(plan.sources),
-                )
-            if polished is not None and len(polished) == len(targets):
-                targets, polish_empty_reverted = keep_nonempty_drafts(targets, polished)
-            else:
+            try:
+                polished = self._continue_polish(draft, plan.next_source)
+                if polished is None:
+                    polished = self._polisher.polish_or_none(
+                        targets,
+                        glossary_terms=list(plan.terms),
+                        style=plan.style,
+                        next_source=plan.next_source,
+                        sources=list(plan.sources),
+                    )
+            except Exception as exc:
+                if not is_resumable_provider_interrupt(exc):
+                    raise
                 polish_failed = True
+                polish_interrupted = exc
+            else:
+                if polished is not None and len(polished) == len(targets):
+                    targets, polish_empty_reverted = keep_nonempty_drafts(targets, polished)
+                else:
+                    polish_failed = True
         return BatchResult(
             tuple(targets),
             before_polish,
             polish_failed=polish_failed,
             polish_empty_reverted=polish_empty_reverted,
+            polish_interrupted=polish_interrupted,
         )
 
     def translate(self, plan: BatchPlan) -> BatchDraft:

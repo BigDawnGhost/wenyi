@@ -11,11 +11,10 @@ from ...agents.analyzer import Analyzer
 from ...agents.synopsis import Synopsizer
 from ...config import Config
 from ...events import ProgressFn
-from ...glossary.store import GlossaryStore
 from ...i18n.policy.models import content_hash
 from ...llm.routing import inference_snapshot
 from ...models.document import Chapter
-from ...models.glossary import GlossaryTerm
+from ...models.glossary import GlossaryTerm, normalize_gender
 from ...storage.protocol import Storage
 from ..run.runtime_usage import UsageCoordinator
 
@@ -26,13 +25,16 @@ _LEGACY_SYNOPSIS_VERSION = 3
 _SYNOPSIS_OPERATION = "synopsis.book"
 
 
-def _synopsis_mappings(terms: list[GlossaryTerm], digests: list[str]) -> dict[str, list[str]]:
+def _synopsis_mappings(matched: list[GlossaryTerm]) -> dict[str, list[str]]:
     """Keep only the prompt-relevant ``[target, type, gender]`` fields for digest-matched terms."""
-    matched = GlossaryStore.terms_in(terms, "\n".join(digests))
-    return {term.source: [term.target, term.type, term.gender] for term in matched}
+    return {
+        term.source: [term.target, term.type, normalize_gender(term.gender)] for term in matched
+    }
 
 
-def _legacy_v3_mappings(saved: dict, digests: list[str]) -> dict[str, list[str]] | None:
+def _legacy_v3_mappings(
+    store: Storage, saved: dict, digests: list[str]
+) -> dict[str, list[str]] | None:
     """Project a version-3 all-term snapshot onto the digest-matched ``[target, type, gender]`` view."""
     terms: list[GlossaryTerm] = []
     for source, fields in saved.items():
@@ -56,10 +58,11 @@ def _legacy_v3_mappings(saved: dict, digests: list[str]) -> dict[str, list[str]]
                 aliases=list(fields[3]),
             )
         )
-    return _synopsis_mappings(terms, digests)
+    return _synopsis_mappings(store.terms_in(terms, "\n".join(digests)))
 
 
 def _mappings_unchanged(
+    store: Storage,
     saved: object,
     current: dict[str, list[str]],
     *,
@@ -70,7 +73,7 @@ def _mappings_unchanged(
     if not isinstance(saved, dict):
         return False
     projected: dict[str, list[str]] | None = (
-        _legacy_v3_mappings(saved, digests) if version == _LEGACY_SYNOPSIS_VERSION else saved
+        _legacy_v3_mappings(store, saved, digests) if version == _LEGACY_SYNOPSIS_VERSION else saved
     )
     if projected is None:
         return False
@@ -121,9 +124,8 @@ class BookUnderstandingService:
 
         analysis = store.load_analysis() or {}
         terms = sorted(store.all_terms(), key=lambda term: term.source)
-        matched_terms = GlossaryStore.terms_in(terms, "\n".join(digests))
-        style = self._analyzer.style_brief(analysis, terms=matched_terms)
-        mappings = {term.source: [term.target, term.type, term.gender] for term in matched_terms}
+        matched_terms = store.terms_in(terms, "\n".join(digests))
+        mappings = _synopsis_mappings(matched_terms)
         inputs = {
             "language_policy": self._config.language_policy("analysis").task_fingerprint(
                 "book_synopsis"
@@ -137,7 +139,7 @@ class BookUnderstandingService:
             "style": self._analyzer.style_brief(analysis, terms=[]),
             "source_lang": self._config.source_lang,
             "target_lang": self._config.target_lang,
-            "routing": inference_snapshot(self._config.llm, [_SYNOPSIS_OPERATION]),
+            "routing": inference_snapshot(self._config.llm, (_SYNOPSIS_OPERATION,)),
         }
         fingerprint = hashlib.sha256(
             json.dumps(inputs, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -155,6 +157,7 @@ class BookUnderstandingService:
             and saved.get("inputs_sha256") == fingerprint
             and isinstance(saved.get("glossary"), str)
             and _mappings_unchanged(
+                store,
                 store.read_artifact(saved["glossary"]),
                 mappings,
                 version=saved_version,
@@ -170,7 +173,8 @@ class BookUnderstandingService:
         }
         if progress:
             progress(0, 0, "progress.stage.synopsis")
-        synopsis = self._synopsizer.book_synopsis(digests, style, glossary=terms)
+        style = self._analyzer.style_brief(analysis, terms=matched_terms)
+        synopsis = self._synopsizer.book_synopsis(digests, style, glossary=matched_terms)
         if synopsis:
             # The snapshot is derived state; write it before the analysis that references it.
             store.write_artifact(snapshot, mappings)

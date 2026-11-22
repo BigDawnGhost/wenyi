@@ -63,45 +63,19 @@ def _assemble_epub(
     description = meta.get("epub_description_translated")
     raw_subjects = meta.get("epub_subjects_translated")
     subjects = (
-        [item for item in raw_subjects if isinstance(item, str) and item.strip()]
+        [item.strip() if isinstance(item, str) else "" for item in raw_subjects]
         if isinstance(raw_subjects, list)
         else []
     )
-    resource_titles: dict[str, str] = {}
-    chapter_rows = {c["index"]: c for c in m["chapters"] if isinstance(c.get("index"), int)}
-
-    def _chapters_with_titles():
-        for chapter in store.iter_chapters_once(c["index"] for c in m["chapters"]):
-            row = chapter_rows.get(chapter.index)
-            translated_title = _ch_title(row) if row is not None else ""
-            if translated_title:
-                href = chapter.href or next(
-                    (seg.resource_href for seg in chapter.segments if seg.resource_href), ""
-                )
-                if href and href not in resource_titles:
-                    resource_titles[href] = translated_title
-            yield chapter
-
-    chapters_list = list(_chapters_with_titles())
-    # Also fill resource titles from TOC entries whose target has no fragment.
-    for entry in meta.get("toc_entries", []) if isinstance(meta.get("toc_entries"), list) else []:
-        if not isinstance(entry, dict):
-            continue
-        href = entry.get("resource_href")
-        fragment = entry.get("fragment")
-        title = entry.get("title_translated") or entry.get("title")
-        if (
-            isinstance(href, str)
-            and href
-            and not fragment
-            and isinstance(title, str)
-            and title.strip()
-            and href not in resource_titles
-        ):
-            resource_titles[href] = title.strip()
-
+    chapter_titles = {
+        c["index"]: title.strip()
+        for c in m["chapters"]
+        if isinstance(c.get("index"), int)
+        and isinstance(title := c.get("title_translated"), str)
+        and title.strip()
+    }
     state = epub_native.options(
-        chapters_list,
+        store.iter_chapters_once(c["index"] for c in m["chapters"]),
         meta,
         book_title=source_title,
         source_lang=source_lang,
@@ -113,7 +87,7 @@ def _assemble_epub(
         original_title=original_title or None,
         description=description if isinstance(description, str) else None,
         subjects=subjects,
-        resource_titles=resource_titles,
+        chapter_titles=chapter_titles,
         about=about.render().decode("utf-8") if about is not None else None,
     )
     with publish_target(out_path) as temp_out:

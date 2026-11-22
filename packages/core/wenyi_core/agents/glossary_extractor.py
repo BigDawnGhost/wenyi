@@ -19,7 +19,10 @@ from ..glossary.store import (
     GlossaryOccurrenceMatcher,
     GlossaryStore,
     GlossaryTerm,
+    normalize_match_text,
     source_matches_text,
+    source_occurrence_spans,
+    term_match_sources,
 )
 from ..i18n.policy.models import content_hash
 from ..llm.base import LLMClient
@@ -38,14 +41,31 @@ _POSSESSIVE_KIN = re.compile(
     re.IGNORECASE,
 )
 _EN_CONTRADICTION_PREFIX = (
-    r"(?:distinct\s+from|different\s+from|not\s+to\s+be\s+confused\s+with|unlike|"
-    r"not\s+the\s+same\s+as|rather\s+than|instead\s+of|do\s+not\s+(?:use|translate\s+as)|"
-    r"don't\s+(?:use|translate\s+as)|never\s+(?:use|translate\s+as)|avoid|not)"
+    r"(?:distinct\s+from|different\s+from|not\s+to\s+be\s+confused\s+with|"
+    r"do\s+not\s+confuse\s+with|don['’]t\s+confuse\s+with|unlike|"
+    r"not\s+the\s+same\s+as|rather\s+than|instead\s+of|"
+    r"do\s+not\s+(?:use|translate\s+as|render\s+as)|"
+    r"don['’]t\s+(?:use|translate\s+as|render\s+as)|"
+    r"never\s+(?:use|translate\s+as|render\s+as)|"
+    r"avoid|not)"
 )
-_ZH_CONTRADICTION_PREFIX = r"(?:区别于|不同于|并非|不是|非|勿译为|不要译为|不可译为)"
-_ZH_TARGET_BOUNDARY = (
-    r"(?:$|[\s\"'”’」』》），。、；：！？,.!?;:()（）—\-/]|的|等|或|和|与|及|而|但|却|才|就|也|是)"
+_EN_CONTRAST_PREDICATES = re.compile(r"^(?i:distinct\s+from|different\s+from|unlike)\b")
+_EN_NEGATED_CONTRAST = re.compile(r"(?i:(?:\b(?:not|no|never)|n['’]t)\s+)$")
+_EN_TARGET_BOUNDARY = (
+    r"(?:$|\s*[,.;:!?)\]}—–/]|"
+    r"\s+(?:when|while|because|since|although|though|but|however|instead)\b)"
 )
+_ZH_CONTRADICTION_PREFIX = (
+    r"(?:区别于|不同于|勿译为|不要译为|不可译为|勿翻为|不要翻为|并非|(?<!是)不是|而非)"
+)
+_ZH_CONTRAST_PREDICATES = re.compile(r"^(?:区别于|不同于)")
+_ZH_NEGATED_CONTRAST = re.compile(r"(?:并非|不是|毫不|绝不|并无|不)$")
+_ZH_TARGET_BOUNDARY = r"(?:$|\s*[，。、；：！？,.!?;:)）\]】—–/]|(?:而|但|却))"
+
+
+def _quoted_target_pattern(escaped: str) -> str:
+    body = f"(?i:{escaped})"
+    return rf'(?:"{body}"|\'{body}\'|“{body}”|‘{body}’|`{body}`|「{body}」|『{body}』|《{body}》)'
 
 
 def _note_contradicts_target(target: str, note: str) -> bool:
@@ -55,54 +75,118 @@ def _note_contradicts_target(target: str, note: str) -> bool:
     if not cleaned_target or not cleaned_note:
         return False
     escaped = re.escape(cleaned_target)
+    quoted = _quoted_target_pattern(escaped)
     en_pattern = re.compile(
-        rf"\b{_EN_CONTRADICTION_PREFIX}\s+(?:(?:the|a|an)\s+)?"
-        rf"(?:[\"'“‘`]{escaped}[\"'”’`]|{escaped}(?![\w'’]|\s+[A-Z]))",
-        re.IGNORECASE,
+        rf"\b(?i:{_EN_CONTRADICTION_PREFIX})\s+(?:(?i:the|a|an)\s+)?"
+        rf"(?:{quoted}(?!['’]s\b)|(?i:{escaped})(?={_EN_TARGET_BOUNDARY}))"
     )
-    if en_pattern.search(cleaned_note):
+    for match in en_pattern.finditer(cleaned_note):
+        if _EN_CONTRAST_PREDICATES.match(match.group(0)) and _EN_NEGATED_CONTRAST.search(
+            cleaned_note[: match.start()]
+        ):
+            continue
         return True
-    trailing = r"(?![A-Za-z0-9_])" if cleaned_target.isascii() else _ZH_TARGET_BOUNDARY
     zh_pattern = re.compile(
-        rf"{_ZH_CONTRADICTION_PREFIX}\s*[\"'“‘「『《]?{escaped}[\"'”’」』》]?{trailing}"
+        rf"{_ZH_CONTRADICTION_PREFIX}\s*(?:{quoted}|(?i:{escaped})(?={_ZH_TARGET_BOUNDARY}))"
     )
-    return zh_pattern.search(cleaned_note) is not None
+    for match in zh_pattern.finditer(cleaned_note):
+        if _ZH_CONTRAST_PREDICATES.match(match.group(0)) and _ZH_NEGATED_CONTRAST.search(
+            cleaned_note[: match.start()]
+        ):
+            continue
+        return True
+    return False
 
 
 def _is_shadowed_or_unbounded_source(
     term: GlossaryTerm,
-    source_text: str,
-    candidate_longer_keys: Iterable[str],
+    normalized_text: str,
+    reference_keys_by_source: Iterable[tuple[str, tuple[str, ...]]],
 ) -> bool:
-    """Reject a source key that only appears inside a longer word or a longer batch/known term."""
-    source = term.source.strip()
-    if not source or not source_text:
+    """Reject a source key that only appears inside a longer word or another longer term."""
+    normalized_source = normalize_match_text(term.source).strip()
+    if not normalized_source or not normalized_text:
         return False
-    lowered_text = source_text.casefold()
-    lowered_source = source.casefold()
-    if lowered_source not in lowered_text:
+    if normalized_source not in normalized_text:
         return False
-    # For space-delimited scripts, require a token boundary rather than matching inside a word.
-    if not source_matches_text(source, source_text):
-        return True
-    longer = sorted(
-        {
-            key.strip()
-            for key in candidate_longer_keys
-            if (stripped := key.strip())
-            and len(stripped.casefold()) > len(lowered_source)
-            and lowered_source in stripped.casefold()
-            and source_matches_text(stripped, source_text)
-        },
-        key=len,
-        reverse=True,
+
+    source_spans = source_occurrence_spans(normalized_source, normalized_text)
+    if not source_spans:
+        # For space-delimited scripts, require a token boundary rather than matching inside a
+        # longer word (e.g. "Ann" inside "Anna"), unless one of this term's own matching aliases
+        # appears on a token boundary.
+        alias_keys = [
+            normalized
+            for alias in term_match_sources(term)
+            if (normalized := normalize_match_text(alias).strip())
+            and normalized != normalized_source
+        ]
+        alias_spans = [
+            span for alias in alias_keys for span in source_occurrence_spans(alias, normalized_text)
+        ]
+        if not alias_spans:
+            return True
+        source_spans = alias_spans
+        candidate_keys = set(alias_keys)
+    else:
+        candidate_keys = {normalized_source}
+
+    longer_keys = {
+        key
+        for other_source, other_keys in reference_keys_by_source
+        if other_source != normalized_source
+        for key in other_keys
+        if any(len(key) > len(candidate) and candidate in key for candidate in candidate_keys)
+    }
+    if not longer_keys:
+        return False
+
+    longer_spans = [
+        span for key in longer_keys for span in source_occurrence_spans(key, normalized_text)
+    ]
+    if not longer_spans:
+        return False
+
+    return all(
+        any(l_start <= s_start and s_end <= l_end for l_start, l_end in longer_spans)
+        for s_start, s_end in source_spans
     )
-    if not longer:
-        return False
-    masked = source_text
-    for key in longer:
-        masked = re.sub(re.escape(key), " ", masked, flags=re.IGNORECASE)
-    return not source_matches_text(source, masked)
+
+
+def _filter_shadowed_sources(
+    terms: list[GlossaryTerm],
+    source_text: str,
+    reference_terms: Iterable[GlossaryTerm],
+) -> list[GlossaryTerm]:
+    """Drop terms whose source only appears inside a longer word or another longer term."""
+    if not terms:
+        return terms
+    reference_keys_by_source = [
+        (
+            normalize_match_text(item.source).strip(),
+            tuple(
+                normalized
+                for raw_key in term_match_sources(item)
+                if (normalized := normalize_match_text(raw_key).strip())
+            ),
+        )
+        for item in reference_terms
+    ]
+    normalized_source_text = normalize_match_text(source_text)
+    filtered: list[GlossaryTerm] = []
+    shadowed = 0
+    for term in terms:
+        if _is_shadowed_or_unbounded_source(term, normalized_source_text, reference_keys_by_source):
+            shadowed += 1
+            continue
+        filtered.append(term)
+    if shadowed:
+        _LOGGER.warning(
+            "Rejected %d glossary extraction(s) shadowed by a longer term or word boundary "
+            "(operation=glossary.extract)",
+            shadowed,
+        )
+    return filtered
 
 
 def _text(value: object, default: str = "") -> str:
@@ -226,26 +310,20 @@ class GlossaryExtractor(Agent):
                     note=_text(d.get("note")),
                 )
             )
-        all_keys: list[str] = []
-        for item in (*terms, *existing):
-            all_keys.append(item.source)
-            all_keys.extend(item.aliases)
-        filtered: list[GlossaryTerm] = []
+        non_contradictory: list[GlossaryTerm] = []
+        contradicted = 0
         for term in terms:
             if _note_contradicts_target(term.target, term.note):
-                _LOGGER.warning(
-                    "Rejected glossary extraction with self-contradictory note: source=%r",
-                    term.source,
-                )
+                contradicted += 1
                 continue
-            if _is_shadowed_or_unbounded_source(term, source_text, all_keys):
-                _LOGGER.warning(
-                    "Rejected glossary extraction shadowed by longer term or word boundary: source=%r",
-                    term.source,
-                )
-                continue
-            filtered.append(term)
-        return filtered
+            non_contradictory.append(term)
+        if contradicted:
+            _LOGGER.warning(
+                "Rejected %d glossary extraction(s) with self-contradictory notes "
+                "(operation=glossary.extract)",
+                contradicted,
+            )
+        return _filter_shadowed_sources(non_contradictory, source_text, (*terms, *existing))
 
     @staticmethod
     def _first_occurrences(
@@ -462,6 +540,8 @@ class GlossaryExtractor(Agent):
             mode=self.config.pipeline.batch_glossary,
         )
         terms = self.extract(source_text, target_text, existing)
+        if len(existing) < len(all_existing):
+            terms = _filter_shadowed_sources(terms, source_text, (*terms, *all_existing))
         occurrences = (
             self._first_occurrences(terms, store, history, before) if before is not None else {}
         )

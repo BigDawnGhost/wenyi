@@ -184,32 +184,26 @@ def plan_titles(manifest: dict[str, Any], chapters: Mapping[int, Chapter]) -> Ti
                 plan.pending.append(
                     TitleRequest(epub_meta, book_title, field="book_title_translated")
                 )
-        raw_desc = epub_meta.get("epub_description")
-        if (
-            isinstance(raw_desc, str)
-            and _flat(raw_desc)
-            and not _flat(epub_meta.get("epub_description_translated"))
-        ):
-            plan.pending.append(
-                TitleRequest(epub_meta, _flat(raw_desc), field="epub_description_translated")
-            )
         raw_subjects = epub_meta.get("epub_subjects")
         if isinstance(raw_subjects, list) and raw_subjects:
             subjects = [
                 _flat(item) for item in raw_subjects if isinstance(item, str) and _flat(item)
             ]
             existing_subjects = epub_meta.get("epub_subjects_translated")
+            aligned_existing = (
+                existing_subjects
+                if isinstance(existing_subjects, list) and len(existing_subjects) == len(subjects)
+                else None
+            )
             if subjects and (
-                not isinstance(existing_subjects, list)
-                or len(existing_subjects) != len(subjects)
-                or any(not isinstance(item, str) or not item.strip() for item in existing_subjects)
+                aligned_existing is None
+                or any(not isinstance(item, str) or not item.strip() for item in aligned_existing)
             ):
                 for idx, subject in enumerate(subjects):
                     if (
-                        isinstance(existing_subjects, list)
-                        and idx < len(existing_subjects)
-                        and isinstance(existing_subjects[idx], str)
-                        and existing_subjects[idx].strip()
+                        aligned_existing is not None
+                        and isinstance(aligned_existing[idx], str)
+                        and aligned_existing[idx].strip()
                     ):
                         continue
                     plan.pending.append(

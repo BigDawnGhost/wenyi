@@ -180,6 +180,45 @@ def test_unpolished_chapter_is_marked_and_repolished_on_resume_without_retransla
     assert not any(row.get("unpolished") for row in manifest_after["chapters"])
     assert not store.load_chapter(0).meta.get("unpolished")
     assert all(POLISH_FAILED not in seg.meta for seg in store.load_chapter(0).text_segments)
+
+
+def test_polish_provider_outage_saves_draft_and_resumes_without_retranslating(tmp_path):
+    txt = os.path.join(tmp_path, "novel.txt")
+    write_sample_txt(txt)
+    config = fake_pipeline_config(os.path.join(tmp_path, "state"))
+    config.pipeline.review = False
+    config.pipeline.book_understanding = False
+    config.pipeline.polish = True
+    config.pipeline.align_retry_limit = 0
+
+    allow_polish = {"ok": False}
+
+    def handler(messages, tier, json_mode):
+        if len(messages) == 4 or "editor" in messages[0]["content"].lower():
+            if not allow_polish["ok"]:
+                raise TimeoutError("polisher timed out")
+        return routing_handler(messages, tier, json_mode)
+
+    with pytest.raises(TimeoutError, match="polisher timed out"):
+        Orchestrator(config, client=FakeClient(handler=handler)).run(txt, only_chapter=0)
+
+    store = require_file_storage(
+        Orchestrator(config, client=FakeClient(handler=routing_handler)).prepare(txt)
+    )
+    ch0_saved = store.load_chapter(0)
+    assert all(seg.target is not None for seg in ch0_saved.text_segments)
+    assert any(seg.meta.get(POLISH_FAILED) for seg in ch0_saved.text_segments)
+    failed_events = _events(store, "batch_polish_failed")
+    assert any(ev.get("reason") == "provider_interrupted" for ev in failed_events)
+
+    allow_polish["ok"] = True
+    resume_client = FakeClient(handler=handler)
+    Orchestrator(config, client=resume_client).run(txt, only_chapter=0)
+    assert not [c for c in resume_client.calls if c["operation"] == "translation.body"]
+    assert any(c["operation"] == "polish.body" for c in resume_client.calls)
+    ch0_after = store.load_chapter(0)
+    assert all(POLISH_FAILED not in seg.meta for seg in ch0_after.text_segments)
+    assert ch0_after.text_segments[0].target.startswith("润")
     assert store.load_chapter(0).text_segments[0].target.startswith("润")
     finished_after = _events(store, "translate_run_finished")[-1]
     assert finished_after["unpolished_chapter_count"] == 0

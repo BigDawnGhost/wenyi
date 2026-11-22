@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from os import PathLike
 
 from wenyi_core.assemble.html_bilingual import _BILINGUAL_CSS
@@ -46,7 +46,8 @@ def options(
     original_title: str | None = None,
     description: str | None = None,
     subjects: list[str] | None = None,
-    resource_titles: dict[str, str] | None = None,
+    chapter_titles: Mapping[int, str] | None = None,
+    resource_titles: Mapping[str, str] | None = None,
     horizontal: bool = False,
     about: str | None = None,
 ) -> bytes:
@@ -66,12 +67,23 @@ def options(
             if isinstance(value := record.get(key), str):
                 row[key] = value
         entries.append(row)
+    resolved_resource_titles: dict[str, str] = {}
+    if resource_titles:
+        for href, title in resource_titles.items():
+            if isinstance(href, str) and href and isinstance(title, str) and title.strip():
+                resolved_resource_titles[href] = title.strip()
     merged = {}
     for chapter in chapters:
+        chapter_title = (
+            chapter_titles.get(chapter.index, "").strip() if chapter_titles is not None else ""
+        )
+        chapter_href = chapter.href or ""
         for segment in chapter.segments:
             href = segment.resource_href
             if not href:
                 continue
+            if not chapter_href:
+                chapter_href = href
             current = merged.setdefault(href, {})
             if segment.cont and current:
                 previous = next(reversed(current.values()))
@@ -90,6 +102,24 @@ def options(
                 raise ValueError(
                     f"EPUB state is inconsistent: segment {segment.index} has no anchor"
                 )
+        if chapter_title and chapter_href and chapter_href not in resolved_resource_titles:
+            resolved_resource_titles[chapter_href] = chapter_title
+    if target_lang is not None and isinstance(raw_entries, list):
+        for record in raw_entries:
+            if not isinstance(record, dict):
+                continue
+            href = record.get("resource_href")
+            fragment = record.get("fragment")
+            title = record.get("title_translated")
+            if (
+                isinstance(href, str)
+                and href
+                and not fragment
+                and isinstance(title, str)
+                and title.strip()
+                and href not in resolved_resource_titles
+            ):
+                resolved_resource_titles[href] = title.strip()
     return json.dumps(
         {
             "title": book_title,
@@ -105,7 +135,7 @@ def options(
             "segments": [record for page in merged.values() for record in page.values()],
             "about": about,
             "package_path": package_path if isinstance(package_path, str) else None,
-            "resource_titles": resource_titles or {},
+            "resource_titles": resolved_resource_titles,
             "presentation": (
                 {
                     "lang": target_lang,
