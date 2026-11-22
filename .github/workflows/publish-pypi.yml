@@ -47,16 +47,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           # hatch_build.py compiles the Core native extension into this standalone
           # workspace target directory, not the root Desktop workspace target.
@@ -65,7 +65,7 @@ jobs:
           # environment hash, since this job always runs on one Ubuntu image.
           add-job-id-key: false
           add-rust-environment-hash-key: false
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.13.7"
       - name: Validate release identity
@@ -132,7 +132,7 @@ jobs:
               "$environment/bin/wenyi" languages
             )
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pypi-distributions
           # The host Core wheel is for smoke testing; cibuildwheel builds the
@@ -159,14 +159,14 @@ jobs:
     steps:
       # Validate the repaired wheel against the same texts as the producer.
       # cibuildwheel still builds the verified sdist, never this checkout.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
           ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: pypi-distributions
           path: dist/pypi/
@@ -178,8 +178,8 @@ jobs:
           set -- dist/pypi/wenyi_core-*.tar.gz
           test "$#" -eq 1 && test -f "$1"
           echo "sdist=$1" >> "$GITHUB_OUTPUT"
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: pypa/cibuildwheel@v3.3
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: pypa/cibuildwheel@298ed2fb2c105540f5ed055e8a6ad78d82dd3a7e # v3.3
         with:
           package-dir: ${{ steps.core.outputs.sdist }}
         env:
@@ -203,7 +203,7 @@ jobs:
             tmp.cleanup()"
       - name: Inspect the portable wheel before upload
         run: python scripts/release/check_wheel_resources.py wheelhouse
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pypi-core-${{ matrix.runner }}
           path: wheelhouse/wenyi_core-*.whl
@@ -221,12 +221,12 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: pypi-*
           merge-multiple: true
           path: dist/pypi/
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.13.7"
       - name: Publish Core
@@ -243,11 +243,11 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: pypi-distributions
           path: dist/pypi/
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.13.7"
       - name: Publish CLI
