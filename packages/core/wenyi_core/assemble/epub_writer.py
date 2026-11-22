@@ -173,7 +173,6 @@ def _build_epub_from_chapters(
             f"<body>{''.join(body_parts)}</body></html>"
         )
         chapters.append(EpubChapter(fname, ch_title, content))
-        entry = EpubTocEntry(fname, ch_title)
         heading = next(
             (
                 segment
@@ -182,17 +181,8 @@ def _build_epub_from_chapters(
             ),
             None,
         )
-        if heading is None:
-            # Untitled prefaces are navigation entries, not parents of later headings.
-            toc.append(entry)
-            toc_stack.clear()
-            continue
-        level = _heading_level(ch, heading)
-        while toc_stack and toc_stack[-1][0] >= level:
-            toc_stack.pop()
-        siblings = toc_stack[-1][1] if toc_stack else toc
-        siblings.append(entry)
-        toc_stack.append((level, entry.children))
+        level = None if heading is None else _heading_level(ch, heading)
+        _push_toc_entry(toc, toc_stack, EpubTocEntry(fname, ch_title), level)
 
     write_epub(
         out_path,
@@ -205,6 +195,31 @@ def _build_epub_from_chapters(
         styled_bilingual=bilingual and not preserve_source_style,
     )
     return out_path
+
+
+def _push_toc_entry(
+    toc: list[EpubTocEntry],
+    toc_stack: list[tuple[int, list[EpubTocEntry]]],
+    entry: EpubTocEntry,
+    level: int | None,
+) -> None:
+    """Place one TOC entry at its heading level; None marks an untitled preface."""
+    if level is None:
+        # Untitled prefaces are navigation entries, not parents of later headings.
+        toc.append(entry)
+        toc_stack.clear()
+        return
+    while toc_stack and toc_stack[-1][0] >= level:
+        toc_stack.pop()
+    siblings = toc_stack[-1][1] if toc_stack else toc
+    siblings.append(entry)
+    toc_stack.append((level, entry.children))
+
+
+def _rendered_toc_level(rendered: str) -> int | None:
+    """Return a chapter's original heading level from its rendered template."""
+    heading = BeautifulSoup(rendered, "html.parser").find(["h1", "h2", "h3", "h4", "h5", "h6"])
+    return int(heading.name[1]) if heading is not None else None
 
 
 def _build_epub_from_html_templates(
@@ -237,6 +252,7 @@ def _build_epub_from_html_templates(
     )
     chapters: list[EpubChapter] = []
     toc: list[EpubTocEntry] = []
+    toc_stack: list[tuple[int, list[EpubTocEntry]]] = []
     packaged_assets: dict[str, tuple[str, bytes]] = {}
 
     for chapter_meta in manifest["chapters"]:
@@ -268,7 +284,9 @@ def _build_epub_from_html_templates(
             f"{body_open}{rendered}</body></html>"
         )
         chapters.append(EpubChapter(filename, chapter_title, content))
-        toc.append(EpubTocEntry(filename, chapter_title))
+        _push_toc_entry(
+            toc, toc_stack, EpubTocEntry(filename, chapter_title), _rendered_toc_level(rendered)
+        )
 
     resources = [
         EpubResource(href, media_type, payload)

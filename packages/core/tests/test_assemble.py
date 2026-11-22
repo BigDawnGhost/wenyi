@@ -292,6 +292,64 @@ class TestAssembleText(unittest.TestCase):
                 [chapter.model_dump() for chapter in document.chapters],
             )
 
+    def test_html_heading_levels_and_epub_toc_hierarchy(self):
+        parents = [None, None, 1, 2, 1, None]
+
+        def linked_parents(tree, node_tag, link_tag, attribute):
+            result = []
+            for node in tree.find_all(node_tag):
+                link = node.find(link_tag, recursive=False)
+                parent = node.find_parent(node_tag)
+                parent_link = parent.find(link_tag, recursive=False) if parent else None
+                result.append((link[attribute], parent_link[attribute] if parent_link else None))
+            return result
+
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "headings.html")
+            with open(source_path, "w", encoding="utf-8") as source:
+                source.write(
+                    "<!DOCTYPE html><html><head><title>Book</title></head><body>"
+                    "<p>Front matter.</p>"
+                    + "".join(
+                        f"<h{level}>Title {index}</h{level}><p>Body {index}.</p>"
+                        for index, level in enumerate([1, 2, 3, 2, 1], start=1)
+                    )
+                    + "</body></html>"
+                )
+            document = load_document(source_path, "en", "en")
+            store = FileStorage(os.path.join(directory, "state"))
+            store.init_from_document(document)
+            output_path = assemble(store, source_path, out_format="epub", about_page=False)
+
+            with zipfile.ZipFile(output_path) as archive:
+                paths = {os.path.basename(name): name for name in archive.namelist()}
+                for index, level in enumerate([None, 1, 2, 3, 2, 1]):
+                    body = BeautifulSoup(
+                        archive.read(paths[f"ch{index}.xhtml"]), "html.parser"
+                    ).body
+                    assert isinstance(body, Tag)
+                    self.assertEqual(
+                        [
+                            (heading.name, heading.get_text())
+                            for heading in body.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
+                        ],
+                        [(f"h{level}", f"Title {index}")] if level is not None else [],
+                    )
+                nav = BeautifulSoup(archive.read(paths["nav.xhtml"]), "html.parser").find("nav")
+                ncx = BeautifulSoup(archive.read(paths["toc.ncx"]), "xml").find("navMap")
+                assert isinstance(nav, Tag)
+                assert isinstance(ncx, Tag)
+
+            expected = [
+                (f"ch{index}.xhtml", f"ch{parent}.xhtml" if parent is not None else None)
+                for index, parent in enumerate(parents)
+            ]
+            self.assertEqual(linked_parents(nav, "li", "a", "href"), expected)
+            self.assertEqual(linked_parents(ncx, "navPoint", "content", "src"), expected)
+            self.assertTrue(
+                all(ordered_list.find("li", recursive=False) for ordered_list in nav.find_all("ol"))
+            )
+
     def test_fb2_images_and_cover_are_preserved_in_generated_epub(self):
         with tempfile.TemporaryDirectory() as d:
             fb2 = os.path.join(d, "illustrated.fb2")
