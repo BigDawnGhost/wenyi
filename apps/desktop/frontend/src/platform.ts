@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import { lazy } from "react";
+import { createElement, Fragment, lazy } from "react";
 import type { PlatformServices } from "@wenyi/ui/platform";
 import { apiBase, authToken, progressInterval, progressUrl } from "./runtime";
 import { request, download } from "./transport";
@@ -12,6 +12,7 @@ import { DesktopDiagnostics, DiagnosticExportButton } from "./DesktopDiagnostics
 import { reportDiagnostic } from "./diagnostics";
 import { translateDesktop } from "./i18n";
 import { NotificationSettings } from "./DesktopNotifications";
+import { InterfaceZoomSettings } from "./InterfaceZoomSettings";
 
 const loadDesktopCredential = () => import("./DesktopCredential");
 const DesktopCredential = lazy(() =>
@@ -53,7 +54,9 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
     progressInterval,
     bindSourceDrop,
     capabilities: {
-      generalSettings: NotificationSettings,
+      generalSettings: () => createElement(
+        Fragment, null, createElement(InterfaceZoomSettings), createElement(NotificationSettings),
+      ),
       diagnostics: {
         label: (locale) => translateDesktop(locale, "diagnostics.title"),
         Section: DesktopDiagnostics,

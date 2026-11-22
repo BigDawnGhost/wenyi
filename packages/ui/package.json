@@ -14,6 +14,7 @@
     "./document-language": "./src/i18n/DocumentLanguage.tsx",
     "./styles.css": "./src/index.css",
     "./theme": "./src/theme.ts",
+    "./toast": "./src/lib/toast.ts",
     "./primitives": "./src/components/ui/index.ts",
     "./settings": "./src/features/settings/SettingsSection.tsx",
     "./format": "./src/format.ts"
