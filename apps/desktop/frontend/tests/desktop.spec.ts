@@ -556,6 +556,7 @@ const SHARED_RENDER_SMOKE: SharedRenderSmoke[] = [
   { module: "sidebar", route: "/", slot: "sidebar" },
   { module: "sidebar-motion", route: "/", slot: "sidebar" },
   { module: "style-editing", route: `/projects/${pid}/style`, slot: "page.header" },
+  { module: "tabs", route: "/tests/tabs-harness.html", role: "tablist" },
 ] as const;
 
 for (const route of new Set(SHARED_RENDER_SMOKE.map(smoke => smoke.route))) {

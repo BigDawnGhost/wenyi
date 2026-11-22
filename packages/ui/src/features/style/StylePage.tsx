@@ -98,7 +98,7 @@ export default function StylePage() {
       <PageContainer className="mx-auto w-full max-w-5xl">
         <ErrorNotice error={error || save.error} />
         <Tabs value={tab} onValueChange={setTab}>
-          <TabsList className="flex w-fit max-w-full flex-wrap [&_button]:whitespace-nowrap">
+          <TabsList aria-label={tr("common.styleSynopsis")} className="flex w-fit max-w-full flex-wrap [&_button]:whitespace-nowrap">
             <TabsTrigger value="style">{tr("style.styleAnalysis")}</TabsTrigger>
             <TabsTrigger value="synopsis">
               {tr("style.bookSynopsis")}
