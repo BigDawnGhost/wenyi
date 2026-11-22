@@ -19,7 +19,12 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 from wenyi_core.errors import WenyiError
-from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm, search_term_page
+from wenyi_core.glossary.store import (
+    GlossaryStore,
+    GlossaryTerm,
+    equivalent_targets,
+    search_term_page,
+)
 from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.storage.run_store import ExportSnapshotStore, source_sha256
 
@@ -808,7 +813,7 @@ class PostgresStorage:
                     ),
                 )
                 return "unchanged"
-            if existing.target == term.target:
+            if equivalent_targets(existing.target, term.target):
                 aliases = sorted(set(existing.aliases) | set(term.aliases))
                 conn.execute(
                     """UPDATE glossary SET reading=COALESCE(NULLIF(%s,''),reading),

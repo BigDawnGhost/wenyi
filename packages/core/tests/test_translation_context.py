@@ -575,7 +575,7 @@ def test_resume_refreshes_full_glossary_before_pending_batches(
     config.pipeline.polish = polish
     source = tmp_path / "book.txt"
     source.write_text(
-        "Alice waited by the window.\n\nThe door opened slowly.\n\nA letter arrived later.",
+        "Alice waited by the window.\n\nThe door opened slowly.\n\nA letter for Alice arrived later.",
         encoding="utf-8",
     )
 

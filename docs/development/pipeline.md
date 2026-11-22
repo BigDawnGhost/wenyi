@@ -264,7 +264,11 @@ Invalid provider/JSON/semantic responses are failures, not negative evidence cac
 A successfully validated response that supports no mapping is different: historical
 term alignment can cache that unresolved decision for the exact request without
 repeating calls or diagnostics. Never use cached uncertainty to overwrite a manual
-glossary decision.
+glossary decision. History alignment locates a term's first translation by substring,
+so it skips one-character sources (孤 also occurs in 孤舟) and keeps the batch's own
+target when a name would align to wording without a capital letter while the batch
+rendered it with one (横江 in 白露横江). These guards run after the cached decision, so
+cached requests stay valid.
 
 <a id="precision-checkpoints"></a>
 
