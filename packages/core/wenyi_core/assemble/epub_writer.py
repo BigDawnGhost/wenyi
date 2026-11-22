@@ -30,7 +30,7 @@ from wenyi_core.assemble.writer_common import (
     _sanitize_filename,
 )
 from wenyi_core.atomicio import publish_target
-from wenyi_core.ingest.fb2_reader import read_fb2_binaries
+from wenyi_core.ingest.fb2_reader import read_fb2_binaries, read_fb2_image_alts
 from wenyi_core.models.document import KIND_HEADING
 
 from .export_view import AssembleStore, ExportViewStore
@@ -79,6 +79,13 @@ def _assemble_epub(
     return out_path
 
 
+def _fb2_image_div(href: str, alt: str) -> str:
+    return (
+        f'<div class="fb2-image"><img src="{escape(href, quote=True)}"'
+        f' alt="{escape(alt, quote=True)}"/></div>'
+    )
+
+
 def _build_epub_from_chapters(
     store: AssembleStore,
     source_path: str,
@@ -107,8 +114,10 @@ def _build_epub_from_chapters(
     image_hrefs: dict[str, str] = {}
     raw_meta = m.get("meta")
     manifest_meta = raw_meta if isinstance(raw_meta, dict) else {}
+    image_alts: dict[str, str] = {}
     if m.get("fmt") == "fb2":
         binaries = read_fb2_binaries(source_path)
+        image_alts = read_fb2_image_alts(source_path)
         cover_id = manifest_meta.get("fb2_cover_image")
         used_hrefs: set[str] = set()
         for index, (resource_id, (content_type, payload)) in enumerate(binaries.items()):
@@ -135,7 +144,7 @@ def _build_epub_from_chapters(
         ch = store.load_chapter(c["index"])
         ch_title = _ch_title(c) or ch.title
         body_parts = []
-        images_by_position: dict[int, list[str]] = {}
+        images_by_position: dict[int, list[tuple[str, str]]] = {}
         raw_images = ch.meta.get("fb2_images")
         if isinstance(raw_images, list):
             for image in raw_images:
@@ -147,7 +156,9 @@ def _build_epub_from_chapters(
                     continue
                 href = image_hrefs.get(resource_id)
                 if href:
-                    images_by_position.setdefault(position, []).append(href)
+                    images_by_position.setdefault(position, []).append(
+                        (href, image_alts.get(resource_id, ""))
+                    )
                 elif warnings is not None:
                     warnings.append(
                         f"chapter {c['index']}: unresolved FB2 image reference: {resource_id}"
@@ -156,8 +167,7 @@ def _build_epub_from_chapters(
         paragraphs = _merged_paragraphs(ch)
         for position, (kind, target, source, level) in enumerate(paragraphs):
             body_parts.extend(
-                f'<div class="fb2-image"><img src="{escape(href, quote=True)}" alt=""/></div>'
-                for href in images_by_position.get(position, [])
+                _fb2_image_div(href, alt) for href, alt in images_by_position.get(position, [])
             )
             body_parts.extend(
                 _render_paragraph_html(
@@ -171,8 +181,7 @@ def _build_epub_from_chapters(
                 )
             )
         body_parts.extend(
-            f'<div class="fb2-image"><img src="{escape(href, quote=True)}" alt=""/></div>'
-            for href in images_by_position.get(len(paragraphs), [])
+            _fb2_image_div(href, alt) for href, alt in images_by_position.get(len(paragraphs), [])
         )
         fname = f"ch{c['index']}.xhtml"
         content = (

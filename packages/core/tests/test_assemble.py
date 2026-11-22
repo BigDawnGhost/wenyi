@@ -68,6 +68,24 @@ _FB2_WITH_MISSING_IMAGE = """\
 </FictionBook>
 """
 
+_FB2_WITH_IMAGE_ALT = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"
+             xmlns:xlink="http://www.w3.org/1999/xlink">
+<description><title-info>
+  <book-title>Alt Text Book</book-title>
+  <coverpage><image xlink:href="#cover.jpg"/></coverpage>
+</title-info></description>
+<body><section><title><p>Chapter</p></title>
+  <image xlink:href="#inside.png" alt="Original &amp; alt"/>
+  <image xlink:href="#plain.gif"/><p>Illustrated text.</p>
+</section></body>
+<binary id="cover.jpg" content-type="image/jpeg">Y292ZXItYnl0ZXM=</binary>
+<binary id="inside.png" content-type="image/png">aW5zaWRlLWJ5dGVz</binary>
+<binary id="plain.gif" content-type="image/gif">cGxhaW4tYnl0ZXM=</binary>
+</FictionBook>
+"""
+
 
 def _write_vertical_epub(path: str) -> None:
     container = """<?xml version="1.0" encoding="UTF-8"?>
@@ -392,6 +410,28 @@ class TestAssembleText(unittest.TestCase):
         self.assertIsNotNone(image)
         cover_item = package.find("item", properties="cover-image")
         self.assertIsNotNone(cover_item)
+
+    def test_fb2_image_alt_is_passed_through_to_generated_epub(self):
+        with tempfile.TemporaryDirectory() as d:
+            fb2 = os.path.join(d, "alt-text.fb2")
+            with open(fb2, "w", encoding="utf-8") as file:
+                file.write(_FB2_WITH_IMAGE_ALT)
+            store, _ = _run(fb2, os.path.join(d, "state"))
+
+            out = assemble(store, fb2, out_format="epub")
+
+            with zipfile.ZipFile(out) as archive:
+                chapter_name = next(
+                    name for name in archive.namelist() if name.endswith("/ch0.xhtml")
+                )
+                chapter = BeautifulSoup(archive.read(chapter_name), "html.parser")
+
+        with_alt = chapter.find("img", src="images/inside.png")
+        self.assertIsNotNone(with_alt)
+        self.assertEqual(with_alt.get("alt"), "Original & alt")
+        without_alt = chapter.find("img", src="images/plain.gif")
+        self.assertIsNotNone(without_alt)
+        self.assertEqual(without_alt.get("alt"), "")
 
     def test_txt_input_to_txt(self):
         with tempfile.TemporaryDirectory() as d:
