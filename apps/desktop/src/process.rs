@@ -240,6 +240,7 @@ impl Backend {
             .arg("--native-startup")
             .env("WENYI_API_TOKEN", &token)
             .env("WENYI_DIAGNOSTICS_PROTOCOL", "1")
+            .env("WENYI_DESKTOP_VERSION", env!("WENYI_DESKTOP_VERSION"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Never forward arbitrary backend output (which might contain credentials).

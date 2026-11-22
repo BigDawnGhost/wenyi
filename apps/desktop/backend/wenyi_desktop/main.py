@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
 import json
+import os
 import sqlite3
 import sys
 from contextlib import asynccontextmanager
@@ -278,6 +280,45 @@ def create_context(
     )
 
 
+def verify_version_handshake() -> None:
+    """Refuse to serve when the native shell and this engine are different builds.
+
+    The shell injects the version it was compiled with before spawning this
+    process. A mismatch means the Python package on disk belongs to another
+    install, so serving it could corrupt data written by a different schema.
+    A missing variable means an older launcher started the engine; keep that
+    startup path working and only note the skipped check.
+    """
+    shell_version = os.environ.get("WENYI_DESKTOP_VERSION")
+    if shell_version is None:
+        print(
+            "wenyi-desktop: launcher did not set WENYI_DESKTOP_VERSION; "
+            "skipping the shell/engine version handshake.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    try:
+        engine_version = importlib.metadata.version("wenyi-desktop")
+    except importlib.metadata.PackageNotFoundError:
+        print(
+            "wenyi-desktop: installed engine version is unknown; "
+            "skipping the shell/engine version handshake.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    if engine_version != shell_version:
+        print(
+            "wenyi-desktop: version mismatch between the desktop shell "
+            f"({shell_version}) and the Python engine ({engine_version}); "
+            "refusing to start. Install matching desktop components.",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise SystemExit(2)
+
+
 def create_app(
     workspace: str | Path | None = None,
     *,
@@ -288,6 +329,8 @@ def create_app(
     install_root: str | Path | None = None,
     engine_diagnostics: EngineDiagnostics | None = None,
 ):
+    verify_version_handshake()
+
     from .desktop import ORIGINS
     from .routers import (
         babeldoc_plugin,
