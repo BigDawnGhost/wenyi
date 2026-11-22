@@ -121,9 +121,11 @@ class PostgresStorage:
 
     @contextmanager
     def state_lock(self) -> Iterator[None]:
-        """Serialize a brief state update and make its nested calls one transaction."""
-        if getattr(self._local, "state_conn", None) is not None:
-            yield
+        """Serialize a brief state update; nested failures roll back to their savepoint."""
+        state_conn = getattr(self._local, "state_conn", None)
+        if state_conn is not None:
+            with state_conn.transaction():
+                yield
             return
         with self._pool.connection() as conn:
             with conn.transaction():

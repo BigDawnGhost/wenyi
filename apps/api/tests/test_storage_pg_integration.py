@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from api_test_support import document, initialize
+from psycopg.errors import DivisionByZero
 from type_helpers import must
 from wenyi_api.storage_pg import PostgresStorage, ProjectBusyError
 from wenyi_core.config import Config
@@ -324,6 +325,42 @@ def test_postgres_state_transaction_rolls_back_complete_chapter(pg_storage, tmp_
             raise RuntimeError("injected publication failure")
     assert pg_storage.load_chapter(0).segments[0].target == "润色译文"
     assert pg_storage.load_manifest()["chapters"][0]["status"] == "pending"
+
+
+def test_postgres_nested_state_lock_failure_rolls_back_to_savepoint(pg_storage, tmp_path):
+    initialize(pg_storage, tmp_path)
+    before = pg_storage.load_manifest()["title"]
+    with pg_storage.state_lock():
+        manifest = pg_storage.load_manifest()
+        manifest["title"] = "outer-rename"
+        pg_storage.save_manifest(manifest)
+        with pytest.raises(DivisionByZero):
+            with pg_storage.state_lock():
+                nested = pg_storage.load_manifest()
+                nested["title"] = "nested-rename"
+                pg_storage.save_manifest(nested)
+                with pg_storage._conn as conn:
+                    conn.execute("SELECT 1/0")
+        # The savepoint rollback leaves the connection usable for more state writes.
+        final = pg_storage.load_manifest()
+        final["title"] = "final-rename"
+        pg_storage.save_manifest(final)
+    assert pg_storage.load_manifest()["title"] == "final-rename"
+    assert before != "final-rename"
+
+
+def test_postgres_nested_state_lock_failure_propagating_rolls_back_everything(pg_storage, tmp_path):
+    initialize(pg_storage, tmp_path)
+    before = pg_storage.load_manifest()["title"]
+    with pytest.raises(DivisionByZero):
+        with pg_storage.state_lock():
+            manifest = pg_storage.load_manifest()
+            manifest["title"] = "never-committed"
+            pg_storage.save_manifest(manifest)
+            with pg_storage.state_lock():
+                with pg_storage._conn as conn:
+                    conn.execute("SELECT 1/0")
+    assert pg_storage.load_manifest()["title"] == before
 
 
 def test_postgres_complete_workflow_review_reuse_and_export(pg_storage, tmp_path):
