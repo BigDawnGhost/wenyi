@@ -5176,6 +5176,7 @@ dependencies = [
  "objc2",
  "objc2-foundation",
  "objc2-user-notifications",
+ "objc2-web-kit",
  "reqwest",
  "rfd",
  "same-file",
@@ -5186,8 +5187,10 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-updater",
+ "webkit2gtk",
  "windows",
  "windows-sys 0.61.2",
+ "winreg",
  "zip",
 ]
 

@@ -80,14 +80,12 @@ def test_preflight_shrinks_glossary_to_fit_small_context_window():
             "llm": {
                 "preset": "fake",
                 "models": {
-                    "small": {
-                        "provider": "default",
-                        "model": "fake",
+                    "fake/fake-small": {
                         "context_window": 1400,
                         "max_output_tokens": 200,
                     }
                 },
-                "tiers": {"strong": "small", "cheap": "small", "fast": "small"},
+                "routes": {"translation.body": {"model": "fake/fake-small"}},
             }
         }
     )
@@ -108,14 +106,12 @@ def test_preflight_fails_with_actionable_error_when_even_empty_glossary_overflow
             "llm": {
                 "preset": "fake",
                 "models": {
-                    "tiny": {
-                        "provider": "default",
-                        "model": "fake",
+                    "fake/fake-tiny": {
                         "context_window": 50,
                         "max_output_tokens": 20,
                     }
                 },
-                "tiers": {"strong": "tiny", "cheap": "tiny", "fast": "tiny"},
+                "routes": {"translation.body": {"model": "fake/fake-tiny"}},
             }
         }
     )
@@ -156,21 +152,21 @@ def test_preflight_checks_smallest_configured_fallback_context_window():
             "llm": {
                 "preset": "fake",
                 "models": {
-                    "big": {
-                        "provider": "default",
-                        "model": "fake-big",
+                    "fake/fake-big": {
                         "context_window": 128000,
                         "max_output_tokens": 4096,
                     },
-                    "small": {
-                        "provider": "default",
-                        "model": "fake-small",
+                    "fake/fake-small": {
                         "context_window": 400,
                         "max_output_tokens": 100,
                     },
                 },
-                "tiers": {"strong": "big", "cheap": "big", "fast": "big"},
-                "routes": {"translation.body": {"model": "big", "fallbacks": ["small"]}},
+                "routes": {
+                    "translation.body": {
+                        "model": "fake/fake-big",
+                        "fallbacks": ["fake/fake-small"],
+                    }
+                },
             }
         }
     )

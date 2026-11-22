@@ -49,11 +49,13 @@ test("Desktop settings replaces app navigation and keeps structured drafts betwe
   await page.getByRole("link", { name: "Workflow", exact: true }).click();
   await page.getByLabel("Polishing", { exact: true }).uncheck();
   await page.getByRole("link", { name: "Models & connections", exact: true }).click();
-  await page.locator("#provider-models").getByLabel("API provider", { exact: true }).click();
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+  await page.getByLabel("API provider", { exact: true }).click();
   await expect(page.getByRole("listbox")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page).toHaveURL("/settings/providers");
   await expect(page.locator('[role="listbox"]')).toHaveCount(0);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await page.getByRole("link", { name: "Workflow", exact: true }).click();
   await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
   await page.reload();
@@ -69,7 +71,7 @@ test("lazy credentials do not blank settings after its configuration loads", asy
   await desktop(page);
   await fakeApi(page, {
     "/desktop/credentials": {
-      default: { mode: "environment", available: false, storage: "environment" },
+      deepseek: { mode: "environment", available: false, storage: "environment" },
     },
   }, origin);
   let releaseConfig = () => {};
@@ -106,12 +108,13 @@ test("lazy credentials do not blank settings after its configuration loads", asy
     await expect(page.getByRole("heading", { name: "General", exact: true })).toBeVisible();
     await expect(page.getByLabel("Interface language")).toBeVisible();
     await page.getByRole("link", { name: "Models & connections", exact: true }).click();
-    await expect(page.locator("#provider-models").getByLabel("API provider", { exact: true })).toBeVisible();
-    await expect(page.locator("#key-default")).toBeVisible();
+    await page.getByRole("button", { name: "Edit provider deepseek" }).click();
+    await expect(page.getByLabel("API provider", { exact: true })).toBeVisible();
+    const env = page.getByLabel("API key environment variable", { exact: true });
+    await expect(env).toHaveCount(0);
     releaseCredential();
-    // The native field keeps environment controls visible alongside the masked API key.
-    await expect(page.locator("#credential-secret-default")).toBeVisible();
-    await expect(page.locator("#key-default")).toBeVisible();
+    await expect(page.getByLabel("API key", { exact: true })).toBeVisible();
+    await expect(env).toHaveCount(0);
   } finally {
     releaseConfig();
     releaseCredential();

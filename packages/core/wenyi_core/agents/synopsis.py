@@ -1,4 +1,4 @@
-"""Book-understanding prescan agent using an economical tier.
+"""Book-understanding prescan agent using the chapter and book synopsis routes.
 Read the source before translation. Store one target-language digest per chapter in
 chapter.meta["source_digest"], then combine digests and preliminary analysis into a
 whole-book synopsis.
@@ -36,7 +36,7 @@ class Synopsizer(Agent):
     def _digest(self, source: str) -> str:
         system = self.render("chapter_digest_system", src=self.src, tgt=self.tgt)
         user = self.render("chapter_digest_user", src=self.src, tgt=self.tgt, source=source)
-        # Use the fast tier without overriding its configured or provider-default output limit.
+        # Use the route's configured or provider-default output limit.
         return self._ask_text(system, user, operation="synopsis.chapter").strip()
 
     def _merge_digests(self, digests: list[str]) -> str:

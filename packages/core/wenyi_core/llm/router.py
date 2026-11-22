@@ -19,7 +19,7 @@ from .limits import RequestLimits
 from .operations import require_operation
 from .registry import provider_spec
 from .retrying import is_retryable_provider_error, safe_provider_error
-from .routing import ResolvedRoute, model_route, resolve_routes
+from .routing import ResolvedRoute, model_route, operation_route, resolve_routes
 from .transport import ProviderAdapter, RequestContext
 from .usage import UsageSample
 
@@ -68,12 +68,11 @@ class RoutedLLMClient(LLMClient):
             require_operation(operation)
             route = self.routes[operation]
             connections.add(route.provider)
-            connections.update(self.config.models[profile].provider for profile in route.fallbacks)
             self._validate_token_reservation(route)
             for profile in route.fallbacks:
-                self._validate_token_reservation(
-                    model_route(self.config, operation, profile, origin="fallback")
-                )
+                fallback = model_route(self.config, operation, profile, origin="fallback")
+                connections.add(fallback.provider)
+                self._validate_token_reservation(fallback)
         for connection in sorted(connections):
             self.adapter(connection).validate_credentials()
 
@@ -144,15 +143,7 @@ class RoutedLLMClient(LLMClient):
     ) -> str:
         operation = primary.operation
         if max_tokens is not None:
-            primary = model_route(
-                self.config,
-                operation,
-                primary.profile,
-                origin=primary.origin,
-                tier=primary.tier,
-                fallbacks=primary.fallbacks,
-                output_hint=max_tokens,
-            )
+            primary = operation_route(self.config, operation, output_hint=max_tokens)
         routes = [
             primary,
             *(
@@ -174,7 +165,6 @@ class RoutedLLMClient(LLMClient):
                 "call_id": call_id,
                 "operation": operation,
                 "stage": operation,
-                "tier": route.tier or "direct",
                 "profile": route.profile,
                 "connection": route.provider,
                 "provider": route.provider_kind,
@@ -202,7 +192,7 @@ class RoutedLLMClient(LLMClient):
                 if sample is not None and active_reservation is not None:
                     active_reservation.actual_tokens = sample.total_tokens
                 self.usage.record(
-                    route.tier or "direct",
+                    "direct",  # Schema v3 ledgers retain the historical attribution bucket.
                     sample,
                     operation,
                     provider=route.provider_identity,
@@ -235,7 +225,7 @@ class RoutedLLMClient(LLMClient):
 
             context = RequestContext(
                 operation,
-                route.tier or "direct",
+                route.profile,
                 route.max_output_tokens,
                 emit,
                 record,

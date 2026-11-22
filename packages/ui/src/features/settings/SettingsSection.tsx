@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import { cn } from "../../lib/utils";
 import { Card } from "../../components/ui/card";
 
-export { SettingsRow } from "./SettingsRow";
+export { SettingsRow, SETTINGS_CONTROL_CLASSNAME } from "./SettingsRow";
 
 const SETTINGS_HEADING_CLASSNAME = "text-sm font-medium";
 

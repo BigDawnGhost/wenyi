@@ -133,8 +133,8 @@ class BackendContext:
     # None retains DATA_DIR-relative Web originals. Desktop keeps movable project-local names.
     source_paths: SourcePaths | None = None
     mineru_token_resolver: Callable[[], str | None] | None = None
-    # Desktop resolves a saved connection's stored key; None keeps environment lookup (Web).
-    connection_credential: Callable[[str, Any], str | None] | None = None
+    # A draft without a saved ID may use its environment, never another connection's key.
+    connection_credential: Callable[[str | None, Any], str | None] | None = None
     babeldoc_connection: BridgeResolver | None = None
     # Web retains its executor; Desktop owns a dedicated thread per workflow.
     run_workflow_sync: WorkflowDispatcher = asyncio.to_thread

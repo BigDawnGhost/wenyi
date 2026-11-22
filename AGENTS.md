@@ -1,6 +1,16 @@
 # Wenyi repository guide for coding agents
 
-本文件适用于整个仓库；更深层的 `AGENTS.md` 在其范围内优先。按任务查阅相关源码、测试和文档，无需预先通读仓库。
+本文件适用于整个仓库；更深层的 `AGENTS.md` 在其范围内优先。
+
+## 动手前先读对应的开发文档
+
+设计、修改或审查代码前，先按**受影响的行为**从[开发文档索引](docs/development/index.md#find-the-owning-layer)找到负责该主题的文档，阅读相关章节，再决定实现和验证方式。跨层改动分别查阅涉及的契约，不必通读整套文档。常见入口：
+
+- Web/Desktop 页面、组件或交互（包括小幅 UI 调整）：先读[前端开发](docs/development/frontend.md)；涉及尺寸、颜色、间距或动效时，再查[设计令牌](docs/development/design-tokens.md)。
+- 模块依赖、存储接口或平台边界：先读[架构](docs/development/architecture.md)；涉及检查点、续跑或提示词时，查[流水线契约](docs/development/pipeline.md)。
+- Web API、worker 或队列查 [Web 开发](docs/development/web.md)；Desktop 凭据、本地运行器或原生能力查 [Desktop 开发](docs/development/desktop.md)。
+
+实现验收和代码审查都要对照读到的约束。例如改弹窗保存流程，应验证失败后能否在原表单重试、关闭后键盘焦点回到哪里；类型检查和构建通过不能代替这些行为检查。
 
 ## 工作范围与完成条件
 
@@ -45,7 +55,7 @@ Web/Desktop 相关入口使用仓库根目录相对路径：
 - Web 装配、PostgreSQL 与队列：`apps/api/wenyi_api/`；测试在 `apps/api/tests/`。Desktop SQLite、凭据和本地运行器：`apps/desktop/backend/wenyi_desktop/`；测试在 `apps/desktop/backend/tests/`。
 - 共享页面与组件：`packages/ui/`；平台入口与适配分别在 `apps/web/src/` 和 `apps/desktop/frontend/src/`，E2E 在各自 `tests/`。API 类型在 `packages/shared-schema/`，接口变更需同步检查后端 schema、共享类型与前端调用。
 
-用户操作查阅 [guide](docs/guide/index.md)，选项与格式查阅 [configuration](docs/reference/configuration.md)、[formats](docs/reference/formats.md)，内部职责与恢复契约查阅 [architecture](docs/development/architecture.md)、[pipeline](docs/development/pipeline.md)。前端约定见 [frontend](docs/development/frontend.md)；中文版在 `docs/zh/` 的对应目录。CI 与打包以 `.github/workflows/` 和 `pyproject.toml` 为准。
+用户操作查阅 [guide](docs/guide/index.md)，选项与格式查阅 [configuration](docs/reference/configuration.md)、[formats](docs/reference/formats.md)。中文版在 `docs/zh/` 的对应目录。CI 与打包以 `.github/workflows/` 和 `pyproject.toml` 为准。
 
 `packages/` 和 `apps/` 包含产品源码；其中忽略的运行产物仍属于本地数据。`state/`、`output/`、`review-*`、Web `DATA_DIR`、Desktop 工作区、缓存、构建目录和样例书籍均需保留。除非用户明确要求，不读取整本私有书籍，不改写、移动、删除或提交这些数据。
 
@@ -81,7 +91,7 @@ CLI / Web / Desktop → Orchestrator → Runtime / Preparation / Translation / A
 - `source_sha256` 绑定输入内容，不按相同文件名复用不同内容的状态。
 - 保持锁语义：长流程使用书级运行锁；一致状态读写使用短状态锁；事件追加与产物导出分别使用专用锁。
 - 已完成批次和章节必须可安全跳过。修改翻译、术语检查点、预扫或 Review 缓存时，必须覆盖中断后续跑场景。
-- `target is None` 表示待翻译；MinerU 路径允许有意保存空译文 `""`，不能用真假判断将其视为未完成。
+- `target is None` 表示待翻译；不能用真假判断将已保存的空译文 `""` 视为未完成。
 - 导出从 manifest 与章节数据的一致快照读取。
 - Review 引擎只能修改本次运行内存/目录中的影子译文。只有显式开启的独立 Review Autofix 发布服务可以在先写可恢复索引后更新正式章节 `target`；它不得新增章节历史字段、修改 manifest 或术语库。
 - 本地独立 Review 使用术语库只读快照，包含已提交的 WAL 数据且不触碰正式数据库文件；文件存储拥有的术语连接在运行锁退出时释放，包括异常退出。

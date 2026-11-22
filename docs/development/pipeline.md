@@ -69,8 +69,8 @@ budgets on retry without discarding other completed work.
 
 ## Stable state and translation checkpoints
 
-`target is None` means pending. A saved empty string can be an intentional completed
-MinerU translation; truthiness must not be used to decide whether to translate again.
+`target is None` means pending. A saved empty string is not a pending target;
+truthiness must not decide whether to retry.
 Export fallback to source text is a separate decision and must not rewrite targets.
 
 Preserve chapter indices, segment indices, continuation boundaries, EPUB/HTML

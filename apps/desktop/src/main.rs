@@ -6,6 +6,7 @@ mod diagnostics;
 mod diagnostics_ui;
 mod graphics;
 mod instance;
+mod interface_zoom;
 mod ipc_error;
 mod library_choose;
 mod local_connection;
@@ -13,11 +14,14 @@ mod migration;
 mod mutex;
 mod native_drop;
 mod native_export;
+mod native_preferences;
 mod notifications;
 mod paths;
 mod process;
 mod profile;
 mod publish;
+#[cfg(any(windows, test))]
+mod uninstall;
 mod updates;
 
 use crate::mutex::lock;
@@ -258,6 +262,10 @@ fn main() {
     let data_dir = match args.as_slice() {
         [] => None,
         [flag, path] if flag == "--data-dir" => Some(std::path::PathBuf::from(path)),
+        #[cfg(windows)]
+        [flag, selection] if flag == "--uninstall-user-data" => {
+            std::process::exit(uninstall::run(selection));
+        }
         [flag] if flag == "--version" || flag == "-V" => {
             println!("Wenyi Desktop {}", env!("WENYI_DESKTOP_VERSION"));
             return;
@@ -347,6 +355,7 @@ fn main() {
         .manage(diagnostics.clone())
         .manage(Arc::new(diagnostics_ui::ExportControl::default()))
         .manage(engine)
+        .manage(interface_zoom::InterfaceZoom::new(&workspace))
         .manage(updates::Updates::new())
         .plugin(tauri_plugin_updater::Builder::new()
             .pubkey(env!("WENYI_UPDATER_PUBLIC_KEY"))
@@ -374,6 +383,7 @@ fn main() {
             notifications::desktop_notifications_permission,
             notifications::desktop_notifications_enabled,
             notifications::desktop_notifications_set_enabled,
+            interface_zoom::desktop_interface_zoom,
         ])
         .on_window_event(|window, event| {
             // A WebviewWindow's native drops are emitted as window events.
@@ -416,8 +426,9 @@ fn main() {
             // The shared shell reserves 752 logical px for content plus the 240 px
             // expanded sidebar, so a narrower minimum would clip settings behind a
             // horizontal scrollbar; 1024 leaves room for both scrollbar styles.
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("Wenyi").inner_size(1280.0, 850.0).min_inner_size(1024.0, 600.0)
+                .visible(false)
                 .data_directory(webview_data)
                 .initialization_script(lock(&startup_state).script())
                 .on_navigation(trusted)
@@ -430,6 +441,8 @@ fn main() {
                     }
                 })
                 .build()?;
+            app.state::<interface_zoom::InterfaceZoom>().restore(&window);
+            window.show()?;
             setup_tray.store(background::install(app.handle())?, Ordering::SeqCst);
             let handle = app.handle().clone();
             updates::check_on_startup(&handle);

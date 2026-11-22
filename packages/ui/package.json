@@ -14,6 +14,7 @@
     "./document-language": "./src/i18n/DocumentLanguage.tsx",
     "./styles.css": "./src/index.css",
     "./theme": "./src/theme.ts",
+    "./toast": "./src/lib/toast.ts",
     "./primitives": "./src/components/ui/index.ts",
     "./settings": "./src/features/settings/SettingsSection.tsx",
     "./format": "./src/format.ts"
@@ -21,6 +22,7 @@
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
     "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-popper": "^1.3.7",
     "@radix-ui/react-select": "^2.3.7",
     "@tanstack/react-query": "^5.59.0",
     "@tanstack/react-virtual": "^3.10.0",

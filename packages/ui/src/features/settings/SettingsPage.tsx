@@ -9,7 +9,7 @@ import { useProjectQuery } from "../../lib/projectQuery";
 import { PageContainer, PageHeader } from "../../components/layout/AppLayout";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/form";
-import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
+import { ErrorNotice } from "../../components/ui/data";
 
 import { ModelSelection } from "./ModelSelection";
 import { ExportSettings } from "./ExportSettings";
@@ -133,8 +133,7 @@ export default function SettingsPage() {
       <PageContainer className="mx-auto flex w-full max-w-5xl flex-1 flex-col pb-24">
         <div className={SETTINGS_CONTENT_CLASSNAME}>
           <ErrorNotice error={config.error || configurationError} />
-          {busy && <ReadOnlyNotice />}
-          <SettingsSection title={tr("settings.sectionDefaultModels")} className="py-0" grouped>
+          <SettingsSection title={tr("settings.stageModels")} className="py-0" grouped>
             <ModelSelection
               llm={section(effective, "llm")}
               models={config.data?.registered_models || {}}

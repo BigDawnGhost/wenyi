@@ -111,18 +111,18 @@ export const workflow = {
   ],
   progress: null,
 } satisfies Output<"WorkflowOut">;
+const modelOperations = [
+  { id: "translation.body", description: "Translate paragraphs" },
+  { id: "review.verify", description: "Verify issues with evidence" },
+  { id: "autofix.verify", description: "Verify issues before publication" },
+];
 export const effective = {
   language: { source: "ja", target: "en" },
   llm: {
     preset: "deepseek",
-    providers: { default: { kind: "deepseek" } },
-    models: { default_model: { provider: "default", model: "deepseek-flash" } },
-    tiers: {
-      strong: "default_model",
-      cheap: "default_model",
-      fast: "default_model",
-    },
-    routes: {},
+    providers: { deepseek: { kind: "deepseek" } },
+    models: { "deepseek/deepseek-flash": {} },
+    routes: Object.fromEntries(modelOperations.map(({ id }) => [id, { model: "deepseek/deepseek-flash" }])),
   },
   segment: { max_tokens_per_batch: 1800, max_tokens_per_segment: 1200 },
   pipeline: {
@@ -139,12 +139,18 @@ export const effective = {
 };
 export const projectEffective = {
   ...effective,
-  llm: { tiers: effective.llm.tiers, routes: effective.llm.routes, budget: {} },
+  llm: { routes: effective.llm.routes, budget: {} },
+};
+const registeredModels = {
+  "deepseek/deepseek-flash": {
+    provider: "deepseek", model: "deepseek-flash", thinking_levels: ["off", "low", "high", "max"],
+    thinking_value: "high",
+  },
 };
 export const configuration = {
   yaml: JSON.stringify(projectEffective, null, 2),
   effective: projectEffective,
-  registered_models: effective.llm.models,
+  registered_models: registeredModels,
   routes: [{ operation: "translate", model: "model-a" }],
   editable: true,
 } satisfies Output<"ProjectConfigOut">;
@@ -153,6 +159,7 @@ export const globalConfiguration = {
   effective,
   default_template: "标准翻译",
   revision: 0,
+  registered_models: registeredModels,
 } satisfies Output<"GlobalConfigOut">;
 export const capabilities = {
   languages: [
@@ -167,13 +174,10 @@ export const capabilities = {
     export_backends: ["babeldoc"],
   },
   providers: ["deepseek"],
-  operations: [
-    {
-      id: "translation.body",
-      tier: "strong",
-      description: "Translate paragraphs",
-    },
-  ],
+  operations: modelOperations.map(spec => ({
+    workflows: ["translate"], flags: [], review: false, resumable_conversation: false,
+    protocol_version: 1, ...spec,
+  })),
 } satisfies Output<"Capabilities">;
 export const preview = {
   title: "Source preview",

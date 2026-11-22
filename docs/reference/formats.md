@@ -17,7 +17,7 @@ and source requirements. For workflow choices, see the
 | Markdown | EPUB | TXT, HTML, Markdown, DOCX | Heading hierarchy and paragraphs; not a full Markdown syntax round trip |
 | HTML / XHTML | HTML | EPUB, TXT, Markdown, DOCX | Static source-file backfill; no browser execution |
 | DOCX | DOCX | EPUB, TXT, HTML, Markdown | Reconstruct supported paragraphs, tables, lists and styles |
-| PDF via MinerU | EPUB | TXT, HTML, Markdown, DOCX | Reflow converted HTML, not the original PDF pages |
+| PDF via MinerU | EPUB | TXT, HTML, Markdown, DOCX | Reflow a derived source EPUB, not the original PDF pages |
 | PDF via BabelDOC | PDF | EPUB, TXT, HTML, Markdown, DOCX | Fill translations into the saved external bridge session |
 
 CLI `--format epub|txt|html|markdown|pdf|docx` overrides the default.
@@ -211,7 +211,7 @@ export before processing a layout-sensitive document.
 | | MinerU | BabelDOC |
 | --- | --- | --- |
 | Default | Yes | Opt-in |
-| Primary goal | Extract/reflow text through converted HTML | Preserve original page layout where possible |
+| Primary goal | Extract structured content for reflowable EPUB | Preserve original page layout where possible |
 | Service boundary | External conversion service | External AGPL bridge, separate repository/process, HTTP only |
 | Scanned image-only input | Use this path or OCR first | Requires an extractable text layer |
 | Default CLI output | EPUB | PDF |
@@ -220,15 +220,17 @@ export before processing a layout-sensitive document.
 ### MinerU
 
 The first conversion requires `MINERU_API_KEY` in the CLI environment.
-Converted HTML is cached under
-`state/<book>/targets/<target-language>/source/<source-sha256>/converted.html`.
-Matching retries reuse conversion rather than treating another PDF with the same
-filename as equivalent. Review extraction quality before committing to a long
-translation; OCR/conversion quality limits all later stages.
+Wenyi builds a source EPUB from MinerU's Content List V2 and its images, then
+uses the regular EPUB translation workflow. The original PDF remains the project
+source. In the CLI, the derived EPUB is cached under
+`state/<book>/targets/<target-language>/source/<source-sha256>/converted.epub`.
+Keep it with the project: matching retries and EPUB/HTML exports reuse it without
+calling MinerU. Review extraction quality before a long translation; this does
+not correct recognition errors or recover links absent from the result.
 
-MinerU state supports reflow exports, not PDF reconstruction. Some parsed units may
-intentionally have empty completed translations; they are not automatically pending.
-Changing configuration to BabelDOC later cannot add the missing layout session.
+Projects initialized with the former HTML workflow must re-import the original
+PDF as a new project. MinerU does not support PDF reconstruction; changing to
+BabelDOC later cannot add a missing layout session.
 
 ### BabelDOC
 
@@ -242,7 +244,7 @@ Before contacting the bridge, Wenyi checks selected pages for image-only content
 If no extractable text layer is found, use MinerU or run OCR first. Chapter grouping
 uses PDF bookmarks, with one chapter when no outline is available.
 Explicit EPUB export reflows those saved chapters without contacting the bridge.
-It does not reproduce PDF page layout or require a MinerU HTML cache.
+It does not reproduce PDF page layout or use the MinerU conversion cache.
 
 With a row-capable bridge, aligned numbered contents entries with dot leaders and
 page numbers, and confidently detected list items with repeated unknown leading

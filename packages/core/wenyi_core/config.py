@@ -30,8 +30,9 @@ language:
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  preset: deepseek # All tiers: deepseek-flash, thinking enabled, reasoning_effort high
-  # Add providers, models and routes to override individual operations.
+  preset: deepseek # Registers deepseek-flash and assigns it to each operation.
+  # Select a registered connection/model for each operation with routes.<operation>.model.
+  # Optionally override its thinking effort with routes.<operation>.thinking.
   # Inspect effective settings with: wenyi models list
 
 # ── Segmentation ─────────────────────────────────────────────────────────────────
@@ -57,7 +58,7 @@ pipeline:
   review: true # Run final review after whole-book translation; disable with --no-review
   # Additional structural retries for standard translation and each precision stage; 0 disables retries.
   align_retry_limit: 2
-  polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
+  polish: true # Polish the full translation using polish.body; enabled by default and adds substantial cost
   translation_mode: standard # standard | three_draft_synthesis; three_draft_synthesis requires polish
   # Standard-mode polish workers; above 1, polishing runs in the background while translation continues.
   polish_concurrency: 1
@@ -168,9 +169,7 @@ class PipelineConfig(BaseModel):
     review: bool = True
     # Additional structural retries for standard translation and precision generation/synthesis.
     align_retry_limit: int = 2
-    polish: bool = (
-        True  # Polish the full translation with the strong tier by default; disable to save cost
-    )
+    polish: bool = True  # Polish the full translation by default; disable to save cost
     # Above 1, standard-mode polish jobs run in a bounded background pool while translation
     # continues; 1 polishes each batch inline. Ignored by three_draft_synthesis.
     polish_concurrency: int = Field(default=1, ge=1)

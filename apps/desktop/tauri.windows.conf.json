@@ -3,8 +3,9 @@
     "targets": ["nsis"],
     "windows": {
       "allowDowngrades": false,
+      "webviewInstallMode": { "type": "embedBootstrapper" },
       "nsis": {
-        "installMode": "currentUser",
+        "installMode": "both",
         "template": "installer.nsi",
         "languages": ["English", "SimpChinese"],
         "displayLanguageSelector": true,

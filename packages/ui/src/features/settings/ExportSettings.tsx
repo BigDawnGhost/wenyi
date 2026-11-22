@@ -39,7 +39,6 @@ export function ExportSettings({
         <SettingsRow
           label={t("settings.includeAnAboutThisTranslationPage")}
           htmlFor="output-about-page"
-          description={t("settings.aboutPageHelp")}
           control={
             <Switch
               id="output-about-page"

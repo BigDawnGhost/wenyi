@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..configuration import ProviderConfig
 from ..retrying import error_status_code
+from ..thinking import ThinkingControl, effort_control
 from ..transport import Messages, RequestContext, ResolvedModel
 from ._openai_compatible import (
     OpenAICompatibleBaseClient,
@@ -23,6 +24,17 @@ ReasoningStyle = Literal["none", "deepseek", "openai", "openrouter"]
 class CompatibleConnectionOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, hide_input_in_errors=True)
     reasoning_style: ReasoningStyle = "none"
+
+
+_THINKING = {
+    "deepseek": effort_control("off", "low", "high", "max", raw_field="request_overrides"),
+    "openai": effort_control(
+        "off", "minimal", "low", "medium", "high", "xhigh", raw_field="request_overrides"
+    ),
+    "openrouter": effort_control(
+        "off", "minimal", "low", "medium", "high", "xhigh", raw_field="request_overrides"
+    ),
+}
 
 
 class OpenAICompatibleOptions(BaseModel):
@@ -86,6 +98,13 @@ def build_request_kwargs(
 class OpenAICompatibleClient(OpenAICompatibleBaseClient[OpenAICompatibleOptions]):
     connection_options = CompatibleConnectionOptions
     protocol_version = 2
+
+    @classmethod
+    def route_thinking(cls, connection: ProviderConfig, model: str) -> ThinkingControl | None:
+        style = CompatibleConnectionOptions.model_validate(
+            connection.model_extra or {}
+        ).reasoning_style
+        return _THINKING.get(style)
 
     def __init__(self, cfg: ProviderConfig, *, credentials: tuple[str | None] | None = None):
         super().__init__(cfg, credentials=credentials)

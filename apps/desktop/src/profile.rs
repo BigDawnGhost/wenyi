@@ -42,7 +42,7 @@ fn open(path: &Path) -> Result<File, String> {
         .map_err(|_| "Could not open Desktop profile admission.".into())
 }
 
-fn linked(metadata: &fs::Metadata) -> bool {
+pub(crate) fn linked(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;

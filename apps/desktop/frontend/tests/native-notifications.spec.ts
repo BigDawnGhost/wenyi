@@ -3,9 +3,9 @@ import { fakeApi } from "../../../../packages/ui/sandbox/fixtures";
 
 const origin = "http://127.0.0.1:19481";
 
-async function setup(page: Page, permission = "not_determined", answer = "granted", failed = false) {
-  await page.addInitScript(({ origin, permission, answer, failed }) => {
-    localStorage.setItem("wenyi.locale", "en");
+async function setup(page: Page, permission = "not_determined", answer = "granted", failed = false, locale = "en") {
+  await page.addInitScript(({ origin, permission, answer, failed, locale }) => {
+    localStorage.setItem("wenyi.locale", locale);
     const requests: boolean[] = [];
     Object.assign(window, {
       __WENYI_DESKTOP__: failed ? undefined : { apiBase: origin, token: "fake-private-token" },
@@ -20,7 +20,7 @@ async function setup(page: Page, permission = "not_determined", answer = "grante
         },
       },
     });
-  }, { origin, permission, answer, failed });
+  }, { origin, permission, answer, failed, locale });
   if (!failed) await fakeApi(page, {}, origin);
 }
 
@@ -61,6 +61,14 @@ test("denied permission explains system settings without requesting again", asyn
     .filter({ hasText: "Close" }).click();
   await expect(dialog).toHaveCount(0);
   expect((await requests(page)).filter(Boolean)).toEqual([true]);
+});
+
+test("Chinese permission guidance uses the installed application's name", async ({ page }) => {
+  await setup(page, "not_determined", "denied", false, "zh-CN");
+  await page.goto("/");
+  const dialog = page.getByRole("dialog", { name: "桌面状态通知" });
+  await dialog.getByRole("button", { name: "允许通知" }).click();
+  await expect(dialog.getByRole("status")).toContainText("Wenyi Desktop");
 });
 
 test("permission errors allow retry without exposing native errors", async ({ page }) => {

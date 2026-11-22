@@ -57,11 +57,7 @@ class ReviewRoundService:
         done = 0
         # A stable key plus the round, so the client renders the number in the
         # reader's language instead of receiving a sentence baked here.
-        review_label = (
-            "progress.stage.reviewRound1"
-            if review_round == 1
-            else f"progress.stage.reviewRound:{review_round}"
-        )
+        review_label = f"progress.stage.reviewRound:{review_round}"
         if progress:
             progress(0, total, review_label)
         raw_issues: list[dict[str, Any]] = []

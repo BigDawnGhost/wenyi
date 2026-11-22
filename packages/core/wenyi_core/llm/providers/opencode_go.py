@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..thinking import effort_control
 from ..transport import Messages, ResolvedModel
 from ._openai_compatible import (
     OpenAICompatibleBaseClient,
@@ -57,6 +58,7 @@ def build_request_kwargs(
 class OpenCodeGoClient(OpenAICompatibleBaseClient[OpenCodeGoOptions]):
     """OpenCode Go transport with Wenyi User-Agent and a stable session id."""
 
+    thinking_control = effort_control("low", "medium", "high")
     default_base_url = DEFAULT_BASE_URL
     default_api_key_env = DEFAULT_API_KEY_ENV
     requires_api_key = True

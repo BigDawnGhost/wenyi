@@ -386,8 +386,8 @@ class TestProviderFactory(unittest.TestCase):
             {
                 "llm": {
                     "providers": {"default": connection},
-                    "models": {"m": {"provider": "default", "model": "m"}},
-                    "tiers": {tier: "m" for tier in ("strong", "cheap", "fast")},
+                    "models": {"default/m": {}},
+                    "routes": {op: {"model": "default/m"} for op in Config().llm.routes},
                 }
             }
         )

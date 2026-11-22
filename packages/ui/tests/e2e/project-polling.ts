@@ -60,7 +60,6 @@ test("scrolling into a prefetched window after completion reconciles its transla
   const prefetched = neighborReads;
   for (const row of segments) row.target = `Final ${row.index}`;
   saved.status = "done";
-  await expect(page.getByText("Read-only while a task runs", { exact: true })).toHaveCount(0);
   await expect(page.locator("#paragraph-0").getByTestId("translation-text")).toHaveText("Final 0");
   const pane = page.locator('[data-slot="content"]');
   const row = page.locator("#paragraph-48");
@@ -184,10 +183,11 @@ test("an in-flight chapter read cannot swallow the final paused snapshot", async
   await page.goto(`/projects/${pid}/proofreading/0`);
   // Development StrictMode may cancel and restart the first mount's request.
   await expect.poll(() => reads).toBeGreaterThan(0);
-  await expect(page.getByText("Read-only while a task runs", { exact: true })).toBeVisible();
+  // The chapter window is still held; the sidebar observes the project's terminal read.
   saved.status = "paused";
+  saved.name = "Paused snapshot";
   await page.clock.runFor(4000);
-  await expect(page.getByText("Read-only while a task runs", { exact: true })).toHaveCount(0);
+  await expect(page.getByTitle(saved.name, { exact: true })).toBeVisible();
   const beforeRelease = reads;
   holding = false;
   release();

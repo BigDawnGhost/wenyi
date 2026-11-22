@@ -56,21 +56,10 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 
-def _is_mineru_pdf(manifest: dict[str, Any]) -> bool:
-    """True for MinerU PDF state (fmt=pdf without BabelDOC markers)."""
-    if manifest.get("fmt") != "pdf":
-        return False
-    raw_meta = manifest.get("meta")
-    meta: dict[str, Any] = raw_meta if isinstance(raw_meta, dict) else {}
-    return not bool(meta.get("babeldoc")) and meta.get("pdf_export") != "babeldoc"
-
-
 # Segment meta marker saved with a draft whose polish has not been applied yet.
 POLISH_PENDING = "polish_pending"
 # Segment meta marker saved when polish failed after retries/splitting so resume can re-polish it.
 POLISH_FAILED = "polish_failed"
-
-
 class TranslationService:
     """Domain service for body translation, glossary extraction and chapter/TOC titles."""
 
@@ -103,7 +92,6 @@ class TranslationService:
         manifest = store.load_manifest()
         glossary = store
         style = self._runtime.analyzer.style_brief(store.load_analysis() or {})
-        allow_empty_translations = _is_mineru_pdf(manifest)
 
         pipeline = self._runtime.config.pipeline
         if only_chapter is not None:
@@ -131,7 +119,6 @@ class TranslationService:
             only_chapter=only_chapter,
             chapters=targets,
             total_segments=total,
-            allow_empty_translations=allow_empty_translations,
         )
         if (
             pipeline.polish
@@ -157,7 +144,6 @@ class TranslationService:
                     progress=progress,
                     done=done,
                     total=total,
-                    allow_empty_translations=allow_empty_translations,
                 )
                 self._runtime.usage.flush(store, scope="chapter")
             queue = self._polish_queue
@@ -349,7 +335,7 @@ class TranslationService:
             glossary_key = store.batch_glossary_key(batch_start, len(b))
             if all(s.target is not None for s in b):
                 # Reuse a batch translated at this position/context, rebuild rolling context and skip it.
-                # Blank "" is a completed MinerU allowance; only None means not yet translated.
+                # Only None means not yet translated.
                 marked = any(s.meta.get(POLISH_PENDING) or s.meta.get(POLISH_FAILED) for s in b)
                 polish_pending = marked and (
                     self._runtime.config.pipeline.polish

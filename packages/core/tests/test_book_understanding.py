@@ -662,10 +662,30 @@ def test_version_3_synopsis_snapshot_is_reused_across_alias_and_unmatched_change
 
 
 def test_unrelated_route_change_reuses_synopsis(tmp_path):
+    ref = "deepseek/deepseek-flash"
     service, store, runtime = _service(tmp_path)
+    runtime.config.llm = Config.from_dict(
+        {
+            "llm": {
+                "preset": "deepseek",
+                "routes": {
+                    "synopsis.book": {"model": ref, "thinking": "off"},
+                    "translation.body": {"model": ref, "thinking": "off"},
+                },
+            }
+        }
+    ).llm
     service.ensure_understanding(store)
     runtime.config.llm = Config.from_dict(
-        {"llm": {"preset": "fake", "routes": {"review.fix": {"tier": "fast"}}}}
+        {
+            "llm": {
+                "preset": "deepseek",
+                "routes": {
+                    "synopsis.book": {"model": ref, "thinking": "off"},
+                    "translation.body": {"model": ref, "thinking": "max"},
+                },
+            }
+        }
     ).llm
     runtime.synopsizer.reset_mock()
     assert service.ensure_understanding(store) == "Whole-book synopsis."

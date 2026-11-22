@@ -29,7 +29,8 @@ export function registerShellTests({ apiOrigin }: { apiOrigin?: string } = {}) {
         json: { ...project, status: "translating" },
       }));
       await page.goto(`/projects/${pid}/glossary`);
-      await expectCardSurface(page.getByText("Read-only while a task runs", { exact: true }));
+      await expect(page.getByRole("button", { name: "Add term", exact: true })).toBeDisabled();
+      await expect(page.getByText("Read-only while a task runs", { exact: true })).toHaveCount(0);
     });
   }
 

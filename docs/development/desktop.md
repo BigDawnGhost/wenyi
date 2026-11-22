@@ -108,6 +108,13 @@ contracts aligned. `workspace` in existing APIs means this selected data root,
 not a second storage location. The system credential vault and macOS-managed
 WKWebView data remain outside it.
 
+The native host restores UI zoom from `<data-root>/runtime/interface-zoom.json`
+before showing the window. Only the supported integer percentages are accepted;
+missing or invalid data falls back to 100%. Zoom is independent of project
+configuration and network availability. The settings row reads the live WebView
+scale. Before persisting a change, the host confirms the scale on the WebView's
+UI thread; failed changes do not overwrite the saved preference.
+
 Resolve projects through the
 [catalog's project-directory resolver](../../apps/desktop/backend/wenyi_desktop/local_backend.py#L157),
 not by concatenating the current root and project ID. Changing the default library

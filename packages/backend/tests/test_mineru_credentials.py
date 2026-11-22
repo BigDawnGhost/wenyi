@@ -2,7 +2,6 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 from tests.fake_llm import routing_handler
@@ -10,9 +9,25 @@ from wenyi_backend.context import current_context, use_context
 from wenyi_backend.execution import operations
 from wenyi_backend.execution.bindings import operation_services
 from wenyi_backend.execution.contracts import ExecutionRequest
+from wenyi_core.assemble.epub_package import EpubChapter, EpubTocEntry, write_epub
 from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.storage.file import FileStorage
+
+
+def _write_sample(output, title, lang):
+    write_epub(
+        output,
+        title=title,
+        lang=lang,
+        chapters=[
+            EpubChapter(
+                "source.xhtml", title, "<html><body><p>Sample source text.</p></body></html>"
+            )
+        ],
+        toc=[EpubTocEntry("source.xhtml", title)],
+        resources=[],
+    )
 
 
 @pytest.mark.parametrize("operation", ["parse", "prepare", "parse_then_prepare", "translation"])
@@ -22,14 +37,13 @@ def test_worker_conversion_resolves_execution_credentials_only(
     source = tmp_path / "book.pdf"
     source.write_bytes(b"fake pdf")
     backend_context.repository.get_project.return_value = {"fmt": "pdf", "source_path": str(source)}
-    monkeypatch.setattr("wenyi_core.ingest.pdf_reader._check_deps", lambda: None)
     seen = []
 
-    def convert(source, output, *, api_token):
+    def convert(source, output, *, api_token, title, lang):
         seen.append(api_token)
-        Path(output).write_text("<html><body><p>Sample source text.</p></body></html>")
+        _write_sample(output, title, lang)
 
-    monkeypatch.setattr("wenyi_core.ingest.pdf_to_html.convert_pdf_to_html", convert)
+    monkeypatch.setattr("wenyi_core.ingest.pdf_reader.convert_pdf_to_epub", convert)
     config = Config.from_dict(
         {
             "language": {"source": "en", "target": "zh"},
@@ -45,6 +59,7 @@ def test_worker_conversion_resolves_execution_credentials_only(
         if operation in {"parse", "parse_then_prepare"}:
             operations.parse_source("p", storage, config, lambda *args: None, services)
             operations.parse_source("p", storage, config, lambda *args: None, services)
+            assert storage.read_artifact("preview.json")["fmt"] == "pdf"
         if operation != "parse":
             operations.book_operation(
                 ExecutionRequest(
@@ -56,6 +71,8 @@ def test_worker_conversion_resolves_execution_credentials_only(
                 lambda *args: None,
                 services,
             )
+            assert storage.load_manifest()["fmt"] == "pdf"
+            assert storage.load_manifest()["meta"]["mineru_epub_sha256"]
     assert seen == ["execution-only-token"]
     assert "execution-only-token" not in str(params)
     for path in (tmp_path / "state").rglob("*"):
@@ -67,14 +84,13 @@ def test_pdf_resolvers_remain_context_local(backend_context, monkeypatch, tmp_pa
     source = tmp_path / "book.pdf"
     source.write_bytes(b"fake pdf")
     backend_context.repository.get_project.return_value = {"fmt": "pdf", "source_path": str(source)}
-    monkeypatch.setattr("wenyi_core.ingest.pdf_reader._check_deps", lambda: None)
     seen = {}
 
-    def convert(source, output, *, api_token):
+    def convert(source, output, *, api_token, title, lang):
         seen[current_context().data_dir] = api_token
-        Path(output).write_text("<html><body><p>Sample source text.</p></body></html>")
+        _write_sample(output, title, lang)
 
-    monkeypatch.setattr("wenyi_core.ingest.pdf_to_html.convert_pdf_to_html", convert)
+    monkeypatch.setattr("wenyi_core.ingest.pdf_reader.convert_pdf_to_epub", convert)
 
     def parse(index):
         context = replace(

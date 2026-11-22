@@ -181,10 +181,33 @@ shells and rewrites local media references. For canonical HTML, Rust can also
 emit both bilingual orders and restore simple annotations with verified offsets.
 Complex link rewrites, nested or stale placements and noncanonical inputs use
 the Python compatibility renderer.
-MinerU uses the same module to read ordinary result ZIPs, combine HTML chunks and
-extract eligible cached blocks. Large PDFs are split in a private directory using
-`pdf/`, with pypdf page cloning for unsupported page features. Python owns the
-HTTP calls, cache policy and temporary-file lifetime.
+Large MinerU PDFs are split in a private directory using `pdf/`, with pypdf page
+cloning for unsupported page features. Python reads the Content List V2 result
+ZIPs in chunk order and publishes one `converted.epub`. New runs use the regular
+EPUB reader and writer. The manifest binds the original PDF hash and the derived
+EPUB hash; `fmt` remains `pdf` for the project and its previews. Template-aware
+operations use the derived EPUB, not the uploaded file. Exports never request
+another conversion from MinerU.
+
+To inspect an existing MinerU result bundle, use the same renderer offline:
+
+```bash
+uv run --no-sync wenyi mineru-epub path/to/mineru-result.zip path/to/source.epub
+```
+
+The converter uses only Content List V2 and referenced local assets, not the
+Markdown or HTML export. It retains the recorded block order, page footnotes,
+figures, captions and reference entries, while omitting running page headers,
+footers and numbers. It emits MathML with visible equation numbers and uses an
+available formula crop when display math cannot be rendered. In mixed prose and
+math paragraphs it fills missing spaces next to Latin letters and digits and
+uses start alignment to avoid stretching the words before wrapped formulas.
+Neither adjustment changes the LaTeX. Code listing text keeps its whitespace;
+algorithm prose and captions are translatable, with inline formulas protected.
+Generated source editions mark each explicit TOC heading as a logical chapter
+boundary, including nested headings. The NAV document is not in the reading
+order. This preserves the TOC tree without changing chapter selection for
+ordinary EPUBs. Only links present in the JSON are carried over.
 
 PDF layout extraction and fillback remain in the separate BabelDOC bridge. For
 image-only detection and bookmarks, Core first inspects the PDF natively; ambiguous

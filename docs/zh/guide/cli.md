@@ -136,6 +136,10 @@ wenyi translate book.epub
 - `translate` 复用匹配的解析与准备结果，再处理待译内容。
   常规术语抽取从翻译过程中完成的原译文对开始。
 
+已有 MinerU 结果 ZIP 时，运行 `wenyi mineru-epub result.zip source.epub` 即可离线生成原文 EPUB，
+单文件版 CLI 也支持。也可传入解压后的 `*_content_list_v2.json` 和相邻的图片目录。
+用 `--lang` 指定原文语言标签（默认 `en`）。
+
 首次通过 MinerU 导入未缓存的 PDF，还需在进程环境中设置 `MINERU_API_KEY`。
 BabelDOC 配置、PDF 导出条件及其他格式要求见[格式参考](../reference/formats.md)。
 

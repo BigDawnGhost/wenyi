@@ -117,7 +117,7 @@ class _MeteredFakeClient(FakeClient):
             max_tokens=max_tokens,
         )
         self.usage.record(
-            self.routes[operation].tier or "direct",
+            "direct",
             UsageSample(
                 prompt_tokens=7,
                 completion_tokens=3,
@@ -138,9 +138,10 @@ def _minimal_deepseek_cfg() -> LLMConfig:
         timeout=1,
         max_retries=0,
         profiles={
-            "strong": dict(model="m1"),
-            "cheap": dict(model="m2"),
+            "default": dict(model="m1"),
+            "reviewer": dict(model="m2"),
         },
+        routes={"review.scan": {"model": "reviewer"}},
     )
 
 
@@ -154,7 +155,7 @@ def _minimal_openai_compatible_cfg(
         kind="openai-compatible",
         base_url="https://example.invalid/v1",
         max_retries=max_retries,
-        profiles={"strong": dict(model="m", options=options)},
+        profiles={"default": dict(model="m", options=options)},
     )
 
 
@@ -300,11 +301,11 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
 class TestDeepSeekProviderDefaults(unittest.TestCase):
     def test_provider_only_config_uses_deepseek_defaults(self):
         client = build_client(Config.from_dict({"llm": {"preset": "deepseek"}}))
-        self.assertIsInstance(client.adapter("default"), DeepSeekClient)
-        assert isinstance(client.adapter("default"), DeepSeekClient)
+        self.assertIsInstance(client.adapter("deepseek"), DeepSeekClient)
+        assert isinstance(client.adapter("deepseek"), DeepSeekClient)
 
-        self.assertEqual(client.adapter("default").base_url, DEFAULT_BASE_URL)
-        self.assertEqual(client.adapter("default").api_key_env, DEFAULT_API_KEY_ENV)
+        self.assertEqual(client.adapter("deepseek").base_url, DEFAULT_BASE_URL)
+        self.assertEqual(client.adapter("deepseek").api_key_env, DEFAULT_API_KEY_ENV)
         self.assertEqual(client.routes["translation.body"].request_model().model, "deepseek-flash")
         self.assertEqual(client.routes["review.scan"].request_model().model, "deepseek-flash")
         self.assertTrue(client.routes["translation.body"].request_model().options.thinking)
@@ -317,15 +318,16 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
         self.assertEqual(client.adapter("default").api_key_env, "X")
         self.assertEqual(client.routes["translation.body"].request_model().model, "m1")
 
-    def test_partial_tier_override_keeps_other_provider_defaults(self):
+    def test_operation_override_keeps_other_provider_defaults(self):
         client = RoutedLLMClient(
             model_config(
                 profiles={
-                    "fast": dict(
+                    "summary": dict(
                         model="custom-fast",
                         options={"thinking": False},
                     ),
-                }
+                },
+                routes={"synopsis.chapter": {"model": "summary"}},
             )
         )
 
@@ -337,7 +339,7 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
         client = RoutedLLMClient(
             model_config(
                 profiles={
-                    "fast": dict(options={"thinking": True}),
+                    "default": dict(options={"thinking": True}),
                 }
             )
         )
@@ -350,14 +352,14 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
             RoutedLLMClient(
                 model_config(
                     profiles={
-                        "strong": dict(options={"unknown_option": True}),
+                        "default": dict(options={"unknown_option": True}),
                     }
                 )
             )
 
 
-class TestDeepSeekUsageByTier(unittest.TestCase):
-    def test_records_usage_and_splits_by_tier(self):
+class TestDeepSeekUsageByModel(unittest.TestCase):
+    def test_records_usage_and_splits_by_model(self):
         cfg = _minimal_deepseek_cfg()
         c = RoutedLLMClient(cfg)
         responses = [
@@ -399,13 +401,15 @@ class TestDeepSeekUsageByTier(unittest.TestCase):
         self.assertEqual(totals["cache_hit_rate"], 0.6)
         self.assertEqual(totals["calls"], 2)
 
-        by_tier = summary["by_tier"]
-        self.assertEqual(by_tier["strong"]["cache_hit_rate"], 0.8)
-        self.assertEqual(by_tier["cheap"]["cache_hit_rate"], 0.2)
-        self.assertEqual(by_tier["strong"]["calls"], 1)
-        self.assertEqual(by_tier["cheap"]["calls"], 1)
-        self.assertEqual(by_tier["strong"]["prompt_tokens"], 1000)
-        self.assertEqual(by_tier["cheap"]["prompt_tokens"], 500)
+        by_model = summary["by_model"]
+        writer = by_model[c.routes["translation.body"].model_identity]
+        reviewer = by_model[c.routes["review.scan"].model_identity]
+        self.assertEqual(writer["cache_hit_rate"], 0.8)
+        self.assertEqual(reviewer["cache_hit_rate"], 0.2)
+        self.assertEqual(writer["calls"], 1)
+        self.assertEqual(reviewer["calls"], 1)
+        self.assertEqual(writer["prompt_tokens"], 1000)
+        self.assertEqual(reviewer["prompt_tokens"], 500)
         self.assertEqual(list(summary["by_stage"]), ["translation.body", "review.scan"])
         self.assertEqual(summary["by_stage"]["translation.body"]["total_tokens"], 1200)
         self.assertEqual(summary["by_stage"]["translation.body"]["cache_hit_rate"], 0.8)
@@ -419,7 +423,7 @@ class TestOpenAIUsageNormalization(unittest.TestCase):
             api_key_env="X",
             timeout=1,
             max_retries=0,
-            profiles={"strong": dict(model="m")},
+            profiles={"default": dict(model="m")},
         )
         client = RoutedLLMClient(cfg)
         usage = SimpleNamespace(
@@ -715,7 +719,8 @@ class TestSourceIdentityAndExport(unittest.TestCase):
                 "language": {"source": "ja", "target": "zh"},
                 "llm": {
                     "preset": "fake",
-                    "models": {"default_strong": {"provider": "default", "model": "fake-strong"}},
+                    "models": {"fake/fake-model": {}},
+                    "routes": {"translation.body": {"model": "fake/fake-model"}},
                 },
                 "pipeline": {
                     "book_understanding": False,

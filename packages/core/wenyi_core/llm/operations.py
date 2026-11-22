@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
-from .operation_names import TIERS, require_operation_name
+from .operation_names import require_operation_name
 
 if TYPE_CHECKING:
     from ..config import Config
@@ -20,8 +20,6 @@ class OperationSpec:
 
     id: str
     description: str
-    tier: str | None = None
-    inherits: str | None = None
     workflows: tuple[str, ...] = ("translate",)
     flags: tuple[str, ...] = ()
     review: bool = False
@@ -37,23 +35,9 @@ def register_operations(specs: Iterable[OperationSpec]) -> Mapping[str, Operatio
             raise ValueError(f"Invalid operation ID: {spec.id}")
         if spec.id in registry:
             raise ValueError(f"Duplicate operation: {spec.id}")
-        if (spec.tier is None) == (spec.inherits is None):
-            raise ValueError(f"Operation {spec.id} needs exactly one default selection")
-        if spec.tier is not None and spec.tier not in TIERS:
-            raise ValueError(f"Unknown default tier: {spec.tier}")
         if spec.protocol_version <= 0:
             raise ValueError(f"Invalid operation protocol version: {spec.id}")
         registry[spec.id] = spec
-    for spec in registry.values():
-        seen = {spec.id}
-        parent = spec.inherits
-        while parent is not None:
-            if parent not in registry:
-                raise ValueError(f"Unknown inherited operation: {parent}")
-            if parent in seen:
-                raise ValueError(f"Operation inheritance cycle: {parent}")
-            seen.add(parent)
-            parent = registry[parent].inherits
     return MappingProxyType(registry)
 
 
@@ -62,60 +46,50 @@ OPERATIONS = register_operations(
         OperationSpec(
             "language.detect",
             "Detect source language",
-            "cheap",
             workflows=("prepare", "translate"),
             flags=("language_auto",),
         ),
         OperationSpec(
             "analysis.style",
             "Analyze style and character voices",
-            "strong",
             workflows=("prepare", "translate"),
         ),
         OperationSpec(
             "synopsis.chapter",
             "Summarize one chapter",
-            "fast",
             workflows=("prepare", "translate"),
             flags=("book_understanding",),
         ),
         OperationSpec(
             "synopsis.book",
             "Merge digests into a book synopsis",
-            "fast",
             workflows=("prepare", "translate"),
             flags=("book_understanding",),
         ),
-        OperationSpec(
-            "translation.body", "Translate body paragraphs", "strong", protocol_version=2
-        ),
-        OperationSpec("translation.title", "Translate chapter and TOC titles", "strong"),
+        OperationSpec("translation.body", "Translate body paragraphs", protocol_version=2),
+        OperationSpec("translation.title", "Translate chapter and TOC titles"),
         OperationSpec(
             "polish.body",
             "Polish translated paragraphs",
-            "strong",
             flags=("polish",),
             protocol_version=2,
         ),
-        OperationSpec("glossary.extract", "Extract glossary candidates", "fast"),
-        OperationSpec("glossary.align_history", "Align terms with earlier translations", "fast"),
+        OperationSpec("glossary.extract", "Extract glossary candidates"),
+        OperationSpec("glossary.align_history", "Align terms with earlier translations"),
         OperationSpec(
             "glossary.note",
             "Maintain an incremental glossary note",
-            "fast",
             flags=("glossary_note_workers",),
         ),
         OperationSpec(
             "annotation.align",
             "Align EPUB annotation positions",
-            "cheap",
             workflows=("translate", "review"),
             flags=("annotation_alignment",),
         ),
         OperationSpec(
             "review.scan",
             "Review and blindly re-review translated text",
-            "cheap",
             workflows=("translate", "review"),
             review=True,
             protocol_version=2,
@@ -123,7 +97,6 @@ OPERATIONS = register_operations(
         OperationSpec(
             "review.verify",
             "Verify issues with evidence",
-            "strong",
             workflows=("translate", "review"),
             flags=("review_agent_loop",),
             review=True,
@@ -133,7 +106,6 @@ OPERATIONS = register_operations(
         OperationSpec(
             "review.arbitrate",
             "Arbitrate conflicting recommendations",
-            "strong",
             workflows=("translate", "review"),
             flags=("review_agent_loop", "review_conflict_arbitration"),
             review=True,
@@ -143,7 +115,6 @@ OPERATIONS = register_operations(
         OperationSpec(
             "review.fix",
             "Propose shadow translation replacements",
-            "strong",
             workflows=("translate", "review"),
             flags=("review_fix_loop",),
             review=True,
@@ -152,7 +123,6 @@ OPERATIONS = register_operations(
         OperationSpec(
             "autofix.verify",
             "Verify issues before publication",
-            inherits="review.verify",
             workflows=("translate", "review"),
             flags=("review_autofix",),
             review=True,
@@ -162,7 +132,6 @@ OPERATIONS = register_operations(
         OperationSpec(
             "autofix.fix",
             "Propose replacements for publication",
-            inherits="review.fix",
             workflows=("translate", "review"),
             flags=("review_autofix",),
             review=True,
