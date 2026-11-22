@@ -8,7 +8,12 @@ from pydantic import ValidationError
 from wenyi_core.config import Config
 from wenyi_core.llm.configuration import LLMConfig
 from wenyi_core.llm.limits import RequestCancelled, RequestLimits, RequestStopped
-from wenyi_core.llm.operations import OperationSpec, register_operations
+from wenyi_core.llm.operations import (
+    KNOWN_OPERATION_FLAGS,
+    OPERATIONS,
+    OperationSpec,
+    register_operations,
+)
 from wenyi_core.llm.providers.fake import FakeProvider
 from wenyi_core.llm.registry import PROVIDERS
 from wenyi_core.llm.router import RoutedLLMClient
@@ -106,11 +111,17 @@ def test_explicit_registry_requires_all_operation_routes():
     [
         ([OperationSpec("x.a", "a"), OperationSpec("x.a", "b")], "Duplicate"),
         ([OperationSpec("x.a", "a", protocol_version=0)], "protocol version"),
+        ([OperationSpec("x.a", "a", flags=("review_autofixs",))], "Unknown operation flag"),
     ],
 )
 def test_registration_rejects_ambiguous_defaults(specs, message):
     with pytest.raises(ValueError, match=message):
         register_operations(specs)
+
+
+def test_registered_operations_only_declare_known_flags():
+    for spec in OPERATIONS.values():
+        assert set(spec.flags) <= KNOWN_OPERATION_FLAGS
 
 
 def test_registration_is_immutable_and_accepts_new_operations():
