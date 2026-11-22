@@ -97,3 +97,48 @@ def runstore_for_cli(
     except (IngestError, OSError, ValueError) as error:
         console.print(f"[red]Error: {error}[/]")
         raise typer.Exit(1) from None
+
+
+def resolve_export_out_path(
+    out_path: str | None,
+    *,
+    source_path: str,
+    bilingual: bool = False,
+    overwrite: bool = False,
+    console: Console | None = None,
+) -> str | None:
+    """Keep an existing ``--out`` target by exporting to a free numbered name instead.
+
+    Unless ``overwrite`` is set, an existing output file and its bilingual companion
+    are never replaced: the export moves to the next free ``name (n).ext`` path and
+    the console explains the change. A path equal to the source is returned unchanged
+    so the core source-protection error still fires.
+    """
+    if out_path is None or overwrite:
+        return out_path
+    if os.path.realpath(out_path) == os.path.realpath(source_path):
+        return out_path
+
+    def occupied(path: str) -> bool:
+        if os.path.exists(path):
+            return True
+        if not bilingual:
+            return False
+        from wenyi_core.assemble.writer_common import bilingual_out_path
+
+        return os.path.exists(bilingual_out_path(path))
+
+    if not occupied(out_path):
+        return out_path
+    base, ext = os.path.splitext(out_path)
+    index = 1
+    candidate = f"{base} ({index}){ext}"
+    while occupied(candidate):
+        index += 1
+        candidate = f"{base} ({index}){ext}"
+    console = console or Console()
+    console.print(
+        f"[yellow]Output exists: {out_path}; writing to {candidate} instead"
+        " (pass --overwrite to replace it)[/]"
+    )
+    return candidate

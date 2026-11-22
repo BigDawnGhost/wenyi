@@ -15,6 +15,7 @@ from .context import ContextAccessor
 from .run_report import _crashed_step_events, _read_events, build_report
 from .validation import (
     require_input_file,
+    resolve_export_out_path,
     resolve_output_format,
     runstore_for_cli,
 )
@@ -219,6 +220,11 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
             "--bilingual/--no-bilingual",
             help="Override output.bilingual to enable or disable bilingual output",
         ),
+        overwrite: bool = typer.Option(
+            False,
+            "--overwrite",
+            help="Replace existing --out files instead of writing numbered alternatives",
+        ),
     ):
         """Export translations from existing state without calling a model."""
         from wenyi_core.models.errors import ExportPartialError, IngestError
@@ -234,6 +240,13 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
             config.output.mono = mono
         if bilingual is not None:
             config.output.bilingual = bilingual
+        out = resolve_export_out_path(
+            out,
+            source_path=input,
+            bilingual=bool(config.output.bilingual),
+            overwrite=overwrite,
+            console=console,
+        )
         try:
             result = Orchestrator(config, client=FakeClient()).run_assemble(
                 input,
