@@ -9,6 +9,12 @@ overrides the library search path. Both crates belong to one root Cargo
 workspace, so a checkout build lands in the root `target/` directory and is
 found without the override; `CARGO_TARGET_DIR` is searched as well, because a
 developer who builds out of tree would otherwise silently keep the fallback.
+
+`WENYI_LOCKS_MODE` decides what happens when the native library cannot be
+loaded: `warn` (default) keeps the Python fallback and logs a warning naming
+the paths tried and the load errors, `error` fails the lock acquisition with
+those reasons instead of degrading quietly, and `silent` keeps the fallback
+without the warning for operators who chose it deliberately.
 """
 
 from __future__ import annotations
@@ -42,6 +48,9 @@ EXPORT_HISTORY_LOCK = ".export-history.lock"  # export history appends
 _RETRY_SECONDS = 0.05
 _FORCED_BACKEND: str | None = None
 _BACKENDS = ("auto", "rust", "python")
+# What to do when the native library cannot be loaded: warn and fall back
+# (default), fail the acquisition, or fall back without the warning.
+_LOCKS_MODES = ("warn", "error", "silent")
 
 # Emit a holder report to stderr after this many seconds of waiting, and repeat
 # it at that interval, so a CLI that blocks on a busy workflow lock tells the
@@ -145,12 +154,50 @@ def _library_candidates() -> Iterator[str]:
 
 _native: ctypes.CDLL | None = None
 _native_probed = False
+# One "path (reason)" entry per candidate that failed to load, kept so the
+# fallback warning and the error-mode failure can name the real cause.
+_native_attempts: list[str] = []
+
+
+def _locks_mode() -> str:
+    mode = os.environ.get("WENYI_LOCKS_MODE", "warn")
+    if mode not in _LOCKS_MODES:
+        raise ValueError(f"Unknown lock mode {mode!r}; expected one of {', '.join(_LOCKS_MODES)}")
+    return mode
+
+
+def _native_unavailable_message() -> str:
+    tried = "; ".join(_native_attempts) or "no candidate paths"
+    return (
+        "The wenyi-locks native library could not be loaded and "
+        "WENYI_LOCKS_MODE=error refuses the Python fallback. "
+        f"Tried: {tried}. Build the crate (`cargo build -p wenyi-locks`) or point "
+        "WENYI_LOCKS_LIB at the built library, or set WENYI_LOCKS_MODE=warn to "
+        "accept the fallback."
+    )
+
+
+def _report_native_unavailable() -> None:
+    """Make a missing native library loud: warn by default, fail on demand."""
+    mode = _locks_mode()
+    if mode == "error":
+        raise RuntimeError(_native_unavailable_message())
+    if mode == "silent":
+        return
+    _logger.warning(
+        "wenyi-locks native library not found; serving locks with the Python "
+        "backend. Set WENYI_LOCKS_MODE=error to fail instead of falling back, or "
+        "WENYI_LOCKS_MODE=silent to quiet this warning. Tried: %s",
+        "; ".join(_native_attempts),
+    )
 
 
 def _native_library() -> ctypes.CDLL | None:
     """Load the native backend once; `None` means the fallback is in use."""
     global _native, _native_probed
     if _native_probed:
+        if _native is None and _locks_mode() == "error":
+            raise RuntimeError(_native_unavailable_message())
         return _native
     _native_probed = True
     override = os.environ.get("WENYI_LOCKS_LIB")
@@ -165,6 +212,7 @@ def _native_library() -> ctypes.CDLL | None:
         except (OSError, AttributeError) as error:
             # Older builds used the output handle for OS errors too; never call
             # them with the new layout or mistake an error number for an owned lock.
+            _native_attempts.append(f"{candidate} ({error})")
             if override is not None and candidate == override:
                 override_error = error
             continue
@@ -191,12 +239,8 @@ def _native_library() -> ctypes.CDLL | None:
             override_error,
             ", ".join(tried),
         )
-    elif _native is None:
-        _logger.warning(
-            "wenyi-locks native library not found; serving locks with the Python backend. "
-            "Tried: %s",
-            ", ".join(tried),
-        )
+    if _native is None:
+        _report_native_unavailable()
     return _native
 
 
