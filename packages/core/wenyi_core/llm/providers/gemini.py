@@ -92,7 +92,9 @@ def convert_messages_to_gemini(
     return system_instruction, contents
 
 
-def extract_gemini_usage(usage_metadata: Any) -> UsageSample | None:
+def extract_gemini_usage(
+    usage_metadata: Any, *, max_tokens: int | None = None
+) -> UsageSample | None:
     """Normalize Gemini UsageMetadata, including prompt/cached-content tokens,
     candidate/thought tokens and total tokens.
     """
@@ -120,6 +122,7 @@ def extract_gemini_usage(usage_metadata: Any) -> UsageSample | None:
         cache_miss_tokens=ordinary or 0,
         cache_write_tokens=0,
         uncached_tokens=ordinary,
+        max_tokens=max_tokens,
     )
 
 
@@ -266,7 +269,9 @@ class GeminiClient(ProviderAdapter):
         )
 
         # Record usage.
-        sample = extract_gemini_usage(getattr(response, "usage_metadata", None))
+        sample = extract_gemini_usage(
+            getattr(response, "usage_metadata", None), max_tokens=context.max_tokens
+        )
         context.record_usage(sample)
 
         # Validate the response and check safety blocking.

@@ -553,6 +553,56 @@ class TestEmptyCacheHitRate(unittest.TestCase):
         self.assertEqual(c.usage_summary()["by_stage"], {})
 
 
+class TestUsageMaxTokens(unittest.TestCase):
+    """Requested output caps land in usage details; absence stays None, never fabricated."""
+
+    def test_normalize_openai_usage_prefers_reported_max_tokens(self):
+        reported = SimpleNamespace(
+            prompt_tokens=10, completion_tokens=5, total_tokens=15, max_tokens=77
+        )
+        self.assertEqual(normalize_openai_usage(reported, max_tokens=512).max_tokens, 77)
+        requested = SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        self.assertEqual(normalize_openai_usage(requested, max_tokens=512).max_tokens, 512)
+        self.assertIsNone(normalize_openai_usage(requested).max_tokens)
+
+    def test_adapter_records_requested_max_tokens_in_usage_details(self):
+        client = RoutedLLMClient(_minimal_openai_compatible_cfg())
+        usage = _make_usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        events: list[dict[str, Any]] = []
+        client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+        response = _make_response("ok", usage)
+        with patch.object(
+            client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
+        ):
+            client.complete(
+                [{"role": "user", "content": "translate"}],
+                operation="translation.body",
+                max_tokens=512,
+            )
+        usage_events = [event for event in events if event["event"] == "llm_usage"]
+        self.assertEqual(len(usage_events), 1)
+        self.assertEqual(usage_events[0]["max_tokens"], 512)
+        totals = client.usage_summary()["totals"]
+        self.assertEqual(totals["max_tokens"], 512)
+        self.assertEqual(totals["completion_tokens"], 5)
+
+    def test_missing_output_cap_records_none_without_fabrication(self):
+        tracker = UsageTracker()
+        uncounted = make_usage_sample(
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        )
+        tracker.record("direct", uncounted, "translation.body")
+        tracker.record(
+            "direct",
+            UsageSample(prompt_tokens=1, completion_tokens=1, total_tokens=2, max_tokens=64),
+            "translation.body",
+        )
+        summary = tracker.summary()
+        self.assertEqual(summary["totals"]["calls"], 2)
+        self.assertEqual(summary["totals"]["max_tokens"], 64)
+        self.assertEqual(summary["by_stage"]["translation.body"]["max_tokens"], 64)
+
+
 class TestUsageThreadSafety(unittest.TestCase):
     def test_concurrent_record_exact_counts(self):
         client = FakeClient()
