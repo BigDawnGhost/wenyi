@@ -1,0 +1,44 @@
+# Dependency update domains: one uv workspace, one pnpm workspace, two cargo domains.
+version: 2
+updates:
+  # Python workspace: the root uv.lock covers every member under packages/ and apps/.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # JavaScript workspace: the root pnpm-lock.yaml covers the web app, the desktop
+  # frontend, shared UI and the shared schema package.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # Rust workspace: the root Cargo.lock covers apps/desktop and native/wenyi-locks.
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+
+  # Standalone EPUB extension crate with its own tracked Cargo.lock.
+  - package-ecosystem: "cargo"
+    directory: "/packages/core/rust"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
