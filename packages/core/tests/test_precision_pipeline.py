@@ -12,7 +12,7 @@ from wenyi_core.pipeline import precision as precision_module
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor
 from wenyi_core.pipeline.translate.precision_records import load_precision_call
-from wenyi_core.pipeline.translate.translation import TranslationService
+from wenyi_core.pipeline.translate.translation import ChapterTranslationError, TranslationService
 from wenyi_core.storage.precision_archive import PrecisionArchive
 
 from tests.fake_llm import MeteredFakeClient
@@ -291,7 +291,7 @@ def test_guarded_publication_keeps_manual_edits_and_recovers_marker(tmp_path, mo
         raise RuntimeError("after publication")
 
     monkeypatch.setattr(service._precision, "mark_published", interrupt)
-    with pytest.raises(RuntimeError, match="after publication"):
+    with pytest.raises(ChapterTranslationError, match="after publication"):
         service.run(store, book_synopsis="synopsis")
     key = next(
         key

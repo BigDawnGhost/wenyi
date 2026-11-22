@@ -9,7 +9,7 @@ from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.translate.babeldoc_context import BabeldocContext
-from wenyi_core.pipeline.translate.translation import TranslationService
+from wenyi_core.pipeline.translate.translation import ChapterTranslationError, TranslationService
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
 
@@ -306,7 +306,7 @@ def test_interrupted_run_rebuilds_context_without_retranslating_saved_units(stor
 
     config = _config()
     first = Orchestrator(config, client=FakeClient(handler=interrupt))
-    with pytest.raises(RuntimeError, match="simulated interruption"):
+    with pytest.raises(ChapterTranslationError, match="simulated interruption"):
         first._translation.run(store, book_synopsis="")
     saved = store.load_chapter(0).segments
     assert all(segment.target is not None for segment in saved[:2])

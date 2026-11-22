@@ -31,6 +31,7 @@ from wenyi_core.i18n.prompts import render
 from wenyi_core.i18n.resources import read_text
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.pipeline.translate.translation import ChapterTranslationError
 from wenyi_core.storage.run_store import translation_run_dir
 
 from tests.fake_llm import routing_handler
@@ -325,7 +326,9 @@ def test_language_list_needs_no_api_and_reads_packaged_templates():
         tempfile.TemporaryDirectory() as directory,
         patch("wenyi_cli.commands.context.CommandContext.validate_api_configuration") as validate,
     ):
-        result = runner.invoke(app, ["--config", str(Path(directory) / "config.yaml"), "languages"])
+        config_path = Path(directory) / "config.yaml"
+        Config.create_default_file(str(config_path))
+        result = runner.invoke(app, ["--config", str(config_path), "languages"])
         assert result.exit_code == 0, result.output
         assert "zh-Hant" in result.output
         assert "en-GB" in result.output
@@ -381,7 +384,7 @@ def test_partial_non_chinese_run_resumes_without_retranslating_saved_batch():
             return routing_handler(messages, tier, json_mode)
 
         first = Orchestrator(config, client=FakeClient(handler=handler))
-        with pytest.raises(RuntimeError, match="synthetic interruption"):
+        with pytest.raises(ChapterTranslationError, match="synthetic interruption"):
             first.run(str(source))
 
         def resume_handler(messages, tier, json_mode):

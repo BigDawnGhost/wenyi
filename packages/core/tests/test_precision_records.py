@@ -9,6 +9,7 @@ from wenyi_core.llm.routing import identity
 from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor, _PrecisionRun
 from wenyi_core.pipeline.translate.precision_records import PrecisionRecords, load_precision_call
+from wenyi_core.pipeline.translate.translation import ChapterTranslationError
 from wenyi_core.storage.precision_archive import PrecisionArchive
 
 from tests.fake_llm import MeteredFakeClient
@@ -234,7 +235,6 @@ def test_completed_paid_receipt_recovers_gap_before_stage_checkpoint(
 
 
 def test_missing_publication_result_is_not_silently_skipped(tmp_path, monkeypatch):
-    from wenyi_core.agents.precision import PrecisionError
     from wenyi_core.pipeline.orchestrator import Orchestrator
 
     store, config = _store(tmp_path), _config(tmp_path)
@@ -244,7 +244,7 @@ def test_missing_publication_result_is_not_silently_skipped(tmp_path, monkeypatc
         raise RuntimeError("after chapter commit")
 
     monkeypatch.setattr(service._precision, "mark_published", interrupt)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ChapterTranslationError):
         service.run(store, book_synopsis="synopsis")
     key = next(
         key
@@ -254,7 +254,7 @@ def test_missing_publication_result_is_not_silently_skipped(tmp_path, monkeypatc
     record = _artifact(store, key)
     store.delete_artifact(record["result_ref"])
     later = MeteredFakeClient(handler=Handler())
-    with pytest.raises(PrecisionError, match="missing result"):
+    with pytest.raises(ChapterTranslationError, match="missing result"):
         Orchestrator(config, later)._translation.run(store, book_synopsis="synopsis")
     assert not later.calls
     assert store.load_manifest()["chapters"][0]["status"] == "pending"
