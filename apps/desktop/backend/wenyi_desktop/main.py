@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from wenyi_backend.errors import ApiError, api_error_handler
 from wenyi_core.errors import SchemaTooNew
 from wenyi_core.observability import configure_logging
 
-from . import paths
+from . import catalog, paths
 from .babeldoc_plugin import BabeldocPlugin
 from .diagnostics import DiagnosticsMiddleware, EngineDiagnostics, Reporter, scope
 from .local_backend import PROJECT_SCHEMA_TOO_NEW, LocalBackend
@@ -42,6 +43,99 @@ from .updates import router as updates_router
 # the only proof that the link is still carrying data.
 HEARTBEAT_SECONDS = 30.0
 HEARTBEAT_FRAME = '{"kind": "heartbeat"}'
+
+# Old Desktop releases kept everything in one SQLite database and admitted any
+# project folder beside it. The unified layout never adopts that data: the
+# catalog refuses it and old folders stay unregistered. Startup only detects
+# the situation so the user can be given the explicit steps below; nothing is
+# migrated, moved, or rewritten (docs/development/desktop.md).
+LEGACY_IMPORT_STEPS = (
+    "Old-format Wenyi Desktop data was found in the selected data directory; "
+    "this version does not migrate it automatically.",
+    "A project folder that contains a current project.json (schema_version 2) "
+    "can be brought over with the library's Import project action; the "
+    "original stays untouched.",
+    "Folders without a current project.json use an unsupported old layout and "
+    "cannot be imported; keep using the Wenyi version that created them or "
+    "export their content from that version first.",
+    "To start fresh, choose a new empty Desktop data directory; the old data is left as is.",
+)
+LEGACY_DATA_GUIDANCE = " ".join(LEGACY_IMPORT_STEPS)
+
+
+def legacy_data_report(workspace: str | Path) -> dict:
+    """Read-only scan of a data root for old-format Desktop data.
+
+    The report never writes, adopts, or moves anything, and every failure
+    degrades to "nothing found" so the check itself can never break startup.
+    """
+    root = Path(workspace)
+    report: dict = {"legacy_catalog": False, "legacy_database": False, "old_project_folders": []}
+    catalog_file = root / "catalog.sqlite3"
+    if catalog_file.is_file():
+        try:
+            connection = sqlite3.connect(f"{catalog_file.resolve().as_uri()}?mode=ro", uri=True)
+            try:
+                populated = connection.execute(
+                    "SELECT count(*) FROM sqlite_master"
+                    " WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+                ).fetchone()[0]
+                application_id = connection.execute("PRAGMA application_id").fetchone()[0]
+                user_version = connection.execute("PRAGMA user_version").fetchone()[0]
+            finally:
+                connection.close()
+            current = (catalog.APPLICATION_ID, catalog.FORMAT_VERSION)
+            found = (application_id, user_version)
+            report["legacy_catalog"] = bool(populated) and found != current
+        except sqlite3.Error:
+            # A catalog file that cannot be confirmed as current counts as old
+            # for guidance only; catalog admission still decides startup.
+            report["legacy_catalog"] = True
+    projects = root / "projects"
+    if projects.is_dir():
+        try:
+            entries = sorted(projects.iterdir())
+        except OSError:
+            entries = []
+        for entry in entries:
+            try:
+                if not entry.is_dir() or entry.is_symlink():
+                    continue
+                if not any(entry.iterdir()):
+                    continue
+                if (entry / paths.PROJECT_DELETING).exists():
+                    continue
+                marker = entry / paths.PROJECT_MARKER
+                if not marker.is_file():
+                    report["old_project_folders"].append(entry.name)
+                    continue
+                try:
+                    data = json.loads(marker.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    report["old_project_folders"].append(entry.name)
+                    continue
+                schema = data.get("schema_version") if isinstance(data, dict) else None
+                if schema != paths.PROJECT_SCHEMA_VERSION:
+                    report["old_project_folders"].append(entry.name)
+            except OSError:
+                continue
+    report["legacy_database"] = (root / "local.sqlite3").is_file()
+    return report
+
+
+def _report_legacy_data(workspace: str | Path) -> None:
+    """Guide the user about old-format data on the sidecar's own stderr.
+
+    stdout carries the parent/child protocol; a stray line before readiness
+    would break the handshake, so guidance goes to stderr, which the shell
+    only logs.
+    """
+    try:
+        report = legacy_data_report(workspace)
+    except OSError:
+        return
+    if report["legacy_catalog"] or report["legacy_database"] or report["old_project_folders"]:
+        print(LEGACY_DATA_GUIDANCE, file=sys.stderr, flush=True)
 
 
 class DesktopServices:
@@ -139,19 +233,23 @@ def create_context(
         # stdout so the native shell can tell the user, instead of leaving the
         # data half-migrated behind a generic bootstrap timeout.
         outcome = restore_latest_backup(workspace)
-        payload = json.dumps(
-            {
-                "reason": "migration",
-                "restored": outcome.status == "restored",
-                "detail": outcome.detail or str(error)[:200],
-            },
-            separators=(",", ":"),
-        )
-        print(f"WENYI_FAILED {payload}", flush=True)
+        payload = {
+            "reason": "migration",
+            "restored": outcome.status == "restored",
+            "detail": outcome.detail or str(error)[:200],
+        }
+        if "not a current-format Desktop catalog" in str(error):
+            # The refusal is about old-format data, not a failed update: attach
+            # the explicit import steps so the shell and the logs can guide the
+            # user instead of the generic migration text.
+            payload["legacy_data"] = True
+            payload["guidance"] = list(LEGACY_IMPORT_STEPS)
+        print(f"WENYI_FAILED {json.dumps(payload, separators=(',', ':'))}", flush=True)
         raise
     # Retention runs only on a healthy start: a failed migration must keep
     # every snapshot it may still need to roll back to.
     prune_backups(workspace)
+    _report_legacy_data(workspace)
     credentials = credentials or CredentialStore(backend.workspace, vault_factory=system_keyring)
     if credentials.database != backend.database:
         raise ValueError("Desktop credentials must belong to the selected data root")
