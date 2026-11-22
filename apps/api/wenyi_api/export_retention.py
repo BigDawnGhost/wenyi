@@ -23,15 +23,20 @@ def export_history_lock(connection: Connection, pid: str, *, shared: bool = Fals
 
 
 @contextmanager
-def export_history_session_lock(pool: ConnectionPool, pid: str) -> Iterator[Connection]:
+def export_history_session_lock(
+    pool: ConnectionPool, pid: str, *, blocking: bool = False
+) -> Iterator[Connection]:
     """Exclude export admission/publication/opening without a transaction during cleanup."""
     key = f"wenyi:export-history:{pid}"
+    statement = (
+        "SELECT pg_advisory_lock(hashtextextended(%s,0))"
+        if blocking
+        else "SELECT pg_try_advisory_lock(hashtextextended(%s,0))"
+    )
     with pool.connection() as connection:
         acquired = False
         try:
-            row = connection.execute(
-                "SELECT pg_try_advisory_lock(hashtextextended(%s,0))", (key,)
-            ).fetchone()
+            row = connection.execute(statement, (key,)).fetchone()
             acquired = bool(row and row[0])
             connection.commit()
             if not acquired:
@@ -47,6 +52,13 @@ def export_history_session_lock(pool: ConnectionPool, pid: str) -> Iterator[Conn
 def publish_export(
     pool: ConnectionPool, pid: str, export_id: int, output: str, *, data_dir: str
 ) -> None:
+    """Publish the export, trim history rows, then delete superseded files.
+
+    Rows are updated and removed inside one transaction; file deletion happens
+    only after that transaction commits. A database failure therefore leaves the
+    previous files in place (rows and files stay consistent), while a failure
+    after the commit leaves at most a logged orphan file with no history row.
+    """
     file = export_path(data_dir, pid, str(Path(output).absolute()))
     if file is None or not file.is_file():
         raise ValueError("Export output must be a file in the project's export directory")
@@ -68,6 +80,20 @@ def publish_export(
                ORDER BY COALESCE(completed_at,created_at) DESC,id DESC OFFSET %s""",
             (pid, EXPORT_LIMIT),
         ).fetchall()
+        for old_id, _old_path, _fmt in expired:
+            conn.execute("DELETE FROM exports WHERE id=%s AND project_id=%s", (old_id, pid))
+    _remove_expired_files(pool, pid, expired, data_dir)
+
+
+def _remove_expired_files(
+    pool: ConnectionPool, pid: str, expired: list[tuple[int, str, str]], data_dir: str
+) -> None:
+    """Delete files for history rows that the committed transaction removed."""
+    if not expired:
+        return
+    # Blocking session lock: the rows are already gone, so skipping cleanup here
+    # would leak the files permanently; waiting is preferable to orphans.
+    with export_history_session_lock(pool, pid, blocking=True):
         for old_id, old_path, fmt in expired:
             old_file = export_path(data_dir, pid, old_path)
             if old_file is None:
@@ -82,10 +108,9 @@ def publish_export(
                         shutil.rmtree(assets)
                 old_file.unlink(missing_ok=True)
             except OSError:
-                # Retry at the next successful publication without failing the new export.
+                # The history row is already gone; keep the orphan visible in logs.
                 log.warning("Could not remove expired export %s", old_id, exc_info=True)
                 continue
-            conn.execute("DELETE FROM exports WHERE id=%s AND project_id=%s", (old_id, pid))
 
 
 def open_export(

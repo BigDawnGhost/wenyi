@@ -205,6 +205,17 @@ class PostgresExports:
             export_history_lock(connection, pid)
             if connection.execute("SELECT 1 FROM projects WHERE id=%s", (pid,)).fetchone() is None:
                 raise ApiError(PROJECT_NOT_FOUND, 404, "project not found")
+            active = connection.execute(
+                """SELECT j.id, j.run_id, e.id FROM jobs j
+                   JOIN exports e ON e.id=(j.params->>'export_id')::bigint
+                   WHERE j.project_id=%s AND j.kind='export'
+                     AND j.status IN ('queued','running') AND e.fmt=%s
+                   ORDER BY j.id DESC LIMIT 1""",
+                (pid, fmt),
+            ).fetchone()
+            if active is not None:
+                # Idempotent admission: one in-flight export per project and format.
+                return int(active[2]), int(active[0])
             export_id = dal.create_export(pid, fmt, options, connection=connection)
             job_id = dal.create_job(
                 pid,

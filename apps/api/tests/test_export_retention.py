@@ -87,7 +87,7 @@ def test_concurrent_publications_keep_five_and_open_download_survives_eviction(a
         stream.close()
 
 
-def test_expired_html_assets_removed_and_cleanup_failure_retried(api, tmp_path, monkeypatch):  # noqa: F811
+def test_cleanup_failure_trims_rows_and_leaves_logged_orphans(api, tmp_path, monkeypatch):  # noqa: F811
     pid, data_dir = new_project(api), tmp_path / "data"
     oldest = pending_export(pid, data_dir, "html")
     assets = oldest[1].with_name("translation.assets")
@@ -105,11 +105,15 @@ def test_expired_html_assets_removed_and_cleanup_failure_retried(api, tmp_path, 
         patch.setattr(Path, "unlink", unavailable)
         for _ in range(5):
             publish(pid, pending_export(pid, data_dir), data_dir)
-    assert oldest[1].exists()
-    assert len(completed_ids(pid)) == 6
-    publish(pid, pending_export(pid, data_dir), data_dir)
-    assert not oldest[1].exists() and not assets.exists()
+    # Rows commit first, so history is trimmed even when the file delete fails;
+    # the failed file becomes a logged orphan with no row left to retry it.
     assert len(completed_ids(pid)) == 5
+    assert not assets.exists()
+    assert oldest[1].exists()
+    # Later publications keep the bound and do not resurrect the failed row.
+    publish(pid, pending_export(pid, data_dir), data_dir)
+    assert len(completed_ids(pid)) == 5
+    assert oldest[1].exists()
 
 
 @pytest.mark.parametrize("path_kind", ["source", "other_project", "symlink"])

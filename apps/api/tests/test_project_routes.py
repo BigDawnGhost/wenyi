@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 
 import pytest
@@ -413,3 +414,60 @@ def test_http_download_and_websocket_require_token(api, monkeypatch):
             connection.receive_json()
         assert raised.value.code == 1008
     secured_client.close()
+
+
+def test_duplicate_export_requests_share_one_task(api):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    first = client.post(f"/projects/{pid}/exports", json={"format": "txt"})
+    second = client.post(f"/projects/{pid}/exports", json={"format": "txt"})
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert second.json() == {
+        "job_id": first.json()["job_id"],
+        "project_id": pid,
+        "kind": "export",
+        "export_id": first.json()["export_id"],
+    }
+    assert [name for name, _ in queue if name == "run_export"] == ["run_export"]
+    export_jobs = [row for row in dal.list_jobs(pid) if row["kind"] == "export"]
+    assert len(export_jobs) == 1
+    # A finished export no longer deduplicates: a new request gets a fresh task.
+    dal.set_job_status(export_jobs[0]["id"], "done")
+    dal.set_export_status(first.json()["export_id"], "done")
+    third = client.post(f"/projects/{pid}/exports", json={"format": "txt"})
+    assert third.status_code == 200, third.text
+    assert third.json()["export_id"] != first.json()["export_id"]
+    assert [name for name, _ in queue if name == "run_export"] == ["run_export", "run_export"]
+
+
+def test_start_job_reuses_in_flight_task_of_same_kind(api):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    dal.set_project_status(pid, "paused")
+    parse_job = must(dal.latest_resumable_job(pid))
+    dal.set_job_status(parse_job["id"], "paused")
+    in_flight = dal.create_job(pid, "parse", "resumed-parse", run_id="resumed-run")
+    result = asyncio.run(job_service.start_job(pid, "parse"))
+    assert result == {"job_id": "resumed-run", "project_id": pid, "kind": "parse"}
+    assert [name for name, _ in queue if name == "run_parse"] == []
+    resumed = must(dal.get_job(in_flight))
+    assert resumed["run_id"] == "resumed-run" and resumed["status"] == "queued"
+
+
+def test_concurrent_resume_dispatches_exactly_one_task(api):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    dal.set_project_status(pid, "paused")
+    parse_job = must(dal.latest_resumable_job(pid))
+    dal.set_job_status(parse_job["id"], "paused")
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        responses = list(pool.map(lambda _: client.post(f"/projects/{pid}/resume"), range(4)))
+    assert sum(response.status_code == 200 for response in responses) >= 1
+    assert all(response.status_code in (200, 409) for response in responses)
+    assert [name for name, _ in queue if name == "run_parse"].count("run_parse") == 1
+    parse_jobs = [row for row in dal.list_jobs(pid) if row["kind"] == "parse"]
+    assert len(parse_jobs) == 2  # the upload's parse plus exactly one resumed task

@@ -12,7 +12,7 @@ from wenyi_core.config import Config
 from .config_documents import runtime_document
 from .context import BackendStorage
 from .errors import QUEUE_UNAVAILABLE, ApiError
-from .ports.jobs import JobAdmission
+from .ports.jobs import JobCatalog
 from .ports.projects import ProjectReader
 from .project_service import project_write
 
@@ -37,7 +37,7 @@ async def start_job(
     kind: str,
     *,
     projects: ProjectReader,
-    jobs: JobAdmission,
+    jobs: JobCatalog,
     storage_for: Callable[[str], BackendStorage],
     config_for: Callable[[dict], Config],
     enqueue: Callable[..., Awaitable[Any]],
@@ -50,6 +50,18 @@ async def start_job(
     with project_write(pid, projects, storage_for) as (project, _storage):
         if not project.get("source_path"):
             raise HTTPException(409, "upload a source file first")
+        active = next(
+            (
+                row
+                for row in jobs.list_jobs(pid)
+                if row.get("kind") == kind and row.get("status") in {"queued", "running"}
+            ),
+            None,
+        )
+        if active is not None and active.get("run_id"):
+            # Idempotent admission: a queued or running task of the same kind already
+            # owns this project; reuse it instead of dispatching a duplicate.
+            return {"job_id": active["run_id"], "project_id": pid, "kind": kind}
         run_id = uuid4().hex
         try:
             snapshot = runtime_document(config_for(project))
