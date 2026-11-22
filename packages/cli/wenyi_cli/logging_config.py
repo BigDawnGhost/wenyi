@@ -9,9 +9,10 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 import typer
-from wenyi_core.observability import configure_logging, use_json_logs
+from wenyi_core.observability import bind_run_id, configure_logging, reset_run_id, use_json_logs
 
 
 class CliLoggingError(OSError):
@@ -30,13 +31,18 @@ def invocation_log_dir(config_path: str) -> Path:
 
 @contextmanager
 def invocation_logging(config_path: str) -> Iterator[Path]:
-    """Install a private file sink for this invocation, then restore its caller's logging."""
+    """Install a private file sink for this invocation, then restore its caller's logging.
+
+    The invocation binds a fresh run ID that is attached to every emitted record so
+    console and file lines can be correlated and grepped afterwards.
+    """
     root = logging.getLogger()
     previous, level = list(root.handlers), root.level
     for handler in previous:
         if getattr(handler, "_wenyi_handler", False):
             root.removeHandler(handler)
     directory = invocation_log_dir(config_path)
+    run_token = bind_run_id(uuid4().hex)
     try:
         try:
             directory.mkdir(parents=True, exist_ok=True)
@@ -61,6 +67,7 @@ def invocation_logging(config_path: str) -> Iterator[Path]:
                 typer.echo(f"Diagnostic log: {path}", err=True)
             raise
     finally:
+        reset_run_id(run_token)
         for handler in list(root.handlers):
             if handler not in previous and getattr(handler, "_wenyi_handler", False):
                 root.removeHandler(handler)
