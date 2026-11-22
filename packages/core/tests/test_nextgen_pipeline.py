@@ -427,3 +427,315 @@ def test_benchmark_metrics_script_analyzes_completed_run(tmp_path: Path):
     assert report["formatting_lint"]["colon_tags"] == 0
     assert report["formatting_lint"]["raw_double_dash"] == 0
     assert report["post_normalized"]["typography_fixes"] >= 1
+
+
+def test_book_bible_snippets_follow_normalized_offsets_after_readings():
+    from wenyi_core.agents.book_bible import _extract_distant_snippets
+    from wenyi_core.glossary.store import normalize_match_text
+
+    corpus = (
+        "漢〘かん〙字〘じ〙" * 30 + "孫悟空が来た。" + "平〘へい〙和〘わ〙" * 30 + "孫悟空が笑う。"
+    )
+    snip_a, snip_b = _extract_distant_snippets("孫悟空", normalize_match_text(corpus))
+    assert "孫悟空" in snip_a and "孫悟空" in snip_b
+
+
+def _bible_agent(handler, target: str = "en") -> BookBibleAgent:
+    cfg = Config.from_dict(
+        {
+            "language": {"source": "zh-Hant", "target": target},
+            "llm": {"preset": "fake"},
+            "pipeline": {"glossary_mode": "compiled"},
+        }
+    )
+    agent = BookBibleAgent(FakeClient(handler=handler), cfg)
+    agent.src = "zh-Hant"
+    agent.tgt = target
+    return agent
+
+
+def test_book_bible_adjudication_ignores_malformed_aliases_and_targets_the_configured_language():
+    systems: list[str] = []
+
+    def handler(messages, tier, json_mode):
+        systems.append(messages[0]["content"])
+        return json.dumps(
+            {
+                "terms": [
+                    {"source": "行者", "target": "Pélerin", "type": "person", "aliases": 1},
+                    {"source": "三藏", "target": "Sanzang", "type": "person", "aliases": "三"},
+                ]
+            }
+        )
+
+    agent = _bible_agent(handler, target="fr")
+    from wenyi_core.agents.book_bible import BibleCandidate
+
+    candidates = [
+        (BibleCandidate("行者", 5, True, "", ""), "Pélerin", "Pèlerin", True),
+        (BibleCandidate("三藏", 5, True, "", ""), "Sanzang", "Sanzang", False),
+    ]
+    terms = agent._adjudicate(candidates, book_synopsis="", style="", existing_terms=[])
+    assert {t.source: t.aliases for t in terms} == {"行者": [], "三藏": []}
+    assert "target English" not in systems[0]
+    assert "(fr)" in systems[0]
+
+
+def test_bible_fingerprint_changes_with_the_style_brief():
+    from wenyi_core.pipeline.translate.bible_seed import _bible_fingerprint
+
+    cfg = Config.from_dict(
+        {"language": {"source": "zh", "target": "en"}, "llm": {"preset": "fake"}}
+    )
+    a = _bible_fingerprint(cfg, "sha", ["d"], "syn", "Terse.")
+    b = _bible_fingerprint(cfg, "sha", ["d"], "syn", "Ornate.")
+    assert a != b
+
+
+def test_entity_markers_match_whole_words_in_space_delimited_sources():
+    terms = [GlossaryTerm(source="Ann", target="Anne", type="person", gender="female")]
+    plan = mask_batch_entities(["Anna met Ann at the Annual fair."], terms)
+    assert plan.masked_sources == ("Anna met ⟦N0⟧ at the Annual fair.",)
+    filled, _, unresolved = unmask_batch_entities(["Anna a vu ⟦N0⟧ à la foire."], plan)
+    assert filled == ["Anna a vu Anne à la foire."]
+    assert unresolved == 0
+
+
+def test_entity_markers_count_dropped_markers_as_unresolved():
+    terms = [GlossaryTerm(source="孫悟空", target="Sun Wukong", type="person")]
+    plan = mask_batch_entities(["孫悟空回來了。"], terms)
+    _, _, unresolved = unmask_batch_entities(["He came back."], plan)
+    assert unresolved == 1
+
+
+def test_batch_translation_retranslates_plain_source_when_a_marker_is_dropped():
+    from wenyi_core.agents.translator import Translator
+    from wenyi_core.pipeline.translate.translation_batch import BatchPlan, TranslationBatchExecutor
+
+    user_messages: list[str] = []
+
+    def handler(messages, tier, json_mode):
+        user = messages[-1]["content"]
+        user_messages.append(user)
+        if "⟦N0⟧" in user:
+            return json.dumps({"translations": ["He came back."]})
+        return json.dumps({"translations": ["Sun Wukong came back."]})
+
+    cfg = Config.from_dict(
+        {"language": {"source": "zh-Hant", "target": "en"}, "llm": {"preset": "fake"}}
+    )
+    translator = Translator(FakeClient(handler=handler), cfg)
+    executor = TranslationBatchExecutor(translator, None)
+    plan = BatchPlan(
+        chapter=0,
+        start_index=0,
+        segment_indices=(0,),
+        sources=("孫悟空回來了。",),
+        terms=(GlossaryTerm(source="孫悟空", target="Sun Wukong", type="person"),),
+        context="",
+        style="",
+        book_synopsis="",
+        chapter_digest="",
+        annotation_contexts=[[]],
+        next_source="",
+        allow_empty_translations=False,
+        entity_markers=True,
+    )
+    draft = executor.translate(plan)
+    assert draft.targets == ("Sun Wukong came back.",)
+    assert len(user_messages) == 2
+    assert "⟦N0⟧" not in user_messages[1]
+
+
+_PARALLEL_BOOK = (
+    "# 第一章\n\n行者跟隨三藏走出長安。\n\n行者笑著說道：前面有山。\n\n"
+    "# 第二章\n\n三藏問行者：此山何名？\n\n行者答道：這是兩界山。\n\n"
+    "# 第三章\n\n行者護送三藏過了兩界山。\n\n三藏合掌稱謝。\n"
+)
+
+
+def _parallel_handler(translated: list[str], *, fail_on: str | None = None):
+    def handler(messages, tier, json_mode):
+        sys_msg = messages[0]["content"]
+        user_msg = messages[-1]["content"]
+        if "pre-translation analyst" in sys_msg:
+            return json.dumps({"style_guide": "Plain.", "characters": []})
+        if "chapter digest writer" in sys_msg:
+            return "行者 and 三藏 travel."
+        if "whole-book synopsis writer" in sys_msg:
+            return "A journey."
+        if "terminology prober" in sys_msg:
+            return json.dumps({"renderings": {}})
+        if "Book Bible" in sys_msg:
+            return json.dumps({"terms": []})
+        if "literary translator" in sys_msg:
+            if fail_on is not None and f"] {fail_on}" in user_msg:
+                raise RuntimeError("provider down")
+            n = len(re.findall(r"^\[\d+\]", user_msg, re.MULTILINE))
+            translated.append(user_msg)
+            return json.dumps({"translations": [f"Draft {i}." for i in range(n)]})
+        if "chapter title translator" in sys_msg:
+            n = len(re.findall(r"^\[\d+\]", user_msg, re.MULTILINE))
+            return json.dumps({"titles": [f"Chapter {i + 1}" for i in range(n)]})
+        return "{}"
+
+    return handler
+
+
+def _parallel_config(tmp_path: Path, **pipeline) -> Config:
+    return Config.from_dict(
+        {
+            "language": {"source": "zh-Hant", "target": "en"},
+            "llm": {"preset": "fake"},
+            "paths": {"state_dir": str(tmp_path / "state")},
+            # One paragraph per batch, so a chapter has several batches in one wave.
+            "segment": {"max_tokens_per_batch": 1},
+            "pipeline": {
+                "glossary_mode": "compiled",
+                "chapter_concurrency": 3,
+                "polish": False,
+                "review": False,
+                "review_autofix": False,
+                **pipeline,
+            },
+        }
+    )
+
+
+def test_parallel_failure_saves_every_drafted_batch_and_resume_skips_them(tmp_path: Path):
+    import pytest
+
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    first: list[str] = []
+    cfg = _parallel_config(tmp_path)
+    with pytest.raises(Exception, match="provider down"):
+        Orchestrator(
+            cfg, client=FakeClient(handler=_parallel_handler(first, fail_on="行者答道"))
+        ).run(str(book))
+
+    resumed: list[str] = []
+    store = Orchestrator(cfg, client=FakeClient(handler=_parallel_handler(resumed))).run(str(book))
+    # Only the failed batch is translated again; batches drafted before and after it are kept.
+    assert len(resumed) == 1
+    assert "] 行者答道" in resumed[0]
+    for ci in range(3):
+        assert all(s.target for s in store.load_chapter(ci).text_segments)
+
+
+def test_parallel_chapters_need_compiled_glossary(tmp_path: Path):
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    cfg = _parallel_config(tmp_path, glossary_mode="incremental")
+    orch = Orchestrator(cfg, client=FakeClient(handler=_parallel_handler([])))
+    calls: list[int] = []
+    original = orch._translation._run_parallel_chapters
+
+    def spy(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    orch._translation._run_parallel_chapters = spy
+    orch.run(str(book))
+    assert calls == []
+
+
+def test_parallel_resume_repolishes_marked_drafts(tmp_path: Path):
+    from wenyi_core.pipeline.translate.translation import POLISH_FAILED
+    from wenyi_core.storage.run_store import STATUS_PENDING
+
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    store = Orchestrator(
+        _parallel_config(tmp_path), client=FakeClient(handler=_parallel_handler([]))
+    ).run(str(book))
+    for ci in (1, 2):
+        chapter = store.load_chapter(ci)
+        chapter.text_segments[1].meta[POLISH_FAILED] = True
+        store.save_chapter(chapter)
+        store.set_chapter_status(ci, STATUS_PENDING)
+
+    edits: list[str] = []
+    base = _parallel_handler([])
+
+    def handler(messages, tier, json_mode):
+        if "bilingual literary editor" in messages[0]["content"]:
+            edits.append(messages[-1]["content"])
+            return json.dumps({"patches": []})
+        return base(messages, tier, json_mode)
+
+    cfg = _parallel_config(tmp_path, polish=True, polish_mode="sparse")
+    store = Orchestrator(cfg, client=FakeClient(handler=handler)).run(str(book))
+    assert len(edits) == 2
+    for ci in (1, 2):
+        assert not any(s.meta.get(POLISH_FAILED) for s in store.load_chapter(ci).text_segments)
+
+
+def test_parallel_worker_gives_non_body_batches_no_context(tmp_path: Path):
+    from wenyi_core.pipeline.translate.translation import _ParallelWaveSpec, _WaveBatchSpec
+    from wenyi_core.pipeline.translate.translation_batch import BatchResult
+
+    orch = Orchestrator(
+        _parallel_config(tmp_path), client=FakeClient(handler=_parallel_handler([]))
+    )
+    service = orch._translation
+    plans = []
+
+    def execute(plan, *, polish, polish_mode):
+        plans.append(plan)
+        return BatchResult(tuple(f"T{i}" for i in plan.segment_indices), (None,))
+
+    service._batches.execute = execute
+
+    def batch(start: int, body: bool) -> _WaveBatchSpec:
+        return _WaveBatchSpec(
+            batch_start=start,
+            segment_indices=(start,),
+            sources=(f"S{start}",),
+            terms=(),
+            annotation_contexts=[[]],
+            next_source="",
+            already_done=False,
+            existing_targets=(None,),
+            body_context=body,
+        )
+
+    spec = _ParallelWaveSpec(
+        chapter=0,
+        wave_index=0,
+        chapter_digest="DIGEST",
+        opening_source_lookbehind="LOOKBEHIND",
+        style="",
+        book_synopsis="SYNOPSIS",
+        batches=(batch(0, True), batch(1, False), batch(2, True)),
+        quote_references_by_batch=("", "", ""),
+        polish=False,
+        polish_mode="full",
+        entity_markers=False,
+        rolling_context_tokens=1000,
+    )
+    _, _, outcomes, error = service._translate_wave_worker(spec)
+    assert error is None and len(outcomes) == 3
+    body, caption, after = plans
+    assert body.context == "LOOKBEHIND" and body.book_synopsis == "SYNOPSIS"
+    assert (caption.context, caption.book_synopsis, caption.chapter_digest) == ("", "", "")
+    # The caption's draft never enters later rolling context.
+    assert "T0" in after.context and "T1" not in after.context
+
+
+def test_compiled_only_chapter_compiles_from_every_chapter_digest(tmp_path: Path):
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    orch = Orchestrator(
+        _parallel_config(tmp_path), client=FakeClient(handler=_parallel_handler([]))
+    )
+    seen: list[int] = []
+    original = orch._translation._bible_seed.ensure_seeded
+
+    def spy(store, *, digests, **kwargs):
+        seen.append(len(digests))
+        return original(store, digests=digests, **kwargs)
+
+    orch._translation._bible_seed.ensure_seeded = spy
+    orch.run(str(book), only_chapter=1)
+    assert seen == [3]

@@ -106,6 +106,8 @@ class _WaveBatchSpec:
     next_source: str
     already_done: bool
     existing_targets: tuple[str | None, ...]
+    # False for PDF captions, headings and other non-body batches, which get no context.
+    body_context: bool = True
 
 
 @dataclass(frozen=True)
@@ -224,9 +226,11 @@ class TranslationService:
             self._quote_memory.observe(pos, src, tgt)
 
         if pipeline.glossary_mode == "compiled":
+            # Compile from every chapter, even when this run translates only one, so the
+            # Bible matches the whole-book source corpus it is mined against.
             digests = [
-                str(store.load_chapter(ci).meta.get("source_digest") or "")
-                for ci in progress_chapters
+                str(store.load_chapter(row["index"]).meta.get("source_digest") or "")
+                for row in manifest.get("chapters", [])
             ]
             self._bible_variants = self._bible_seed.ensure_seeded(
                 store,
@@ -248,8 +252,16 @@ class TranslationService:
             chapter_concurrency=pipeline.chapter_concurrency,
             polish_mode=pipeline.polish_mode,
         )
+        if pipeline.chapter_concurrency > 1 and pipeline.glossary_mode != "compiled":
+            # Parallel chapters plan every prompt up front, so terms extracted as earlier
+            # chapters finish would never reach later ones; keep incremental mode serial.
+            _LOGGER.warning(
+                "pipeline.chapter_concurrency needs glossary_mode: compiled; "
+                "translating chapters serially"
+            )
         use_parallel_chapters = (
             pipeline.chapter_concurrency > 1
+            and pipeline.glossary_mode == "compiled"
             and pipeline.translation_mode == "standard"
             and not pipeline.glossary_note_workers
             and bool(targets)
@@ -926,7 +938,7 @@ class TranslationService:
         self,
         spec: _ParallelWaveSpec,
         polish_executor: ThreadPoolExecutor | None = None,
-    ) -> tuple[int, int, list[_WaveBatchOutcome]]:
+    ) -> tuple[int, int, list[_WaveBatchOutcome], Exception | None]:
         """Execute one chapter/wave's batches serially in a worker thread (model calls only).
 
         Never reads or writes Storage, SQLite, adherence or usage ledgers. Rolling context
@@ -934,6 +946,8 @@ class TranslationService:
         the deterministic positional source lookbehind captured before launch.
         When ``polish_executor`` is supplied and polishing is enabled, polish/sparse-edit
         calls overlap concurrently with subsequent batch translations inside the wave.
+        A failed batch stops the wave; the batches drafted before it are still returned,
+        with the error, so the writer can save them and a resume never pays for them again.
         """
         pending_outcomes: list[
             tuple[
@@ -946,72 +960,86 @@ class TranslationService:
             ]
         ] = []
         wave_drafts: list[str] = []
-        for batch_idx, bspec in enumerate(spec.batches):
-            if bspec.already_done:
-                wave_drafts.extend(t or "" for t in bspec.existing_targets)
-                continue
-            if wave_drafts:
-                ctx_text = render_recent_translations(
-                    reversed(wave_drafts),
-                    spec.rolling_context_tokens,
-                )
-            else:
-                ctx_text = spec.opening_source_lookbehind
-            quote_ref = spec.quote_references_by_batch[batch_idx]
-            if quote_ref:
-                ctx_text = f"{ctx_text}\n\n{quote_ref}".strip() if ctx_text else quote_ref
+        error: Exception | None = None
+        try:
+            for batch_idx, bspec in enumerate(spec.batches):
+                if bspec.already_done:
+                    if bspec.body_context:
+                        wave_drafts.extend(t or "" for t in bspec.existing_targets)
+                    continue
+                if not bspec.body_context:
+                    # Like the serial path, isolated material gets no rolling context.
+                    ctx_text = ""
+                elif wave_drafts:
+                    ctx_text = render_recent_translations(
+                        reversed(wave_drafts),
+                        spec.rolling_context_tokens,
+                    )
+                else:
+                    ctx_text = spec.opening_source_lookbehind
+                quote_ref = spec.quote_references_by_batch[batch_idx]
+                if quote_ref:
+                    ctx_text = f"{ctx_text}\n\n{quote_ref}".strip() if ctx_text else quote_ref
 
-            plan = BatchPlan(
-                chapter=spec.chapter,
-                start_index=bspec.batch_start,
-                segment_indices=bspec.segment_indices,
-                sources=bspec.sources,
-                terms=bspec.terms,
-                context=ctx_text,
-                style=spec.style,
-                book_synopsis=spec.book_synopsis,
-                chapter_digest=spec.chapter_digest,
-                annotation_contexts=bspec.annotation_contexts,
-                next_source=bspec.next_source,
-                allow_empty_translations=False,
-                entity_markers=spec.entity_markers,
-            )
-            glossary_tokens = count_tokens(
-                self._runtime.translator.render_glossary_block(list(plan.terms), list(plan.sources))
-            )
-            if spec.polish and polish_executor is not None:
-                draft = self._batches.translate(plan)
-                wave_drafts.extend(draft.targets)
-                job = PolishJob.from_plan(plan, draft)
-                ctx_copy = contextvars.copy_context()
-                fut = polish_executor.submit(
-                    ctx_copy.run,
-                    self._batches.polish,
-                    job,
-                    polish_mode=spec.polish_mode,
+                plan = BatchPlan(
+                    chapter=spec.chapter,
+                    start_index=bspec.batch_start,
+                    segment_indices=bspec.segment_indices,
+                    sources=bspec.sources,
+                    terms=bspec.terms,
+                    context=ctx_text,
+                    style=spec.style,
+                    book_synopsis=spec.book_synopsis if bspec.body_context else "",
+                    chapter_digest=spec.chapter_digest if bspec.body_context else "",
+                    annotation_contexts=bspec.annotation_contexts,
+                    next_source=bspec.next_source,
+                    allow_empty_translations=False,
+                    entity_markers=spec.entity_markers,
                 )
-                pending_outcomes.append((bspec, draft, fut, None, len(plan.terms), glossary_tokens))
-            else:
-                result = self._batches.execute(
-                    plan,
-                    polish=spec.polish,
-                    polish_mode=spec.polish_mode,
-                )
-                draft_texts = [
-                    bp if bp is not None else tgt
-                    for tgt, bp in zip(result.targets, result.before_polish)
-                ]
-                wave_drafts.extend(draft_texts)
-                pending_outcomes.append(
-                    (
-                        bspec,
-                        BatchDraft(tuple(draft_texts)),
-                        None,
-                        result,
-                        len(plan.terms),
-                        glossary_tokens,
+                glossary_tokens = count_tokens(
+                    self._runtime.translator.render_glossary_block(
+                        list(plan.terms), list(plan.sources)
                     )
                 )
+                if spec.polish and polish_executor is not None:
+                    draft = self._batches.translate(plan)
+                    if bspec.body_context:
+                        wave_drafts.extend(draft.targets)
+                    job = PolishJob.from_plan(plan, draft)
+                    ctx_copy = contextvars.copy_context()
+                    fut = polish_executor.submit(
+                        ctx_copy.run,
+                        self._batches.polish,
+                        job,
+                        polish_mode=spec.polish_mode,
+                    )
+                    pending_outcomes.append(
+                        (bspec, draft, fut, None, len(plan.terms), glossary_tokens)
+                    )
+                else:
+                    result = self._batches.execute(
+                        plan,
+                        polish=spec.polish,
+                        polish_mode=spec.polish_mode,
+                    )
+                    draft_texts = [
+                        bp if bp is not None else tgt
+                        for tgt, bp in zip(result.targets, result.before_polish)
+                    ]
+                    if bspec.body_context:
+                        wave_drafts.extend(draft_texts)
+                    pending_outcomes.append(
+                        (
+                            bspec,
+                            BatchDraft(tuple(draft_texts)),
+                            None,
+                            result,
+                            len(plan.terms),
+                            glossary_tokens,
+                        )
+                    )
+        except Exception as exc:  # noqa: BLE001 - returned so drafted batches are saved first.
+            error = exc
 
         outcomes: list[_WaveBatchOutcome] = []
         for bspec, draft, fut, direct_result, glossary_terms_n, glossary_tokens in pending_outcomes:
@@ -1053,7 +1081,7 @@ class TranslationService:
                     glossary_tokens=glossary_tokens,
                 )
             )
-        return spec.chapter, spec.wave_index, outcomes
+        return spec.chapter, spec.wave_index, outcomes, error
 
     def _run_parallel_chapters(
         self,
@@ -1085,6 +1113,8 @@ class TranslationService:
         waves: list[_ParallelWaveSpec] = []
         chapter_wave_counts: dict[int, int] = {}
         chapter_objects: dict[int, Chapter] = {}
+        # Saved drafts whose polish a previous run never applied; repolished before publish.
+        repolish_jobs: dict[int, list[PolishJob]] = {}
 
         for ci in targets:
             chapter = loaded_all[ci]
@@ -1139,6 +1169,35 @@ class TranslationService:
                     )
                 )
                 already_done = all(s.target is not None for s in b)
+                if already_done and any(
+                    s.meta.get(POLISH_PENDING) or s.meta.get(POLISH_FAILED) for s in b
+                ):
+                    if pipeline.polish:
+                        # Repolish the saved draft; never retranslate it.
+                        repolish_jobs.setdefault(ci, []).append(
+                            PolishJob(
+                                ci,
+                                batch_start,
+                                tuple(s.index for s in b),
+                                tuple(s.source for s in b),
+                                terms_for_batch,
+                                style,
+                                next_source,
+                                BatchDraft(
+                                    tuple(
+                                        s.target_before_polish
+                                        if s.target_before_polish is not None
+                                        else s.target or ""
+                                        for s in b
+                                    )
+                                ),
+                            )
+                        )
+                    else:
+                        # Polishing is now off; the saved draft is final.
+                        for s in b:
+                            s.meta.pop(POLISH_PENDING, None)
+                            s.meta.pop(POLISH_FAILED, None)
                 batch_specs.append(
                     _WaveBatchSpec(
                         batch_start=batch_start,
@@ -1154,6 +1213,7 @@ class TranslationService:
                             else s.target
                             for s in b
                         ),
+                        body_context=body_context,
                     )
                 )
                 quote_refs.append(
@@ -1217,19 +1277,27 @@ class TranslationService:
             return done
 
         # Run model calls concurrently; persist results on THIS single writer thread in book order.
-        completed_by_key: dict[tuple[int, int], list[_WaveBatchOutcome]] = {}
+        completed_by_key: dict[
+            tuple[int, int], tuple[list[_WaveBatchOutcome], BaseException | None]
+        ] = {}
         ordered_keys = [(w.chapter, w.wave_index) for w in waves]
         next_flush_idx = 0
         chapters_remaining_waves = dict(chapter_wave_counts)
+        # The first failure in book order; later chapters are then saved but never published.
+        failure: BaseException | None = None
 
-        def _flush_ready() -> None:
-            nonlocal next_flush_idx, done
+        def _flush_ready(*, final: bool = False) -> None:
+            nonlocal next_flush_idx, done, failure
             while next_flush_idx < len(ordered_keys):
                 key = ordered_keys[next_flush_idx]
                 if key not in completed_by_key:
-                    break
+                    if not final:
+                        break
+                    # A wave cancelled after a failure; save what later waves drafted.
+                    next_flush_idx += 1
+                    continue
                 ci, _wave_idx = key
-                outcomes = completed_by_key.pop(key)
+                outcomes, error = completed_by_key.pop(key)
                 chapter = chapter_objects[ci]
                 text_segs = chapter.text_segments
                 for out in outcomes:
@@ -1252,7 +1320,8 @@ class TranslationService:
                             count=len(b),
                             reason="provider_interrupted",
                         )
-                        raise res.polish_interrupted
+                        # The saved draft keeps its marker; stop after saving the rest.
+                        error = error or res.polish_interrupted
                     self._align_batch_context(store, chapter, text_segs, out.batch_start, len(b))
                     store.log_event(
                         "batch_translated",
@@ -1282,25 +1351,17 @@ class TranslationService:
                     done += len(b)
                     if progress:
                         progress(done, total, self.chapter_progress_label(chapter.title, ci))
-                chapters_remaining_waves[ci] -= 1
-                if chapters_remaining_waves[ci] == 0:
-                    if pipeline.glossary_mode == "incremental":
-                        src_text = "\n".join(s.source for s in text_segs)
-                        tgt_text = "\n".join(
-                            s.target_before_polish or s.target or "" for s in text_segs
-                        )
-                        summary = self._runtime.extractor.extract_and_store(
-                            glossary,
-                            src_text,
-                            tgt_text,
-                            ci,
-                            history=translation_history.values(),
-                            before=(ci, len(text_segs)),
-                            source_corpus=source_corpus,
-                        )
-                        store.log_event("chapter_glossary_extracted", chapter=ci, summary=summary)
-                    self._publish_chapter(store, ci, terms=term_snapshot)
-                    self._runtime.usage.flush(store, scope="chapter")
+                if failure is None:
+                    failure = error
+                if failure is None:
+                    chapters_remaining_waves[ci] -= 1
+                    if chapters_remaining_waves[ci] == 0:
+                        for job in repolish_jobs.pop(ci, ()):
+                            self._schedule_polish(store, job)
+                        self._publish_chapter(store, ci, terms=term_snapshot)
+                        self._runtime.usage.flush(store, scope="chapter")
+                else:
+                    self._runtime.usage.flush(store, scope="translation")
                 next_flush_idx += 1
 
         max_workers = min(pipeline.chapter_concurrency, len(waves))
@@ -1324,14 +1385,22 @@ class TranslationService:
                     for wave in waves
                 }
                 for future in as_completed(futures):
-                    ci, wave_idx, outcomes = future.result()
-                    completed_by_key[(ci, wave_idx)] = outcomes
+                    if future.cancelled():
+                        continue
+                    ci, wave_idx, outcomes, error = future.result()
+                    completed_by_key[(ci, wave_idx)] = (outcomes, error)
                     _flush_ready()
+                    if error is not None or failure is not None:
+                        # Start no new waves; running ones finish and are saved below.
+                        for pending in futures:
+                            pending.cancel()
         finally:
             if polish_pool is not None:
                 polish_pool.shutdown(wait=True)
 
-        _flush_ready()
+        _flush_ready(final=True)
+        if failure is not None:
+            raise failure
         return done
 
     def _publish_chapter(
@@ -1434,7 +1503,8 @@ class TranslationService:
             )
             return
         try:
-            outcome = PolishOutcome(job, self._batches.polish(job))
+            polish_mode = self._runtime.config.pipeline.polish_mode
+            outcome = PolishOutcome(job, self._batches.polish(job, polish_mode=polish_mode))
         except Exception as error:  # noqa: BLE001 - a failed polish keeps the draft.
             outcome = PolishOutcome(job, None, error)
         self._apply_polish(store, outcome)

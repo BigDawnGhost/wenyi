@@ -71,7 +71,6 @@ class BibleResult:
 
 def _extract_distant_snippets(
     source: str,
-    corpus: str,
     normalized_corpus: str,
     *,
     radius: int = 38,
@@ -84,10 +83,13 @@ def _extract_distant_snippets(
     second_idx = max(1, (len(spans) * 2) // 3) if len(spans) > 1 else 0
     second_pos = spans[min(second_idx, len(spans) - 1)][0]
 
+    # Spans index the normalized corpus, whose offsets differ once reading annotations go.
+    width = len(normalize_match_text(source))
+
     def _slice(pos: int) -> str:
         lo = max(0, pos - radius)
-        hi = min(len(corpus), pos + len(source) + radius)
-        return " ".join(corpus[lo:hi].split())
+        hi = min(len(normalized_corpus), pos + width + radius)
+        return " ".join(normalized_corpus[lo:hi].split())
 
     return _slice(first_pos), _slice(second_pos)
 
@@ -214,7 +216,7 @@ def mine_bible_candidates(
     candidates: list[BibleCandidate] = []
     for cand in kept_keys:
         count, from_digest = raw_scored[cand]
-        snip_a, snip_b = _extract_distant_snippets(cand, source_corpus, normalized_corpus)
+        snip_a, snip_b = _extract_distant_snippets(cand, normalized_corpus)
         candidates.append(
             BibleCandidate(
                 source=cand,
@@ -240,7 +242,7 @@ class BookBibleAgent(Agent):
         results: dict[str, str] = {}
         system = (
             f"You are a fast terminology prober translating {self.src} entity spans into {self.tgt}. "
-            "For each numbered item, give the natural English/target rendering of the named entity "
+            f"For each numbered item, give the natural {self.tgt} rendering of the named entity "
             "as used in its snippet. If the span is an ordinary verb, common noun, pronoun, or "
             "context-dependent form of address (like 'I', 'my lord', 'said'), return an empty string.\n"
             'Return ONLY JSON: {"renderings": {"<source>": "<target or empty>", ...}}.'
@@ -308,10 +310,13 @@ class BookBibleAgent(Agent):
             "compound term already present in the candidate list.\n"
             "2. Resolve every DIVERGENT entry decisively into ONE consistent canonical target.\n"
             "3. Maintain ONE coherent naming policy across the whole book: translate descriptive epithets, titles, "
-            "places, palaces, caves, artifacts, spells, and astronomical/religious terms into idiomatic target English "
-            "rather than opaque transliteration, and keep parallel place/deity pairs in the same convention.\n"
-            "4. Keep standard unsplit romanization for Chinese personal and dharma names (e.g. Sanzang, not San Zang; "
-            "Wukong, not Wu Kong) unless a recurring byname is a transparent epithet.\n"
+            "places, palaces, caves, artifacts, spells, and astronomical/religious terms into idiomatic "
+            f"{self.tgt} rather than opaque transliteration, and keep parallel place/deity pairs in the same "
+            "convention. Every target must be written in the target language "
+            f"({self.tgt}).\n"
+            "4. When the target language uses Latin script, keep standard unsplit romanization for Chinese "
+            "personal and dharma names (e.g. Sanzang, not San Zang; Wukong, not Wu Kong) unless a recurring "
+            "byname is a transparent epithet.\n"
             "5. Keep linked name families consistent (e.g. a person, their estate, and their title should share one root).\n"
             "6. Respect any existing user-imported glossary mappings listed below.\n"
             'Return ONLY JSON: {"terms": [{"source": "...", "target": "...", "type": "person|place|organization|term", '
@@ -369,9 +374,10 @@ class BookBibleAgent(Agent):
             if term_type not in {"person", "place", "organization", "term"}:
                 term_type = "term"
             gender = normalize_gender(str(item.get("gender") or ""))
+            raw_aliases = item.get("aliases")
             aliases = [
-                str(a).strip()
-                for a in (item.get("aliases") or [])
+                a.strip()
+                for a in (raw_aliases if isinstance(raw_aliases, list) else [])
                 if isinstance(a, str) and a.strip() and a.strip() != src
             ]
             note = str(item.get("note") or "").strip()

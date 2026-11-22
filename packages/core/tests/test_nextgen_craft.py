@@ -38,6 +38,7 @@ def test_boilerplate_catches_embedded_domain_watermarks(text: str):
     [
         "他在浏览器里打开了 www.example.com，仔细查看着上面的新闻报道。",
         "She typed https://example.org into the terminal and waited.",
+        "他打开www.example.com阅读那封信，随后关掉了电脑。",
     ],
 )
 def test_boilerplate_ignores_normal_prose_with_urls(text: str):
@@ -198,3 +199,52 @@ def test_chapter_latin_typography_preserves_multiparagraph_quotes_trims_leaks_an
     leaked, applied = normalize_latin_typography("Line one;\\nLine two.")
     assert leaked == "Line one;\nLine two."
     assert "escaped_newline" in applied
+
+
+def test_split_pinyin_fix_never_rewrites_another_entitys_name():
+    terms = [
+        GlossaryTerm(source="三藏", target="Sanzang", type="person"),
+        GlossaryTerm(source="散臧", target="San Zang", type="person"),
+    ]
+    pairs = [("三藏遇见散臧。", "San Zang bowed to the monk.")]
+    normalized, subs = normalize_minority_names(pairs, terms)
+    assert normalized == ["San Zang bowed to the monk."]
+    assert subs == []
+
+
+def test_leaked_paragraph_trim_keeps_a_short_legitimate_tail():
+    from wenyi_core.pipeline.translate.post_normalize import _trim_leaked_next_paragraph
+
+    target = "The night was long and the wind was cold.\n\nHe waited."
+    next_target = "He waited beside the gate until dawn finally came."
+    assert (
+        _trim_leaked_next_paragraph(
+            "夜长风冷。\n\n他等着。", target, "他在门边等到天亮。", next_target
+        )
+        == target
+    )
+    leaked = "Intro line here.\n\nHe waited beside the gate until dawn finally came."
+    trimmed = _trim_leaked_next_paragraph("引子。", leaked, "他在门边等到天亮。", next_target)
+    assert trimmed == "Intro line here."
+
+
+def test_quote_memory_keeps_meaning_bearing_punctuation_in_keys():
+    memory = QuoteMemory.from_chapters(
+        [(0, ["We'll go to the old house.", "Well, go to the old house."])]
+    )
+    assert memory.repeated_count == 0
+
+
+def test_quote_memory_skips_inner_quotes_without_a_target_quote():
+    quote = "「天下大势，分久必合，合久必分」"
+    memory = QuoteMemory.from_chapters(
+        [(0, [f"他说{quote}，然后沉默了很久很久。", f"她也说{quote}，众人都笑了起来。"])]
+    )
+    assert memory.repeated_count == 1
+    # The target uses single quotes, so no quote can be identified; narration is not stored.
+    memory.observe(
+        (0, 0),
+        f"他说{quote}，然后沉默了很久很久。",
+        "He said, 'The empire long divided must unite,' then fell silent.",
+    )
+    assert memory.references_for_batch([f"她也说{quote}，众人都笑了起来。"]) == []

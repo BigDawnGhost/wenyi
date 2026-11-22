@@ -221,25 +221,31 @@ class TranslationBatchExecutor:
                 f"{context_for_model}\n\n{verse_note}".strip() if context_for_model else verse_note
             )
 
-        targets, turn, indices = self._translator.translate_batch_with_transcript(
-            sources_for_model,
-            glossary_terms=list(plan.terms),
-            style=plan.style,
-            context=context_for_model,
-            book_synopsis=plan.book_synopsis,
-            chapter_digest=plan.chapter_digest,
-            annotation_contexts=plan.annotation_contexts,
-            next_source=plan.next_source,
-            allow_empty_translations=plan.allow_empty_translations,
-        )
+        def run(sources: list[str], context: str):
+            return self._translator.translate_batch_with_transcript(
+                sources,
+                glossary_terms=list(plan.terms),
+                style=plan.style,
+                context=context,
+                book_synopsis=plan.book_synopsis,
+                chapter_digest=plan.chapter_digest,
+                annotation_contexts=plan.annotation_contexts,
+                next_source=plan.next_source,
+                allow_empty_translations=plan.allow_empty_translations,
+            )
+
+        targets, turn, indices = run(sources_for_model, context_for_model)
         cleaned_targets = [strip_ruby_markers(target) for target in targets]
         if mask_plan is not None and mask_plan.active:
-            cleaned_targets, _filled, _unresolved = unmask_batch_entities(
-                cleaned_targets, mask_plan
-            )
+            cleaned_targets, _filled, unresolved = unmask_batch_entities(cleaned_targets, mask_plan)
             # Filled targets differ from the masked assistant turn, so disable continuation polish.
             turn = None
             indices = None
+            if unresolved:
+                # A dropped or mangled marker loses its entity; translate the plain source once.
+                plain_context = context_for_model.replace(mask_plan.legend_block, "").strip()
+                targets, turn, indices = run(list(plan.sources), plain_context)
+                cleaned_targets = [strip_ruby_markers(target) for target in targets]
         return BatchDraft(
             tuple(cleaned_targets),
             turn if turn is not None and indices is not None else None,

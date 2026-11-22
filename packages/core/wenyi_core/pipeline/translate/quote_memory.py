@@ -15,11 +15,14 @@ from collections.abc import Sequence
 
 _MIN_SPAN_CHARS = 12
 _QUOTED_SPAN_RE = re.compile(r"[「『“\"]([^「」『』“”\"]{12,240})[」』”\"]")
-_STRIP_PUNCT_RE = re.compile(r"[\s，。！？；：、,.!?;:\"'“”‘’「」『』（）()【】\[\]—…·-]+")
+# Drop only spacing and the quote/bracket wrappers that vary between occurrences; keep
+# meaning-bearing punctuation so "We'll go" and "Well, go" never share a key.
+_STRIP_WRAPPER_RE = re.compile(r"[\s\"“”「」『』（）()【】\[\]]+")
 
 
 def _normalize_span(text: str) -> str:
-    return _STRIP_PUNCT_RE.sub("", unicodedata.normalize("NFKC", text)).casefold()
+    normalized = unicodedata.normalize("NFKC", text).replace("’", "'").replace("‘", "'")
+    return _STRIP_WRAPPER_RE.sub("", normalized).casefold()
 
 
 def extract_candidate_spans(source: str) -> list[str]:
@@ -78,9 +81,8 @@ class QuoteMemory:
                 stored_target = cleaned_target
             elif len(quoted_targets) == 1:
                 stored_target = quoted_targets[0]
-            elif len(cleaned_target) <= 320:
-                stored_target = cleaned_target
             else:
+                # Without one identifiable target quote, the paragraph is not the quote.
                 continue
             existing = self._canonical.get(key)
             if existing is None or position < existing[0]:

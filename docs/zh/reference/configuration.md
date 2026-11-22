@@ -342,7 +342,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 |---|---|---|
 | `pipeline.translation_mode` | `standard` | `standard` 或 `three_draft_synthesis`，后者要求 `polish: true`。 |
 | `pipeline.glossary_mode` | `incremental` | `incremental` 逐批抽取术语；`compiled` 在正文翻译前根据章节梗概与双语境熵探测编译冻结的 Book Bible，并跳过热路径上的逐批抽取。 |
-| `pipeline.chapter_concurrency` | `1` | 章节并发草稿数（`1`–`16`）。`1` 顺序翻译并跨章传递前文译文；大于 `1` 时多章（或超大单章的波次）并发翻译，跨章使用确定性的前章末尾原文参考，由单线程写入存储。 |
+| `pipeline.chapter_concurrency` | `1` | 章节并发草稿数（`1`–`16`）。`1` 顺序翻译并跨章传递前文译文；大于 `1` 且 `glossary_mode: compiled` 时多章（或超大单章的波次）并发翻译，跨章使用确定性的前章末尾原文参考，由单线程写入存储；`incremental` 术语模式下仍顺序翻译，因为并发提示词在前面章节新增术语前就已确定。 |
 | `pipeline.polish` | `true` | 润色已译批次，增加较多模型工作。 |
 | `pipeline.polish_mode` | `full` | `full` 重写整批译文；`sparse` 运行对照原文的稀疏语义与文风编辑，仅对存在实质语义反转、典故或格式缺陷的段落输出 JSON 补丁。 |
 | `pipeline.polish_concurrency` | `1` | 标准模式润色并发，整数 ≥ 1。`1` 在下一批开始前润色当前批；大于 `1` 时先保存初稿，在后台润色并继续翻译，最多排队该值两倍的批次。provider `max_concurrency` 仍然生效。`three_draft_synthesis` 忽略此项。见[后台润色](../guide/pipeline.md#deferred-polishing)。 |

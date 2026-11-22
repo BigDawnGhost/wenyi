@@ -1,8 +1,8 @@
 """Resumable Book Bible seeding service for compiled glossary mode.
 
 Runs before body translation starts under the book lock. Caches its compiled result as a
-Storage artifact keyed by source hash, digest content, language direction and routing
-fingerprint so resumes never repeat probe/adjudication model calls. User-imported or
+Storage artifact keyed by source hash, digest content, synopsis, style brief, language
+direction and routing fingerprint so resumes never repeat probe/adjudication model calls. User-imported or
 manually edited glossary entries (``first_chapter is None``) are never overwritten.
 """
 
@@ -29,6 +29,7 @@ def _bible_fingerprint(
     source_sha256: str,
     digests: Sequence[str],
     book_synopsis: str,
+    style: str,
 ) -> str:
     payload = {
         "version": _BIBLE_VERSION,
@@ -37,6 +38,8 @@ def _bible_fingerprint(
         "target_lang": config.target_lang,
         "digests": list(digests),
         "synopsis_hash": hashlib.sha256(book_synopsis.encode("utf-8")).hexdigest(),
+        # The adjudicator reads the style brief, so a new brief must recompile.
+        "style_hash": hashlib.sha256(style.encode("utf-8")).hexdigest(),
         "routing": inference_snapshot(config.llm, ("glossary.extract",)),
     }
     return hashlib.sha256(
@@ -64,7 +67,7 @@ class BibleSeedService:
         """Seed the glossary once before translation; return observed variant spellings."""
         manifest = store.load_manifest()
         source_hash = str(manifest.get("source_sha256") or "")
-        fp = _bible_fingerprint(self._config, source_hash, digests, book_synopsis)
+        fp = _bible_fingerprint(self._config, source_hash, digests, book_synopsis, style)
 
         saved = store.read_artifact(_BIBLE_ARTIFACT)
         if isinstance(saved, dict) and saved.get("fingerprint") == fp:

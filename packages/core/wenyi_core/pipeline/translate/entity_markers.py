@@ -13,7 +13,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from ...glossary.store import STATUS_OK
+from ...glossary.store import STATUS_OK, raw_source_pattern, source_matches_text
 from ...models.glossary import GlossaryTerm
 
 _ENTITY_MARKER_TYPES = frozenset({"person", "place"})
@@ -49,7 +49,7 @@ def select_markable_terms(
         tgt = term.target.strip()
         if len(src) < 2 or len(tgt) < 2:
             continue
-        if src not in joined:
+        if not source_matches_text(src, joined):
             continue
         # Only mask unambiguous capitalized entity targets (avoid generic nouns).
         if not any(ch.isupper() for ch in tgt):
@@ -77,15 +77,9 @@ def mask_batch_entities(
 
     for idx, term in enumerate(selected):
         marker = f"⟦N{idx}⟧"
-        changed = False
-        new_list: list[str] = []
-        for text in masked_list:
-            if term.source in text:
-                new_list.append(text.replace(term.source, marker))
-                changed = True
-            else:
-                new_list.append(text)
-        if changed:
+        pattern = raw_source_pattern(term.source)
+        new_list = [pattern.sub(marker, text) for text in masked_list]
+        if new_list != masked_list:
             masked_list = new_list
             marker_to_term[marker] = term
             used_markers.append((marker, term))
@@ -123,7 +117,9 @@ def unmask_batch_entities(
 ) -> tuple[list[str], int, int]:
     """Deterministically fill every ``⟦N#⟧`` token with its frozen canonical target.
 
-    Returns ``(filled_targets, filled_count, unresolved_count)``.
+    Returns ``(filled_targets, filled_count, unresolved_count)``. Unresolved counts unknown
+    tokens left in a target and every expected marker the model dropped from its segment,
+    so a caller can retranslate instead of saving a translation that lost an entity.
     """
     if not plan.active:
         return list(targets), 0, 0
@@ -131,11 +127,13 @@ def unmask_batch_entities(
     filled_count = 0
     unresolved_count = 0
     out: list[str] = []
-    for text in targets:
+    for index, text in enumerate(targets):
         updated = text
+        source = plan.masked_sources[index] if index < len(plan.masked_sources) else ""
         for marker, term in plan.marker_to_term.items():
-            if marker in updated:
-                hits = updated.count(marker)
+            hits = updated.count(marker)
+            unresolved_count += max(0, source.count(marker) - hits)
+            if hits:
                 updated = updated.replace(marker, term.target.strip())
                 filled_count += hits
         leftovers = _MARKER_TOKEN_RE.findall(updated)

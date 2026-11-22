@@ -119,8 +119,9 @@ def _trim_leaked_next_paragraph(
         head, tail = target.rsplit("\n\n", 1)
         tail_first_lines = " ".join(tail.splitlines()[:2])
         tail_words = _word_set(tail_first_lines)
-        if head.strip() and tail_words:
-            overlap = len(tail_words & next_words) / min(len(tail_words), len(next_words))
+        # A short tail such as "He waited." overlaps any longer paragraph; never trim it.
+        if head.strip() and len(tail_words) >= 5:
+            overlap = len(tail_words & next_words) / len(tail_words)
             if overlap >= 0.72:
                 return head.rstrip()
     return target
@@ -314,6 +315,12 @@ def normalize_minority_names(
     variants_map = variants_by_source or {}
 
     all_canonical_lower = [t.target.strip().casefold() for t in terms if t.target.strip()]
+
+    def collides(variant: str, canonical: str) -> bool:
+        """Never replace a variant that is part of another glossary entry's target."""
+        v_low, c_low = variant.casefold(), canonical.casefold()
+        return any(v_low in other and other != c_low for other in all_canonical_lower)
+
     eligible_terms: list[
         tuple[GlossaryTerm, re.Pattern[str], list[tuple[str, re.Pattern[str]]]]
     ] = []
@@ -340,11 +347,7 @@ def normalize_minority_names(
                 continue
             if _is_generic_english(variant, generic_words):
                 continue
-            # Never replace a variant that collides with another glossary entry's target.
-            if any(
-                v_low in other_low and other_low != canonical.casefold()
-                for other_low in all_canonical_lower
-            ):
+            if collides(variant, canonical):
                 continue
             seen_v.add(v_low)
             safe_variants.append((variant, _latin_boundary_pattern(variant)))
@@ -380,7 +383,7 @@ def normalize_minority_names(
                     break
             if not replaced:
                 split_var = _find_split_pinyin_variant(canonical, masked)
-                if split_var is not None:
+                if split_var is not None and not collides(split_var, canonical):
                     masked = _latin_boundary_pattern(split_var).sub(canonical, masked)
                     substitutions.append(
                         {

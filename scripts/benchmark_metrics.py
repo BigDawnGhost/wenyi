@@ -14,7 +14,6 @@ import argparse
 import collections
 import glob
 import json
-import os
 import re
 import sqlite3
 import sys
@@ -221,7 +220,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--target-lang", default="en", help="Target language code (default: en)")
     args = parser.parse_args(argv)
     report = {
-        os.path.basename(os.path.normpath(run)): analyze_run(run, target_lang=args.target_lang)
+        str(Path(run).expanduser().resolve()): analyze_run(run, target_lang=args.target_lang)
         for run in args.runs
     }
     print(json.dumps(report, ensure_ascii=False, indent=2))
