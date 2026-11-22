@@ -101,35 +101,18 @@ class _ClientStub:
         self.chat = _ChatStub(responses)
 
 
-class _MeteredFakeClient(FakeClient):
-    """Record fixed tokens per offline call for per-run ledger assertions."""
+_METERED_USAGE_SAMPLE = UsageSample(
+    prompt_tokens=7,
+    completion_tokens=3,
+    total_tokens=10,
+    cache_hit_tokens=2,
+    cache_miss_tokens=5,
+)
 
-    def complete(
-        self,
-        messages,
-        *,
-        operation: str,
-        json_mode: bool = False,
-        max_tokens: int | None = None,
-    ) -> str:
-        result = super().complete(
-            messages,
-            operation=operation,
-            json_mode=json_mode,
-            max_tokens=max_tokens,
-        )
-        self.usage.record(
-            "direct",
-            UsageSample(
-                prompt_tokens=7,
-                completion_tokens=3,
-                total_tokens=10,
-                cache_hit_tokens=2,
-                cache_miss_tokens=5,
-            ),
-            operation,
-        )
-        return result
+
+def _metered_client() -> MeteredFakeClient:
+    """Build the shared offline client with the per-run ledger sample injected."""
+    return MeteredFakeClient(handler=routing_handler, usage_sample=_METERED_USAGE_SAMPLE)
 
 
 def _minimal_deepseek_cfg() -> LLMConfig:
@@ -890,7 +873,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
                 config = self._config(directory)
                 store = Orchestrator(
                     config,
-                    client=_MeteredFakeClient(handler=routing_handler),
+                    client=_metered_client(),
                 ).run_steps(source, {"translate"})["store"]
                 completed = threading.Event()
                 errors: list[BaseException] = []
@@ -931,7 +914,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             config = self._config(directory)
             store = Orchestrator(
                 config,
-                client=_MeteredFakeClient(handler=routing_handler),
+                client=_metered_client(),
             ).run_steps(source, {"translate"})["store"]
             completed = threading.Event()
             errors: list[BaseException] = []
@@ -966,7 +949,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             config = self._config(directory)
             store = Orchestrator(
                 config,
-                client=_MeteredFakeClient(handler=routing_handler),
+                client=_metered_client(),
             ).run_steps(source, {"translate"})["store"]
             with open(source, "a", encoding="utf-8") as file:
                 file.write("\n追加された本文。\n")
@@ -985,7 +968,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             config = self._config(directory)
             Orchestrator(
                 config,
-                client=_MeteredFakeClient(handler=routing_handler),
+                client=_metered_client(),
             ).run_steps(source, {"translate"})
             resumed = Orchestrator(config, client=FakeClient())
             locate = resumed._preparation.locate_existing
@@ -1023,7 +1006,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             initial_config = self._config(directory)
             Orchestrator(
                 initial_config,
-                client=_MeteredFakeClient(handler=routing_handler),
+                client=_metered_client(),
             ).run_steps(source, {"translate"})
             resumed_config = self._config(directory)
             resumed_config.source_lang = "auto"
