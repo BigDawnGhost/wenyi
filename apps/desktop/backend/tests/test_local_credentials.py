@@ -386,6 +386,15 @@ def test_router_is_local_authenticated_origin_restricted_and_never_echoes(
     )
 
 
+def test_non_ascii_bearer_token_is_rejected(private_profile, desktop_context):
+    client = TestClient(create_app(context=desktop_context))
+    headers = [
+        (b"authorization", "Bearer caf\u00e9".encode("utf-8")),
+        (b"origin", b"tauri://localhost"),
+    ]
+    assert client.get("/desktop/credentials", headers=headers).status_code == 401
+
+
 def test_non_system_keyring_is_rejected(monkeypatch):
     import keyring
 

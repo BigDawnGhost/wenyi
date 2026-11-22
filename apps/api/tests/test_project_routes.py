@@ -413,6 +413,11 @@ def test_http_download_and_websocket_require_token(api, monkeypatch):
         with pytest.raises(WebSocketDisconnect) as raised:
             connection.receive_json()
         assert raised.value.code == 1008
+    with secured_client.websocket_connect(f"/ws/projects/{pid}/progress") as connection:
+        connection.send_json({"token": "caf\u00e9"})
+        with pytest.raises(WebSocketDisconnect) as raised:
+            connection.receive_json()
+        assert raised.value.code == 1008
     secured_client.close()
 
 
