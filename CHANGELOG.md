@@ -80,6 +80,8 @@ Historical releases remain available in the repository's GitHub Releases pages.
   - cli: sync config creation guidance in guide
   - zh: mirror glossary matching updates
 - Internal changes
+  - adapt path assertions for long path prefixes
+  - sync changelog
   - add changelog sync tooling
   - run the hardened suite on main pushes
   - ci: pin third-party actions to commit shas
