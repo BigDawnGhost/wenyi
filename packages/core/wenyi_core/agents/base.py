@@ -10,13 +10,34 @@ import logging
 from typing import Any, ClassVar
 
 from ..config import Config
+from ..errors import WenyiError
 from ..i18n.policy.models import Phase
 from ..i18n.prompts import render
 from ..llm.base import LLMClient
-from ..llm.json_parser import parse_json_loose
+from ..llm.json_parser import JsonParseError, parse_json_loose
+from ..llm.retrying import EmptyResponseError, ProviderRequestError, TruncatedResponseError
 
 _RAISE = object()  # Sentinel: propagate exceptions when the caller supplies no default.
 _LOGGER = logging.getLogger(__name__)
+
+# Failures an agent may absorb into its configured fallback: unusable model output and
+# transient provider or transport problems. Budget stops and cancellations derive from
+# BaseException and never reach these handlers; any other WenyiError or ValueError
+# (configuration, routing, semantic validation) must propagate to the caller.
+_FALLBACKABLE_ERRORS = (
+    ProviderRequestError,
+    EmptyResponseError,
+    TruncatedResponseError,
+    JsonParseError,
+)
+
+
+def _is_fallbackable(error: Exception) -> bool:
+    """Return True when the error may be replaced by an agent's fallback value."""
+    if isinstance(error, _FALLBACKABLE_ERRORS):
+        return True
+    return not isinstance(error, (WenyiError, ValueError))
+
 
 Messages = list[dict[str, str]]
 
@@ -99,8 +120,10 @@ class Agent:
         item_type: type | None = None,
     ) -> Any:
         """Send system/user messages through complete_json.
-        Return default on failure, or propagate when no default is supplied (for example,
-        Translator handles alignment retries). With key, use data[key] for dictionaries, a
+        Return default on recoverable model-output or provider failure, or propagate when no
+        default is supplied (for example, Translator handles alignment retries). Configuration,
+        routing, budget, and other business errors always propagate. With key, use data[key]
+        for dictionaries, a
         nonempty list directly, or the fallback otherwise. With item_type, a keyed list must
         contain only items of that type or the fallback is returned instead.
         """
@@ -114,7 +137,7 @@ class Agent:
                 max_tokens=max_tokens,
             )
         except Exception as error:
-            if default is _RAISE:
+            if default is _RAISE or not _is_fallbackable(error):
                 raise
             _LOGGER.warning(
                 "Agent call failed; returning fallback (operation=%s): %s: %s",
@@ -148,7 +171,7 @@ class Agent:
                 max_tokens=max_tokens,
             )
         except Exception as error:
-            if default is _RAISE:
+            if default is _RAISE or not _is_fallbackable(error):
                 raise
             _LOGGER.warning(
                 "Agent call failed; returning fallback (operation=%s): %s: %s",
@@ -173,7 +196,7 @@ class Agent:
         default: str = "",
         max_tokens: int | None = None,
     ) -> str:
-        """Complete plain text and strip whitespace; return default on failure."""
+        """Complete plain text and strip whitespace; return default on recoverable failure."""
         try:
             return (
                 self.client.complete(
@@ -187,6 +210,8 @@ class Agent:
                 or ""
             ).strip()
         except Exception as error:  # noqa: BLE001 - Text helper calls return the configured fallback on failure.
+            if not _is_fallbackable(error):
+                raise
             _LOGGER.warning(
                 "Agent call failed; returning fallback (operation=%s): %s: %s",
                 operation,

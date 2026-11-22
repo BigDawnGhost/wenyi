@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from unittest.mock import patch
 
 import pytest
 from wenyi_core.config import Config
 from wenyi_core.llm.configuration import LLMConfig
+from wenyi_core.llm.limits import RequestStopped
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample
 from wenyi_core.models.glossary import GlossaryTerm
@@ -18,7 +20,7 @@ from wenyi_core.pipeline.run.runtime import PipelineRuntime
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
 
-from tests.fake_llm import MeteredFakeClient, routing_handler
+from tests.fake_llm import METERED_TOTAL_TOKENS, MeteredFakeClient, routing_handler
 from tests.pipeline_fixtures import require_file_storage
 from tests.sample_data import write_sample_txt
 
@@ -396,3 +398,112 @@ def test_completed_translation_is_kept_and_changed_review_model_gets_new_run(tmp
         path.name: path.read_bytes() for path in (tmp_path / "state").rglob("ch*.json")
     } == translated
     assert json.loads(open(store.manifest_path, encoding="utf-8").read())["target_lang"] == "zh"
+
+
+def _polish_config(tmp_path):
+    config = _config(tmp_path)
+    config.pipeline.polish = True
+    config.segment.max_tokens_per_batch = 1
+    return config
+
+
+def _polish_source(tmp_path):
+    source = tmp_path / "polish_resume.txt"
+    source.write_text(
+        "堀北は静かな部屋で長い手紙を読みました。\n\n堀北は翌日の朝に友人と話をしました。\n",
+        encoding="utf-8",
+    )
+    return source
+
+
+def _polish_handler(stopping_after):
+    """Return a handler that raises a budget stop once N polish turns have succeeded."""
+    polish_turns = {"count": 0}
+
+    def handler(messages, tier, json_mode):
+        system = messages[0]["content"]
+        user = messages[-1]["content"]
+        is_polish = (
+            "prose editor" in system
+            or "Polish the translations from your previous JSON response" in user
+        )
+        if is_polish:
+            polish_turns["count"] += 1
+            if polish_turns["count"] > stopping_after:
+                raise RequestStopped("Model request budget exhausted")
+        return routing_handler(messages, tier, json_mode)
+
+    return handler
+
+
+def test_budget_exhaustion_in_polish_propagates_and_resume_bills_once(tmp_path):
+    """A budget stop inside the polisher aborts the run; resume replays only that batch."""
+    config = _polish_config(tmp_path)
+    source = _polish_source(tmp_path)
+    store = FileStorage(str(tmp_path / "run"))
+    first_client = MeteredFakeClient(handler=_polish_handler(1))
+    interrupted = Orchestrator(config, first_client, storage=store)
+
+    with (
+        patch.object(interrupted._translation, "extract_batch_glossary", return_value={}),
+        patch.object(interrupted._runtime.extractor, "extract_and_store", return_value={}),
+    ):
+        with pytest.raises(RequestStopped, match="budget exhausted"):
+            interrupted.run(str(source))
+
+    # Every dispatched call stays on the ledger, including the aborted polish request;
+    # the second batch is incomplete, so its second segment is still untranslated.
+    partial = store.load_usage()
+    assert partial is not None
+    assert partial["totals"]["calls"] == 5
+    assert partial["totals"]["total_tokens"] == 5 * METERED_TOTAL_TOKENS
+    assert {stage: row["calls"] for stage, row in partial["by_stage"].items()} == {
+        "analysis.style": 1,
+        "translation.body": 2,
+        "polish.body": 2,
+    }
+    partial_chapter = store.load_chapter(0)
+    assert partial_chapter.segments[0].target == "润0"
+    assert partial_chapter.segments[1].target is None
+
+    resumed_client = MeteredFakeClient(handler=routing_handler)
+    resumed = Orchestrator(config, resumed_client, storage=store)
+    with (
+        patch.object(resumed._translation, "extract_batch_glossary", return_value={}),
+        patch.object(resumed._runtime.extractor, "extract_and_store", return_value={}),
+    ):
+        result = require_file_storage(resumed.run(str(source)))
+
+    # Resume replays only the interrupted batch plus the final title pass; the completed
+    # analysis and first batch are never re-run, so each real call is billed exactly once.
+    resume_ops = sorted(row["operation"] for row in resumed_client.calls)
+    assert resume_ops == ["polish.body", "translation.body", "translation.title"]
+    chapter = result.load_chapter(0)
+    assert [segment.target for segment in chapter.segments] == ["润0", "润0"]
+    usage = result.load_usage()
+    assert usage is not None
+    assert usage["totals"]["calls"] == 8
+    assert usage["totals"]["total_tokens"] == 8 * METERED_TOTAL_TOKENS
+    assert {stage: row["calls"] for stage, row in usage["by_stage"].items()} == {
+        "analysis.style": 1,
+        "translation.body": 3,
+        "polish.body": 3,
+        "translation.title": 1,
+    }
+
+
+def test_polish_configuration_error_propagates_without_fallback(tmp_path):
+    """A polish routing ValueError aborts the run instead of keeping raw translations."""
+    config = _polish_config(tmp_path)
+    source = _polish_source(tmp_path)
+    store = FileStorage(str(tmp_path / "run"))
+
+    def failing_handler(messages, tier, json_mode):
+        if tier == "polish.body":
+            raise ValueError("Unknown model profile: fake/missing")
+        return routing_handler(messages, tier, json_mode)
+
+    orchestrator = Orchestrator(config, MeteredFakeClient(handler=failing_handler), storage=store)
+
+    with pytest.raises(ValueError, match="Unknown model profile"):
+        orchestrator.run(str(source))
