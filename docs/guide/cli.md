@@ -154,6 +154,11 @@ wenyi translate book.epub
   work. Ordinary glossary extraction starts from completed source/translation
   pairs during translation.
 
+If you already have a MinerU result ZIP, `wenyi mineru-epub result.zip source.epub`
+creates a readable source EPUB offline, including in the single-file CLI. An
+extracted `*_content_list_v2.json` with its local images also works. Use
+`--lang` to set the source language tag (default: `en`).
+
 For an uncached MinerU PDF import, also set `MINERU_API_KEY` in the process
 environment. BabelDOC setup, PDF export eligibility, and other format-specific
 requirements are in the [format reference](../reference/formats.md).

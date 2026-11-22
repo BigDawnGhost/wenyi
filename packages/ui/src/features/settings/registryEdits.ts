@@ -1,84 +1,34 @@
 export type Document = Record<string, unknown>;
 export const object = (value: unknown) => (value || {}) as Document;
-export type RegistryGroup = "providers" | "models";
+export type Renames = Record<string, string>;
 
-export function renameRegistryId(
-  llm: Document,
-  group: RegistryGroup,
-  oldId: string,
-  newId: string,
-): Document {
-  const renamed: Document = {
-    ...llm,
-    preset: null,
-    [group]: Object.fromEntries(
-      Object.entries(object(llm[group])).map(([id, value]) => [
-        id === oldId ? newId : id,
-        value,
-      ]),
-    ),
-  };
-  if (group === "providers") {
-    renamed.models = Object.fromEntries(
-      Object.entries(object(llm.models)).map(([id, raw]) => {
-        const model = object(raw);
-        return [
-          id,
-          model.provider === oldId ? { ...model, provider: newId } : model,
-        ];
-      }),
-    );
-  } else {
-    renamed.tiers = Object.fromEntries(
-      Object.entries(object(llm.tiers)).map(([tier, id]) => [
-        tier,
-        id === oldId ? newId : id,
-      ]),
-    );
-    renamed.routes = Object.fromEntries(
-      Object.entries(object(llm.routes)).map(([id, raw]) => {
-        const route = object(raw);
-        return [
-          id,
-          {
-            ...route,
-            ...(route.model === oldId ? { model: newId } : {}),
-            ...(Array.isArray(route.fallbacks)
-              ? {
-                  fallbacks: route.fallbacks.map((id) =>
-                    id === oldId ? newId : id,
-                  ),
-                }
-              : {}),
-          },
-        ];
-      }),
-    );
-  }
-  return renamed;
+// Connection IDs cannot contain "/", but remote model names (e.g. "org/model") can.
+export function splitModelRef(ref: string) {
+  const slash = ref.indexOf("/");
+  return { provider: ref.slice(0, slash), model: ref.slice(slash + 1) };
 }
 
-export function registryReferences(
-  llm: Document,
-  group: RegistryGroup,
-  id: string,
-): string[] {
-  if (group === "providers")
-    return Object.entries(object(llm.models))
-      .filter(([, model]) => object(model).provider === id)
-      .map(([key]) => key);
-  return [
-    ...Object.entries(object(llm.tiers))
-      .filter(([, model]) => model === id)
-      .map(([key]) => key),
-    ...Object.entries(object(llm.routes))
-      .filter(([, raw]) => {
-        const route = object(raw);
-        return (
-          route.model === id ||
-          (Array.isArray(route.fallbacks) && route.fallbacks.includes(id))
-        );
-      })
-      .map(([key]) => key),
-  ];
+export function nextId(prefix: string, ids: string[]) {
+  let index = 1;
+  while (ids.includes(`${prefix}${index}`)) index++;
+  return `${prefix}${index}`;
+}
+
+export function renameSelections(llm: Document, renames: Renames): Document {
+  const renamed = (ref: unknown) => typeof ref === "string" && Object.hasOwn(renames, ref) ? renames[ref] : ref;
+  return {
+    routes: Object.fromEntries(Object.entries(object(llm.routes)).map(([id, raw]) => {
+      const route = object(raw);
+      return [id, { ...route, model: renamed(route.model),
+        ...(Array.isArray(route.fallbacks) ? { fallbacks: route.fallbacks.map(renamed) } : {}) }];
+    })),
+  };
+}
+
+export function isModelReferenced(llm: Document, id: string): boolean {
+  return Object.values(object(llm.routes)).some(raw => {
+    const route = object(raw);
+    return route.model === id ||
+      (Array.isArray(route.fallbacks) && route.fallbacks.includes(id));
+  });
 }

@@ -1,24 +1,9 @@
-#!/usr/bin/env python3
-"""
-Convert PDF to HTML via MinerU API.
-
-Simple API usage:
-    from pdf_to_html import convert_pdf_to_html
-    output_path = convert_pdf_to_html("document.pdf")
-
-CLI usage:
-    uv run python pdf_to_html.py document.pdf [output.html]
-"""
+"""Retrieve ordered MinerU Precision API result bundles for a PDF."""
 
 from __future__ import annotations
 
-import io
-import os
-import sys
 import tempfile
 import time
-import zipfile
-from collections.abc import Callable
 from contextlib import closing
 from pathlib import Path
 
@@ -105,7 +90,6 @@ class MinerUApi:
             json={
                 "files": files_meta,
                 "model_version": "vlm",
-                "extra_formats": ["html"],
             },
         )
         resp.raise_for_status()
@@ -213,20 +197,6 @@ def _prepare_chunks(source: Path, directory: Path, max_pages: int) -> tuple[int,
     )
 
 
-# ── HTML helpers ──
-
-
-def _html_from_zip(zip_bytes: bytes) -> str:
-    native = _epub_native.mineru_html_from_zip(zip_bytes)
-    if native is not None:
-        return native
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        for name in zf.namelist():
-            if name.endswith((".html", ".htm")):
-                return zf.read(name).decode("utf-8")
-    raise MinerUError("No HTML file in result ZIP")
-
-
 # ── helpers ──
 
 
@@ -236,92 +206,9 @@ def _check(body: dict) -> dict:
     return body
 
 
-# ── public API ──
-
-ProgressFn = Callable[[str], None]
-
-
-def convert_pdf_to_html(
-    pdf_path: str,
-    output_path: str | None = None,
-    *,
-    api_token: str | None = None,
-    on_progress: ProgressFn | None = None,
-) -> str:
-    """Convert a PDF file to HTML via MinerU API.
-
-    Handles PDFs exceeding 200 pages by splitting into chunks and
-    reassembling the HTML output.
-
-    Args:
-        pdf_path: Path to the source PDF file.
-        output_path: Destination path. Defaults to ``<pdf_stem>.html``.
-        api_token: MinerU API token. Reads ``MINERU_API_KEY`` from env if omitted.
-        on_progress: Optional progress callback.
-
-    Returns:
-        Absolute path to the generated HTML file.
-    """
-    msg = on_progress or (lambda _: None)
-
-    pdf_path = str(Path(pdf_path).resolve())
-    if not os.path.isfile(pdf_path):
-        raise FileNotFoundError(pdf_path)
-
-    if output_path is None:
-        output_path = str(Path(pdf_path).with_suffix(".html"))
-    output_path = str(Path(output_path).resolve())
-
-    if api_token is None:
-        api_token = os.getenv("MINERU_API_KEY")
-    if not api_token:
-        raise MinerUError("API token not provided and MINERU_API_KEY not set")
-
+def extract_pdf(pdf_path: str, *, api_token: str) -> list[bytes]:
+    """Return result bundles in source-page order, removing private chunks on exit."""
     with tempfile.TemporaryDirectory(prefix="mineru-chunks-") as directory:
-        total_pages, chunk_paths = _prepare_chunks(Path(pdf_path), Path(directory), MAX_PAGES)
-        msg(f"PDF: {total_pages} pages")
-        if len(chunk_paths) > 1:
-            for i in range(len(chunk_paths)):
-                count = min(MAX_PAGES, total_pages - i * MAX_PAGES)
-                msg(f"  Chunk {i + 1}/{len(chunk_paths)}: {count} pages")
+        _, chunk_paths = _prepare_chunks(Path(pdf_path).resolve(), Path(directory), MAX_PAGES)
         with closing(MinerUApi(api_token)) as api:
-            msg(f"Uploading and extracting {len(chunk_paths)} chunk(s)…")
-            zip_bytes_list = api.submit_batch([str(cp) for cp in chunk_paths])
-    html_parts = [_html_from_zip(zb) for zb in zip_bytes_list]
-    for i, part in enumerate(html_parts):
-        msg(f"  Chunk {i + 1} done ({len(part):,} chars)")
-
-    html = (
-        html_parts[0]
-        if len(html_parts) == 1
-        else _epub_native.mineru_assemble_html(html_parts, Path(pdf_path).name)
-    )
-    Path(output_path).write_text(html, encoding="utf-8")
-    msg(f"Done → {output_path} ({len(html):,} chars)")
-    return output_path
-
-
-# ── CLI ──
-
-
-def main() -> None:
-    if len(sys.argv) < 2:
-        print("Usage: uv run python pdf_to_html.py <pdf_path> [output_html_path]")
-        sys.exit(1)
-
-    try:
-        convert_pdf_to_html(
-            sys.argv[1],
-            sys.argv[2] if len(sys.argv) > 2 else None,
-            on_progress=print,
-        )
-    except (MinerUError, FileNotFoundError) as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
-    except KeyboardInterrupt:
-        print("\nCancelled.", file=sys.stderr)
-        sys.exit(130)
-
-
-if __name__ == "__main__":
-    main()
+            return api.submit_batch([str(path) for path in chunk_paths])

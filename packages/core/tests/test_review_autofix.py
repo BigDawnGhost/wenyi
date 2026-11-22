@@ -76,7 +76,7 @@ def _agent_final(user: str) -> str:
 
 
 class TestReviewAutofix(unittest.TestCase):
-    def test_export_punctuation_setting_does_not_rewrite_autofix_target(self):
+    def test_publishes_autofix_target_as_proposed(self):
         with tempfile.TemporaryDirectory() as directory:
             store = _store(directory)
             outcome = _outcome(
@@ -92,7 +92,6 @@ class TestReviewAutofix(unittest.TestCase):
                 ],
             )
             config = _config(str(Path(directory, "state")))
-            config.output.punctuation_normalize = True
 
             fixed = Orchestrator(config, client=FakeClient())._review_autofix.run(
                 store, outcome, []
@@ -306,9 +305,10 @@ class TestReviewAutofix(unittest.TestCase):
             chapter.text_segments[0].target = "正式译文。"
             store.save_chapter(chapter)
 
-            cfg.llm.models["default_strong"] = cfg.llm.models["default_strong"].model_copy(
-                update={"model": "changed-after-publication-started"}
-            )
+            ref = "fake/changed-after-publication-started"
+            route = cfg.llm.routes["autofix.verify"]
+            cfg.llm.models[ref] = cfg.llm.models[route.model]
+            cfg.llm.routes["autofix.verify"] = route.model_copy(update={"model": ref})
             client = FakeClient(handler=lambda *_args, **_kwargs: "model must not run")
             resumed = Orchestrator(cfg, client=client)._review_autofix.resume_pending(store)
 

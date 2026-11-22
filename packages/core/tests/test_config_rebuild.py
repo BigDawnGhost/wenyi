@@ -65,6 +65,15 @@ def test_rebuild_prunes_nested_invalid_fields_without_losing_model_registry():
     assert config.llm.preset == "fake"
 
 
+def test_saved_export_preferences_drop_retired_punctuation_setting():
+    original = {"output": {"punctuation_normalize": True, "bilingual_order": "source_first"}}
+    with pytest.raises(ValidationError, match="punctuation_normalize"):
+        Config.from_dict(original)
+    rebuilt = rebuild_config(original)
+    assert rebuilt.document == {"output": {"bilingual_order": "source_first"}}
+    assert rebuilt.removed == ("output.punctuation_normalize",)
+
+
 def test_single_provider_configuration_is_discarded_not_converted():
     original = {
         "llm": {"provider": "deepseek", "tiers": {"fast": {"options": {"thinking": False}}}},
@@ -76,10 +85,78 @@ def test_single_provider_configuration_is_discarded_not_converted():
     result = rebuild_config(original)
     config = Config.from_dict(result.document)
     assert config.llm == Config().llm
-    assert config.llm.routes == {}
+    assert config.llm.routes == Config().llm.routes
     assert config.pipeline.review is False
     assert original == before
     assert not rebuild_config(result.document).changed
+
+
+def test_saved_tier_selections_are_dropped_without_translating_them_to_routes():
+    raw = {
+        "llm": {
+            "preset": "fake",
+            "models": {"fake/custom": {}},
+            "tiers": {"strong": "editor", "cheap": "editor", "fast": "editor"},
+            "routes": {
+                "review.scan": {"tier": "strong"},
+                "review.verify": {"model": "fake/custom"},
+            },
+        }
+    }
+    result = rebuild_config(raw)
+    assert result.changed
+    config = Config.from_dict(result.document).llm
+    assert config.routes["review.scan"].model == "fake/fake"
+    assert set(result.document["llm"]["routes"]) == {"review.verify"}
+    assert config.routes["review.verify"].model == "fake/custom"
+    assert not rebuild_config(result.document).changed
+
+
+@pytest.mark.parametrize("preset", ["deepseek", None])
+def test_saved_registry_discards_only_retired_profile_ids(preset):
+    profile = {"provider": "default", "model": "deepseek-flash"}
+    retired = ("default_strong", "default_cheap", "default_fast")
+    raw = {
+        "llm": {
+            "preset": preset,
+            "providers": {"deepseek": {"kind": "deepseek"}},
+            "models": {
+                **dict.fromkeys(retired, profile),
+                "deepseek/custom_fast": {},
+                "deepseek/default_fast": {},
+            },
+            "default_model": "default_strong",
+            "routes": {
+                "review.scan": {"model": "default_cheap"},
+                "translation.body": {
+                    "model": "deepseek/custom_fast",
+                    "fallbacks": ["default_fast", "deepseek/default_fast", "default_cheap"],
+                },
+            },
+        }
+    }
+    before = deepcopy(raw)
+    result = rebuild_config(raw)
+    llm = Config.from_dict(result.document).llm
+    assert set(llm.models) == {
+        "deepseek/deepseek-flash",
+        "deepseek/custom_fast",
+        "deepseek/default_fast",
+    }
+    assert llm.routes["review.scan"].model == "deepseek/deepseek-flash"
+    assert set(result.document["llm"]["routes"]) == {"translation.body"}
+    assert llm.routes["translation.body"].model == "deepseek/custom_fast"
+    assert llm.routes["translation.body"].fallbacks == ["deepseek/default_fast"]
+    assert raw == before
+    assert result.changed and not rebuild_config(result.document).changed
+
+
+@pytest.mark.parametrize("name", ["default_strong", "default_cheap", "default_fast"])
+def test_new_registrations_cannot_reintroduce_retired_profile_ids(name):
+    with pytest.raises(ValidationError, match=name):
+        Config.from_dict(
+            {"llm": {"preset": "fake", "models": {name: {"provider": "default", "model": "fake"}}}}
+        )
 
 
 @pytest.mark.parametrize("preset", ["removed-provider", [], {}, False])

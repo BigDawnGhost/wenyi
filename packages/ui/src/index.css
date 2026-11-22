@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Only supply ambiguous quotation glyphs. Letters, spaces, shaping and emoji
+   still use the normal body stack; no font download or text substitution. */
+@font-face {
+  font-family: "Wenyi Proportional Quotes";
+  src: local("Arial"), local("Liberation Sans"), local("DejaVu Sans"), local("Noto Sans");
+  unicode-range: U+00AB, U+00BB, U+2018-201F, U+2039-203A;
+}
+
 /* 梦源宋体 (DreamHan Serif CN) W13 subset — the two brand glyphs only.
    SIL Open Font License 1.1; see DreamHanSerif-LICENSE-OFL.txt. */
 @font-face {

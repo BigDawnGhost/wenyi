@@ -235,14 +235,6 @@ def resolve_policy(
             and language not in spec.languages
         ):
             raise ValueError(f"Language operation {key} is unavailable for this language/workflow")
-        if (
-            binding.mode == "on"
-            and key == "punctuation.zh_cn"
-            and not context.punctuation_normalize
-        ):
-            raise ValueError(
-                "Language operation punctuation.zh_cn is unavailable: output.punctuation_normalize is disabled"
-            )
         reasons = []
         phase_matches = (
             spec.point.startswith("export.")
@@ -261,8 +253,6 @@ def resolve_policy(
             reasons.append("unsupported format")
         if spec.backends and context.backend not in spec.backends:
             reasons.append("unsupported backend")
-        if key == "punctuation.zh_cn" and not context.punctuation_normalize:
-            reasons.append("output.punctuation_normalize is disabled")
         if binding.mode == "on" and reasons:
             raise ValueError(f"Language operation {key} is unavailable: {'; '.join(reasons)}")
         enabled = binding.mode != "off" and not reasons

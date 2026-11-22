@@ -120,10 +120,11 @@ def test_cache_binds_historical_inputs_and_rendered_prompts(tmp_path, monkeypatc
     elif change == "policy":
         resumed = GlossaryExtractor(client, Config(source_lang="en", target_lang="ja"))
     elif change == "routing":
-        name = resumed.config.llm.tiers["fast"]
-        profile = resumed.config.llm.models[name]
-        resumed.config.llm.models[name] = profile.model_copy(
-            update={"model": profile.model + "-changed"}
+        route = resumed.config.llm.routes["glossary.align_history"]
+        changed = route.model + "-changed"
+        resumed.config.llm.models[changed] = resumed.config.llm.models[route.model]
+        resumed.config.llm.routes["glossary.align_history"] = route.model_copy(
+            update={"model": changed}
         )
     else:
         render = resumed.render

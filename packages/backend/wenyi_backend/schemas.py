@@ -7,6 +7,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from wenyi_core.i18n.genres import DEFAULT_GENRE, Genre
 from wenyi_core.i18n.languages import require_language
+from wenyi_core.llm.operations import OperationSpec
 
 
 class RequestModel(BaseModel):
@@ -272,7 +273,6 @@ class ExportRequest(RequestModel):
     order: Literal["target_first", "source_first"] = "target_first"
     about_page: bool = True
     preserve_source_style: bool = False
-    punctuation_normalize: bool | None = None
 
 
 class ExportOut(BaseModel):
@@ -317,9 +317,7 @@ class AssembleEnqueued(JobEnqueued):
 
 
 class GlossaryImport(RequestModel):
-    # A bounded list keeps the single-transaction import from holding the project write
-    # lock for minutes on end (audit Y-4/E-5).
-    terms: list[TermIn] = Field(max_length=1000)
+    terms: list[TermIn]
 
 
 class DigestUpdate(RequestModel):
@@ -395,11 +393,18 @@ class Capabilities(BaseModel):
     output_formats: list[str]
     pdf: PDFCapabilities
     providers: list[str]
-    operations: list[dict[str, Any]]
+    operations: list[OperationSpec]
 
 
 class ConfigInput(RequestModel):
     yaml: str = Field(max_length=2_000_000)
+
+
+class RegisteredModel(BaseModel):
+    provider: str
+    model: str
+    thinking_levels: list[str]
+    thinking_value: str | None
 
 
 class ProjectConfigOut(BaseModel):
@@ -407,7 +412,7 @@ class ProjectConfigOut(BaseModel):
     effective: dict[str, Any]
     routes: list[dict[str, Any]]
     editable: bool
-    registered_models: dict[str, Any]
+    registered_models: dict[str, RegisteredModel]
 
 
 class GlobalConfigInput(ConfigInput):
@@ -422,6 +427,7 @@ class GlobalConfigOut(BaseModel):
     effective: dict[str, Any]
     default_template: Literal["标准翻译"]
     revision: int
+    registered_models: dict[str, RegisteredModel]
 
 
 class ModelCheckRequest(RequestModel):
@@ -434,6 +440,7 @@ class ModelCheckResult(BaseModel):
 
 
 class ModelPingRequest(RequestModel):
+    connection: str | None = None
     timeout: float = Field(default=30, gt=0, le=120)
 
 

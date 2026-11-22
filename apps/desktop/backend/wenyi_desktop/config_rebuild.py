@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 from typing import TYPE_CHECKING
 
 from wenyi_backend.config_rebuild import (
@@ -12,11 +13,38 @@ from wenyi_backend.config_rebuild import (
     rebuild_strategy,
 )
 from wenyi_core.config import Config
+from wenyi_core.llm.configuration import ProviderConfig
 
 if TYPE_CHECKING:
     from .local_backend import LocalBackend
 
 logger = logging.getLogger(__name__)
+
+
+def _move_preset_credential(conn: sqlite3.Connection, old_llm: dict, config: Config) -> None:
+    """Move only an unambiguous preset identity, without touching the OS vault."""
+    target = config.llm.preset
+    previous = old_llm.get("providers", {})
+    if (
+        not target
+        or target in previous
+        or "default" not in previous
+        or "default" in config.llm.providers
+    ):
+        return
+    try:
+        original = ProviderConfig.model_validate(previous["default"])
+    except ValueError:
+        return
+    if original != config.llm.providers.get(target) or original != ProviderConfig(kind=target):
+        return
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='desktop_credentials'"
+    ).fetchone():
+        conn.execute(
+            "UPDATE OR IGNORE desktop_credentials SET connection=? WHERE connection='default'",
+            (target,),
+        )
 
 
 def rebuild_saved_settings(backend: LocalBackend) -> None:
@@ -27,6 +55,7 @@ def rebuild_saved_settings(backend: LocalBackend) -> None:
         saved = backend.load_settings(connection)
         if saved is not None:
             rebuilt = rebuild_settings(saved.get("config"))
+            defaults = Config.from_dict(rebuilt.document)
             original_template = saved.get("template", "标准翻译")
             template = rebuild_default_template(original_template)
             removed = list(rebuilt.removed)
@@ -44,8 +73,9 @@ def rebuild_saved_settings(backend: LocalBackend) -> None:
                     "revision": saved.get("revision", 0) + 1,
                 }
                 backend.save_settings(updated, connection)
+                if "llm.providers.default" in removed:
+                    _move_preset_credential(connection, saved["config"]["llm"], defaults)
                 logger.warning("Backed up and rebuilt Desktop global settings")
-            defaults = Config.from_dict(rebuilt.document)
         project_ids = [row[0] for row in connection.execute("SELECT id FROM projects ORDER BY id")]
 
     for pid in project_ids:

@@ -49,6 +49,7 @@ export default function ProofreadingPage() {
           busy || !project.data?.initialized || project.isError || chapters.isError
         }
         error={project.error || chapters.error}
+        sourceLanguage={project.data?.source_lang === "auto" ? "" : project.data?.source_lang ?? ""}
         targetLanguage={project.data?.target_lang ?? undefined}
       />
     );
@@ -60,7 +61,6 @@ export default function ProofreadingPage() {
         <ErrorNotice error={project.error || chapters.error} />
         <Card>
           <CardContent className="p-4 space-y-3">
-            <h2 className="font-medium">{t("review.proofreadByChapter")}</h2>
             <div className="flex flex-wrap items-start gap-3">
               <div className="flex-1 min-w-48 space-y-1">
                 <Label htmlFor="chapter-search">

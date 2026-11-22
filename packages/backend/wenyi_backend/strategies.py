@@ -60,17 +60,15 @@ STEP_REGISTRY = [
         "category": "post_process",
         "depends_on": ["review"],
     },
-    {"id": "punctuation_normalize", "name": "导出标点规范化", "category": "export"},
 ]
 _SWITCHES = {"book_understanding", "polish", "annotation_alignment", "review", "review_autofix"}
-_STANDARD = {**dict.fromkeys(sorted(_SWITCHES), True), "punctuation_normalize": True}
 PRESET_TEMPLATES = [
     {
         "name": "标准翻译",
         "description": "与 dev 默认流程一致：预理解、润色、审校及自动修复",
         "time_factor": 2,
         "recommended": True,
-        "steps": _STANDARD,
+        "steps": dict.fromkeys(sorted(_SWITCHES), True),
     },
 ]
 
@@ -114,8 +112,6 @@ def strategy_to_config(
             raise ValueError(f"Workflow step {key} must be boolean")
         if key in _SWITCHES:
             setattr(cfg.pipeline, key, value)
-        elif key == "punctuation_normalize":
-            cfg.output.punctuation_normalize = value
         elif not value:
             raise ValueError(f"Required workflow step cannot be disabled: {key}")
     if translation_mode is not None:
@@ -132,12 +128,6 @@ def strategy_to_config(
 def workflow_steps(config: Config) -> dict[str, bool]:
     """Describe the actual switches for a configured workflow template."""
     return {
-        step["id"]: (
-            bool(getattr(config.pipeline, step["id"]))
-            if step["id"] in _SWITCHES
-            else config.output.punctuation_normalize
-            if step["id"] == "punctuation_normalize"
-            else True
-        )
+        step["id"]: bool(getattr(config.pipeline, step["id"])) if step["id"] in _SWITCHES else True
         for step in STEP_REGISTRY
     }

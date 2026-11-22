@@ -299,7 +299,7 @@ class RetryReporter:
     """Record retry waits and exhaustion in standard logs and optional book events."""
 
     provider: str
-    tier: str
+    profile: str
     stage: str | None
     max_attempts: int
     emit: Callable[..., None]
@@ -329,7 +329,7 @@ class RetryReporter:
         fields = self._error_fields(error)
         payload = {
             "provider": self.provider,
-            "tier": self.tier,
+            "profile": self.profile,
             "stage": self.stage,
             "failed_attempt": retry_state.attempt_number,
             "next_attempt": retry_state.attempt_number + 1,
@@ -342,11 +342,11 @@ class RetryReporter:
         }
         self.emit("llm_retry_wait", **payload)
         _LOGGER.warning(
-            "LLM request retrying: provider=%s stage=%s tier=%s attempt=%s/%s "
+            "LLM request retrying: provider=%s stage=%s profile=%s attempt=%s/%s "
             "wait=%.3fs reason=%s error=%s request_id=%s",
             self.provider,
             self.stage or "unknown",
-            self.tier,
+            self.profile,
             retry_state.attempt_number,
             self.max_attempts,
             wait_seconds,
@@ -362,18 +362,18 @@ class RetryReporter:
         fields = self._error_fields(error)
         payload = {
             "provider": self.provider,
-            "tier": self.tier,
+            "profile": self.profile,
             "stage": self.stage,
             "attempts": self.max_attempts,
             **fields,
         }
         self.emit("llm_retry_exhausted", **payload)
         _LOGGER.error(
-            "LLM retries exhausted: provider=%s stage=%s tier=%s attempts=%s "
+            "LLM retries exhausted: provider=%s stage=%s profile=%s attempts=%s "
             "reason=%s error=%s request_id=%s",
             self.provider,
             self.stage or "unknown",
-            self.tier,
+            self.profile,
             self.max_attempts,
             fields["reason"],
             fields["error_type"],

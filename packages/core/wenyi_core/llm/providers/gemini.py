@@ -8,12 +8,30 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..configuration import ProviderConfig
 from ..retrying import EmptyResponseError, TruncatedResponseError
+from ..thinking import ThinkingControl
 from ..transport import Messages, ProviderAdapter, RequestContext, ResolvedModel
 from ..usage import UsageSample, make_usage_sample, read_usage_counter, read_usage_int
 
 DEFAULT_API_KEY_ENV = "GEMINI_API_KEY"
 FALLBACK_API_KEY_ENV = "GOOGLE_API_KEY"
+
+
+def _thinking_value(options: dict[str, Any]) -> str | None:
+    if level := options["thinking_level"]:
+        return level.lower()
+    budget = options["thinking_budget"]
+    return f"{budget} tokens" if budget is not None and budget >= 0 else None
+
+
+_THINKING_LEVEL = ThinkingControl(
+    ("low", "high"),
+    lambda level: {"thinking_level": level, "thinking_budget": None},
+    _thinking_value,
+    "extra_body",
+    ("thinking_config", "thinkingConfig"),
+)
 
 
 class GeminiOptions(BaseModel):
@@ -34,22 +52,8 @@ class GeminiOptions(BaseModel):
         return self
 
 
-def preset_models() -> dict[str, ResolvedModel[GeminiOptions]]:
-    """Return built-in Gemini defaults for strong, cheap and fast tiers."""
-    return {
-        "strong": ResolvedModel(
-            model="gemini-3.6-flash",
-            options=GeminiOptions(),
-        ),
-        "cheap": ResolvedModel(
-            model="gemini-3.6-flash",
-            options=GeminiOptions(),
-        ),
-        "fast": ResolvedModel(
-            model="gemini-3.6-flash",
-            options=GeminiOptions(),
-        ),
-    }
+def preset_model() -> ResolvedModel[GeminiOptions]:
+    return ResolvedModel("gemini-3.6-flash", GeminiOptions())
 
 
 def convert_messages_to_gemini(
@@ -146,6 +150,11 @@ class GeminiClient(ProviderAdapter):
     default_api_key_env = DEFAULT_API_KEY_ENV
     default_base_url = "https://generativelanguage.googleapis.com"
     requires_api_key = True
+
+    @classmethod
+    def route_thinking(cls, connection: ProviderConfig, model: str) -> ThinkingControl | None:
+        # Gemini 2.x uses a token budget rather than the Gemini 3 thinking levels.
+        return _THINKING_LEVEL if model.removeprefix("models/").startswith("gemini-3") else None
 
     def validate_credentials(self) -> None:
         """Validate Gemini API-key configuration."""

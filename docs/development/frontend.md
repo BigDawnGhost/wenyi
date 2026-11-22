@@ -120,6 +120,11 @@ abandoned requests are cancelled and inactive windows are evicted. Dense reader
 positions exclude whitespace-only sources but include headings. Stable segment IDs,
 not positions, identify edits and deep links.
 
+Mark source and target prose with their project languages, not the interface locale.
+Where a paragraph contains letters but no East Asian script, use a local proportional
+font for quotation marks only. CJK and mixed CJK paragraphs keep their normal typography.
+Never insert or remove characters to adjust spacing in the reader, editor or history.
+
 The window endpoint accepts at most 256 paragraphs. Translation refresh submits
 known paragraph revisions and receives only changed targets and before-polish
 values, never source text. Apply a response only if its previous revision still

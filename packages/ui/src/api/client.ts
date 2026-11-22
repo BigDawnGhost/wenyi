@@ -26,10 +26,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  pingModels: (timeout?: number) =>
+  pingModels: (connection: string) =>
     request<ModelPingResult[]>("/settings/models/ping", {
       method: "POST",
-      body: JSON.stringify(timeout === undefined ? {} : { timeout }),
+      body: JSON.stringify({ connection }),
     }),
   listModels: (body: ModelListRequest) =>
     request<ModelListResult>("/settings/models/list", {
@@ -165,10 +165,10 @@ export const api = {
     ),
   exportGlossaryUrl: (pid: string, format: GlossaryExportFormat) =>
     `${apiBase()}/projects/${pid}/glossary/export?format=${format}`,
-  importGlossary: (pid: string, terms: Partial<Term>[]) =>
+  importGlossary: (pid: string, body: string) =>
     request<{ imported: number }>(`/projects/${pid}/glossary/import`, {
       method: "POST",
-      body: JSON.stringify({ terms: terms.map(termInput) }),
+      body,
     }),
 
   getReview: (pid: string, ci: number, signal?: AbortSignal) =>
@@ -270,18 +270,6 @@ export const api = {
 
   listTemplates: () => request<StrategyTemplate[]>("/strategies/templates"),
 };
-
-function termInput(term: Partial<Term>) {
-  return {
-    source: term.source || "",
-    target: term.target || "",
-    reading: term.reading || "",
-    type: term.type || "term",
-    gender: term.gender || "",
-    aliases: term.aliases || [],
-    note: term.note || "",
-  };
-}
 
 export const ACTIVE_STATUSES = [
   "parsing",

@@ -38,8 +38,8 @@ def test_local_client_sanitizes_real_provider_failure(tmp_path, monkeypatch, cap
                         "max_retries": 1,
                     }
                 },
-                "models": {"m": {"provider": "one", "model": "offline"}},
-                "tiers": {"strong": "m", "cheap": "m", "fast": "m"},
+                "models": {"one/offline": {}},
+                "routes": {op: {"model": "one/offline"} for op in Config().llm.routes},
             }
         }
     )
@@ -89,8 +89,8 @@ def test_environment_control_characters_are_rejected_before_sdk(tmp_path, monkey
         {
             "llm": {
                 "providers": {"one": {"kind": "openai"}},
-                "models": {"m": {"provider": "one", "model": "offline"}},
-                "tiers": {"strong": "m", "cheap": "m", "fast": "m"},
+                "models": {"one/offline": {}},
+                "routes": {op: {"model": "one/offline"} for op in Config().llm.routes},
             }
         }
     )
@@ -297,8 +297,8 @@ def test_clients_snapshot_credentials_without_mutating_environment(
         {
             "llm": {
                 "providers": {"one": {"kind": kind, "api_key_env": "WENYI_TEST_FAKE_KEY"}},
-                "models": {"model": {"provider": "one", "model": "fake-model"}},
-                "tiers": {"strong": "model", "cheap": "model", "fast": "model"},
+                "models": {"one/fake-model": {}},
+                "routes": {op: {"model": "one/fake-model"} for op in Config().llm.routes},
             }
         }
     )
@@ -404,9 +404,11 @@ def test_registry_rename_and_delete_are_atomic_with_preferences(desktop_context,
     store = local_credentials.credential_store()
     store.update(old, mode="manual", secret="fake-global-rename")
     document["llm"]["providers"]["renamed"] = document["llm"]["providers"].pop(old)
-    for model in document["llm"]["models"].values():
-        if model["provider"] == old:
-            model["provider"] = "renamed"
+    old_ref = document["llm"]["routes"]["translation.body"]["model"]
+    new_ref = "renamed/" + old_ref.split("/", 1)[1]
+    document["llm"]["models"][new_ref] = document["llm"]["models"].pop(old_ref)
+    for route in document["llm"]["routes"].values():
+        route["model"] = new_ref
     saved = save_settings(
         json.dumps(document),
         current.default_template,
@@ -483,9 +485,11 @@ def test_vault_write_cannot_bind_to_changed_connection(desktop_context, isolated
         renames = {}
         if edit in {"rename", "delete"}:
             document["llm"]["providers"]["replacement"] = document["llm"]["providers"].pop(name)
-            for model in document["llm"]["models"].values():
-                if model["provider"] == name:
-                    model["provider"] = "replacement"
+            old_ref = document["llm"]["routes"]["translation.body"]["model"]
+            new_ref = "replacement/" + old_ref.split("/", 1)[1]
+            document["llm"]["models"][new_ref] = document["llm"]["models"].pop(old_ref)
+            for route in document["llm"]["routes"].values():
+                route["model"] = new_ref
             if edit == "rename":
                 renames[name] = "replacement"
         elif edit == "provider":
@@ -681,3 +685,13 @@ def test_draft_model_listing_uses_the_stored_key(desktop_context, isolated_vault
     assert response.json()["models"] == ["listed"]
     assert seen == [("fake-stored-list-key", True)]
     assert "fake-stored-list-key" not in response.text
+
+    # A new provider has no saved ID. Its draft environment must not borrow the
+    # manual key of an existing provider, even when both use the same adapter.
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "fake-env-list-key")
+    draft = client.post(
+        "/settings/models/list", headers=headers, json={"provider": {"kind": "deepseek"}}
+    )
+    assert draft.json()["models"] == ["listed"]
+    assert seen[-1] == ("fake-env-list-key", True)
+    assert "fake-env-list-key" not in draft.text

@@ -30,8 +30,9 @@ language:
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  preset: deepseek # All tiers: deepseek-flash, thinking enabled, reasoning_effort high
-  # Add providers, models and routes to override individual operations.
+  preset: deepseek # Registers deepseek-flash and assigns it to each operation.
+  # Select a registered connection/model for each operation with routes.<operation>.model.
+  # Optionally override its thinking effort with routes.<operation>.thinking.
   # Inspect effective settings with: wenyi models list
 
 # ── Segmentation ─────────────────────────────────────────────────────────────────
@@ -47,7 +48,7 @@ pipeline:
   review: true # Run final review after whole-book translation; disable with --no-review
   # Additional structural retries for standard translation and each precision stage; 0 disables retries.
   align_retry_limit: 2
-  polish: true # Polish the full translation with the strong tier; enabled by default and adds substantial cost
+  polish: true # Polish the full translation using polish.body; enabled by default and adds substantial cost
   translation_mode: standard # standard | three_draft_synthesis; three_draft_synthesis requires polish
   rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)
   glossary_note_workers: 0 # Incremental evidence notes: 0 disables, 1-16 workers per batch
@@ -87,7 +88,6 @@ output:
   # true=preserve source styles; false=muted source in EPUB/HTML, normal body text in DOCX
   bilingual_preserve_source_style: false
   about_page: true # Append an About This Translation page
-  punctuation_normalize: true # Normalize only exported copies; preserve formal translations in state
 """
 
 
@@ -129,9 +129,7 @@ class PipelineConfig(BaseModel):
     review: bool = True
     # Additional structural retries for standard translation and precision generation/synthesis.
     align_retry_limit: int = 2
-    polish: bool = (
-        True  # Polish the full translation with the strong tier by default; disable to save cost
-    )
+    polish: bool = True  # Polish the full translation by default; disable to save cost
     rolling_context_tokens: int = Field(default=512, ge=0)
     # Note generation requires an opted-in workflow runner.
     glossary_note_workers: int = Field(default=0, ge=0, le=16)
@@ -196,9 +194,6 @@ class OutputConfig(BaseModel):
     )
     bilingual_preserve_source_style: bool = False  # EPUB/HTML styling and DOCX source metadata
     about_page: bool = True  # Append the project about page
-    punctuation_normalize: bool = (
-        True  # Normalize export copies only; never write back to chapter target
-    )
 
 
 class LanguageConfig(BaseModel):
@@ -249,13 +244,7 @@ class Config(BaseModel):
 
     @model_validator(mode="after")
     def validate_builtin_language_policy(self) -> Config:
-        resolve_policy(
-            PolicyContext(
-                self.source_lang,
-                self.target_lang,
-                punctuation_normalize=self.output.punctuation_normalize,
-            ),
-        )
+        resolve_policy(PolicyContext(self.source_lang, self.target_lang))
         return self
 
     @property
@@ -290,7 +279,6 @@ class Config(BaseModel):
             phase=phase,
             format=format,
             backend=backend,
-            punctuation_normalize=self.output.punctuation_normalize,
             source_identity=source_identity,
             task_groups=self._policy_tasks(phase),
             bilingual=self.output.bilingual,

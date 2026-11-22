@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
+from .operation_names import OPERATION_NAMES
+
 if TYPE_CHECKING:
     from .configuration import ModelConfig, ProviderConfig
 
@@ -76,28 +78,22 @@ class ProviderSpec:
     def validate_connection(self, connection: ProviderConfig) -> None:
         self.adapter_type().validate_connection(connection)
 
-    def validate_model(self, model: ModelConfig):
+    def validate_model(self, model: ModelConfig, *, options: dict[str, Any] | None = None):
         _check_options(model.options)
-        return self.options_type().model_validate(model.options)
+        return self.options_type().model_validate(model.options if options is None else options)
 
     def preset(self) -> dict[str, Any]:
-        factory = getattr(self._module(), "preset_models", None)
+        factory = getattr(self._module(), "preset_model", None)
         if factory is None:
             raise ValueError(
                 f"Provider {self.kind!r} has no preset; configure explicit model profiles"
             )
-        definitions = factory()
+        model = factory()
+        reference = f"{self.kind}/{model.model}"
         return {
-            "providers": {"default": {"kind": self.kind}},
-            "models": {
-                f"default_{tier}": {
-                    "provider": "default",
-                    "model": model.model,
-                    "options": model.options.model_dump(),
-                }
-                for tier, model in definitions.items()
-            },
-            "tiers": {tier: f"default_{tier}" for tier in definitions},
+            "providers": {self.kind: {"kind": self.kind}},
+            "models": {reference: {"options": model.options.model_dump()}},
+            "routes": {operation: {"model": reference} for operation in OPERATION_NAMES},
         }
 
 

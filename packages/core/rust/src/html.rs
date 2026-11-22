@@ -6,20 +6,14 @@
 
 mod ingest;
 
-use std::{
-    collections::HashMap,
-    io::{Cursor, Read},
-    sync::LazyLock,
-};
+use std::collections::HashMap;
 
 use base64::{engine::general_purpose::STANDARD, Engine};
-use pyo3::{prelude::*, types::PyBytes};
-use regex::Regex;
-use zip::{CompressionMethod, ZipArchive};
+use pyo3::prelude::*;
 
 use crate::epub::{
-    dom::{strip, Dom, Id, Kind},
-    extract::{annotate_dom, normalize, ANCHOR, ANNOTATION, INLINE, LINE},
+    dom::{Dom, Id, Kind},
+    extract::{normalize, ANCHOR, ANNOTATION, INLINE, LINE},
     html::srcset,
 };
 
@@ -111,66 +105,6 @@ fn canonical(input: &str) -> Option<Dom> {
         .strip_prefix("<!DOCTYPE html>\n")
         .is_some_and(|body| rendered.strip_prefix("<!DOCTYPE html>\n\n") == Some(body));
     (rendered == input || doctype_only).then_some(dom)
-}
-
-type AnnotatedFragment<'py> = (String, Bound<'py, PyBytes>, String);
-
-#[pyfunction]
-fn mineru_annotate_plain<'py>(
-    py: Python<'py>,
-    fragment: &str,
-    index: usize,
-) -> PyResult<Option<AnnotatedFragment<'py>>> {
-    // Links, ruby, complex objects and processing instructions remain on the
-    // compatibility path; never regenerate a paid chapter with different IDs.
-    let result = py.detach(|| {
-        let dom = canonical(fragment)?;
-        if dom.walk(0).any(|id| match dom.kind(id) {
-            Kind::Tag(tag, attrs) => match tag.as_str() {
-                "span" | "strong" | "em" | "i" | "b" => {
-                    attrs.contains_key("id") || attrs.contains_key("name")
-                }
-                "div" | "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "br" | "section"
-                | "article" | "table" | "tbody" | "thead" | "tfoot" | "tr" | "td" | "th" | "ol"
-                | "ul" | "li" | "dl" | "dt" | "dd" | "blockquote" | "figure" | "figcaption"
-                | "img" => false,
-                _ => true,
-            },
-            Kind::Text(_) => false,
-            _ => true,
-        }) {
-            return None;
-        }
-        // Unusual nested headings are parsed by the compatibility path.
-        let heading = |id| matches!(dom.name(id), "h1" | "h2" | "h3" | "h4" | "h5" | "h6");
-        if dom
-            .tags(0)
-            .any(|id| heading(id) && dom.parents(id).any(heading))
-        {
-            return None;
-        }
-        let resource = annotate_dom(
-            dom,
-            index,
-            &format!("html-chapter-{index}.xhtml"),
-            "",
-            false,
-        );
-        Some((
-            resource.title,
-            serde_json::to_vec(&resource.segments),
-            resource.dom.html(0),
-        ))
-    });
-    result
-        .map(|(title, data, template)| {
-            Ok((
-                title,
-                PyBytes::new(py, &data.map_err(|e| crate::value_error(e.into()))?),
-                template,
-            ))
-        })
-        .transpose()
 }
 
 type PlainEdit = (String, String, String, Option<(String, String)>, bool);
@@ -395,143 +329,13 @@ fn html_inline_media(
     })))
 }
 
-// zipfile remains responsible for unusual archives and for reporting errors.
-// Restrict the fast path to ordinary single-disk ZIPs whose metadata is
-// interpreted identically by Python and the Rust reader.
-#[pyfunction]
-fn mineru_html_from_zip(py: Python<'_>, bytes: &[u8]) -> Option<String> {
-    py.detach(|| {
-        let u16_at =
-            |data: &[u8], pos| Some(u16::from_le_bytes(data.get(pos..pos + 2)?.try_into().ok()?));
-        let u32_at =
-            |data: &[u8], pos| Some(u32::from_le_bytes(data.get(pos..pos + 4)?.try_into().ok()?));
-        let end = bytes.len().checked_sub(22)?;
-        let footer = bytes.get(end..)?;
-        if &footer[..8] != b"PK\x05\x06\0\0\0\0" || u16_at(footer, 20)? != 0 {
-            return None;
-        }
-        let count = u16_at(footer, 10)?;
-        let directory = u32_at(footer, 16)? as usize;
-        if count != u16_at(footer, 8)?
-            || directory.checked_add(u32_at(footer, 12)? as usize)? != end
-        {
-            return None;
-        }
-        let mut zip = ZipArchive::new(Cursor::new(bytes)).ok()?;
-        if zip.offset() != 0
-            || zip.central_directory_start() != directory as u64
-            || zip.len() != usize::from(count)
-        {
-            return None; // Includes duplicates, whose last value wins in zipfile.
-        }
-        let mut position = directory;
-        let mut selected = None;
-        let mut bounds = Vec::with_capacity(zip.len());
-        for index in 0..zip.len() {
-            let file = zip.by_index_raw(index).ok()?;
-            let header = bytes.get(position..position.checked_add(46)?)?;
-            let flags = u16_at(header, 8)?;
-            let raw = file.name_raw();
-            if file.central_header_start() != position as u64
-                || u16_at(header, 6)? > 20
-                || u16_at(header, 30)? != 0 // Unicode path overrides and ZIP64 need zipfile.
-                || u16_at(header, 34)? != 0
-                || raw.contains(&0)
-                || raw.contains(&b'\\')
-                || (flags & 0x800 != 0 && std::str::from_utf8(raw).is_err())
-            {
-                return None;
-            }
-            position += 46 + raw.len() + usize::from(u16_at(header, 32)?);
-            let start = file.header_start();
-            bounds.push(start);
-            if selected.is_none()
-                && (file.name().ends_with(".html") || file.name().ends_with(".htm"))
-            {
-                if flags & !0x080e != 0
-                    || !matches!(
-                        file.compression(),
-                        CompressionMethod::Stored | CompressionMethod::Deflated
-                    )
-                {
-                    return None;
-                }
-                let local = bytes.get(usize::try_from(start).ok()?..)?;
-                let name_end = 30 + usize::from(u16_at(local, 26)?);
-                if u16_at(local, 6)? & 0x800 != flags & 0x800 || local.get(30..name_end)? != raw {
-                    return None;
-                }
-                selected = Some((
-                    index,
-                    start,
-                    file.data_start().checked_add(file.compressed_size())?,
-                ));
-            }
-        }
-        let (index, start, data_end) = selected?;
-        if position != end
-            || data_end > directory as u64
-            || bounds.iter().filter(|&&offset| offset == start).count() != 1
-            || bounds
-                .into_iter()
-                .any(|offset| offset > start && offset < data_end)
-        {
-            return None;
-        }
-        let file = zip.by_index(index).ok()?;
-        let size = file.size();
-        let mut output = String::new();
-        file.take(size.checked_add(1)?)
-            .read_to_string(&mut output)
-            .ok()?;
-        (output.len() as u64 == size).then_some(output)
-    })
-}
-
-// Retain the converter's historical assembly policy: use the first head,
-// discard its title/charset, and copy each raw body (or shell-less part).
-static BODY: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?si)<body[^>]*>(.*?)</body>").unwrap());
-static HEAD: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?si)<head[^>]*>(.*?)</head>").unwrap());
-static TITLE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?si)<t[iİı]tle[^>]*>.*?</t[iİı]tle>").unwrap());
-static CHARSET: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)<meta[^>]*char[sſ]et[^>]*/?>").unwrap());
-
-#[pyfunction]
-fn mineru_assemble_html(py: Python<'_>, parts: Vec<String>, title: &str) -> PyResult<String> {
-    let Some(first) = parts.first() else {
-        return Err(pyo3::exceptions::PyIndexError::new_err(
-            "list index out of range",
-        ));
-    };
-    Ok(py.detach(|| {
-        let head = HEAD.captures(first).and_then(|c| c.get(1)).map_or("", |m| m.as_str());
-        let head = TITLE.replace_all(head, "");
-        let head = CHARSET.replace_all(&head, "");
-        let mut output = format!(
-            "<!DOCTYPE html>\n<html>\n<head>\n    <meta charset=\"utf-8\">\n    <title>{title}</title>\n{}\n</head>\n<body>\n",
-            strip(&head)
-        );
-        for part in &parts {
-            output.push_str(BODY.captures(part).and_then(|c| c.get(1)).map_or(part, |m| m.as_str()));
-        }
-        output.push_str("\n</body>\n</html>");
-        output
-    }))
-}
-
 pub(crate) fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
     ingest::register(m)?;
     m.add_function(wrap_pyfunction!(html_regions, m)?)?;
     m.add_function(wrap_pyfunction!(html_normalize_text, m)?)?;
-    m.add_function(wrap_pyfunction!(mineru_annotate_plain, m)?)?;
     m.add_function(wrap_pyfunction!(html_backfill_plain, m)?)?;
     m.add_function(wrap_pyfunction!(paired::html_backfill_paired, m)?)?;
     m.add_function(wrap_pyfunction!(html_present, m)?)?;
     m.add_function(wrap_pyfunction!(html_inline_media, m)?)?;
-    m.add_function(wrap_pyfunction!(mineru_html_from_zip, m)?)?;
-    m.add_function(wrap_pyfunction!(mineru_assemble_html, m)?)?;
     Ok(())
 }

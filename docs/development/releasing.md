@@ -237,22 +237,23 @@ unavailable/error state rather than resuming writes speculatively.
 
 ### Windows installer safety
 
-Keep [Windows bundle configuration](../../apps/desktop/tauri.windows.conf.json#L1)
-connected to the [NSIS template](../../apps/desktop/installer.nsi#L106) and
-[directory-admission hooks](../../apps/desktop/installer.nsh#L140):
+Keep the [Windows bundle configuration](../../apps/desktop/tauri.windows.conf.json)
+connected to the [NSIS template](../../apps/desktop/installer.nsi) and
+[installer hooks](../../apps/desktop/installer.nsh):
 
-- `installMode` stays `currentUser`, and elevated launches are refused. Program and
-  data defaults are separate, as listed in the [Desktop guide](../guide/desktop.md).
-  Keep both English and Simplified Chinese installer UI available.
+- `installMode` is `both`. Setup starts without requesting elevation, and only
+  all-users installation and removal require administrator approval. Keep the
+  registry and shortcuts scoped to the selection, and keep both installer languages.
 - Setup and uninstall share a mutex. Check both the native executable and
   `sidecar/wenyi-engine/wenyi-engine.exe` for occupancy before replacement/removal;
   never force-kill translations. Interactive, silent and passive modes must all
   refuse occupied files and downgrades. Project SQLite version refusal is a
   separate guard, not permission for an older installer to proceed.
-- Before payload writes, reject drive/share/user roots, Windows/Program Files,
-  data or legacy-location overlap, linked ancestors and unwritable targets.
-  A new or different target must be empty. Only the registered current-layout
-  in-place upgrade may preserve unrelated files in an occupied program directory.
+- Before payload writes, reject drive/share/user roots, Windows, linked ancestors,
+  and unwritable targets. Current-user installation also rejects Program Files and
+  overlap with data or legacy locations. All-users installation only accepts the
+  fixed machine folder. A new or different target must be empty; only registered
+  current-layout in-place upgrades may preserve unrelated files.
 - Runtime layout checks use the actual executable directory, including source,
   unpacked and explicit `--data-dir` launches. Resolve existing ancestors of missing
   destinations so links and Windows short paths cannot conceal overlap. Apply the
@@ -260,22 +261,27 @@ connected to the [NSIS template](../../apps/desktop/installer.nsi#L106) and
 - A manual installer does not create a snapshot or require a historical
   `MANIFEST.json`. The in-app updater still creates and verifies its snapshot
   before launching `/UPDATE`; these are distinct guarantees.
-- Use active Add/Remove Programs registration, not a remembered location alone.
-  Replace an old registered program through its recorded uninstaller and known
-  program files; do not recursively remove a legacy mixed program/data directory
-  or migrate its data.
-- Ordinary uninstall offers two independent, initially unchecked options: remove
-  catalog/settings/logs/locks/runtime, or remove default projects and upgrade backups.
+- Current-user setup and uninstall run without administrative rights, even when
+  launched by the built-in Administrator. Use the previous version's uninstaller
+  to remove its known payload. A current-user in-app update requires a matching
+  active registration, pins its directory at launch, and refuses a changed target.
+  Unregistered and machine installations update manually. Full installers embed
+  Microsoft's WebView2 bootstrapper; installing a missing runtime still needs internet.
+- Current-user uninstall offers two independent, initially unchecked options: remove
+  catalog/settings/logs/runtime, or remove default projects and upgrade backups.
+  Hold the native profile's exclusive lease for the entire cleanup; keep the
+  lock directory intact. If admission fails, offer program-only removal.
   They affect only the default Windows data root. Custom roots, external libraries
   and legacy directories remain untouched; recursive cleanup must not follow links.
   Removing the catalog loses the project list even if project files remain.
-  Silent/passive uninstall and upgrade replacement must not select data cleanup.
+  Silent/passive uninstall, upgrade replacement and all-users uninstall must not
+  select data cleanup.
 
-Run acceptance as a standard user on Windows itself: fresh install, same-version
-reinstall, upgrade, downgrade/elevation refusal, occupied native/engine files,
-concurrent setup/uninstall, each data-deletion choice, and directory/link aliases
-including not-yet-created targets. Cross-compilation and browser IPC mocks do not
-validate these installer behaviors.
+On Windows itself, test current-user installation from a standard account and the
+built-in Administrator, and all-users installation and removal with UAC approval
+and cancellation. Exercise both scopes coexisting, same-version reinstall, upgrade,
+downgrade refusal, occupied native/engine files, concurrent setup/uninstall,
+each data-deletion choice, and directory/link aliases including missing targets.
 
 ## Release notes
 

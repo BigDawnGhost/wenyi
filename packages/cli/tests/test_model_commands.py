@@ -42,7 +42,7 @@ def test_preview_needs_no_keys_or_sdk(tmp_path, monkeypatch):
         tmp_path, {"llm": {"preset": "deepseek"}}, "explain", "--operation", "autofix.verify"
     )
     assert explained.exit_code == 0, explained.output
-    assert json.loads(explained.output)["origin"] == "inherits review.verify"
+    assert json.loads(explained.output)["origin"] == "llm.routes.autofix.verify"
 
 
 def test_check_respects_disabled_stages(tmp_path, monkeypatch):
@@ -51,8 +51,8 @@ def test_check_respects_disabled_stages(tmp_path, monkeypatch):
         "llm": {
             "preset": "fake",
             "providers": {"remote": {"kind": "openai", "api_key_env": "UNUSED_REVIEW_KEY"}},
-            "models": {"editor": {"provider": "remote", "model": "editor"}},
-            "routes": {"review.scan": {"model": "editor"}},
+            "models": {"remote/editor": {}},
+            "routes": {"review.scan": {"model": "remote/editor"}},
         },
         "pipeline": {"review": False},
     }

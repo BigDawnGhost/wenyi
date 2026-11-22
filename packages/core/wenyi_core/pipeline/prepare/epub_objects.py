@@ -5,9 +5,10 @@ from __future__ import annotations
 from copy import deepcopy
 
 from ...ingest.epub_reader import read_epub
+from ...ingest.pdf_reader import cached_epub_source
 from ...markup.contracts import ANNOTATION_META_KEY
 from ...markup.objects import OBJECT_RELATION, OBJECT_SCHEMA_VERSION
-from ...models.document import Document, Segment
+from ...models.document import MINERU_EPUB_DIGEST, Document, Segment, uses_epub_template
 from ...storage.protocol import Storage
 
 
@@ -21,9 +22,16 @@ def refresh_epub_objects(
     """
     manifest = store.load_manifest()
     meta = manifest.get("meta", {})
-    if manifest.get("fmt") != "epub" or meta.get("epub_objects") == OBJECT_SCHEMA_VERSION:
+    if not uses_epub_template(manifest.get("fmt"), meta):
         return
-    document = document or read_epub(source_path, manifest["source_lang"], manifest["target_lang"])
+    epub_path = source_path
+    if MINERU_EPUB_DIGEST in meta:
+        epub_path = cached_epub_source(
+            store.source_dir, manifest["source_sha256"], meta[MINERU_EPUB_DIGEST]
+        )
+    if meta.get("epub_objects") == OBJECT_SCHEMA_VERSION:
+        return
+    document = document or read_epub(epub_path, manifest["source_lang"], manifest["target_lang"])
     fresh: dict[tuple[str | None, str], Segment] = {}
     for chapter in document.chapters:
         first: Segment | None = None

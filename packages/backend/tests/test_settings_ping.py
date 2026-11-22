@@ -18,7 +18,7 @@ class ProbingClient:
         self.calls = []
 
     def probe_profiles(self, profiles=None, *, timeout=None):
-        self.calls.append(timeout)
+        self.calls.append((profiles, timeout))
         if self.error is not None:
             raise self.error
         return self.results
@@ -26,8 +26,8 @@ class ProbingClient:
 
 def _result(**overrides):
     values = dict(
-        profile="default_strong",
-        connection="default",
+        profile="deepseek/deepseek-flash",
+        connection="deepseek",
         provider="deepseek",
         model="deepseek-flash",
         endpoint="https://api.deepseek.com",
@@ -66,24 +66,43 @@ def test_ping_probes_saved_settings_without_a_project(api):
         saved,
         [
             _result(),
-            _result(profile="spare", ok=False, category="authentication_failed", status_code=401),
+            _result(
+                profile="deepseek/spare",
+                model="spare",
+                ok=False,
+                category="authentication_failed",
+                status_code=401,
+            ),
         ],
     )
     response = client.post("/settings/models/ping", json={"timeout": 5})
     assert response.status_code == 200, response.text
     body = response.json()
-    assert [item["profile"] for item in body] == ["default_strong", "spare"]
+    assert [item["profile"] for item in body] == ["deepseek/deepseek-flash", "deepseek/spare"]
     assert body[0]["operations"] == ["translation.body"]
     assert body[1] | {"ok": False, "status_code": 401} == body[1]
     assert state.configs == [saved]
-    assert state.client.calls == [5]
+    assert state.client.calls == [(None, 5)]
+
+
+def test_ping_only_probes_selected_connection(api):
+    client, state, saved = api
+    from wenyi_core.llm.configuration import ModelConfig, ProviderConfig
+
+    saved.llm.providers["other"] = ProviderConfig(kind="fake")
+    saved.llm.models["other/model"] = ModelConfig()
+    state.client = ProbingClient(saved, [_result()])
+    response = client.post("/settings/models/ping", json={"connection": "deepseek"})
+    assert response.status_code == 200, response.text
+    assert state.client.calls == [(["deepseek/deepseek-flash"], 30)]
+    assert client.post("/settings/models/ping", json={"connection": "missing"}).status_code == 422
 
 
 def test_ping_defaults_and_bounds_the_timeout(api):
     client, state, saved = api
     state.client = ProbingClient(saved)
     assert client.post("/settings/models/ping", json={}).status_code == 200
-    assert state.client.calls == [30]
+    assert state.client.calls == [(None, 30)]
     for timeout in (0, 121):
         assert client.post("/settings/models/ping", json={"timeout": timeout}).status_code == 422
     assert client.post("/settings/models/ping", json={"workflow": "x"}).status_code == 422

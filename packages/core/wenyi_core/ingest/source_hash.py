@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+from pathlib import Path
 
 
-def source_sha256(path: str) -> str:
+def source_sha256(path: str | Path) -> str:
     """Stream source SHA-256 calculation without loading the whole book into memory."""
     digest = hashlib.sha256()
     with open(path, "rb") as source:

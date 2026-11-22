@@ -114,19 +114,88 @@ fn mode(version: &str, key: &str, debug: bool, os: &str, arch: &str, appimage: b
     }
 }
 
+#[cfg(any(windows, test))]
+fn registered_program(
+    exe: &std::path::Path,
+    location: &str,
+    binary: &str,
+    uninstall: &str,
+) -> std::io::Result<Option<PathBuf>> {
+    let unquote = |s: &str| {
+        s.strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .map(PathBuf::from)
+    };
+    let Some(dir) = unquote(location) else {
+        return Ok(None);
+    };
+    let Some(parent) = exe.parent() else {
+        return Ok(None);
+    };
+    if !dir.is_absolute()
+        || exe.file_name() != Some(std::ffi::OsStr::new(binary))
+        || !same_file::is_same_file(&dir, parent)?
+    {
+        return Ok(None);
+    }
+    Ok(match unquote(uninstall) {
+        Some(path)
+            if path.is_absolute() && same_file::is_same_file(&path, dir.join("uninstall.exe"))? =>
+        {
+            Some(dir)
+        }
+        _ => None,
+    })
+}
+
+#[cfg(windows)]
+fn registered_user_install() -> Option<PathBuf> {
+    use std::{io, path::Path};
+    use winreg::{enums::*, RegKey, HKEY};
+
+    fn registered(hive: HKEY, exe: &Path) -> io::Result<Option<PathBuf>> {
+        let key = match RegKey::predef(hive).open_subkey_with_flags(
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Wenyi Desktop",
+            KEY_READ | KEY_WOW64_64KEY,
+        ) {
+            Ok(key) => key,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        let location: String = key.get_value("InstallLocation")?;
+        let uninstall: String = key.get_value("UninstallString")?;
+        let binary: String = key.get_value("MainBinaryName")?;
+        registered_program(exe, &location, &binary, &uninstall)
+    }
+    let exe = std::env::current_exe().ok()?;
+    if registered(HKEY_LOCAL_MACHINE, &exe).ok()?.is_some() {
+        return None;
+    }
+    registered(HKEY_CURRENT_USER, &exe).ok()?
+}
+
 impl Updates {
     pub fn new() -> Self {
+        let mode = mode(
+            env!("WENYI_DESKTOP_VERSION"),
+            env!("WENYI_UPDATER_PUBLIC_KEY"),
+            cfg!(debug_assertions),
+            std::env::consts::OS,
+            std::env::consts::ARCH,
+            std::env::var_os("APPIMAGE").is_some_and(|p| !p.is_empty()),
+        );
+        // A machine update must be approved and must not silently install or
+        // replace a separate current-user copy through the Tauri updater.
+        #[cfg(windows)]
+        let mode = if mode == Mode::Automatic && registered_user_install().is_none() {
+            Mode::Manual
+        } else {
+            mode
+        };
         Self(Mutex::new(UpdateState {
             snapshot: Snapshot {
                 current_version: env!("WENYI_DESKTOP_VERSION").into(),
-                mode: mode(
-                    env!("WENYI_DESKTOP_VERSION"),
-                    env!("WENYI_UPDATER_PUBLIC_KEY"),
-                    cfg!(debug_assertions),
-                    std::env::consts::OS,
-                    std::env::consts::ARCH,
-                    std::env::var_os("APPIMAGE").is_some_and(|p| !p.is_empty()),
-                ),
+                mode,
                 phase: Phase::Idle,
                 version: None,
                 notes: None,
@@ -292,8 +361,22 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
         let checked: Result<(Option<(String, String)>, Option<Update>)> = if automatic {
             let result = async {
                 let manifest = manifest_url().parse().unwrap();
-                let updater = app
-                    .updater_builder()
+                let builder = app.updater_builder();
+                #[cfg(windows)]
+                let builder = {
+                    // NSIS consumes /D= as the last argument, including spaces.
+                    // A later registry change must not redirect this update.
+                    let dir = registered_user_install().ok_or_else(|| {
+                        IpcError::new(
+                            "update_check_failed",
+                            "The installation registration changed.",
+                        )
+                    })?;
+                    let mut arg = std::ffi::OsString::from("/D=");
+                    arg.push(dir);
+                    builder.installer_arg(arg)
+                };
+                let updater = builder
                     .endpoints(vec![manifest])
                     .map_err(|_| {
                         IpcError::new("update_check_failed", "Could not check for updates.")
@@ -809,6 +892,29 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn only_the_registered_program_can_update_that_installation() {
+        let base = std::env::temp_dir().join(format!("wenyi-registration-{}", std::process::id()));
+        let installed = base.join("Installed Copy");
+        let copied = base.join("Copied");
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::create_dir_all(&copied).unwrap();
+        let uninstaller = installed.join("uninstall.exe");
+        std::fs::write(&uninstaller, []).unwrap();
+        let location = format!("\"{}\"", installed.display());
+        let uninstall = format!("\"{}\"", uninstaller.display());
+        let registered =
+            |exe: PathBuf, cmd: &str| registered_program(&exe, &location, "app.exe", cmd).unwrap();
+        assert_eq!(
+            registered(installed.join("app.exe"), &uninstall),
+            Some(installed.clone())
+        );
+        assert!(registered(copied.join("app.exe"), &uninstall).is_none());
+        assert!(registered(installed.join("other.exe"), &uninstall).is_none());
+        assert!(registered(installed.join("app.exe"), "").is_none());
+        std::fs::remove_dir_all(base).unwrap();
+    }
 
     fn controls(
         replies: Vec<(&'static str, Option<u16>)>,

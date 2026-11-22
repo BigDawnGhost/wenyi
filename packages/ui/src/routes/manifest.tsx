@@ -116,7 +116,7 @@ type SettingsNavEntry = {
 const settingsSections: SettingsNavEntry[] = [
   { id: "general", label: "settings.sectionGeneral", icon: Settings2 },
   { id: "providers", label: "settings.sectionProviders", icon: Plug },
-  { id: "defaults", label: "settings.sectionDefaultModels", icon: Sparkles },
+  { id: "defaults", label: "settings.stageModels", icon: Sparkles },
   { id: "workflow", label: "settings.sectionWorkflow", icon: Workflow },
   { id: "pdf", label: "settings.sectionPdf", icon: FileScan },
   { id: "advanced", label: "settings.sectionAdvanced", icon: Code },

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from enum import Enum
+from pathlib import Path
+from zipfile import BadZipFile
 
 import typer
 from rich.progress import Progress
@@ -27,6 +29,25 @@ class TranslationMode(str, Enum):
 
 
 def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> None:
+    @app.command(rich_help_panel="Main workflow")
+    def mineru_epub(
+        source: Path = typer.Argument(
+            ..., exists=True, dir_okay=False, help="MinerU ZIP or Content List V2 JSON"
+        ),
+        output: Path = typer.Argument(..., help="Destination .epub file"),
+        title: str | None = typer.Option(None, help="Override the book title"),
+        lang: str = typer.Option("en", help="Source language tag"),
+    ) -> None:
+        """Convert a local MinerU result to a source EPUB without uploading or translating."""
+        from wenyi_core.ingest.mineru_epub import convert_json
+
+        try:
+            convert_json(source, output, title=title, lang=lang)
+        except (BadZipFile, OSError, ValueError, RuntimeError) as error:
+            typer.echo(f"Conversion failed: {error}", err=True)
+            raise typer.Exit(1) from None
+        typer.echo(f"Wrote {output}")
+
     @app.command(rich_help_panel="Main workflow")
     def parse(
         input_path: str = typer.Argument(..., help="Source book to parse without AI"),

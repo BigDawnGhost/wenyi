@@ -268,7 +268,7 @@ def test_navigation_terms_feed_review_and_only_autofix_changes_body(
                 "review_conflict_arbitration": False,
                 "review_concurrency": 1,
             },
-            "output": {"bilingual": True, "punctuation_normalize": False},
+            "output": {"bilingual": True},
         }
     )
     reviewed = []

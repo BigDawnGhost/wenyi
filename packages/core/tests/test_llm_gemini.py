@@ -149,7 +149,7 @@ def test_gemini_client_complete_and_usage():
     cfg = model_config(
         kind="gemini",
         api_key_env="TEST_GEMINI_KEY",
-        profiles={"strong": dict(model="gemini-3.6-flash", options={"temperature": 0.3})},
+        profiles={"default": dict(model="gemini-3.6-flash", options={"temperature": 0.3})},
     )
 
     mock_client_instance = MagicMock()
@@ -192,7 +192,7 @@ def test_gemini_client_retries_server_error_and_records_wait():
     cfg = model_config(
         kind="gemini",
         max_retries=1,
-        profiles={"strong": dict(model="gemini-3.6-flash")},
+        profiles={"default": dict(model="gemini-3.6-flash")},
     )
     request = httpx.Request("POST", "https://example.invalid")
     failure_response = httpx.Response(
@@ -230,7 +230,7 @@ def test_gemini_client_does_not_retry_client_error():
     cfg = model_config(
         kind="gemini",
         max_retries=4,
-        profiles={"strong": dict(model="gemini-3.6-flash")},
+        profiles={"default": dict(model="gemini-3.6-flash")},
     )
     failure = ClientError(401, {"message": "unauthorized"})
     sdk = MagicMock()
@@ -256,7 +256,7 @@ def test_gemini_client_json_mode():
     cfg = model_config(
         kind="gemini",
         api_key_env="TEST_GEMINI_KEY",
-        profiles={"strong": dict(model="gemini-3.6-flash")},
+        profiles={"default": dict(model="gemini-3.6-flash")},
     )
 
     mock_client_instance = MagicMock()
@@ -284,7 +284,7 @@ def test_gemini_client_safety_block():
     cfg = model_config(
         kind="gemini",
         api_key_env="TEST_GEMINI_KEY",
-        profiles={"strong": dict(model="gemini-3.6-flash")},
+        profiles={"default": dict(model="gemini-3.6-flash")},
     )
 
     mock_client_instance = MagicMock()
@@ -335,6 +335,6 @@ def test_factory_build_client_gemini():
     cfg = Config.from_dict({"llm": {"preset": "gemini"}})
     client = build_client(cfg)
     assert isinstance(client, RoutedLLMClient)
-    assert isinstance(client.adapter("default"), GeminiClient)
+    assert isinstance(client.adapter("gemini"), GeminiClient)
     with pytest.raises(ValueError, match="Unknown provider"):
         Config.from_dict({"llm": {"preset": "google"}})

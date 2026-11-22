@@ -1,4 +1,4 @@
-"""Global analysis agent using the strong tier.
+"""Global analysis agent using the style analysis route.
 Read sample chapters to produce a style guide and character references with gender and
 voice. Name mappings and terminology extraction belong to the translation glossary workflow.
 """

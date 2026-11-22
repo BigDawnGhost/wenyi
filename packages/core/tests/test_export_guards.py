@@ -32,13 +32,7 @@ def _run_full_pipeline(input_path: str, state_dir: str):
     cfg = Config.from_dict(
         {
             "language": {"source": "ja", "target": "zh"},
-            "llm": {
-                "preset": "fake",
-                "models": {
-                    "default_strong": {"provider": "default", "model": "p"},
-                    "default_cheap": {"provider": "default", "model": "f"},
-                },
-            },
+            "llm": {"preset": "fake"},
             "pipeline": {"review": True, "review_autofix": False, "polish": True},
             "paths": {"state_dir": state_dir},
         }

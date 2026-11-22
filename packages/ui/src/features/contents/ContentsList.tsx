@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
-import { BookOpen, Pencil } from "lucide-react";
+import { BookOpen } from "lucide-react";
 import { useI18n } from "../../i18n";
-import { Button } from "../../components/ui/button";
 import { Card, CardContent } from "../../components/ui/card";
+import { EditButton } from "../../components/ui/edit-button";
 
 export interface ContentsEntry {
   id: string;
@@ -78,16 +78,11 @@ export function ContentsList({
                     <BookOpen className="h-4 w-4" aria-hidden="true" />
                   </Link>
                 )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t("contents.editTitle")}
-                  title={t("contents.editTitle")}
+                <EditButton
+                  label={t("contents.editTitle")}
                   disabled={readOnly}
                   onClick={() => onEdit(entry.id)}
-                >
-                  <Pencil className="h-4 w-4" aria-hidden="true" />
-                </Button>
+                />
               </div>
             </li>
           ))}

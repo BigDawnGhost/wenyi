@@ -17,24 +17,21 @@ import { cn } from "../../lib/utils";
 import { ModelSelection } from "./ModelSelection";
 import { ExportSettings } from "./ExportSettings";
 import { ProviderSettings } from "./ProviderSettings";
+import type { ProviderChanges } from "./ProviderDialog";
 import { PdfSettings } from "./PdfSettings";
 import { SettingsActionBar, SettingsGroup, SettingsSection } from "./SettingsSection";
 import { WorkflowSettings, workflowField } from "./WorkflowSettings";
-import { renameRegistryId, type RegistryGroup } from "./registryEdits";
+import { renameSelections } from "./registryEdits";
 import { SETTINGS_CONTENT_CLASSNAME } from "./SettingsRow";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
-const noPendingCredentials = () => false;
 
 export function GlobalConfiguration({ section }: { section: SettingsSectionId }) {
   const { t } = useI18n();
   const location = useLocation();
   const qc = useQueryClient();
   const credentials = platform().capabilities.credentials;
-  // The platform is fixed before React mounts, so the hook identity is stable.
-  const useCredentialsPending = credentials?.usePending ?? noPendingCredentials;
-  const credentialsPending = useCredentialsPending();
   const Updates = platform().capabilities.updates?.Section;
   const Diagnostics = platform().capabilities.diagnostics?.Section;
   const mutations = useIsMutating();
@@ -49,57 +46,33 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
   });
   const [draft, setDraft] = useState<GlobalConfig | null>(null);
   const [yamlDirty, setYamlDirty] = useState(false);
-  // A toast disappears; a key that failed to reach the credential store stays
-  // unsaved until the user acts, so the reason has to stay on the page.
-  const [credentialsFailed, setCredentialsFailed] = useState(false);
   const [uncommitted, setUncommitted] = useState(false);
-  const [registryKey, setRegistryKey] = useState(0);
-  const [editingIds, setEditingIds] = useState(false);
-  const [renames, setRenames] = useState<Record<string, string>>({});
-  const [providerRenames, setProviderRenames] = useState<Record<string, string>>({});
+  const [providerSaving, setProviderSaving] = useState(false);
   useEffect(() => {
     if (query.data && !draft) setDraft(query.data);
   }, [query.data, draft]);
-  useEffect(() => () => credentials?.retain([]), [credentials]);
   const input = () => ({
     yaml: draft!.yaml,
     revision: draft!.revision,
     default_template: "标准翻译" as const,
-    model_renames: renames,
-    ...(credentials ? { provider_renames: providerRenames } : {}),
   });
   const apply = (value: GlobalConfig) => {
     setDraft(value);
     setYamlDirty(false);
   };
+  const rememberSaved = (value: GlobalConfig) => {
+    if (credentials) void credentials.refresh();
+    qc.setQueryData(["globalConfig"], value);
+    for (const key of ["config", "models", "templates"])
+      void qc.invalidateQueries({ queryKey: [key] });
+  };
   const save = useMutation({
-    mutationFn: async () => {
-      // Keep submitted keys outside the mutation cache and independent of the page draft.
-      const commitCredentials = credentials?.prepareCommit();
-      const value = await api.saveGlobalConfig(input());
-      // Keys are written only after their connections exist in the saved configuration.
-      let keysFailed = false;
-      if (commitCredentials) {
-        try {
-          await commitCredentials(Object.keys(object(object(value.effective.llm).providers)));
-        } catch {
-          keysFailed = true;
-        }
-      }
-      return { value, keysFailed };
-    },
-    onSuccess: ({ value, keysFailed }) => {
+    mutationFn: () => api.saveGlobalConfig(input()),
+    onSuccess: (value) => {
       apply(value);
       setUncommitted(false);
-      setRenames({});
-      setProviderRenames({});
-      if (credentials) void credentials.refresh();
-      qc.setQueryData(["globalConfig"], value);
-      for (const key of ["config", "models", "templates"])
-        void qc.invalidateQueries({ queryKey: [key] });
-      setCredentialsFailed(keysFailed);
-      if (keysFailed) toast.error(t("settings.credentialsFailed"));
-      else toast.success(t("settings.globalSaved"));
+      rememberSaved(value);
+      toast.success(t("settings.globalSaved"));
     },
   });
   const validate = useMutation({
@@ -115,10 +88,6 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
     onSuccess: (value) => {
       setUncommitted(true);
       apply({ ...value, revision: draft!.revision });
-      setRenames({});
-      setProviderRenames({});
-      setRegistryKey((value) => value + 1);
-      credentials?.retain(Object.keys(object(object(value.effective.llm).providers)));
       toast.success(t("settings.defaultsLoaded"));
     },
   });
@@ -126,8 +95,8 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
   // Installing a credential is a state the page is in, so it disables the form.
   // A request in flight is not: disabling for it applied the disabled face to
   // every control and stripped the hover state from the button being pressed.
-  const pending = save.isPending || validate.isPending || restore.isPending;
-  const disabled = !draft || yamlDirty || installing;
+  const pending = providerSaving || save.isPending || validate.isPending || restore.isPending;
+  const disabled = !draft || yamlDirty || installing || providerSaving;
   const effective = draft?.effective || {};
   const llm = object(effective.llm);
   // Until the first load completes there is no draft to compare against, so
@@ -136,7 +105,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
   // bar, shifts the bar sideways before the load settles.
   const loaded = !!draft;
   const configSaved = loaded && draft.yaml === query.data?.yaml;
-  const dirty = (loaded && !configSaved) || uncommitted || yamlDirty || credentialsPending;
+  const dirty = (loaded && !configSaved) || uncommitted || yamlDirty;
   const change = (next: Document) => {
     if (draft)
       setDraft({
@@ -147,55 +116,54 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
   };
   const changeLlm = (value: Document) => {
     change({ ...effective, llm: { ...value, preset: null } });
-    credentials?.retain(Object.keys(object(value.providers)));
-    setProviderRenames((current) =>
-      Object.fromEntries(
-        Object.entries(current).filter(([, id]) => id in object(value.providers)),
-      ),
-    );
-    setRenames((current) =>
-      Object.fromEntries(
-        Object.entries(current).filter(([, id]) => id in object(value.models)),
-      ),
-    );
   };
-  const rename = (group: RegistryGroup, oldId: string, newId: string) => {
-    if (group === "providers" && credentials) {
-      credentials.rename(oldId, newId);
-      const next = { ...providerRenames };
-      const original = Object.keys(next).find((id) => next[id] === oldId);
-      if (original) {
-        if (original === newId) delete next[original];
-        else next[original] = newId;
-      } else if (oldId in object(object(query.data?.effective.llm).providers)) {
-        next[oldId] = newId;
+  const savedLlm = object(query.data?.effective.llm);
+  const registryEdited = ["providers", "models"].some(key => JSON.stringify(savedLlm[key]) !== JSON.stringify(llm[key]));
+  const saveProvider = async ({ llm: next, models, provider, revision }: ProviderChanges) => {
+    const saved = query.data!;
+    setProviderSaving(true);
+    try {
+      // Save only the registry change; keep unrelated workflow and route edits in the draft.
+      const registry = { preset: next.preset, providers: next.providers, models: next.models };
+      const value = await api.saveGlobalConfig({
+        yaml: JSON.stringify({
+          ...saved.effective,
+          llm: { ...savedLlm, ...registry, ...renameSelections(savedLlm, models) },
+        }),
+        revision,
+        default_template: saved.default_template,
+        model_renames: models,
+        ...(credentials && provider ? { provider_renames: { [provider.from]: provider.to } } : {}),
+      });
+      const savedRegistry = object(value.effective.llm);
+      if (configSaved) {
+        apply(value);
+      } else {
+        setDraft(current => {
+          if (!current) return current;
+          const currentLlm = object(current.effective.llm);
+          const effective = {
+            ...current.effective,
+            llm: {
+              ...currentLlm,
+              preset: savedRegistry.preset,
+              providers: savedRegistry.providers,
+              models: savedRegistry.models,
+              ...renameSelections(currentLlm, models),
+            },
+          };
+          return { ...value, effective, yaml: JSON.stringify(effective, null, 2) };
+        });
       }
-      setProviderRenames(next);
+      rememberSaved(value);
+      return value;
+    } finally {
+      setProviderSaving(false);
     }
-    if (group === "models") {
-      const next = { ...renames };
-      const original = Object.keys(next).find((id) => next[id] === oldId);
-      if (original) {
-        if (original === newId) delete next[original];
-        else next[original] = newId;
-      } else if (
-        oldId in object(object(query.data?.effective.llm).models) &&
-        !(oldId in next)
-      )
-        next[oldId] = newId;
-      setRenames(next);
-    }
-    changeLlm(renameRegistryId(llm, group, oldId, newId));
   };
   return (
     <>
       <ErrorNotice error={query.error || error} />
-      {/* Distinct from the toast that announces the failure: this one stays, so
-          it describes the state the keys are in rather than repeating the event. */}
-      {credentialsFailed && (
-        <ErrorNotice error={t("settings.credentialsFailedNotice")} />
-      )}
-      {/* Keep controls mounted so category navigation preserves local ID/key drafts. */}
       <div className={SETTINGS_CONTENT_CLASSNAME}>
         <div hidden={section !== "general"}>
           <LanguageSettings />
@@ -209,28 +177,25 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
         </div>
         <div hidden={section !== "providers"}>
           <SettingsSection id="provider-models" title={t("settings.sectionProviders")} grouped>
-            <ProviderSettings
-              key={registryKey}
-              config={effective}
-              kinds={caps?.providers || []}
-              disabled={disabled}
-              onChange={changeLlm}
-              onRename={rename}
-              onEditingChange={setEditingIds}
-              saved={configSaved && !credentialsPending}
-            />
+            {section === "providers" && <ProviderSettings
+              revision={query.data?.revision ?? 0}
+              llm={savedLlm}
+              draftLlm={llm}
+              capabilities={caps}
+              disabled={disabled || pending || registryEdited}
+              onSave={saveProvider}
+            />}
           </SettingsSection>
         </div>
         <div hidden={section !== "defaults"}>
-          <SettingsSection title={t("settings.sectionDefaultModels")} grouped>
-            <SettingsGroup title={t("settings.modelTiers")}>
-              <ModelSelection
-                llm={llm}
-                models={object(llm.models)}
-                disabled={disabled}
-                onChange={changeLlm}
-              />
-            </SettingsGroup>
+          <SettingsSection title={t("settings.stageModels")} grouped>
+            <ModelSelection
+              llm={llm}
+              models={object(llm.models)}
+              registeredModels={draft?.registered_models}
+              disabled={disabled}
+              onChange={changeLlm}
+            />
           </SettingsSection>
         </div>
         <div hidden={section !== "workflow"}>
@@ -280,8 +245,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
             <LazyBoundary>
               <Updates
                 blocked={!draft || !query.data || draft.yaml !== query.data.yaml ||
-                  uncommitted || yamlDirty || editingIds || pending || mutations > 0 ||
-                  Object.keys(renames).length > 0 || Object.keys(providerRenames).length > 0}
+                  uncommitted || yamlDirty || pending || mutations > 0}
                 onInstalling={setInstalling}
               />
             </LazyBoundary>
@@ -290,19 +254,14 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
       </div>
       <SettingsActionBar
         notices={
-          yamlDirty || editingIds || dirty ? (
+          yamlDirty || dirty ? (
             <>
               {yamlDirty && (
                 <Link to="/settings/advanced" state={location.state} className="block text-warning-text underline underline-offset-4">
                   {t("settings.advancedYamlHasUnvalidatedChangesValidateIt")}
                 </Link>
               )}
-              {editingIds && (
-                <Link to="/settings/providers" state={location.state} className="block text-warning-text underline underline-offset-4">
-                  {t("registry.finishRenaming")}
-                </Link>
-              )}
-              {!yamlDirty && !editingIds && dirty && (
+              {!yamlDirty && dirty && (
                 <span className="text-muted-foreground">{t("settings.unsavedSummary")}</span>
               )}
             </>
@@ -320,7 +279,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
         {section === "advanced" && (
           <Button
             variant="outline"
-            disabled={!draft || editingIds}
+            disabled={!draft}
             aria-busy={validate.isPending || undefined}
             onClick={() => { if (!pending) validate.mutate(); }}
           >
@@ -328,7 +287,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
           </Button>
         )}
         <Button
-          disabled={!draft || editingIds}
+          disabled={!draft}
           aria-busy={save.isPending || undefined}
           onClick={() => { if (!pending) save.mutate(); }}
         >

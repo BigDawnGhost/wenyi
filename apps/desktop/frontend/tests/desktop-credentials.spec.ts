@@ -1,5 +1,9 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { fakeApi, globalConfiguration } from "../../../../packages/ui/sandbox/fixtures";
+
+const editProvider = (page: Page) => page.getByRole("button", { name: "Edit provider deepseek" }).click();
+const saveProvider = (page: Page) => page.getByRole("button", { name: "Save provider" }).click();
+const cancelProvider = (page: Page) => page.getByRole("button", { name: "Cancel", exact: true }).click();
 
 test("API keys are typed directly, saved with the configuration and shown masked", async ({ page }) => {
   await page.addInitScript(() => {
@@ -46,6 +50,7 @@ test("API keys are typed directly, saved with the configuration and shown masked
   });
   await page.goto("/settings/providers");
   // No separate save button and no prerequisite save: the field is ready immediately.
+  await editProvider(page);
   await expect(page.getByRole("button", { name: "Save key", exact: true })).toHaveCount(0);
   const secret = page.getByLabel("API key", { exact: true });
   const eye = page.getByRole("button", { name: "Show key", exact: true });
@@ -58,13 +63,19 @@ test("API keys are typed directly, saved with the configuration and shown masked
   await expect(secret).toHaveAttribute("type", "password");
   await secret.fill("fake-ui-secret-not-real");
   await page.getByLabel("Model name", { exact: true }).fill("edited-model");
+  await saveProvider(page);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await editProvider(page);
+  await secret.fill("discarded-test-value");
+  await cancelProvider(page);
   await page.getByRole("link", { name: "General", exact: true }).click();
   await page.getByRole("link", { name: "Models & connections", exact: true }).click();
+  await editProvider(page);
   await expect(secret).toHaveValue("fake-ui-secret-not-real");
-  expect(submissions).toEqual([]);
-  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
-  await expect(page.getByText("Global settings saved", { exact: true })).toBeVisible();
+  await cancelProvider(page);
+  expect(submissions).toHaveLength(1);
   // The saved key stays in the field, masked.
+  await editProvider(page);
   await expect(secret).toHaveValue("fake-ui-secret-not-real");
   await expect(secret).toHaveAttribute("type", "password");
   await expect(page.getByText(/Enter it again after restarting Desktop/)).toBeVisible();
@@ -74,22 +85,27 @@ test("API keys are typed directly, saved with the configuration and shown masked
   expect(await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage })))
     .not.toContain("fake-ui-secret");
   await page.reload();
+  await editProvider(page);
   // After a restart of the page the stored key is loaded back into the masked field.
   await expect(secret).toHaveValue("fake-ui-secret-not-real");
   await expect(secret).toHaveAttribute("type", "password");
   // An unchanged field writes nothing; clearing it removes the stored key on save.
-  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
-  await expect(page.getByText("Global settings saved", { exact: true })).toBeVisible();
+  await saveProvider(page);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(submissions).toHaveLength(1);
+  await editProvider(page);
   await secret.fill("");
-  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+  await saveProvider(page);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect.poll(() => submissions.length).toBe(2);
   expect(submissions[1]).toEqual({ mode: "manual", clear: true });
+  await editProvider(page);
   await expect(secret).toHaveAttribute("placeholder", "Enter API key");
-  await expect(page.getByLabel("API key environment variable", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Use environment variable instead", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Use environment variable instead", exact: true })).toBeDisabled();
-  expect(submissions[2]).toEqual({ mode: "environment", clear: true });
+  await expect(page.getByLabel("API key environment variable", { exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Use environment variable instead" })).toHaveCount(0);
+  await saveProvider(page);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(submissions).toHaveLength(2);
 });
 
 test("a key entered for a new connection is saved under its renamed ID", async ({ page }) => {
@@ -106,6 +122,11 @@ test("a key entered for a new connection is saved under its renamed ID", async (
     } });
   });
   await page.route("**/api/desktop/credentials", (route) => route.fulfill({ json: {} }));
+  const listings: Record<string, unknown>[] = [];
+  await page.route("**/api/settings/models/list", async route => {
+    listings.push(route.request().postDataJSON());
+    await route.fulfill({ json: { ok: true, category: "ok", models: [], message: "" } });
+  });
   await page.route("**/api/desktop/credentials/*", async (route) => {
     writes.push(decodeURIComponent(new URL(route.request().url()).pathname.split("/").pop()!));
     await route.fulfill({ json: {
@@ -114,13 +135,23 @@ test("a key entered for a new connection is saved under its renamed ID", async (
     } });
   });
   await page.goto("/settings/providers");
-  await page.getByRole("button", { name: "Add API connection", exact: true }).click();
-  await page.locator("#credential-secret-provider1").fill("fake-new-connection-key");
+  await page.getByRole("button", { name: "Add provider", exact: true }).click();
+  await page.getByLabel("API base URL", { exact: true }).fill("https://example.invalid/v1");
+  await page.getByLabel("Model name", { exact: true }).fill("remote-model");
+  const key = page.getByLabel("API key", { exact: true });
+  await key.fill("fake-new-connection-key");
   const id = page.getByLabel("Connection ID", { exact: true }).last();
   await id.fill("renamed");
-  await id.press("Enter");
-  await expect(page.locator("#credential-secret-renamed")).toHaveValue("fake-new-connection-key");
-  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+  await page.getByRole("button", { name: "Fetch models" }).click();
+  await expect.poll(() => listings).toEqual([expect.objectContaining({
+    connection: null, api_key: "fake-new-connection-key",
+  })]);
+  const emptyListing = page.getByRole("status").filter({ hasText: "The provider returned no models." });
+  await expect(emptyListing).toBeVisible();
+  await key.fill("fake-replacement-key");
+  await expect(emptyListing).toHaveCount(0);
+  await saveProvider(page);
+  await expect(page.getByRole("button", { name: "Edit provider renamed" })).toBeVisible();
   await expect.poll(() => writes).toEqual(["renamed"]);
 });
 
@@ -138,6 +169,7 @@ test("credential reads never retry or automatically recheck on focus/reconnect",
     return route.fulfill({ status: 503, json: { detail: "Credential store unavailable" } });
   });
   await page.goto("/settings/providers");
+  await editProvider(page);
   await expect(page.getByRole("alert").filter({ hasText: "Credential store unavailable" })).toBeVisible();
   await page.clock.runFor(60_000);
   await page.evaluate(() => {
@@ -156,13 +188,12 @@ test("credential reads never retry or automatically recheck on focus/reconnect",
   });
   await page.clock.runFor(1000);
   expect(reads).toBe(1);
-  await expect(page.getByLabel("API key environment variable", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("API key", { exact: true })).toBeEnabled();
   await page.getByRole("button", { name: "Recheck", exact: true }).click();
   await expect.poll(() => reads).toBe(2);
 });
 
-for (const revisit of [false, true]) {
-  test(`saving keys survives leaving Settings${revisit ? " and preserves a newer draft" : ""}`, async ({ page }) => {
+test("provider save prevents dismissal until configuration and credentials complete", async ({ page }) => {
     await page.addInitScript(() => Object.assign(window, {
       __WENYI_DESKTOP__: { apiBase: "http://127.0.0.1:4174/api", token: "fixture" },
     }));
@@ -180,10 +211,10 @@ for (const revisit of [false, true]) {
       await route.fulfill({ json: globalConfiguration });
     });
     await page.route("**/api/desktop/credentials", route =>
-      route.fulfill({ json: stored ? { default: status } : {} }));
-    await page.route("**/api/desktop/credentials/default/secret", route =>
+      route.fulfill({ json: stored ? { deepseek: status } : {} }));
+    await page.route("**/api/desktop/credentials/deepseek/secret", route =>
       route.fulfill({ json: { secret: stored } }));
-    await page.route("**/api/desktop/credentials/default", route => {
+    await page.route("**/api/desktop/credentials/deepseek", route => {
       const body = route.request().postDataJSON();
       writes.push(body);
       stored = body.secret;
@@ -191,42 +222,27 @@ for (const revisit of [false, true]) {
     });
     try {
       await page.goto("/settings/providers");
+      await editProvider(page);
       const key = page.getByLabel("API key", { exact: true });
       await key.fill("fake-submitted-key");
+      await page.getByLabel("Model name", { exact: true }).fill("updated-model");
       const submitted = page.waitForRequest(request =>
         new URL(request.url()).pathname === "/api/settings" && request.method() === "PUT");
-      await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+      await saveProvider(page);
       await submitted;
-      await page.getByRole("button", { name: "Back", exact: true }).click();
-      // Wait for the page to unmount, not just for navigation to start.
-      await expect(key).toHaveCount(0);
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
       expect(writes).toEqual([]);
-      if (revisit) {
-        await page.getByRole("link", { name: "Settings", exact: true }).click();
-        await page.getByRole("link", { name: "Models & connections", exact: true }).click();
-        await key.fill("fake-newer-draft");
-      }
       release();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
       await expect.poll(() => writes).toEqual([{ mode: "manual", secret: "fake-submitted-key" }]);
-      if (revisit) {
-        await expect(key).toHaveValue("fake-newer-draft");
-        await expect(page.getByRole("button", { name: "Test connection", exact: true })).toBeDisabled();
-        await page.getByRole("button", { name: "Save configuration", exact: true }).click();
-        await expect.poll(() => writes).toEqual([
-          { mode: "manual", secret: "fake-submitted-key" },
-          { mode: "manual", secret: "fake-newer-draft" },
-        ]);
-        await expect(page.getByRole("button", { name: "Test connection", exact: true })).toBeEnabled();
-      } else {
-        await page.getByRole("link", { name: "Settings", exact: true }).click();
-        await page.getByRole("link", { name: "Models & connections", exact: true }).click();
-        await expect(key).toHaveValue("fake-submitted-key");
-      }
+      await editProvider(page);
+      await expect(key).toHaveValue("fake-submitted-key");
     } finally {
       release();
     }
-  });
-}
+});
 
 test("saving a padded key normalizes the field and clears the pending state", async ({ page }) => {
   await page.addInitScript(() => Object.assign(window, {
@@ -245,9 +261,14 @@ test("saving a padded key normalizes the field and clears the pending state", as
     system_storage_available: false, requires_key: true,
   };
   await page.route("**/api/desktop/credentials", route =>
-    route.fulfill({ json: writes.length ? { default: status } : {} }));
-  await page.route("**/api/desktop/credentials/default", route => {
-    writes.push(route.request().postDataJSON());
+    route.fulfill({ json: writes.length ? { deepseek: status } : {} }));
+  let stored = "";
+  await page.route("**/api/desktop/credentials/deepseek/secret", route =>
+    route.fulfill({ json: { secret: stored } }));
+  await page.route("**/api/desktop/credentials/deepseek", route => {
+    const body = route.request().postDataJSON();
+    writes.push(body);
+    stored = body.secret;
     return route.fulfill({ json: status });
   });
   await page.goto("/settings/updates");
@@ -256,14 +277,15 @@ test("saving a padded key normalizes the field and clears the pending state", as
   const install = page.getByRole("button", { name: "Install and restart", exact: true });
   await expect(install).toBeEnabled();
   await page.getByRole("link", { name: "Models & connections", exact: true }).click();
+  await editProvider(page);
   await key.fill(" fake-padded-key ");
-  await page.getByRole("link", { name: "About", exact: true }).click();
-  await expect(install).toBeDisabled();
-  await save.click();
-  await page.getByRole("link", { name: "Models & connections", exact: true }).click();
+  await saveProvider(page);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await editProvider(page);
   await expect(key).toHaveValue("fake-padded-key");
-  await expect(page.getByText("Unsaved changes", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Test connection", exact: true })).toBeEnabled();
+  await cancelProvider(page);
+  await expect(page.getByText("Unsaved changes", { exact: true })).toHaveCount(0);
   await page.getByRole("link", { name: "About", exact: true }).click();
   await expect(install).toBeEnabled();
   await expect(save).toBeEnabled();
@@ -284,38 +306,52 @@ for (const stage of ["configuration", "credential"]) {
     await fakeApi(page);
     let fail = true;
     const writes: unknown[] = [];
+    let configWrites = 0;
+    let saved = globalConfiguration;
+    let stored = "";
     const status = {
       mode: "manual", storage: "session", available: true, environment: null,
       system_storage_available: false, requires_key: true,
     };
     await page.route("**/api/settings", route => {
-      if (route.request().method() === "PUT" && stage === "configuration" && fail)
-        return route.fulfill({ status: 503, json: { detail: "Configuration unavailable" } });
-      return route.fulfill({ json: globalConfiguration });
+      if (route.request().method() === "PUT") {
+        configWrites++;
+        if (stage === "configuration" && fail)
+          return route.fulfill({ status: 503, json: { detail: "Configuration unavailable" } });
+        const { yaml } = route.request().postDataJSON();
+        saved = { ...saved, yaml, effective: JSON.parse(yaml), revision: saved.revision + 1 };
+      }
+      return route.fulfill({ json: saved });
     });
     await page.route("**/api/desktop/credentials", route =>
-      route.fulfill({ json: fail ? {} : { default: status } }));
-    await page.route("**/api/desktop/credentials/default", route => {
-      writes.push(route.request().postDataJSON());
-      return stage === "credential" && fail
-        ? route.fulfill({ status: 503, json: { detail: "Credential unavailable" } })
-        : route.fulfill({ json: status });
+      route.fulfill({ json: stored ? { deepseek: status } : {} }));
+    await page.route("**/api/desktop/credentials/deepseek/secret", route =>
+      route.fulfill({ json: { secret: stored } }));
+    await page.route("**/api/desktop/credentials/deepseek", route => {
+      const body = route.request().postDataJSON();
+      writes.push(body);
+      if (stage === "credential" && fail)
+        return route.fulfill({ status: 503, json: { detail: "Credential unavailable" } });
+      stored = body.secret;
+      return route.fulfill({ json: status });
     });
     await page.goto("/settings/providers");
+    await editProvider(page);
     const key = page.getByLabel("API key", { exact: true });
-    const save = page.getByRole("button", { name: "Save configuration", exact: true });
     await key.fill(" fake-retry-key ");
-    await save.click();
-    await expect(page.getByText(stage === "configuration"
+    await page.getByLabel("Model name", { exact: true }).fill("updated-model");
+    await saveProvider(page);
+    await expect(page.getByRole("dialog").getByRole("alert")).toContainText(stage === "configuration"
       ? "Configuration unavailable"
-      : "Configuration saved, but an API key could not be saved. Save again to retry.",
-    { exact: true })).toBeVisible();
-    await expect(save).toBeEnabled();
+      : "Configuration saved, but an API key could not be saved. Save again to retry.");
     await expect(key).toHaveValue(" fake-retry-key ");
     await expect(page.getByRole("button", { name: "Test connection", exact: true })).toBeDisabled();
     expect(writes).toHaveLength(stage === "configuration" ? 0 : 1);
     fail = false;
-    await save.click();
+    await saveProvider(page);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(configWrites).toBe(stage === "configuration" ? 2 : 1);
+    await editProvider(page);
     await expect(key).toHaveValue("fake-retry-key");
     await expect(page.getByRole("button", { name: "Test connection", exact: true })).toBeEnabled();
     expect(writes).toEqual(Array(stage === "configuration" ? 1 : 2)

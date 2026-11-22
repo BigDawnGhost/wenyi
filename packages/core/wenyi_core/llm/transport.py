@@ -1,4 +1,4 @@
-"""Provider transport contracts without workflow orchestration or tier selection."""
+"""Provider transport contracts without workflow orchestration or model selection."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict
 
 from .configuration import ProviderConfig
 from .retrying import RetryReporter, provider_retry
+from .thinking import ThinkingControl
 from .usage import UsageSample
 
 OptionsT = TypeVar("OptionsT", bound=BaseModel)
@@ -34,7 +35,7 @@ class RequestContext:
     """Per-call hooks; shared adapters never retain mutable request context."""
 
     operation: str
-    tier: str
+    profile: str
     max_tokens: int | None
     emit: Callable[..., None]
     record_usage: Callable[[UsageSample | None], None]
@@ -52,6 +53,11 @@ class ProviderAdapter(ABC):
     requires_base_url = True
     protocol_version = 1
     connection_options: type[BaseModel] = ConnectionOptions
+    thinking_control: ThinkingControl | None = None
+
+    @classmethod
+    def route_thinking(cls, connection: ProviderConfig, model: str) -> ThinkingControl | None:
+        return cls.thinking_control
 
     def __init__(self, cfg: ProviderConfig, *, credentials: tuple[str | None] | None = None):
         self.validate_connection(cfg)
@@ -100,7 +106,7 @@ class ProviderAdapter(ABC):
         """Keep one transient retry budget when an adapter negotiates a wire format."""
         reporter = RetryReporter(
             provider=self.cfg.kind,
-            tier=context.tier,
+            profile=context.profile,
             stage=context.operation,
             max_attempts=self.cfg.max_retries + 1,
             emit=context.emit,

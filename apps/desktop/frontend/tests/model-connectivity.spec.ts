@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { fakeApi } from "../../../../packages/ui/sandbox/fixtures";
 
-test("Desktop tests saved model connections next to the credential fields", async ({ page }) => {
+test("Desktop probes the saved connection next to the credential fields", async ({ page }) => {
   await page.addInitScript(() => {
     Object.assign(window, {
       __WENYI_DESKTOP__: { apiBase: "http://127.0.0.1:4174/api", token: "fixture" },
@@ -10,12 +10,13 @@ test("Desktop tests saved model connections next to the credential fields", asyn
   await fakeApi(page);
   let requests = 0;
   await page.route("**/api/settings/models/ping", async (route) => {
+    expect(route.request().postDataJSON()).toEqual({ connection: "deepseek" });
     requests++;
     await route.fulfill({
       json: [
         {
-          profile: "default_model",
-          connection: "default",
+          profile: "deepseek/deepseek-flash",
+          connection: "deepseek",
           provider: "deepseek",
           model: "deepseek-flash",
           endpoint: null,
@@ -30,6 +31,7 @@ test("Desktop tests saved model connections next to the credential fields", asyn
     });
   });
   await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
   await page.getByRole("button", { name: "Test connection", exact: true }).click();
   const status = page.getByRole("status").filter({ hasText: "unreachable" });
   await expect(status).toContainText("No API key is configured for this connection.");

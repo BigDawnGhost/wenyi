@@ -207,7 +207,6 @@ def test_direct_translation_polishing_review_and_resume(source, target):
                         str(path),
                         out_format=fmt,
                         bilingual=bilingual,
-                        punctuation_normalize=True,
                     )
                 )
                 assert f".{target}{'-bi' if bilingual else ''}." in output.name

@@ -270,13 +270,7 @@ class TestRenderChapterHtmlBilingual(unittest.TestCase):
 def _config(state_dir: str, output: dict | None = None):
     raw = {
         "language": {"source": "ja", "target": "zh"},
-        "llm": {
-            "preset": "fake",
-            "models": {
-                "default_strong": {"provider": "default", "model": "p"},
-                "default_cheap": {"provider": "default", "model": "f"},
-            },
-        },
+        "llm": {"preset": "fake"},
         "pipeline": {
             "review": True,
             "review_autofix": False,

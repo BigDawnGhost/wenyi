@@ -1,5 +1,5 @@
 """Lightweight architecture tests protecting the thin orchestrator facade.
-Forbid direct agents/ingest/glossary/assemble/postprocess/llm imports, thread pools and
+Forbid direct agents/ingest/glossary/assemble/llm imports, thread pools and
 direct parsing/model/export calls. Require every extracted service to be assembled.
 Forbid lower-layer imports of orchestrator and agent imports of pipeline; agents may use
 top-level review models. Platform adapters reach orchestration through injected ports,
@@ -60,7 +60,6 @@ FORBIDDEN_TOP_LEVEL = (
     "ingest",
     "glossary",
     "assemble",
-    "postprocess",
     "llm",
 )
 

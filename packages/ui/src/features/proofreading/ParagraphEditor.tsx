@@ -9,7 +9,8 @@ import { api } from "../../api/client";
 import type { ChapterSegments } from "../../api/types";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/form";
-import { ErrorNotice, ReadOnlyNotice } from "../../components/ui/data";
+import { ErrorNotice } from "../../components/ui/data";
+import { bookTextFont } from "./bookText";
 import { RevisionHistory } from "./RevisionHistory";
 import { PrecisionDrafts } from "./PrecisionDrafts";
 
@@ -25,6 +26,7 @@ export function ParagraphEditor({
   initialView,
   readOnly,
   busy,
+  sourceLanguage,
   targetLanguage,
   onClose,
   onRefresh,
@@ -35,6 +37,7 @@ export function ParagraphEditor({
   initialView: "edit" | "history" | "precision";
   readOnly: boolean;
   busy: boolean;
+  sourceLanguage: string;
   targetLanguage?: string;
   onClose: () => void;
   onRefresh: () => Promise<void>;
@@ -222,7 +225,6 @@ export function ParagraphEditor({
         <ErrorNotice
           error={save.error || (view === "history" ? history.error : undefined)}
         />
-        {readOnly && <ReadOnlyNotice className="mb-4" />}
         {stale && (
           <div
             role="status"
@@ -248,7 +250,7 @@ export function ParagraphEditor({
         >
           <section className="min-w-0 space-y-3">
             <h3 className="text-sm font-medium">{t("common.source")}</h3>
-            <p className="whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]">
+            <p lang={sourceLanguage} className={cn("whitespace-pre-wrap text-sm leading-relaxed [overflow-wrap:anywhere]", bookTextFont(segment.source))}>
               {segment.source}
             </p>
           </section>
@@ -264,9 +266,10 @@ export function ParagraphEditor({
                 <Textarea
                   ref={textarea}
                   id="paragraph-draft"
+                  lang={targetLanguage}
                   value={draft}
                   disabled={disabled}
-                  className="min-h-44 resize-none overflow-hidden text-sm leading-relaxed"
+                  className={cn("min-h-44 resize-none overflow-hidden text-sm leading-relaxed", bookTextFont(draft))}
                   onChange={(event) => setDraft(event.target.value)}
                 />
               </>
@@ -278,6 +281,7 @@ export function ParagraphEditor({
                 source={segment.source}
                 beforePolish={segment.target_before_polish}
                 target={segment.target}
+                language={targetLanguage}
                 busy={busy}
               />
             ) : history.isPending ? (

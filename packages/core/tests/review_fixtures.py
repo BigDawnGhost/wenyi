@@ -16,13 +16,7 @@ def _config() -> Config:
     return Config.from_dict(
         {
             "language": {"source": "en", "target": "zh"},
-            "llm": {
-                "preset": "fake",
-                "models": {
-                    "default_strong": {"provider": "default", "model": "strong"},
-                    "default_cheap": {"provider": "default", "model": "cheap"},
-                },
-            },
+            "llm": {"preset": "fake"},
             "pipeline": {
                 "review_agent_max_evidence_rounds": 2,
             },
@@ -62,15 +56,11 @@ def autofix_config(state_dir: str) -> Config:
     return Config.from_dict(
         {
             "language": {"source": "ja", "target": "zh"},
-            "llm": {
-                "preset": "fake",
-                "models": {"default_strong": {"provider": "default", "model": "p"}},
-            },
+            "llm": {"preset": "fake"},
             "pipeline": {
                 "review_autofix": True,
                 "review_concurrency": 1,
             },
-            "output": {"punctuation_normalize": False},
             "paths": {"state_dir": state_dir},
         }
     )

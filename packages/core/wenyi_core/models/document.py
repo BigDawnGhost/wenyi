@@ -14,6 +14,12 @@ from pydantic import BaseModel, Field
 # Segment kinds.
 KIND_TEXT = "text"
 KIND_HEADING = "heading"
+MINERU_EPUB_DIGEST = "mineru_epub_sha256"
+
+
+def uses_epub_template(fmt: object, meta: object) -> bool:
+    """The uploaded format and the backfill template need not be the same."""
+    return fmt == "epub" or (fmt == "pdf" and isinstance(meta, dict) and MINERU_EPUB_DIGEST in meta)
 
 
 class Segment(BaseModel):
@@ -54,7 +60,7 @@ class Document(BaseModel):
     title: str = ""
     source_lang: str
     target_lang: str
-    fmt: str  # epub | text
+    fmt: str  # Original input format, not the format of a derived template.
     source_path: str = ""
     chapters: list[Chapter] = Field(default_factory=list)
     meta: dict[str, Any] = Field(default_factory=dict)
