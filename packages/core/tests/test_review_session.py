@@ -10,6 +10,7 @@ import pytest
 from wenyi_core.llm.retrying import ProviderRequestError
 from wenyi_core.models.document import Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
+from wenyi_core.review.evidence import BookEvidenceIndex
 from wenyi_core.review.run_store import ReviewRunStore
 
 from tests.fake_llm import METERED_TOTAL_TOKENS, MeteredFakeClient
@@ -233,3 +234,75 @@ def test_finished_fixer_trace_is_only_resumed_with_identical_guidance(tmp_path, 
     outcome = resumed._review.run_session(store, [])
     assert (outcome.result["review_id"] != previous["review_id"]) == (change != "unchanged")
     assert sum(c["operation"] == "review.fix" for c in client.calls) == int(change != "unchanged")
+
+
+def _chunked_project(directory):
+    """Two-segment book forced into two single-paragraph review chunks."""
+    config = _config(str(directory / "state"))
+    config.segment.max_tokens_per_batch = 1
+    config.pipeline.review_autofix = False
+    config.pipeline.review_agent_loop = False
+    config.pipeline.review_conflict_arbitration = False
+    config.pipeline.review_fix_loop = True
+    config.pipeline.review_clean_confirmations = 2
+
+    def handler(messages, tier, json_mode):
+        system, user = messages[0]["content"], messages[-1]["content"]
+        if "translation reviewer" in system:
+            issues = (
+                []
+                if "影子修订译文。" in user
+                else [
+                    {
+                        "index": 0,
+                        "type": "missing",
+                        "detail": "Missing meaning",
+                        "suggestion": "Restore it",
+                    }
+                ]
+            )
+            return _review_json(user, issues)
+        if "cautious revision editor" in system:
+            return _fix_json(user, "影子修订译文。")
+        raise AssertionError(system)
+
+    client = MeteredFakeClient(handler=handler)
+    store = _store(str(directory))
+    chapter = store.load_chapter(0)
+    chapter.segments.append(Segment(index=1, source="Second source.", target="Second target."))
+    store.save_chapter(chapter)
+    return Orchestrator(config, client), store, client
+
+
+def test_chunk_checkpoint_carries_usage_into_ledgers(tmp_path):
+    """Finished chunks ledger their usage as each chunk checkpoints, before any
+    phase-boundary flush, and a repeated flush never merges the same usage twice."""
+    orch, store, client = _chunked_project(tmp_path / "chunks")
+    run_store = ReviewRunStore(store.run_dir, storage=store)
+    chapter = store.load_chapter(0)
+    evidence = BookEvidenceIndex([chapter], [], {})
+    coordinator = orch._runtime.usage
+
+    def flush_usage():
+        coordinator.flush(store, scope="review", review=run_store)
+
+    issues = orch._review._rounds._chunks.review_chapter(
+        chapter.text_segments,
+        [],
+        chapter_index=0,
+        evidence=evidence,
+        debug=run_store,
+        review_round=1,
+        flush_usage=flush_usage,
+    )
+    assert len(issues) == 2
+
+    usage = run_store.load_usage()
+    assert usage is not None
+    assert usage["totals"]["calls"] == len(client.calls) == 2
+    assert usage["totals"]["total_tokens"] == 2 * METERED_TOTAL_TOKENS
+    assert store.load_usage()["totals"]["calls"] == 2
+
+    flush_usage()
+    assert run_store.load_usage()["totals"] == usage["totals"]
+    assert store.load_usage()["totals"]["calls"] == 2

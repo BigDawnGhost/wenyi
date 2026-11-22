@@ -67,6 +67,7 @@ class ReviewChunkService:
         target_overrides: Mapping[tuple[int, int], str] | None = None,
         review_round: int | None = None,
         on_chunk_finished: Callable[[int], None] | None = None,
+        flush_usage: Callable[[], None] | None = None,
     ) -> list[dict]:
         """Review contiguous chapter blocks in parallel and return chapter-local issue indices.
         Use blocks around three translation batches to reduce calls and repeated context.
@@ -75,7 +76,8 @@ class ReviewChunkService:
         snapshot across workers. Completed chunks and initial traces bypass model calls.
         Read fixed target/glossary snapshots. Recursively bisect invalid output and retry
         single paragraphs a bounded number of times. Merge results in original block order
-        for determinism.
+        for determinism. When ``flush_usage`` is provided it runs on the main thread after
+        each completed chunk checkpoint so interrupted scans keep finished-chunk usage.
         """
         budget = self._config.segment.max_tokens_per_batch * 3
         chunks = self.pack_contiguous(text_segs, budget)
@@ -430,6 +432,8 @@ class ReviewChunkService:
                     results.append(review_one(job))
                     if on_chunk_finished:
                         on_chunk_finished(len(job[1]))
+                    if flush_usage:
+                        flush_usage()
             else:
                 ordered_results: list[list[dict] | None] = [None] * len(jobs)
                 with ThreadPoolExecutor(max_workers=workers) as ex:
@@ -442,6 +446,8 @@ class ReviewChunkService:
                         ordered_results[position] = future.result()
                         if on_chunk_finished:
                             on_chunk_finished(segment_count)
+                        if flush_usage:
+                            flush_usage()
                 results = [result for result in ordered_results if result is not None]
         finally:
             if debug is not None:
