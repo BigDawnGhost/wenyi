@@ -139,3 +139,129 @@ def test_receipt_never_claims_missing_outputs(workflow, tmp_path, monkeypatch):
     response = invoke(source, tmp_path / "progress.json", result)
     assert response.exit_code == 1
     assert json.loads(result.read_text())["status"] == "failed"
+
+
+def _write_temp_config(tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        "paths:\n"
+        + f"  state_dir: {(tmp_path / 'state').as_posix()}\n"
+        + "llm:\n"
+        + "  preset: fake\n"
+    )
+    return config
+
+
+def _invoke_with_config(source, config, progress, result):
+    return CliRunner().invoke(
+        app,
+        [
+            "--config",
+            str(config),
+            "translate",
+            str(source),
+            "--progress-json",
+            str(progress),
+            "--result-json",
+            str(result),
+        ],
+    )
+
+
+def test_failed_receipt_reports_event_log_reason(tmp_path, monkeypatch):
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"%PDF-1.7\nsource\n%%EOF")
+    config = _write_temp_config(tmp_path)
+    result = tmp_path / "result.json"
+
+    class Workflow:
+        def __init__(self, *args, **kwargs):
+            self.client = FakeClient()
+
+        def run_all(self, input_path, *, progress, **kwargs):
+            from wenyi_core.config_rebuild import load_rebuilt_config
+            from wenyi_core.storage.run_store import RunStore, translation_run_dir
+
+            settings = load_rebuilt_config(str(config))
+            store = RunStore(
+                translation_run_dir(settings.state_dir, "paper", settings.target_lang),
+                create=True,
+            )
+            store.log_event(
+                "llm_retry_exhausted",
+                provider="fake",
+                profile="default",
+                stage="translate",
+                attempts=2,
+                reason="timeout",
+                error_type="TimeoutError",
+                status_code=None,
+                request_id="req-1",
+            )
+            raise RuntimeError("model backend unreachable")
+
+    monkeypatch.setattr("wenyi_core.pipeline.orchestrator.Orchestrator", Workflow)
+    response = _invoke_with_config(source, config, tmp_path / "progress.json", result)
+    assert response.exit_code == 1
+    receipt = json.loads(result.read_text())
+    assert receipt["status"] == "failed"
+    message = receipt["error"]["message"]
+    assert "LLM request failed after 2 attempts" in message
+    assert "TimeoutError" in message
+    assert "reason=timeout" in message
+    assert "stage=translate" in message
+    assert "model backend unreachable" not in message
+
+
+def test_failed_receipt_reports_unfinished_pipeline_steps(tmp_path, monkeypatch):
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"%PDF-1.7\nsource\n%%EOF")
+    config = _write_temp_config(tmp_path)
+    result = tmp_path / "result.json"
+
+    class Workflow:
+        def __init__(self, *args, **kwargs):
+            self.client = FakeClient()
+
+        def run_all(self, input_path, *, progress, **kwargs):
+            from wenyi_core.config_rebuild import load_rebuilt_config
+            from wenyi_core.storage.run_store import RunStore, translation_run_dir
+
+            settings = load_rebuilt_config(str(config))
+            store = RunStore(
+                translation_run_dir(settings.state_dir, "paper", settings.target_lang),
+                create=True,
+            )
+            store.log_event(
+                "run_steps_started", steps=["translate", "review"], input_path=str(input_path)
+            )
+            raise RuntimeError("cancelled by test")
+
+    monkeypatch.setattr("wenyi_core.pipeline.orchestrator.Orchestrator", Workflow)
+    response = _invoke_with_config(source, config, tmp_path / "progress.json", result)
+    assert response.exit_code == 1
+    message = json.loads(result.read_text())["error"]["message"]
+    assert "translate, review" in message
+    assert "cancelled by test" not in message
+
+
+def test_failed_receipt_falls_back_without_error_events(tmp_path, monkeypatch):
+    source = tmp_path / "paper.pdf"
+    source.write_bytes(b"%PDF-1.7\nsource\n%%EOF")
+    config = _write_temp_config(tmp_path)
+    result = tmp_path / "result.json"
+
+    class Workflow:
+        def __init__(self, *args, **kwargs):
+            self.client = FakeClient()
+
+        def run_all(self, input_path, *, progress, **kwargs):
+            raise RuntimeError("model backend unreachable")
+
+    monkeypatch.setattr("wenyi_core.pipeline.orchestrator.Orchestrator", Workflow)
+    response = _invoke_with_config(source, config, tmp_path / "progress.json", result)
+    assert response.exit_code == 1
+    receipt = json.loads(result.read_text())
+    assert receipt["status"] == "failed"
+    assert receipt["error"]["code"] == "translation_failed"
+    assert "no error events" in receipt["error"]["message"]

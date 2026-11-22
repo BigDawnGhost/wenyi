@@ -36,8 +36,9 @@ class MachineOutput:
         self.source = Path(source).resolve()
         self.run_id = uuid4().hex
         self.completed = False
+        self.config_path = Path(config).resolve()
         paths = [path for path in (self.progress_path, self.result_path) if path is not None]
-        protected = {self.source, Path(config).resolve()}
+        protected = {self.source, self.config_path}
         if output:
             protected.add(Path(output).resolve())
         if len(set(paths)) != len(paths) or protected.intersection(paths):
@@ -93,10 +94,19 @@ class MachineOutput:
         self.completed = True
 
     def failed(self) -> None:
+        # The failure reason lives in the run's event log; read it before the
+        # receipt replaces the previous one, and keep config values out of it.
+        from wenyi_cli.commands.inspection import describe_last_failure
+
+        message = describe_last_failure(str(self.source), str(self.config_path))
         self._write(
             self.result_path,
             status="failed",
             outputs=[],
-            error={"code": "translation_failed", "message": "See the Wenyi log for details."},
+            error={
+                "code": "translation_failed",
+                "message": message
+                or "Run failed but no error events were recorded; see the Wenyi log for details.",
+            },
         )
         self._write(self.progress_path, status="failed", done=0, total=None, label="Stopped")
