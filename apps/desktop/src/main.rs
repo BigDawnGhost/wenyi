@@ -349,7 +349,6 @@ fn main() {
     let startup_state = state.clone();
     let notification_workspace = workspace.clone();
     let window_store = window_state::Store::new(&workspace);
-    let event_window_store = window_store.clone();
     let tray_available = Arc::new(AtomicBool::new(false));
     let setup_tray = tray_available.clone();
     let app = tauri::Builder::default()
@@ -389,7 +388,7 @@ fn main() {
             notifications::desktop_notifications_set_enabled,
             interface_zoom::desktop_interface_zoom,
         ])
-        .on_window_event(move |window, event| {
+        .on_window_event(|window, event| {
             // A WebviewWindow's native drops are emitted as window events.
             if let tauri::WindowEvent::DragDrop(event) = event {
                 if let Some(window) = window.app_handle().get_webview_window(window.label()) {
@@ -405,7 +404,10 @@ fn main() {
                 )
             {
                 if let Some(window) = window.app_handle().get_webview_window(window.label()) {
-                    event_window_store.schedule(&window);
+                    window
+                        .app_handle()
+                        .state::<window_state::Store>()
+                        .schedule(&window);
                 }
             }
         })

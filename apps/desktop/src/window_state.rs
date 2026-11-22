@@ -37,6 +37,7 @@ struct Rect {
 #[derive(Clone, Debug)]
 pub(super) struct Screen {
     name: Option<String>,
+    position: [i32; 2],
     work_area: Rect,
     scale_factor: f64,
     primary: bool,
@@ -45,8 +46,10 @@ pub(super) struct Screen {
 impl Screen {
     pub fn from_monitor(monitor: &tauri::Monitor, primary: bool) -> Self {
         let work_area = monitor.work_area();
+        let position = monitor.position();
         Self {
             name: monitor.name().cloned(),
+            position: [position.x, position.y],
             work_area: Rect {
                 x: f64::from(work_area.position.x),
                 y: f64::from(work_area.position.y),
@@ -71,6 +74,9 @@ impl Screen {
 struct Document {
     version: u8,
     monitor: Option<String>,
+    /// Physical monitor origin used to distinguish displays with the same name.
+    #[serde(default)]
+    monitor_position: Option<[i32; 2]>,
     /// Logical offset from the monitor work area's top-left corner.
     x: f64,
     y: f64,
@@ -279,9 +285,11 @@ fn capture(window: &WebviewWindow) -> io::Result<Document> {
         .map_err(|error| io::Error::other(error.to_string()))?;
     let scale_factor = monitor.scale_factor();
     let area = monitor.work_area();
+    let monitor_position = monitor.position();
     let document = Document {
         version: 1,
         monitor: monitor.name().cloned(),
+        monitor_position: Some([monitor_position.x, monitor_position.y]),
         x: (f64::from(position.x) - f64::from(area.position.x)) / scale_factor,
         y: (f64::from(position.y) - f64::from(area.position.y)) / scale_factor,
         width: f64::from(size.width) / scale_factor,
@@ -298,9 +306,22 @@ fn capture(window: &WebviewWindow) -> io::Result<Document> {
 }
 
 fn placement(saved: Option<&Document>, screens: &[Screen]) -> Option<Placement> {
-    let saved_monitor = saved.and_then(|document| document.monitor.as_deref());
-    let screen = saved_monitor
-        .and_then(|name| screens.iter().find(|screen| screen.name.as_deref() == Some(name)))
+    let saved_screen = saved.and_then(|document| {
+        let name = document.monitor.as_deref()?;
+        let mut matching = screens
+            .iter()
+            .filter(|screen| screen.name.as_deref() == Some(name));
+        let first = matching.next()?;
+        if let Some(position) = document.monitor_position {
+            if let Some(exact) = screens.iter().find(|screen| {
+                screen.name.as_deref() == Some(name) && screen.position == position
+            }) {
+                return Some(exact);
+            }
+        }
+        matching.next().is_none().then_some(first)
+    });
+    let screen = saved_screen
         .or_else(|| screens.iter().find(|screen| screen.primary))
         .or_else(|| screens.first())?;
     if !screen.valid() {
@@ -321,7 +342,7 @@ fn placement(saved: Option<&Document>, screens: &[Screen]) -> Option<Placement> 
         .clamp(min_height, available_height);
     let max_x = (screen.work_area.width / screen.scale_factor - width - FRAME_WIDTH).max(0.0);
     let max_y = (screen.work_area.height / screen.scale_factor - height - FRAME_HEIGHT).max(0.0);
-    let (offset_x, offset_y) = if saved.is_some() && saved_monitor == screen.name.as_deref() {
+    let (offset_x, offset_y) = if saved_screen.is_some() {
         let saved = saved.unwrap();
         (saved.x.clamp(0.0, max_x), saved.y.clamp(0.0, max_y))
     } else {
@@ -346,6 +367,7 @@ mod tests {
     fn screen(name: &str, x: i32, y: i32, width: u32, height: u32, scale_factor: f64) -> Screen {
         Screen {
             name: Some(name.into()),
+            position: [x, y],
             work_area: Rect {
                 x: f64::from(x),
                 y: f64::from(y),
@@ -361,6 +383,7 @@ mod tests {
         Document {
             version: 1,
             monitor: Some(monitor.into()),
+            monitor_position: None,
             x,
             y,
             width,
@@ -420,6 +443,51 @@ mod tests {
         assert_eq!(placement.height, 680.0);
         assert_eq!(placement.x, 80.0);
         assert_eq!(placement.y, 60.0);
+    }
+
+    #[test]
+    fn restores_legacy_state_without_a_monitor_position_on_a_unique_display() {
+        let document: Document = serde_json::from_str(
+            r#"{"version":1,"monitor":"primary","x":80,"y":60,"width":1100,"height":680,"scale_factor":1}"#,
+        )
+        .unwrap();
+        assert_eq!(document.monitor_position, None);
+
+        let screen = screen("primary", 0, 0, 1920, 1080, 1.0);
+        let placement = placement(Some(&document), &[screen]).unwrap();
+
+        assert_eq!(placement.x, 80.0);
+        assert_eq!(placement.y, 60.0);
+    }
+
+    #[test]
+    fn uses_saved_monitor_position_to_disambiguate_duplicate_monitor_names() {
+        let secondary = screen("same model", 0, 0, 1920, 1080, 1.0);
+        let mut primary = screen("same model", 1920, 0, 1920, 1080, 1.0);
+        primary.primary = true;
+        let screens = [secondary, primary];
+        let mut document = saved("same model", 80.0, 60.0, 1100.0, 680.0);
+        document.monitor_position = Some([1920, 0]);
+
+        let placement = placement(Some(&document), &screens).unwrap();
+
+        assert_eq!(placement.x, 2000.0);
+        assert_eq!(placement.y, 60.0);
+    }
+
+    #[test]
+    fn centers_on_primary_when_duplicate_monitor_names_cannot_be_disambiguated() {
+        let secondary = screen("same model", 0, 0, 1920, 1080, 1.0);
+        let mut primary = screen("same model", 1920, 0, 1920, 1080, 1.0);
+        primary.primary = true;
+        let screens = [secondary, primary];
+        let mut document = saved("same model", 80.0, 60.0, 1100.0, 680.0);
+        document.monitor_position = Some([3840, 0]);
+
+        let placement = placement(Some(&document), &screens).unwrap();
+
+        assert_eq!(placement.x, 2322.0);
+        assert_eq!(placement.y, 176.0);
     }
 
     #[test]
