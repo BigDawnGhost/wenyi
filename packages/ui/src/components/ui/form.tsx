@@ -53,3 +53,29 @@ export const Switch = React.forwardRef<HTMLButtonElement, SwitchProps>(
   ),
 );
 Switch.displayName = "Switch";
+
+/** Validation error text for a form control: renders nothing without a
+ * message, otherwise carries a stable id and an alert role so the control can
+ * point at it through aria-describedby. */
+export function FieldError({ id, message, className }: {
+  id: string;
+  message?: string | null;
+  className?: string;
+}) {
+  if (!message) return null;
+  return <p id={id} role="alert" className={cn("text-sm text-destructive", className)}>{message}</p>;
+}
+
+/** ARIA wiring for a control with an optional validation error: marks the
+ * control invalid and merges the error id (plus any other description) into
+ * aria-describedby. Spread the result onto the control. */
+export function fieldAria(errorId: string | undefined, error?: string | null, describedBy?: string): {
+  "aria-invalid"?: true;
+  "aria-describedby"?: string;
+} {
+  const described = [describedBy, error && errorId].filter(Boolean).join(" ");
+  return {
+    "aria-invalid": error ? true : undefined,
+    "aria-describedby": described || undefined,
+  };
+}
