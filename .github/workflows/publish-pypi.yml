@@ -56,6 +56,15 @@ jobs:
         with:
           python-version: "3.12"
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # hatch_build.py compiles the Core native extension into this standalone
+          # workspace target directory, not the root Desktop workspace target.
+          workspaces: packages/core/rust -> packages/core/rust/target
+          # Match the desktop workflows: one stable key with no per-job or Rust
+          # environment hash, since this job always runs on one Ubuntu image.
+          add-job-id-key: false
+          add-rust-environment-hash-key: false
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           version: "0.13.7"
