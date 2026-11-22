@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from pydantic import ValidationError
 from wenyi_core.config import Config
 from wenyi_core.llm.configuration import LLMConfig
 from wenyi_core.llm.limits import RequestCancelled, RequestLimits, RequestStopped
@@ -676,3 +677,65 @@ def test_direct_selection_does_not_accept_a_legacy_tier():
                 }
             }
         )
+
+
+def test_failed_attempt_releases_token_reservation():
+    limits = RequestLimits(_graph(budget={"max_tokens": 1000}))
+    with pytest.raises(RuntimeError):
+        with limits.attempt("a", 900, lambda *args, **kwargs: None):
+            raise RuntimeError("provider failed")
+    assert limits.reserved_tokens == 0
+    # The failed attempt must not make an equal-sized retry look unaffordable.
+    with limits.attempt("a", 900, lambda *args, **kwargs: None):
+        pass
+    assert limits.reserved_tokens == 900
+
+
+def test_budget_exhaustion_emits_audit_event_before_stopping():
+    limits = RequestLimits(_graph(budget={"max_requests": 1}))
+    events = []
+    with limits.attempt("a", 10, lambda event, **data: events.append((event, data))):
+        pass
+    with pytest.raises(RequestStopped, match="request budget"):
+        with limits.attempt("a", 10, lambda event, **data: events.append((event, data))):
+            pass
+    exhausted = [data for event, data in events if event == "llm_budget_exhausted"]
+    assert len(exhausted) == 1
+    assert exhausted[0]["reason"] == "request_budget"
+    assert exhausted[0]["limit"] == 1
+
+
+def test_token_budget_exhaustion_emits_audit_event_before_stopping():
+    limits = RequestLimits(_graph(budget={"max_tokens": 1000}))
+    events = []
+    with pytest.raises(RequestStopped, match="token reservation budget"):
+        with limits.attempt("a", 1100, lambda event, **data: events.append((event, data))):
+            pass
+    exhausted = [data for event, data in events if event == "llm_budget_exhausted"]
+    assert len(exhausted) == 1
+    assert exhausted[0]["reason"] == "token_budget"
+    assert exhausted[0]["estimate"] == 1100
+    assert exhausted[0]["limit"] == 1000
+
+
+def test_token_estimate_applies_configured_divisor(monkeypatch):
+    client = RoutedLLMClient(_graph(budget={"token_estimate_divisor": 4.0}))
+    events = []
+    client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+
+    def request(self, messages, model, **kwargs):
+        raise _ProviderDeniedError("denied")
+
+    monkeypatch.setattr(FakeProvider, "_request", request)
+    with pytest.raises(_ProviderDeniedError):
+        client.complete([], operation="translation.body")
+    started = [row for row in events if row["event"] == "llm_request_started"]
+    assert [row["estimated_tokens"] for row in started] == [256 + 128]
+
+
+def test_budget_token_estimate_divisor_validation():
+    config = _graph(budget={"token_estimate_divisor": 1.5})
+    assert config.budget.token_estimate_divisor == 1.5
+    for bad in (0, -1, float("inf"), float("nan")):
+        with pytest.raises(ValidationError):
+            _graph(budget={"token_estimate_divisor": bad})

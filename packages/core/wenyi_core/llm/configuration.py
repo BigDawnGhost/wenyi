@@ -129,6 +129,7 @@ class BudgetConfig(BaseModel):
     max_requests: int | None = Field(default=None, gt=0)
     max_tokens: int | None = Field(default=None, gt=0)
     deadline_seconds: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    token_estimate_divisor: float = Field(default=2.0, gt=0, allow_inf_nan=False)
 
 
 class LLMConfig(BaseModel):

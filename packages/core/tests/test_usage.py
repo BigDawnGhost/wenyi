@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from wenyi_core.agents.base import Agent
 from wenyi_core.config import Config, LLMConfig
+from wenyi_core.glossary.store import GlossaryStore
 from wenyi_core.llm.factory import build_client
 from wenyi_core.llm.providers._openai_compatible import (
     EmptyResponseError,
@@ -37,8 +38,9 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.run_store import source_sha256
 
-from tests.fake_llm import routing_handler
+from tests.fake_llm import METERED_TOTAL_TOKENS, MeteredFakeClient, routing_handler
 from tests.model_fixtures import model_config
+from tests.pipeline_fixtures import fake_pipeline_config
 from tests.sample_data import write_sample_txt
 
 
@@ -709,6 +711,99 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             self.assertEqual(usage["totals"]["total_tokens"], 170)
             self.assertEqual(usage["totals"]["calls"], 2)
             self.assertEqual(result["store"].load_usage(), usage)
+
+    def test_batch_usage_flush_survives_interruption_and_replay_bills_once(self):
+        """Usage from completed batches survives an interrupted run and is billed once on replay."""
+        with tempfile.TemporaryDirectory() as directory:
+            config = fake_pipeline_config(os.path.join(directory, "state"))
+            config.pipeline.polish = False
+            config.pipeline.annotation_alignment = False
+            config.pipeline.glossary_note_workers = False
+            config.segment.max_tokens_per_batch = 1  # three single-segment batches
+
+            store = FileStorage(os.path.join(directory, "state", "book"))
+            store.save_chapter(
+                Chapter(
+                    index=0,
+                    segments=[
+                        Segment(index=0, source="ああ"),
+                        Segment(index=1, source="いい"),
+                        Segment(index=2, source="ううう"),
+                    ],
+                )
+            )
+            store.save_manifest(
+                {
+                    "title": "Book",
+                    "fmt": "txt",
+                    "source_lang": "ja",
+                    "target_lang": "zh",
+                    "chapters": [{"index": 0, "title": "", "status": "pending"}],
+                }
+            )
+            glossary = GlossaryStore(store.glossary_path)
+            try:
+
+                class InterruptedAfterFirstBatch(BaseException):
+                    """Simulate process death: no finally block can run afterwards."""
+
+                first = Orchestrator(config, client=MeteredFakeClient(handler=routing_handler))
+                service = first._translation
+                real_execute = service._batches.execute
+                executed = {"count": 0}
+
+                def crashing_execute(plan, **kwargs):
+                    executed["count"] += 1
+                    if executed["count"] == 2:
+                        raise InterruptedAfterFirstBatch
+                    return real_execute(plan, **kwargs)
+
+                with (
+                    patch.object(service._batches, "execute", side_effect=crashing_execute),
+                    patch.object(service, "extract_batch_glossary", return_value={}),
+                    patch.object(first._runtime.extractor, "extract_and_store", return_value={}),
+                ):
+                    with self.assertRaises(InterruptedAfterFirstBatch):
+                        service.translate_chapter(
+                            0,
+                            store,
+                            glossary,
+                            "",
+                            translation_history={},
+                            source_corpus="ああいいううう",
+                            annotation_context_registry=None,
+                        )
+
+                # The interrupted run must have persisted the first batch's usage.
+                after_crash = store.load_usage()
+                self.assertIsNotNone(after_crash)
+                assert after_crash is not None
+                self.assertEqual(after_crash["totals"]["calls"], 1)
+                self.assertEqual(after_crash["totals"]["total_tokens"], METERED_TOTAL_TOKENS)
+
+                # Replay skips the finished batch and bills its usage exactly once overall.
+                resumed = Orchestrator(config, client=MeteredFakeClient(handler=routing_handler))
+                with (
+                    patch.object(resumed._translation, "extract_batch_glossary", return_value={}),
+                    patch.object(resumed._runtime.extractor, "extract_and_store", return_value={}),
+                ):
+                    resumed._translation.translate_chapter(
+                        0,
+                        store,
+                        glossary,
+                        "",
+                        translation_history={},
+                        source_corpus="ああいいううう",
+                        annotation_context_registry=None,
+                    )
+
+                final = store.load_usage()
+                self.assertIsNotNone(final)
+                assert final is not None
+                self.assertEqual(final["totals"]["calls"], 3)
+                self.assertEqual(final["totals"]["total_tokens"], 3 * METERED_TOTAL_TOKENS)
+            finally:
+                glossary.close()
 
 
 class TestSourceIdentityAndExport(unittest.TestCase):
