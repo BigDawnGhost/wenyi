@@ -100,6 +100,7 @@ class BabeldocBridgeClientTests(unittest.TestCase):
             with (
                 patch.object(client, "health", return_value={}),
                 patch("wenyi_core.pdf_bridge.client.httpx.stream", stream),
+                patch("wenyi_core.pdf_bridge.client._sleep"),
                 self.assertRaisesRegex(BabeldocBridgeError, "interrupted"),
             ):
                 client.fillback("session", {"0:0": "text"}, out_path=output)
