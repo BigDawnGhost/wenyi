@@ -139,8 +139,8 @@ English, an extracted entry whose translation is only pronouns and title words (
 "your son", "Your Excellency") is not stored, while "Lord Jiang" keeps its name and
 stays. During translation, an extracted entry that the finished translation keeps
 overriding is left out of later translation and polish prompts. Counting starts at the
-earliest draft paragraph, in book order, that uses its stored translation, so text
-written before a correction does not count against it; once its source has appeared in
+earliest draft paragraph, in book order, that uses its stored translation, so paragraphs
+earlier in the book than a corrected translation's first use do not count against it; once its source has appeared in
 at least five such paragraphs and fewer than 35% use the translation, it is left out.
 The entry stays in the glossary, and imported or manually added entries are always
 sent. A `glossary_terms_left_out` event records each change. Translations are matched

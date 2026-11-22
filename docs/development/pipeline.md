@@ -279,7 +279,7 @@ saved, so a resumed run reaches the same decision without a checkpoint. Paragrap
 keyed by chapter and paragraph index, so arrival order (`--chapter N` before a full run)
 does not matter. Only the entry's own source is counted, not aliases, and counting
 starts at the earliest paragraph in book order that uses the current target, so a
-user's correction is not judged on text written before it. Only extracted entries
+user's correction is not judged on paragraphs earlier in the book than its first use. Only extracted entries
 (`first_chapter` set) qualify; imported, manual and context-dependent entries are always
 sent. The decision filters the snapshot that body translation and polish receive; glossary
 extraction and Review still read the full glossary.
