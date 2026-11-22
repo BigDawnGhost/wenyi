@@ -217,6 +217,19 @@ jobs:
           uv run --no-sync ruff check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
           uv run --no-sync ruff format --check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
           git diff --check
+      - name: Python type check (pyright)
+        # Type-checking rolls out per domain through pyrightconfig.json; this
+        # step enforces whatever that config includes today. A single run on
+        # the 3.12 leg suffices: type resolution follows the configured
+        # pythonVersion, not the matrix interpreter. pyright is not a dev
+        # dependency yet, so uvx fetches it; pin it in the dev group once the
+        # per-domain rollout settles.
+        if: matrix.python-version == '3.12'
+        run: uvx pyright
+      - name: Install coverage tooling
+        # The coverage report stays out of the lockfile: install the plugin
+        # into the synced venv right before the report run below.
+        run: uv pip install pytest-cov
       - name: Offline Python regression tests
         # loadgroup keeps tests that share a group on one worker; -n auto sizes
         # to the runner. Both supported interpreters verify the full workspace.
@@ -224,7 +237,9 @@ jobs:
           WENYI_LOCKS_LIB: ${{ github.workspace }}/target/release/libwenyi_locks.so
         # Packaging coverage builds distributions and belongs to the release workflows,
         # which run this marker explicitly; the regression job stays offline and fast.
-        run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration and not packaging"
+        # Coverage is report-only: the per-domain table documents reach and no
+        # fail-under threshold gates the suite.
+        run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration and not packaging" --cov=wenyi_core --cov=wenyi_cli --cov=wenyi_backend --cov=wenyi_api --cov=wenyi_desktop --cov-report=term-missing
       - name: Prepare Docker proxy test images
         if: github.event_name == 'schedule'
         # The proxy fixture inspects local images and starts containers with --pull=never.
