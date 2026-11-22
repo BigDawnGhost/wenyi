@@ -10,6 +10,7 @@ missing terms without retranslating or overwriting targets.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
@@ -22,6 +23,7 @@ from ...events import ProgressFn
 from ...glossary.store import GlossaryStore
 from ...markup.contexts import annotation_contexts_for_segments
 from ...models.document import Chapter, Segment
+from ...models.glossary import GlossaryTerm
 from ...storage.protocol import Storage
 from ...storage.run_store import STATUS_DONE
 from ..annotate.docx_styles import DocxStyleService
@@ -131,6 +133,16 @@ class TranslationService:
                 raise ChapterTranslationError(failures) from failures[0][1]
             # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
             if not store.pending_chapters():
+                if self._runtime.config.pipeline.glossary_retroactive:
+                    self.retroactive_glossary_pass(
+                        store,
+                        glossary,
+                        style,
+                        book_synopsis,
+                        annotation_context_registry=annotation_context_registry,
+                        progress=progress,
+                    )
+                    self._runtime.usage.flush(store, scope="chapter")
                 self._titles.run(store, glossary, progress=progress)
                 self._annotations.repair_fallbacks(store, progress=progress)
         finally:
@@ -473,6 +485,193 @@ class TranslationService:
             segment_count=len(text_segs),
         )
         return done
+
+    @staticmethod
+    def glossary_fingerprint(terms: list[GlossaryTerm]) -> str:
+        """Hash the read-only snapshot so repeated retroactive passes skip unchanged glossaries."""
+        payload = "\n".join(
+            "\x1f".join(
+                (
+                    term.source,
+                    term.target,
+                    term.reading,
+                    term.type,
+                    term.gender,
+                    term.note,
+                    "\x1e".join(term.aliases),
+                )
+            )
+            for term in terms
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def retroactive_glossary_pass(
+        self,
+        store: Storage,
+        glossary: Storage | GlossaryStore,
+        style: str,
+        book_synopsis: str = "",
+        *,
+        annotation_context_registry: dict[str, Any] | None = None,
+        progress: ProgressFn | None = None,
+    ) -> int:
+        """Retranslate completed chapters with the current glossary snapshot.
+
+        New terms normally affect only subsequent batches and chapters. This opt-in pass
+        ('pipeline.glossary_retroactive') also applies the refreshed snapshot to already
+        translated chapters. The snapshot is read-only: the pass never extracts or writes
+        glossary terms. One fingerprint event per retranslated chapter lets retries and
+        resumes skip unchanged glossaries without repeating model calls or usage.
+        Returns the number of retranslated chapters.
+        """
+        term_snapshot = glossary.all_terms()
+        if not term_snapshot:
+            return 0
+        fingerprint = self.glossary_fingerprint(term_snapshot)
+        done_chapters = {
+            event.get("chapter")
+            for event in store.list_events(event_type="glossary_retroactive_chapter", limit=0)
+            if event.get("fingerprint") == fingerprint
+        }
+        manifest = store.load_manifest()
+        chapter_indices = sorted(
+            chapter["index"]
+            for chapter in manifest.get("chapters", [])
+            if isinstance(chapter.get("index"), int)
+        )
+        candidates: list[Chapter] = []
+        for ci in chapter_indices:
+            if ci in done_chapters:
+                continue
+            with store.state_lock():
+                chapter = store.load_chapter(ci)
+            text_segs = chapter.text_segments
+            if not text_segs or all(segment.target is None for segment in text_segs):
+                continue
+            sources = "\n".join(segment.source for segment in text_segs)
+            if not GlossaryStore.terms_in(term_snapshot, sources):
+                continue
+            candidates.append(chapter)
+        for done_count, chapter in enumerate(candidates):
+            if progress:
+                progress(
+                    done_count,
+                    len(candidates),
+                    self.chapter_progress_label(chapter.title, chapter.index),
+                )
+            self._retranslate_chapter_terms(
+                chapter,
+                store,
+                term_snapshot,
+                style,
+                book_synopsis,
+                annotation_context_registry=annotation_context_registry,
+            )
+            store.log_event(
+                "glossary_retroactive_chapter",
+                chapter=chapter.index,
+                fingerprint=fingerprint,
+                batches=len(self._chapter_batches(chapter)),
+            )
+            self._runtime.usage.flush(store, scope="chapter")
+        return len(candidates)
+
+    def _retranslate_chapter_terms(
+        self,
+        chapter: Chapter,
+        store: Storage,
+        term_snapshot: list[GlossaryTerm],
+        style: str,
+        book_synopsis: str,
+        *,
+        annotation_context_registry: dict[str, Any] | None,
+    ) -> int:
+        """Retranslate every batch of one completed chapter under the read-only snapshot.
+
+        Returns the number of retranslated batches. Rolling context is rebuilt from the
+        freshly saved targets so later batches stay consistent with earlier ones, and each
+        batch persists incrementally so interruption resumes after the last saved batch.
+        """
+        ci = chapter.index
+        text_segs = chapter.text_segments
+        chapter_digest = chapter.meta.get("source_digest", "")
+        context_policy = BabeldocContext.for_chapter(chapter)
+        annotation_contexts = annotation_contexts_for_segments(
+            text_segs, annotation_context_registry
+        )
+        batches = self._chapter_batches(chapter)
+        seg_base = 0
+        for b in batches:
+            batch_start = seg_base
+            next_index = batch_start + len(b)
+            body_context = context_policy is None or context_policy.body[batch_start]
+            ctx_text = (
+                self.recent_context(store, chapter, batch_start, context_policy)
+                if body_context
+                else ""
+            )
+            next_source = (
+                self.following_source(store, chapter, next_index, context_policy)
+                if body_context
+                else ""
+            )
+            batch_terms = GlossaryStore.terms_in(term_snapshot, "\n".join(s.source for s in b))
+            plan = BatchPlan.capture(
+                ci,
+                batch_start,
+                b,
+                batch_terms,
+                ctx_text,
+                style,
+                book_synopsis if body_context else "",
+                chapter_digest if body_context else "",
+                annotation_contexts[batch_start : batch_start + len(b)],
+                next_source,
+            )
+            if self._runtime.config.pipeline.translation_mode == "three_draft_synthesis":
+
+                def checkpoint_precision_usage() -> None:
+                    self._runtime.usage.flush(store, scope="precision")
+
+                result = self._precision.execute(
+                    plan,
+                    store,
+                    checkpoint=checkpoint_precision_usage,
+                )
+                chapter = self.save_precision_batch(store, plan, result)
+                # Precision publication reloads the chapter; alignment must use its segments.
+                text_segs = chapter.text_segments
+                b = text_segs[batch_start : batch_start + len(b)]
+                self._precision.mark_published(store, result)
+            else:
+                result = self._batches.execute(plan, polish=self._runtime.config.pipeline.polish)
+                for segment, target, before_polish in zip(b, result.targets, result.before_polish):
+                    segment.target = target
+                    segment.target_before_polish = before_polish
+                # Persist translations incrementally so interruption resumes after this batch.
+                store.save_chapter(chapter)
+            self._align_batch_context(store, chapter, text_segs, batch_start, len(b))
+            store.log_event(
+                "batch_translated",
+                chapter=ci,
+                start_index=batch_start,
+                count=len(b),
+                polished=self._runtime.config.pipeline.polish,
+                translation_mode=self._runtime.config.pipeline.translation_mode,
+                retroactive=True,
+                segments=[
+                    {
+                        "index": batch_start + i,
+                        "source": s.source,
+                        "target": s.target,
+                    }
+                    for i, s in enumerate(b)
+                ],
+            )
+            seg_base += len(b)
+            self._runtime.usage.flush(store, scope="batch")
+        store.save_chapter_with_status(chapter, STATUS_DONE)
+        return len(batches)
 
     def _align_batch_context(
         self,

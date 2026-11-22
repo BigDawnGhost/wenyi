@@ -365,6 +365,7 @@ described under [scope](#scope).
 | `pipeline.synopsis_source_tokens` | `8000` | Positive integer token budget for each chapter-digest source chunk. |
 | `pipeline.synopsis_reduce_tokens` | `12000` | Positive integer token budget for each digest merge group and generated summary. |
 | `pipeline.glossary_note_workers` | `0` | CLI: `0` disables; `1`–`16` sets parallel note workers. The [Web/Desktop project switch](../guide/workspace.md#create-a-project) uses 4 when enabled. |
+| `pipeline.glossary_retroactive` | `false` | Retranslate completed chapters with the final glossary snapshot after the run; disabled by default. |
 | `pipeline.annotation_alignment` | `true` | Align translated links/annotations. EPUB uses paragraph-end fallbacks; PDF omits failed items. See [PDF formats](formats.md#babeldoc). |
 | `pipeline.annotation_alignment_concurrency` | `4` | Concurrent per-annotation requests within one logical paragraph. |
 
@@ -402,7 +403,9 @@ Older configurations with `terminology_context: false` still load. The `true` se
 
 Fresh Reviewer requests receive the full glossary; body translation injects only the
 terms matched in each batch, with longer matches shadowing their overlapping substring
-hits. There is no scope selector. Annotation alignment may add model requests;
+hits. There is no scope selector. New terms affect only subsequent chapters; the optional
+`pipeline.glossary_retroactive` pass retranslates completed chapters with the final snapshot
+(disabled by default). Annotation alignment may add model requests;
 placement-failure behavior depends on the [format](formats.md). Full workflow, cost, and resume
 semantics belong in the [workflow guide](../guide/pipeline.md); markup/layout
 limitations belong in [formats](formats.md).

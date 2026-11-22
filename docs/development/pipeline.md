@@ -188,8 +188,10 @@ caption's first sentence is included.
 The full glossary owns name mappings. It retains stable insertion order, and fresh
 Reviewer requests share one complete final snapshot. Body translation reads the full
 snapshot as the matching pool and injects only the terms matched in each batch, where
-longer matches shadow their overlapping substring hits. Selective evidence and Fixer
-requests may use relevant subsets. Japanese readings are source metadata supported
+longer matches shadow their overlapping substring hits. New terms affect only subsequent
+batches and chapters; completed chapters are not rewritten unless the optional
+`pipeline.glossary_retroactive` pass retranslates them with a refreshed snapshot. Selective
+evidence and Fixer requests may use relevant subsets. Japanese readings are source metadata supported
 by explicit source evidence, not target-language transliterations; non-Japanese
 sources do not inject them through structured glossary rendering.
 

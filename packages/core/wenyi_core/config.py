@@ -52,6 +52,7 @@ pipeline:
   translation_mode: standard # standard | three_draft_synthesis; three_draft_synthesis requires polish
   rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)
   glossary_note_workers: 0 # Incremental evidence notes: 0 disables, 1-16 workers per batch
+  glossary_retroactive: false # Retranslate completed chapters with the final glossary snapshot; disabled by default
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
   prescan_concurrency: 4 # Concurrent chapter-digest workers; chapters are independent, 1 runs serially
   # Prescan content budgets in cl100k_base tokens; prompt/context overhead is additional.
@@ -133,6 +134,8 @@ class PipelineConfig(BaseModel):
     rolling_context_tokens: int = Field(default=512, ge=0)
     # Note generation requires an opted-in workflow runner.
     glossary_note_workers: int = Field(default=0, ge=0, le=16)
+    # Optional retroactive pass: retranslate completed chapters with the final glossary snapshot.
+    glossary_retroactive: bool = False
 
     @property
     def use_glossary_notes(self) -> bool:

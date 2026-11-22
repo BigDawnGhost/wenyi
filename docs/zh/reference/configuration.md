@@ -348,6 +348,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | `pipeline.synopsis_source_tokens` | `8000` | 每个章节梗概原文块的 token 预算，正整数。 |
 | `pipeline.synopsis_reduce_tokens` | `12000` | 每组摘要归并内容及生成摘要的 token 预算，正整数。 |
 | `pipeline.glossary_note_workers` | `0` | CLI：`0` 关闭；`1`–`16` 指定并行词条数。[Web/Desktop 项目开关](../guide/workspace.md#创建项目)开启时使用 4 个 worker。 |
+| `pipeline.glossary_retroactive` | `false` | 运行结束后用最终术语快照重译已完成章节；默认关闭。 |
 | `pipeline.annotation_alignment` | `true` | 定位译文链接／注释。EPUB 使用段末回退标记；PDF 忽略失败项，见 [PDF 格式说明](formats.md#babeldoc)。 |
 | `pipeline.annotation_alignment_concurrency` | `4` | 单个逻辑段内逐注释请求的并发数。 |
 
@@ -377,7 +378,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 
 旧配置中的 `terminology_context: false` 仍可读取。`true` 和 `terminology.*` 模型路由已移除；升级时删除这些设置，不会自动改为付费的 note 维护。
 
-新的 Reviewer 请求接收全量术语；正文翻译仅注入每个批次命中的术语，较长的匹配会遮蔽其覆盖的重叠子串命中。没有范围选择器。
+新的 Reviewer 请求接收全量术语；正文翻译仅注入每个批次命中的术语，较长的匹配会遮蔽其覆盖的重叠子串命中。没有范围选择器。新术语只影响后续章节；可选的 `pipeline.glossary_retroactive` 任务会用最终快照重译已完成章节（默认关闭）。
 注释定位可能增加模型请求，定位失败的处理取决于[格式](formats.md)。
 完整流程、成本和续跑语义见[流程指南](../guide/pipeline.md)，
 标记／排版限制见[格式参考](formats.md)。
