@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 from wenyi_backend import paths
 from wenyi_backend.context import current_context, use_context
 from wenyi_backend.global_settings import load_settings, save_settings
+from wenyi_core.storage.io_path import plain_path
 from wenyi_desktop import paths as desktop_paths
 from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.main import create_context
@@ -184,8 +185,8 @@ def test_retired_export_waits_for_last_stream_and_cleans_on_close(
     attempted = []
 
     def unlink(path, *args, **kwargs):
-        if path == output:
-            attempted.append(path)
+        if Path(plain_path(path)) == output:
+            attempted.append(Path(plain_path(path)))
             # Model Windows deny-delete handles on every test platform.
             if not first.closed or not second.closed:
                 raise PermissionError("Export still has an open download")
@@ -323,7 +324,7 @@ def test_failed_removal_leaves_retryable_hidden_tombstone(backend, monkeypatch, 
     original = Path.unlink
 
     def denied(path, *args, **kwargs):
-        if path == old_file:
+        if Path(plain_path(path)) == old_file:
             raise PermissionError("temporarily open on Windows")
         return original(path, *args, **kwargs)
 
@@ -415,7 +416,7 @@ def test_interruption_after_unlink_keeps_committed_tombstone(backend, monkeypatc
 
     def interrupted(path, *args, **kwargs):
         result = unlink(path, *args, **kwargs)
-        if path == old_file:
+        if Path(plain_path(path)) == old_file:
             raise KeyboardInterrupt
         return result
 
@@ -440,7 +441,7 @@ def _crash_during_export_cleanup(workspace, pid, new_id, new_file, old_file, aft
     original = Path.unlink
 
     def crash(path, *args, **kwargs):
-        if str(path) == old_file:
+        if plain_path(path) == old_file:
             if after_unlink:
                 original(path, *args, **kwargs)
             os._exit(23)
@@ -493,7 +494,7 @@ def test_download_open_and_retention_share_only_project_history_lock(backend, mo
     path_open = local_export_files.open_regular
 
     def delayed_open(path, *args, **kwargs):
-        if path == old_file:
+        if Path(plain_path(path)) == old_file:
             entered.set()
             assert release.wait(10)
         return path_open(path, *args, **kwargs)
