@@ -10,6 +10,7 @@ missing terms without retranslating or overwriting targets.
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
@@ -34,6 +35,10 @@ from .translation_batch import BatchPlan, BatchResult, TranslationBatchExecutor,
 if TYPE_CHECKING:
     from ..annotate.annotations import AnnotationService
     from ..run.runtime import PipelineRuntime
+
+_LOGGER = logging.getLogger(__name__)
+# Segment meta marker saved when polish failed after retries/splitting so resume can re-polish it.
+POLISH_FAILED = "polish_failed"
 
 
 class TranslationService:
@@ -65,11 +70,22 @@ class TranslationService:
         glossary = store
         style = self._runtime.analyzer.style_brief(store.load_analysis() or {})
 
+        pipeline = self._runtime.config.pipeline
         if only_chapter is not None:
             targets = [only_chapter]
             progress_chapters = targets
         else:
             targets = store.pending_chapters()
+            if pipeline.polish and pipeline.translation_mode == "standard":
+                unpolished = [
+                    chapter["index"]
+                    for chapter in manifest.get("chapters", [])
+                    if chapter.get("unpolished") and chapter["index"] not in targets
+                ]
+                if unpolished:
+                    order = [chapter["index"] for chapter in manifest.get("chapters", [])]
+                    needed = set(targets) | set(unpolished)
+                    targets = [idx for idx in order if idx in needed]
             progress_chapters = [chapter["index"] for chapter in manifest.get("chapters", [])]
 
         total, done = self.progress_counts(store, progress_chapters)
@@ -105,8 +121,35 @@ class TranslationService:
             self._runtime.usage.flush(store, scope="translate")
         if progress and total:
             progress(total, total, "progress.stage.translationDone")
-        store.log_event("translate_run_finished", total_segments=total)
+        final_manifest = store.load_manifest()
+        unpolished_chapters = [
+            row["index"] for row in final_manifest.get("chapters", []) if row.get("unpolished")
+        ]
+        store.log_event(
+            "translate_run_finished",
+            total_segments=total,
+            unpolished_chapters=unpolished_chapters,
+            unpolished_chapter_count=len(unpolished_chapters),
+        )
         return store
+
+    @staticmethod
+    def _set_manifest_unpolished(store: Storage, ci: int, unpolished: bool) -> None:
+        """Update one chapter's unpolished retry marker in the manifest under the state lock."""
+        with store.state_lock():
+            manifest = store.load_manifest()
+            changed = False
+            for row in manifest.get("chapters", []):
+                if row.get("index") == ci:
+                    if unpolished and not row.get("unpolished"):
+                        row["unpolished"] = True
+                        changed = True
+                    elif not unpolished and row.get("unpolished"):
+                        row.pop("unpolished", None)
+                        changed = True
+                    break
+            if changed:
+                store.save_manifest(manifest)
 
     @staticmethod
     def load_translation_inputs(
@@ -262,6 +305,96 @@ class TranslationService:
             if all(s.target is not None for s in b):
                 # Reuse a batch translated at this position/context, rebuild rolling context and skip it.
                 # Only None means not yet translated.
+                has_polish_failed = any(s.meta.get(POLISH_FAILED) for s in b)
+                should_repolish = has_polish_failed and (
+                    self._runtime.config.pipeline.polish
+                    and self._runtime.config.pipeline.translation_mode == "standard"
+                )
+                repolish_eligible = (
+                    [
+                        s
+                        for s in b
+                        if s.meta.get(POLISH_FAILED)
+                        and (s.target_before_polish is None or s.target == s.target_before_polish)
+                    ]
+                    if should_repolish
+                    else []
+                )
+                if should_repolish and repolish_eligible:
+                    if term_snapshot_stale:
+                        term_snapshot = glossary.all_terms()
+                        term_snapshot_stale = False
+                    next_index = batch_start + len(b)
+                    body_context = context_policy is None or context_policy.body[batch_start]
+                    next_source = (
+                        self.following_source(store, chapter, next_index, context_policy)
+                        if body_context
+                        else ""
+                    )
+                    cleaned, reverted = self._batches.polish_batch(
+                        [s.target or "" for s in b],
+                        glossary_terms=term_snapshot,
+                        style=style,
+                        next_source=next_source,
+                        sources=[s.source for s in b],
+                    )
+                    if cleaned is not None:
+                        changed = 0
+                        applied_reverted: list[int] = []
+                        reverted_set = set(reverted)
+                        for offset, (segment, polished_target) in enumerate(zip(b, cleaned)):
+                            failed_before = segment.meta.pop(POLISH_FAILED, None)
+                            if failed_before and (
+                                segment.target_before_polish is None
+                                or segment.target == segment.target_before_polish
+                            ):
+                                if segment.target != polished_target:
+                                    segment.target = polished_target
+                                    changed += 1
+                                if offset in reverted_set:
+                                    applied_reverted.append(offset)
+                        store.save_chapter(chapter)
+                        self.update_translation_history(translation_history, ci, batch_start, b)
+                        if applied_reverted:
+                            _LOGGER.warning(
+                                "Polish returned empty output for %d non-empty segment(s) in "
+                                "chapter %d batch %d; kept the translation draft.",
+                                len(applied_reverted),
+                                ci,
+                                batch_start,
+                            )
+                            store.log_event(
+                                "batch_polish_empty_kept",
+                                chapter=ci,
+                                start_index=batch_start,
+                                count=len(b),
+                                reverted_indices=applied_reverted,
+                            )
+                        store.log_event(
+                            "batch_polished",
+                            chapter=ci,
+                            start_index=batch_start,
+                            count=len(b),
+                            changed=changed,
+                        )
+                    else:
+                        store.log_event(
+                            "batch_polish_failed",
+                            chapter=ci,
+                            start_index=batch_start,
+                            count=len(b),
+                            reason="misaligned_output",
+                        )
+                elif has_polish_failed:
+                    # Polishing is off (or all failed segments were manually edited); clear retry markers.
+                    for s in b:
+                        s.meta.pop(POLISH_FAILED, None)
+                    chapter_clean = not any(seg.meta.get(POLISH_FAILED) for seg in text_segs)
+                    if chapter_clean:
+                        chapter.meta.pop("unpolished", None)
+                    store.save_chapter(chapter)
+                    if chapter_clean:
+                        self._set_manifest_unpolished(store, ci, False)
                 self._align_batch_context(store, chapter, text_segs, batch_start, len(b))
                 if glossary_key in glossary_checkpoints or (
                     context_policy is not None
@@ -362,15 +495,48 @@ class TranslationService:
                 for segment, target, before_polish in zip(b, result.targets, result.before_polish):
                     segment.target = target
                     segment.target_before_polish = before_polish
+                    if result.polish_failed:
+                        segment.meta[POLISH_FAILED] = True
+                    else:
+                        segment.meta.pop(POLISH_FAILED, None)
                 # Persist translations incrementally so interruption resumes after this batch.
                 store.save_chapter(chapter)
+                if result.polish_empty_reverted:
+                    _LOGGER.warning(
+                        "Polish returned empty output for %d non-empty segment(s) in chapter %d "
+                        "batch %d; kept the translation draft.",
+                        len(result.polish_empty_reverted),
+                        ci,
+                        batch_start,
+                    )
+                    store.log_event(
+                        "batch_polish_empty_kept",
+                        chapter=ci,
+                        start_index=batch_start,
+                        count=len(b),
+                        reverted_indices=list(result.polish_empty_reverted),
+                    )
+                if result.polish_failed:
+                    store.log_event(
+                        "batch_polish_failed",
+                        chapter=ci,
+                        start_index=batch_start,
+                        count=len(b),
+                        reason="misaligned_output",
+                    )
             self._align_batch_context(store, chapter, text_segs, batch_start, len(b))
             store.log_event(
                 "batch_translated",
                 chapter=ci,
                 start_index=batch_start,
                 count=len(b),
-                polished=self._runtime.config.pipeline.polish,
+                polished=(
+                    self._runtime.config.pipeline.polish
+                    and not (
+                        self._runtime.config.pipeline.translation_mode == "standard"
+                        and result.polish_failed
+                    )
+                ),
                 translation_mode=self._runtime.config.pipeline.translation_mode,
                 segments=[
                     {
@@ -425,12 +591,23 @@ class TranslationService:
             summary=chapter_glossary_summary,
         )
 
+        unpolished = any(segment.meta.get(POLISH_FAILED) for segment in text_segs)
+        if unpolished:
+            chapter.meta["unpolished"] = True
+            # Persist the manifest retry marker before marking the chapter done so a crash
+            # between the two writes never leaves an unpolished chapter silently skipped.
+            self._set_manifest_unpolished(store, ci, True)
+        else:
+            chapter.meta.pop("unpolished", None)
         store.save_chapter_with_status(chapter, STATUS_DONE)
+        if not unpolished:
+            self._set_manifest_unpolished(store, ci, False)
         store.log_event(
             "chapter_done",
             chapter=ci,
             title=chapter.title,
             segment_count=len(text_segs),
+            **({"unpolished": True} if unpolished else {}),
         )
         return done
 

@@ -7,9 +7,15 @@ polishing cannot drop paragraphs.
 
 from __future__ import annotations
 
+import json
+
+from ..llm.retrying import TruncatedResponseError, is_resumable_provider_interrupt
 from ..models.glossary import GlossaryTerm
 from . import prompts
-from .base import Agent, Messages
+from .base import _LOGGER, Agent, Messages
+
+_MISALIGNED = object()
+_PROVIDER_ERROR = object()
 
 
 class Polisher(Agent):
@@ -23,8 +29,25 @@ class Polisher(Agent):
         sources: list[str] | None = None,
     ) -> list[str]:
         """Polish an aligned list in a fresh conversation; return input unchanged on failure."""
-        if not targets:
-            return []
+        polished = self.polish_or_none(
+            targets,
+            glossary_terms=glossary_terms,
+            style=style,
+            next_source=next_source,
+            sources=sources,
+        )
+        return list(targets) if polished is None else polished
+
+    def _polish_once(
+        self,
+        targets: list[str],
+        *,
+        glossary_terms: list[GlossaryTerm] | None = None,
+        style: str = "",
+        next_source: str = "",
+        sources: list[str] | None = None,
+    ) -> list[str] | object:
+        """Send one standalone polish request and distinguish misalignment from provider failure."""
         n = len(targets)
         system = self.render(
             "polisher_system", src=self.src, tgt=self.tgt, n=n
@@ -46,17 +69,79 @@ class Polisher(Agent):
             numbered_target=prompts.numbered(targets),
             next_source=prompts.render_source_reference(next_source),
         )
-        items = self._ask_json(
-            system,
-            user,
-            operation="polish.body",
-            key="polished",
-            default=None,
-            item_type=str,
-        )
+        try:
+            items = self._ask_json(
+                system,
+                user,
+                operation="polish.body",
+                key="polished",
+                item_type=str,
+            )
+        except (json.JSONDecodeError, ValueError, TruncatedResponseError):
+            return _MISALIGNED
+        except Exception as error:
+            if is_resumable_provider_interrupt(error):
+                raise
+            _LOGGER.warning(
+                "Agent call failed; returning fallback (operation=polish.body): %s: %s",
+                type(error).__name__,
+                error,
+            )
+            return _PROVIDER_ERROR
         if isinstance(items, list) and len(items) == n:
             return items
-        return list(targets)
+        return _MISALIGNED
+
+    def polish_or_none(
+        self,
+        targets: list[str],
+        *,
+        glossary_terms: list[GlossaryTerm] | None = None,
+        style: str = "",
+        next_source: str = "",
+        sources: list[str] | None = None,
+    ) -> list[str] | None:
+        """Polish an aligned list, retrying misalignment and splitting halves before giving up."""
+        if not targets:
+            return []
+        attempts = max(0, self.config.pipeline.align_retry_limit) + 1
+        for _ in range(attempts):
+            result = self._polish_once(
+                targets,
+                glossary_terms=glossary_terms,
+                style=style,
+                next_source=next_source,
+                sources=sources,
+            )
+            if result is _PROVIDER_ERROR:
+                return None
+            if isinstance(result, list):
+                return result
+        if len(targets) <= 1:
+            return None
+        mid = len(targets) // 2
+        left_sources = sources[:mid] if sources is not None else None
+        right_sources = sources[mid:] if sources is not None else None
+        left_next = sources[mid] if sources is not None and mid < len(sources) else ""
+        left = self.polish_or_none(
+            targets[:mid],
+            glossary_terms=glossary_terms,
+            style=style,
+            next_source=left_next,
+            sources=left_sources,
+        )
+        if left is None:
+            return None
+        right = self.polish_or_none(
+            targets[mid:],
+            glossary_terms=glossary_terms,
+            style=style,
+            next_source=next_source,
+            sources=right_sources,
+        )
+        if right is None:
+            return None
+        return [*left, *right]
 
     def polish_continue(
         self,
@@ -83,13 +168,24 @@ class Polisher(Agent):
             *turn,
             {"role": "user", "content": continue_user},
         ]
-        items = self._ask_json_messages(
-            messages,
-            operation="polish.body",
-            key="polished",
-            default=None,
-            item_type=str,
-        )
+        try:
+            items = self._ask_json_messages(
+                messages,
+                operation="polish.body",
+                key="polished",
+                item_type=str,
+            )
+        except (json.JSONDecodeError, ValueError, TruncatedResponseError):
+            return None
+        except Exception as error:
+            if is_resumable_provider_interrupt(error):
+                raise
+            _LOGGER.warning(
+                "Agent call failed; returning fallback (operation=polish.body): %s: %s",
+                type(error).__name__,
+                error,
+            )
+            return None
         if isinstance(items, list) and len(items) == n:
             return items
         return None
