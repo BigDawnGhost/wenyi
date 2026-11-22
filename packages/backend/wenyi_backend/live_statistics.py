@@ -146,7 +146,12 @@ class LiveStatistics:
 def read_live_statistics(
     redis: StatisticsCache, project_id: str, job: dict[str, Any]
 ) -> dict[str, Any] | None:
-    """Accept only a fresh snapshot belonging to the currently executing job."""
+    """Accept only a snapshot belonging to the currently executing job.
+
+    Freshness is bounded by the cache TTL instead of a wall-clock comparison:
+    a host clock rollback between publishing and reading must not reject an
+    in-progress run's live snapshot.
+    """
     if job.get("status") != "running":
         return None
     try:
@@ -156,17 +161,13 @@ def read_live_statistics(
         snapshot = json.loads(raw)
         if snapshot["project_id"] != project_id or snapshot["run_id"] != job.get("run_id"):
             return None
-        timestamp = datetime.fromisoformat(snapshot["updated_at"])
-        age = (datetime.now(timezone.utc) - timestamp).total_seconds()
-        if not 0 <= age < LIVE_TTL_SECONDS:
-            return None
         return {
             "usage": snapshot["usage"],
             "timing": snapshot["timing"],
             "live": {
                 "run_id": snapshot["run_id"],
                 "updated_at": snapshot["updated_at"],
-                "valid_for_seconds": LIVE_TTL_SECONDS - age,
+                "valid_for_seconds": LIVE_TTL_SECONDS,
             },
         }
     except (ValueError, TypeError, KeyError, OSError):
