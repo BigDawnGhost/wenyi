@@ -13,9 +13,9 @@ from threading import RLock
 from typing import Literal
 from uuid import uuid4
 
+from wenyi_backend.security import validate_credential
 from wenyi_core.config import Config
 from wenyi_core.llm.configuration import ProviderConfig
-from wenyi_core.llm.credentials import validate_credential
 from wenyi_core.llm.registry import provider_spec
 from wenyi_core.llm.router import RoutedLLMClient
 
