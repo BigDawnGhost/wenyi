@@ -296,3 +296,10 @@ def test_imported_mapping_is_sent_even_when_overridden(run):
     store.upsert_term(GlossaryTerm(source="Doctor", target="医生", type="term"))
     orchestrator.run(str(source))
     assert _prompt_entries(client) == [["Alice", "Doctor"]] * 8
+
+
+def test_a_resolved_mapping_is_the_users_and_always_sent(run):
+    orchestrator, store, source, client = run
+    assert store.resolve_term("Doctor", "医生")
+    orchestrator.run(str(source))
+    assert _prompt_entries(client) == [["Alice", "Doctor"]] * 8

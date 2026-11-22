@@ -147,7 +147,8 @@ class PostgresRepository:
         with self.pool.connection() as conn:
             conn.execute(
                 """UPDATE glossary SET source=%s,target=%s,reading=%s,type=%s,gender=%s,
-                aliases=%s,note=%s,status=%s,updated_at=%s WHERE project_id=%s AND source=%s""",
+                aliases=%s,note=%s,status=%s,first_chapter=NULL,updated_at=%s
+                WHERE project_id=%s AND source=%s""",
                 (
                     term.source,
                     term.target,

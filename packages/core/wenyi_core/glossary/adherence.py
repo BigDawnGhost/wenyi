@@ -102,8 +102,8 @@ class GlossaryAdherence:
     def ignored(self, term: GlossaryTerm) -> bool:
         """Return True when the translator has overridden an extracted mapping too often.
 
-        Only extracted terms qualify (they carry ``first_chapter``); imported and manually
-        added entries are user requirements and are always sent. Context-dependent entries
+        Only extracted terms qualify (they carry ``first_chapter``); imported, manually
+        added, edited and resolved entries are user requirements and are always sent. Context-dependent entries
         already ask the translator to choose by context, so they are always sent too.
         """
         if term.first_chapter is None or term.status == STATUS_CONTEXT_DEPENDENT:

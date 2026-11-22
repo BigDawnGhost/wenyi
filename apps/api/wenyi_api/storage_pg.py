@@ -840,7 +840,8 @@ class PostgresStorage:
         resolved_status = "context_dependent" if status == "context_dependent" else "ok"
         with self.state_lock(), self._conn as conn:
             cursor = conn.execute(
-                "UPDATE glossary SET target=%s,status=%s,updated_at=%s WHERE project_id=%s AND source=%s",
+                "UPDATE glossary SET target=%s,status=%s,first_chapter=NULL,updated_at=%s "
+                "WHERE project_id=%s AND source=%s",
                 (target, resolved_status, time.time(), self.project_id, source),
             )
             return cursor.rowcount > 0

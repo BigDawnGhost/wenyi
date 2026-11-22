@@ -456,12 +456,17 @@ class GlossaryStore:
         )
 
     def resolve_term(self, source: str, target: str, *, status: str = STATUS_OK) -> bool:
-        """Resolve the final translation and status; report whether the term exists."""
+        """Resolve the final translation and status; report whether the term exists.
+
+        A resolution is a user decision, so ``first_chapter`` (extraction provenance) is
+        cleared and the entry is always sent, like an imported one.
+        """
         resolved_status = normalize_term_status(status)
         if resolved_status == STATUS_CONFLICT:
             resolved_status = STATUS_OK
         cur = self.conn.execute(
-            "UPDATE glossary SET target=?, status=?, updated_at=? WHERE source=?",
+            "UPDATE glossary SET target=?, status=?, first_chapter=NULL, updated_at=? "
+            "WHERE source=?",
             (target, resolved_status, time.time(), source),
         )
         if self._owns_connection:
