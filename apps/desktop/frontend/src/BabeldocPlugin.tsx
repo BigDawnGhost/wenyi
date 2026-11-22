@@ -22,9 +22,13 @@ type Status = {
 };
 const key = ["desktopBabeldocPlugin"];
 const endpoint = "/desktop/plugins/babeldoc";
-// Sibling rows in the group card share the hairline divider rhythm
-// of the canonical settings rows used across the settings pages.
-const row = "border-t border-border px-4 py-3";
+// Sibling rows in the group card share the hairline divider rhythm of the
+// canonical settings rows used across the settings pages. Each row spells out
+// its full literal class list: class composition is reserved to shared UI.
+const rowStatus = "border-t border-border px-4 py-3 text-sm text-muted-foreground";
+const rowDialog = "border-t border-border px-4 py-3 space-y-3";
+const rowNotice = "border-t border-border px-4 py-3 text-sm";
+const rowAlert = "border-t border-border px-4 py-3 text-sm text-destructive";
 type ActionFailure = Parameters<typeof translateDesktop>[1];
 // The plugin router refuses actions with distinct sentences but no stable code
 // yet, and every refusal shares HTTP 409. Reading a code first leaves room for
@@ -139,7 +143,7 @@ export function BabeldocPlugin({ disabled }: { disabled: boolean }) {
           </div>
           {/* The active version stays visible while an update runs. */}
           {data.version && (
-            <p className={`${row} text-sm text-muted-foreground`}>
+            <p className={rowStatus}>
               {t("babeldoc.version", { version: data.version })}
             </p>
           )}
@@ -156,14 +160,14 @@ export function BabeldocPlugin({ disabled }: { disabled: boolean }) {
         </div>
       )}
       {data?.latest_version && !data.checking_update && (
-        <p role="status" className={`${row} text-sm text-muted-foreground`}>
+        <p role="status" className={rowStatus}>
           {t(data.update_available ? "babeldoc.availableVersion" : "babeldoc.current", {
             version: data.latest_version,
           })}
         </p>
       )}
       {confirm && data?.update_available && !data.updating && (
-        <div role="alertdialog" aria-label={t("babeldoc.update")} className={`${row} space-y-3`}>
+        <div role="alertdialog" aria-label={t("babeldoc.update")} className={rowDialog}>
           <p className="text-sm">{t("babeldoc.confirmUpdate", { version: data.latest_version })}</p>
           <div className="flex flex-wrap gap-2">
             <Button
@@ -179,9 +183,9 @@ export function BabeldocPlugin({ disabled }: { disabled: boolean }) {
           </div>
         </div>
       )}
-      {data?.supported === false && <p className={`${row} text-sm`}>{t("babeldoc.unsupported")}</p>}
+      {data?.supported === false && <p className={rowNotice}>{t("babeldoc.unsupported")}</p>}
       {(query.error || action.error || data?.error || data?.update_error) && (
-        <p role="alert" className={`${row} text-sm text-destructive`}>
+        <p role="alert" className={rowAlert}>
           {action.error
             ? t(actionFailure(action.error))
             : data?.update_error ? t(`babeldoc.${data.update_error}`)
