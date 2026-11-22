@@ -210,6 +210,12 @@ sources do not inject them through structured glossary rendering.
 
 Incremental notes are generated after translation by opted-in CLI or Web/Desktop project workflows. Preparation does not seed glossary entries and Review does not generate glossary notes.
 
+When `pipeline.glossary_mode` is `compiled`, `BibleSeedService` runs at the start of `TranslationService.run` (under the book lock, after chapter digests exist) using deterministic source/digest candidate mining, a dual-context entropy probe, and one global adjudication call on the `glossary.extract` route. It caches its result in the `glossary_bible.json` artifact keyed by source hash, digests, synopsis hash, language direction and routing identity, inserts new entries with `first_chapter = 0` without overwriting user-imported or manually edited entries (`first_chapter is None`), and skips hot-path per-batch and chapter-end extraction.
+
+When `pipeline.chapter_concurrency` is above `1` in standard mode, `TranslationService` translates chapters (or 6-batch waves of single chapters exceeding 12 batches) concurrently: workers perform model calls only (`translate`, optional `full` or `sparse` polish) and never touch `Storage`, SQLite, adherence or usage ledgers. Opening context for each chapter or wave uses a deterministic positional rule—the preceding chapter's digest plus its last three immutable source paragraphs—so thread completion order never changes chapter content or resume outputs. The main coordinator thread persists chapters, alignments, events and usage in strict book order.
+
+When `pipeline.polish_mode` is `sparse`, `SparseSemanticEditor` audits `(source, draft)` pairs on the `polish.body` route and emits JSON patches only for paragraphs with concrete fidelity, allusion or formatting defects, preserving protected-object markers and leaving clean drafts untouched. `QuoteMemory` indexes repeated source quotations across the book to reuse established renderings consistently, `batch_segments` keeps contiguous multi-couplet verse blocks unbroken within bounded token slack, and `pipeline.deterministic_hygiene` applies zero-cost post-translation Latin typography cleanup and word-boundary minority-name normalization before chapter publication.
+
 <a id="storage-and-artifacts"></a>
 
 ## Storage, artifacts and locks
