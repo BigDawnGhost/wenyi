@@ -74,6 +74,14 @@ class TestGenericTargets:
         assert _extract(payload, "李大人到。", "Text.", "ja", "en-GB") == []
 
 
+def _observe(tracker, pairs, chapter=0):
+    """Add pairs at the next positions of one chapter, in arrival order."""
+    start = sum(1 for position, _, _ in tracker._pairs if position[0] == chapter)
+    tracker.observe(
+        ((chapter, start + offset), source, target) for offset, (source, target) in enumerate(pairs)
+    )
+
+
 def _term(source, target, *, first_chapter=0, **kwargs):
     return GlossaryTerm(source=source, target=target, first_chapter=first_chapter, **kwargs)
 
@@ -84,19 +92,19 @@ class TestGlossaryAdherence:
         lone = _term("孤", "lone", type="appellation")
         name = _term("江哲", "Jiang Zhe", type="person")
         # Extraction learned "lone" from 孤舟; later paragraphs use 孤 as "I".
-        tracker.observe([("孤舟一叶，江哲独坐。", "A lone boat; Jiang Zhe sat alone.")])
-        tracker.observe([("孤意已决。", "My mind is made up.")] * 3)
+        _observe(tracker, [("孤舟一叶，江哲独坐。", "A lone boat; Jiang Zhe sat alone.")])
+        _observe(tracker, [("孤意已决。", "My mind is made up.")] * 3)
         # Four occurrences are not enough evidence yet.
         assert tracker.filter([lone, name]) == ([lone, name], [])
-        tracker.observe([("江哲与孤同行。", "Jiang Zhe walked with me.")])
-        tracker.observe([("孤问江哲。", "I asked Jiang Zhe.")])
+        _observe(tracker, [("江哲与孤同行。", "Jiang Zhe walked with me.")])
+        _observe(tracker, [("孤问江哲。", "I asked Jiang Zhe.")])
         # 孤: used in 1 of 6 paragraphs. 江哲: used in all 3.
         assert tracker.filter([lone, name]) == ([name], ["孤"])
 
     def test_user_terms_and_context_dependent_terms_are_always_sent(self):
         tracker = GlossaryAdherence()
-        tracker.observe([("大人请。", "Your Excellency, please.")])
-        tracker.observe([("大人请。", "Please, my lord.")] * 6)
+        _observe(tracker, [("大人请。", "Your Excellency, please.")])
+        _observe(tracker, [("大人请。", "Please, my lord.")] * 6)
         imported = GlossaryTerm(source="大人", target="Your Excellency")
         senses = _term("大人", "Your Excellency; adults", status=STATUS_CONTEXT_DEPENDENT)
         assert tracker.ignored(_term("大人", "Your Excellency"))
@@ -105,45 +113,67 @@ class TestGlossaryAdherence:
 
     def test_target_matches_whole_words_case_insensitively_without_article(self):
         tracker = GlossaryAdherence()
-        tracker.observe([("禄山来了。", "Lu came.")])
-        tracker.observe([("禄山来了。", "An Lushan came.")] * 6)
+        _observe(tracker, [("禄山来了。", "Lu came.")])
+        _observe(tracker, [("禄山来了。", "An Lushan came.")] * 6)
         assert tracker.ignored(_term("禄山", "Lu"))
         assert not tracker.ignored(_term("禄山", "the  an lushan"))
 
     def test_unspaced_scripts_match_targets_inside_running_text(self):
         tracker = GlossaryAdherence()
-        tracker.observe(
+        _observe(
+            tracker,
             [
                 ("Alice met the Doctor.", "爱丽丝见到了医生。"),
                 ("Then Alice smiled.", "然后爱丽丝笑了。"),
             ]
-            * 3
+            * 3,
         )
-        tracker.observe([("Harry looked up.", "ハリーは顔を上げた。")] * 5)
+        _observe(tracker, [("Harry looked up.", "ハリーは顔を上げた。")] * 5)
         assert not tracker.ignored(_term("Alice", "爱丽丝", type="person"))
         assert not tracker.ignored(_term("Harry", "ハリー", type="person"))
 
     def test_counting_starts_at_the_first_paragraph_using_the_current_target(self):
         tracker = GlossaryAdherence()
-        tracker.observe([("林风走进来。", "Lin Feng walked in.")] * 20)
+        _observe(tracker, [("林风走进来。", "Lin Feng walked in.")] * 20)
         # A user correction is not judged on paragraphs written before it.
         assert not tracker.ignored(_term("林风", "Lin Fung", type="person"))
-        tracker.observe([("林风笑了。", "Lin Fung smiled.")] + [("林风走了。", "He left.")] * 3)
+        _observe(tracker, [("林风笑了。", "Lin Fung smiled.")] + [("林风走了。", "He left.")] * 3)
         assert not tracker.ignored(_term("林风", "Lin Fung", type="person"))
-        tracker.observe([("林风走了。", "He left.")] * 2)
+        _observe(tracker, [("林风走了。", "He left.")] * 2)
         assert tracker.ignored(_term("林风", "Lin Fung", type="person"))
 
     def test_a_new_target_is_judged_from_scratch_on_earlier_paragraphs(self):
         tracker = GlossaryAdherence()
-        tracker.observe([("白露横江。", "White dew lay across the river.")])
-        tracker.observe([("横江在望。", "Hengjiang was in sight.")] * 5)
+        _observe(tracker, [("白露横江。", "White dew lay across the river.")])
+        _observe(tracker, [("横江在望。", "Hengjiang was in sight.")] * 5)
         assert tracker.ignored(_term("横江", "lay across the river"))
         assert not tracker.ignored(_term("横江", "Hengjiang"))
 
+    def test_the_decision_depends_on_book_position_not_arrival_order(self):
+        lone = _term("孤", "lone", type="appellation", first_chapter=5)
+        later = [("孤舟一叶。", "A lone boat.")]
+        earlier = [("孤意已决。", "My mind is made up.")] * 4
+        # Chapter 5 translated first on its own, then chapter 1 by a later full run.
+        live = GlossaryAdherence()
+        _observe(live, later, chapter=5)
+        _observe(live, earlier, chapter=1)
+        resumed = GlossaryAdherence()
+        _observe(resumed, earlier, chapter=1)
+        _observe(resumed, later, chapter=5)
+        assert live.ignored(lone) is resumed.ignored(lone) is False
+
+    def test_a_retranslated_paragraph_replaces_the_earlier_one(self):
+        tracker = GlossaryAdherence()
+        _observe(tracker, [("大人请。", "Your Excellency, please.")])
+        _observe(tracker, [("大人请。", "Please, my lord.")] * 5)
+        assert tracker.ignored(_term("大人", "Your Excellency"))
+        tracker.observe(((0, i), "大人请。", "Your Excellency, please.") for i in range(1, 6))
+        assert not tracker.ignored(_term("大人", "Your Excellency"))
+
     def test_aliases_do_not_count_against_the_main_name(self):
         tracker = GlossaryAdherence()
-        tracker.observe([("孙悟空来了。", "Sun Wukong came.")])
-        tracker.observe([("大圣笑了。", "The Great Sage laughed.")] * 6)
+        _observe(tracker, [("孙悟空来了。", "Sun Wukong came.")])
+        _observe(tracker, [("大圣笑了。", "The Great Sage laughed.")] * 6)
         assert not tracker.ignored(_term("孙悟空", "Sun Wukong", type="person", aliases=["大圣"]))
 
 

@@ -63,16 +63,19 @@ POLISH_PENDING = "polish_pending"
 POLISH_FAILED = "polish_failed"
 
 
-def _draft_pairs(segments: list[Segment]) -> list[tuple[str, str]]:
-    """Return source/draft pairs; drafts do not depend on when background polish finishes."""
+def _draft_pairs(
+    chapter: int, start_index: int, segments: list[Segment]
+) -> list[tuple[tuple[int, int], str, str]]:
+    """Return positioned source/draft pairs; drafts do not depend on when polish finishes."""
     return [
         (
+            (chapter, start_index + offset),
             segment.source,
             segment.target_before_polish
             if segment.target_before_polish is not None
             else segment.target or "",
         )
-        for segment in segments
+        for offset, segment in enumerate(segments)
         if segment.target is not None
     ]
 
@@ -132,7 +135,7 @@ class TranslationService:
             progress_chapters = [chapter["index"] for chapter in manifest.get("chapters", [])]
 
         total, done = self.progress_counts(store, progress_chapters)
-        drafts: list[tuple[str, str]] = []
+        drafts: list[tuple[tuple[int, int], str, str]] = []
         translation_history, source_corpus = self.load_translation_inputs(store, drafts)
         self._adherence = GlossaryAdherence()
         self._adherence.observe(drafts)
@@ -208,10 +211,11 @@ class TranslationService:
     @staticmethod
     def load_translation_inputs(
         store: Storage,
-        drafts: list[tuple[str, str]] | None = None,
+        drafts: list[tuple[tuple[int, int], str, str]] | None = None,
     ) -> tuple[dict[tuple[int, int], TranslatedSegmentEvidence], str]:
         """Read chapters once to rebuild translated-history indices and concatenate the source
-        corpus. ``drafts``, when given, receives each translated paragraph's source and draft.
+        corpus. ``drafts``, when given, receives each translated paragraph's position, source
+        and draft.
         """
         history: dict[tuple[int, int], TranslatedSegmentEvidence] = {}
         source_parts: list[str] = []
@@ -227,7 +231,7 @@ class TranslationService:
             source_parts.extend(segment.source for segment in segments)
             TranslationService.update_translation_history(history, chapter_index, 0, segments)
             if drafts is not None:
-                drafts.extend(_draft_pairs(segments))
+                drafts.extend(_draft_pairs(chapter_index, 0, segments))
         return history, "\n".join(source_parts)
 
     @staticmethod
@@ -635,7 +639,7 @@ class TranslationService:
             if notes is not None:
                 covered_notes.update(notes.maintain(ci, batch_start, b))
             self.update_translation_history(translation_history, ci, batch_start, b)
-            self._adherence.observe(_draft_pairs(b))
+            self._adherence.observe(_draft_pairs(ci, batch_start, b))
             glossary_checkpoints.add(glossary_key)
             # The glossary may have changed; refresh before the next real translation, not after the final batch.
             term_snapshot_stale = True

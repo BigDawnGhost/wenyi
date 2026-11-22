@@ -33,30 +33,39 @@ def _found(matcher: re.Pattern[str] | str, text: str) -> bool:
     return matcher in text if isinstance(matcher, str) else matcher.search(text) is not None
 
 
+Position = tuple[int, int]
+
+
 @dataclass
 class _Counts:
     target: str
-    started: bool = False
-    seen: int = 0
-    used: int = 0
+    # Book position (chapter, paragraph) of each paragraph containing the source -> used.
+    hits: dict[Position, bool] = field(default_factory=dict)
 
 
 @dataclass
 class GlossaryAdherence:
     """Count, per extracted term, paragraphs that contain its source and use its target.
 
-    Counting starts at the first paragraph that uses the current target. Paragraphs written
-    before then could not follow it, as when a user edits a target the earlier text predates.
+    Counting starts at the earliest paragraph, in book order, that uses the current target.
+    Paragraphs before it could not follow it, as when a user edits a target the earlier
+    text predates. Positions, not arrival order, decide, so translating one chapter first
+    and resuming later reach the same result.
     """
 
-    _pairs: list[tuple[str, str]] = field(default_factory=list)
+    _pairs: list[tuple[Position, str, str]] = field(default_factory=list)
     _counts: dict[str, _Counts] = field(default_factory=dict)
     _scanned: dict[str, int] = field(default_factory=dict)
 
-    def observe(self, pairs: Iterable[tuple[str, str]]) -> None:
-        """Add translated paragraphs as ``(source, draft)`` pairs; blank drafts are ignored."""
+    def observe(self, pairs: Iterable[tuple[Position, str, str]]) -> None:
+        """Add translated paragraphs as ``(position, source, draft)``; blank drafts are ignored.
+
+        A position seen again replaces the earlier paragraph there.
+        """
         self._pairs.extend(
-            (_key(source), _key(target)) for source, target in pairs if target.strip()
+            (position, _key(source), _key(target))
+            for position, source, target in pairs
+            if target.strip()
         )
 
     def _update(self, term: GlossaryTerm) -> _Counts:
@@ -73,16 +82,22 @@ class GlossaryAdherence:
             # not make the main name look overridden.
             source = _matcher(source_key) if source_key else None
             target = _matcher(target_key) if target_key else None
-            for source_text, target_text in self._pairs[start:]:
-                if source is None or not _found(source, source_text):
-                    continue
-                used = target is not None and _found(target, target_text)
-                counts.started = counts.started or used
-                if counts.started:
-                    counts.seen += 1
-                    counts.used += used
+            for position, source_text, target_text in self._pairs[start:]:
+                if source is not None and _found(source, source_text):
+                    counts.hits[position] = target is not None and _found(target, target_text)
+                else:
+                    counts.hits.pop(position, None)
             self._scanned[term.source] = len(self._pairs)
         return counts
+
+    @staticmethod
+    def _rate(counts: _Counts) -> tuple[int, int]:
+        used_at = [position for position, used in counts.hits.items() if used]
+        if not used_at:
+            return 0, 0
+        first = min(used_at)
+        window = [used for position, used in counts.hits.items() if position >= first]
+        return len(window), sum(window)
 
     def ignored(self, term: GlossaryTerm) -> bool:
         """Return True when the translator has overridden an extracted mapping too often.
@@ -93,8 +108,8 @@ class GlossaryAdherence:
         """
         if term.first_chapter is None or term.status == STATUS_CONTEXT_DEPENDENT:
             return False
-        counts = self._update(term)
-        return counts.seen >= MIN_OCCURRENCES and counts.used / counts.seen < MAX_ADHERENCE
+        seen, used = self._rate(self._update(term))
+        return seen >= MIN_OCCURRENCES and used / seen < MAX_ADHERENCE
 
     def filter(self, terms: list[GlossaryTerm]) -> tuple[list[GlossaryTerm], list[str]]:
         """Return the terms to send, in order, and the sources left out."""
