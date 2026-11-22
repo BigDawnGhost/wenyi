@@ -5,7 +5,7 @@ resolution-markers = [
     "python_full_version >= '3.14'",
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "python_full_version < '3.12' or (python_full_version == '3.12.*' and sys_platform != 'emscripten')",
+    "(python_full_version < '3.13' and sys_platform != 'emscripten') or (python_full_version < '3.12' and sys_platform == 'emscripten')",
 ]
 
 [manifest]
@@ -2516,7 +2516,7 @@ dev = [
     { name = "pytest-rerunfailures", specifier = ">=14" },
     { name = "pytest-xdist", specifier = ">=3" },
     { name = "python-docx", specifier = ">=1.2.0" },
-    { name = "ruff", specifier = ">=0.6" },
+    { name = "ruff", specifier = "==0.15.21" },
     { name = "tomli", specifier = ">=2" },
 ]
 
