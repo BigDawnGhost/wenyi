@@ -516,6 +516,16 @@ class TranslationService:
                         count=len(b),
                         reverted_indices=list(result.polish_empty_reverted),
                     )
+                if result.polish_interrupted is not None:
+                    self._runtime.usage.flush(store, scope="translation")
+                    store.log_event(
+                        "batch_polish_failed",
+                        chapter=ci,
+                        start_index=batch_start,
+                        count=len(b),
+                        reason="provider_interrupted",
+                    )
+                    raise result.polish_interrupted
                 if result.polish_failed:
                     store.log_event(
                         "batch_polish_failed",
