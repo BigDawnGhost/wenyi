@@ -14,8 +14,10 @@ from types import SimpleNamespace
 import pytest
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.llm.usage import UsageSample, UsageTracker
+from wenyi_core.models.document import Chapter, Segment
+from wenyi_core.storage.atomic_write import write_texts_atomic
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.run_store import RunStore, slugify
+from wenyi_core.storage.run_store import STATUS_DONE, STATUS_PENDING, RunStore, slugify
 
 
 class _RecordingText:
@@ -403,6 +405,121 @@ def test_replacement_succeeds_while_the_target_is_open(tmp_path):
 
     assert json.loads(target.read_text(encoding="utf-8")) == {"target": "updated"}
     assert [path.name for path in tmp_path.iterdir()] == ["manifest.json"]
+
+
+def _pending_store(tmp_path) -> FileStorage:
+    """A run with one pending chapter, ready for its translation result."""
+    storage = FileStorage(str(tmp_path / "run"))
+    storage.save_chapter(Chapter(index=0, segments=[Segment(index=0, source="Alice waited.")]))
+    storage.save_manifest(
+        {
+            "title": "book",
+            "source_lang": "en",
+            "target_lang": "zh",
+            "source_sha256": "0" * 64,
+            "chapters": [{"index": 0, "status": STATUS_PENDING}],
+        }
+    )
+    return storage
+
+
+def _translated_chapter() -> Chapter:
+    return Chapter(
+        index=0, segments=[Segment(index=0, source="Alice waited.", target="爱丽丝等着。")]
+    )
+
+
+def test_save_chapter_with_status_publishes_content_and_status_together(tmp_path):
+    """One call must leave the chapter file and the manifest agreeing."""
+    storage = _pending_store(tmp_path)
+    storage.save_chapter_with_status(_translated_chapter(), STATUS_DONE)
+    assert storage.load_chapter(0).segments[0].target == "爱丽丝等着。"
+    assert storage.load_manifest()["chapters"][0]["status"] == STATUS_DONE
+    assert storage.pending_chapters() == []
+
+
+def test_save_chapter_with_status_commits_the_manifest_last(tmp_path, monkeypatch):
+    """The manifest marks success, so its replacement must be the last one."""
+    storage = _pending_store(tmp_path)
+    published = []
+    real_replace = os.replace
+
+    def recording_replace(source, target):
+        published.append(os.path.basename(str(target)))
+        real_replace(source, target)
+
+    monkeypatch.setattr("wenyi_core.storage.run_store.os.replace", recording_replace)
+    storage.save_chapter_with_status(_translated_chapter(), STATUS_DONE)
+    assert published == ["ch0.json", "manifest.json"]
+
+
+def test_save_chapter_with_status_keeps_previous_state_when_a_write_fails(tmp_path, monkeypatch):
+    """A failure while writing either temporary file must publish neither file.
+
+    Publishing the chapter first and the manifest second meant a failure in
+    between left a chapter on disk whose manifest status still said pending.
+    Preparing both temporary files before either replacement turns that window
+    into an all-or-nothing commit, so the previous consistent state survives.
+    """
+    storage = _pending_store(tmp_path)
+    old_chapter = storage.load_chapter(0)
+    old_manifest = storage.load_manifest()
+    real_fsync = os.fsync
+    attempts = []
+
+    def failing_second_fsync(descriptor):
+        attempts.append(descriptor)
+        if len(attempts) == 2:
+            raise OSError("interrupted before publish")
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr("wenyi_core.storage.run_store.os.fsync", failing_second_fsync)
+    with pytest.raises(OSError, match="interrupted before publish"):
+        storage.save_chapter_with_status(_translated_chapter(), STATUS_DONE)
+    assert storage.load_chapter(0) == old_chapter
+    assert storage.load_manifest() == old_manifest
+    assert [path.name for path in (tmp_path / "run").rglob("*.tmp")] == []
+
+
+def test_write_texts_atomic_publishes_all_targets_in_order(tmp_path, monkeypatch):
+    """The multi-file commit replaces every target, in the caller's order."""
+    first = tmp_path / "first.json"
+    second = tmp_path / "nested" / "second.json"
+    published = []
+    real_replace = os.replace
+
+    def recording_replace(source, target):
+        published.append(os.path.basename(str(target)))
+        real_replace(source, target)
+
+    monkeypatch.setattr("wenyi_core.storage.atomic_write.os.replace", recording_replace)
+    write_texts_atomic([(str(first), "new-first"), (str(second), "new-second")])
+    assert first.read_text(encoding="utf-8") == "new-first"
+    assert second.read_text(encoding="utf-8") == "new-second"
+    assert published == ["first.json", "second.json"]
+
+
+def test_write_texts_atomic_keeps_every_target_when_a_write_fails(tmp_path, monkeypatch):
+    """A failure before the replacements leaves every target and no residue."""
+    first = tmp_path / "first.json"
+    second = tmp_path / "second.json"
+    first.write_text("old-first", encoding="utf-8")
+    second.write_text("old-second", encoding="utf-8")
+    real_fsync = os.fsync
+    attempts = []
+
+    def failing_second_fsync(descriptor):
+        attempts.append(descriptor)
+        if len(attempts) == 2:
+            raise OSError("no space left")
+        return real_fsync(descriptor)
+
+    monkeypatch.setattr("wenyi_core.storage.atomic_write.os.fsync", failing_second_fsync)
+    with pytest.raises(OSError, match="no space left"):
+        write_texts_atomic([(str(first), "new-first"), (str(second), "new-second")])
+    assert first.read_text(encoding="utf-8") == "old-first"
+    assert second.read_text(encoding="utf-8") == "old-second"
+    assert [path.name for path in tmp_path.glob("*.tmp")] == []
 
 
 #: Filesystem calls that need the extended-length spelling, and the ones that do not.
