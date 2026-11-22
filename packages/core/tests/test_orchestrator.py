@@ -582,6 +582,7 @@ class TestSegmentLevelResume(unittest.TestCase):
                     "prepare_extraction",
                     return_value=ExtractionRequest("", "", (), ()),
                 ),
+                patch.object(orch._runtime.extractor, "extract_candidates", return_value=[]),
                 patch.object(orch._runtime.extractor, "store_extracted", return_value={}),
                 patch.object(
                     orch._translation,
