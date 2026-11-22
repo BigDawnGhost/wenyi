@@ -29,6 +29,10 @@
     "openapi-typescript": "^7.4.4",
     "vitepress": "^1.6.4"
   },
+  "engines": {
+    "node": "^22.0.0",
+    "pnpm": "^9.0.0"
+  },
   "browserslist": [
     "safari >= 15.4",
     "chrome >= 106",

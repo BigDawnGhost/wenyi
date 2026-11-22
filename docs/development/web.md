@@ -6,7 +6,7 @@ This guide covers the Web application's development environment and backend cont
 
 ## Local development environment
 
-Use Python 3.10+, `uv`, Node 22, pnpm 9, PostgreSQL 16, and Redis 7. Run commands from the repository root. The default Python workspace installation only selects CLI/Core; Web development needs the full workspace:
+Use Python 3.10+, `uv`, Node 22, pnpm 9 (the versions pinned in CI and mirrored in the root `package.json` `engines` field), PostgreSQL 16, and Redis 7. Run commands from the repository root. The default Python workspace installation only selects CLI/Core; Web development needs the full workspace:
 
 ```bash
 uv sync --locked --all-packages --group dev
