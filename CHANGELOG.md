@@ -29,6 +29,7 @@ Historical releases remain available in the repository's GitHub Releases pages.
   - llm: deep-merge layered llm settings by key
   - llm: record max_tokens in usage samples
 - Bug fixes
+  - core: support long paths on windows
   - assemble: stage docx media through the tmp convention
   - ingest: pass fb2 image alt text through to epub
   - core: default prompt rendering to english
@@ -79,6 +80,7 @@ Historical releases remain available in the repository's GitHub Releases pages.
   - cli: sync config creation guidance in guide
   - zh: mirror glossary matching updates
 - Internal changes
+  - add changelog sync tooling
   - run the hardened suite on main pushes
   - ci: pin third-party actions to commit shas
   - add just recipes for common commands
