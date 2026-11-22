@@ -117,7 +117,7 @@ one connection named after the provider, one registered model, and a separate ro
 
 | Preset | Model assigned to each operation | Model options |
 |---|---|---|
-| `deepseek` | `deepseek/deepseek-flash` | `thinking: true`, `reasoning_effort: high` |
+| `deepseek` | `deepseek/deepseek-flash` | `thinking: true`, `reasoning_effort: high`; the `glossary.extract` route sets `thinking: low`. |
 | `gemini` | `gemini/gemini-3.6-flash` | Thinking/temperature unset; service defaults apply. |
 | `fake` | `fake/fake` | Offline test adapter, no real translation or credentials. |
 

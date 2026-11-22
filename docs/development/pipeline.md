@@ -84,12 +84,20 @@ For each body batch:
 1. Freeze the source, full ordered glossary and consumed context.
 2. Translate and optionally polish; validate shape before publication.
 3. Save formal targets, then align annotations/styles.
-4. Extract terms from the completed pairs and checkpoint that extraction.
-5. Refresh the glossary snapshot before the next pending batch if it changed.
+4. Prepare extraction of the completed pairs from the current glossary. During a run
+   its model call overlaps the next batch's steps 1–3.
+5. On the run thread, store the terms and write the extraction checkpoint before the
+   next extraction is prepared, then refresh the glossary snapshot before the next
+   pending batch.
 
-A completed target batch with no glossary checkpoint requires extraction, not
-retranslation. A fully checkpointed batch skips both. Chapter completion follows
-its required batch and chapter-level work. Keep interruption tests at the boundaries
+`ExtractionQueue` holds at most one pending job, and its worker only calls the model, so
+every extraction sees the glossary the serial order leaves and formal state keeps one
+writer. The next batch's frozen glossary lacks only the previous batch's new entries.
+An interrupted or stopped job is discarded without a checkpoint. A completed target
+batch with no glossary checkpoint requires extraction, not retranslation. A fully
+checkpointed batch skips both. Chapter completion follows its required batch and
+chapter-level work, so a chapter is published only after its chapter extraction is
+stored. Keep interruption tests at the boundaries
 between target persistence, alignment and glossary checkpointing.
 
 `wenyi_core.alignment` owns the format-independent text-location contract, not DOM,

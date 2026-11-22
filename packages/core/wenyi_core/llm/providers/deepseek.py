@@ -43,8 +43,8 @@ class DeepSeekOptions(BaseModel):
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
-# Glossary extraction reads names off a finished translation; on a held-out 22-chapter
-# benchmark, low effort took 40% less extraction time than high with no quality loss.
+# Glossary extraction reads names off a finished translation; low effort suffices and
+# takes far less time than high.
 PRESET_THINKING = {"glossary.extract": "low"}
 
 
