@@ -1,3 +1,5 @@
 {
-  "ja__zh": "ja__zh.json"
+  "ja__zh": "ja__zh.json",
+  "zh__en": "zh__en.json",
+  "zh-Hant__en": "zh__en.json"
 }

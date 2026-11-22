@@ -75,6 +75,16 @@ _ZH_WATERMARK_PATTERNS: tuple[re.Pattern[str], ...] = (
         r"[\s\[\]【】()（）<>《》*_~-]{0,6}$",
         re.IGNORECASE,
     ),
+    # Short promo/format watermarks embedding a domain, e.g. "好书尽在www.qinkan.net"
+    # or "Txt,Epub,Mobi www.qinkan.net".
+    re.compile(
+        r"(?:好书|尽在|免费|下载|电子书|全文|小说|看书|阅读|更多|精彩|正版|首发|更新|书友|"
+        r"\b(?:txt|epub|mobi|azw3|pdf)\b)"
+        r".{0,24}(?:https?://|www\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s]*)?"
+        r"|(?:https?://|www\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s]*)?"
+        r".{0,24}(?:好书|尽在|免费|下载|电子书|全文|小说|看书|阅读|\b(?:txt|epub|mobi|azw3|pdf)\b)",
+        re.IGNORECASE,
+    ),
 )
 
 _STRAY_FRAGMENT_PATTERNS: tuple[re.Pattern[str], ...] = (
