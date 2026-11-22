@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ...events import ProgressFn
+from ...models.errors import ExportPartialError, ExportProductOutcome
 from ...storage.protocol import Storage
 from ...storage.run_store import source_sha256
 from ..run.language_policies import persist_plan
@@ -36,7 +37,12 @@ class AssemblyService:
         out_path: str | None,
         policy_store: Storage,
     ) -> list[str]:
-        """Generate every configured artifact from live state or a read-only snapshot."""
+        """Generate every configured artifact from live state or a read-only snapshot.
+
+        Every configured product is attempted even when an earlier one fails; when any
+        product fails, ``ExportPartialError`` carries the per-product manifest so
+        callers can report which outputs succeeded and which failed.
+        """
         from ...assemble.policy import export_plan
         from ...assemble.writer import assemble
         from ...assemble.writer_common import bilingual_out_path
@@ -62,38 +68,45 @@ class AssemblyService:
         for plan in plans.values():
             persist_plan(policy_store, plan)
 
-        outputs: list[str] = []
+        products: list[tuple[bool, str | None]] = []
         if do_mono:
-            outputs.append(
-                assemble(
-                    store,
-                    input_path,
-                    out_path=out_path,
-                    out_format=out_format,
-                    bilingual=False,
-                    about_page=out_cfg.about_page,
-                    babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
-                    language_policy=plans[False],
-                    progress=progress,
-                )
-            )
+            products.append((False, out_path))
         if do_bilingual:
-            bi_out_path = bilingual_out_path(out_path) if out_path else None
-            outputs.append(
-                assemble(
+            products.append((True, bilingual_out_path(out_path) if out_path else None))
+        outputs: list[str] = []
+        outcomes: list[ExportProductOutcome] = []
+        first_error: Exception | None = None
+        for bilingual, product_out_path in products:
+            label = "bilingual" if bilingual else "monolingual"
+            try:
+                path = assemble(
                     store,
                     input_path,
-                    out_path=bi_out_path,
+                    out_path=product_out_path,
                     out_format=out_format,
-                    bilingual=True,
-                    order=out_cfg.bilingual_order,
-                    preserve_source_style=out_cfg.bilingual_preserve_source_style,
+                    bilingual=bilingual,
+                    order=out_cfg.bilingual_order if bilingual else "target_first",
+                    preserve_source_style=out_cfg.bilingual_preserve_source_style
+                    if bilingual
+                    else False,
                     about_page=out_cfg.about_page,
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
-                    language_policy=plans[True],
+                    language_policy=plans[bilingual],
                     progress=progress,
                 )
-            )
+            except Exception as error:
+                outcomes.append(
+                    ExportProductOutcome(
+                        label, out_format, error=str(error) or type(error).__name__
+                    )
+                )
+                if first_error is None:
+                    first_error = error
+                continue
+            outputs.append(path)
+            outcomes.append(ExportProductOutcome(label, out_format, output=path))
+        if first_error is not None:
+            raise ExportPartialError(outcomes) from first_error
         return outputs
 
     def assemble_live(

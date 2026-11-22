@@ -221,7 +221,7 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
         ),
     ):
         """Export translations from existing state without calling a model."""
-        from wenyi_core.models.errors import IngestError
+        from wenyi_core.models.errors import ExportPartialError, IngestError
 
         console = context().console
         from wenyi_core.llm.providers.fake import FakeClient
@@ -240,6 +240,18 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
                 out_format=fmt,
                 out_path=out,
             )
+        except ExportPartialError as error:
+            for outcome in error.outcomes:
+                if outcome.ok:
+                    console.print(
+                        f"[green]{outcome.product} {outcome.out_format} written:[/]"
+                        f" [bold]{outcome.output}[/]"
+                    )
+                else:
+                    console.print(
+                        f"[red]{outcome.product} {outcome.out_format} failed:[/] {outcome.error}"
+                    )
+            raise typer.Exit(1) from None
         except (IngestError, OSError, ValueError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None
