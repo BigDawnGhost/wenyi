@@ -132,8 +132,11 @@ class PostgresRepository:
             return row[0]
 
     def admit_job(self, pid, kind, job_id, *, project_status, **kwargs):
-        result = dal.create_job(pid, kind, job_id, status="queued", **kwargs)
-        dal.set_project_status(pid, project_status)
+        with self.pool.connection() as connection, connection.transaction():
+            result = dal.create_job(
+                pid, kind, job_id, status="queued", connection=connection, **kwargs
+            )
+            dal.set_project_status(pid, project_status, connection=connection)
         return result
 
     def fail_admission(self, job_id, status, error):

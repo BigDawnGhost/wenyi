@@ -115,8 +115,14 @@ def get_project(pid: str) -> Optional[dict]:
     }
 
 
-def set_project_status(pid: str, status: str, *, error: str | None = None) -> None:
-    with _conn() as c:
+def set_project_status(
+    pid: str,
+    status: str,
+    *,
+    error: str | None = None,
+    connection: Connection[Any] | None = None,
+) -> None:
+    with _conn(connection) as c:
         c.execute(
             "UPDATE projects SET status=%s, error=%s, updated_at=now() WHERE id=%s",
             (status, error, pid),
