@@ -19,7 +19,12 @@ export const Progress = React.forwardRef<
       <div
         className={cn(
           "h-full rounded-full bg-gradient-to-r from-primary to-primary/85",
-          indeterminate ? "w-1/3 motion-safe:animate-pulse" : "transition-[width] duration-motion-slow ease-decelerate motion-reduce:transition-none",
+          // The sweep must own movement: a static segment reads the bar as real
+          // progress parked at one third. Reduced motion keeps a dimmed segment
+          // because the sibling status text carries the state either way.
+          indeterminate
+            ? "w-1/3 motion-safe:animate-progress-sweep motion-reduce:opacity-40"
+            : "transition-[width] duration-motion-slow ease-decelerate motion-reduce:transition-none",
         )}
         style={indeterminate ? undefined : { width: `${pct}%` }}
       />

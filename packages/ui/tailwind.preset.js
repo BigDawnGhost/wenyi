@@ -222,6 +222,20 @@ export default {
         accelerate: "cubic-bezier(0.3, 0, 0.8, 0.15)",
         sidebar: "cubic-bezier(0.22, 1, 0.36, 1)",
       },
+      // Indeterminate progress: the segment sweeps the full track instead of
+      // pulsing in place, so a stalled state never reads as a stuck percentage.
+      // Translation is relative to the segment's own width (w-1/3): -100% hides
+      // it left of the overflow-hidden track, 300% beyond its right edge, so
+      // the loop restarts without a visible jump.
+      keyframes: {
+        "progress-sweep": {
+          "0%": { transform: "translateX(-100%)" },
+          "100%": { transform: "translateX(300%)" },
+        },
+      },
+      animation: {
+        "progress-sweep": "progress-sweep 1.6s ease-in-out infinite",
+      },
     },
   },
   plugins: [],

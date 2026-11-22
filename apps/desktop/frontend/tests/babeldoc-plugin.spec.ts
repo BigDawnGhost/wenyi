@@ -33,7 +33,11 @@ test("plugin setup persists across navigation, retries and shares update progres
   await page.goto("/settings/pdf");
   const plugin = page.getByTestId("babeldoc-plugin");
   await expect(plugin).toContainText("未启用");
-  await expect(plugin).toContainText("AGPL-3.0-only");
+  // The license is identity metadata: it belongs beside the group heading,
+  // not inside the interactive plugin card.
+  const heading = page.getByRole("heading", { name: /BabelDOC 插件/ });
+  await expect(heading).toContainText("AGPL-3.0-only");
+  await expect(plugin).not.toContainText("AGPL-3.0-only");
   await expect(plugin).not.toContainText("可选的本地 PDF");
   await expect(plugin).not.toContainText("启用后从");
   expect(actions).toEqual([]);
@@ -48,10 +52,11 @@ test("plugin setup persists across navigation, retries and shares update progres
   await expect(plugin.getByRole("button")).toHaveCount(1);
   const cancel = plugin.getByRole("button", { name: "取消下载" });
   await expect(cancel).toBeVisible();
+  // Actions share the progress label row: above the bar, right-aligned with it.
   const buttonBox = await cancel.boundingBox();
-  const progressBox = await plugin.locator('[data-slot="transfer-progress"]').boundingBox();
-  expect(buttonBox!.y + buttonBox!.height).toBeLessThan(progressBox!.y);
-  expect(Math.abs(buttonBox!.x + buttonBox!.width - progressBox!.x - progressBox!.width)).toBeLessThanOrEqual(1);
+  const barBox = await plugin.getByRole("progressbar").boundingBox();
+  expect(buttonBox!.y + buttonBox!.height).toBeLessThanOrEqual(barBox!.y);
+  expect(Math.abs(buttonBox!.x + buttonBox!.width - barBox!.x - barBox!.width)).toBeLessThanOrEqual(1);
   await plugin.screenshot({ path: testInfo.outputPath("plugin-progress.png") });
   const update = page.getByTestId("desktop-updates");
   expect(await plugin.locator('[data-slot="transfer-progress"]').getAttribute("class"))

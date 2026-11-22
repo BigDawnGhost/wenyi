@@ -35,7 +35,8 @@ for (const chinese of [false, true]) {
     const mineru = page.getByTestId("mineru-settings");
     const babeldoc = page.getByTestId("babeldoc-plugin");
     await expect(mineru.getByLabel(chinese ? "MinerU API 密钥" : "MinerU API key", { exact: true })).toBeVisible();
-    await expect(page.getByRole("heading", { name: chinese ? "BabelDOC 插件" : "BabelDOC plugin", exact: true })).toBeVisible();
+    // The license badge is part of the heading's accessible name by design.
+    await expect(page.getByRole("heading", { name: chinese ? /BabelDOC 插件/ : /BabelDOC plugin/ })).toBeVisible();
     await expect(babeldoc.getByRole("button", { name: chinese ? "启用并下载" : "Enable and download", exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath(`pdf-settings-${chinese ? "zh" : "en"}.png`), fullPage: true });
     for (const legacy of ["mineru", "plugins"]) {

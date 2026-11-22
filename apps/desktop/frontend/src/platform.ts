@@ -74,6 +74,7 @@ export function desktopPlatform(queryClient: QueryClient): PlatformServices {
       plugins: {
         label: (locale) => translateDesktop(locale, "babeldoc.title"),
         Section: BabeldocPlugin,
+        license: "AGPL-3.0-only",
       },
       saveExport: saveNativeExport,
       library,

@@ -99,6 +99,9 @@ export interface OptionalCapabilities {
   plugins?: {
     label: (locale: string) => string;
     Section: ComponentType<{ disabled: boolean }>;
+    // License metadata belongs on the section heading, next to the plugin
+    // name, not inside the plugin's interactive card.
+    license?: string;
   };
   saveExport?: (
     project: string, options: ExportOptions, exportId?: number,
