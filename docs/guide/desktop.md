@@ -64,7 +64,7 @@ Desktop uses one **data root**, separate from its program directory:
 | macOS | `~/Library/Application Support/Wenyi/Desktop` |
 | Windows | `%LOCALAPPDATA%\Wenyi\Desktop` |
 
-The root contains the project list and settings in `catalog.sqlite3`, default project files in `projects/`, logs in `logs/`, locks in `locks/`, plugins in `runtime/`, and upgrade snapshots in `backups/`. API keys remain in the system vault or session memory, not these files.
+The root contains the project list and settings in `catalog.sqlite3`, default project files in `projects/`, logs in `logs/`, locks in `locks/`, plugins and remembered window geometry in `runtime/`, and upgrade snapshots in `backups/`. API keys remain in the system vault or session memory, not these files.
 
 New projects default to `<data-root>/projects/`, not a folder beside the installed program. A chosen project library may be on another local volume. Protected program, system, settings, and cache locations are refused; existing projects keep their recorded locations.
 
@@ -135,6 +135,7 @@ Both options apply only to `%LOCALAPPDATA%\Wenyi\Desktop`; custom data roots, ex
 
 - Minimizing or closing the window does **not** pause translation. Close hides it to the system tray; if no tray is available, it minimizes instead. Background work can continue to incur model charges.
 - Use **Show Wenyi**, the macOS Dock, or open the executable/shortcut again to restore the same window without losing its in-memory drafts or session credentials.
+- Desktop remembers the last normal window size and position for each data root. The first launch opens centered at up to 1280 × 720 logical pixels; later launches fit the saved window to the current monitor's work area. Minimized and maximized states are not restored.
 - Use **Quit Wenyi**, **Ctrl+Q** on Windows/Linux, or **Cmd+Q** on macOS to exit. Desktop stops accepting work and lets tasks stop safely; reopen the project to resume saved progress.
 - **Save drafts before quitting.** Unsaved proofreading, style, and settings edits are not translation checkpoints. Hiding a window preserves memory, not a durable backup, and does not prevent computer sleep.
 

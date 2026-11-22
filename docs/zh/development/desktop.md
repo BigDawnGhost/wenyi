@@ -86,7 +86,7 @@ Windows 上的 debug Python 覆盖值必须是已存在的可执行文件路径�
 | `<data-root>/catalog.sqlite3` | 项目/任务目录、设置与不透明凭据引用 |
 | `<data-root>/projects/` | 默认项目库，保存项目 SQLite 状态、原文、解析缓存及导出 |
 | `<data-root>/logs/`、`locks/` | 诊断、进程准入及激活记录 |
-| `<data-root>/runtime/` | 插件运行时/会话及 Windows/Linux WebView 数据 |
+| `<data-root>/runtime/` | 插件运行时/会话、Windows/Linux WebView 数据及已保存的窗口位置与尺寸 |
 | `<data-root>/backups/` | 应用内更新生成的已校验快照 |
 | 外部项目库 | 显式选择的本地位置，按项目记录在目录库中 |
 
