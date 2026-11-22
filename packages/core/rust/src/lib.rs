@@ -25,18 +25,39 @@ fn value_error(error: anyhow::Error) -> PyErr {
     }
 }
 
+fn native_panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(message) = panic.downcast_ref::<&str>() {
+        format!("native panic: {message}")
+    } else if let Some(message) = panic.downcast_ref::<String>() {
+        format!("native panic: {message}")
+    } else {
+        "native panic: unknown panic payload".to_string()
+    }
+}
+
+fn guard<T: Send>(py: Python<'_>, f: impl FnOnce() -> T + Send) -> PyResult<T> {
+    py.detach(move || {
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+            Ok(value) => Ok(value),
+            Err(panic) => Err(pyo3::exceptions::PyRuntimeError::new_err(native_panic_message(
+                panic,
+            ))),
+        }
+    })
+}
+
 #[pyfunction]
-fn xhtml_tokens<'a>(py: Python<'_>, markup: &'a str) -> Option<Vec<Token<'a>>> {
-    py.detach(|| epub::xhtml_tokens(markup))
+fn xhtml_tokens<'a>(py: Python<'_>, markup: &'a str) -> PyResult<Option<Vec<Token<'a>>>> {
+    guard(py, || epub::xhtml_tokens(markup))
 }
 
 #[pyfunction]
 fn peek(py: Python<'_>, path: PathBuf) -> PyResult<String> {
-    py.detach(|| {
+    guard(py, || {
         let mut zip = archive::open(&path)?;
         Ok(reader::book_title(&path, &reader::package(&mut zip)?))
     })
-    .map_err(value_error)
+    .and_then(|result| result.map_err(value_error))
 }
 
 #[pyfunction]
@@ -46,12 +67,11 @@ fn ingest<'py>(
     source_lang: &str,
     target_lang: &str,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    let data = py
-        .detach(|| {
+    let data = guard(py, || {
             let _admission = workers::admit();
             reader::ingest(&path, source_lang, target_lang)
         })
-        .map_err(value_error)?;
+        .and_then(|result| result.map_err(value_error))?;
     Ok(PyBytes::new(py, &data))
 }
 
@@ -62,11 +82,11 @@ fn export(
     destination: PathBuf,
     options: &[u8],
 ) -> PyResult<Vec<String>> {
-    py.detach(|| {
+    guard(py, || {
         let _admission = workers::admit();
         writer::export(&source, &destination, serde_json::from_slice(options)?)
     })
-    .map_err(value_error)
+    .and_then(|result| result.map_err(value_error))
 }
 
 #[pyfunction]
@@ -75,7 +95,7 @@ fn render_resources(
     source: PathBuf,
     options: &[u8],
 ) -> PyResult<(Vec<(String, String)>, Vec<String>)> {
-    py.detach(|| {
+    guard(py, || {
         let _admission = workers::admit();
         let (pages, warnings) = writer::resources(
             &mut archive::open(&source)?,
@@ -83,7 +103,7 @@ fn render_resources(
         )?;
         Ok((pages.into_iter().collect(), warnings))
     })
-    .map_err(value_error)
+    .and_then(|result| result.map_err(value_error))
 }
 
 #[pyfunction(name = "generate")]
@@ -93,11 +113,11 @@ fn generate_epub(
     options: &[u8],
     assets: Vec<generate::Asset>,
 ) -> PyResult<()> {
-    py.detach(|| {
+    guard(py, || {
         let _admission = workers::admit();
         generate::generate(&destination, serde_json::from_slice(options)?, assets)
     })
-    .map_err(value_error)
+    .and_then(|result| result.map_err(value_error))
 }
 
 #[pyfunction]
@@ -107,11 +127,11 @@ fn render_html_bodies(
     options: &[u8],
     mime_types: HashMap<String, String>,
 ) -> PyResult<(Vec<String>, Vec<String>)> {
-    py.detach(|| {
+    guard(py, || {
         let _admission = workers::admit();
         epub::html::bodies(&source, serde_json::from_slice(options)?, &mime_types)
     })
-    .map_err(value_error)
+    .and_then(|result| result.map_err(value_error))
 }
 
 #[pyfunction]
@@ -121,16 +141,16 @@ fn append_about(
     destination: PathBuf,
     page: &str,
 ) -> PyResult<bool> {
-    py.detach(|| {
+    guard(py, || {
         let _admission = workers::admit();
         writer::append_about(&source, &destination, page)
     })
-    .map_err(value_error)
+    .and_then(|result| result.map_err(value_error))
 }
 
 #[pyfunction]
-fn parse_text(py: Python<'_>, content: &str) -> Vec<text::Parsed> {
-    py.detach(|| text::parse(content))
+fn parse_text(py: Python<'_>, content: &str) -> PyResult<Vec<text::Parsed>> {
+    guard(py, || text::parse(content))
 }
 
 #[pyfunction]
@@ -142,8 +162,8 @@ fn write_text(
     source_first: bool,
     markdown: bool,
 ) -> PyResult<()> {
-    py.detach(|| text::write(&destination, chapters, bilingual, source_first, markdown))
-        .map_err(|error| value_error(error.into()))
+    guard(py, || text::write(&destination, chapters, bilingual, source_first, markdown))
+        .and_then(|result| result.map_err(|error| value_error(error.into())))
 }
 
 #[pymodule]
@@ -176,19 +196,18 @@ fn parse_fb2<'py>(
     source_lang: &str,
     target_lang: &str,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    let data = py
-        .detach(|| fb2::ingest(content, fallback, path, source_lang, target_lang))
-        .map_err(value_error)?;
+    let data = guard(py, || fb2::ingest(content, fallback, path, source_lang, target_lang))
+        .and_then(|result| result.map_err(value_error))?;
     Ok(PyBytes::new(py, &data))
 }
 
 #[pyfunction]
 fn fb2_title(py: Python<'_>, content: &str, fallback: &str) -> PyResult<String> {
-    py.detach(|| Ok(fb2::title(fb2::parse(content)?.root_element(), fallback)))
-        .map_err(value_error)
+    guard(py, || Ok(fb2::title(fb2::parse(content)?.root_element(), fallback)))
+        .and_then(|result| result.map_err(value_error))
 }
 
 #[pyfunction]
 fn fb2_binaries(py: Python<'_>, content: &str) -> PyResult<Vec<(String, String, String)>> {
-    py.detach(|| fb2::binaries(content)).map_err(value_error)
+    guard(py, || fb2::binaries(content)).and_then(|result| result.map_err(value_error))
 }
