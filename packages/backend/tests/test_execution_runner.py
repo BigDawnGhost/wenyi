@@ -289,3 +289,45 @@ def test_export_failure_keeps_error_writes_under_the_lock(export_execution, stag
         exporting.execute(request, dependencies)
     assert sequence[-3:] == ["job:error", "export:error", "unlock"]
     storage.close.assert_called_once()
+
+
+def test_native_panic_lands_failed_terminal_state(execution):
+    """pyo3 wraps Rust panics in BaseException subclasses; the run must not stay running."""
+    request, dependencies, storage = execution
+
+    class NativePanic(BaseException):
+        pass
+
+    dependencies.operation.side_effect = NativePanic("native engine panicked")
+    with pytest.raises(NativePanic, match="native engine panicked"):
+        runner.execute(request, dependencies)
+    dependencies.projects.set_project_status.assert_called_once_with(
+        "project", "error", error="native engine panicked"
+    )
+    dependencies.jobs.set_job_status.assert_any_call(1, "error", error="native engine panicked")
+    assert dependencies.metrics.snapshot()["tasks"] == {("error", "pipeline_failed"): 1}
+    fields = next(
+        call.kwargs
+        for call in storage.log_event.call_args_list
+        if call.args and call.args[0] == "pipeline_error"
+    )
+    assert fields["error_type"] == "NativePanic"
+    assert storage.close.call_count >= 1
+    dependencies.telemetry.release.assert_called_once()
+
+
+def test_export_native_panic_keeps_error_writes_under_the_lock(export_execution):
+    """An export panic still writes its error terminal states inside the lock."""
+    request, dependencies, storage, sequence = export_execution
+
+    class NativePanic(BaseException):
+        pass
+
+    def fail(*args):
+        raise NativePanic("native render panicked")
+
+    dependencies = replace(dependencies, render=fail)
+    with pytest.raises(NativePanic, match="native render panicked"):
+        exporting.execute(request, dependencies)
+    assert sequence[-3:] == ["job:error", "export:error", "unlock"]
+    storage.close.assert_called_once()

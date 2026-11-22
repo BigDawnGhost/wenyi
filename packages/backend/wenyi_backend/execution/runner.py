@@ -118,6 +118,27 @@ def execute(
                 raise PauseRequested(pid)
             emitter(done, total, label)
 
+        def record_failure(error: BaseException) -> None:
+            # Provider credentials are stripped before they reach this point; the
+            # traceback stays on the operator side and is never returned to clients.
+            log.exception("Pipeline task failed: kind=%s run_id=%s", kind, run_id)
+            record_terminal_status(request, dependencies, error)
+            storage.log_event(
+                "pipeline_error",
+                kind=kind,
+                run_id=run_id,
+                error=str(error),
+                error_type=type(error).__name__,
+            )
+            # Tell live subscribers the run is over; failure here must not mask the
+            # original error, so publish_error swallows transport problems.
+            publish_error(cache, pid, code=error_code(error), message=str(error), run_id=run_id)
+            # Observability only: the counter swallows its own failures.
+            if job or not run_id:
+                dependencies.metrics.record_task(
+                    status="error", code=error_code(error), identity=metric_identity
+                )
+
         job = None
         try:
             with storage.lock(), ExitStack() as scope:
@@ -173,25 +194,12 @@ def execute(
                     status="paused", code="none", identity=metric_identity
                 )
         except Exception as error:
-            # Provider credentials are stripped before they reach this point; the
-            # traceback stays on the operator side and is never returned to clients.
-            log.exception("Pipeline task failed: kind=%s run_id=%s", kind, run_id)
-            record_terminal_status(request, dependencies, error)
-            storage.log_event(
-                "pipeline_error",
-                kind=kind,
-                run_id=run_id,
-                error=str(error),
-                error_type=type(error).__name__,
-            )
-            # Tell live subscribers the run is over; failure here must not mask the
-            # original error, so publish_error swallows transport problems.
-            publish_error(cache, pid, code=error_code(error), message=str(error), run_id=run_id)
-            # Observability only: the counter swallows its own failures.
-            if job or not run_id:
-                dependencies.metrics.record_task(
-                    status="error", code=error_code(error), identity=metric_identity
-                )
+            record_failure(error)
+            raise
+        except BaseException as error:
+            # Native panics reach Python as BaseException subclasses (pyo3's
+            # PanicException); catch them too or the task would stay running forever.
+            record_failure(error)
             raise
         finally:
             stop_watcher()
@@ -216,5 +224,9 @@ async def run(request: ExecutionRequest, dependencies: ExecutionDependencies) ->
         raise
     except Exception as error:
         # Startup may fail before the synchronous runner can enter its recovery scope.
+        await asyncio.to_thread(record_terminal_status, request, dependencies, error)
+        raise
+    except BaseException as error:
+        # Native panics arrive as BaseException subclasses; still land the terminal state.
         await asyncio.to_thread(record_terminal_status, request, dependencies, error)
         raise
