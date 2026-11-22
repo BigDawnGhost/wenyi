@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import tempfile
 import threading
 import unittest
@@ -221,6 +222,121 @@ class TestGlossary(unittest.TestCase):
             [term.source for term in self.store.all_terms()],
             ["乙", "甲", "丙"],
         )
+
+    def test_equivalent_spellings_conflict_instead_of_coexisting(self):
+        """Full-width and half-width sources are one term: a different target conflicts and
+        stays a single row instead of injecting contradictory translations.
+        """
+        self.store.upsert_term(GlossaryTerm(source="ＡＩ", target="人工智能"), chapter=1)
+        result = self.store.upsert_term(
+            GlossaryTerm(source="AI", target="artificial intelligence"), chapter=2
+        )
+        self.assertEqual(result, "conflict")
+        terms = self.store.all_terms()
+        self.assertEqual([term.source for term in terms], ["ＡＩ"])
+        self.assertEqual(terms[0].status, "conflict")
+        # Either spelling resolves to the single stored entry, keeping the display form.
+        resolved = self.store.get_term("AI")
+        self.assertIsNotNone(resolved)
+        self.assertEqual(resolved.source, "ＡＩ")
+        conflicts = self.store.open_conflicts()
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0]["source"], "ＡＩ")
+        self.assertEqual(conflicts[0]["proposed_target"], "artificial intelligence")
+
+    def test_equivalent_spellings_same_target_merge_aliases(self):
+        """A repeated term under an equivalent spelling merges fields instead of duplicating."""
+        self.store.upsert_term(
+            GlossaryTerm(source="ＡＩ", target="人工智能", aliases=["机器智能"]), chapter=1
+        )
+        result = self.store.upsert_term(
+            GlossaryTerm(source="AI", target="人工智能", aliases=["人工智能体"]), chapter=2
+        )
+        self.assertEqual(result, "unchanged")
+        terms = self.store.all_terms()
+        self.assertEqual(len(terms), 1)
+        self.assertEqual(terms[0].aliases, ["人工智能体", "机器智能"])
+        self.assertEqual(self.store.stats(), {"terms": 1, "open_conflicts": 0})
+
+    def test_normalized_lookup_resolution_and_injection_dedup(self):
+        """Lookups, resolution and term injection work through any equivalent spelling."""
+        self.store.upsert_term(GlossaryTerm(source="ＡＩ", target="人工智能"), chapter=1)
+        self.store.upsert_term(GlossaryTerm(source="ａｉ", target="机器智能"), chapter=2)
+        self.assertEqual(self.store.get_term("AI").target, "人工智能")
+        self.assertEqual([term.source for term in self.store.get_terms(["AI"])], ["ＡＩ"])
+        self.assertTrue(self.store.resolve_term("AI", "人工智能"))
+        self.assertEqual(self.store.get_term("ａｉ").status, "ok")
+        # Injection stays unique: equivalent spellings hit one stored term.
+        injected = GlossaryStore.terms_in(
+            self.store.all_terms(), "The AI system and the ＡＩ system."
+        )
+        self.assertEqual([term.source for term in injected], ["ＡＩ"])
+        self.store.mark_conflicts_resolved("AI")
+        self.assertEqual(self.store.open_conflicts(), [])
+
+    def test_legacy_database_migrates_equivalent_sources(self):
+        """A pre-source_norm database migrates in place: equivalent rows merge and conflicts
+        re-point to the surviving display source.
+        """
+        with tempfile.TemporaryDirectory() as directory:
+            db_path = os.path.join(directory, "legacy.db")
+            conn = sqlite3.connect(db_path)
+            conn.executescript(
+                """
+                CREATE TABLE glossary (
+                    source TEXT PRIMARY KEY, target TEXT NOT NULL, reading TEXT,
+                    type TEXT, gender TEXT, aliases TEXT, first_chapter INTEGER,
+                    note TEXT, status TEXT DEFAULT 'ok', updated_at REAL
+                );
+                CREATE TABLE term_conflicts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, source TEXT,
+                    existing_target TEXT, proposed_target TEXT, chapter INTEGER,
+                    note TEXT, resolved INTEGER DEFAULT 0, created_at REAL
+                );
+                """
+            )
+            conn.execute(
+                "INSERT INTO glossary (source, target, type, updated_at)"
+                " VALUES ('ＡＩ', '人工智能', 'term', 1)"
+            )
+            conn.execute(
+                "INSERT INTO glossary (source, target, type, updated_at)"
+                " VALUES ('AI', 'artificial intelligence', 'term', 2)"
+            )
+            conn.execute(
+                "INSERT INTO term_conflicts (source, existing_target, proposed_target, created_at)"
+                " VALUES ('AI', 'artificial intelligence', 'machine intelligence', 3)"
+            )
+            conn.commit()
+            conn.close()
+
+            store = GlossaryStore(db_path)
+            terms = store.all_terms()
+            self.assertEqual([term.source for term in terms], ["ＡＩ"])
+            self.assertEqual(terms[0].status, "conflict")
+            conflicts = store.open_conflicts()
+            self.assertEqual(
+                sorted((c["source"], c["proposed_target"]) for c in conflicts),
+                [
+                    ("ＡＩ", "artificial intelligence"),
+                    ("ＡＩ", "machine intelligence"),
+                ],
+            )
+            indexes = {
+                row[0]
+                for row in store.conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
+            }
+            self.assertIn("idx_glossary_source_norm", indexes)
+            # The migrated store keeps enforcing single normalized mappings.
+            self.assertEqual(
+                store.upsert_term(GlossaryTerm(source="ａｉ", target="机器智能"), chapter=3),
+                "conflict",
+            )
+            store.close()
+
+            reopened = GlossaryStore(db_path)
+            self.assertEqual(len(reopened.all_terms()), 1)
+            reopened.close()
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 """SQLite glossary with two tables.
-glossary stores one mapping per source. When another target is proposed, retain the current
-translation and log the alternative in term_conflicts for human review. term_conflicts
-records unresolved translation conflicts.
+glossary stores one mapping per normalized source: equivalent spellings (width, case,
+compatibility forms) share a single entry. The original spelling stays in source for display;
+its normalized identity key is kept in source_norm. When another target is proposed, retain
+the current translation and log the alternative in term_conflicts for human review.
+term_conflicts records unresolved translation conflicts.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ __all__ = [
     "GlossaryOccurrenceMatcher",
     "GlossaryStore",
     "GlossaryTerm",
+    "normalize_term_key",
     "search_term_page",
     "source_matches_text",
     "term_match_sources",
@@ -50,6 +53,7 @@ __all__ = [
 _CREATE_GLOSSARY_TABLE = """
 CREATE TABLE IF NOT EXISTS glossary (
     source        TEXT PRIMARY KEY,
+    source_norm   TEXT,
     target        TEXT NOT NULL,
     reading       TEXT,
     type          TEXT,
@@ -92,6 +96,15 @@ def _match_text(text: str) -> str:
     if "〘" in text:
         text = _RUBY_MARK_RE.sub("", text)
     return unicodedata.normalize("NFKC", text).casefold()
+
+
+def normalize_term_key(text: str) -> str:
+    """Return the canonical identity key for a source term.
+    Storage and matching must agree on term identity: equivalent spellings such as full-width
+    and half-width forms normalize to one key, so the glossary keeps a single mapping per term
+    and injection carries exactly one translation.
+    """
+    return _match_text(text).strip()
 
 
 _WORD_BOUNDARY_SCRIPTS = ("LATIN", "GREEK", "CYRILLIC")
@@ -141,7 +154,7 @@ def source_matches_text(source: str, text: str) -> bool:
     for ASCII, Latin, Greek and Cyrillic to avoid matching Ann inside Anna or a short
     Cyrillic word inside a longer one.
     """
-    key = _match_text(source).strip()
+    key = normalize_term_key(source)
     if not key:
         return False
     normalized_text = _match_text(text)
@@ -163,23 +176,23 @@ def term_match_sources(term: GlossaryTerm) -> list[str]:
 
 def trusted_match_sources(term: GlossaryTerm, all_terms: list[GlossaryTerm]) -> list[str]:
     """For note citations, use aliases only when no other glossary identity claims them."""
-    canonical = _match_text(term.source).strip()
+    canonical = normalize_term_key(term.source)
     claimed = {
-        _match_text(key).strip()
+        normalize_term_key(key)
         for other in all_terms
-        if _match_text(other.source).strip() != canonical
+        if normalize_term_key(other.source) != canonical
         for key in [other.source, *other.aliases]
     }
     return [
         key
         for key in dict.fromkeys(term_match_sources(term))
-        if key == term.source or (term.status == "ok" and _match_text(key).strip() not in claimed)
+        if key == term.source or (term.status == "ok" and normalize_term_key(key) not in claimed)
     ]
 
 
 def _source_occurrence_spans(source: str, normalized_text: str) -> list[tuple[int, int]]:
     """Return nonoverlapping source-term spans in normalized text."""
-    key = _match_text(source).strip()
+    key = normalize_term_key(source)
     if not key:
         return []
     if pattern := _source_pattern(key):
@@ -226,7 +239,7 @@ class GlossaryOccurrenceMatcher:
         recurring: list[GlossaryTerm] = []
         for term in terms:
             raw_keys = term_match_sources(term)
-            keys = {normalized for key in raw_keys if (normalized := _match_text(key).strip())}
+            keys = {normalized for key in raw_keys if (normalized := normalize_term_key(key))}
             spans: set[tuple[int, int]] = set()
             for key in keys:
                 spans.update(_source_occurrence_spans(key, self.normalized_text))
@@ -245,12 +258,21 @@ class GlossaryStore:
         self.conn.execute("PRAGMA busy_timeout = 5000")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(_SCHEMA)
-        self.conn.commit()
+        self.conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._ensure_source_norm(self.conn)
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
         self._owns_connection = True
 
     @classmethod
     def from_connection(cls, conn: sqlite3.Connection) -> GlossaryStore:
         """Borrow an initialized connection; the caller owns transactions and its lifetime."""
+        # Legacy desktop databases only reach the glossary through borrowed connections, so
+        # keep their schema current here; after migration this is one cheap marker query.
+        cls._ensure_source_norm(conn)
         store = cls.__new__(cls)
         store.conn = conn
         store._owns_connection = False
@@ -262,6 +284,106 @@ class GlossaryStore:
         for statement in _SCHEMA.split(";"):
             if statement.strip():
                 conn.execute(statement)
+        GlossaryStore._ensure_source_norm(conn)
+
+    @staticmethod
+    def _ensure_source_norm(conn: sqlite3.Connection) -> None:
+        """One-time migration to normalized source identity; idempotent, no transaction control.
+        Legacy rows gain a source_norm key and equivalent spellings merge into the earliest
+        row; the unique source_norm index both enforces single mappings and marks completion.
+        Runs inside the caller's transaction: initialize_schema must not commit.
+        """
+        migrated = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_glossary_source_norm'"
+        ).fetchone()
+        if migrated is not None:
+            return
+        conn.execute("SAVEPOINT glossary_source_norm_migration")
+        try:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(glossary)")}
+            if "source_norm" not in columns:
+                conn.execute("ALTER TABLE glossary ADD COLUMN source_norm TEXT")
+            rows = conn.execute(
+                "SELECT rowid, source FROM glossary"
+                " WHERE source IS NOT NULL AND source_norm IS NULL ORDER BY rowid"
+            ).fetchall()
+            for row in rows:
+                key = normalize_term_key(row["source"])
+                if key:
+                    conn.execute(
+                        "UPDATE glossary SET source_norm=? WHERE rowid=?", (key, row["rowid"])
+                    )
+            GlossaryStore._merge_equivalent_sources(conn)
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_glossary_source_norm"
+                " ON glossary(source_norm)"
+            )
+        except Exception:
+            conn.execute("ROLLBACK TO SAVEPOINT glossary_source_norm_migration")
+            raise
+        finally:
+            conn.execute("RELEASE SAVEPOINT glossary_source_norm_migration")
+
+    @staticmethod
+    def _merge_equivalent_sources(conn: sqlite3.Connection) -> None:
+        """Fold rows sharing one source_norm into the earliest row, keeping prompt order.
+        The survivor keeps the original target and gains the merged row's aliases and missing
+        fields; a different target becomes an open conflict instead of a silent replacement.
+        """
+        rows = conn.execute(
+            "SELECT rowid, source, target, reading, gender, aliases, first_chapter, note,"
+            " status, source_norm FROM glossary ORDER BY rowid"
+        ).fetchall()
+        survivors: dict[str, sqlite3.Row] = {}
+        for row in rows:
+            key = row["source_norm"]
+            if key is None:
+                continue
+            survivor = survivors.get(key)
+            if survivor is None:
+                survivors[key] = row
+                continue
+            merged_aliases = json.dumps(
+                sorted(
+                    set(json.loads(survivor["aliases"] or "[]"))
+                    | set(json.loads(row["aliases"] or "[]"))
+                ),
+                ensure_ascii=False,
+            )
+            conn.execute(
+                """UPDATE glossary SET reading=COALESCE(NULLIF(reading,''),?),
+                   gender=COALESCE(NULLIF(gender,''),?), aliases=?,
+                   note=COALESCE(NULLIF(note,''),?), first_chapter=COALESCE(first_chapter,?),
+                   status=CASE WHEN ?<>target THEN 'conflict' ELSE status END
+                   WHERE rowid=?""",
+                (
+                    row["reading"],
+                    row["gender"],
+                    merged_aliases,
+                    row["note"],
+                    row["first_chapter"],
+                    row["target"],
+                    survivor["rowid"],
+                ),
+            )
+            if row["target"] != survivor["target"]:
+                conn.execute(
+                    """INSERT INTO term_conflicts
+                       (source,existing_target,proposed_target,chapter,created_at)
+                       VALUES (?,?,?,?,?)""",
+                    (
+                        survivor["source"],
+                        survivor["target"],
+                        row["target"],
+                        row["first_chapter"],
+                        time.time(),
+                    ),
+                )
+            conn.execute(
+                "UPDATE term_conflicts SET source=? WHERE source=?",
+                (survivor["source"], row["source"]),
+            )
+            conn.execute("DELETE FROM glossary WHERE rowid=?", (row["rowid"],))
 
     def close(self) -> None:
         """Close the underlying SQLite connection."""
@@ -322,8 +444,17 @@ class GlossaryStore:
 
     # Glossary terms.
     def get_term(self, source: str) -> GlossaryTerm | None:
-        """Look up the exact source term; return None if absent."""
-        row = self.conn.execute("SELECT * FROM glossary WHERE source = ?", (source,)).fetchone()
+        """Look up a source term by its normalized key; equivalent spellings share one entry."""
+        return self._get_by_source_norm(normalize_term_key(source) or source, source)
+
+    def _get_by_source_norm(self, key: str, source: str) -> GlossaryTerm | None:
+        """Fetch one term by normalized key; rows whose key is not materialized yet fall
+        back to their exact display source.
+        """
+        row = self.conn.execute(
+            "SELECT * FROM glossary WHERE source_norm = ? OR (source_norm IS NULL AND source = ?)",
+            (key, source),
+        ).fetchone()
         return GlossaryTerm.from_row(row) if row else None
 
     def upsert_term(self, term: GlossaryTerm, chapter: int | None = None) -> str:
@@ -332,20 +463,22 @@ class GlossaryStore:
         and record the candidate. Automatic extraction must not replace confirmed mappings
         without human resolution.
         """
+        key = normalize_term_key(term.source) or term.source
         try:
             # Acquire the lock before reading existing so two connections cannot decide from the same old view.
             if self._owns_connection:
                 self.conn.execute("BEGIN IMMEDIATE")
-            existing = self.get_term(term.source)
+            existing = self._get_by_source_norm(key, term.source)
             now = time.time()
             if existing is None:
                 self.conn.execute(
                     """INSERT INTO glossary
-                       (source,target,reading,type,gender,aliases,first_chapter,note,
-                        status,updated_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                       (source,source_norm,target,reading,type,gender,aliases,first_chapter,
+                        note,status,updated_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         term.source,
+                        key,
                         term.target,
                         term.reading,
                         term.type,
@@ -364,23 +497,26 @@ class GlossaryStore:
                 self.conn.execute(
                     """UPDATE glossary SET reading=COALESCE(NULLIF(?,''),reading),
                        gender=COALESCE(NULLIF(?,''),gender), aliases=?,
-                       note=COALESCE(NULLIF(?,''),note), updated_at=? WHERE source=?""",
+                       note=COALESCE(NULLIF(?,''),note), updated_at=?
+                       WHERE source_norm=? OR (source_norm IS NULL AND source=?)""",
                     (
                         term.reading,
                         term.gender,
                         json.dumps(merged_aliases, ensure_ascii=False),
                         term.note,
                         now,
+                        key,
                         term.source,
                     ),
                 )
                 result = "unchanged"
             else:
                 # Different target: keep the established mapping and record the candidate for human resolution.
-                self._log_conflict(term.source, existing.target, term.target, chapter)
+                self._log_conflict(existing.source, existing.target, term.target, chapter)
                 self.conn.execute(
-                    "UPDATE glossary SET status='conflict', updated_at=? WHERE source=?",
-                    (now, term.source),
+                    "UPDATE glossary SET status='conflict', updated_at=? "
+                    "WHERE source_norm=? OR (source_norm IS NULL AND source=?)",
+                    (now, key, term.source),
                 )
                 result = "conflict"
             if self._owns_connection:
@@ -404,9 +540,11 @@ class GlossaryStore:
         """Resolve the final translation and restore normal status; report whether the term
         exists.
         """
+        key = normalize_term_key(source) or source
         cur = self.conn.execute(
-            "UPDATE glossary SET target=?, status='ok', updated_at=? WHERE source=?",
-            (target, time.time(), source),
+            "UPDATE glossary SET target=?, status='ok', updated_at=? "
+            "WHERE source_norm=? OR (source_norm IS NULL AND source=?)",
+            (target, time.time(), key, source),
         )
         if self._owns_connection:
             self.conn.commit()
@@ -424,12 +562,16 @@ class GlossaryStore:
         return [GlossaryTerm.from_row(r) for r in rows]
 
     def get_terms(self, sources: list[str]) -> list[GlossaryTerm]:
-        """Look up a bounded set of exact sources independently of display filters."""
-        if not sources:
+        """Look up a bounded set of sources by their normalized keys."""
+        keys = {normalize_term_key(source) or source for source in sources}
+        if not keys:
             return []
-        placeholders = ",".join("?" for _ in sources)
+        placeholders = ",".join("?" for _ in keys)
+        source_placeholders = ",".join("?" for _ in sources)
         rows = self.conn.execute(
-            f"SELECT * FROM glossary WHERE source IN ({placeholders})", sources
+            f"SELECT * FROM glossary WHERE source_norm IN ({placeholders}) "
+            f"OR (source_norm IS NULL AND source IN ({source_placeholders}))",
+            tuple(keys) + tuple(sources),
         )
         return [GlossaryTerm.from_row(row) for row in rows]
 
@@ -484,8 +626,19 @@ class GlossaryStore:
         )
 
     def mark_conflicts_resolved(self, source: str) -> None:
-        """Mark every unresolved conflict for the given source term as handled."""
-        self.conn.execute("UPDATE term_conflicts SET resolved=1 WHERE source=?", (source,))
+        """Mark every unresolved conflict for the given source term as handled.
+        Conflicts are logged under the stored spelling; an equivalent spelling of the same
+        normalized term clears them too.
+        """
+        sources = {source}
+        term = self.get_term(source)
+        if term is not None:
+            sources.add(term.source)
+        placeholders = ",".join("?" for _ in sources)
+        self.conn.execute(
+            f"UPDATE term_conflicts SET resolved=1 WHERE source IN ({placeholders})",
+            tuple(sources),
+        )
         if self._owns_connection:
             self.conn.commit()
 

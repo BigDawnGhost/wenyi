@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from ..errors import ArtifactCorrupt, SchemaTooNew, WenyiError
-from ..glossary.store import GlossaryStore, GlossaryTerm
+from ..glossary.store import GlossaryStore, GlossaryTerm, normalize_term_key
 from ..models.document import Chapter, Document
 from .io_path import require_sqlite_path
 from .locks import (
@@ -1183,21 +1183,43 @@ class SqliteStorage:
 
     def delete_term(self, source: str) -> bool:
         with self.state_lock():
+            key = normalize_term_key(source) or source
             return (
                 self._connection()
-                .execute("DELETE FROM glossary WHERE source=?", (source,))
+                .execute(
+                    "DELETE FROM glossary WHERE source_norm=? OR (source_norm IS NULL AND source=?)",
+                    (key, source),
+                )
                 .rowcount
                 > 0
             )
 
     def update_term(self, source: str, term: GlossaryTerm) -> bool:
-        """Apply an explicit edit in place, retaining prompt order and first chapter."""
+        """Apply an explicit edit in place, retaining prompt order and first chapter.
+        The row is addressed by its normalized key so an equivalent spelling of the stored
+        source still edits the same term, and renames refresh the stored key.
+        """
         with self.state_lock():
-            cursor = self._connection().execute(
-                "UPDATE glossary SET source=?, target=?, reading=?, type=?, gender=?, "
-                "aliases=?, note=?, status='ok', updated_at=? WHERE source=?",
+            old_key = normalize_term_key(source) or source
+            row = (
+                self._connection()
+                .execute(
+                    "SELECT source FROM glossary WHERE source_norm=? "
+                    "OR (source_norm IS NULL AND source=?)",
+                    (old_key, source),
+                )
+                .fetchone()
+            )
+            if row is None:
+                return False
+            new_key = normalize_term_key(term.source) or term.source
+            self._connection().execute(
+                "UPDATE glossary SET source=?, source_norm=?, target=?, reading=?, type=?, "
+                "gender=?, aliases=?, note=?, status='ok', updated_at=? "
+                "WHERE source_norm=? OR (source_norm IS NULL AND source=?)",
                 (
                     term.source,
+                    new_key,
                     term.target,
                     term.reading,
                     term.type,
@@ -1205,14 +1227,13 @@ class SqliteStorage:
                     json.dumps(term.aliases, ensure_ascii=False),
                     term.note,
                     time.time(),
+                    old_key,
                     source,
                 ),
             )
-            if not cursor.rowcount:
-                return False
             self._connection().execute(
-                "UPDATE term_conflicts SET source=?, resolved=1 WHERE source=?",
-                (term.source, source),
+                "UPDATE term_conflicts SET source=?, resolved=1 WHERE source IN (?, ?)",
+                (term.source, term.source, row[0]),
             )
             return True
 
