@@ -1,7 +1,7 @@
 //! Native UI preference, scoped to the selected Desktop data root.
 
 use std::{
-    io::{self, Read, Write},
+    io,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -9,9 +9,9 @@ use std::{
     },
 };
 
-use cap_fs_ext::{DirExt, FollowSymlinks, OpenOptionsFollowExt};
-use cap_std::fs::{Dir, OpenOptions};
 use serde::{Deserialize, Serialize};
+
+use crate::native_preferences;
 
 const FILE: &str = "notifications.json";
 
@@ -53,8 +53,8 @@ impl Preferences {
         let Some(root) = &self.root else {
             return Ok(self.enabled.load(Ordering::SeqCst));
         };
-        let enabled = match read(root) {
-            Ok(enabled) => enabled,
+        let enabled = match native_preferences::read::<Document>(root, FILE) {
+            Ok(document) => document.enabled,
             Err(error) if error.kind() == io::ErrorKind::NotFound => true,
             Err(error) => {
                 self.enabled.store(false, Ordering::SeqCst);
@@ -68,52 +68,12 @@ impl Preferences {
     pub fn save(&self, enabled: bool) -> io::Result<bool> {
         let _guard = self.writing.lock().unwrap();
         if let Some(root) = &self.root {
-            let root = Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
-            root.create_dir_all("runtime")?;
-            let directory = root.open_dir_nofollow("runtime")?;
-            let mut random = [0; 16];
-            getrandom::fill(&mut random)
-                .map_err(|_| io::Error::other("Secure randomness unavailable."))?;
-            let suffix: String = random.iter().map(|byte| format!("{byte:02x}")).collect();
-            let temporary = format!(".notifications-{suffix}.tmp");
-            let mut options = OpenOptions::new();
-            options
-                .write(true)
-                .create_new(true)
-                .follow(FollowSymlinks::No);
-            let mut file = directory.open_with(&temporary, &options)?;
-            let result = (|| {
-                file.write_all(&serde_json::to_vec(&Document { enabled })?)?;
-                file.sync_all()?;
-                drop(file);
-                directory.rename(&temporary, &directory, FILE)
-            })();
-            if let Err(error) = result {
-                let _ = directory.remove_file(&temporary);
-                return Err(error);
-            }
+            native_preferences::save(root, FILE, &Document { enabled })?;
         }
         // This cannot be lost behind a full notification queue.
         self.enabled.store(enabled, Ordering::SeqCst);
         Ok(enabled)
     }
-}
-
-fn read(root: &Path) -> io::Result<bool> {
-    let root = Dir::open_ambient_dir(root, cap_std::ambient_authority())?;
-    let directory = root.open_dir_nofollow("runtime")?;
-    let mut options = OpenOptions::new();
-    options.read(true).follow(FollowSymlinks::No);
-    let file = directory.open_with(FILE, &options)?;
-    if !file.metadata()?.is_file() {
-        return Err(io::Error::other("Invalid notification preference file"));
-    }
-    let mut bytes = Vec::new();
-    file.take(1025).read_to_end(&mut bytes)?;
-    if bytes.len() > 1024 {
-        return Err(io::Error::other("Invalid notification preference size"));
-    }
-    Ok(serde_json::from_slice::<Document>(&bytes)?.enabled)
 }
 
 #[cfg(test)]
