@@ -597,6 +597,8 @@ def test_resume_refreshes_full_glossary_before_pending_batches(
     def interrupt(*args, **kwargs):
         if checkpoint_saved:
             extract(*args, **kwargs)
+            # Store the overlapped extraction, writing its checkpoint, before interrupting.
+            first._translation._extraction_queue.settle()
         raise KeyboardInterrupt("after saving the first target")
 
     with monkeypatch.context() as patcher:

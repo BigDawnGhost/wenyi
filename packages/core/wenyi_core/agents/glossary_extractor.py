@@ -309,6 +309,17 @@ class TranslatedSegmentEvidence:
     target: str
 
 
+@dataclass(frozen=True)
+class ExtractionRequest:
+    """One extraction request, read from the glossary before its model call."""
+
+    source_text: str
+    target_text: str
+    # Entries shown to the model, and the whole glossary they were chosen from.
+    existing: tuple[GlossaryTerm, ...]
+    all_existing: tuple[GlossaryTerm, ...]
+
+
 class GlossaryExtractor(Agent):
     def __init__(self, client: LLMClient, config: Config):
         super().__init__(client, config)
@@ -673,27 +684,18 @@ class GlossaryExtractor(Agent):
             )
         return aligned, len(resolved) - rejected, unresolved
 
-    def extract_and_store(
+    def prepare_extraction(
         self,
         store: Storage | GlossaryStore,
         source_text: str,
         target_text: str,
-        chapter: int,
         *,
-        history: Iterable[TranslatedSegmentEvidence] = (),
-        before: tuple[int, int] | None = None,
         source_corpus: str | None = None,
-        admit: Callable[[GlossaryTerm, int | None], str] | None = None,
-    ) -> dict[str, int]:
-        """Extract and store terms, preferring the translation at their first historical
-        occurrence.
-        history contains translated evidence only. If a new term appears before the supplied
-        position, align target against its first source/target pair. Defer uncertain
-        mappings instead of locking a later candidate into the glossary and contaminating
-        subsequent text.
-        With source_corpus, inject only existing terms occurring at least twice in the
-        source. Low-frequency terms remain stored but do not repeatedly consume extraction
-        context, and new terms occurring only once in the book are not stored.
+    ) -> ExtractionRequest:
+        """Read the glossary entries one extraction request shows the model.
+
+        With source_corpus, show only existing terms occurring at least twice in the source.
+        Low-frequency terms remain stored but do not repeatedly consume extraction context.
         """
         all_existing = store.all_terms()
         existing = (
@@ -707,9 +709,28 @@ class GlossaryExtractor(Agent):
             budget=self.config.pipeline.glossary_prompt_tokens,
             mode=self.config.pipeline.batch_glossary,
         )
-        terms = self.extract(source_text, target_text, existing)
-        if len(existing) < len(all_existing):
-            terms = _filter_shadowed_sources(terms, source_text, (*terms, *all_existing))
+        return ExtractionRequest(source_text, target_text, tuple(existing), tuple(all_existing))
+
+    def extract_candidates(self, request: ExtractionRequest) -> list[GlossaryTerm]:
+        """Call the model for one prepared request; reads and writes no run state."""
+        return self.extract(request.source_text, request.target_text, list(request.existing))
+
+    def store_extracted(
+        self,
+        store: Storage | GlossaryStore,
+        request: ExtractionRequest,
+        terms: list[GlossaryTerm],
+        chapter: int,
+        *,
+        history: Iterable[TranslatedSegmentEvidence] = (),
+        before: tuple[int, int] | None = None,
+        source_corpus: str | None = None,
+        admit: Callable[[GlossaryTerm, int | None], str] | None = None,
+    ) -> dict[str, int]:
+        """Filter, align and store the candidates of one request; see ``extract_and_store``."""
+        source_text = request.source_text
+        if len(request.existing) < len(request.all_existing):
+            terms = _filter_shadowed_sources(terms, source_text, (*terms, *request.all_existing))
         if source_corpus is not None:
             terms = self._drop_single_occurrence_new_terms(terms, store, source_corpus)
         occurrences = (
@@ -740,3 +761,38 @@ class GlossaryExtractor(Agent):
             result = admit(t, chapter) if admit else store.upsert_term(t, chapter=chapter)
             summary[result] = summary.get(result, 0) + 1
         return summary
+
+    def extract_and_store(
+        self,
+        store: Storage | GlossaryStore,
+        source_text: str,
+        target_text: str,
+        chapter: int,
+        *,
+        history: Iterable[TranslatedSegmentEvidence] = (),
+        before: tuple[int, int] | None = None,
+        source_corpus: str | None = None,
+        admit: Callable[[GlossaryTerm, int | None], str] | None = None,
+    ) -> dict[str, int]:
+        """Extract and store terms, preferring the translation at their first historical
+        occurrence.
+        history contains translated evidence only. If a new term appears before the supplied
+        position, align target against its first source/target pair. Defer uncertain
+        mappings instead of locking a later candidate into the glossary and contaminating
+        subsequent text.
+        With source_corpus, inject only existing terms occurring at least twice in the
+        source, and do not store new terms occurring only once in the book.
+        """
+        request = self.prepare_extraction(
+            store, source_text, target_text, source_corpus=source_corpus
+        )
+        return self.store_extracted(
+            store,
+            request,
+            self.extract_candidates(request),
+            chapter,
+            history=history,
+            before=before,
+            source_corpus=source_corpus,
+            admit=admit,
+        )
