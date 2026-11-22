@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import tempfile
+import unittest
 import zipfile
 from itertools import permutations
 from pathlib import Path
@@ -17,6 +19,7 @@ from wenyi_core.assemble.writer import assemble
 from wenyi_core.assemble.writer_common import _epub_lang
 from wenyi_core.config import Config
 from wenyi_core.i18n.languages import (
+    honorific_rule,
     normalize_language,
     profile,
     supported_languages,
@@ -32,6 +35,7 @@ from wenyi_core.storage.run_store import translation_run_dir
 
 from tests.fake_llm import routing_handler
 from tests.pipeline_fixtures import require_file_storage
+from tests.sample_data import write_sample_txt
 
 
 def test_non_chinese_translation_has_no_chinese_target_instruction():
@@ -432,3 +436,90 @@ def test_review_rechecks_when_language_resources_change():
         ):
             orchestrator.run_review(str(source))
         assert len(client.calls) > before
+
+
+class TestModelLanguageDetection(unittest.TestCase):
+    def _cfg(self, state: str) -> Config:
+        return Config.from_dict(
+            {
+                "language": {"source": "auto", "target": "zh"},
+                "llm": {"preset": "fake"},
+                "pipeline": {"book_understanding": False},
+                "paths": {"state_dir": state},
+            }
+        )
+
+    def test_auto_uses_model_detection(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = self._cfg(os.path.join(d, "state"))
+
+            def handler(messages, tier, json_mode):
+                if "language detector" in messages[0]["content"]:
+                    return json.dumps({"language": "russian"}, ensure_ascii=False)
+                return routing_handler(messages, tier, json_mode)
+
+            store = require_file_storage(
+                Orchestrator(cfg, client=FakeClient(handler=handler)).prepare(txt)
+            )
+            self.assertEqual(cfg.source_lang, "ru")
+            self.assertEqual(store.load_manifest()["source_lang"], "ru")
+
+    def test_auto_detection_failure_requires_user_source(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = self._cfg(os.path.join(d, "state"))
+
+            def handler(messages, tier, json_mode):
+                if "language detector" in messages[0]["content"]:
+                    return json.dumps({"language": ""}, ensure_ascii=False)
+                return routing_handler(messages, tier, json_mode)
+
+            with self.assertRaisesRegex(ValueError, "language.source"):
+                Orchestrator(cfg, client=FakeClient(handler=handler)).prepare(txt)
+
+    def test_explicit_same_source_and_target_stops_before_model_calls(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = Config.from_dict(
+                {
+                    "language": {"source": "ja", "target": "ja-JP"},
+                    "llm": {"preset": "fake"},
+                    "paths": {"state_dir": os.path.join(d, "state")},
+                }
+            )
+            client = FakeClient(handler=routing_handler)
+
+            with self.assertRaisesRegex(
+                ValueError, "Source and target languages are identical .*ja"
+            ):
+                Orchestrator(cfg, client=client).prepare(txt)
+
+            self.assertEqual(client.calls, [])
+
+    def test_auto_detected_source_matching_target_stops_before_analysis(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            cfg = self._cfg(os.path.join(d, "state"))
+
+            def handler(messages, tier, json_mode):
+                if "language detector" in messages[0]["content"]:
+                    return json.dumps({"language": "chinese"}, ensure_ascii=False)
+                raise AssertionError("相同语言不应继续进入分析或翻译")
+
+            with self.assertRaisesRegex(
+                ValueError, "Source and target languages are identical .*zh"
+            ):
+                Orchestrator(cfg, client=FakeClient(handler=handler)).prepare(txt)
+
+
+class TestLanguageProfile(unittest.TestCase):
+    def test_language_pair_requires_stable_honorific_choice(self):
+        rule = honorific_rule("ja", "zh")
+
+        self.assertIn("use it consistently for that relationship throughout the book", rule)
+        self.assertNotIn("可酌情保留", rule)

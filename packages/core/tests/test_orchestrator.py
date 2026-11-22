@@ -7,10 +7,12 @@ import os
 import re
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
 from wenyi_core.agents.reviewer import ReviewOutputError
+from wenyi_core.config import Config
 from wenyi_core.glossary.store import GlossaryStore
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample
@@ -2790,6 +2792,53 @@ class TestProgressLabels(unittest.TestCase):
             )
             self.assertIn((0, 0, "progress.stage.synopsis"), events)
             self.assertNotIn("Generating report…", labels)
+
+
+class TestRunAll(unittest.TestCase):
+    def test_continuous_pipeline_outputs_epub(self):
+        with tempfile.TemporaryDirectory() as d:
+            txt = os.path.join(d, "novel.txt")
+            write_sample_txt(txt)
+            state = os.path.join(d, "state")
+            cfg = Config.from_dict(
+                {
+                    "language": {"source": "auto", "target": "zh"},
+                    "llm": {"preset": "fake"},
+                    "pipeline": {
+                        "review": True,
+                        "review_autofix": False,
+                        "polish": True,
+                    },
+                    "paths": {"state_dir": state},
+                }
+            )
+            seen = []
+            orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
+            result = orch.run_all(
+                txt,
+                progress=lambda done, total, label, payload=None: seen.append((done, total)),
+                out_format="epub",
+            )
+            self.assertTrue(result["output"].endswith(".epub"))
+            self.assertTrue(zipfile.is_zipfile(result["output"]))
+            # Progress callbacks run and finish with done equal to total.
+            self.assertTrue(seen)
+            self.assertEqual(seen[-1][0], seen[-1][1])
+            # Model detection resolves auto source to ja.
+            self.assertEqual(cfg.source_lang, "ja")
+            with open(result["store"].event_log_path, "r", encoding="utf-8") as f:
+                events = [json.loads(line) for line in f if line.strip()]
+            event_names = [e["event"] for e in events]
+            self.assertIn("run_initialized", event_names)
+            self.assertIn("batch_translated", event_names)
+            self.assertNotIn("report_saved", event_names)
+            self.assertNotIn("report", result)
+            self.assertFalse(os.path.exists(os.path.join(result["store"].run_dir, "report.json")))
+            self.assertIn("assembled", event_names)
+            translated = next(e for e in events if e["event"] == "batch_translated")
+            self.assertTrue(translated["segments"])
+            self.assertIn("source", translated["segments"][0])
+            self.assertIn("target", translated["segments"][0])
 
 
 if __name__ == "__main__":

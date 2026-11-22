@@ -2260,5 +2260,43 @@ class TestHtmlOrphanContinuation(unittest.TestCase):
             self.assertIn("re-run", message.lower())
 
 
+class TestStandaloneExport(unittest.TestCase):
+    def test_export_preserves_saved_punctuation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "novel.txt"
+            source.write_text("Hello world.", encoding="utf-8")
+            config = Config.from_dict(
+                {
+                    "language": {"source": "en", "target": "zh"},
+                    "llm": {"preset": "fake"},
+                    "pipeline": {
+                        "book_understanding": False,
+                        "polish": False,
+                        "annotation_alignment": False,
+                    },
+                    "paths": {"state_dir": str(Path(directory) / "state")},
+                }
+            )
+
+            def handler(messages, tier, json_mode):
+                if "literary translator" in messages[0]["content"]:
+                    return json.dumps({"translations": ["他说,真的吗?"]}, ensure_ascii=False)
+                return routing_handler(messages, tier, json_mode)
+
+            orchestrator = Orchestrator(config, client=FakeClient(handler=handler))
+            store = orchestrator.run(str(source))
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "他说,真的吗?")
+
+            output = Path(
+                orchestrator.run_assemble(
+                    str(source),
+                    out_format="txt",
+                    out_path=str(Path(directory) / "novel.zh.txt"),
+                )["output"]
+            )
+            self.assertIn("他说,真的吗?", output.read_text(encoding="utf-8"))
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "他说,真的吗?")
+
+
 if __name__ == "__main__":
     unittest.main()
