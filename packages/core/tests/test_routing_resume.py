@@ -395,4 +395,4 @@ def test_completed_translation_is_kept_and_changed_review_model_gets_new_run(tmp
     assert {
         path.name: path.read_bytes() for path in (tmp_path / "state").rglob("ch*.json")
     } == translated
-    assert json.loads(open(store.manifest_path).read())["target_lang"] == "zh"
+    assert json.loads(open(store.manifest_path, encoding="utf-8").read())["target_lang"] == "zh"
