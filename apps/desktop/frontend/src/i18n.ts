@@ -275,12 +275,26 @@ const zhCN: Record<keyof typeof en, string> = {
   "credentials.refresh": "重新检查",
 };
 
+export const desktopDictionaries = { en, zhCN };
+
+// Lookup order per UI locale: the locale dictionary first, then English, so a
+// key that has not been translated yet degrades to English instead of crashing
+// on a missing entry. Locales without a chain use English only.
+const LOCALE_CHAINS: Record<string, readonly Record<keyof typeof en, string>[]> = {
+  "zh-CN": [zhCN, en],
+};
+const DEFAULT_CHAIN: readonly Record<keyof typeof en, string>[] = [en];
+
 export function translateDesktop(
   locale: string,
   key: keyof typeof en,
   values: Record<string, unknown> = {},
 ) {
-  return (locale === "zh-CN" ? zhCN : en)[key].replace(
+  const chain = LOCALE_CHAINS[locale] ?? DEFAULT_CHAIN;
+  const template = chain
+    .map((messages) => messages[key])
+    .find((text) => typeof text === "string");
+  return (template ?? key).replace(
     /\{(\w+)\}/g, (_, name: string) => String(values[name] ?? ""),
   );
 }
