@@ -66,6 +66,35 @@ class TestGlossary(unittest.TestCase):
             {"OpenAI", "ＡＢＣ"},
         )
 
+    def test_terms_in_longest_match_shadows_substring_hits(self):
+        """A longer matched term shadows overlapping substring hits in the same span."""
+        self.store.upsert_term(GlossaryTerm(source="東京", target="东京"))
+        self.store.upsert_term(GlossaryTerm(source="大学", target="大学"))
+        self.store.upsert_term(GlossaryTerm(source="東京大学", target="东京大学"))
+
+        hits = self.store.terms_in(self.store.all_terms(), "東京大学の前を歩く。")
+
+        self.assertEqual([term.source for term in hits], ["東京大学"])
+
+    def test_terms_in_longest_match_keeps_standalone_occurrences(self):
+        """Shadowing hides only covered spans; a standalone occurrence still injects."""
+        self.store.upsert_term(GlossaryTerm(source="東京", target="东京"))
+        self.store.upsert_term(GlossaryTerm(source="東京大学", target="东京大学"))
+
+        hits = self.store.terms_in(self.store.all_terms(), "東京大学は東京にある。")
+
+        self.assertEqual([term.source for term in hits], ["東京", "東京大学"])
+
+    def test_terms_in_preserves_insertion_order_of_survivors(self):
+        """Survivors keep the glossary's stable insertion order."""
+        self.store.upsert_term(GlossaryTerm(source="大学", target="大学"))
+        self.store.upsert_term(GlossaryTerm(source="早稲田", target="早稻田"))
+        self.store.upsert_term(GlossaryTerm(source="東京大学", target="东京大学"))
+
+        hits = self.store.terms_in(self.store.all_terms(), "東京大学と早稲田。")
+
+        self.assertEqual([term.source for term in hits], ["早稲田", "東京大学"])
+
     def test_ascii_source_match_respects_word_boundaries(self):
         self.assertTrue(source_matches_text("Ann", "Ann opened the door."))
         self.assertTrue(source_matches_text("ANN", "ann opened the door."))

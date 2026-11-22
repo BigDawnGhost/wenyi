@@ -44,7 +44,7 @@ segment:
 
 # ── Pipeline options (quality and cost)───────────────────────────────────────────
 pipeline:
-  # Body translation and Reviewer requests always use the full glossary.
+  # Reviewer requests use the full glossary; body translation injects only batch-matched terms.
   review: true # Run final review after whole-book translation; disable with --no-review
   # Additional structural retries for standard translation and each precision stage; 0 disables retries.
   align_retry_limit: 2

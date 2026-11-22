@@ -574,7 +574,7 @@ def test_resume_after_target_save_completes_glossary_without_retranslation(
 def test_resume_refreshes_full_glossary_before_pending_batches(
     tmp_path, config, monkeypatch, checkpoint_saved, polish
 ):
-    """Keep saved targets and refresh the full glossary after recovering extraction."""
+    """Keep saved targets and refresh the glossary snapshot before pending batches."""
     config.pipeline.polish = polish
     source = tmp_path / "book.txt"
     source.write_text(
@@ -586,15 +586,20 @@ def test_resume_refreshes_full_glossary_before_pending_batches(
         system = messages[0]["content"]
         user = messages[-1]["content"]
         if "terminology" in system and "extractor" in system:
+            # The first batch also yields a term that only matches a later batch's text, so
+            # the refreshed glossary snapshot must carry it into that batch's prompt.
             terms = [{"source": "Alice", "target": "爱丽丝", "type": "person"}]
-            return json.dumps({"terms": terms if "Alice" in user else []}, ensure_ascii=False)
+            if "Alice" in user:
+                terms.append({"source": "letter", "target": "信"})
+            return json.dumps({"terms": terms}, ensure_ascii=False)
         return routing_handler(messages, tier, json_mode)
 
     first = Orchestrator(config, client=FakeClient(handler=handler))
     store = first.prepare(str(source))
-    # Append in a deliberately nonalphabetical order; neither source occurs in the book.
-    store.upsert_term(GlossaryTerm(source="Zebra", target="斑马"))
-    store.upsert_term(GlossaryTerm(source="Apple", target="苹果"))
+    # Append in a deliberately nonalphabetical order; both sources occur only in the
+    # second batch, so the prompt order must follow insertion rather than the alphabet.
+    store.upsert_term(GlossaryTerm(source="slowly", target="徐徐"))
+    store.upsert_term(GlossaryTerm(source="door", target="门"))
     extract = first._translation.extract_batch_glossary
 
     def interrupt(*args, **kwargs):
@@ -626,11 +631,17 @@ def test_resume_refreshes_full_glossary_before_pending_batches(
     assert store.load_chapter(0).text_segments[0] == saved
     calls = [call for call in client.calls if call["operation"] == "translation.body"]
     assert len(calls) == 2
-    for call in calls:
-        user = call["messages"][-1]["content"]
-        assert "Alice → 爱丽丝" in user
-        assert "Outside → 外部术语" in user
-        assert user.index("Zebra → 斑马") < user.index("Apple → 苹果")
+    first_user = calls[0]["messages"][-1]["content"]
+    second_user = calls[1]["messages"][-1]["content"]
+    # Only batch-matched terms inject, in the glossary's insertion order.
+    assert "slowly → 徐徐" in first_user
+    assert "door → 门" in first_user
+    assert first_user.index("slowly → 徐徐") < first_user.index("door → 门")
+    assert "letter → 信" in second_user
+    for user in (first_user, second_user):
+        # Alice occurs only in the first batch, which resume does not retranslate.
+        assert "Alice → 爱丽丝" not in user
+        assert "Outside → 外部术语" not in user
         assert "Alice waited by the window." not in _numbered_sources(user)
     cached_client = FakeClient(handler=handler)
     Orchestrator(config, client=cached_client).run(str(source))

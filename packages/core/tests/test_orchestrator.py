@@ -2535,14 +2535,17 @@ class TestFullGlossary(unittest.TestCase):
             if "literary translator" in c["messages"][0]["content"]
         ]
 
-    def test_every_translation_batch_keeps_absent_terms_and_aliases(self):
+    def test_translation_batches_inject_only_matched_terms_and_aliases(self):
+        """Body batches inject only terms occurring in their own source text: absent
+        terms stay out of every prompt, while an alias hit still injects its term.
+        """
         with tempfile.TemporaryDirectory() as d:
             translate_prompts = self._run_with_terms(d)
             self.assertTrue(translate_prompts)
+            self.assertIn("ホリキタ", "\n".join(translate_prompts))
             for p in translate_prompts:
-                self.assertIn("外部人物X", p)
-                self.assertIn("無関係用語", p)
-                self.assertIn("ホリキタ", p)
+                self.assertNotIn("外部人物X", p)
+                self.assertNotIn("無関係用語", p)
 
     def test_batch_glossary_refreshes_following_prompts(self):
         """Extract terms after each batch so later prompts immediately receive new forms of

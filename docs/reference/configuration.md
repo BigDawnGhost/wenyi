@@ -400,8 +400,9 @@ do not by themselves regenerate verified complete digests or cached synopses.
 
 Older configurations with `terminology_context: false` still load. The `true` setting and `terminology.*` model routes have been removed; remove these settings when upgrading. Incremental note generation is never enabled implicitly.
 
-Body translation and fresh Reviewer requests always receive the full glossary;
-there is no scope selector. Annotation alignment may add model requests;
+Fresh Reviewer requests receive the full glossary; body translation injects only the
+terms matched in each batch, with longer matches shadowing their overlapping substring
+hits. There is no scope selector. Annotation alignment may add model requests;
 placement-failure behavior depends on the [format](formats.md). Full workflow, cost, and resume
 semantics belong in the [workflow guide](../guide/pipeline.md); markup/layout
 limitations belong in [formats](formats.md).

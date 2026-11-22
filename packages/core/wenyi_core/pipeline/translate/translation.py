@@ -358,11 +358,15 @@ class TranslationService:
                 if body_context
                 else ""
             )
+            # Inject only the terms occurring in this batch's own source text: the snapshot is
+            # read once per chapter as the matching pool, so each batch receives the
+            # deduplicated hits of its text, with longest matches shadowing substring hits.
+            batch_terms = GlossaryStore.terms_in(term_snapshot, "\n".join(s.source for s in b))
             plan = BatchPlan.capture(
                 ci,
                 batch_start,
                 b,
-                term_snapshot,
+                batch_terms,
                 ctx_text,
                 style,
                 book_synopsis if body_context else "",

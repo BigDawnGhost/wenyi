@@ -597,16 +597,31 @@ class GlossaryStore:
     def terms_in(terms: list[GlossaryTerm], text: str) -> list[GlossaryTerm]:
         """Filter a prefetched term list by source/alias occurrences in text.
         Match evidence and local revision context without querying the database per term.
+        Longest match wins: an occurrence fully covered by a longer matched term is shadowed,
+        so 東京大学 in the text injects only 東京大学 instead of also injecting the overlapping
+        東京 and 大学 hits with conflicting guidance. Standalone occurrences still inject.
         """
-        out: list[GlossaryTerm] = []
         normalized_text = _match_text(text)
+        candidates: list[tuple[GlossaryTerm, set[tuple[int, int]]]] = []
         for term in terms:
             # Forms of address, verbal habits and fixed expressions carry tone or context. A bare-name alias
             # must not inject their derived translation into an ordinary address.
-            keys = term_match_sources(term)
-            if any(source_matches_text(k, normalized_text) for k in keys):
-                out.append(term)
-        return out
+            spans: set[tuple[int, int]] = set()
+            for key in term_match_sources(term):
+                spans.update(_source_occurrence_spans(key, normalized_text))
+            if spans:
+                candidates.append((term, spans))
+        if len(candidates) < 2:
+            return [term for term, _ in candidates]
+        all_spans = [span for _, spans in candidates for span in spans]
+
+        def shadowed(span: tuple[int, int]) -> bool:
+            return any(
+                other != span and other[0] <= span[0] and span[1] <= other[1] for other in all_spans
+            )
+
+        # Keep the caller's order: stable prompt glossary positions preserve prefix caching.
+        return [term for term, spans in candidates if not all(shadowed(span) for span in spans)]
 
     @staticmethod
     def recurring_terms(
