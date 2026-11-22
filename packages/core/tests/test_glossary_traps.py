@@ -28,7 +28,12 @@ def _config(source: str = "zh", target: str = "en") -> Config:
     )
 
 
-def _extractor(extracted: list[dict], aligned: list[dict] | None = None, source: str = "zh"):
+def _extractor(
+    extracted: list[dict],
+    aligned: list[dict] | None = None,
+    source: str = "zh",
+    target: str = "en",
+):
     calls: list[str] = []
 
     # Appellation-like types are admitted only with an explicit stable scope.
@@ -41,7 +46,7 @@ def _extractor(extracted: list[dict], aligned: list[dict] | None = None, source:
             return json.dumps({"terms": aligned or []}, ensure_ascii=False)
         return json.dumps({"terms": extracted}, ensure_ascii=False)
 
-    return GlossaryExtractor(FakeClient(handler=handler), _config(source)), calls
+    return GlossaryExtractor(FakeClient(handler=handler), _config(source, target)), calls
 
 
 class TestContextDependentSources(unittest.TestCase):
@@ -68,16 +73,31 @@ class TestContextDependentSources(unittest.TestCase):
         result = extractor.extract("孤与本王问李大人，李贽笑道：大人请。", "Text.", [])
         self.assertEqual([t.source for t in result], ["李贽", "李大人"])
 
+    def test_forms_of_address_are_removed_from_aliases(self):
+        extractor, _ = _extractor(
+            [
+                {
+                    "source": "德亲王",
+                    "target": "Prince De",
+                    "type": "person",
+                    "aliases": ["本王", "赵珏", "王爷"],
+                }
+            ]
+        )
+        result = extractor.extract("德亲王赵珏道：本王来了。", "Text.", [])
+        self.assertEqual(result[0].aliases, ["赵珏"])
+
     def test_single_character_common_words_are_dropped_but_names_kept(self):
         payload = [
             {"source": "课", "target": "reading", "type": "term"},
             {"source": "丈", "target": "zhang", "type": "item"},
             {"source": "蜀", "target": "Shu", "type": "place"},
             {"source": "胜", "target": "Sheng", "type": "person"},
+            {"source": "晋", "target": "Jin", "type": "setting"},
         ]
         extractor, _ = _extractor(payload)
-        result = extractor.extract("课上说蜀国主胜身高一丈。", "Text.", [])
-        self.assertEqual([t.source for t in result], ["蜀", "胜"])
+        result = extractor.extract("课上说蜀国主胜身高一丈，晋人亦然。", "Text.", [])
+        self.assertEqual([t.source for t in result], ["蜀", "胜", "晋"])
 
         japanese, _ = _extractor(
             [{"source": "術", "target": "术", "type": "technique"}], source="ja"
@@ -138,6 +158,18 @@ class TestHistoryAlignmentTraps(unittest.TestCase):
         self.assertEqual(summary["history_matched"], 0)
         self.assertEqual(len(calls), 2)
 
+    def test_caseless_historical_rendering_is_still_aligned(self):
+        extractor, _ = _extractor(
+            [{"source": "Class C", "target": "C班", "type": "organization"}],
+            aligned=[{"source": "Class C", "target": "丙班"}],
+            source="en",
+            target="zh",
+        )
+        history = [TranslatedSegmentEvidence(1, 0, "Class C met.", "丙班集合了。")]
+        summary, terms = self._store_once(extractor, "Class C left.", "C班离开了。", history)
+        self.assertEqual(terms["Class C"].target, "丙班")
+        self.assertEqual(summary["history_aligned"], 1)
+
     def test_name_aligned_to_an_earlier_capitalized_rendering_still_aligns(self):
         extractor, _ = _extractor(
             [{"source": "江哲", "target": "Jiang Che", "type": "person"}],
@@ -191,7 +223,7 @@ class TestSingleOccurrenceTerms(unittest.TestCase):
 
 
 class TestEquivalentTargets(unittest.TestCase):
-    def test_article_case_spacing_and_final_stop_are_not_conflicts(self):
+    def test_article_case_spacing_and_final_stop_are_equivalent(self):
         for left, right in [
             ("Qingyuan Collection", "the Qingyuan Collection"),
             ("The master", "Master"),
@@ -205,26 +237,44 @@ class TestEquivalentTargets(unittest.TestCase):
             ("second place", "second-place laureate"),
             ("", " "),
             ("Theodore", "odore"),
+            ("An Lushan", "Lushan"),
+            ("A Zi", "Zi"),
         ]:
             with self.subTest(left=left, right=right):
                 self.assertFalse(equivalent_targets(left, right))
 
-    def test_store_keeps_existing_target_without_logging_a_conflict(self):
+    def test_extraction_keeps_the_stored_target_without_logging_a_conflict(self):
+        extractor, _ = _extractor(
+            [
+                {
+                    "source": "清远集",
+                    "target": "the Qingyuan Collection",
+                    "type": "item",
+                    "aliases": ["清远"],
+                }
+            ]
+        )
         with tempfile.TemporaryDirectory() as d:
             store = GlossaryStore(os.path.join(d, "g.db"))
             store.upsert_term(GlossaryTerm(source="清远集", target="Qingyuan Collection"))
-            result = store.upsert_term(
-                GlossaryTerm(source="清远集", target="the Qingyuan Collection", aliases=["清远"])
+            summary = extractor.extract_and_store(
+                store, "他读清远集。", "He read the Qingyuan Collection.", chapter=1
             )
             term = store.get_term("清远集")
-            self.assertEqual(result, "unchanged")
             assert term is not None
+            self.assertEqual(summary["unchanged"], 1)
             self.assertEqual(term.target, "Qingyuan Collection")
             self.assertEqual(term.aliases, ["清远"])
             self.assertEqual(term.status, "ok")
             self.assertEqual(store.open_conflicts(), [])
+            store.close()
+
+    def test_direct_store_writes_still_compare_targets_exactly(self):
+        with tempfile.TemporaryDirectory() as d:
+            store = GlossaryStore(os.path.join(d, "g.db"))
+            store.upsert_term(GlossaryTerm(source="清远集", target="qingyuan collection"))
             self.assertEqual(
-                store.upsert_term(GlossaryTerm(source="清远集", target="Clear Distance Anthology")),
+                store.upsert_term(GlossaryTerm(source="清远集", target="Qingyuan Collection")),
                 "conflict",
             )
             store.close()

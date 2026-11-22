@@ -109,13 +109,6 @@ def test_glossary_order_conflict_and_batch_checkpoint(storage, tmp_path):
     storage.upsert_term(GlossaryTerm(source="Zed", target="泽德"))
     storage.upsert_term(GlossaryTerm(source="Amy", target="艾米"))
     assert [term.source for term in storage.all_terms()] == ["Zed", "Amy"]
-    storage.upsert_term(GlossaryTerm(source="清远集", target="Qingyuan Collection"))
-    assert storage.upsert_term(GlossaryTerm(source="清远集", target="the Qingyuan Collection")) == (
-        "unchanged"
-    )
-    assert storage.get_term("清远集").status == "ok"
-    assert storage.open_conflicts() == []
-    assert storage.delete_term("清远集")
     assert storage.upsert_term(GlossaryTerm(source="Zed", target="另一译名")) == "conflict"
     assert storage.get_term("Zed").target == "泽德"
     assert storage.resolve_term("Zed", "确认译名")

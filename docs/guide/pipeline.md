@@ -130,8 +130,9 @@ descriptions or single lines. Wenyi also enforces this without the model: a new 
 whose source occurs only once in the whole book is not stored, and for Chinese sources
 self-references and forms of address whose wording depends on speaker and listener
 (such as 孤, 本王, 大人 or 公子) and one-character common words are not stored either;
-one-character names such as 蜀 are kept. A different translation that differs only in
-case, spacing, a leading English article or a final stop is not recorded as a conflict.
+one-character names such as 蜀 are kept. An extracted translation that differs from the
+stored one only in case, spacing, a leading "the" or a final stop is not recorded as a
+conflict; glossary imports and manual edits still compare exactly.
 It runs after every batch and once per chapter, with the
 `fast` profile's reasoning setting. A lighter profile of the same model, such as
 `reasoning_effort: low`, usually suffices; route `glossary.extract` and

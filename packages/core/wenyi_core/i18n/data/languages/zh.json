@@ -52,7 +52,10 @@
     "賢姪",
     "閣下",
     "王爺",
-    "少爺"
+    "少爺",
+    "末將",
+    "兄臺",
+    "賢侄"
   ],
   "glossary_single_character_names_only": true,
   "target_guidance": "Use Simplified Chinese and natural Chinese ${genre_chinese_conventions} while preserving ${genre_chinese_style_focus}.",

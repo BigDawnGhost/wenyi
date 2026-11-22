@@ -108,13 +108,14 @@ def normalize_match_text(text: str) -> str:
 
 _match_text = normalize_match_text
 
-_LEADING_ARTICLE = re.compile(r"^(?:the|a|an)\s+")
+_LEADING_ARTICLE = re.compile(r"^the\s+")
 _TRAILING_PUNCTUATION = re.compile(r"[\s.!?。！？]+$")
 
 
 def equivalent_targets(left: str, right: str) -> bool:
-    """Treat targets differing only by case, spacing, a leading English article or a final
-    stop as the same translation, so extraction does not log them as conflicts.
+    """Treat targets differing only by case, spacing, a leading English "the" or a final
+    stop as the same translation, so automatic extraction does not log them as conflicts.
+    Only "the" is stripped: "A" and "An" also romanize Chinese names (阿紫, 安禄山).
     """
     if left == right:
         return True
@@ -412,7 +413,7 @@ class GlossaryStore:
                     ),
                 )
                 result = "unchanged"
-            elif equivalent_targets(existing.target, term.target):
+            elif existing.target == term.target:
                 # Merging aliases or filling missing fields is not a conflict.
                 merged_aliases = sorted(set(existing.aliases) | set(term.aliases))
                 self.conn.execute(
