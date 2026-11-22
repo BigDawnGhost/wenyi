@@ -13,7 +13,7 @@ from threading import Event
 
 import pytest
 from wenyi_core.config import Config
-from wenyi_core.errors import SchemaTooNew
+from wenyi_core.errors import SchemaTooNew, WenyiError
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
 from wenyi_core.models.document import Chapter, Document, Segment
@@ -1213,3 +1213,40 @@ def test_chapter_snapshot_releases_reader_after_load_error(store, document):
     assert store._readers == 0
     store.close()
     assert store.exists()
+
+
+def test_open_rejects_a_corrupted_database_with_recovery_guidance(tmp_path):
+    run_dir = tmp_path / "corrupt"
+    storage = SqliteStorage(str(run_dir))
+    storage.write_artifact("chapters/ch0.json", {"text": "word " * 4096})
+    storage.close_all()
+    database = run_dir / "state.sqlite3"
+    garbage = b"this file is not a sqlite database" * 128
+    database.write_bytes(garbage)
+    broken = SqliteStorage(str(run_dir), create=False)
+    with pytest.raises(WenyiError) as raised:
+        broken._connection()
+    assert raised.value.code == "database_corrupt"
+    message = str(raised.value)
+    assert "corrupted" in message
+    assert str(database) in message
+    assert "Restore the database from a backup" in message
+    with pytest.raises(WenyiError, match="corrupted"):
+        SqliteStorage(str(run_dir))._connection()
+    assert database.read_bytes() == garbage
+
+
+def test_open_rejects_a_database_corrupted_beyond_its_header(tmp_path):
+    run_dir = tmp_path / "damaged"
+    storage = SqliteStorage(str(run_dir))
+    storage.write_artifact("chapters/ch0.json", {"text": "word " * 8192})
+    storage.close_all()
+    database = run_dir / "state.sqlite3"
+    with database.open("r+b") as handle:
+        handle.seek(4096)
+        handle.write(b"\xde\xad\xbe\xef" * 512)
+    broken = SqliteStorage(str(run_dir), create=False)
+    with pytest.raises(WenyiError) as raised:
+        broken._connection()
+    assert raised.value.code == "database_corrupt"
+    assert "corrupted" in str(raised.value)

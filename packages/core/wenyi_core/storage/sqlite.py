@@ -20,7 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from ..errors import ArtifactCorrupt, SchemaTooNew
+from ..errors import ArtifactCorrupt, SchemaTooNew, WenyiError
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..models.document import Chapter, Document
 from .io_path import require_sqlite_path
@@ -141,6 +141,7 @@ class SqliteStorage:
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA busy_timeout = 5000")
+            self._check_database_integrity(conn)
             conn.execute("PRAGMA foreign_keys = ON")
             if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
                 conn.execute("PRAGMA journal_mode = WAL")
@@ -217,6 +218,33 @@ class SqliteStorage:
             conn.close()
             raise
         return conn
+
+    def _check_database_integrity(self, conn: sqlite3.Connection) -> None:
+        """Refuse to open a database whose contents fail SQLite's quick check.
+
+        A damaged file otherwise surfaces later as arbitrary
+        sqlite3.DatabaseError values from unrelated statements. The check
+        runs once per opened connection, and connections are cached per
+        thread, so ordinary statements do not pay for it again.
+        """
+        guidance = (
+            "Restore the database from a backup, or move or delete state.sqlite3 "
+            "so a fresh database is created; source files and exports in the run "
+            "directory are separate files and stay untouched."
+        )
+        try:
+            report = conn.execute("PRAGMA quick_check").fetchone()[0]
+        except sqlite3.DatabaseError as error:
+            report = str(error)
+            raise WenyiError(
+                f"Local state database is corrupted ({report}): {self.database_path}. {guidance}",
+                code="database_corrupt",
+            ) from error
+        if report != "ok":
+            raise WenyiError(
+                f"Local state database is corrupted ({report}): {self.database_path}. {guidance}",
+                code="database_corrupt",
+            )
 
     def _check_schema_version(self, conn: sqlite3.Connection) -> int:
         """Refuse newer schemas before reading data or attempting an upgrade.
