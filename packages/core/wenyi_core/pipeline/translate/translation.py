@@ -851,7 +851,7 @@ class TranslationService:
             if notes is not None:
                 notes.maintain(ci, 0, chapter_segments, exclude=covered_notes)
             store.log_event("chapter_glossary_extracted", chapter=ci, summary=summary)
-            publish_when_polished(None)
+            publish_when_polished(term_snapshot)
 
         self._extract(
             glossary,
