@@ -173,7 +173,7 @@ impl Store {
         let (pending, changed) = &*self.pending;
         let _ = pending.lock().unwrap().take();
         changed.notify_one();
-        let _ = self.save_normal_window(window);
+        let _ = self.save_normal_window(window, None);
     }
 
     fn run_worker(&self) {
@@ -193,21 +193,29 @@ impl Store {
             let item = queued.take().unwrap();
             drop(queued);
             if self.generation.load(Ordering::SeqCst) == item.generation {
-                let _ = self.save_normal_window(&item.window);
+                let _ = self.save_normal_window(&item.window, Some(item.generation));
             }
             queued = pending.lock().unwrap();
         }
     }
 
-    fn save_normal_window(&self, window: &WebviewWindow) -> io::Result<()> {
+    fn save_normal_window(
+        &self,
+        window: &WebviewWindow,
+        expected_generation: Option<u64>,
+    ) -> io::Result<()> {
         if window.is_minimized().unwrap_or(true) || window.is_maximized().unwrap_or(true) {
             return Ok(());
         }
         let document = capture(window)?;
-        self.write_document(&document)
+        self.write_document(&document, expected_generation)
     }
 
-    fn write_document(&self, document: &Document) -> io::Result<()> {
+    fn write_document(
+        &self,
+        document: &Document,
+        expected_generation: Option<u64>,
+    ) -> io::Result<()> {
         if !document.valid() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -215,6 +223,11 @@ impl Store {
             ));
         }
         let _guard = self.writing.lock().unwrap();
+        if expected_generation
+            .is_some_and(|generation| self.generation.load(Ordering::SeqCst) != generation)
+        {
+            return Ok(());
+        }
         let root = Dir::open_ambient_dir(&self.root, cap_std::ambient_authority())?;
         root.create_dir_all("runtime")?;
         let directory = root.open_dir_nofollow("runtime")?;
@@ -244,7 +257,7 @@ impl Store {
 
     #[cfg(test)]
     fn write_for_test(&self, document: &Document) -> io::Result<()> {
-        self.write_document(document)
+        self.write_document(document, None)
     }
 }
 
@@ -562,5 +575,20 @@ mod tests {
         assert_eq!(store.load_document().unwrap(), Some(document));
         assert_eq!(Store::new(&second.0).load_document().unwrap(), None);
         assert_eq!(fs::read_dir(first.0.join("runtime")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn stale_debounced_write_cannot_overwrite_final_geometry() {
+        let fixture = Fixture::new();
+        let store = Store::new(&fixture.0);
+        let final_geometry = saved("primary", 120.0, 90.0, 1180.0, 700.0);
+        let stale_geometry = saved("primary", 20.0, 30.0, 1100.0, 680.0);
+
+        // A final synchronous save advances the generation before writing.
+        store.generation.store(2, Ordering::SeqCst);
+        store.write_document(&final_geometry, None).unwrap();
+        store.write_document(&stale_geometry, Some(1)).unwrap();
+
+        assert_eq!(store.load_document().unwrap(), Some(final_geometry));
     }
 }
