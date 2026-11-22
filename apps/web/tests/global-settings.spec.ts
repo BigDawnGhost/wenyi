@@ -356,3 +356,52 @@ test("adding another model preserves a previously saved model rename", async ({
   expect(renames).toEqual([{ "deepseek/deepseek-flash": "deepseek/editor" }, {}]);
   expect(Object.keys(current.effective.llm.models)).toEqual(["deepseek/editor", "deepseek/writer-v1"]);
 });
+
+test("global settings keep a field edited while a save is in flight and advance revision", async ({
+  page,
+}) => {
+  await fakeApi(page);
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let serverRevision = globalConfiguration.revision;
+  const submittedRevisions: number[] = [];
+  await page.route("**/api/settings", async (route) => {
+    if (route.request().method() !== "PUT") return route.fallback();
+    const body = route.request().postDataJSON();
+    submittedRevisions.push(body.revision);
+    if (submittedRevisions.length === 1) await gate;
+    serverRevision += 1;
+    await route.fulfill({
+      json: {
+        ...globalConfiguration,
+        revision: serverRevision,
+        effective: JSON.parse(body.yaml),
+        yaml: body.yaml,
+      },
+    });
+  });
+  await page.goto("/settings/workflow");
+  const review = page.getByLabel("Whole-book review", { exact: true });
+  await expect(review).toBeEnabled();
+  const initial = await review.isChecked();
+  const firstSave = page.waitForRequest(
+    (request) => request.method() === "PUT" && request.url().endsWith("/api/settings"),
+  );
+  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+  await firstSave;
+  // The form stays editable during the request; the late reply must not revert it.
+  await review.setChecked(!initial);
+  release();
+  await expect(page.getByText("Global settings saved", { exact: true })).toBeVisible();
+  await expect(review).toBeChecked({ checked: !initial });
+  await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
+  // Saving the newer edit must use the revision returned by the first save.
+  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+  await expect.poll(() => submittedRevisions).toEqual([
+    globalConfiguration.revision,
+    globalConfiguration.revision + 1,
+  ]);
+  await expect(review).toBeChecked({ checked: !initial });
+});

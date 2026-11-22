@@ -187,6 +187,15 @@ for (const mode of ["manual", "unconfigured"]) {
   });
 }
 
+test("an installing update locks the configuration actions", async ({ page }) => {
+  await setup(page, "automatic", "installing");
+  await page.getByRole("link", { name: "Advanced", exact: true }).click();
+  await expect(page.getByRole("textbox", { name: "Advanced YAML configuration" })).toBeDisabled();
+  for (const name of ["Restore defaults", "Validate configuration", "Save configuration"]) {
+    await expect(page.getByRole("button", { name, exact: true })).toBeDisabled();
+  }
+});
+
 test("validated YAML is still unsaved and prevents installation", async ({ page }) => {
   await setup(page, "automatic", "ready");
   await page.getByRole("link", { name: "Advanced", exact: true }).click();
