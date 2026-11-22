@@ -12,7 +12,7 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .diagnostics import EngineDiagnostics, Reporter
+from .diagnostics import EngineDiagnostics, Reporter, deliver
 from .ownership import NativeOwner, profile_lock
 
 if TYPE_CHECKING:
@@ -238,8 +238,7 @@ def main() -> None:
     reporter = (
         Reporter(protocol_stream) if os.environ.get("WENYI_DIAGNOSTICS_PROTOCOL") == "1" else None
     )
-    if reporter is not None:
-        reporter.emit("engine_bootstrap")
+    deliver(reporter, "engine_bootstrap")
     lifecycle = EngineDiagnostics(reporter)
     try:
         with lifecycle.observe("bootstrap"):
