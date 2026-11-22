@@ -16,6 +16,7 @@ autofix publication indices.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -48,12 +49,33 @@ STATUS_PENDING = "pending"
 STATUS_DONE = "done"
 
 
+#: Cap for the slug component so "state/<slug>/targets/<lang>/..." stays well
+#: below the Windows MAX_PATH limit even for very long titles.
+SLUG_MAX_LENGTH = 64
+_SLUG_SUFFIX_LENGTH = 8
+
+
 def slugify(name: str) -> str:
-    """Convert a book title into a stable short state-directory name."""
+    """Convert a book title into a stable short state-directory name.
+
+    Slugs longer than SLUG_MAX_LENGTH are truncated and disambiguated with a
+    deterministic sha256 suffix, so the same title always maps to the same
+    directory and long titles sharing a prefix never collide.
+    """
     s = re.sub(r"[^\w一-鿿぀-ヿ-]+", "_", name).strip("_")
     # The reserved-name escape prefixes an underscore, so it has to come after
     # the separator trim that would otherwise remove it again.
-    return escape_reserved(strip_trailing(s)) or DEFAULT_COMPONENT
+    slug = escape_reserved(strip_trailing(s)) or DEFAULT_COMPONENT
+    return _cap_slug(slug)
+
+
+def _cap_slug(slug: str) -> str:
+    """Truncate an over-long slug and append a short sha256 suffix for uniqueness."""
+    if len(slug) <= SLUG_MAX_LENGTH:
+        return slug
+    suffix = hashlib.sha256(slug.encode("utf-8")).hexdigest()[:_SLUG_SUFFIX_LENGTH]
+    stem = slug[: SLUG_MAX_LENGTH - _SLUG_SUFFIX_LENGTH - 1].rstrip("_") or DEFAULT_COMPONENT
+    return f"{stem}-{suffix}"
 
 
 def translation_run_dir(state_dir: str, title: str, target_lang: str) -> str:
