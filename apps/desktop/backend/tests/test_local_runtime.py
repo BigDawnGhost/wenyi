@@ -164,7 +164,7 @@ def test_failure_notice_uses_the_catalog_name_and_a_bounded_reason(catalog, monk
     stream = io.StringIO()
     reporter = Reporter(stream)
 
-    async def execute(ctx, *, project_id, run_id):
+    async def execute(ctx, *, project_id, run_id, **values):
         job = current_context().repository.get_job_by_arq_id(run_id)
         # The shared runner persists the terminal status before it re-raises.
         current_context().repository.set_job_status(job["id"], "error", error="fake-private-error")
@@ -252,7 +252,7 @@ def test_completion_notice_requires_the_persisted_terminal_status(
     stream = io.StringIO()
     reporter = Reporter(stream)
 
-    async def execute(ctx, *, project_id, run_id):
+    async def execute(ctx, *, project_id, run_id, **values):
         job = current_context().repository.get_job_by_arq_id(run_id)
         current_context().repository.set_job_status(job["id"], "done")
         current_context().repository.set_project_status(project_id, status)
@@ -443,7 +443,7 @@ def test_duplicate_delivery_and_independent_two_export_slots(catalog, monkeypatc
         exports_started = asyncio.Event()
         calls = []
 
-        async def execute(ctx, *, project_id, run_id):
+        async def execute(ctx, *, project_id, run_id, **values):
             calls.append(run_id)
             job = current_context().repository.get_job_by_arq_id(run_id)
             current_context().repository.set_job_status(job["id"], "running")
