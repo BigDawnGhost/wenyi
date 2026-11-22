@@ -789,7 +789,7 @@ fn present(dom: &mut Dom, href: &str, p: &Presentation, options: &Options) -> bo
             dom.prepend(html, head);
             head
         });
-        if let Some(title_node) = dom.find(head, "title") {
+        if let Some(title_node) = dom.direct(head, "title") {
             dom.clear(title_node);
             dom.append_text(title_node, title);
         } else {
@@ -860,7 +860,12 @@ fn output<T>(
                 continue;
             }
             let line = dom.attr(node, LINE).is_some();
-            let nested = matches!(dom.name(node), "li" | "blockquote");
+            // Keep the copy inside structural containers: rows admit only cells,
+            // and a figure's caption must remain its first or last child.
+            let nested = matches!(
+                dom.name(node),
+                "li" | "blockquote" | "td" | "th" | "figcaption"
+            );
             let copy = dom.tag(if line {
                 "span"
             } else if nested {
@@ -873,6 +878,11 @@ fn output<T>(
                     unreachable!()
                 };
                 *dom.attrs_mut(copy) = attrs.clone();
+            }
+            if matches!(dom.name(node), "td" | "th") {
+                for attr in ["colspan", "rowspan", "headers", "scope", "abbr"] {
+                    dom.attrs_mut(copy).remove(attr);
+                }
             }
             if !options.source_lang.is_empty() && dom.attr(copy, "lang").is_none() {
                 dom.set(copy, "lang", options.source_lang.clone());
@@ -1108,20 +1118,38 @@ fn rewrite_xml(
                     .filter(|s| !s.is_empty() && *s != p.title)
                 {
                     if let Some(meta) = doc.descendants().find(|n| n.has_tag_name("metadata")) {
-                        let mut escaped_orig = String::new();
-                        escape(&mut escaped_orig, orig, true);
-                        edits.push(xml_append(
-                            &text,
-                            meta,
-                            &format!(
-                                "<meta name=\"wenyi:source-title\" content=\"{escaped_orig}\"/>"
-                            ),
-                        ));
+                        let has_source_title = meta.descendants().any(|child| {
+                            child.has_tag_name("meta")
+                                && child.attribute("name") == Some("wenyi:source-title")
+                        });
+                        if !has_source_title {
+                            let qualified = text[meta.range().start + 1..]
+                                .split(|c: char| c.is_whitespace() || c == '/' || c == '>')
+                                .next()
+                                .unwrap();
+                            let prefix = qualified
+                                .split_once(':')
+                                .map_or(String::new(), |(p, _)| format!("{p}:"));
+                            let mut escaped_orig = String::new();
+                            escape(&mut escaped_orig, orig, true);
+                            edits.push(xml_append(
+                                &text,
+                                meta,
+                                &format!(
+                                    "<{prefix}meta name=\"wenyi:source-title\" content=\"{escaped_orig}\"/>"
+                                ),
+                            ));
+                        }
                     }
                 }
             }
         }
-        if let Some(desc) = p.description.as_deref().map(strip).filter(|s| !s.is_empty()) {
+        if let Some(desc) = p
+            .description
+            .as_deref()
+            .map(strip)
+            .filter(|s| !s.is_empty())
+        {
             if let Some(n) = field("description") {
                 edits.push(xml_contents(&text, n, desc));
             }
@@ -1129,12 +1157,16 @@ fn rewrite_xml(
         if !p.subjects.is_empty() {
             let mut subject_nodes: Vec<_> = doc
                 .descendants()
-                .filter(|n| n.has_tag_name((DC, "subject")))
+                .filter(|n| {
+                    n.has_tag_name((DC, "subject")) && !strip(n.text().unwrap_or("")).is_empty()
+                })
                 .collect();
             if subject_nodes.is_empty() {
                 subject_nodes = doc
                     .descendants()
-                    .filter(|n| n.has_tag_name("subject"))
+                    .filter(|n| {
+                        n.has_tag_name("subject") && !strip(n.text().unwrap_or("")).is_empty()
+                    })
                     .collect();
             }
             for (node, translated) in subject_nodes.into_iter().zip(p.subjects.iter()) {
@@ -1363,8 +1395,13 @@ pub fn export(source: &Path, destination: &Path, mut options: Options) -> Result
                 let text = decode_xhtml_for_export(&data);
                 let mut dom = Dom::parse(&text);
                 rewrite_nav(&mut dom, href, &options);
-                present(&mut dom, href, options.presentation.as_ref().unwrap(), &options)
-                    .then(|| dom.epub_html())
+                present(
+                    &mut dom,
+                    href,
+                    options.presentation.as_ref().unwrap(),
+                    &options,
+                )
+                .then(|| dom.epub_html())
             } else {
                 None
             };

@@ -271,23 +271,42 @@ def _installer_code(member: str) -> str:
     )
 
 
-def test_windows_installer_uses_explicit_template_and_bilingual_current_user_policy():
+def test_windows_installer_offers_two_scopes_without_requiring_elevation_on_startup():
     nsis = _windows_bundle()["bundle"]["windows"]["nsis"]
-    assert nsis["installMode"] == "currentUser"
+    assert nsis["installMode"] == "both"
     assert nsis["languages"] == ["English", "SimpChinese"]
     assert nsis["displayLanguageSelector"] is True
     template = _installer_code("template")
     assert '!include "{{installer_hooks}}"' in template
     assert "RequestExecutionLevel user" in template
-    assert "WenyiRequireUser" in template.split("Function .onInit")[1].split("FunctionEnd")[0]
-    assert "IsUserAnAdmin" in _installer_code("installerHooks")
+    assert "Page custom ChooseScope ChooseScopeLeave" in template
+    assert "WenyiRequireUser" not in template
+    assert "WenyiRequireUser" not in _installer_code("installerHooks")
+
+
+def test_windows_machine_scope_is_elevated_and_isolated_from_user_data():
+    template = _installer_code("template")
+    scope = template.split("Function LoadInstallScope")[1].split("FunctionEnd")[0]
+    assert scope.index("WenyiElevateAndWait") < scope.index("Call AcquireSetupMutex")
+    assert 'StrCpy $1 "$1 /NS"' in scope
+    assert 'StrCpy $INSTDIR "${MACHINE_DIR}"' in scope
+    assert "SetShellVarContext all" in scope
+    assert scope.index("$RequestedDirectory") < scope.index("WenyiElevateAndWait")
+    install = template.split("Section Install")[1].split("SectionEnd")[0]
+    assert 'WriteRegStr SHCTX "${UNINSTKEY}" "InstallLocation"' in install
+    uninit = template.split("Function un.onInit")[1].split("FunctionEnd")[0]
+    assert '$INSTDIR == "${MACHINE_DIR}"' in uninit
+    assert 'ReadRegStr $0 HKLM "${MANUPRODUCTKEY}"' in uninit
+    uninstall = template.split("Section Uninstall")[1].split("SectionEnd")[0]
+    assert uninstall.index("$AllUsers != 1") < uninstall.index("$DeleteSettings == 1")
+    assert 'DeleteRegKey SHCTX "${UNINSTKEY}"' in uninstall
 
 
 def test_installer_separates_program_and_data_without_restoring_old_default():
     code = _installer_code("template")
     assert r"$LOCALAPPDATA\Programs\${PRODUCTNAME}" in code
     assert r'!define DATA_ROOT "$LOCALAPPDATA\Wenyi\Desktop"' in code
-    init = code.split("Function .onInit")[1].split("FunctionEnd")[0]
+    init = code.split("Function LoadInstallScope")[1].split("FunctionEnd")[0]
     assert "$PreviousLayout == 2" in init
     assert "$PreviousLayout != 2" in init
     assert "ReadRegDWORD $PreviousLayout" in init
@@ -309,9 +328,22 @@ def test_installer_preflight_runs_before_dependency_or_payload_writes():
     assert "CloseHandle" in replace and "Call AcquireSetupMutex" in replace
 
 
+def test_user_installs_drop_privileges_before_reading_previous_installation():
+    template = _installer_code("template")
+    scope = template.split("Function LoadInstallScope")[1].split("FunctionEnd")[0]
+    assert scope.index("WenyiRunCurrentUser") < scope.index("ReadRegStr $PreviousDirectory")
+    assert "$InPlace" not in template
+
+
+def test_windows_setup_embeds_webview_bootstrapper_without_nsisdl():
+    windows = _windows_bundle()["bundle"]["windows"]
+    assert windows["webviewInstallMode"]["type"] == "embedBootstrapper"
+    assert "NSISdl::" not in _installer_code("template")
+
+
 def test_installer_retains_registered_directory_ownership_across_uninstall():
     template = _installer_code("template")
-    init = template.split("Function .onInit")[1].split("FunctionEnd")[0]
+    init = template.split("Function LoadInstallScope")[1].split("FunctionEnd")[0]
     assert init.index("Call AcquireSetupMutex") < init.index("ReadRegStr $PreviousDirectory")
     assert "ReadRegDWORD $PreviousLayout" in init
     assert re.search(r'\$\{If\} \$0 == ""\s+StrCpy \$PreviousDirectory ""', init)
@@ -351,20 +383,15 @@ def test_installer_serializes_setup_and_checks_the_real_engine_without_forcing_s
     assert r"$TEMP\MicrosoftEdge" not in _installer_code("template")
 
 
-def test_uninstaller_deletion_is_opt_in_scoped_and_does_not_follow_nested_links():
+def test_uninstaller_deletion_is_opt_in_and_only_calls_the_native_cleanup():
     template = _installer_code("template")
     uninstall = template.split("Section Uninstall")[1].split("SectionEnd")[0]
     assert uninstall.index("$UpdateMode != 1") < uninstall.index("$DeleteSettings == 1")
-    assert uninstall.index("$DeleteProjects == 1") < uninstall.index(r"${DATA_ROOT}\projects")
-    assert "WENYI_LIBRARY_ROOTS" not in uninstall
-    assert r"$PROFILE\Wenyi" not in uninstall
-    assert r"$LOCALAPPDATA\Wenyi Desktop" not in uninstall
-    code = _installer_code("installerHooks")
-    remove = code.split("Function un.RemoveTree")[1].split("FunctionEnd")[0]
-    assert remove.index("GetFileAttributesW") < remove.index("FindFirst")
-    assert "${WENYI_REPARSE_POINT}" in remove
-    assert "Call un.RemoveTree" in remove
-    assert "RMDir /r" not in remove
+    assert uninstall.index("$DeleteProjects == 1") < uninstall.index("Call un.CleanUserData")
+    assert "${DATA_ROOT}" not in uninstall
+    cleanup = _installer_code("installerHooks").split("Function un.CleanUserData")[1]
+    assert "--uninstall-user-data $1" in cleanup
+    assert "RMDir" not in cleanup and "Delete " not in cleanup
 
 
 def test_installer_compares_whole_components_and_refuses_linked_ancestors():
@@ -391,12 +418,14 @@ def test_installer_normalizes_missing_paths_without_nsis_existing_file_requireme
 
 
 def test_installer_validates_explicit_directory_even_if_nsis_discards_it():
-    init = _installer_code("template").split("Function .onInit")[1].split("FunctionEnd")[0]
+    template = _installer_code("template")
+    init = template.split("Function .onInit")[1].split("FunctionEnd")[0]
     raw = init.index("kernel32::GetCommandLineW")
     explicit = init.index('${GetOptions} $0 "/D=" $0')
     assert raw < explicit
-    assert "StrCpy $INSTDIR $0" in init[explicit:]
-    assert explicit < init.index('$INSTDIR == "${PLACEHOLDER}"')
+    assert "StrCpy $RequestedDirectory $0" in init[explicit:]
+    scope = template.split("Function LoadInstallScope")[1].split("FunctionEnd")[0]
+    assert "StrCpy $INSTDIR $RequestedDirectory" in scope
 
 
 def test_installer_template_does_not_escape_handlebars_path_variables():

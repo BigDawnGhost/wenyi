@@ -74,7 +74,7 @@ def _config(*, max_retries: int) -> LLMConfig:
         api_key_env="TEST_LLM_KEY",
         timeout=1,
         max_retries=max_retries,
-        profiles={"strong": dict(model="test-model")},
+        profiles={"default": dict(model="test-model")},
     )
 
 

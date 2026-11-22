@@ -201,6 +201,7 @@ def test_model_observations_keep_client_scope_across_threads_and_leave_ledger_al
     import threading
 
     from wenyi_core.llm.configuration import LLMConfig
+    from wenyi_core.llm.operation_names import OPERATION_NAMES
     from wenyi_desktop.diagnostic_client import DesktopLLMClient
 
     stream = io.StringIO()
@@ -208,8 +209,8 @@ def test_model_observations_keep_client_scope_across_threads_and_leave_ledger_al
     config = LLMConfig.model_validate(
         {
             "providers": {"default": {"kind": "fake"}},
-            "models": {"one": {"provider": "default", "model": "offline"}},
-            "tiers": {"strong": "one", "cheap": "one", "fast": "one"},
+            "models": {"default/offline": {}},
+            "routes": {op: {"model": "default/offline"} for op in OPERATION_NAMES},
         }
     )
     with scope(reporter, project_ref="first"):

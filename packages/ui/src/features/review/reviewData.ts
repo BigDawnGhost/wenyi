@@ -9,7 +9,18 @@ export const itemStatuses = {
   unchanged: { key: "review.unchanged", tone: "secondary" },
 } as const;
 
+// The pipeline reports stable progress keys with the round after a colon. The
+// prose forms below are what earlier versions saved, and still arrive from
+// progress stored before an upgrade.
 const phases: [RegExp, MessageKey][] = [
+  [/^progress\.stage\.reviewChapters$/, "review.phaseLoading"],
+  [/^progress\.stage\.reviewCheckpoint$/, "review.phaseRestoring"],
+  [/^progress\.stage\.reviewPrepare:(\d+)$/, "review.phasePreparing"],
+  [/^progress\.stage\.reviewRound:?(1)$/, "review.phaseScan"],
+  [/^progress\.stage\.reviewRound:(\d+)$/, "review.phaseBlind"],
+  [/^progress\.stage\.arbitration:(\d+)$/, "review.phaseArbitration"],
+  [/^progress\.stage\.shadowRevision:(\d+)$/, "review.phaseRevision"],
+  [/^progress\.stage\.publishingAutofix$/, "review.phasePublish"],
   [/^Loading review chapters/, "review.phaseLoading"],
   [/^Restoring review checkpoint/, "review.phaseRestoring"],
   [/^Preparing review R(\d+)/, "review.phasePreparing"],

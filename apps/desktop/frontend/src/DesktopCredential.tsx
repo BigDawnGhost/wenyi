@@ -1,98 +1,66 @@
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  credentialDrafts,
-  credentialQuery,
-  readCredential,
-  saveCredential,
-  useCredentialEntry,
-  type CredentialStatus,
-} from "./credentials";
+import { useQuery } from "@tanstack/react-query";
+import { credentialQuery, readCredential } from "./credentials";
+import { updateCredentialSafety } from "./updateSafety";
 import { useDesktopI18n } from "./i18n";
 import type { CredentialFieldProps } from "@wenyi/ui/platform";
-import { ErrorNotice, Button, Label, PasswordInput } from "@wenyi/ui/primitives";
-import { SettingsGroup } from "@wenyi/ui/settings";
+import { ErrorNotice, Button, PasswordInput } from "@wenyi/ui/primitives";
+import { SettingsRow, SETTINGS_CONTROL_CLASSNAME } from "@wenyi/ui/settings";
 
 /**
  * API key field. A saved manual key is loaded into the field masked with dots;
- * the eye button reveals it. Edits are written with the next configuration save.
+ * the eye button reveals it. Unsaved edits belong to the provider dialog.
  */
-export function DesktopCredential({ connection, children }: CredentialFieldProps) {
+export function DesktopCredential({ connection, storedConnection, edit, onEdit }: CredentialFieldProps) {
   const { t } = useDesktopI18n();
   const credentials = useQuery(credentialQuery);
-  const status = credentials.data?.[connection];
-  const queryClient = useQueryClient();
-  const entry = useCredentialEntry(connection);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState(false);
+  const status = storedConnection ? credentials.data?.[storedConnection] : undefined;
+  const [stored, setStored] = useState<{ id: string; value: string }>();
   const manual = status?.mode === "manual" && status.available;
   // Load the stored key once per connection so the field shows it masked.
   useEffect(() => {
-    if (!manual || credentialDrafts.get(connection)) return;
+    if (!storedConnection || !manual) return;
     let active = true;
-    readCredential(connection)
-      .then((secret) => { if (active) credentialDrafts.load(connection, secret); })
+    readCredential(storedConnection)
+      .then(value => { if (active) setStored({ id: storedConnection, value }); })
       // An unreadable saved key must not block entering a replacement.
-      .catch(() => { if (active) credentialDrafts.load(connection, ""); });
+      .catch(() => { if (active) setStored(undefined); });
     return () => { active = false; };
-  }, [connection, manual]);
-  const write = async (mode: "manual" | "environment") => {
-    setPending(true);
-    setError(false);
-    try {
-      const result = await saveCredential(connection, { mode, clear: true });
-      queryClient.setQueryData<Record<string, CredentialStatus>>(
-        credentialQuery.queryKey, (current) => ({ ...current, [connection]: result }),
-      );
-      credentialDrafts.stored(connection, "");
-    } catch {
-      setError(true);
-    } finally {
-      setPending(false);
-    }
-  };
-  const environment = status?.mode === "environment";
-  const placeholder = environment && status.available
+  }, [storedConnection, manual]);
+  const hasEdit = edit !== undefined;
+  useEffect(() => {
+    const field = Symbol("provider-key");
+    updateCredentialSafety(field, hasEdit);
+    return () => updateCredentialSafety(field, false);
+  }, [hasEdit]);
+  const savedValue = manual && stored?.id === storedConnection ? stored?.value : undefined;
+  const placeholder = edit === undefined && status?.mode === "environment" && status.available
     ? t("credentials.environmentPlaceholder", { name: status.environment || "" })
-    : status && !status.requires_key && environment
+    : status && !status.requires_key
       ? t("credentials.notRequired")
       : t("credentials.placeholder");
   const inputId = `credential-secret-${connection}`;
   return (
-    <div className="space-y-2">
-      <ErrorNotice error={credentials.error} />
-      <Label htmlFor={inputId}>{t("credentials.key")}</Label>
-      <PasswordInput
-        id={inputId}
-        value={entry?.value ?? ""}
-        placeholder={placeholder}
-        showLabel={t("credentials.show")}
-        hideLabel={t("credentials.hide")}
-        onChange={(event) => credentialDrafts.set(connection, event.target.value)}
-      />
-      {manual && status.storage === "session" && (
-        <p className="text-xs text-muted-foreground">{t("credentials.sessionHelp")}</p>
-      )}
-      {error && <p role="alert" className="text-sm text-destructive">{t("credentials.failed")}</p>}
-      <SettingsGroup title={t("credentials.advanced")}>
-        <fieldset className="space-y-3" disabled={pending}>
-          {children}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={!status || environment}
-              onClick={() => void write("environment")}
-            >
-              {t("credentials.useEnvironment")}
-            </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => void credentials.refetch()}>
-              {t("credentials.refresh")}
-            </Button>
-          </div>
-        </fieldset>
-      </SettingsGroup>
-    </div>
+    <SettingsRow
+      label={t("credentials.key")}
+      htmlFor={inputId}
+      description={manual && status.storage === "session" ? t("credentials.sessionHelp") : undefined}
+      control={
+        <div className="w-full">
+          <PasswordInput id={inputId} className={SETTINGS_CONTROL_CLASSNAME}
+            value={edit ?? savedValue ?? ""}
+            placeholder={placeholder}
+            showLabel={t("credentials.show")}
+            hideLabel={t("credentials.hide")}
+            onChange={({ target: { value } }) => onEdit(value === savedValue ? undefined : value)}
+          />
+        </div>
+      }
+      detail={credentials.error && <>
+        <ErrorNotice error={credentials.error} />
+        <Button type="button" variant="ghost" size="sm" disabled={credentials.isFetching}
+          onClick={() => void credentials.refetch()}>{t("credentials.refresh")}</Button>
+      </>}
+    />
   );
 }

@@ -12,6 +12,7 @@ test("fetching models for a connection fills a searchable model-name list", asyn
   });
   await page.goto("/settings/providers");
   const name = page.getByRole("combobox", { name: "Model name", exact: true });
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
   await expect(page.getByRole("listbox")).toHaveCount(0);
   // The draft (unsaved) base URL is used for the request.
   await page.getByLabel("API base URL", { exact: true }).fill("https://draft.invalid/v1");
@@ -21,7 +22,7 @@ test("fetching models for a connection fills a searchable model-name list", asyn
   await expect(page.getByText("3 models available", { exact: true })).toBeVisible();
   expect(requests).toEqual([
     {
-      connection: "default",
+      connection: "deepseek",
       provider: expect.objectContaining({ kind: "deepseek", base_url: "https://draft.invalid/v1" }),
       api_key: null,
     },
@@ -34,7 +35,7 @@ test("fetching models for a connection fills a searchable model-name list", asyn
   await expect(list).toHaveCount(0);
   // Free text is still accepted.
   await name.fill("custom-name");
-  await name.press("Escape");
+  await name.press("Tab");
   await expect(name).toHaveValue("custom-name");
   // Editing the connection makes the list stale.
   await page.getByLabel("API base URL", { exact: true }).fill("https://changed.invalid/v1");
@@ -49,8 +50,9 @@ test("listing failures explain the cause in Chinese", async ({ page }) => {
       json: { ok: false, models: [], category: "authentication_failed", message: "x", status_code: 401 },
     }));
   await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "编辑提供商 deepseek" }).click();
   await page.getByRole("button", { name: "获取模型列表", exact: true }).click();
-  await expect(page.getByRole("status").filter({ hasText: "认证失败" })).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "认证失败" })).toBeVisible();
   await expect(page.getByRole("listbox")).toHaveCount(0);
 });
 
@@ -77,6 +79,7 @@ for (const outcome of ["success", "failure", "http error"] as const) {
     });
     try {
       await page.goto("/settings/providers");
+      await page.getByRole("button", { name: "Edit provider deepseek" }).click();
       const fetch = page.getByRole("button", { name: "Fetch models", exact: true });
       const submitted = page.waitForRequest("**/api/settings/models/list");
       await fetch.click();

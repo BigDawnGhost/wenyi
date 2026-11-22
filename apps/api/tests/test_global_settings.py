@@ -40,36 +40,34 @@ def test_shared_registry_persists_and_projects_only_save_selections(api):
     client, _ = api
     global_config = client.get("/settings").json()
     document = global_config["effective"]
-    document["llm"]["models"]["extra"] = {"provider": "default", "model": "extra-model"}
+    ref = "fake/extra-model"
+    document["llm"]["models"][ref] = {}
     saved = client.put("/settings", json=payload(global_config))
     assert saved.status_code == 200, saved.text
     assert saved.json()["revision"] == 1
-    assert "extra" in client.get("/settings").json()["effective"]["llm"]["models"]
+    assert ref in client.get("/settings").json()["effective"]["llm"]["models"]
     pid = new_project(api)
     config = client.get(f"/projects/{pid}/config").json()
-    assert set(config["effective"]["llm"]) == {"tiers", "routes", "budget"}
-    assert config["registered_models"]["extra"]["model"] == "extra-model"
-    config["effective"]["llm"]["tiers"]["strong"] = "extra"
-    config["effective"]["llm"]["routes"] = {"translation.body": {"model": "extra"}}
+    assert set(config["effective"]["llm"]) == {"routes", "budget"}
+    assert config["registered_models"][ref]["model"] == "extra-model"
+    config["effective"]["llm"]["routes"] = {"translation.body": {"model": ref}}
     assert (
         client.put(
             f"/projects/{pid}/config", json={"yaml": json.dumps(config["effective"])}
         ).status_code
         == 200
     )
-    assert set(must(dal.get_project(pid))["config"]["llm"]) == {"tiers", "routes", "budget"}
+    assert set(must(dal.get_project(pid))["config"]["llm"]) == {"routes", "budget"}
     other = new_project(api)
-    assert (
-        client.get(f"/projects/{other}/config").json()["effective"]["llm"]["tiers"]["strong"]
-        != "extra"
-    )
-    # Clearing explicit operation routes must remove the override, not merge it back.
+    other_routes = client.get(f"/projects/{other}/config").json()["effective"]["llm"]["routes"]
+    assert other_routes["translation.body"]["model"] != ref
+    # An empty project route map restores the explicit global routes for the project.
     config["effective"]["llm"]["routes"] = {}
     assert (
         client.put(
             f"/projects/{pid}/config", json={"yaml": json.dumps(config["effective"])}
         ).json()["effective"]["llm"]["routes"]
-        == {}
+        == other_routes
     )
 
 
@@ -81,6 +79,7 @@ def test_shared_registry_persists_and_projects_only_save_selections(api):
         ("preset", "deepseek"),
         ("quotas", {}),
         ("tiers", {"strong": "unregistered"}),
+        ("default_model", "unregistered"),
         ("routes", {"translation.body": {"model": "unregistered"}}),
     ],
 )
@@ -108,14 +107,17 @@ def test_global_changes_preserve_existing_projects_and_queued_snapshots(api):
     original = build_config_for(current_context(), pid, run["arq_job_id"])
     document = before["effective"]
     document["pipeline"]["polish"] = False
-    model_id = document["llm"]["tiers"]["strong"]
-    document["llm"]["models"][model_id]["model"] = "new-model"
-    changed = client.put("/settings", json=payload(before))
+    model_id = document["llm"]["routes"]["translation.body"]["model"]
+    new = "fake/new-model"
+    document["llm"]["models"][new] = document["llm"]["models"].pop(model_id)
+    document["llm"]["preset"] = None
+    before["effective"]["llm"] = rename_model_references(document["llm"], {model_id: new})
+    changed = client.put("/settings", json=payload(before, model_renames={model_id: new}))
     assert changed.status_code == 200, changed.text
     assert build_config_for(current_context(), pid, run["arq_job_id"]).llm == original.llm
     existing = client.get(f"/projects/{pid}/config").json()
     assert existing["effective"]["pipeline"]["polish"] is True
-    assert existing["registered_models"][model_id]["model"] == "new-model"
+    assert existing["registered_models"][new]["model"] == "new-model"
     second = client.post(
         "/projects",
         data={"project": json.dumps({"name": "New book"})},
@@ -136,18 +138,19 @@ def test_in_use_models_and_secrets_cannot_be_saved(api):
     client, _ = api
     current = client.get("/settings").json()
     doc = current["effective"]
-    doc["llm"]["models"]["extra"] = {"provider": "default", "model": "extra"}
+    doc["llm"]["models"]["fake/extra"] = {}
     saved = client.put("/settings", json=payload(current)).json()
     pid = new_project(api)
-    client.put(f"/projects/{pid}/config", json={"yaml": "llm: {tiers: {strong: extra}}"})
-    del saved["effective"]["llm"]["models"]["extra"]
+    client.put(
+        f"/projects/{pid}/config",
+        json={"yaml": "llm: {routes: {translation.body: {model: fake/extra}}}"},
+    )
+    del saved["effective"]["llm"]["models"]["fake/extra"]
     response = client.put("/settings", json=payload(saved))
     assert response.status_code == 422 and pid in response.text
-    saved["effective"]["llm"]["providers"]["default"]["api_key"] = "not-a-real-key"
+    saved["effective"]["llm"]["providers"]["fake"]["api_key"] = "not-a-real-key"
     assert client.post("/settings/validate", json=payload(saved)).status_code == 422
-    assert (
-        "api_key" not in client.get("/settings").json()["effective"]["llm"]["providers"]["default"]
-    )
+    assert "api_key" not in client.get("/settings").json()["effective"]["llm"]["providers"]["fake"]
 
 
 def test_concurrent_global_edits_do_not_overwrite_each_other(api):
@@ -191,14 +194,15 @@ def test_renaming_updates_projects_atomically_and_preserves_queued_snapshots(api
     client, _ = api
     current = client.get("/settings").json()
     pid = new_project(api)
-    old = current["effective"]["llm"]["tiers"]["strong"]
+    old = current["effective"]["llm"]["routes"]["translation.body"]["model"]
+    current["effective"]["llm"]["models"]["fake/editor"] = {}
+    current = client.put("/settings", json=payload(current)).json()
     project_config = {
         "llm": {
-            "tiers": {"strong": old},
             "routes": {
                 "translation.body": {"model": old},
                 "translation.title": {
-                    "model": current["effective"]["llm"]["tiers"]["cheap"],
+                    "model": "fake/editor",
                     "fallbacks": [old],
                 },
             },
@@ -220,33 +224,28 @@ def test_renaming_updates_projects_atomically_and_preserves_queued_snapshots(api
     frozen = deepcopy(must(dal.get_job(job_id))["params"])
     llm = current["effective"]["llm"]
     llm["preset"] = None
-    llm["providers"]["renamed_provider"] = llm["providers"].pop("default")
-    for model in llm["models"].values():
-        model["provider"] = "renamed_provider"
-    llm["models"]["renamed_model"] = llm["models"].pop(old)
-    current["effective"]["llm"] = rename_model_references(llm, {old: "renamed_model"})
+    new = "renamed_provider/new-model"
+    llm["providers"]["renamed_provider"] = deepcopy(llm["providers"]["fake"])
+    llm["models"][new] = llm["models"].pop(old)
+    current["effective"]["llm"] = rename_model_references(llm, {old: new})
     if reuse_id:
         # Existing selections follow the rename even when a new profile reuses the vacated ID.
-        current["effective"]["llm"]["models"][old] = {
-            "provider": "renamed_provider",
-            "model": "newly-registered-model",
-        }
-    body = payload(current, model_renames={old: "renamed_model"})
+        current["effective"]["llm"]["models"][old] = {"max_output_tokens": 8192}
+    body = payload(current, model_renames={old: new})
     assert client.post("/settings/validate", json=body).status_code == 200
     assert must(dal.get_project(pid))["config"] == saved_project
     assert client.put("/settings", json=body).status_code == 200
     updated = must(dal.get_project(pid))["config"]
     assert updated["pipeline"] == saved_project["pipeline"]
-    assert updated["llm"]["tiers"]["strong"] == "renamed_model"
     assert updated["llm"]["routes"]["translation.body"] == {
-        "model": "renamed_model",
-        "tier": None,
+        "model": new,
         "fallbacks": [],
+        "thinking": None,
     }
-    assert updated["llm"]["routes"]["translation.title"]["fallbacks"] == ["renamed_model"]
+    assert updated["llm"]["routes"]["translation.title"]["fallbacks"] == [new]
     assert must(dal.get_job(job_id))["params"] == frozen
     effective = client.get(f"/projects/{pid}/config").json()
-    assert effective["registered_models"]["renamed_model"]["provider"] == "renamed_provider"
+    assert effective["registered_models"][new]["provider"] == "renamed_provider"
     assert client.put("/settings", json=body).status_code == 409
 
 
@@ -266,7 +265,7 @@ def test_unused_registrations_can_be_deleted_and_defaults_are_only_a_preview(api
     current = deepcopy(defaults)
     llm = current["effective"]["llm"]
     llm["providers"]["unused"] = {"kind": "fake"}
-    llm["models"]["unused"] = {"provider": "unused", "model": "unused"}
+    llm["models"]["unused/unused"] = {}
     current["effective"]["pipeline"]["polish"] = False
     saved = client.put("/settings", json=payload(current)).json()
     assert client.get("/settings/defaults").json() == defaults

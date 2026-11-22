@@ -22,6 +22,9 @@ export default {
     extend: {
       spacing: pxScale,
       translate: pxScale,
+      fontFamily: {
+        "book-quotes": ['"Wenyi Proportional Quotes"', "theme(fontFamily.sans)"],
+      },
       lineHeight: {
         3: "12px",
         4: "16px",

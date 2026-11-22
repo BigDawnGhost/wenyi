@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from io import BytesIO
 from pathlib import Path
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
@@ -13,6 +14,7 @@ from wenyi_cli.cli import app
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
 from wenyi_core.ingest.pdf_babeldoc import read_pdf_babeldoc
+from wenyi_core.ingest.pdf_reader import read_pdf
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
@@ -253,13 +255,30 @@ def test_saved_babeldoc_state_defaults_to_pdf_after_config_switches_to_mineru(pd
     assert Path(requests[0][2]).suffix == ".pdf"
 
 
-def test_saved_non_babeldoc_pdf_still_defaults_to_epub(pdf_project):
-    config, source, requests = pdf_project
-    store = Orchestrator(config).run(str(source))
-    manifest = store.load_manifest()
-    manifest["meta"] = {"mineru": True}
-    store.save_manifest(manifest)
+def _initialize_mineru(pdf_project, monkeypatch):
+    config, source, _ = pdf_project
+    paragraph = {
+        "type": "paragraph",
+        "content": {"paragraph_content": [{"type": "text", "content": "A short source."}]},
+    }
+    result = BytesIO()
+    with ZipFile(result, "w") as archive:
+        archive.writestr("sample_content_list_v2.json", json.dumps([[paragraph]]))
+    monkeypatch.setattr(
+        "wenyi_core.ingest.mineru_api.MinerUApi.submit_batch", lambda *_: [result.getvalue()]
+    )
+    monkeypatch.setenv("MINERU_API_KEY", "offline")
+    monkeypatch.setattr(
+        "wenyi_core.pipeline.prepare.input_preparation.load_document",
+        lambda path, src, tgt, *, cache_dir, **_: read_pdf(path, src, tgt, cache_dir=cache_dir),
+    )
+    config.pipeline.pdf_backend = "mineru"
+    return Orchestrator(config).run(str(source))
 
+
+def test_mineru_pdf_still_defaults_to_epub(pdf_project, monkeypatch):
+    _initialize_mineru(pdf_project, monkeypatch)
+    _, source, requests = pdf_project
     result = CliRunner().invoke(app, ["assemble", str(source)])
 
     assert result.exit_code == 0, result.output
@@ -267,13 +286,9 @@ def test_saved_non_babeldoc_pdf_still_defaults_to_epub(pdf_project):
     assert requests == []
 
 
-@pytest.mark.parametrize("meta", [None, {}, {"mineru": True}, {"babeldoc": False}])
-def test_non_babeldoc_pdf_export_fails_before_creating_output(pdf_project, tmp_path, meta):
-    config, source, requests = pdf_project
-    store = Orchestrator(config).run(str(source))
-    manifest = store.load_manifest()
-    manifest["meta"] = meta
-    store.save_manifest(manifest)
+def test_non_babeldoc_pdf_export_fails_before_creating_output(pdf_project, tmp_path, monkeypatch):
+    store = _initialize_mineru(pdf_project, monkeypatch)
+    _, source, requests = pdf_project
     output = tmp_path / "rejected" / "book.pdf"
 
     with pytest.raises(ValueError, match="PDF export is only available for BabelDOC"):
@@ -283,13 +298,9 @@ def test_non_babeldoc_pdf_export_fails_before_creating_output(pdf_project, tmp_p
     assert requests == []
 
 
-def test_cli_rejects_non_babeldoc_pdf_export_without_traceback(pdf_project):
-    config, source, requests = pdf_project
-    store = Orchestrator(config).run(str(source))
-    manifest = store.load_manifest()
-    manifest["meta"] = {"mineru": True}
-    store.save_manifest(manifest)
-
+def test_cli_rejects_non_babeldoc_pdf_export_without_traceback(pdf_project, monkeypatch):
+    _initialize_mineru(pdf_project, monkeypatch)
+    _, source, requests = pdf_project
     result = CliRunner().invoke(app, ["assemble", str(source), "--format", "pdf"])
 
     assert result.exit_code == 1, result.output

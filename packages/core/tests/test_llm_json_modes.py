@@ -14,6 +14,8 @@ from wenyi_core.llm.providers._openai_compatible import OpenAICompatibleBaseClie
 from wenyi_core.llm.retrying import EmptyResponseError, TruncatedResponseError
 from wenyi_core.llm.router import RoutedLLMClient
 
+from .model_fixtures import routes_for
+
 VALUE = {"translations": ["Translated paragraph."]}
 FORMAT_ERROR = "'response_format.type' must be 'json_schema' or 'text'"
 
@@ -28,8 +30,8 @@ def config(kind="openai-compatible", max_retries=0):
                     "max_retries": max_retries,
                 }
             },
-            "models": {"model": {"provider": "local", "model": "example"}},
-            "tiers": {tier: "model" for tier in ("strong", "cheap", "fast")},
+            "models": {"local/example": {}},
+            "routes": routes_for("local/example"),
         }
     )
 
@@ -132,24 +134,22 @@ def test_connectivity_stays_plain_text_and_does_not_prime_runtime_modes(sdk):
 
 def test_json_output_mode_is_not_a_configuration_option():
     settings = config().model_dump()
-    settings["models"]["model"]["options"] = {"json_output_mode": "json_schema"}
+    settings["models"]["local/example"]["options"] = {"json_output_mode": "json_schema"}
     with pytest.raises(ValueError):
         LLMConfig.model_validate(settings)
 
 
-@pytest.mark.parametrize("difference", ["model", "options", "connection", "client"])
+@pytest.mark.parametrize("difference", ["model", "connection", "client"])
 def test_runtime_cache_is_scoped_to_connection_and_model_configuration(sdk, difference):
     calls, _ = sdk
     settings = config().model_dump()
-    settings["models"]["other"] = dict(settings["models"]["model"])
-    if difference == "model":
-        settings["models"]["other"]["model"] = "another"
-    elif difference == "options":
-        settings["models"]["other"]["options"] = {"thinking": True}
-    elif difference == "connection":
+    ref = {"model": "local/another", "connection": "other/example", "client": "local/example"}[
+        difference
+    ]
+    if difference == "connection":
         settings["providers"]["other"] = dict(settings["providers"]["local"])
-        settings["models"]["other"]["provider"] = "other"
-    settings["routes"] = {"translation.body": {"model": "other"}}
+    settings["models"][ref] = dict(settings["models"]["local/example"])
+    settings["routes"]["translation.body"] = {"model": ref}
     original = LLMConfig.model_validate(settings)
     client = RoutedLLMClient(original)
     assert client.complete_json([], operation="analysis.style") == VALUE

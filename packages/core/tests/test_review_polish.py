@@ -72,7 +72,7 @@ class TestReviewer(unittest.TestCase):
         r = Reviewer(client, _cfg())
         out = r.review(["あ", "い"], ["甲", "乙"])
         self.assertEqual(len(out), 2)
-        self.assertEqual(client.calls[-1]["tier"], "cheap")  # Review uses the cheap tier.
+        self.assertEqual(client.calls[-1]["operation"], "review.scan")
         self.assertIn('"reviewed_segments":2', client.calls[-1]["messages"][1]["content"])
 
     def test_reviewer_drops_fields_outside_the_initial_issue_contract(self):
@@ -519,7 +519,7 @@ class TestPolisher(unittest.TestCase):
         p = Polisher(client, _cfg())
         out = p.polish(["甲", "乙"])
         self.assertEqual(out, ["润色甲", "润色乙"])
-        self.assertEqual(client.calls[-1]["tier"], "strong")
+        self.assertEqual(client.calls[-1]["operation"], "polish.body")
 
     def test_polish_mismatch_keeps_original(self):
         client = FakeClient(

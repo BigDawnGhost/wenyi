@@ -47,7 +47,7 @@
 | EPUB、PDF、DOCX、FB2、TXT、Markdown、HTML | EPUB、PDF（BabelDOC 项目）、DOCX、TXT、HTML、Markdown |
 
 - **EPUB** — 将译文回填到原书 XHTML 模板，尽量保留样式、图片、目录和锚点；竖排转为横排以适配中文阅读。
-- **PDF** — 默认使用 MinerU 解析，首次转换需要其 API Key，生成的 HTML 会缓存复用。带文本层的 PDF 可选择 BabelDOC bridge，在翻译与 PDF 导出时尽量保留版式。**PDF 导出仅适用于已保存的 BabelDOC 项目**；MinerU 项目可导出为上表中的其他格式。详见 [PDF 支持](reference/formats.md#pdf)。
+- **PDF** — 默认使用 MinerU 解析，首次转换需要其 API Key，生成的原文 EPUB 会缓存复用。带文本层的 PDF 可选择 BabelDOC bridge，在翻译与 PDF 导出时尽量保留版式。**PDF 导出仅适用于已保存的 BabelDOC 项目**；MinerU 项目可导出为上表中的其他格式。详见 [PDF 支持](reference/formats.md#pdf)。
 - **DOCX** — 尽量保留标题、简易表格、列表和常见字符／段落样式；已译中文使用宋体。
 - **双语对照** — 在支持的格式中导出原文与译文对照版；EPUB、HTML 支持原文淡化显示和深色阅读。
 

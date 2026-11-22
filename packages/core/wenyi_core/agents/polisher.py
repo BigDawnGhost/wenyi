@@ -1,4 +1,4 @@
-"""Polishing agent using the strong tier.
+"""Polishing agent using the body polishing route.
 Improve literary quality in the target language without changing information or paragraph
 count. Prefer appending a polish user turn to the translation conversation so shared
 prompt prefixes stay cacheable. Preserve the original translation on alignment failure so

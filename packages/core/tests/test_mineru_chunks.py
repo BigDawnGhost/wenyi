@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import NameObject, TextStringObject
-from wenyi_core.ingest import pdf_to_html
+from wenyi_core.ingest import mineru_api
 
 from tests.pdf_fixtures import pdf_bytes
 
@@ -24,11 +24,11 @@ def test_chunks_preserve_page_content_boxes_units_and_order(tmp_path, monkeypatc
             writer.write(tmp_path / "marked.pdf")
         source = tmp_path / "marked.pdf"
     else:
-        monkeypatch.setattr(pdf_to_html, "PdfReader", lambda *_: pytest.fail("unexpected fallback"))
+        monkeypatch.setattr(mineru_api, "PdfReader", lambda *_: pytest.fail("unexpected fallback"))
     chunks = tmp_path / "chunks"
     chunks.mkdir()
     original = source.read_bytes()
-    count, paths = pdf_to_html._prepare_chunks(source, chunks, 2)
+    count, paths = mineru_api._prepare_chunks(source, chunks, 2)
     assert count == 3
     assert [path.name for path in paths] == ["chunk_p1-2.pdf", "chunk_p3-3.pdf"]
     labels = []
@@ -47,7 +47,7 @@ def test_chunks_preserve_page_content_boxes_units_and_order(tmp_path, monkeypatc
 def test_small_pdf_uploads_the_exact_original(tmp_path):
     source = tmp_path / "input.pdf"
     source.write_bytes(pdf_bytes(["one", "two"]))
-    assert pdf_to_html._prepare_chunks(source, tmp_path, 2) == (2, [source])
+    assert mineru_api._prepare_chunks(source, tmp_path, 2) == (2, [source])
     assert list(tmp_path.iterdir()) == [source]
 
 
@@ -62,9 +62,9 @@ def test_failed_upload_removes_partial_chunks_only(tmp_path, monkeypatch):
         assert all(path.exists() for path in seen)
         raise OSError("upload interrupted")
 
-    monkeypatch.setattr(pdf_to_html, "MAX_PAGES", 1)
-    monkeypatch.setattr(pdf_to_html.MinerUApi, "submit_batch", fail_upload)
+    monkeypatch.setattr(mineru_api, "MAX_PAGES", 1)
+    monkeypatch.setattr(mineru_api.MinerUApi, "submit_batch", fail_upload)
     with pytest.raises(OSError, match="interrupted"):
-        pdf_to_html.convert_pdf_to_html(str(source), str(out), api_token="synthetic")
+        mineru_api.extract_pdf(str(source), api_token="synthetic")
     assert len(seen) == 2 and all(not path.parent.exists() for path in seen)
     assert out.read_text(encoding="utf-8") == "keep" and source.exists()

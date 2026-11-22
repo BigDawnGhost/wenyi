@@ -5,10 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from wenyi_core.config import Config, parse_config_yaml
-from wenyi_core.config_rebuild import merge_section
 from wenyi_core.i18n.genres import DEFAULT_GENRE
+from wenyi_core.llm.configuration import merge_llm_settings
 
-PROJECT_LLM_FIELDS = frozenset({"tiers", "routes", "budget"})
+PROJECT_LLM_FIELDS = frozenset({"routes", "budget"})
 PROJECT_PIPELINE_FIELDS = frozenset({"translation_mode", "prompt_genre", "glossary_note_workers"})
 
 
@@ -73,7 +73,7 @@ def project_llm(value: Any, *, strict: bool = False) -> dict:
     if strict and set(value) - PROJECT_LLM_FIELDS:
         raise ValueError(
             "Register providers and models in global Settings; projects may only set "
-            "llm.tiers, llm.routes and llm.budget"
+            "llm.routes and llm.budget"
         )
     return {key: item for key, item in value.items() if key in PROJECT_LLM_FIELDS}
 
@@ -85,9 +85,7 @@ def merge_project(base: dict, override: dict) -> dict:
         if not isinstance(value, dict):
             raise ValueError(f"Configuration section {section} must be a mapping")
         if section == "llm":
-            value = project_llm(value)
-            for key, item in value.items():
-                if not isinstance(item, dict):
-                    raise ValueError(f"llm.{key} must be a mapping")
-        result[section] = merge_section(section, base.get(section, {}), value)
+            result[section] = merge_llm_settings(base.get(section, {}), project_llm(value))
+        else:
+            result[section] = {**base.get(section, {}), **value}
     return result

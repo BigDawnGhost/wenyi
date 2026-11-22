@@ -130,13 +130,7 @@ def _config(state_dir: str):
     return Config.from_dict(
         {
             "language": {"source": "ja", "target": "zh"},
-            "llm": {
-                "preset": "fake",
-                "models": {
-                    "default_strong": {"provider": "default", "model": "p"},
-                    "default_cheap": {"provider": "default", "model": "f"},
-                },
-            },
+            "llm": {"preset": "fake"},
             "pipeline": {"review": True, "review_autofix": False, "polish": True},
             "paths": {"state_dir": state_dir},
         }
@@ -1819,14 +1813,29 @@ class TestTitleTranslation(unittest.TestCase):
                 self.assertIn("<dc:title>Shadow Empire</dc:title>", opf)
                 self.assertIn('<meta name="wenyi:source-title" content="阴影帝国"/>', opf)
                 self.assertIn("<dc:creator>Original Author</dc:creator>", opf)
-                self.assertIn(
-                    "<dc:description>An alternate-history business novel.</dc:description>", opf
-                )
+                # Prose dc:description is not routed through the chapter-title prompt.
+                self.assertIn("<dc:description>一部架空商战小说。</dc:description>", opf)
                 self.assertIn("<dc:subject>Alternate History</dc:subject>", opf)
                 self.assertIn("<dc:subject>Business Warfare</dc:subject>", opf)
                 self.assertNotIn("<title>第1章 初遇</title>", ch1)
                 self.assertIn("<title>", ch1)
                 self.assertEqual("tn-source" in ch1, bilingual)
+
+            # Partial subject translations preserve positional slots rather than shifting later items.
+            manifest = store.load_manifest()
+            manifest["meta"]["epub_subjects_translated"] = ["", "Business Warfare"]
+            manifest["meta"]["epub_description_translated"] = "An alternate-history business novel."
+            store.save_manifest(manifest)
+            partial_out = os.path.join(d, "partial.epub")
+            assemble(store, ep, out_path=partial_out, out_format="epub")
+            with zipfile.ZipFile(partial_out) as z:
+                partial_opf = z.read("OEBPS/content.opf").decode("utf-8")
+            self.assertIn("<dc:subject>架空</dc:subject>", partial_opf)
+            self.assertIn("<dc:subject>Business Warfare</dc:subject>", partial_opf)
+            self.assertIn(
+                "<dc:description>An alternate-history business novel.</dc:description>",
+                partial_opf,
+            )
 
             # Also verify fallback to chapter 0's title_translated when book_title_translated is absent.
             manifest = store.load_manifest()
@@ -1840,6 +1849,70 @@ class TestTitleTranslation(unittest.TestCase):
                 opf = z.read("OEBPS/content.opf").decode("utf-8")
             self.assertIn("<dc:title>Shadow Empire Legacy</dc:title>", opf)
             self.assertIn('<meta name="wenyi:source-title" content="阴影帝国"/>', opf)
+
+            # Verify untranslated chapter titles leave <head><title> untouched.
+            manifest["chapters"][0].pop("title_translated", None)
+            store.save_manifest(manifest)
+            untranslated_out = os.path.join(d, "untranslated.epub")
+            assemble(store, ep, out_path=untranslated_out, out_format="epub")
+            with zipfile.ZipFile(untranslated_out) as z:
+                ch1_untranslated = z.read("OEBPS/ch1.xhtml").decode("utf-8")
+            self.assertIn("<title>第1章 初遇</title>", ch1_untranslated)
+
+    def test_prefixed_opf_preserves_meta_namespace_prefix_and_avoids_duplicate_source_title(self):
+        with tempfile.TemporaryDirectory() as d:
+            ep = os.path.join(d, "prefixed.epub")
+            with zipfile.ZipFile(ep, "w") as z:
+                z.writestr("mimetype", "application/epub+zip")
+                z.writestr(
+                    "META-INF/container.xml",
+                    '<?xml version="1.0"?><container version="1.0" '
+                    'xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+                    '<rootfiles><rootfile full-path="OEBPS/content.opf" '
+                    'media-type="application/oebps-package+xml"/></rootfiles></container>',
+                )
+                z.writestr(
+                    "OEBPS/content.opf",
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<opf:package xmlns:opf="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="id">'
+                    '<opf:metadata xmlns:dc="http://purl.org/dc/elements/1.1/">'
+                    "<dc:title>Origin</dc:title>"
+                    "<dc:language>en</dc:language>"
+                    "</opf:metadata>"
+                    "<opf:manifest>"
+                    '<opf:item id="ch1" href="ch1.xhtml" media-type="application/xhtml+xml"/>'
+                    "</opf:manifest>"
+                    '<opf:spine><opf:itemref idref="ch1"/></opf:spine>'
+                    "</opf:package>",
+                )
+                z.writestr(
+                    "OEBPS/ch1.xhtml",
+                    '<?xml version="1.0" encoding="utf-8"?>'
+                    '<html xmlns="http://www.w3.org/1999/xhtml"><head>'
+                    "<title>Start</title></head>"
+                    "<body><h1>Start</h1><p>Hello.</p></body></html>",
+                )
+
+            document = load_document(ep, "en", "zh")
+            store = FileStorage(os.path.join(d, "state"))
+            manifest = store.stage_document(document)
+            manifest["meta"]["book_title_translated"] = "起源"
+            manifest["chapters"][0]["title_translated"] = "开篇"
+            chapter = store.load_chapter(0)
+            for seg in chapter.segments:
+                seg.target = "译文"
+            store.save_chapter(chapter)
+            store.save_manifest(manifest)
+
+            out = os.path.join(d, "out.epub")
+            assemble(store, ep, out_path=out, out_format="epub", about_page=False)
+            with zipfile.ZipFile(out) as z:
+                opf = z.read("OEBPS/content.opf").decode("utf-8")
+                ch1 = z.read("OEBPS/ch1.xhtml").decode("utf-8")
+            self.assertIn("<dc:title>起源</dc:title>", opf)
+            self.assertIn('<opf:meta name="wenyi:source-title" content="Origin"/>', opf)
+            self.assertEqual(opf.count("wenyi:source-title"), 1)
+            self.assertIn("<title>开篇</title>", ch1)
 
     def test_rewrite_nav_and_ncx_labels(self):
         from wenyi_core.assemble.epub_navigation import _rewrite_toc

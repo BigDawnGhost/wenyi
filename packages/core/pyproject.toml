@@ -18,6 +18,9 @@ dependencies = [
     "google-genai>=2.13.0",
     "json-repair>=0.61,<1",
     "tiktoken>=0.14.0",
+    "markdown-it-py>=4,<5",
+    "mdit-py-plugins>=0.7,<0.8",
+    "latex2mathml>=3.81.1,<4",
 ]
 
 [project.urls]

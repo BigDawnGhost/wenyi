@@ -2,8 +2,7 @@ import { useI18n, type MessageKey } from "../../i18n";
 import { statusLabel } from "../../i18n/status";
 import { errorMessage } from "../../lib/error-codes";
 import { cn } from "../../lib/utils";
-import { Lock } from "lucide-react";
-import { Card } from "./card";
+
 export function ErrorNotice({
   error,
   children,
@@ -29,27 +28,6 @@ export function ErrorNotice({
     >
       {children ?? errorMessage(error, t)}
     </div>
-  );
-}
-
-/** One consistent notice panel for pages that become read-only during a project task. */
-export function ReadOnlyNotice({
-  className,
-  reason = "running",
-}: {
-  className?: string;
-  /** "source": the source is parsed but AI preparation has not finished yet. */
-  reason?: "running" | "source";
-}) {
-  const { t } = useI18n();
-  return (
-    <Card
-      role="status"
-      className={cn("flex items-center gap-2 p-4 text-sm text-muted-foreground", className)}
-    >
-      <Lock className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-      <span>{t(reason === "source" ? "common.readOnlyUntilPrepared" : "common.readOnlyWhileRunning")}</span>
-    </Card>
   );
 }
 

@@ -51,8 +51,10 @@ __all__ = [
     "GlossaryStore",
     "GlossaryTerm",
     "merge_context_senses",
+    "normalize_match_text",
     "search_term_page",
     "source_matches_text",
+    "source_occurrence_spans",
     "term_match_sources",
 ]
 
@@ -93,7 +95,7 @@ CREATE TABLE IF NOT EXISTS term_conflicts (
 _RUBY_MARK_RE = re.compile(r"〘[^〙]*〙")
 
 
-def _match_text(text: str) -> str:
+def normalize_match_text(text: str) -> str:
     """Normalize width, compatibility forms and case for glossary matching.
     Strip embedded furigana so a reading inserted inside a word does not prevent that word
     from matching. The original ruby markup remains in the source template.
@@ -101,6 +103,9 @@ def _match_text(text: str) -> str:
     if "〘" in text:
         text = _RUBY_MARK_RE.sub("", text)
     return unicodedata.normalize("NFKC", text).casefold()
+
+
+_match_text = normalize_match_text
 
 
 _WORD_BOUNDARY_SCRIPTS = ("LATIN", "GREEK", "CYRILLIC")
@@ -186,9 +191,9 @@ def trusted_match_sources(term: GlossaryTerm, all_terms: list[GlossaryTerm]) -> 
     ]
 
 
-def _source_occurrence_spans(source: str, normalized_text: str) -> list[tuple[int, int]]:
+def source_occurrence_spans(source: str, normalized_text: str) -> list[tuple[int, int]]:
     """Return nonoverlapping source-term spans in normalized text."""
-    key = _match_text(source).strip()
+    key = normalize_match_text(source).strip()
     if not key:
         return []
     if pattern := _source_pattern(key):
@@ -201,6 +206,9 @@ def _source_occurrence_spans(source: str, normalized_text: str) -> list[tuple[in
         spans.append((index, end))
         start = end
     return spans
+
+
+_source_occurrence_spans = source_occurrence_spans
 
 
 def _merged_occurrence_count(spans: set[tuple[int, int]]) -> int:

@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from ..thinking import effort_control
 from ..transport import Messages, ResolvedModel
 from ..usage import UsageSample
 from ._openai_compatible import (
@@ -49,6 +50,7 @@ def build_request_kwargs(
 
 
 class OpenAIClient(OpenAICompatibleBaseClient[OpenAIOptions]):
+    thinking_control = effort_control("off", "minimal", "low", "medium", "high", "xhigh")
     default_base_url = DEFAULT_BASE_URL
     default_api_key_env = DEFAULT_API_KEY_ENV
     requires_api_key = True
@@ -64,7 +66,7 @@ class OpenAIClient(OpenAICompatibleBaseClient[OpenAIOptions]):
         json_mode: bool,
         max_tokens: int | None,
     ) -> dict[str, Any]:
-        """Build final request arguments for the selected OpenAI tier."""
+        """Build final request arguments for the selected OpenAI model."""
         return build_request_kwargs(
             model_config,
             messages,

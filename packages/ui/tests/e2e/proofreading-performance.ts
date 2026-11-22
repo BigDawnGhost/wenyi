@@ -88,8 +88,12 @@ test("large chapter reading, polling and editing measurements", async ({ page },
   await expect(page.locator("#paragraph-0").getByTestId("translation-text")).toHaveText(rows[0].target, { timeout: 8000 });
   expect(windows).toBe(initialWindows);
   expect(await page.evaluate(() => (window as any).__unchangedRow === document.getElementById("paragraph-1"))).toBe(true);
+  await page.locator("#paragraph-0").getByRole("button", { name: "Paragraph actions" }).click();
+  const edit = page.getByRole("menuitem", { name: "Edit translation", exact: true });
+  await expect(edit).toBeDisabled();
   savedProject.status = "paused";
-  await expect(page.getByText("Read-only while a task runs", { exact: true })).toHaveCount(0);
+  await expect(edit).toBeEnabled({ timeout: 8000 });
+  await page.keyboard.press("Escape");
   const frames = await page.locator("#paragraph-0").evaluate(async (row) => {
     let scroller = row.parentElement!;
     while (scroller.parentElement && scroller.scrollHeight <= scroller.clientHeight) scroller = scroller.parentElement;

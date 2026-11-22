@@ -34,18 +34,19 @@ class TestConfigFileCreation(unittest.TestCase):
 
             self.assertTrue(created)
             self.assertTrue(path.is_file())
-            self.assertEqual(cfg.llm.providers["default"].kind, "deepseek")
+            self.assertEqual(set(cfg.llm.providers), {"deepseek"})
+            self.assertEqual(cfg.llm.providers["deepseek"].kind, "deepseek")
             self.assertEqual(
                 resolve_routes(cfg.llm)["translation.body"].endpoint, "https://api.deepseek.com"
             )
             self.assertEqual(
                 provider_spec("deepseek").adapter_type().default_api_key_env, "DEEPSEEK_API_KEY"
             )
-            self.assertEqual(set(cfg.llm.tiers), {"strong", "cheap", "fast"})
-            self.assertEqual(cfg.llm.models[cfg.llm.tiers["strong"]].model, "deepseek-flash")
-            self.assertEqual(cfg.llm.models[cfg.llm.tiers["cheap"]].model, "deepseek-flash")
-            self.assertEqual(cfg.llm.models[cfg.llm.tiers["fast"]].model, "deepseek-flash")
-            self.assertTrue(cfg.llm.models[cfg.llm.tiers["fast"]].options["thinking"])
+            self.assertEqual(set(cfg.llm.models), {"deepseek/deepseek-flash"})
+            self.assertEqual(
+                {route.model for route in cfg.llm.routes.values()}, {"deepseek/deepseek-flash"}
+            )
+            self.assertTrue(cfg.llm.models["deepseek/deepseek-flash"].options["thinking"])
             for profile in cfg.llm.models.values():
                 self.assertEqual(profile.options["reasoning_effort"], "high")
             self.assertFalse(hasattr(cfg.llm, "api_key"))
@@ -68,7 +69,9 @@ class TestConfigFileCreation(unittest.TestCase):
             self.assertEqual(cfg.pipeline.review_concurrency, 4)
             self.assertEqual(cfg.pipeline.review_output_retries, 2)
             self.assertTrue(cfg.pipeline.review_agent_loop)
-            self.assertEqual(resolve_routes(cfg.llm)["review.verify"].tier, "strong")
+            self.assertEqual(
+                resolve_routes(cfg.llm)["review.verify"].profile, "deepseek/deepseek-flash"
+            )
             self.assertEqual(cfg.pipeline.review_agent_max_evidence_rounds, 2)
             self.assertTrue(cfg.pipeline.review_conflict_arbitration)
             self.assertTrue(cfg.pipeline.review_fix_loop)
@@ -168,7 +171,9 @@ class TestConfigFileCreation(unittest.TestCase):
         self.assertEqual(cfg.pipeline.review_concurrency, 4)
         self.assertEqual(cfg.pipeline.review_output_retries, 2)
         self.assertTrue(cfg.pipeline.review_agent_loop)
-        self.assertEqual(resolve_routes(cfg.llm)["review.verify"].tier, "strong")
+        self.assertEqual(
+            resolve_routes(cfg.llm)["review.verify"].profile, "deepseek/deepseek-flash"
+        )
         self.assertEqual(cfg.pipeline.review_agent_max_evidence_rounds, 2)
         self.assertTrue(cfg.pipeline.review_conflict_arbitration)
         self.assertTrue(cfg.pipeline.review_fix_loop)
@@ -199,8 +204,8 @@ class TestConfigFileCreation(unittest.TestCase):
             {
                 "llm": {
                     "providers": {"local": {"kind": "ollama", "reasoning_style": "deepseek"}},
-                    "models": {"m": {"provider": "local", "model": "m"}},
-                    "tiers": {tier: "m" for tier in ("strong", "cheap", "fast")},
+                    "models": {"local/m": {}},
+                    "routes": {op: {"model": "local/m"} for op in Config().llm.routes},
                 }
             }
         )

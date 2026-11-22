@@ -27,13 +27,7 @@ class TestTranslatorAlignment(unittest.TestCase):
         return Config.from_dict(
             {
                 "language": {"source": "ja", "target": "zh"},
-                "llm": {
-                    "preset": "fake",
-                    "models": {
-                        "default_strong": {"provider": "default", "model": "deepseek-pro"},
-                        "default_cheap": {"provider": "default", "model": "deepseek-flash"},
-                    },
-                },
+                "llm": {"preset": "fake"},
                 "pipeline": {"align_retry_limit": 1},
             }
         )
@@ -160,15 +154,10 @@ class TestTranslatorAlignment(unittest.TestCase):
         self.assertEqual(len(client.calls), 1)
 
 
-class TestMinerUEmptyTargetResume(unittest.TestCase):
+class TestEmptyTargetResume(unittest.TestCase):
     def test_blank_target_counts_as_translated_for_resume_batches(self):
         from wenyi_core.models.document import Segment
-        from wenyi_core.pipeline.translate.translation import _is_mineru_pdf
         from wenyi_core.pipeline.translate.translation_batch import resume_batches
-
-        self.assertTrue(_is_mineru_pdf({"fmt": "pdf", "meta": {}}))
-        self.assertFalse(_is_mineru_pdf({"fmt": "pdf", "meta": {"babeldoc": True}}))
-        self.assertFalse(_is_mineru_pdf({"fmt": "epub", "meta": {}}))
 
         segments = [
             Segment(index=0, kind="p", source="a", target="译"),

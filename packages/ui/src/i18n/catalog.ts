@@ -4,6 +4,10 @@ import zhCN from "./locales/zh-CN";
 export type MessageKey = keyof typeof en;
 export type Messages = Record<MessageKey, string>;
 
+export function isMessageKey(key: string): key is MessageKey {
+  return Object.hasOwn(en, key);
+}
+
 /** Add each interface language here, using its own name in the selector. */
 export const locales = {
   en: { name: "English", messages: en },

@@ -9,7 +9,7 @@ from ..i18n.languages import require_language
 from ..i18n.policy.models import PolicyContext
 from ..i18n.policy.resolver import resolve_policy
 from ..markup.contracts import HTML_ATTRIBUTE_META_KEY
-from ..models.document import Chapter, Segment
+from ..models.document import Chapter, Segment, uses_epub_template
 
 _ILLEGAL_FN = re.compile(r'[\\/:*?"<>|\r\n\t]+')
 
@@ -28,6 +28,18 @@ def supports_pdf_export(manifest: dict) -> bool:
     raw_meta = manifest.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
     return meta.get("pdf_export") == "babeldoc" or bool(meta.get("babeldoc"))
+
+
+def validate_pdf_source_format(manifest: dict) -> None:
+    """Require re-import for projects whose only template was a MinerU HTML export."""
+    if (
+        manifest.get("fmt") == "pdf"
+        and not uses_epub_template("pdf", manifest.get("meta"))
+        and not supports_pdf_export(manifest)
+    ):
+        raise ValueError(
+            "This MinerU project uses the retired HTML format. Re-import the PDF as a new project."
+        )
 
 
 def output_formats(manifest: dict) -> list[str]:

@@ -305,9 +305,10 @@ class TestReviewAutofix(unittest.TestCase):
             chapter.text_segments[0].target = "正式译文。"
             store.save_chapter(chapter)
 
-            cfg.llm.models["default_strong"] = cfg.llm.models["default_strong"].model_copy(
-                update={"model": "changed-after-publication-started"}
-            )
+            ref = "fake/changed-after-publication-started"
+            route = cfg.llm.routes["autofix.verify"]
+            cfg.llm.models[ref] = cfg.llm.models[route.model]
+            cfg.llm.routes["autofix.verify"] = route.model_copy(update={"model": ref})
             client = FakeClient(handler=lambda *_args, **_kwargs: "model must not run")
             resumed = Orchestrator(cfg, client=client)._review_autofix.resume_pending(store)
 

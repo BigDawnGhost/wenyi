@@ -9,13 +9,14 @@ test("Web keeps environment-variable-only settings", async ({ page }) => {
   }));
   await fakeApi(page);
   await page.goto("/settings/providers");
+  await page.getByRole("button", { name: "Edit provider deepseek" }).click();
   await expect(page.getByLabel("API key environment variable", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Credential source", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("API key", { exact: true })).toHaveCount(0);
 });
 
 for (const locale of ["en", "zh-CN"]) {
-  test(`Web General excludes native notification settings in ${locale}`, async ({ page }) => {
+  test(`Web General excludes native interface settings in ${locale}`, async ({ page }) => {
     await page.addInitScript(locale => {
       localStorage.setItem("wenyi.locale", locale);
       Object.assign(window, {
@@ -27,6 +28,7 @@ for (const locale of ["en", "zh-CN"]) {
     await fakeApi(page);
     await page.goto("/settings");
     await expect(page.getByLabel(locale === "en" ? "Interface language" : "界面语言")).toBeVisible();
+    await expect(page.getByRole("combobox", { name: /Interface zoom|界面缩放/ })).toHaveCount(0);
     await expect(page.getByRole("switch", { name: /Status notifications|状态通知/ })).toHaveCount(0);
     await expect(page.getByRole("dialog", { name: /Desktop status notifications|桌面状态通知/ })).toHaveCount(0);
   });

@@ -26,10 +26,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  pingModels: (timeout?: number) =>
+  pingModels: (connection: string) =>
     request<ModelPingResult[]>("/settings/models/ping", {
       method: "POST",
-      body: JSON.stringify(timeout === undefined ? {} : { timeout }),
+      body: JSON.stringify({ connection }),
     }),
   listModels: (body: ModelListRequest) =>
     request<ModelListResult>("/settings/models/list", {

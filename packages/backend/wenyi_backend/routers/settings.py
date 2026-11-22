@@ -16,6 +16,7 @@ from ..errors import INVALID_CONFIGURATION, ApiError
 from ..global_settings import (
     GlobalSettings,
     load_settings,
+    registered_models,
     registry_guard,
     save_settings,
     validate_settings,
@@ -40,6 +41,7 @@ def response(value: GlobalSettings) -> dict:
         "effective": document,
         "default_template": value.default_template,
         "revision": value.revision,
+        "registered_models": registered_models(value.config),
     }
 
 
@@ -86,8 +88,16 @@ def save(body: GlobalConfigInput) -> dict:
 def ping_models(body: ModelPingRequest) -> list[dict]:
     """Send one short live request per saved model profile; this uses provider tokens."""
     try:
-        client = current_context().build_client(load_settings().config)
-        results = client.probe_profiles(timeout=body.timeout)
+        config = load_settings().config
+        profiles = None
+        if body.connection is not None:
+            if body.connection not in config.llm.providers:
+                raise ValueError("Unknown provider connection")
+            profiles = [
+                ref for ref in config.llm.models if ref.partition("/")[0] == body.connection
+            ]
+        client = current_context().build_client(config)
+        results = client.probe_profiles(profiles, timeout=body.timeout)
     except (ValueError, RuntimeError) as error:
         raise HTTPException(422, str(error)) from error
     return [result.describe() for result in results]
@@ -123,8 +133,7 @@ def _list_models(body: ModelListRequest) -> dict:
         if typed:
             credential, injected = typed, True
         elif resolve is not None:
-            # Desktop: a draft connection with no typed key uses the stored key, if any.
-            credential = resolve(body.connection, provider) if body.connection else None
+            credential = resolve(body.connection, provider)
             injected = True
         else:
             # Web reads the environment named by the connection, like real requests do. Only

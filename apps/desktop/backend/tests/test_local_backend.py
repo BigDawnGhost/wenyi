@@ -790,10 +790,10 @@ def test_model_rename_updates_projects_not_frozen_jobs(backend):
     pid = new_project()
     settings = client.get("/settings").json()
     document = settings["effective"]
-    old = document["llm"]["tiers"]["strong"]
+    old = document["llm"]["routes"]["translation.body"]["model"]
     response = client.put(
         f"/projects/{pid}/config",
-        json={"yaml": json.dumps({"llm": {"tiers": {"strong": old}}})},
+        json={"yaml": json.dumps({"llm": {"routes": {"translation.body": {"model": old}}}})},
     )
     assert response.status_code == 200, response.text
     job_id = current_context().repository.create_job(
@@ -802,21 +802,22 @@ def test_model_rename_updates_projects_not_frozen_jobs(backend):
     frozen = current_context().repository.get_job(job_id)["params"]
     llm = document["llm"]
     llm["preset"] = None
-    llm["models"]["renamed"] = llm["models"].pop(old)
-    document["llm"] = rename_model_references(llm, {old: "renamed"})
+    new = "deepseek/new-model"
+    llm["models"][new] = llm["models"].pop(old)
+    document["llm"] = rename_model_references(llm, {old: new})
     body = {
         "yaml": json.dumps(document),
         "revision": 0,
         "default_template": settings["default_template"],
-        "model_renames": {old: "renamed"},
+        "model_renames": {old: new},
     }
     assert client.post("/settings/validate", json=body).status_code == 200
-    assert current_context().repository.get_project_config(pid)["llm"]["tiers"]["strong"] == old
+    selections = current_context().repository.get_project_config(pid)["llm"]["routes"]
+    assert selections["translation.body"]["model"] == old
     response = client.put("/settings", json=body)
     assert response.status_code == 200, response.text
-    assert (
-        current_context().repository.get_project_config(pid)["llm"]["tiers"]["strong"] == "renamed"
-    )
+    selections = current_context().repository.get_project_config(pid)["llm"]["routes"]
+    assert selections["translation.body"]["model"] == new
     assert current_context().repository.get_job(job_id)["params"] == frozen
 
 
