@@ -43,6 +43,11 @@ class DeepSeekOptions(BaseModel):
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
+# Glossary extraction reads names off a finished translation; low effort suffices and
+# takes far less time than high.
+PRESET_THINKING = {"glossary.extract": "low"}
+
+
 def preset_model() -> ResolvedModel[DeepSeekOptions]:
     return ResolvedModel("deepseek-flash", DeepSeekOptions())
 

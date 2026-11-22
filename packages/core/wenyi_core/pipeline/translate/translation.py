@@ -1,22 +1,25 @@
 """Translation batches, resume, polishing, rolling context, glossary extraction and titles.
 Use the prepared book synopsis while the caller holds the book lock. Process chapters and
-batches serially. For each batch: translate, persist targets, align/persist annotations,
-update context, append the batch event, extract/checkpoint glossary terms, update history,
-then proceed.
+batches in order. For each batch: translate, persist targets, align/persist annotations,
+update context, append the batch event, then extract glossary terms. During a run the
+extraction model call overlaps the next batch's translation; its terms are stored, its
+checkpoint written and history updated on this thread before the following extraction is
+prepared, so the next batch's prompt lacks only the previous batch's new entries.
 With ``pipeline.polish_concurrency`` above 1, standard mode saves each draft with a durable
 polish-pending marker and hands polishing to a bounded background pool. Finished polish jobs
 are applied on this thread in submission order; a chapter is published as done only after
 its jobs are applied. Rolling context and glossary extraction may therefore read drafts.
-At chapter end, perform fallback glossary extraction and publish model text plus done
-through save_chapter_with_status. If targets exist without a glossary checkpoint, extract
-missing terms without retranslating or overwriting targets.
+At chapter end, perform fallback glossary extraction the same way and publish model text
+plus done through save_chapter_with_status once its terms are stored. If targets exist
+without a glossary checkpoint, extract missing terms without retranslating or overwriting
+targets.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any
 
@@ -36,6 +39,7 @@ from ...storage.run_store import STATUS_DONE
 from ..annotate.docx_styles import DocxStyleService
 from .babeldoc_context import BabeldocContext
 from .context import render_recent_translations
+from .extraction_queue import ExtractionQueue
 from .glossary_notes import GlossaryNotes
 from .polish_queue import PolishOutcome, PolishQueue
 from .precision import PrecisionBatchExecutor, PrecisionError
@@ -91,6 +95,7 @@ class TranslationService:
         self._batches = TranslationBatchExecutor(runtime.translator, runtime.polisher)
         self._precision = PrecisionBatchExecutor(runtime.client, runtime.config)
         self._polish_queue: PolishQueue | None = None
+        self._extraction_queue: ExtractionQueue | None = None
         # In-memory chapters this run still writes, including those awaiting polish results.
         self._open_chapters: dict[int, Chapter] = {}
         self._awaiting_polish: set[int] = set()
@@ -157,6 +162,7 @@ class TranslationService:
                 lambda outcome: self._apply_polish(store, outcome),
                 workers=pipeline.polish_concurrency,
             )
+        self._extraction_queue = ExtractionQueue()
         try:
             for ci in targets:
                 done = self.translate_chapter(
@@ -173,6 +179,8 @@ class TranslationService:
                     total=total,
                 )
                 self._runtime.usage.flush(store, scope="chapter")
+            # Store the last extraction, publishing its chapter, before polish drains.
+            self._extraction_queue.settle()
             queue = self._polish_queue
             if queue is not None:
                 if progress and total and len(queue):
@@ -183,11 +191,15 @@ class TranslationService:
                 self._titles.run(store, glossary, progress=progress)
                 self._annotations.repair_fallbacks(store, progress=progress)
         except BaseException:
+            # An unstored extraction has no checkpoint and is extracted again on resume.
+            self._extraction_queue.close(cancel=True)
             if self._polish_queue is not None:
                 # Unapplied jobs keep their durable marker and are repolished on resume.
                 self._polish_queue.close(cancel=True)
             raise
         finally:
+            self._extraction_queue.close()
+            self._extraction_queue = None
             self._polish_queue = None
             self._open_chapters.clear()
             self._awaiting_polish.clear()
@@ -392,6 +404,9 @@ class TranslationService:
                     context_policy is not None
                     and self._glossary_checkpoint_covers(glossary_checkpoints, batch_start, len(b))
                 ):
+                    # Store a pending extraction now, so a skip never widens the lag.
+                    if self._extraction_queue is not None and self._extraction_queue.settle():
+                        term_snapshot_stale = True
                     summary = {
                         "inserted": 0,
                         "conflict": 0,
@@ -625,7 +640,21 @@ class TranslationService:
             seg_base += len(b)
             if progress:
                 progress(done, total, label)
+            self._adherence.observe(_draft_pairs(ci, batch_start, b))
+
+            def batch_extracted(
+                _summary: dict[str, int],
+                start: int = batch_start,
+                batch: list[Segment] = b,
+                key: str = glossary_key,
+            ) -> None:
+                if notes is not None:
+                    covered_notes.update(notes.maintain(ci, start, batch))
+                self.update_translation_history(translation_history, ci, start, batch)
+                glossary_checkpoints.add(key)
+
             # Persist targets before glossary extraction so interruption cannot leave terms ahead of text.
+            # During a run the model call overlaps the next batch's translation.
             self.extract_batch_glossary(
                 glossary,
                 store,
@@ -635,12 +664,8 @@ class TranslationService:
                 translation_history,
                 source_corpus,
                 admission=notes,
+                finish=batch_extracted,
             )
-            if notes is not None:
-                covered_notes.update(notes.maintain(ci, batch_start, b))
-            self.update_translation_history(translation_history, ci, batch_start, b)
-            self._adherence.observe(_draft_pairs(ci, batch_start, b))
-            glossary_checkpoints.add(glossary_key)
             # The glossary may have changed; refresh before the next real translation, not after the final batch.
             term_snapshot_stale = True
             if polish_job is not None:
@@ -655,31 +680,32 @@ class TranslationService:
             (s.target_before_polish if self._polish_queue is not None else None) or s.target or ""
             for s in text_segs
         )
-        chapter_glossary_summary = self._runtime.extractor.extract_and_store(
+        # Precision publication reloads the chapter; publish the object this loop last saved.
+        self._open_chapters[ci] = chapter
+        chapter_segments = text_segs
+
+        def chapter_extracted(summary: dict[str, int]) -> None:
+            if notes is not None:
+                notes.maintain(ci, 0, chapter_segments, exclude=covered_notes)
+            store.log_event("chapter_glossary_extracted", chapter=ci, summary=summary)
+            # The chapter is done only once its terms are stored and its polish is applied.
+            if self._polish_queue is not None and ci in self._polish_queue.pending_chapters():
+                self._awaiting_polish.add(ci)
+            else:
+                self._publish_chapter(store, ci)
+
+        self._extract(
             glossary,
             src_text,
             tgt_text,
             ci,
-            history=translation_history.values(),
+            history=translation_history,
             before=(ci, len(text_segs)),
             source_corpus=source_corpus,
-            **({"admit": notes.admit} if notes is not None else {}),
+            admission=notes,
+            finish=chapter_extracted,
+            overlap=True,
         )
-        if notes is not None:
-            notes.maintain(ci, 0, text_segs, exclude=covered_notes)
-        store.log_event(
-            "chapter_glossary_extracted",
-            chapter=ci,
-            summary=chapter_glossary_summary,
-        )
-
-        # Precision publication reloads the chapter; publish the object this loop last saved.
-        self._open_chapters[ci] = chapter
-        if self._polish_queue is not None and ci in self._polish_queue.pending_chapters():
-            # Publish done only after this chapter's queued polish jobs are applied.
-            self._awaiting_polish.add(ci)
-            return done
-        self._publish_chapter(store, ci)
         return done
 
     def _publish_chapter(self, store: Storage, ci: int) -> None:
@@ -935,30 +961,99 @@ class TranslationService:
         source_corpus: str,
         *,
         admission: GlossaryNotes | None = None,
-    ) -> dict[str, int]:
-        """Extract terms immediately after translating or resuming a batch for use by later
-        chapter batches.
+        finish: Callable[[dict[str, int]], None] | None = None,
+    ) -> dict[str, int] | None:
+        """Extract terms after translating or resuming a batch for use by later batches.
+
+        Without ``finish``, store the terms now and return the summary. With ``finish``
+        during a run, the model call overlaps the next batch's translation; the terms are
+        stored and ``finish`` runs on this thread when that job settles, and None is
+        returned.
         """
         src_text = "\n".join(s.source for s in batch)
         tgt_text = "\n".join(s.target or "" for s in batch)
-        summary = self._runtime.extractor.extract_and_store(
+
+        def stored(summary: dict[str, int]) -> None:
+            # This event is the batch's extraction checkpoint.
+            store.log_event(
+                "batch_glossary_extracted",
+                chapter=chapter,
+                start_index=start_index,
+                count=len(batch),
+                summary=summary,
+            )
+            if finish is not None:
+                finish(summary)
+
+        return self._extract(
             glossary,
             src_text,
             tgt_text,
             chapter,
-            history=translation_history.values(),
+            history=translation_history,
             before=(chapter, start_index),
             source_corpus=source_corpus,
-            **({"admit": admission.admit} if admission is not None else {}),
+            admission=admission,
+            finish=stored,
+            overlap=finish is not None,
         )
-        store.log_event(
-            "batch_glossary_extracted",
-            chapter=chapter,
-            start_index=start_index,
-            count=len(batch),
-            summary=summary,
+
+    def _extract(
+        self,
+        glossary: Storage | GlossaryStore,
+        source_text: str,
+        target_text: str,
+        chapter: int,
+        *,
+        history: dict[tuple[int, int], TranslatedSegmentEvidence],
+        before: tuple[int, int],
+        source_corpus: str,
+        admission: GlossaryNotes | None,
+        finish: Callable[[dict[str, int]], None],
+        overlap: bool,
+    ) -> dict[str, int] | None:
+        """Store one extraction now, or overlap its model call with the next translation.
+
+        Either way the pending job settles first, so extractions are stored in order.
+        """
+        extractor = self._runtime.extractor
+        admit = {"admit": admission.admit} if admission is not None else {}
+        queue = self._extraction_queue
+        if queue is not None:
+            queue.settle()
+        if queue is None or not overlap:
+            summary = extractor.extract_and_store(
+                glossary,
+                source_text,
+                target_text,
+                chapter,
+                history=history.values(),
+                before=before,
+                source_corpus=source_corpus,
+                **admit,
+            )
+            finish(summary)
+            return summary
+        request = extractor.prepare_extraction(
+            glossary, source_text, target_text, source_corpus=source_corpus
         )
-        return summary
+
+        def store_terms(terms: list[GlossaryTerm]) -> None:
+            finish(
+                extractor.store_extracted(
+                    glossary,
+                    request,
+                    terms,
+                    chapter,
+                    history=history.values(),
+                    before=before,
+                    source_corpus=source_corpus,
+                    **admit,
+                )
+            )
+
+        queue.submit(lambda: extractor.extract_candidates(request), store_terms)
+        return None
 
     def recent_context(
         self,

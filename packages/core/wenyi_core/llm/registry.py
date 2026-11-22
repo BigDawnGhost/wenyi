@@ -90,10 +90,16 @@ class ProviderSpec:
             )
         model = factory()
         reference = f"{self.kind}/{model.model}"
+        # Per-operation thinking efforts the preset sets on its routes.
+        thinking: Mapping[str, str] = getattr(self._module(), "PRESET_THINKING", {})
         return {
             "providers": {self.kind: {"kind": self.kind}},
             "models": {reference: {"options": model.options.model_dump()}},
-            "routes": {operation: {"model": reference} for operation in OPERATION_NAMES},
+            "routes": {
+                operation: {"model": reference}
+                | ({"thinking": thinking[operation]} if operation in thinking else {})
+                for operation in OPERATION_NAMES
+            },
         }
 
 

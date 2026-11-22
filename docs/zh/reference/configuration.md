@@ -110,7 +110,7 @@ llm:
 
 | 预设 | 各阶段初始模型 | 模型选项 |
 |---|---|---|
-| `deepseek` | `deepseek/deepseek-flash` | `thinking: true`、`reasoning_effort: high` |
+| `deepseek` | `deepseek/deepseek-flash` | `thinking: true`、`reasoning_effort: high`；`glossary.extract` 路由设为 `thinking: low`。 |
 | `gemini` | `gemini/gemini-3.6-flash` | 不设置 thinking／temperature，沿用服务默认。 |
 | `fake` | `fake/fake` | 离线测试适配器，无真实翻译、无需凭据。 |
 

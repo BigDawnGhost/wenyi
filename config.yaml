@@ -7,7 +7,7 @@ language:
 
 # ── LLM ──────────────────────────────────────────────────────────────────
 llm:
-  preset: deepseek # Registers deepseek-flash and assigns it to each operation.
+  preset: deepseek # Registers deepseek-flash for each operation; glossary.extract uses low thinking.
   # Select a registered connection/model for each operation with routes.<operation>.model.
   # Optionally override its thinking effort with routes.<operation>.thinking.
   # Inspect effective settings with: wenyi models list

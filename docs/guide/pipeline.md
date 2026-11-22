@@ -102,7 +102,10 @@ drafts on resume and does not translate them again.
 Ordinary glossary extraction starts with completed source-and-translation pairs.
 Without imported terms, the first batch therefore has no predefined mappings.
 New terms and conflicts inform later batches; they do not automatically rewrite
-earlier translations. The glossary is authoritative for name mappings, while style
+earlier translations. Each batch's extraction runs while the next batch translates, so
+a new entry reaches the batch after that; the next batch still sees the previous batch's
+wording in its recent-translation context. A chapter is marked done only after its
+terms are stored. The glossary is authoritative for name mappings, while style
 guidance retains source identities and descriptive character information.
 
 By default (`pipeline.batch_glossary: all`) each pending body batch receives all
@@ -147,10 +150,10 @@ sent. A `glossary_terms_left_out` event records each change. Translations are ma
 as written, so in a target language that inflects names (Russian "Лондоне" for
 "Лондон") an entry the translator follows can still be left out.
 
-Extraction runs after every batch and once per chapter, with the
-`fast` profile's reasoning setting. A lighter profile of the same model, such as
-`reasoning_effort: low`, usually suffices; route `glossary.extract` and
-`glossary.align_history` to it as shown in
+Extraction runs after every batch and once per chapter. The DeepSeek preset runs
+`glossary.extract` at `thinking: low`, which is enough to read names off a finished
+translation and takes far less time than high effort. With your own routes, set
+`thinking: low` on `glossary.extract` as shown in
 [connections, profiles, and routes](../reference/configuration.md#model-profiles).
 Disabling reasoning entirely risks wrong mappings for forms of address.
 

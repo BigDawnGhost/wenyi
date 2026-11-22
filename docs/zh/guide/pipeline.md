@@ -85,6 +85,8 @@ BabelDOC 另有[按版面角色约束的上下文边界](../reference/formats.md
 
 常规术语抽取从已完成的原译文对开始。因此，没有导入术语时，第一批正文没有预定映射。
 新术语及冲突影响后续批次，不自动改写早先译文。
+每批的术语抽取与下一批的翻译同时进行，所以新词条从再下一批开始生效；下一批仍能在近期译文上下文中看到上一批的译法。
+章节在其术语保存后才标记为完成。
 术语库是名称映射的权威来源；文风指导保留原文身份和人物描述。
 
 默认（`pipeline.batch_glossary: all`）每个待译正文批次接收全部当前映射。
@@ -110,10 +112,10 @@ BabelDOC 另有[按版面角色约束的上下文边界](../reference/formats.md
 每次变化记录一条 `glossary_terms_left_out` 事件。译名按原样匹配，因此在名词有屈折变化的目标语言中
 （俄语 “Лондон” 写作 “Лондоне”），即使译者遵循了词条，它仍可能被省去。
 
-抽取在每批之后和每章结束时运行，沿用 `fast` 档配置的推理设置。
-同一模型的轻量配置（如 `reasoning_effort: low`）通常已足够；可按
-[连接、模型配置与路由](../reference/configuration.md#model-profiles)将 `glossary.extract` 和
-`glossary.align_history` 路由到该配置。完全关闭推理容易导致称谓映射出错。
+抽取在每批之后和每章结束时运行。DeepSeek 预设以 `thinking: low` 运行 `glossary.extract`：
+从已完成译文中识别名称，低强度已足够，耗时远少于高强度。
+使用自定义路由时，可按[连接、模型配置与路由](../reference/configuration.md#model-profiles)
+为 `glossary.extract` 设置 `thinking: low`。完全关闭推理容易导致称谓映射出错。
 
 EPUB 正文翻译完成后，Wenyi 补齐解析出的导航树译文，并在最终 Review 前将其原译文对收入术语库，
 包括嵌套条目、复用的标题和先前已保存的标题。已有术语译名保持不变，不同的导航译名记为待处理冲突。
