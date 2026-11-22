@@ -6,7 +6,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{webview::PlatformWebview, Manager, WebviewWindow};
 
-use crate::{ipc_error::IpcError, mutex::lock, native_preferences, trusted};
+use crate::{ipc_error::{codes, IpcError}, mutex::lock, native_preferences, trusted};
 
 const FILE: &str = "interface-zoom.json";
 const DEFAULT: u8 = 100;
@@ -65,14 +65,14 @@ impl InterfaceZoom {
         };
         if !PRESETS.contains(&percent) {
             return Err(IpcError::new(
-                "zoom_invalid_percent",
+                codes::ZOOM_INVALID_PERCENT,
                 "Choose a supported interface zoom percentage.",
             ));
         }
         let previous = access(None)?;
         let result = set_confirmed(percent, |factor| access(Some(factor))).and_then(|()| {
             native_preferences::save(&self.root, FILE, &Document { percent })
-                .map_err(|_| IpcError::new("zoom_save_failed", "Could not save interface zoom."))
+                .map_err(|_| IpcError::new(codes::ZOOM_SAVE_FAILED, "Could not save interface zoom."))
         });
         if let Err(error) = result {
             let _ = access(Some(previous));
@@ -83,7 +83,7 @@ impl InterfaceZoom {
 }
 
 fn zoom_error() -> IpcError {
-    IpcError::new("zoom_apply_failed", "Could not confirm interface zoom.")
+    IpcError::new(codes::ZOOM_APPLY_FAILED, "Could not confirm interface zoom.")
 }
 
 fn preset_for(factor: f64) -> Option<u8> {
@@ -173,7 +173,7 @@ pub async fn desktop_interface_zoom(
 ) -> Result<Option<u8>, IpcError> {
     if window.label() != "main" || !window.url().is_ok_and(|url| trusted(&url)) {
         return Err(IpcError::new(
-            "zoom_untrusted_window",
+            codes::ZOOM_UNTRUSTED_WINDOW,
             "Interface zoom is unavailable.",
         ));
     }
@@ -195,7 +195,7 @@ pub async fn desktop_interface_zoom(
         .map(Some)
     })
     .await
-    .map_err(|_| IpcError::new("zoom_unavailable", "Interface zoom is unavailable."))?
+    .map_err(|_| IpcError::new(codes::ZOOM_UNAVAILABLE, "Interface zoom is unavailable."))?
 }
 
 #[cfg(test)]

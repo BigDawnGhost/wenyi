@@ -91,6 +91,7 @@ REASONS = frozenset(
         "shutdown_requested",
         "forced",
         "wait_failed",
+        "migration_failed",
     }
 )
 # Match known base classes, never serialize a user-defined exception class name.

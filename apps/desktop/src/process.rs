@@ -19,7 +19,7 @@ pub enum Failure {
     ProtocolEof,
     ReadyTimeout,
     ChannelClosed,
-    Migration { restored: bool },
+    Migration { restored: bool, guidance: Option<Vec<String>> },
 }
 
 impl Failure {
@@ -36,7 +36,7 @@ impl Failure {
         }
     }
 
-    pub fn report(&self, diagnostics: &Diagnostics) -> &'static str {
+    pub fn report(&self, diagnostics: &Diagnostics) -> String {
         diagnostics.record(
             Source::Native,
             Event::EngineFailed,
@@ -45,22 +45,34 @@ impl Failure {
                 "os_error": match self { Self::Spawn(code) => *code, _ => None },
             }),
         );
-        match self {
-            Self::Setup(message) => message,
-            Self::Spawn(_) => "Could not start local engine.",
+        let mut message = match self {
+            Self::Setup(message) => (*message).to_string(),
+            Self::Spawn(_) => "Could not start local engine.".to_string(),
             Self::ReadyTimeout => {
                 "The local engine timed out during startup. Export a diagnostic report."
+                    .to_string()
             }
-            Self::Migration { restored: true } => {
+            Self::Migration { restored: true, .. } => {
                 "The update could not be applied. Your data was restored to its previous \
                  state; install the previous Wenyi version to continue."
+                    .to_string()
             }
-            Self::Migration { restored: false } => {
+            Self::Migration { restored: false, .. } => {
                 "The update could not be applied, and the automatic data restore did not \
                  complete. Export a diagnostic report."
+                    .to_string()
             }
-            _ => "The local engine did not become ready. Export a diagnostic report.",
+            _ => "The local engine did not become ready. Export a diagnostic report.".to_string(),
+        };
+        // Surface the backend's legacy-data recovery steps alongside the failure text
+        // instead of leaving them on the engine's stderr.
+        if let Self::Migration { guidance: Some(steps), .. } = self {
+            if !steps.is_empty() {
+                message.push_str("\n\n");
+                message.push_str(&steps.join("\n"));
+            }
         }
+        message
     }
 }
 
@@ -88,12 +100,15 @@ struct Failed {
     reason: String,
     #[serde(default)]
     restored: bool,
+    #[serde(default)]
+    guidance: Option<Vec<String>>,
 }
 
 fn failed_protocol(payload: &str) -> Failure {
     match serde_json::from_str::<Failed>(payload) {
         Ok(failed) if failed.reason == "migration" => Failure::Migration {
             restored: failed.restored,
+            guidance: failed.guidance,
         },
         _ => Failure::InvalidProtocol,
     }
@@ -547,15 +562,15 @@ mod tests {
         for (payload, expected) in [
             (
                 r#"{"reason":"migration","restored":true}"#,
-                Failure::Migration { restored: true },
+                Failure::Migration { restored: true, guidance: None },
             ),
             (
                 r#"{"reason":"migration","restored":false}"#,
-                Failure::Migration { restored: false },
+                Failure::Migration { restored: false, guidance: None },
             ),
             (
                 r#"{"reason":"migration"}"#,
-                Failure::Migration { restored: false },
+                Failure::Migration { restored: false, guidance: None },
             ),
             (r#"{"reason":"unknown"}"#, Failure::InvalidProtocol),
             ("not-json", Failure::InvalidProtocol),
@@ -575,7 +590,7 @@ mod tests {
             assert!(rx.try_recv().is_err());
         }
         for restored in [true, false] {
-            let failure = Failure::Migration { restored };
+            let failure = Failure::Migration { restored, guidance: None };
             assert_eq!(failure.reason(), "migration_failed");
             failure.report(&diagnostics);
         }
@@ -587,6 +602,17 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["migration_failed", "migration_failed"],
         );
+    }
+
+    #[test]
+    fn migration_failure_report_surfaces_legacy_guidance() {
+        let diagnostics = Diagnostics::new(None);
+        let failure = failed_protocol(
+            r#"{"reason":"migration","restored":true,"legacy_data":true,"guidance":["Step one.","Step two."]}"#,
+        );
+        let report = failure.report(&diagnostics);
+        assert!(report.contains("restored to its previous state"));
+        assert!(report.contains("Step one.\nStep two."));
     }
 
     #[test]
