@@ -134,6 +134,15 @@ one-character names such as 蜀 are kept. An extracted translation that differs 
 stored one only in case, spacing, a leading "the" or a final stop is not recorded as a
 conflict; glossary imports and manual edits still compare exactly.
 
+Two further checks need no word list for the source language. When translating into
+English, an extracted entry whose translation is only pronouns and title words ("I",
+"your son", "Your Excellency") is not stored, while "Lord Jiang" keeps its name and
+stays. During translation, an extracted entry that the finished translation keeps
+overriding is left out of later translation and polish prompts: after its source has
+appeared in at least five translated paragraphs, fewer than 35% of which use the stored
+translation. The entry stays in the glossary, and imported or manually added entries
+are always sent. A `glossary_terms_left_out` event records each change.
+
 Extraction runs after every batch and once per chapter, with the
 `fast` profile's reasoning setting. A lighter profile of the same model, such as
 `reasoning_effort: low`, usually suffices; route `glossary.extract` and
