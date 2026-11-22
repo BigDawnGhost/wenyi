@@ -133,7 +133,8 @@ self-references and forms of address whose wording depends on speaker and listen
 one-character names such as 蜀 are kept. An extracted translation that differs from the
 stored one only in case, spacing, a leading "the" or a final stop is not recorded as a
 conflict; glossary imports and manual edits still compare exactly.
-It runs after every batch and once per chapter, with the
+
+Extraction runs after every batch and once per chapter, with the
 `fast` profile's reasoning setting. A lighter profile of the same model, such as
 `reasoning_effort: low`, usually suffices; route `glossary.extract` and
 `glossary.align_history` to it as shown in
