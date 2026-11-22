@@ -32,12 +32,14 @@ libc = "0.2"
 [target.'cfg(target_os = "linux")'.dependencies]
 dbus = "0.9"
 gtk = "0.18"
+webkit2gtk = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6"
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSLocale", "NSString", "NSArray", "NSObject", "NSError"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSBundle", "NSLocale", "NSString", "NSArray", "NSObject", "NSError", "NSProcessInfo"] }
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNUserNotificationCenter", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationSettings", "UNNotificationSound", "UNNotificationTrigger"] }
+objc2-web-kit = { version = "0.3", default-features = false, features = ["WKWebView", "objc2-app-kit", "objc2-core-foundation"] }
 
 [target.'cfg(windows)'.dependencies]
 # Windows uses the system TLS stack (schannel), so the build never enters the
