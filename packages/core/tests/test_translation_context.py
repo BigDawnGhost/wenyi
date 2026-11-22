@@ -13,7 +13,10 @@ from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
-from wenyi_core.pipeline.translate.translation import TranslationService
+from wenyi_core.pipeline.translate.translation import (
+    ChapterTranslationError,
+    TranslationService,
+)
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
 
@@ -504,7 +507,7 @@ def test_resume_rebuilds_reference_after_batch_budget_change_without_saving_it_e
     client = FakeClient(handler=interrupted)
     orch = Orchestrator(config, client=client)
     store = orch.prepare(str(source))
-    with pytest.raises(RuntimeError, match="simulated interruption"):
+    with pytest.raises(ChapterTranslationError, match="simulated interruption"):
         orch.run(str(source))
     partial = store.load_chapter(0)
     assert partial.text_segments[0].target == "译0"

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from ...agents.glossary_extractor import TranslatedSegmentEvidence
 from ...agents.glossary_note import GlossaryNoteAgent
 from ...config import PipelineConfig
+from ...errors import WenyiError
 from ...events import ProgressFn
 from ...glossary.store import GlossaryStore
 from ...markup.contexts import annotation_contexts_for_segments
@@ -34,6 +35,19 @@ from .translation_batch import BatchPlan, BatchResult, TranslationBatchExecutor,
 if TYPE_CHECKING:
     from ..annotate.annotations import AnnotationService
     from ..run.runtime import PipelineRuntime
+
+
+class ChapterTranslationError(WenyiError):
+    """One or more chapters failed translation while their siblings completed.
+
+    ``failures`` holds ``(chapter_index, error)`` pairs in run order; failed
+    chapters stay pending, so a resumed run retries only them.
+    """
+
+    def __init__(self, failures: list[tuple[int, Exception]]) -> None:
+        self.failures = failures
+        details = "; ".join(f"chapter {ci}: {error}" for ci, error in failures)
+        super().__init__(f"Chapter translation failed: {details}")
 
 
 class TranslationService:
@@ -58,6 +72,11 @@ class TranslationService:
         """Translate chapters serially and persist usage/progress under the book lock.
         The caller restores languages, validates only_chapter and prepares the synopsis.
         This method performs body and title translation with restored context.
+        Chapter failures are isolated: the remaining chapters still run and each failure
+        is logged as a ``chapter_failed`` event. After the loop a
+        :class:`ChapterTranslationError` listing every failed chapter is raised; failed
+        chapters stay pending, so a resumed run skips completed chapters and retries
+        only the failures.
         """
         self._runtime.require_glossary_note_access()
         PipelineConfig.model_validate(self._runtime.config.pipeline.model_dump())
@@ -81,22 +100,35 @@ class TranslationService:
             chapters=targets,
             total_segments=total,
         )
+        failures: list[tuple[int, Exception]] = []
         try:
             for ci in targets:
-                done = self.translate_chapter(
-                    ci,
-                    store,
-                    glossary,
-                    style,
-                    book_synopsis,
-                    translation_history=translation_history,
-                    source_corpus=source_corpus,
-                    annotation_context_registry=annotation_context_registry,
-                    progress=progress,
-                    done=done,
-                    total=total,
-                )
+                try:
+                    done = self.translate_chapter(
+                        ci,
+                        store,
+                        glossary,
+                        style,
+                        book_synopsis,
+                        translation_history=translation_history,
+                        source_corpus=source_corpus,
+                        annotation_context_registry=annotation_context_registry,
+                        progress=progress,
+                        done=done,
+                        total=total,
+                    )
+                except Exception as error:
+                    failures.append((ci, error))
+                    store.log_event(
+                        "chapter_failed",
+                        chapter=ci,
+                        error=type(error).__name__,
+                        message=str(error),
+                    )
+                    continue
                 self._runtime.usage.flush(store, scope="chapter")
+            if failures:
+                raise ChapterTranslationError(failures) from failures[0][1]
             # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
             if not store.pending_chapters():
                 self._titles.run(store, glossary, progress=progress)

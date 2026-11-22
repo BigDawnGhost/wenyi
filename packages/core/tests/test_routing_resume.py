@@ -17,6 +17,7 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.review.review_checkpoint import ReviewTraceStore
 from wenyi_core.pipeline.review.review_workflow import ReviewService
 from wenyi_core.pipeline.run.runtime import PipelineRuntime
+from wenyi_core.pipeline.translate.translation import ChapterTranslationError
 from wenyi_core.review.run_store import ReviewRunStore
 from wenyi_core.storage.file import FileStorage
 
@@ -505,5 +506,64 @@ def test_polish_configuration_error_propagates_without_fallback(tmp_path):
 
     orchestrator = Orchestrator(config, MeteredFakeClient(handler=failing_handler), storage=store)
 
-    with pytest.raises(ValueError, match="Unknown model profile"):
+    with pytest.raises(ChapterTranslationError, match="Unknown model profile"):
         orchestrator.run(str(source))
+
+
+def test_chapter_failure_isolated_and_resume_skips_completed(tmp_path):
+    """A failing chapter does not abort its siblings; resume retries only the failure."""
+    config = _config(tmp_path)
+    source = tmp_path / "three_chapters.txt"
+    source.write_text(
+        "# 第一章　出会い\n\n綾小路は教室の窓際に座っていた。空はどこまでも青く、遠くで鳥が鳴いていた。\n\n"
+        "# 第二章　放課後\n\n放課後、二人は屋上で待ち合わせた。風が強かった。\n\n"
+        "# 第三章　夜\n\n夜、綾小路は自室で本を読んでいた。静かな時間が流れていた。\n",
+        encoding="utf-8",
+    )
+    store = FileStorage(str(tmp_path / "run"))
+
+    body_calls = {"count": 0}
+
+    def failing_second_chapter(messages, tier, json_mode):
+        # Chapter prompts carry neighboring source previews, so fail by call order:
+        # each chapter is a single batch here and chapters run serially in index order.
+        if tier == "translation.body":
+            body_calls["count"] += 1
+            if body_calls["count"] == 2:
+                raise ValueError("Unknown model profile: fake/missing")
+        return routing_handler(messages, tier, json_mode)
+
+    broken_client = MeteredFakeClient(handler=failing_second_chapter)
+    broken = Orchestrator(config, broken_client, storage=store)
+    with (
+        patch.object(broken._translation, "extract_batch_glossary", return_value={}),
+        patch.object(broken._runtime.extractor, "extract_and_store", return_value={}),
+    ):
+        with pytest.raises(ChapterTranslationError) as excinfo:
+            broken.run(str(source))
+    assert [(ci, str(error)) for ci, error in excinfo.value.failures] == [
+        (1, "Unknown model profile: fake/missing")
+    ]
+    events = store.read_artifact_records("events.jsonl")
+    assert [e["chapter"] for e in events if e["event"] == "chapter_failed"] == [1]
+    statuses = {c["index"]: c["status"] for c in store.load_manifest()["chapters"]}
+    assert statuses == {0: "done", 1: "pending", 2: "done"}
+    assert store.load_chapter(0).segments[0].target
+    assert store.load_chapter(2).segments[0].target
+    assert all(s.target is None for s in store.load_chapter(1).segments)
+
+    resumed_client = MeteredFakeClient(handler=routing_handler)
+    resumed = Orchestrator(config, resumed_client, storage=store)
+    with (
+        patch.object(resumed._translation, "extract_batch_glossary", return_value={}),
+        patch.object(resumed._runtime.extractor, "extract_and_store", return_value={}),
+    ):
+        result = require_file_storage(resumed.run(str(source)))
+    # Resume replays only the failed chapter's batch plus the final title pass.
+    assert sorted(row["operation"] for row in resumed_client.calls) == [
+        "translation.body",
+        "translation.title",
+    ]
+    final = {c["index"]: c["status"] for c in result.load_manifest()["chapters"]}
+    assert final == {0: "done", 1: "done", 2: "done"}
+    assert all(s.target for s in result.load_chapter(1).segments)

@@ -16,7 +16,10 @@ from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.review.review_chunks import ReviewChunkService
-from wenyi_core.pipeline.translate.translation import TranslationService
+from wenyi_core.pipeline.translate.translation import (
+    ChapterTranslationError,
+    TranslationService,
+)
 from wenyi_core.pipeline.translate.translation_batch import (
     TranslationBatchExecutor,
     resume_batches,
@@ -124,8 +127,9 @@ def test_chapter_service_limits_blank_allowance_and_resumes_without_retranslatio
 
     client = FakeClient(handler=handler)
     service = Orchestrator(config, client)._translation
-    with pytest.raises(AlignmentError):
+    with pytest.raises(ChapterTranslationError) as excinfo:
         service.run(store, book_synopsis="")
+    assert isinstance(excinfo.value.__cause__, AlignmentError)
     chapter = store.load_chapter(0)
     assert chapter.text_segments[0].target is None
     chapter.text_segments[0].target = ""
