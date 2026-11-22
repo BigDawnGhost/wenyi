@@ -24,6 +24,7 @@ from ...agents.glossary_extractor import TranslatedSegmentEvidence
 from ...agents.glossary_note import GlossaryNoteAgent
 from ...config import PipelineConfig
 from ...events import ProgressFn
+from ...glossary.adherence import GlossaryAdherence
 from ...glossary.prompt_scope import prompt_terms
 from ...glossary.store import GlossaryStore
 from ...ingest.tokens import count_tokens
@@ -62,6 +63,23 @@ POLISH_PENDING = "polish_pending"
 POLISH_FAILED = "polish_failed"
 
 
+def _draft_pairs(
+    chapter: int, start_index: int, segments: list[Segment]
+) -> list[tuple[tuple[int, int], str, str]]:
+    """Return positioned source/draft pairs; drafts do not depend on when polish finishes."""
+    return [
+        (
+            (chapter, start_index + offset),
+            segment.source,
+            segment.target_before_polish
+            if segment.target_before_polish is not None
+            else segment.target or "",
+        )
+        for offset, segment in enumerate(segments)
+        if segment.target is not None
+    ]
+
+
 class TranslationService:
     """Domain service for body translation, glossary extraction and chapter/TOC titles."""
 
@@ -76,6 +94,9 @@ class TranslationService:
         # In-memory chapters this run still writes, including those awaiting polish results.
         self._open_chapters: dict[int, Chapter] = {}
         self._awaiting_polish: set[int] = set()
+        # Extracted mappings the translator keeps overriding are left out of later prompts.
+        self._adherence = GlossaryAdherence()
+        self._left_out: frozenset[str] = frozenset()
 
     def run(
         self,
@@ -114,7 +135,11 @@ class TranslationService:
             progress_chapters = [chapter["index"] for chapter in manifest.get("chapters", [])]
 
         total, done = self.progress_counts(store, progress_chapters)
-        translation_history, source_corpus = self.load_translation_inputs(store)
+        drafts: list[tuple[tuple[int, int], str, str]] = []
+        translation_history, source_corpus = self.load_translation_inputs(store, drafts)
+        self._adherence = GlossaryAdherence()
+        self._adherence.observe(drafts)
+        self._left_out = frozenset()
         annotation_context_registry = store.load_annotation_contexts()
         store.log_event(
             "translate_run_started",
@@ -186,9 +211,11 @@ class TranslationService:
     @staticmethod
     def load_translation_inputs(
         store: Storage,
+        drafts: list[tuple[tuple[int, int], str, str]] | None = None,
     ) -> tuple[dict[tuple[int, int], TranslatedSegmentEvidence], str]:
         """Read chapters once to rebuild translated-history indices and concatenate the source
-        corpus.
+        corpus. ``drafts``, when given, receives each translated paragraph's position, source
+        and draft.
         """
         history: dict[tuple[int, int], TranslatedSegmentEvidence] = {}
         source_parts: list[str] = []
@@ -203,6 +230,8 @@ class TranslationService:
             segments = chapter.text_segments
             source_parts.extend(segment.source for segment in segments)
             TranslationService.update_translation_history(history, chapter_index, 0, segments)
+            if drafts is not None:
+                drafts.extend(_draft_pairs(chapter_index, 0, segments))
         return history, "\n".join(source_parts)
 
     @staticmethod
@@ -325,7 +354,7 @@ class TranslationService:
         # Refresh lazily only if the glossary may have changed and another batch needs translation.
         # Fully checkpointed skips neither extract nor refresh. Saved translations lacking extraction
         # still extract and mark the snapshot stale, preserving resume completeness without redundant reads.
-        term_snapshot = glossary.all_terms()
+        term_snapshot = self.prompt_snapshot(store, glossary.all_terms())
         term_snapshot_stale = False
 
         # Process batches serially, deriving context from the latest formal targets.
@@ -402,7 +431,7 @@ class TranslationService:
                 if polish_pending:
                     # Repolish an interrupted draft from saved text; never retranslate it.
                     if term_snapshot_stale:
-                        term_snapshot = glossary.all_terms()
+                        term_snapshot = self.prompt_snapshot(store, glossary.all_terms())
                         term_snapshot_stale = False
                     body_context = context_policy is None or context_policy.body[batch_start]
                     polish_next_source = (
@@ -449,7 +478,7 @@ class TranslationService:
                 continue
 
             if term_snapshot_stale:
-                term_snapshot = glossary.all_terms()
+                term_snapshot = self.prompt_snapshot(store, glossary.all_terms())
                 term_snapshot_stale = False
 
             polish_job: PolishJob | None = None
@@ -610,6 +639,7 @@ class TranslationService:
             if notes is not None:
                 covered_notes.update(notes.maintain(ci, batch_start, b))
             self.update_translation_history(translation_history, ci, batch_start, b)
+            self._adherence.observe(_draft_pairs(ci, batch_start, b))
             glossary_checkpoints.add(glossary_key)
             # The glossary may have changed; refresh before the next real translation, not after the final batch.
             term_snapshot_stale = True
@@ -685,6 +715,24 @@ class TranslationService:
             segment_count=len(chapter.text_segments),
             **({"unpolished": True} if unpolished else {}),
         )
+
+    def prompt_snapshot(self, store: Storage, terms: list[GlossaryTerm]) -> list[GlossaryTerm]:
+        """Leave out extracted mappings that finished translations keep overriding.
+
+        The glossary itself is unchanged; a ``glossary_terms_left_out`` event records each
+        change to the set so the decision is visible in the run log.
+        """
+        kept, left_out = self._adherence.filter(terms)
+        current = frozenset(left_out)
+        if current != self._left_out:
+            store.log_event(
+                "glossary_terms_left_out",
+                added=sorted(current - self._left_out),
+                restored=sorted(self._left_out - current),
+                total=len(current),
+            )
+            self._left_out = current
+        return kept
 
     def batch_terms(
         self,

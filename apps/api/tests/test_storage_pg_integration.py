@@ -106,18 +106,34 @@ def test_atomic_chapter_and_export_snapshot(storage, tmp_path):
 
 def test_glossary_order_conflict_and_batch_checkpoint(storage, tmp_path):
     initialize(storage, tmp_path)
-    storage.upsert_term(GlossaryTerm(source="Zed", target="泽德"))
+    storage.upsert_term(GlossaryTerm(source="Zed", target="泽德"), chapter=2)
     storage.upsert_term(GlossaryTerm(source="Amy", target="艾米"))
+    assert storage.get_term("Zed").first_chapter == 2
     assert [term.source for term in storage.all_terms()] == ["Zed", "Amy"]
     assert storage.upsert_term(GlossaryTerm(source="Zed", target="另一译名")) == "conflict"
     assert storage.get_term("Zed").target == "泽德"
     assert storage.resolve_term("Zed", "确认译名")
+    # A resolution is the user's decision, so the entry no longer counts as extracted.
+    assert storage.get_term("Zed").first_chapter is None
     storage.mark_conflicts_resolved("Zed")
     assert storage.open_conflicts() == []
     assert [term.source for term in storage.all_terms()] == ["Zed", "Amy"]
     storage.log_event("batch_glossary_extracted", chapter=0, start_index=2, count=4)
     storage.log_event("batch_glossary_extracted", chapter=1, start_index=0, count=2)
     assert storage.completed_batch_glossary_keys(0) == {"2:4"}
+
+
+def test_web_glossary_edit_makes_the_entry_the_users(pg_storage, pg_pool):
+    from wenyi_api.adapters import PostgresRepository
+
+    pg_storage.upsert_term(GlossaryTerm(source="Zed", target="泽德"), chapter=2)
+    repository = PostgresRepository.__new__(PostgresRepository)
+    repository._pool = pg_pool
+    repository.update_term(
+        pg_storage.project_id, pg_storage, "Zed", GlossaryTerm(source="Zed", target="齐德")
+    )
+    term = must(pg_storage.get_term("Zed"))
+    assert (term.target, term.first_chapter) == ("齐德", None)
 
 
 def test_glossary_display_pages_do_not_reorder_prompt_terms(storage):

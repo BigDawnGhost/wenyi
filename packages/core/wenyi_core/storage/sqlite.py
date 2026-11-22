@@ -1163,12 +1163,16 @@ class SqliteStorage:
             )
 
     def update_term(self, source: str, term: GlossaryTerm) -> bool:
-        """Apply an explicit edit in place, retaining prompt order and first chapter."""
+        """Apply an explicit edit in place, retaining prompt order.
+
+        The edit makes the entry the user's, so ``first_chapter`` (extraction provenance) is
+        cleared and the entry is always sent, like an imported one.
+        """
         status = "context_dependent" if term.status == "context_dependent" else "ok"
         with self.state_lock():
             cursor = self._connection().execute(
                 "UPDATE glossary SET source=?, target=?, reading=?, type=?, gender=?, "
-                "aliases=?, note=?, status=?, updated_at=? WHERE source=?",
+                "aliases=?, note=?, status=?, first_chapter=NULL, updated_at=? WHERE source=?",
                 (
                     term.source,
                     term.target,

@@ -85,6 +85,20 @@ def glossary_single_character_names_only(code: str) -> bool:
     )
 
 
+def glossary_generic_target_words(code: str) -> frozenset[str]:
+    """Return target-language words that never identify one character or thing.
+
+    A target made only of such words, like English "I", "your son" or "Your Excellency",
+    is a pronoun or a bare title whose wording depends on who is speaking.
+    """
+    if not normalize_language(code):
+        return frozenset()
+    values = profile(code).get("glossary_generic_target_words", [])
+    return frozenset(
+        value.casefold() for value in values if isinstance(value, str) and value.strip()
+    )
+
+
 def label(code: str) -> str:
     return profile(code)["label"] if normalize_language(code) else "the source language"
 

@@ -27,6 +27,7 @@ from ..glossary.store import (
 )
 from ..i18n.languages import (
     glossary_context_dependent_sources,
+    glossary_generic_target_words,
     glossary_single_character_names_only,
 )
 from ..i18n.policy.models import content_hash
@@ -250,6 +251,45 @@ def _filter_context_dependent_sources(
     return filtered
 
 
+_WORD = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
+
+
+def _is_generic_target(target: str, generic_words: frozenset[str]) -> bool:
+    """Return True when every word of a target is a pronoun or a title word.
+
+    "I", "your son", "this commoner" and "Your Excellency" name nobody in particular, while
+    "Lord Jiang" or "Prince of Yong" keep a name and stay. Cased and spaced scripts only:
+    a target without such words, such as Chinese, is never generic.
+    """
+    words = _WORD.findall(normalize_match_text(target))
+    return bool(words) and all(word.replace("’", "'") in generic_words for word in words)
+
+
+def _filter_generic_targets(
+    terms: list[GlossaryTerm], generic_words: frozenset[str]
+) -> list[GlossaryTerm]:
+    """Drop extractions whose target is only pronouns and generic titles (target profile)."""
+    if not generic_words:
+        return terms
+
+    def generic(term: GlossaryTerm) -> bool:
+        words = _WORD.findall(term.target)
+        # A one-word capitalized name such as "Grace" or "King" is a person, not a title.
+        if term.type in _NAME_TYPES and len(words) == 1 and len(words[0]) > 1:
+            if words[0][0].isupper():
+                return False
+        return _is_generic_target(term.target, generic_words)
+
+    kept = [term for term in terms if not generic(term)]
+    if len(kept) < len(terms):
+        _LOGGER.info(
+            "Skipped %d glossary extraction(s) with a pronoun or bare-title target "
+            "(operation=glossary.extract)",
+            len(terms) - len(kept),
+        )
+    return kept
+
+
 def _text(value: object, default: str = "") -> str:
     """Normalize scalar model fields to strings."""
     if isinstance(value, str):
@@ -421,11 +461,12 @@ class GlossaryExtractor(Agent):
                 contradicted,
             )
         bounded = _filter_shadowed_sources(non_contradictory, source_text, (*terms, *existing))
-        return _filter_context_dependent_sources(
+        addressed = _filter_context_dependent_sources(
             bounded,
             glossary_context_dependent_sources(self.src),
             single_character_names_only=glossary_single_character_names_only(self.src),
         )
+        return _filter_generic_targets(addressed, glossary_generic_target_words(self.tgt))
 
     @staticmethod
     def _first_occurrences(
