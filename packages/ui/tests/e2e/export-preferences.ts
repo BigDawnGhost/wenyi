@@ -24,7 +24,7 @@ export function registerTests() {
   }
   for (const chinese of [false, true]) {
     const language = chinese ? "Chinese" : "English";
-    const aboutName = chinese ? "附加“关于此翻译”说明页" : "Include an “About this translation” page";
+    const aboutName = chinese ? "在 EPUB 中附加“关于此翻译”页" : "Add an EPUB “About this translation” page";
     const saveName = chinese ? "保存配置" : "Save configuration";
     const preferencesName = chinese ? "导出偏好" : "Export preferences";
     const orderName = chinese ? "双语顺序" : "Bilingual order";
@@ -50,6 +50,7 @@ export function registerTests() {
       const about = preferences.getByRole("switch", { name: aboutName, exact: true });
       const order = preferences.getByRole("combobox", { name: orderName, exact: true });
       const style = preferences.getByRole("switch", { name: styleName, exact: true });
+      await expect(preferences.getByText(chinese ? "PDF 除外。" : "Not for PDF.", { exact: true })).toBeVisible();
       await expect(preferences.getByRole("switch")).toHaveCount(2);
       await expect(about).toBeChecked();
       await expect(order).toHaveText(targetFirst);

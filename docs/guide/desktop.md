@@ -140,6 +140,10 @@ Both options apply only to `%LOCALAPPDATA%\Wenyi\Desktop`; custom data roots, ex
 
 If a previous instance is still closing, wait for it to finish rather than trying to bypass its lock.
 
+## Interface zoom
+
+In **Settings → General → Interface zoom**, choose **80%, 90%, 100%, 110%, or 125%** to resize the window's content. The change takes effect immediately and is remembered for the current Desktop data directory. It does not affect system display scaling or exported files. Use **Ctrl+0** or **Cmd+0** to restore **100%** from any page. If content is clipped at a larger scale, collapse the sidebar or widen the window. On macOS, this setting requires macOS 11 or later.
+
 ## Status notifications
 
 Windows, Linux, and macOS builds can show a system notification when a task fails, times out, or the local engine stops unexpectedly. Translation preparation reaching `prepared` and a book reaching `done` also produce a completion notification.

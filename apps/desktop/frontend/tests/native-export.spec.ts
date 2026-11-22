@@ -98,7 +98,7 @@ test("HTML native save preserves the options and reports the HTML path", async (
     if (request.method() === "POST" && request.url().endsWith("/exports")) browserJobs++;
   });
   await page.goto(`/projects/${pid}/settings`);
-  await page.getByRole("switch", { name: "Include an “About this translation” page", exact: true }).uncheck();
+  await page.getByRole("switch", { name: "Add an EPUB “About this translation” page", exact: true }).uncheck();
   await chooseOption(page.getByLabel("Bilingual order"), "Source first");
   await page.getByRole("switch", { name: "Preserve source formatting in bilingual output", exact: true }).check();
   await page.getByRole("button", { name: "Save configuration", exact: true }).click();
