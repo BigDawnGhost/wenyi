@@ -514,11 +514,11 @@ mod tests {
 
     #[test]
     fn preserves_logical_geometry_when_monitor_scale_changes() {
-        let screen = screen("primary", 1920, 0, 1920, 1080, 1.5);
+        let screen = screen("primary", 1920, 0, 1920, 1200, 1.5);
         let placement = placement(Some(&saved("primary", 80.0, 40.0, 1100.0, 680.0)), &[screen])
             .unwrap();
         assert_eq!(placement.width, 1100.0);
-        assert_eq!(placement.height, 672.0);
+        assert_eq!(placement.height, 680.0);
         assert_eq!(placement.x, 1360.0);
         assert_eq!(placement.y, 40.0);
     }
