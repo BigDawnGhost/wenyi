@@ -23,13 +23,18 @@ class FakeWebSocket:
         self.closed_with = code
 
 
-def ws_context(relayed, token="secret-token"):
+def ws_context(relayed, token="secret-token", require_token=True):
     async def relay(socket, pid):
         relayed.append((socket, pid))
 
     repository = SimpleNamespace(get_project=lambda pid: object())
     telemetry = SimpleNamespace(relay=relay)
-    return SimpleNamespace(api_token=token, repository=repository, telemetry=telemetry)
+    return SimpleNamespace(
+        api_token=token,
+        require_token=require_token,
+        repository=repository,
+        telemetry=telemetry,
+    )
 
 
 def run_progress(socket, context):
@@ -58,5 +63,13 @@ def test_valid_token_relays_progress():
     relayed = []
     socket = FakeWebSocket([{"token": "secret-token"}])
     run_progress(socket, ws_context(relayed))
+    assert socket.closed_with is None
+    assert relayed == [(socket, "project-1")]
+
+
+def test_wrong_token_relays_progress_when_require_token_disabled():
+    relayed = []
+    socket = FakeWebSocket([{"token": "wrong"}])
+    run_progress(socket, ws_context(relayed, require_token=False))
     assert socket.closed_with is None
     assert relayed == [(socket, "project-1")]

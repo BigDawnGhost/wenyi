@@ -139,6 +139,9 @@ class BackendContext:
     # Web retains its executor; Desktop owns a dedicated thread per workflow.
     run_workflow_sync: WorkflowDispatcher = asyncio.to_thread
     metrics: Metrics = field(default_factory=Metrics)
+    # Auth policy: with api_token set, bearer checks stay on unless the host
+    # explicitly opted out. Default True keeps deployments fail-closed.
+    require_token: bool = True
 
 
 _context: ContextVar[BackendContext] = ContextVar("wenyi_backend_context")

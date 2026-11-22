@@ -46,7 +46,7 @@ def create_app(
     app.add_exception_handler(ApiError, api_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_handler)
 
-    if context.api_token:
+    if context.api_token and context.require_token:
 
         class TokenMiddleware(BaseHTTPMiddleware):
             async def dispatch(self, request: Request, call_next):

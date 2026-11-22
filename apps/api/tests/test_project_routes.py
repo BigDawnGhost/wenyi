@@ -6,6 +6,7 @@ import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from api_test_support import new_project
@@ -422,6 +423,29 @@ def test_http_download_and_websocket_require_token(api, monkeypatch):
             connection.receive_json()
         assert raised.value.code == 1008
     secured_client.close()
+
+
+def test_websocket_skips_token_check_when_require_token_disabled(api):
+    from starlette.websockets import WebSocketDisconnect
+
+    client, _ = api
+    pid = new_project(api)
+    open_context = replace(current_context(), api_token="test-access-token")
+
+    async def local_relay(websocket, project_id):
+        # Serve the socket until the client hangs up; no token was required.
+        await websocket.receive()
+        await websocket.close(code=1000)
+
+    open_context = replace(open_context, telemetry=SimpleNamespace(relay=local_relay))
+    open_client = TestClient(create_app(context=open_context))
+    with open_client.websocket_connect(f"/ws/projects/{pid}/progress") as connection:
+        connection.send_json({"token": "wrong"})
+        connection.close()
+        with pytest.raises(WebSocketDisconnect) as raised:
+            connection.receive_json()
+        assert raised.value.code != 1008
+    open_client.close()
 
 
 def test_duplicate_export_requests_share_one_task(api):

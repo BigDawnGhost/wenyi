@@ -277,6 +277,7 @@ def create_context(settings: Settings) -> BackendContext:
         health=repository.health,
         update_term=repository.update_term,
         api_token=settings.api_token,
+        require_token=settings.require_token,
         remove_project=repository.remove_project,
         metrics=Metrics(RedisCounters(settings.redis_url)),
     )

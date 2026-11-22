@@ -17,11 +17,13 @@ async def project_progress(ws: WebSocket, pid: str) -> None:
     await ws.accept()
     try:
         auth = await asyncio.wait_for(ws.receive_json(), timeout=10)
-        token = current_context().api_token
+        context = current_context()
+        token = context.api_token
         supplied = str(auth.get("token", ""))
-        if token and not hmac.compare_digest(supplied.encode("utf-8"), token.encode("utf-8")):
-            await ws.close(code=1008)
-            return
+        if token and context.require_token:
+            if not hmac.compare_digest(supplied.encode("utf-8"), token.encode("utf-8")):
+                await ws.close(code=1008)
+                return
         if not await asyncio.to_thread(current_context().repository.get_project, pid):
             await ws.close(code=1008)
             return
