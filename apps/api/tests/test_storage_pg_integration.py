@@ -20,6 +20,7 @@ from wenyi_api.storage_pg import PostgresStorage, ProjectBusyError
 from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.run.runtime_usage import UsageCoordinator
 from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor
@@ -594,3 +595,50 @@ def test_locks_do_not_starve_shared_pool_connections(pg_pool, tmp_path):
         extra = PostgresStorage(uuid.uuid4().hex, pg_pool, run_dir=str(tmp_path / "extra"))
         with extra.lock(blocking=False):
             pass
+
+
+def test_save_chapters_batches_chapter_writes(pg_storage, tmp_path, monkeypatch):
+    monkeypatch.setattr(PostgresStorage, "_CHAPTER_BATCH_SIZE", 2)
+    source = tmp_path / "batch-source.txt"
+    source.write_text("batch source", encoding="utf-8")
+    chapters = [
+        Chapter(
+            index=index,
+            title=f"Chapter {index}",
+            href=f"chapter-{index}.xhtml",
+            segments=[
+                Segment(index=0, source=f"Source {index}", anchor="a"),
+                Segment(index=1, source=f"Second {index}", target=f"Target {index}"),
+            ],
+        )
+        for index in range(5)
+    ]
+    doc = Document(
+        title="Batch",
+        fmt="text",
+        source_lang="en",
+        target_lang="zh",
+        source_path=str(source),
+        meta={},
+        chapters=chapters,
+    )
+    digest = source_sha256(doc.source_path)
+
+    pg_storage.begin_initialization(digest)
+    manifest = pg_storage.stage_document(doc, source_hash=digest)
+    pg_storage.save_manifest(manifest)
+    pg_storage.finish_initialization()
+
+    for chapter in chapters:
+        stored = pg_storage.read_artifact(f"chapters/ch{chapter.index}.json")
+        assert stored is not None
+        assert stored["title"] == chapter.title
+
+    def revision_count() -> int:
+        with pg_storage._conn as conn:
+            return conn.execute("SELECT COUNT(*) FROM segment_revisions").fetchone()[0]
+
+    initial = revision_count()
+    assert initial == 5
+    pg_storage.save_chapters(chapters)
+    assert revision_count() == initial

@@ -1250,3 +1250,66 @@ def test_open_rejects_a_database_corrupted_beyond_its_header(tmp_path):
         broken._connection()
     assert raised.value.code == "database_corrupt"
     assert "corrupted" in str(raised.value)
+
+
+def _batch_chapters(count: int) -> list[Chapter]:
+    return [
+        Chapter(
+            index=index,
+            title=f"Chapter {index}",
+            href=f"chapter-{index}.xhtml",
+            segments=[
+                Segment(index=0, source=f"Source {index}", anchor="a"),
+                Segment(index=1, source=f"Second {index}", target=f"Target {index}"),
+            ],
+        )
+        for index in range(count)
+    ]
+
+
+def test_save_chapters_upserts_every_chunk_and_retry_is_idempotent(store, monkeypatch):
+    monkeypatch.setattr(SqliteStorage, "_CHAPTER_BATCH_SIZE", 2)
+    chapters = _batch_chapters(5)
+
+    store.save_chapters(chapters)
+
+    for chapter in chapters:
+        stored = store.read_artifact(f"chapters/ch{chapter.index}.json")
+        assert stored is not None
+        assert stored["title"] == chapter.title
+    conn = store._connection()
+    statistics = conn.execute(
+        "SELECT chapter_index, word_count FROM chapter_statistics ORDER BY chapter_index"
+    ).fetchall()
+    assert [tuple(row) for row in statistics] == [(index, 2) for index in range(5)]
+    revisions = conn.execute("SELECT COUNT(*) FROM segment_revisions").fetchone()[0]
+    assert revisions == 5
+
+    store.save_chapters(chapters)
+    assert conn.execute("SELECT COUNT(*) FROM segment_revisions").fetchone()[0] == revisions
+
+
+def test_stage_document_batches_chapter_writes(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(SqliteStorage, "_CHAPTER_BATCH_SIZE", 2)
+    source = tmp_path / "batch-source.txt"
+    source.write_text("batch source", encoding="utf-8")
+    doc = Document(
+        title="Batch",
+        fmt="text",
+        source_lang="en",
+        target_lang="zh",
+        source_path=str(source),
+        meta={},
+        chapters=_batch_chapters(5),
+    )
+    digest = source_sha256(doc.source_path)
+
+    store.begin_initialization(digest)
+    manifest = store.stage_document(doc, source_hash=digest)
+    store.save_manifest(manifest)
+    store.finish_initialization()
+
+    for chapter in doc.chapters:
+        stored = store.read_artifact(f"chapters/ch{chapter.index}.json")
+        assert stored is not None
+        assert stored["title"] == chapter.title
