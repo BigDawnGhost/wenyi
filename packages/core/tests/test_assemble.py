@@ -17,6 +17,7 @@ from wenyi_core.assemble.about import about_xhtml, append_about_page
 from wenyi_core.assemble.epub_presentation import _rewrite_html_document
 from wenyi_core.assemble.html_renderer import _render_chapter_html, _render_segments_html
 from wenyi_core.assemble.html_resources import _package_html_resources
+from wenyi_core.assemble.html_source import _render_html_source
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.assemble.writer_common import bilingual_out_path
 from wenyi_core.config import Config
@@ -2174,7 +2175,9 @@ class TestEpubHrefWarnings(unittest.TestCase):
 
     def test_package_html_resources_without_collector_keeps_behavior(self):
         html = '<p><img src="missing.png"/></p>'
-        packaged_html, packaged = _package_html_resources(html, source_dir=".", href_prefix="assets")
+        packaged_html, packaged = _package_html_resources(
+            html, source_dir=".", href_prefix="assets"
+        )
         self.assertEqual(packaged, {})
         self.assertIn('src="missing.png"', packaged_html)
 
@@ -2214,6 +2217,47 @@ class TestEpubHrefWarnings(unittest.TestCase):
             with zipfile.ZipFile(out) as archive:
                 assets = [name for name in archive.namelist() if "/assets/" in name]
             self.assertEqual(len(assets), 1)
+
+
+class TestHtmlOrphanContinuation(unittest.TestCase):
+    """The merge-back continuity check names the chapter, the segment and the repair."""
+
+    def test_orphaned_continuation_error_names_chapter_segment_and_fix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "book.html")
+            html = (
+                "<!DOCTYPE html><html><head><title>Book</title></head><body>"
+                "<h1>Chapter</h1><p>First paragraph.</p>"
+                "</body></html>"
+            )
+            Path(source).write_text(html, encoding="utf-8")
+            manifest = {
+                "source_sha256": hashlib.sha256(html.encode("utf-8")).hexdigest(),
+                "source_lang": "en",
+                "target_lang": "zh",
+            }
+            chapters = [
+                Chapter(
+                    index=3,
+                    title="Broken Chapter",
+                    segments=[Segment(index=0, source="continued slice", cont=True)],
+                )
+            ]
+            with self.assertRaises(ValueError) as raised:
+                _render_html_source(
+                    source,
+                    manifest,
+                    chapters,
+                    bilingual=False,
+                    order="source_first",
+                    preserve_source_style=False,
+                )
+            message = str(raised.exception)
+            self.assertIn("chapter 3", message)
+            self.assertIn("Broken Chapter", message)
+            self.assertIn("segment 0", message)
+            self.assertIn("anchor", message)
+            self.assertIn("re-run", message.lower())
 
 
 if __name__ == "__main__":
