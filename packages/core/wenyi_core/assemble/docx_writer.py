@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import posixpath
 import re
 import zipfile
@@ -157,11 +156,10 @@ def _write_media(path: str, media: list[tuple[str, str, bytes]]) -> None:
     parts["word/document.xml"] = document.replace(marker, "".join(drawings) + marker, 1).encode(
         "utf-8",
     )
-    staged = f"{path}.media"
-    with zipfile.ZipFile(staged, "w", zipfile.ZIP_DEFLATED) as updated:
-        for name, data in parts.items():
-            updated.writestr(name, data)
-    os.replace(staged, path)
+    with publish_target(path) as staged:
+        with zipfile.ZipFile(staged, "w", zipfile.ZIP_DEFLATED) as updated:
+            for name, data in parts.items():
+                updated.writestr(name, data)
 
 
 def _drawing_paragraph(relationship: str, part: str, doc_pr_id: int, data: bytes) -> str:

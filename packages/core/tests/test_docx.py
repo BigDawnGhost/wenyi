@@ -682,6 +682,70 @@ class TestDocxAssemble(unittest.TestCase):
             with zipfile.ZipFile(out_path) as archive:
                 self.assertNotIn("word/media/image1.png", archive.namelist())
 
+    def test_assemble_docx_interrupted_media_publish_leaves_no_residue(self):
+        def png_bytes(width, height):
+            def chunk(tag, data):
+                return (
+                    struct.pack(">I", len(data))
+                    + tag
+                    + data
+                    + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+                )
+
+            header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+            row = b"\x00" + b"\x00\x00\x00\xff" * width
+            return (
+                b"\x89PNG\r\n\x1a\n"
+                + chunk(b"IHDR", header)
+                + chunk(b"IDAT", zlib.compress(row * height))
+                + chunk(b"IEND", b"")
+            )
+
+        png = png_bytes(1, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "images.docx")
+            source = DocxDocument()
+            source.add_heading("Chapter One", level=1)
+            source.add_paragraph("Before the picture.")
+            source.add_picture(io.BytesIO(png))
+            source.save(path)
+            book = read_docx(path, "en", "zh")
+            store = FileStorage(os.path.join(directory, "state", "images"))
+            store.save_manifest(
+                {
+                    "title": "images",
+                    "fmt": "docx",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "source_sha256": "x",
+                    "chapters": [
+                        {"index": c.index, "title": c.title, "status": STATUS_DONE}
+                        for c in book.chapters
+                    ],
+                }
+            )
+            for chapter in book.chapters:
+                for segment in chapter.segments:
+                    segment.target = f"译:{segment.source}"
+                store.save_chapter(chapter)
+            out_path = os.path.join(directory, "out.docx")
+            seen: list[str] = []
+
+            def interrupted_replace(src, dst):
+                seen.append(os.path.basename(str(src)))
+                raise OSError("simulated export interruption")
+
+            with patch(
+                "wenyi_core.atomicio.os.replace",
+                side_effect=interrupted_replace,
+            ):
+                with self.assertRaises(OSError):
+                    assemble(store, path, out_path, out_format="docx")
+            self.assertEqual(len(seen), 1)
+            self.assertRegex(seen[0], r"^\.wenyi-[0-9a-f]{32}\.tmp$")
+            self.assertFalse(os.path.exists(out_path))
+            self.assertEqual(sorted(os.listdir(directory)), ["images.docx", "state"])
+
 
 class TestDocxCliDefaults(unittest.TestCase):
     def testresolve_output_format_defaults(self):
