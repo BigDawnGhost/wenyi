@@ -265,6 +265,11 @@ class TitleTranslationService:
             )
             completed += len(batch)
             if progress:
-                progress(completed, len(plan.pending), "Translating chapter titles")
+                progress(
+                    completed,
+                    len(plan.pending),
+                    "Translating chapter titles",
+                    {"batch": batch_index, "batch_size": len(batch)},
+                )
         # Commit titles first so an interrupted glossary write can resume without model calls.
         _store_navigation_terms(plan, glossary)

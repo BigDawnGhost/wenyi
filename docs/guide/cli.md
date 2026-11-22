@@ -508,7 +508,7 @@ Each invocation generates a fresh `run_id`. Files include `protocol_version`,
 
 | File / state | Fields and meaning |
 |---|---|
-| Progress while running | `status: "running"`, `done`, nullable `total`, `label`; counts describe the current stage, not overall percentage. |
+| Progress while running | `status: "running"`, `done`, nullable `total`, `label`; counts describe the current stage, not overall percentage. An optional `payload` object repeats whitelisted structured locating fields for the current tick, such as `chapter`, `batch`, and `batch_size`; it is omitted when the stage has none. |
 | Result before preflight | `status: "running"`, empty `outputs`; replaces a previous receipt. |
 | Successful result | `status: "success"`, `source_sha256`, absolute `state_dir`, and `outputs` containing absolute `path`, byte `size`, and `sha256`. |
 | Failed result | `status: "failed"`, empty `outputs`, generic `error`; details remain in terminal/log output. |

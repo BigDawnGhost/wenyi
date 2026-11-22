@@ -208,9 +208,9 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         ):
             rich_progress = progress_view.RichProgressBridge(prog, "Preparing…")
 
-            def cb(done: int, total: int, label: str) -> None:
+            def cb(done: int, total: int, label: str, payload: dict | None = None) -> None:
                 rich_progress(done, total, label)
-                machine(done, total, label)
+                machine(done, total, label, payload)
 
             if chapter is not None:
                 try:

@@ -359,7 +359,7 @@ class AnnotationService:
                     ci, chapter, position, store, segments=segments, retry_fallbacks=True
                 )
             if progress:
-                progress(done, len(chapter_indices), label)
+                progress(done, len(chapter_indices), label, {"chapter": ci})
 
     @staticmethod
     def _logical_segments(segments: list[Segment], position: int) -> list[Segment]:

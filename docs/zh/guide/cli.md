@@ -442,7 +442,7 @@ CLI 会拒绝与源文件、配置及显式 `--out` 路径冲突。
 
 | 文件／状态 | 字段与含义 |
 |---|---|
-| 运行中进度 | `status: "running"`、`done`、可为空的 `total`、`label`；计数只描述当前阶段，不是全流程百分比。 |
+| 运行中进度 | `status: "running"`、`done`、可为空的 `total`、`label`；计数只描述当前阶段，不是全流程百分比。可选的 `payload` 对象携带当前进度经白名单筛选的结构化定位字段（如 `chapter`、`batch`、`batch_size`）；当前阶段没有定位信息时省略该字段。 |
 | 预检前结果 | `status: "running"`、空 `outputs`，替换旧回执。 |
 | 成功结果 | `status: "success"`、`source_sha256`、绝对 `state_dir`；`outputs` 含绝对 `path`、字节 `size` 和 `sha256`。 |
 | 失败结果 | `status: "failed"`、空 `outputs` 和通用 `error`；详情在终端／日志中。 |

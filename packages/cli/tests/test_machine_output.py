@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 from wenyi_cli.cli import app
+from wenyi_cli.commands.machine_output import MachineOutput
 from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
 
@@ -265,3 +266,77 @@ def test_failed_receipt_falls_back_without_error_events(tmp_path, monkeypatch):
     assert receipt["status"] == "failed"
     assert receipt["error"]["code"] == "translation_failed"
     assert "no error events" in receipt["error"]["message"]
+
+
+def _payload_machine(tmp_path, **kwargs):
+    source = tmp_path / "book.epub"
+    source.write_bytes(b"epub")
+    config = tmp_path / "config.yaml"
+    config.write_text("language:\n  target: zh\n", encoding="utf-8")
+    progress = tmp_path / "progress.json"
+    machine = MachineOutput(
+        str(progress), None, source=str(source), config=str(config), output=None, **kwargs
+    )
+    return machine, progress
+
+
+def test_machine_progress_writes_whitelisted_payload(tmp_path):
+    machine, progress = _payload_machine(tmp_path)
+
+    machine(4, 10, "Annotating", {"chapter": 3, "batch": 1, "secret": "key", "deep": {"x": 1}})
+
+    data = json.loads(progress.read_text(encoding="utf-8"))
+    assert data["protocol_version"] == 1
+    assert (data["done"], data["total"], data["label"]) == (4, 10, "Annotating")
+    assert data["payload"] == {"batch": 1, "chapter": 3}
+
+
+def test_machine_progress_omits_payload_without_structured_fields(tmp_path):
+    machine, progress = _payload_machine(tmp_path)
+
+    machine(1, 10, "Translating")
+    assert "payload" not in json.loads(progress.read_text(encoding="utf-8"))
+
+    machine(2, 10, "Translating", {"unexpected": "value", "segments": []})
+    assert "payload" not in json.loads(progress.read_text(encoding="utf-8"))
+
+
+def test_machine_progress_payload_whitelist_is_configurable(tmp_path):
+    machine, progress = _payload_machine(tmp_path, payload_keys=("custom",))
+
+    machine(1, 2, "Working", {"custom": "keep", "chapter": 1})
+
+    data = json.loads(progress.read_text(encoding="utf-8"))
+    assert data["payload"] == {"custom": "keep"}
+
+
+def test_machine_progress_passthrough_keeps_structured_payload(workflow, tmp_path, monkeypatch):
+    source, output = workflow
+    seen = {}
+    store = SimpleNamespace(
+        run_dir=str(tmp_path / "state"),
+        lock=nullcontext,
+        state_lock=nullcontext,
+        load_manifest=lambda: {"chapters": [{"index": 0, "status": "done"}]},
+        stats=lambda: {"terms": 0},
+        load_usage=lambda: {},
+    )
+
+    class PayloadWorkflow:
+        def __init__(self, *args, **kwargs):
+            self.client = FakeClient()
+
+        def run_all(self, input_path, *, progress, **kwargs):
+            progress(1, 3, "Translating")
+            seen["plain"] = json.loads((tmp_path / "progress.json").read_text())
+            progress(2, 3, "Annotating", {"chapter": 7, "secret": "nope"})
+            seen["located"] = json.loads((tmp_path / "progress.json").read_text())
+            output.write_bytes(b"%PDF-1.7\ntranslated\n%%EOF")
+            return {"store": store, "outputs": [str(output)], "output": str(output)}
+
+    monkeypatch.setattr("wenyi_core.pipeline.orchestrator.Orchestrator", PayloadWorkflow)
+    response = invoke(source, tmp_path / "progress.json", tmp_path / "result.json")
+
+    assert response.exit_code == 0, response.output
+    assert "payload" not in seen["plain"]
+    assert seen["located"]["payload"] == {"chapter": 7}

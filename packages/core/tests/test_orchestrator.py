@@ -415,7 +415,9 @@ class TestOrchestrator(unittest.TestCase):
             progress_events: list[tuple[int, int, str]] = []
             store2 = orch2.run(
                 txt,
-                progress=lambda done, total, label: progress_events.append((done, total, label)),
+                progress=lambda done, total, label, payload=None: progress_events.append(
+                    (done, total, label)
+                ),
             )
             m2 = store2.load_manifest()
             self.assertTrue(all(c["status"] == STATUS_DONE for c in m2["chapters"]))
@@ -1057,7 +1059,9 @@ class TestReviewReporting(unittest.TestCase):
 
             orch.run_review(
                 txt,
-                progress=lambda done, total, label: events.append((done, total, label)),
+                progress=lambda done, total, label, payload=None: events.append(
+                    (done, total, label)
+                ),
             )
 
         first = [
@@ -1671,7 +1675,7 @@ class TestReviewReporting(unittest.TestCase):
             ):
                 result = orch.run_review(
                     txt,
-                    progress=lambda done, total, label: progress_events.append(
+                    progress=lambda done, total, label, payload=None: progress_events.append(
                         (done, total, label)
                     ),
                 )
@@ -1765,7 +1769,9 @@ class TestReviewReporting(unittest.TestCase):
             progress_events: list[tuple[int, int, str]] = []
             result = orch.run_review(
                 txt,
-                progress=lambda done, total, label: progress_events.append((done, total, label)),
+                progress=lambda done, total, label, payload=None: progress_events.append(
+                    (done, total, label)
+                ),
             )
 
             summary = result["review_result"]["summary"]
@@ -2759,7 +2765,9 @@ class TestProgressLabels(unittest.TestCase):
             orch.run_steps(
                 txt,
                 {"translate", "assemble"},
-                progress=lambda done, total, label: events.append((done, total, label)),
+                progress=lambda done, total, label, payload=None: events.append(
+                    (done, total, label)
+                ),
             )
 
             labels = [label for _, _, label in events]

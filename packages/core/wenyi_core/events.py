@@ -14,8 +14,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Optional, Protocol, runtime_checkable
 
-ProgressFn = Callable[[int, int, str], None]
-"""Core progress callback: ``(done, total, label)``."""
+ProgressFn = Callable[..., None]
+"""Core progress callback: ``(done, total, label, payload=None)``.
+
+``done``/``total``/``label`` describe the current stage tick. Emitters MAY pass a
+fourth argument: `payload`, a JSON-serialisable dict of structured locating
+fields (for example `{"chapter": 3, "batch": 1, "batch_size": 8}`). The payload
+is passed only when the stage has structured context, so callbacks must accept
+the optional fourth positional argument and tolerate `None`."""
 
 # Event kinds that carry a terminal failure to live subscribers. Anything not
 # listed here keeps its existing progress handling, so this stays additive.
@@ -50,10 +56,13 @@ def make_progress_fn(
 ):
     """Wrap a :class:`ProgressEmitter` as a core ProgressFn callback.
 
-    The signature is ``progress(done: int, total: int, label: str) -> None``.
+    The signature is
+    ``progress(done: int, total: int, label: str, payload: dict | None = None) -> None``.
+    The optional `payload` carries structured locating fields and is published
+    on the event unchanged; adapters decide how to expose it.
     """
 
-    def fn(done: int, total: int, label: str) -> None:
+    def fn(done: int, total: int, label: str, payload: Optional[dict] = None) -> None:
         emitter.emit(
             TranslationEvent(
                 project_id=project_id,
@@ -61,6 +70,7 @@ def make_progress_fn(
                 done=done,
                 total=total,
                 label=label,
+                payload=payload,
             )
         )
 

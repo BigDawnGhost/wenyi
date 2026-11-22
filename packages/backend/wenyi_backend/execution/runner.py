@@ -116,12 +116,12 @@ def execute(
         resources.callback(stop_watcher)
         emitter = redis_progress_fn(cache, pid, kind=kind, run_id=run_id)
 
-        def progress(done: int, total: int, label: str) -> None:
+        def progress(done: int, total: int, label: str, payload: dict | None = None) -> None:
             if stop.is_set() or projects.is_paused(pid):
                 if client is not None:
                     client.cancel()
                 raise PauseRequested(pid)
-            emitter(done, total, label)
+            emitter(done, total, label, payload)
 
         def record_failure(error: BaseException) -> None:
             # Provider credentials are stripped before they reach this point; the
