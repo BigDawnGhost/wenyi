@@ -185,7 +185,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: dtolnay/rust-toolchain@stable
+      # Both native crates built here declare rust-version = "1.89"; pin the
+      # job to that toolchain so CI verifies the declared MSRV floor instead
+      # of only whatever latest stable ships.
+      - uses: dtolnay/rust-toolchain@1.89
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
