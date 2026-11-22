@@ -499,7 +499,7 @@ def test_legacy_sampled_cache_is_rebuilt_without_touching_targets_or_terms(tmp_p
     assert service.ensure_understanding(store) == "Whole-book synopsis."
     assert runtime.synopsizer.digest_chapter.call_count == 2
     runtime.synopsizer.book_synopsis.assert_called_once_with(
-        ["Chapter digest.", "Chapter digest."], "Restrained.", glossary=terms
+        ["Chapter digest.", "Chapter digest."], "Restrained.", glossary=[]
     )
     analysis = store.load_analysis()
     assert analysis is not None
@@ -579,10 +579,20 @@ def test_glossary_growth_aliases_and_unrelated_terms_reuse_synopsis_on_resume(tm
     store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="female"))
     store.upsert_term(GlossaryTerm("Unrelated", "无关", type="place"))
     assert service.ensure_understanding(store) == "Whole-book synopsis."
-    # Adding terms, notes, aliases, gender changes, or editing unmatched terms all reuse the synopsis.
-    store.upsert_term(GlossaryTerm("Bob", "鲍勃", type="person"))
-    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="male", note="Lead."))
-    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", aliases=["Ally"]))
+    # Unmatched terms are excluded from both style_brief and book_synopsis generation inputs.
+    alice_only = [t for t in store.all_terms() if t.source == "Alice"]
+    runtime.analyzer.style_brief.assert_called_with(store.load_analysis(), terms=alice_only)
+    runtime.synopsizer.book_synopsis.assert_called_once_with(
+        ["Alice meets an envoy.", "Alice meets an envoy."],
+        "Restrained.",
+        glossary=alice_only,
+    )
+    # Adding terms, notes, aliases, or editing unmatched terms all reuse the synopsis.
+    store.upsert_term(GlossaryTerm("Bob", "鲍勃", type="person", gender="male"))
+    store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="female", note="Lead."))
+    store.upsert_term(
+        GlossaryTerm("Alice", "爱丽丝", type="person", gender="female", aliases=["Ally"])
+    )
     store.resolve_term("Unrelated", "其他地方")
     store.delete_term("Unrelated")
     runtime.synopsizer.reset_mock()
@@ -598,24 +608,29 @@ def test_glossary_growth_aliases_and_unrelated_terms_reuse_synopsis_on_resume(tm
             store.delete_term("Alice"),
             store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="place")),
         ),
+        lambda store: store.upsert_term(
+            GlossaryTerm("Alice", "爱丽丝", type="person", gender="male")
+        ),
         lambda store: store.delete_term("Alice"),
     ],
-    ids=["target", "type", "removed"],
+    ids=["target", "type", "gender", "removed"],
 )
 def test_changed_or_removed_digest_matched_mapping_invalidates_cache(tmp_path, revise):
     service, store, runtime = _service(tmp_path)
     runtime.synopsizer.digest_chapter.return_value = "Alice arrives."
     store.upsert_term(GlossaryTerm("Alice", "爱丽丝", type="person", gender="female"))
+    store.upsert_term(GlossaryTerm("Unmatched", "未命中", type="person", gender="male"))
     service.ensure_understanding(store)
     revise(store)
     runtime.synopsizer.reset_mock()
     runtime.synopsizer.book_synopsis.return_value = "Revised synopsis."
     assert service.ensure_understanding(store) == "Revised synopsis."
     runtime.synopsizer.digest_chapter.assert_not_called()
+    matched = [t for t in store.all_terms() if t.source == "Alice"]
     runtime.synopsizer.book_synopsis.assert_called_once_with(
-        ["Alice arrives.", "Alice arrives."], "Restrained.", glossary=store.all_terms()
+        ["Alice arrives.", "Alice arrives."], "Restrained.", glossary=matched
     )
-    runtime.analyzer.style_brief.assert_called_with(store.load_analysis(), terms=store.all_terms())
+    runtime.analyzer.style_brief.assert_called_with(store.load_analysis(), terms=matched)
 
 
 def test_removing_only_matching_alias_invalidates_synopsis_cache(tmp_path):

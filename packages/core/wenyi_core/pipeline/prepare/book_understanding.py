@@ -14,7 +14,7 @@ from ...events import ProgressFn
 from ...i18n.policy.models import content_hash
 from ...llm.routing import inference_snapshot
 from ...models.document import Chapter
-from ...models.glossary import GlossaryTerm
+from ...models.glossary import GlossaryTerm, normalize_gender
 from ...storage.protocol import Storage
 from ..run.runtime_usage import UsageCoordinator
 
@@ -24,16 +24,15 @@ _SYNOPSIS_VERSION = 3
 _SYNOPSIS_OPERATION = "synopsis.book"
 
 
-def _synopsis_mappings(
-    store: Storage, terms: list[GlossaryTerm], digests: list[str]
-) -> dict[str, list[str]]:
-    """Keep only the rendered ``[target, type]`` fields for terms matched in chapter digests."""
-    matched = store.terms_in(terms, "\n".join(digests))
-    return {term.source: [term.target, term.type] for term in matched}
+def _synopsis_mappings(matched: list[GlossaryTerm]) -> dict[str, list[str]]:
+    """Keep the rendered ``[target, type, gender]`` fields for terms matched in chapter digests."""
+    return {
+        term.source: [term.target, term.type, normalize_gender(term.gender)] for term in matched
+    }
 
 
 def _mappings_unchanged(saved: object, current: dict[str, list[str]]) -> bool:
-    """Accept added terms and non-mapping edits, not changed target/type or removed digest terms."""
+    """Accept added terms and non-rendered edits, not changed target/type/gender or removed terms."""
     return isinstance(saved, dict) and all(
         current.get(source) == fields for source, fields in saved.items()
     )
@@ -83,7 +82,8 @@ class BookUnderstandingService:
 
         analysis = store.load_analysis() or {}
         terms = sorted(store.all_terms(), key=lambda term: term.source)
-        mappings = _synopsis_mappings(store, terms, digests)
+        matched = store.terms_in(terms, "\n".join(digests))
+        mappings = _synopsis_mappings(matched)
         inputs = {
             "language_policy": self._config.language_policy("analysis").task_fingerprint(
                 "book_synopsis"
@@ -93,8 +93,8 @@ class BookUnderstandingService:
                 for chapter in loaded
                 if chapter.text_segments
             ],
-            # Glossary-derived character lines are excluded here; digest-matched mappings are
-            # bound separately through the snapshot artifact below.
+            # Glossary-derived character lines are excluded here; digest-matched mappings
+            # (including normalized gender) are bound separately through the snapshot artifact.
             "style": self._analyzer.style_brief(analysis, terms=[]),
             "source_lang": self._config.source_lang,
             "target_lang": self._config.target_lang,
@@ -123,8 +123,8 @@ class BookUnderstandingService:
         }
         if progress:
             progress(0, 0, "progress.stage.synopsis")
-        style = self._analyzer.style_brief(analysis, terms=terms)
-        synopsis = self._synopsizer.book_synopsis(digests, style, glossary=terms)
+        style = self._analyzer.style_brief(analysis, terms=matched)
+        synopsis = self._synopsizer.book_synopsis(digests, style, glossary=matched)
         if synopsis:
             # The snapshot is derived state; write it before the analysis that references it.
             store.write_artifact(snapshot, mappings)
