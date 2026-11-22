@@ -17,10 +17,13 @@ targets.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import re
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ...agents.glossary_extractor import TranslatedSegmentEvidence
@@ -38,11 +41,14 @@ from ...storage.protocol import Storage
 from ...storage.run_store import STATUS_DONE
 from ..annotate.docx_styles import DocxStyleService
 from .babeldoc_context import BabeldocContext
+from .bible_seed import BibleSeedService
 from .context import render_recent_translations
 from .extraction_queue import ExtractionQueue
 from .glossary_notes import GlossaryNotes
 from .polish_queue import PolishOutcome, PolishQueue
+from .post_normalize import normalize_chapter_latin_typography, normalize_minority_names
 from .precision import PrecisionBatchExecutor, PrecisionError
+from .quote_memory import QuoteMemory
 from .title_translation import TitleTranslationService
 from .translation_batch import (
     BatchDraft,
@@ -84,6 +90,64 @@ def _draft_pairs(
     ]
 
 
+_LATIN_TARGET_LANGS = frozenset({"en", "en-US", "en-GB", "fr", "de", "es", "it", "pt", "vi"})
+_HUGE_CHAPTER_BATCH_THRESHOLD = 12
+_HUGE_CHAPTER_WAVE_SIZE = 6
+_SOURCE_LOOKBEHIND_PARAS = 3
+
+
+@dataclass(frozen=True)
+class _WaveBatchSpec:
+    batch_start: int
+    segment_indices: tuple[int, ...]
+    sources: tuple[str, ...]
+    terms: tuple[GlossaryTerm, ...]
+    annotation_contexts: list[list[dict[str, str]]]
+    next_source: str
+    already_done: bool
+    existing_targets: tuple[str | None, ...]
+
+
+@dataclass(frozen=True)
+class _ParallelWaveSpec:
+    chapter: int
+    wave_index: int
+    chapter_digest: str
+    opening_source_lookbehind: str
+    style: str
+    book_synopsis: str
+    batches: tuple[_WaveBatchSpec, ...]
+    quote_references_by_batch: tuple[str, ...]
+    polish: bool
+    polish_mode: str
+    entity_markers: bool
+    rolling_context_tokens: int
+
+
+@dataclass(frozen=True)
+class _WaveBatchOutcome:
+    batch_start: int
+    segment_indices: tuple[int, ...]
+    sources: tuple[str, ...]
+    result: BatchResult
+    glossary_terms: int
+    glossary_tokens: int
+
+
+def _format_source_lookbehind(prev_digest: str, prev_sources: list[str]) -> str:
+    """Build deterministic positional cross-chapter context from immutable source text."""
+    parts: list[str] = []
+    if prev_digest.strip():
+        parts.append(f"[Preceding chapter digest (reference only)]\n{prev_digest.strip()}")
+    cleaned = [s.strip() for s in prev_sources if s and s.strip()]
+    if cleaned:
+        joined = "\n".join(cleaned[-_SOURCE_LOOKBEHIND_PARAS:])
+        parts.append(
+            "[Preceding chapter closing source (reference only; do not translate)]\n" + joined
+        )
+    return "\n\n".join(parts)
+
+
 class TranslationService:
     """Domain service for body translation, glossary extraction and chapter/TOC titles."""
 
@@ -92,7 +156,10 @@ class TranslationService:
         self._annotations = annotations
         self._docx_styles = DocxStyleService(runtime)
         self._titles = TitleTranslationService(runtime.title_translator)
-        self._batches = TranslationBatchExecutor(runtime.translator, runtime.polisher)
+        self._batches = TranslationBatchExecutor(
+            runtime.translator, runtime.polisher, runtime.sparse_editor
+        )
+        self._bible_seed = BibleSeedService(runtime.book_bible, runtime.config)
         self._precision = PrecisionBatchExecutor(runtime.client, runtime.config)
         self._polish_queue: PolishQueue | None = None
         self._extraction_queue: ExtractionQueue | None = None
@@ -102,6 +169,8 @@ class TranslationService:
         # Extracted mappings the translator keeps overriding are left out of later prompts.
         self._adherence = GlossaryAdherence()
         self._left_out: frozenset[str] = frozenset()
+        self._bible_variants: dict[str, tuple[str, ...]] = {}
+        self._quote_memory: QuoteMemory | None = None
 
     def run(
         self,
@@ -145,28 +214,72 @@ class TranslationService:
         self._adherence = GlossaryAdherence()
         self._adherence.observe(drafts)
         self._left_out = frozenset()
+        self._bible_variants = {}
+        chapter_sources_for_quotes = [
+            (ci, [seg.source for seg in store.load_chapter(ci).text_segments])
+            for ci in progress_chapters
+        ]
+        self._quote_memory = QuoteMemory.from_chapters(chapter_sources_for_quotes)
+        for pos, src, tgt in drafts:
+            self._quote_memory.observe(pos, src, tgt)
+
+        if pipeline.glossary_mode == "compiled":
+            digests = [
+                str(store.load_chapter(ci).meta.get("source_digest") or "")
+                for ci in progress_chapters
+            ]
+            self._bible_variants = self._bible_seed.ensure_seeded(
+                store,
+                digests=digests,
+                source_corpus=source_corpus,
+                book_synopsis=book_synopsis,
+                style=style,
+                progress=progress,
+            )
+            self._runtime.usage.flush(store, scope="bible")
+
         annotation_context_registry = store.load_annotation_contexts()
         store.log_event(
             "translate_run_started",
             only_chapter=only_chapter,
             chapters=targets,
             total_segments=total,
+            glossary_mode=pipeline.glossary_mode,
+            chapter_concurrency=pipeline.chapter_concurrency,
+            polish_mode=pipeline.polish_mode,
+        )
+        use_parallel_chapters = (
+            pipeline.chapter_concurrency > 1
+            and pipeline.translation_mode == "standard"
+            and not pipeline.glossary_note_workers
+            and bool(targets)
+            and (
+                len(targets) > 1
+                or len(self._chapter_batches(store.load_chapter(targets[0])))
+                > _HUGE_CHAPTER_BATCH_THRESHOLD
+            )
         )
         if (
-            pipeline.polish
+            not use_parallel_chapters
+            and pipeline.polish
             and pipeline.translation_mode == "standard"
             and pipeline.polish_concurrency > 1
         ):
+            polish_fn = (
+                self._batches.polish
+                if pipeline.polish_mode == "full"
+                else (lambda job: self._batches.polish(job, polish_mode=pipeline.polish_mode))
+            )
             self._polish_queue = PolishQueue(
-                self._batches.polish,
+                polish_fn,
                 lambda outcome: self._apply_polish(store, outcome),
                 workers=pipeline.polish_concurrency,
             )
         self._extraction_queue = ExtractionQueue()
         try:
-            for ci in targets:
-                done = self.translate_chapter(
-                    ci,
+            if use_parallel_chapters:
+                done = self._run_parallel_chapters(
+                    targets,
                     store,
                     glossary,
                     style,
@@ -178,7 +291,22 @@ class TranslationService:
                     done=done,
                     total=total,
                 )
-                self._runtime.usage.flush(store, scope="chapter")
+            else:
+                for ci in targets:
+                    done = self.translate_chapter(
+                        ci,
+                        store,
+                        glossary,
+                        style,
+                        book_synopsis,
+                        translation_history=translation_history,
+                        source_corpus=source_corpus,
+                        annotation_context_registry=annotation_context_registry,
+                        progress=progress,
+                        done=done,
+                        total=total,
+                    )
+                    self._runtime.usage.flush(store, scope="chapter")
             # Store the last extraction, publishing its chapter, before polish drains.
             self._extraction_queue.settle()
             queue = self._polish_queue
@@ -203,6 +331,7 @@ class TranslationService:
             self._polish_queue = None
             self._open_chapters.clear()
             self._awaiting_polish.clear()
+            self._quote_memory = None
             self._runtime.usage.flush(store, scope="translate")
         if progress and total:
             progress(total, total, "progress.stage.translationDone")
@@ -372,6 +501,7 @@ class TranslationService:
         # Process batches serially, deriving context from the latest formal targets.
         # This preserves pronoun, term and voice continuity between batches within a chapter.
         # Skip saved complete batches on resume and reconstruct context without retranslating them.
+        compiled_glossary = self._runtime.config.pipeline.glossary_mode == "compiled"
         seg_base = 0  # Chapter-local index of this batch's first paragraph, used to map local issue indices.
         for b in batches:
             batch_start = seg_base
@@ -400,9 +530,15 @@ class TranslationService:
                                     break
                     store.save_chapter(chapter)
                 self._align_batch_context(store, chapter, text_segs, batch_start, len(b))
-                if glossary_key in glossary_checkpoints or (
-                    context_policy is not None
-                    and self._glossary_checkpoint_covers(glossary_checkpoints, batch_start, len(b))
+                if (
+                    compiled_glossary
+                    or glossary_key in glossary_checkpoints
+                    or (
+                        context_policy is not None
+                        and self._glossary_checkpoint_covers(
+                            glossary_checkpoints, batch_start, len(b)
+                        )
+                    )
                 ):
                     # Store a pending extraction now, so a skip never widens the lag.
                     if self._extraction_queue is not None and self._extraction_queue.settle():
@@ -504,6 +640,10 @@ class TranslationService:
                 if body_context
                 else ""
             )
+            if body_context and self._quote_memory is not None:
+                quote_ref = self._quote_memory.format_prompt_block([s.source for s in b])
+                if quote_ref:
+                    ctx_text = f"{ctx_text}\n\n{quote_ref}".strip() if ctx_text else quote_ref
             next_source = (
                 self.following_source(store, chapter, next_index, context_policy)
                 if body_context
@@ -529,6 +669,7 @@ class TranslationService:
                 batch_annotations,
                 next_source,
                 allow_empty_translations=allow_empty_translations,
+                entity_markers=self._runtime.config.pipeline.entity_markers,
             )
             if self._runtime.config.pipeline.translation_mode == "three_draft_synthesis":
 
@@ -560,7 +701,11 @@ class TranslationService:
                 store.save_chapter(chapter)
                 polish_job = PolishJob.from_plan(plan, draft)
             else:
-                result = self._batches.execute(plan, polish=self._runtime.config.pipeline.polish)
+                result = self._batches.execute(
+                    plan,
+                    polish=self._runtime.config.pipeline.polish,
+                    polish_mode=self._runtime.config.pipeline.polish_mode,
+                )
                 for segment, target, before_polish in zip(b, result.targets, result.before_polish):
                     segment.target = target
                     segment.target_before_polish = before_polish
@@ -654,24 +799,44 @@ class TranslationService:
                 glossary_checkpoints.add(key)
 
             # Persist targets before glossary extraction so interruption cannot leave terms ahead of text.
-            # During a run the model call overlaps the next batch's translation.
-            self.extract_batch_glossary(
-                glossary,
-                store,
-                ci,
-                batch_start,
-                b,
-                translation_history,
-                source_corpus,
-                admission=notes,
-                finish=batch_extracted,
-            )
-            # The glossary may have changed; refresh before the next real translation, not after the final batch.
-            term_snapshot_stale = True
+            if not compiled_glossary:
+                # During a run the model call overlaps the next batch's translation.
+                self.extract_batch_glossary(
+                    glossary,
+                    store,
+                    ci,
+                    batch_start,
+                    b,
+                    translation_history,
+                    source_corpus,
+                    admission=notes,
+                    finish=batch_extracted,
+                )
+                # The glossary may have changed; refresh before the next real translation, not after the final batch.
+                term_snapshot_stale = True
+            else:
+                self.update_translation_history(translation_history, ci, batch_start, b)
+            if self._quote_memory is not None:
+                for pos, src, tgt in _draft_pairs(ci, batch_start, b):
+                    self._quote_memory.observe(pos, src, tgt)
             if polish_job is not None:
                 # Queue after extraction so terms come from the draft, not a later polish.
                 self._schedule_polish(store, polish_job)
 
+        # Precision publication reloads the chapter; publish the object this loop last saved.
+        self._open_chapters[ci] = chapter
+
+        def publish_when_polished(terms: list[GlossaryTerm] | None) -> None:
+            # The chapter is done only once its terms are stored and its polish is applied.
+            if self._polish_queue is not None and ci in self._polish_queue.pending_chapters():
+                self._awaiting_polish.add(ci)
+            else:
+                self._publish_chapter(store, ci, terms=terms)
+
+        if compiled_glossary:
+            # The frozen Book Bible replaces per-chapter fallback extraction.
+            publish_when_polished(term_snapshot)
+            return done
         # Keep chapter-wide extraction as a fallback for address, speech and fixed expressions needing context.
         # Final review reads the stable glossary after the entire book finishes translating.
         src_text = "\n".join(s.source for s in text_segs)
@@ -680,19 +845,13 @@ class TranslationService:
             (s.target_before_polish if self._polish_queue is not None else None) or s.target or ""
             for s in text_segs
         )
-        # Precision publication reloads the chapter; publish the object this loop last saved.
-        self._open_chapters[ci] = chapter
         chapter_segments = text_segs
 
         def chapter_extracted(summary: dict[str, int]) -> None:
             if notes is not None:
                 notes.maintain(ci, 0, chapter_segments, exclude=covered_notes)
             store.log_event("chapter_glossary_extracted", chapter=ci, summary=summary)
-            # The chapter is done only once its terms are stored and its polish is applied.
-            if self._polish_queue is not None and ci in self._polish_queue.pending_chapters():
-                self._awaiting_polish.add(ci)
-            else:
-                self._publish_chapter(store, ci)
+            publish_when_polished(None)
 
         self._extract(
             glossary,
@@ -708,9 +867,483 @@ class TranslationService:
         )
         return done
 
-    def _publish_chapter(self, store: Storage, ci: int) -> None:
+    def _apply_chapter_hygiene(
+        self,
+        store: Storage,
+        chapter: Chapter,
+        *,
+        terms: list[GlossaryTerm] | None = None,
+    ) -> None:
+        """Apply zero-cost deterministic typography hygiene and minority-name normalization."""
+        if not self._runtime.config.pipeline.deterministic_hygiene:
+            return
+        text_segs = [s for s in chapter.text_segments if s.target]
+        if not text_segs:
+            return
+        typo_fixes = 0
+        target_lang = self._runtime.config.target_lang
+        if target_lang in _LATIN_TARGET_LANGS:
+            ch_pairs = [(seg.source, seg.target or "") for seg in text_segs]
+            cleaned_targets, typo_fixes = normalize_chapter_latin_typography(ch_pairs)
+            for seg, cleaned in zip(text_segs, cleaned_targets):
+                if cleaned != seg.target:
+                    seg.target = cleaned
+
+        effective_terms = list(terms) if terms is not None else store.all_terms()
+        variants_by_source: dict[str, list[str]] = {
+            k: list(v) for k, v in self._bible_variants.items()
+        }
+        try:
+            for conflict in store.open_conflicts():
+                src = conflict.get("source")
+                prop = conflict.get("proposed_target")
+                if isinstance(src, str) and isinstance(prop, str) and prop.strip():
+                    variants_by_source.setdefault(src, []).append(prop.strip())
+        except Exception:  # noqa: BLE001 - optional conflict enrichment
+            pass
+
+        pairs = [(seg.source, seg.target or "") for seg in text_segs]
+        normalized_targets, name_subs = normalize_minority_names(
+            pairs,
+            effective_terms,
+            variants_by_source=variants_by_source,
+            target_lang=target_lang,
+        )
+        for seg, updated in zip(text_segs, normalized_targets):
+            if updated != seg.target:
+                seg.target = updated
+
+        if typo_fixes or name_subs:
+            store.log_event(
+                "chapter_post_normalized",
+                chapter=chapter.index,
+                typography_fixes=typo_fixes,
+                name_substitutions=len(name_subs),
+                substitutions=name_subs[:50],
+            )
+
+    def _translate_wave_worker(
+        self,
+        spec: _ParallelWaveSpec,
+        polish_executor: ThreadPoolExecutor | None = None,
+    ) -> tuple[int, int, list[_WaveBatchOutcome]]:
+        """Execute one chapter/wave's batches serially in a worker thread (model calls only).
+
+        Never reads or writes Storage, SQLite, adherence or usage ledgers. Rolling context
+        within the wave comes strictly from this wave's own drafts, while opening context is
+        the deterministic positional source lookbehind captured before launch.
+        When ``polish_executor`` is supplied and polishing is enabled, polish/sparse-edit
+        calls overlap concurrently with subsequent batch translations inside the wave.
+        """
+        pending_outcomes: list[
+            tuple[
+                _WaveBatchSpec,
+                BatchDraft,
+                Any,
+                BatchResult | None,
+                int,
+                int,
+            ]
+        ] = []
+        wave_drafts: list[str] = []
+        for batch_idx, bspec in enumerate(spec.batches):
+            if bspec.already_done:
+                wave_drafts.extend(t or "" for t in bspec.existing_targets)
+                continue
+            if wave_drafts:
+                ctx_text = render_recent_translations(
+                    reversed(wave_drafts),
+                    spec.rolling_context_tokens,
+                )
+            else:
+                ctx_text = spec.opening_source_lookbehind
+            quote_ref = spec.quote_references_by_batch[batch_idx]
+            if quote_ref:
+                ctx_text = f"{ctx_text}\n\n{quote_ref}".strip() if ctx_text else quote_ref
+
+            plan = BatchPlan(
+                chapter=spec.chapter,
+                start_index=bspec.batch_start,
+                segment_indices=bspec.segment_indices,
+                sources=bspec.sources,
+                terms=bspec.terms,
+                context=ctx_text,
+                style=spec.style,
+                book_synopsis=spec.book_synopsis,
+                chapter_digest=spec.chapter_digest,
+                annotation_contexts=bspec.annotation_contexts,
+                next_source=bspec.next_source,
+                allow_empty_translations=False,
+                entity_markers=spec.entity_markers,
+            )
+            glossary_tokens = count_tokens(
+                self._runtime.translator.render_glossary_block(list(plan.terms), list(plan.sources))
+            )
+            if spec.polish and polish_executor is not None:
+                draft = self._batches.translate(plan)
+                wave_drafts.extend(draft.targets)
+                job = PolishJob.from_plan(plan, draft)
+                ctx_copy = contextvars.copy_context()
+                fut = polish_executor.submit(
+                    ctx_copy.run,
+                    self._batches.polish,
+                    job,
+                    polish_mode=spec.polish_mode,
+                )
+                pending_outcomes.append((bspec, draft, fut, None, len(plan.terms), glossary_tokens))
+            else:
+                result = self._batches.execute(
+                    plan,
+                    polish=spec.polish,
+                    polish_mode=spec.polish_mode,
+                )
+                draft_texts = [
+                    bp if bp is not None else tgt
+                    for tgt, bp in zip(result.targets, result.before_polish)
+                ]
+                wave_drafts.extend(draft_texts)
+                pending_outcomes.append(
+                    (
+                        bspec,
+                        BatchDraft(tuple(draft_texts)),
+                        None,
+                        result,
+                        len(plan.terms),
+                        glossary_tokens,
+                    )
+                )
+
+        outcomes: list[_WaveBatchOutcome] = []
+        for bspec, draft, fut, direct_result, glossary_terms_n, glossary_tokens in pending_outcomes:
+            if direct_result is not None:
+                res = direct_result
+            else:
+                targets = list(draft.targets)
+                before_polish: tuple[str | None, ...] = tuple(targets)
+                polish_failed = False
+                polish_empty_reverted: tuple[int, ...] = ()
+                polish_interrupted: BaseException | None = None
+                try:
+                    polished = fut.result() if fut is not None else None
+                except Exception as exc:  # noqa: BLE001
+                    from ...llm.retrying import is_resumable_provider_interrupt
+
+                    polish_failed = True
+                    if is_resumable_provider_interrupt(exc):
+                        polish_interrupted = exc
+                else:
+                    if polished is not None and len(polished) == len(targets):
+                        targets, polish_empty_reverted = keep_nonempty_drafts(targets, polished)
+                    else:
+                        polish_failed = True
+                res = BatchResult(
+                    tuple(targets),
+                    before_polish,
+                    polish_failed=polish_failed,
+                    polish_empty_reverted=polish_empty_reverted,
+                    polish_interrupted=polish_interrupted,
+                )
+            outcomes.append(
+                _WaveBatchOutcome(
+                    batch_start=bspec.batch_start,
+                    segment_indices=bspec.segment_indices,
+                    sources=bspec.sources,
+                    result=res,
+                    glossary_terms=glossary_terms_n,
+                    glossary_tokens=glossary_tokens,
+                )
+            )
+        return spec.chapter, spec.wave_index, outcomes
+
+    def _run_parallel_chapters(
+        self,
+        targets: list[int],
+        store: Storage,
+        glossary: Storage | GlossaryStore,
+        style: str,
+        book_synopsis: str,
+        *,
+        translation_history: dict[tuple[int, int], TranslatedSegmentEvidence],
+        source_corpus: str,
+        annotation_context_registry: dict[str, Any] | None,
+        progress: ProgressFn | None,
+        done: int,
+        total: int,
+    ) -> int:
+        """Translate multiple chapters (or huge-chapter waves) concurrently with a single writer."""
+        pipeline = self._runtime.config.pipeline
+        term_snapshot = self.prompt_snapshot(store, glossary.all_terms())
+        manifest = store.load_manifest()
+        all_chapter_indices = sorted(
+            row["index"]
+            for row in manifest.get("chapters", [])
+            if isinstance(row.get("index"), int)
+        )
+        # Preload chapter metadata & immutable sources on the main thread for positional lookbehind.
+        loaded_all: dict[int, Chapter] = {ci: store.load_chapter(ci) for ci in all_chapter_indices}
+
+        waves: list[_ParallelWaveSpec] = []
+        chapter_wave_counts: dict[int, int] = {}
+        chapter_objects: dict[int, Chapter] = {}
+
+        for ci in targets:
+            chapter = loaded_all[ci]
+            text_segs = chapter.text_segments
+            if not text_segs:
+                store.set_chapter_status(ci, STATUS_DONE)
+                store.log_event("chapter_skipped", chapter=ci, reason="empty")
+                continue
+            chapter_objects[ci] = chapter
+            self._open_chapters[ci] = chapter
+            chapter_digest = str(chapter.meta.get("source_digest") or "")
+            context_policy = BabeldocContext.for_chapter(chapter)
+            annotation_contexts = annotation_contexts_for_segments(
+                text_segs,
+                annotation_context_registry,
+            )
+            batches = self._chapter_batches(chapter)
+
+            # Positional cross-chapter source lookbehind from immutable ci-1 source text.
+            prev_indices = [idx for idx in all_chapter_indices if idx < ci]
+            prev_digest = ""
+            prev_sources: list[str] = []
+            if prev_indices:
+                prev_ch = loaded_all[prev_indices[-1]]
+                prev_digest = str(prev_ch.meta.get("source_digest") or "")
+                prev_sources = [s.source for s in prev_ch.text_segments]
+            chapter_opening_lookbehind = _format_source_lookbehind(prev_digest, prev_sources)
+
+            # Build per-batch specs.
+            batch_specs: list[_WaveBatchSpec] = []
+            quote_refs: list[str] = []
+            seg_base = 0
+            for b in batches:
+                batch_start = seg_base
+                next_idx = batch_start + len(b)
+                body_context = context_policy is None or context_policy.body[batch_start]
+                next_source = (
+                    self.following_source(store, chapter, next_idx, context_policy)
+                    if body_context
+                    else ""
+                )
+                batch_annotations = annotation_contexts[batch_start : batch_start + len(b)]
+                terms_for_batch = tuple(
+                    deepcopy(
+                        self.batch_terms(
+                            term_snapshot,
+                            b,
+                            chapter_digest=chapter_digest if body_context else "",
+                            annotation_contexts=batch_annotations,
+                            next_source=next_source,
+                        )
+                    )
+                )
+                already_done = all(s.target is not None for s in b)
+                batch_specs.append(
+                    _WaveBatchSpec(
+                        batch_start=batch_start,
+                        segment_indices=tuple(s.index for s in b),
+                        sources=tuple(s.source for s in b),
+                        terms=terms_for_batch,
+                        annotation_contexts=deepcopy(batch_annotations),
+                        next_source=next_source,
+                        already_done=already_done,
+                        existing_targets=tuple(
+                            s.target_before_polish
+                            if s.target_before_polish is not None
+                            else s.target
+                            for s in b
+                        ),
+                    )
+                )
+                quote_refs.append(
+                    self._quote_memory.format_prompt_block([s.source for s in b])
+                    if (body_context and self._quote_memory is not None)
+                    else ""
+                )
+                seg_base += len(b)
+
+            # Split huge single chapters (>12 batches) into parallel waves along batch chunks.
+            if len(batch_specs) > _HUGE_CHAPTER_BATCH_THRESHOLD:
+                wave_idx = 0
+                for offset in range(0, len(batch_specs), _HUGE_CHAPTER_WAVE_SIZE):
+                    chunk = batch_specs[offset : offset + _HUGE_CHAPTER_WAVE_SIZE]
+                    qchunk = quote_refs[offset : offset + _HUGE_CHAPTER_WAVE_SIZE]
+                    if offset == 0:
+                        lookbehind = chapter_opening_lookbehind
+                    else:
+                        prev_wave_sources = [
+                            src for bs in batch_specs[:offset] for src in bs.sources
+                        ]
+                        lookbehind = _format_source_lookbehind(chapter_digest, prev_wave_sources)
+                    waves.append(
+                        _ParallelWaveSpec(
+                            chapter=ci,
+                            wave_index=wave_idx,
+                            chapter_digest=chapter_digest,
+                            opening_source_lookbehind=lookbehind,
+                            style=style,
+                            book_synopsis=book_synopsis,
+                            batches=tuple(chunk),
+                            quote_references_by_batch=tuple(qchunk),
+                            polish=pipeline.polish,
+                            polish_mode=pipeline.polish_mode,
+                            entity_markers=pipeline.entity_markers,
+                            rolling_context_tokens=pipeline.rolling_context_tokens,
+                        )
+                    )
+                    wave_idx += 1
+                chapter_wave_counts[ci] = wave_idx
+            else:
+                waves.append(
+                    _ParallelWaveSpec(
+                        chapter=ci,
+                        wave_index=0,
+                        chapter_digest=chapter_digest,
+                        opening_source_lookbehind=chapter_opening_lookbehind,
+                        style=style,
+                        book_synopsis=book_synopsis,
+                        batches=tuple(batch_specs),
+                        quote_references_by_batch=tuple(quote_refs),
+                        polish=pipeline.polish,
+                        polish_mode=pipeline.polish_mode,
+                        entity_markers=pipeline.entity_markers,
+                        rolling_context_tokens=pipeline.rolling_context_tokens,
+                    )
+                )
+                chapter_wave_counts[ci] = 1
+
+        if not waves:
+            return done
+
+        # Run model calls concurrently; persist results on THIS single writer thread in book order.
+        completed_by_key: dict[tuple[int, int], list[_WaveBatchOutcome]] = {}
+        ordered_keys = [(w.chapter, w.wave_index) for w in waves]
+        next_flush_idx = 0
+        chapters_remaining_waves = dict(chapter_wave_counts)
+
+        def _flush_ready() -> None:
+            nonlocal next_flush_idx, done
+            while next_flush_idx < len(ordered_keys):
+                key = ordered_keys[next_flush_idx]
+                if key not in completed_by_key:
+                    break
+                ci, _wave_idx = key
+                outcomes = completed_by_key.pop(key)
+                chapter = chapter_objects[ci]
+                text_segs = chapter.text_segments
+                for out in outcomes:
+                    b = text_segs[out.batch_start : out.batch_start + len(out.sources)]
+                    res = out.result
+                    for seg, tgt, bp in zip(b, res.targets, res.before_polish):
+                        seg.target = tgt
+                        seg.target_before_polish = bp
+                        if res.polish_failed:
+                            seg.meta[POLISH_FAILED] = True
+                        else:
+                            seg.meta.pop(POLISH_FAILED, None)
+                    store.save_chapter(chapter)
+                    if res.polish_interrupted is not None:
+                        self._runtime.usage.flush(store, scope="translation")
+                        store.log_event(
+                            "batch_polish_failed",
+                            chapter=ci,
+                            start_index=out.batch_start,
+                            count=len(b),
+                            reason="provider_interrupted",
+                        )
+                        raise res.polish_interrupted
+                    self._align_batch_context(store, chapter, text_segs, out.batch_start, len(b))
+                    store.log_event(
+                        "batch_translated",
+                        chapter=ci,
+                        start_index=out.batch_start,
+                        count=len(b),
+                        polished=pipeline.polish and not res.polish_failed,
+                        parallel_chapter=True,
+                        translation_mode=pipeline.translation_mode,
+                        glossary_terms=out.glossary_terms,
+                        glossary_tokens=out.glossary_tokens,
+                        segments=[
+                            {
+                                "index": out.batch_start + i,
+                                "source": s.source,
+                                "target": s.target,
+                            }
+                            for i, s in enumerate(b)
+                        ],
+                    )
+                    self.update_translation_history(translation_history, ci, out.batch_start, b)
+                    draft_pairs = _draft_pairs(ci, out.batch_start, b)
+                    self._adherence.observe(draft_pairs)
+                    if self._quote_memory is not None:
+                        for pos, src, tgt in draft_pairs:
+                            self._quote_memory.observe(pos, src, tgt)
+                    done += len(b)
+                    if progress:
+                        progress(done, total, self.chapter_progress_label(chapter.title, ci))
+                chapters_remaining_waves[ci] -= 1
+                if chapters_remaining_waves[ci] == 0:
+                    if pipeline.glossary_mode == "incremental":
+                        src_text = "\n".join(s.source for s in text_segs)
+                        tgt_text = "\n".join(
+                            s.target_before_polish or s.target or "" for s in text_segs
+                        )
+                        summary = self._runtime.extractor.extract_and_store(
+                            glossary,
+                            src_text,
+                            tgt_text,
+                            ci,
+                            history=translation_history.values(),
+                            before=(ci, len(text_segs)),
+                            source_corpus=source_corpus,
+                        )
+                        store.log_event("chapter_glossary_extracted", chapter=ci, summary=summary)
+                    self._publish_chapter(store, ci, terms=term_snapshot)
+                    self._runtime.usage.flush(store, scope="chapter")
+                next_flush_idx += 1
+
+        max_workers = min(pipeline.chapter_concurrency, len(waves))
+        polish_workers = max(2, pipeline.polish_concurrency, max_workers) if pipeline.polish else 0
+        polish_pool = (
+            ThreadPoolExecutor(max_workers=polish_workers, thread_name_prefix="wenyi-par-polish")
+            if polish_workers > 0
+            else None
+        )
+        try:
+            with ThreadPoolExecutor(
+                max_workers=max_workers, thread_name_prefix="wenyi-chapter"
+            ) as executor:
+                futures = {
+                    executor.submit(
+                        contextvars.copy_context().run,
+                        self._translate_wave_worker,
+                        wave,
+                        polish_pool,
+                    ): wave
+                    for wave in waves
+                }
+                for future in as_completed(futures):
+                    ci, wave_idx, outcomes = future.result()
+                    completed_by_key[(ci, wave_idx)] = outcomes
+                    _flush_ready()
+        finally:
+            if polish_pool is not None:
+                polish_pool.shutdown(wait=True)
+
+        _flush_ready()
+        return done
+
+    def _publish_chapter(
+        self,
+        store: Storage,
+        ci: int,
+        *,
+        terms: list[GlossaryTerm] | None = None,
+    ) -> None:
         chapter = self._open_chapters.pop(ci)
         self._awaiting_polish.discard(ci)
+        self._apply_chapter_hygiene(store, chapter, terms=terms)
         unpolished = any(segment.meta.get(POLISH_FAILED) for segment in chapter.text_segments)
         if unpolished:
             chapter.meta["unpolished"] = True

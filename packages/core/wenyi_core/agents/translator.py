@@ -255,7 +255,7 @@ class Translator(Agent):
         )
         return out[0]
 
-    def translate_batch(
+    def translate_batch_with_transcript(
         self,
         sources: list[str],
         *,
@@ -267,21 +267,19 @@ class Translator(Agent):
         annotation_contexts: list[list[dict[str, str]]] | None = None,
         next_source: str = "",
         allow_empty_translations: bool = False,
-    ) -> list[str]:
-        """Translate aligned paragraphs with one following source segment as reference only."""
-        self.last_batch_turn = None
-        self.last_batch_indices = None
+    ) -> tuple[list[str], Messages | None, list[int] | None]:
+        """Thread-safe translation returning ``(targets, turn, indices)`` without mutating self."""
         glossary_terms = glossary_terms or []
         n = len(sources)
         annotation_contexts = self._validate_annotation_contexts(sources, annotation_contexts)
         if n == 0:
-            return []
+            return [], None, None
 
         translated_indices = [
             index for index, source in enumerate(sources) if self._needs_translation(source)
         ]
         if not translated_indices:
-            return list(sources)
+            return list(sources), None, None
         translated_sources = [sources[index] for index in translated_indices]
         translated_annotation_contexts = [
             annotation_contexts[index] for index in translated_indices
@@ -307,9 +305,7 @@ class Translator(Agent):
                 targets = list(sources)
                 for index, target in zip(translated_indices, translated):
                     targets[index] = target
-                self.last_batch_turn = turn
-                self.last_batch_indices = list(translated_indices)
-                return targets
+                return targets, turn, list(translated_indices)
             except AlignmentError:
                 # Recover only output protocol/alignment errors; the provider handles transport retries.
                 continue
@@ -317,8 +313,6 @@ class Translator(Agent):
         # Fall back to individual paragraphs. If any still fails, stop explicitly and preserve saved
         # batches for resume. Without allow_empty_translations, empty placeholders must not mark
         # the chapter complete; MinerU may persist "" when the model returns a blank string.
-        self.last_batch_turn = None
-        self.last_batch_indices = None
         targets = list(sources)
         for index, source, annotation_context in zip(
             translated_indices,
@@ -341,4 +335,33 @@ class Translator(Agent):
                 raise AlignmentError(
                     f"Single-paragraph fallback failed at paragraph {index}"
                 ) from error
+        return targets, None, None
+
+    def translate_batch(
+        self,
+        sources: list[str],
+        *,
+        glossary_terms: list[GlossaryTerm] | None = None,
+        style: str = "",
+        context: str = "",
+        book_synopsis: str = "",
+        chapter_digest: str = "",
+        annotation_contexts: list[list[dict[str, str]]] | None = None,
+        next_source: str = "",
+        allow_empty_translations: bool = False,
+    ) -> list[str]:
+        """Translate aligned paragraphs with one following source segment as reference only."""
+        targets, turn, indices = self.translate_batch_with_transcript(
+            sources,
+            glossary_terms=glossary_terms,
+            style=style,
+            context=context,
+            book_synopsis=book_synopsis,
+            chapter_digest=chapter_digest,
+            annotation_contexts=annotation_contexts,
+            next_source=next_source,
+            allow_empty_translations=allow_empty_translations,
+        )
+        self.last_batch_turn = turn
+        self.last_batch_indices = indices
         return targets
