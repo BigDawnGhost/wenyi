@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from contextlib import ExitStack, closing
 from contextvars import copy_context
 from functools import partial
@@ -18,6 +19,10 @@ from ..live_statistics import LiveStatistics
 from .contracts import ExecutionDependencies, ExecutionRequest
 
 log = logging.getLogger(__name__)
+
+# A cancelled workflow gets this long to flush synchronous checkpoints before its slot is
+# released forcibly; a stuck in-flight model call must not block the queue indefinitely.
+CANCEL_DRAIN_TIMEOUT_SECONDS: float = 30.0
 
 
 def error_code(error: BaseException) -> str:
@@ -218,9 +223,25 @@ async def run(request: ExecutionRequest, dependencies: ExecutionDependencies) ->
     try:
         await asyncio.shield(task)
     except asyncio.CancelledError:
-        # Timeout/shutdown must drain synchronous checkpoint writes before releasing the slot.
+        # Timeout/shutdown must drain synchronous checkpoint writes before releasing the slot,
+        # but a stuck drain must never hold the workflow slot indefinitely.
         stop.set()
-        await asyncio.shield(task)
+        started = time.monotonic()
+        outcome = "forced"
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=CANCEL_DRAIN_TIMEOUT_SECONDS)
+            outcome = "drained"
+        except asyncio.TimeoutError:
+            log.warning(
+                "Workflow %s ignored cancellation for %.1fs; forcing terminal paused state",
+                request.run_id or request.project_id,
+                CANCEL_DRAIN_TIMEOUT_SECONDS,
+            )
+            await asyncio.to_thread(record_terminal_status, request, dependencies, status="paused")
+        finally:
+            dependencies.metrics.record_cancel_drain(
+                outcome=outcome, seconds=time.monotonic() - started, identity=request.run_id
+            )
         raise
     except Exception as error:
         # Startup may fail before the synchronous runner can enter its recovery scope.

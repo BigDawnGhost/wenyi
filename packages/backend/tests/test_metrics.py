@@ -66,7 +66,7 @@ def test_deduplication_is_bounded_without_discarding_all_recent_ids():
 def test_independent_applications_do_not_share_counters():
     first, second = Metrics(), Metrics()
     first.record_task(status="done", code="none")
-    assert second.snapshot() == {"tasks": {}, "retries": {}}
+    assert second.snapshot() == {"tasks": {}, "retries": {}, "task_cancel_drains": {}}
     snapshot = first.snapshot()
     snapshot["tasks"].clear()
     assert first.snapshot()["tasks"] == {("done", "none"): 1}

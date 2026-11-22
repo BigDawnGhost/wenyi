@@ -938,3 +938,21 @@ def test_workflow_cached_progress_rejects_other_project_and_old_run(desktop):
     finally:
         client.portal.call(services.runtime.stop)
     store.close()
+
+
+def test_run_workflow_sync_abandons_thread_that_ignores_cancellation(monkeypatch):
+    monkeypatch.setattr(local_runtime, "CANCEL_DRAIN_TIMEOUT_SECONDS", 0.05)
+    release = threading.Event()
+
+    def operation():
+        release.wait(5.0)
+
+    async def scenario():
+        task = asyncio.create_task(local_runtime.run_workflow_sync(operation))
+        await asyncio.sleep(0.02)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 5.0)
+
+    asyncio.run(scenario())
+    release.set()

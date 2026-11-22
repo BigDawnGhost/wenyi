@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import ssl
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -20,6 +21,7 @@ from tenacity import (
 )
 
 from ..errors import WenyiError
+from .limits import CANCEL_MESSAGE, RequestCancelled, RequestStopped
 
 _LOGGER = logging.getLogger(__name__)
 _RETRYABLE_STATUS_CODES = {408, 409, 429}
@@ -381,7 +383,7 @@ class RetryReporter:
         )
 
 
-def provider_retry(max_retries: int, reporter: RetryReporter, *, sleep=None):
+def provider_retry(max_retries: int, reporter: RetryReporter, *, sleep=None, should_cancel=None):
     """Build the selective retry decorator shared by remote providers."""
 
     def exhausted(retry_state: RetryCallState):
@@ -389,19 +391,47 @@ def provider_retry(max_retries: int, reporter: RetryReporter, *, sleep=None):
         error = retry_state.outcome.exception() if retry_state.outcome else None
         if error is None:  # pragma: no cover - Defensive guard for invalid Tenacity state.
             raise RuntimeError("LLM retry stopped without an exception")
-        reporter.exhausted(error)
+        if not isinstance(error, RequestStopped):
+            # Cancellation is a cooperative stop, not a retry-budget exhaustion worth alerting.
+            reporter.exhausted(error)
         raise error
 
-    return retry(
-        stop=stop_after_attempt(max(1, max_retries + 1)),
-        wait=wait_for_provider_retry,
-        retry=retry_if_exception(
-            lambda error: is_retryable_provider_error(error, operation=reporter.stage)
-        ),
-        before_sleep=reporter.before_sleep,
-        retry_error_callback=exhausted,
-        **({"sleep": sleep} if sleep is not None else {}),
-    )
+    def cancellable_sleep(seconds: float) -> None:
+        """Bound every backoff slice so cancellation lands without provider permits."""
+        deadline = time.monotonic() + max(0.0, seconds)
+        while True:
+            if should_cancel():
+                raise RequestCancelled(CANCEL_MESSAGE)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.1, remaining))
+
+    def decorate(operation):
+        if should_cancel is None:
+            wrapped = operation
+        else:
+
+            def wrapped(*args, **kwargs):
+                if should_cancel():
+                    raise RequestCancelled(CANCEL_MESSAGE)
+                return operation(*args, **kwargs)
+
+        retrying_sleep = sleep
+        if retrying_sleep is None and should_cancel is not None:
+            retrying_sleep = cancellable_sleep
+        return retry(
+            stop=stop_after_attempt(max(1, max_retries + 1)),
+            wait=wait_for_provider_retry,
+            retry=retry_if_exception(
+                lambda error: is_retryable_provider_error(error, operation=reporter.stage)
+            ),
+            before_sleep=reporter.before_sleep,
+            retry_error_callback=exhausted,
+            **({"sleep": retrying_sleep} if retrying_sleep is not None else {}),
+        )(wrapped)
+
+    return decorate
 
 
 __all__ = [

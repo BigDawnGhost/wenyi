@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from wenyi_backend.context import BackendContext
+from wenyi_backend.execution.runner import CANCEL_DRAIN_TIMEOUT_SECONDS
 from wenyi_backend.live_statistics import read_live_statistics
 from wenyi_core.storage.locks import FileLockHandle, StorageBusyError
 
@@ -178,14 +179,26 @@ async def run_workflow_sync(operation: Callable[[], None]) -> None:
     """Own one thread per run, leaving the default executor free for control requests."""
     loop = asyncio.get_running_loop()
     # This executor belongs to one invocation, not to a fixed set of workflow slots.
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="desktop-workflow") as executor:
-        future = loop.run_in_executor(executor, copy_context().run, operation)
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="desktop-workflow")
+    future = loop.run_in_executor(executor, copy_context().run, operation)
+    abandoned = False
+    try:
+        await asyncio.shield(future)
+    except asyncio.CancelledError:
+        # The task adapter signals cooperative stop before waiting for this dispatcher, but a
+        # stuck drain must never keep the workflow slot hostage.
+        abandoned = True
         try:
-            await asyncio.shield(future)
-        except asyncio.CancelledError:
-            # The task adapter signals cooperative stop before waiting for this dispatcher.
-            await asyncio.shield(future)
-            raise
+            await asyncio.wait_for(asyncio.shield(future), timeout=CANCEL_DRAIN_TIMEOUT_SECONDS)
+            abandoned = False
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            log.warning(
+                "Desktop workflow thread ignored cancellation for %.1fs; abandoning it",
+                CANCEL_DRAIN_TIMEOUT_SECONDS,
+            )
+        raise
+    finally:
+        executor.shutdown(wait=not abandoned)
 
 
 class LocalRuntime:

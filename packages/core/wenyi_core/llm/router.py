@@ -230,6 +230,7 @@ class RoutedLLMClient(LLMClient):
                 attempt_scope,
                 self.limits.wait_for_retry,
                 self._redact,
+                self.limits.cancelled.is_set,
             )
             safe_error = None
             try:

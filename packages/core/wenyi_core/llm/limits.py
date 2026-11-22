@@ -20,6 +20,9 @@ class RequestCancelled(RequestStopped):
     """Stop cooperatively at the caller's request, without reporting a failure."""
 
 
+CANCEL_MESSAGE = "Model requests cancelled; completed work remains resumable"
+
+
 @dataclass
 class Reservation:
     started: float
@@ -48,7 +51,7 @@ class RequestLimits:
 
     def check(self) -> None:
         if self.cancelled.is_set():
-            raise RequestCancelled("Model requests cancelled; completed work remains resumable")
+            raise RequestCancelled(CANCEL_MESSAGE)
         deadline = self.config.budget.deadline_seconds
         if deadline is not None and self.clock() - self.started >= deadline:
             raise RequestStopped("Model request deadline reached; resume with a new deadline")
