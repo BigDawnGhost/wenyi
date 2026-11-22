@@ -16,6 +16,7 @@ from bs4.element import Tag
 from wenyi_core.assemble.about import about_xhtml, append_about_page
 from wenyi_core.assemble.epub_presentation import _rewrite_html_document
 from wenyi_core.assemble.html_renderer import _render_chapter_html, _render_segments_html
+from wenyi_core.assemble.html_resources import _package_html_resources
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.assemble.writer_common import bilingual_out_path
 from wenyi_core.config import Config
@@ -49,6 +50,20 @@ _FB2_WITH_IMAGES = """\
 </section></body>
 <binary id="cover.jpg" content-type="image/jpeg">Y292ZXItYnl0ZXM=</binary>
 <binary id="inside.png" content-type="image/png">aW5zaWRlLWJ5dGVz</binary>
+</FictionBook>
+"""
+
+_FB2_WITH_MISSING_IMAGE = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"
+             xmlns:xlink="http://www.w3.org/1999/xlink">
+<description><title-info>
+  <book-title>Ghost Image Book</book-title>
+</title-info></description>
+<body><section><title><p>Chapter</p></title>
+  <image xlink:href="#ghost.png"/><p>Illustrated text.</p>
+</section></body>
+<binary id="cover.jpg" content-type="image/jpeg">Y292ZXItYnl0ZXM=</binary>
 </FictionBook>
 """
 
@@ -2136,6 +2151,69 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
         self.assertNotIn("↩", heading.get_text())
         self.assertNotIn("目录", heading.get_text())
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+
+
+class TestEpubHrefWarnings(unittest.TestCase):
+    """Unresolved EPUB hrefs are recorded as queryable warnings, never silently dropped."""
+
+    def test_package_html_resources_records_unresolved_internal_refs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "present.png").write_bytes(b"present-bytes")
+            html = (
+                '<p><img src="present.png"/><img src="missing.png"/></p>'
+                '<img src="#anchor"/><img src="https://example.com/remote.png"/>'
+            )
+            warnings: list[str] = []
+            packaged_html, packaged = _package_html_resources(
+                html, source_dir=directory, href_prefix="assets", warnings=warnings
+            )
+            self.assertEqual(warnings, ["unresolved media reference: missing.png"])
+            self.assertIn('src="missing.png"', packaged_html)
+            self.assertIn("assets/", packaged_html)
+            self.assertEqual(len(packaged), 1)
+
+    def test_package_html_resources_without_collector_keeps_behavior(self):
+        html = '<p><img src="missing.png"/></p>'
+        packaged_html, packaged = _package_html_resources(html, source_dir=".", href_prefix="assets")
+        self.assertEqual(packaged, {})
+        self.assertIn('src="missing.png"', packaged_html)
+
+    def test_fb2_missing_image_reference_is_recorded_not_silent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "ghost.fb2")
+            Path(source).write_text(_FB2_WITH_MISSING_IMAGE, encoding="utf-8")
+            store, _ = _run(source, os.path.join(directory, "state"))
+            warnings: list[str] = []
+            out = assemble(store, source, out_format="epub", about_page=False, warnings=warnings)
+            self.assertTrue(any("ghost.png" in w and "chapter" in w for w in warnings), warnings)
+            sidecar = Path(f"{out}.warnings.json")
+            self.assertTrue(sidecar.exists())
+            self.assertEqual(json.loads(sidecar.read_text(encoding="utf-8")), warnings)
+            self.assertTrue(os.path.exists(out))
+
+    def test_html_template_missing_image_is_recorded_not_silent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "broken.html")
+            Path(source).write_text(
+                "<!DOCTYPE html><html><head><title>Book</title></head><body>"
+                "<h1>Chapter</h1><p>Text.</p>"
+                '<p><img src="present.png"/><img src="missing.png"/></p>'
+                "</body></html>",
+                encoding="utf-8",
+            )
+            Path(directory, "present.png").write_bytes(b"present-bytes")
+            document = load_document(source, "en", "en")
+            store = FileStorage(os.path.join(directory, "state"))
+            store.init_from_document(document)
+            warnings: list[str] = []
+            out = assemble(store, source, out_format="epub", about_page=False, warnings=warnings)
+            self.assertTrue(any("missing.png" in w and "chapter" in w for w in warnings), warnings)
+            sidecar = Path(f"{out}.warnings.json")
+            self.assertTrue(sidecar.exists())
+            self.assertEqual(json.loads(sidecar.read_text(encoding="utf-8")), warnings)
+            with zipfile.ZipFile(out) as archive:
+                assets = [name for name in archive.namelist() if "/assets/" in name]
+            self.assertEqual(len(assets), 1)
 
 
 if __name__ == "__main__":

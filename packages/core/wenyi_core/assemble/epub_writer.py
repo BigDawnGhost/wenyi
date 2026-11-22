@@ -45,9 +45,12 @@ def _assemble_epub(
     order: str = "target_first",
     preserve_source_style: bool = False,
     about: AboutPage | None = None,
+    warnings: list[str] | None = None,
 ) -> str:
     """Copy the EPUB and replace physical body resources, exact TOC titles and target-language
     metadata.
+
+    The native engine handles resource resolution itself, so ``warnings`` stays unused here.
     """
     if os.path.abspath(source_path) == os.path.abspath(out_path):
         # Opening the target for writing would truncate the archive still being read.
@@ -85,6 +88,7 @@ def _build_epub_from_chapters(
     order: str = "target_first",
     preserve_source_style: bool = False,
     about: AboutPage | None = None,
+    warnings: list[str] | None = None,
 ) -> str:
     """Build a standard EPUB3 from chapters when no original EPUB template exists."""
     m = store.load_manifest()
@@ -144,6 +148,10 @@ def _build_epub_from_chapters(
                 href = image_hrefs.get(resource_id)
                 if href:
                     images_by_position.setdefault(position, []).append(href)
+                elif warnings is not None:
+                    warnings.append(
+                        f"chapter {c['index']}: unresolved FB2 image reference: {resource_id}"
+                    )
 
         paragraphs = _merged_paragraphs(ch)
         for position, (kind, target, source, level) in enumerate(paragraphs):
@@ -231,6 +239,7 @@ def _build_epub_from_html_templates(
     order: str = "target_first",
     preserve_source_style: bool = False,
     about: AboutPage | None = None,
+    warnings: list[str] | None = None,
 ) -> str:
     """Build EPUB from rendered HTML templates and package their media resources."""
     manifest = store.load_manifest()
@@ -265,11 +274,15 @@ def _build_epub_from_html_templates(
             preserve_source_style=preserve_source_style,
             prefer_native=True,
         )
+        chapter_warnings: list[str] = []
         rendered, assets = _package_html_resources(
             rendered,
             source_dir=os.path.dirname(os.path.abspath(source_path)),
             href_prefix="assets",
+            warnings=chapter_warnings,
         )
+        if warnings is not None:
+            warnings.extend(f"chapter {chapter.index}: {item}" for item in chapter_warnings)
         packaged_assets.update(assets)
         filename = f"ch{chapter.index}.xhtml"
         html_open = _html_open_tag(
