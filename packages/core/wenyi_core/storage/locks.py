@@ -17,10 +17,13 @@ import ctypes
 import errno
 import logging
 import os
+import socket
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import BinaryIO
 
@@ -39,6 +42,15 @@ EXPORT_HISTORY_LOCK = ".export-history.lock"  # export history appends
 _RETRY_SECONDS = 0.05
 _FORCED_BACKEND: str | None = None
 _BACKENDS = ("auto", "rust", "python")
+
+# Emit a holder report to stderr after this many seconds of waiting, and repeat
+# it at that interval, so a CLI that blocks on a busy workflow lock tells the
+# operator who holds the lock instead of stalling silently.
+_WAIT_NOTICE_SECONDS = 5.0
+# Owner metadata lives past byte 0. Both backends lock only byte 0 and never
+# truncate the file, so the record cannot disturb the lock protocol.
+_HOLDER_OFFSET = 64
+_HOLDER_LIMIT = 256
 
 _logger = logging.getLogger(__name__)
 
@@ -59,6 +71,37 @@ class StorageBusyError(WenyiError, BlockingIOError):
     Keeps `BlockingIOError` so existing `except BlockingIOError` guards keep
     matching while the code migrates.
     """
+
+
+class LockReentryError(StorageBusyError):
+    """The owning thread tried to acquire a file lock it already holds.
+
+    Re-entering the OS-level lock from the same thread waits on an owner that,
+    inside one acquisition context, can never go away, so it is reported
+    instead of waited on. Nesting that is intentional is short-circuited by
+    the depth tables above this layer (`RunStore._file_lock`,
+    `SqliteStorage._file_lock`), so this error means a real acquisition bug.
+    """
+
+
+# File locks this process holds, keyed by normalised path with the owning
+# thread id as the value. OS locks contend per handle rather than per process,
+# so same-thread re-entry would wait on an owner that never exits; it is
+# detected here and reported as `LockReentryError` instead.
+_HELD_LOCKS: dict[str, int] = {}
+
+
+def _lock_key(lock_path: str) -> str:
+    return os.path.normcase(os.path.abspath(lock_path))
+
+
+def _held_by_this_thread(lock_path: str) -> bool:
+    return _HELD_LOCKS.get(_lock_key(lock_path)) == threading.get_ident()
+
+
+def _forget_held_lock(lock_path: str) -> None:
+    """Drop this process's ownership record for `lock_path`, if one exists."""
+    _HELD_LOCKS.pop(_lock_key(lock_path), None)
 
 
 def _backend_choice() -> str:
@@ -190,6 +233,45 @@ def _still_waiting(error: OSError, blocking: bool, deadline: float | None) -> bo
     return True
 
 
+def _write_holder_record(lock_path: str) -> None:
+    """Record this process in the lock file for wait diagnostics; best effort."""
+    record = (
+        f"pid={os.getpid()} host={socket.gethostname()} "
+        f"since={datetime.now(timezone.utc).isoformat(timespec='seconds')}"
+    ).encode("utf-8", "replace")[:_HOLDER_LIMIT]
+    try:
+        with open(lock_path, "r+b") as handle:
+            handle.seek(_HOLDER_OFFSET)
+            handle.write(record)
+    except OSError:
+        # Diagnostics only: a read-only directory or a full disk must not turn
+        # a successful acquisition into a failure.
+        pass
+
+
+def _describe_holder(lock_path: str) -> str:
+    """Best-effort description of the recorded owner of `lock_path`."""
+    try:
+        with open(lock_path, "rb") as handle:
+            handle.seek(_HOLDER_OFFSET)
+            raw = handle.read(_HOLDER_LIMIT)
+    except OSError:
+        return "an unknown owner"
+    text = raw.split(b"\x00", 1)[0].decode("utf-8", "replace").strip()
+    return text or "an unknown owner"
+
+
+def _report_wait(lock_path: str, waited: float) -> float:
+    """Tell the operator who holds the lock; returns the next notice threshold."""
+    print(
+        f"Waiting for lock {lock_path} held by {_describe_holder(lock_path)} "
+        f"(waited {waited:.1f}s)...",
+        file=sys.stderr,
+        flush=True,
+    )
+    return waited + _WAIT_NOTICE_SECONDS
+
+
 class FileLockHandle:
     """Own one acquired cross-process lock until :meth:`release`."""
 
@@ -200,6 +282,7 @@ class FileLockHandle:
         self._handle: int | None = None
         self._file: BinaryIO | None = None
         self._served_by: str | None = None
+        self._acquired = False
 
     @property
     def backend(self) -> str | None:
@@ -211,19 +294,34 @@ class FileLockHandle:
         return self._served_by
 
     def acquire(self, *, blocking: bool = True, timeout_ms: int = 0) -> None:
-        """Take the lock, waiting for another owner unless `blocking` is false."""
+        """Take the lock, waiting for another owner unless `blocking` is false.
+
+        Re-entry from the owning thread raises :class:`LockReentryError`
+        instead of waiting on an owner that cannot go away.
+        """
+        if _held_by_this_thread(self._path):
+            raise LockReentryError(
+                f"Lock {self._path} is already held by this thread; re-acquiring "
+                "it would deadlock. Intentional nesting belongs in a depth table "
+                "above this layer."
+            )
         if _use_native():
             self._acquire_native(blocking=blocking, timeout_ms=timeout_ms)
             self._served_by = "rust"
         else:
             self._acquire_python(blocking=blocking, timeout_ms=timeout_ms)
             self._served_by = "python"
+        _HELD_LOCKS[_lock_key(self._path)] = threading.get_ident()
+        self._acquired = True
+        _write_holder_record(self._path)
 
     def _acquire_native(self, *, blocking: bool, timeout_ms: int) -> None:
         library = _native_library()
         assert library is not None  # _use_native() already proved availability
         raw = self._path.encode("utf-8")
         deadline = None if timeout_ms <= 0 else time.monotonic() + timeout_ms / 1000.0
+        wait_started = time.monotonic()
+        next_notice = 0.0
         result = _NativeLockResult()
         try:
             while True:
@@ -238,6 +336,9 @@ class FileLockHandle:
                     raise OSError(result.os_error, f"Cannot lock {self._path}")
                 if not blocking or (deadline is not None and time.monotonic() >= deadline):
                     raise _busy_error()
+                waited = time.monotonic() - wait_started
+                if waited >= next_notice:
+                    next_notice = _report_wait(self._path, waited)
                 time.sleep(_RETRY_SECONDS)
         except BaseException:
             # ctypes may raise KeyboardInterrupt before assigning its return code.
@@ -249,6 +350,8 @@ class FileLockHandle:
 
     def _acquire_python(self, *, blocking: bool, timeout_ms: int) -> None:
         deadline = None if timeout_ms <= 0 else time.monotonic() + timeout_ms / 1000.0
+        wait_started = time.monotonic()
+        next_notice = 0.0
         handle = open(self._path, "a+b")
         try:
             if os.name == "nt":  # pragma: no cover - Windows-specific
@@ -271,6 +374,9 @@ class FileLockHandle:
                             raise
                         if not _still_waiting(error, blocking, deadline):
                             raise _busy_error() from error
+                        waited = time.monotonic() - wait_started
+                        if waited >= next_notice:
+                            next_notice = _report_wait(self._path, waited)
                         time.sleep(_RETRY_SECONDS)
             else:  # pragma: no cover - POSIX
                 import fcntl
@@ -284,6 +390,9 @@ class FileLockHandle:
                             raise
                         if not _still_waiting(error, blocking, deadline):
                             raise _busy_error() from error
+                        waited = time.monotonic() - wait_started
+                        if waited >= next_notice:
+                            next_notice = _report_wait(self._path, waited)
                         time.sleep(_RETRY_SECONDS)
             self._file = handle
         except BaseException:
@@ -298,28 +407,33 @@ class FileLockHandle:
 
     def release(self) -> None:
         """Release the lock; safe to call on a handle that never acquired."""
-        if self._handle is not None:
-            library = _native_library()
-            if library is not None:
-                library.wenyi_lock_release(self._handle)
-            self._handle = None
-            return
-        handle = self._file
-        self._file = None
-        if handle is None:
-            return
         try:
-            if os.name == "nt":  # pragma: no cover - Windows-specific
-                import msvcrt
+            if self._handle is not None:
+                library = _native_library()
+                if library is not None:
+                    library.wenyi_lock_release(self._handle)
+                self._handle = None
+                return
+            handle = self._file
+            self._file = None
+            if handle is None:
+                return
+            try:
+                if os.name == "nt":  # pragma: no cover - Windows-specific
+                    import msvcrt
 
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-            else:  # pragma: no cover - POSIX
-                import fcntl
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:  # pragma: no cover - POSIX
+                    import fcntl
 
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            finally:
+                handle.close()
         finally:
-            handle.close()
+            if self._acquired:
+                self._acquired = False
+                _forget_held_lock(self._path)
 
 
 @contextmanager
@@ -335,12 +449,13 @@ def exclusive_file_lock(
     A non-contention `OSError` (a missing parent directory, a read-only one, a
     full disk) is raised unchanged, because it is not another owner.
 
-    Same-path re-entry is the caller's responsibility and is not detected here:
-    a second acquisition of a path this process already holds blocks like any
-    other contender. Every nesting the code base relies on is short-circuited by
-    a depth table above this layer (`RunStore.state_lock`, `SqliteStorage._file_lock`),
-    and treating a second handle as contention keeps same-process contention
-    observable and testable.
+    Re-entry from the owning thread is detected and raises
+    :class:`LockReentryError` instead of silently deadlocking on the OS lock.
+    Every nesting the code base relies on is short-circuited by a depth table
+    above this layer (`RunStore.state_lock`, `SqliteStorage._file_lock`), so
+    this error means a real acquisition bug. A blocked wait reports the lock
+    holder to stderr, so a CLI that stalls on a busy workflow tells the
+    operator who holds it.
     """
     handle = FileLockHandle(lock_path)
     try:
