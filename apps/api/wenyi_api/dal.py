@@ -268,7 +268,7 @@ def create_job(
                VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
             (pid, kind, status, arq_job_id, Jsonb(saved_params), run_id or uuid.uuid4().hex),
         ).fetchone()
-    assert r is not None
+    assert r is not None, f"job insert returned no row (project {pid}, kind {kind})"
     return r[0]
 
 
@@ -364,7 +364,7 @@ def create_export(
                VALUES (%s,%s,%s,'pending') RETURNING id""",
             (pid, fmt, Jsonb(options)),
         ).fetchone()
-    assert row is not None
+    assert row is not None, f"export insert returned no row (project {pid}, format {fmt})"
     return row[0]
 
 

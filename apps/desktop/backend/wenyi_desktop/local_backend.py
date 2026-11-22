@@ -910,7 +910,7 @@ class LocalBackend:
                 (pid, run_id, arq_job_id, json.dumps(document)),
             )
             identity = cursor.lastrowid
-            assert identity is not None
+            assert identity is not None, f"job insert returned no rowid (project {pid})"
             document["id"] = identity
             self._put("jobs", identity, document, conn)
         return identity
@@ -1169,7 +1169,7 @@ class LocalBackend:
                 "INSERT INTO exports(project_id,document) VALUES(?,?)", (pid, json.dumps(document))
             )
             identity = cursor.lastrowid
-            assert identity is not None
+            assert identity is not None, f"export insert returned no rowid (project {pid})"
             document["id"] = identity
             self._put("exports", identity, document, conn)
         return identity

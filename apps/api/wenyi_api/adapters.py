@@ -251,7 +251,7 @@ class PostgresExports:
 def postgres_repository(context: BackendContext) -> PostgresRepository:
     """Narrow platform capabilities without adding PostgreSQL to the shared port."""
     repository = context.repository
-    assert isinstance(repository, PostgresRepository)
+    assert isinstance(repository, PostgresRepository), "expected a PostgresRepository backend"
     return repository
 
 

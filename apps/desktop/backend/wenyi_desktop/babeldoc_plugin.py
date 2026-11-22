@@ -415,7 +415,7 @@ class BabeldocPlugin:
                 raise ValueError("Plugin installation is missing")
             await self._start(identity)
             if install:
-                assert version is not None
+                assert version is not None, "install requested without a BabelDOC version"
                 self._select_installation(identity, version)
             self.phase, self.error = "ready", None
         except asyncio.CancelledError:

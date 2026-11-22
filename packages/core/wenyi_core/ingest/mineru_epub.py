@@ -278,7 +278,7 @@ def _visual(kind: str, content: dict[str, Any]) -> str:
     if kind == "table" and table is not None:
         if caption and not table.find("caption", recursive=False):
             node = _fragment(f"<caption>{caption}</caption>").caption
-            assert node is not None
+            assert node is not None, f"caption fragment lost its <caption> node: {caption!r}"
             table.insert(0, node)
         else:
             # Do not discard either caption if both are independently supplied.

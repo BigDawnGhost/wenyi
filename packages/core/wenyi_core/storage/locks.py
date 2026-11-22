@@ -361,7 +361,7 @@ class FileLockHandle:
 
     def _acquire_native(self, *, blocking: bool, timeout_ms: int) -> None:
         library = _native_library()
-        assert library is not None  # _use_native() already proved availability
+        assert library is not None, "native lock library unavailable despite _use_native() guard"
         raw = self._path.encode("utf-8")
         deadline = None if timeout_ms <= 0 else time.monotonic() + timeout_ms / 1000.0
         wait_started = time.monotonic()
