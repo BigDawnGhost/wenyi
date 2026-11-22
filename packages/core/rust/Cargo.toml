@@ -13,6 +13,9 @@ license = "GPL-3.0-only"
 name = "_epub_native"
 crate-type = ["cdylib"]
 
+[features]
+panic-injection = []
+
 [dependencies]
 anyhow = "1"
 base64 = "0.22"

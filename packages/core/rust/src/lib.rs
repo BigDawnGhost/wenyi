@@ -181,6 +181,8 @@ fn _epub_native(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_fb2, m)?)?;
     m.add_function(wrap_pyfunction!(fb2_title, m)?)?;
     m.add_function(wrap_pyfunction!(fb2_binaries, m)?)?;
+    #[cfg(feature = "panic-injection")]
+    m.add_function(wrap_pyfunction!(panic_injection_probe, m)?)?;
     docx::register(m)?;
     html::register(m)?;
     pdf::register(m)?;
@@ -210,4 +212,10 @@ fn fb2_title(py: Python<'_>, content: &str, fallback: &str) -> PyResult<String> 
 #[pyfunction]
 fn fb2_binaries(py: Python<'_>, content: &str) -> PyResult<Vec<(String, String, String)>> {
     guard(py, || fb2::binaries(content)).and_then(|result| result.map_err(value_error))
+}
+
+#[cfg(feature = "panic-injection")]
+#[pyfunction]
+fn panic_injection_probe(py: Python<'_>, message: String) -> PyResult<()> {
+    guard(py, move || -> () { panic!("{message}") })
 }
