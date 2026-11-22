@@ -80,8 +80,11 @@ Historical releases remain available in the repository's GitHub Releases pages.
   - cli: sync config creation guidance in guide
   - zh: mirror glossary matching updates
 - Internal changes
-  - adapt path assertions for long path prefixes
+  - align core tests with config and translation contracts
+  - skip workflow checks without git for windows bash
+  - desktop: accept task payload kwargs in runtime fakes
   - sync changelog
+  - adapt path assertions for long path prefixes
   - add changelog sync tooling
   - run the hardened suite on main pushes
   - ci: pin third-party actions to commit shas
