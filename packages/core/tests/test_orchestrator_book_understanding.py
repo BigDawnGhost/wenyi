@@ -6,6 +6,7 @@ import os
 import tempfile
 import unittest
 
+import pytest
 from wenyi_core.glossary.store import GlossaryStore
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
@@ -67,7 +68,7 @@ class TestBookUnderstanding(unittest.TestCase):
             store = require_file_storage(orch.prepare(txt))
             cfg.pipeline.book_understanding = True
             cfg.freeze_language_policies(store.load_manifest()["source_sha256"])
-            with self.assertRaisesRegex(ValueError, "Chapter digests.*1"):
+            with pytest.raises(ValueError, match="Chapter digests.*1"):
                 orch.run(txt)
             self.assertTrue(store.load_chapter(0).meta["source_digest"])
             self.assertFalse(store.load_chapter(1).meta.get("source_digest"))

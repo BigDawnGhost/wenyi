@@ -78,7 +78,7 @@ def test_recording_survives_a_broken_store(caplog):
     metrics = Metrics(store)
     metrics.record_task(status="done", code="none")
     metrics.record_retry(provider="fake", reason="timeout")
-    assert "synthetic private" not in caplog.text
+    assert not any("synthetic private" in message for message in caplog.messages)
 
 
 def test_exposition_escapes_label_values():

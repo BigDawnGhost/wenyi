@@ -174,7 +174,7 @@ def test_conversion_errors_never_expose_credentials(
         rendered = "".join(traceback.format_exception(caught.type, caught.value, caught.tb))
         assert token not in rendered
         assert repr(token.encode()) not in rendered
-    assert "private-token" not in caplog.text
+    assert not any("private-token" in message for message in caplog.messages)
     assert os.environ["MINERU_API_KEY"] == ambient
     assert not list(cache.rglob("*.epub"))
 

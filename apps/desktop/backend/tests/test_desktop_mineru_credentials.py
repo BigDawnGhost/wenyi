@@ -291,8 +291,8 @@ def test_api_auth_status_and_redacted_validation(desktop_context, caplog):
             assert "fake-service" not in json.dumps(list(conn.iterdump()))
         assert client.put(path, headers=headers, json={"clear": True}).status_code == 200
         assert not client.get(path, headers=headers).json()["available"]
-    assert "fake-service" not in caplog.text
-    assert "fake-invalid" not in caplog.text
+    assert not any("fake-service" in message for message in caplog.messages)
+    assert not any("fake-invalid" in message for message in caplog.messages)
 
 
 def test_auto_storage_fallback_and_clear_keeps_environment(tmp_path, monkeypatch):
@@ -416,9 +416,9 @@ def test_vault_read_failure_logs_class_name_only(tmp_path, caplog):
     store.save_mineru(secret="fake-service", storage="system")
     with caplog.at_level(logging.WARNING, logger="wenyi_desktop.local_credentials"):
         assert store.resolve_mineru_token() is None
-    assert "RuntimeError" in caplog.text
-    assert "internal-vault-details" not in caplog.text
-    assert "fake-service" not in caplog.text
+    assert any("RuntimeError" in message for message in caplog.messages)
+    assert not any("internal-vault-details" in message for message in caplog.messages)
+    assert not any("fake-service" in message for message in caplog.messages)
 
 
 def test_system_keyring_probe_failure_returns_none(monkeypatch, caplog):
@@ -430,4 +430,4 @@ def test_system_keyring_probe_failure_returns_none(monkeypatch, caplog):
     monkeypatch.setitem(sys.modules, "keyring", ExplodingKeyring)
     with caplog.at_level(logging.DEBUG, logger="wenyi_desktop.local_credentials"):
         assert system_keyring() is None
-    assert "RuntimeError" in caplog.text
+    assert any("RuntimeError" in message for message in caplog.messages)

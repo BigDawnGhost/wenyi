@@ -69,7 +69,7 @@ def test_local_client_sanitizes_real_provider_failure(tmp_path, monkeypatch, cap
     assert len(calls) == 2
     assert secret not in str(caught.value)
     assert secret not in json.dumps(events)
-    assert secret not in caplog.text
+    assert not any(secret in message for message in caplog.messages)
     assert caught.value.__context__ is None
 
 

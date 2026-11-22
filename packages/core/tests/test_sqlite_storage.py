@@ -1041,10 +1041,9 @@ def test_a_database_from_a_newer_build_is_refused_before_it_is_read(tmp_path):
     with sqlite3.connect(run_dir / "state.sqlite3") as connection:
         connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
         connection.commit()
-    with pytest.raises(SchemaTooNew) as refused:
+    with pytest.raises(SchemaTooNew, match="newer version of Wenyi") as refused:
         SqliteStorage(str(run_dir))
     assert refused.value.code == "database_schema_too_new"
-    assert "newer version of Wenyi" in str(refused.value)
     # The refusal must not rewrite the version, or the newer build would find
     # its own database claiming to be older than it is.
     with sqlite3.connect(run_dir / "state.sqlite3") as connection:
@@ -1246,10 +1245,9 @@ def test_open_rejects_a_database_corrupted_beyond_its_header(tmp_path):
         handle.seek(4096)
         handle.write(b"\xde\xad\xbe\xef" * 512)
     broken = SqliteStorage(str(run_dir), create=False)
-    with pytest.raises(WenyiError) as raised:
+    with pytest.raises(WenyiError, match="corrupted") as raised:
         broken._connection()
     assert raised.value.code == "database_corrupt"
-    assert "corrupted" in str(raised.value)
 
 
 def _batch_chapters(count: int) -> list[Chapter]:

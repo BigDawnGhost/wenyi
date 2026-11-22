@@ -228,7 +228,7 @@ class TestEpubResourceGuards(unittest.TestCase):
             chapter.segments[0].resource_href = "OEBPS/ghost.xhtml"
             store.save_chapter(chapter)
 
-            with self.assertRaisesRegex(ValueError, "undeclared body resources"):
+            with pytest.raises(ValueError, match="undeclared body resources"):
                 assemble(store, epub, out_format="epub", about_page=False)
 
     def test_missing_body_resource_is_rejected(self):
@@ -237,7 +237,7 @@ class TestEpubResourceGuards(unittest.TestCase):
             trimmed = os.path.join(directory, "trimmed.epub")
             _rewrite_zip_excluding(epub, trimmed, "OEBPS/ch1.xhtml")
 
-            with self.assertRaisesRegex(ValueError, "body resource not found"):
+            with pytest.raises(ValueError, match="body resource not found"):
                 assemble(store, trimmed, out_format="epub", about_page=False)
 
     def test_stripped_backfill_anchors_are_rejected(self):
@@ -262,7 +262,7 @@ class TestEpubResourceGuards(unittest.TestCase):
                         rewritten.encode("utf-8") if info.filename == "OEBPS/ch1.xhtml" else data,
                     )
 
-            with self.assertRaisesRegex(ValueError, "lacks backfill anchors"):
+            with pytest.raises(ValueError, match="lacks backfill anchors"):
                 assemble(store, trimmed, out_format="epub", about_page=False)
 
 

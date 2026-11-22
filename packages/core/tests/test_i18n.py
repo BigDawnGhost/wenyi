@@ -477,7 +477,7 @@ class TestModelLanguageDetection(unittest.TestCase):
                     return json.dumps({"language": ""}, ensure_ascii=False)
                 return routing_handler(messages, tier, json_mode)
 
-            with self.assertRaisesRegex(ValueError, "language.source"):
+            with pytest.raises(ValueError, match="language.source"):
                 Orchestrator(cfg, client=FakeClient(handler=handler)).prepare(txt)
 
     def test_explicit_same_source_and_target_stops_before_model_calls(self):
@@ -493,9 +493,7 @@ class TestModelLanguageDetection(unittest.TestCase):
             )
             client = FakeClient(handler=routing_handler)
 
-            with self.assertRaisesRegex(
-                ValueError, "Source and target languages are identical .*ja"
-            ):
+            with pytest.raises(ValueError, match="Source and target languages are identical .*ja"):
                 Orchestrator(cfg, client=client).prepare(txt)
 
             self.assertEqual(client.calls, [])
@@ -511,9 +509,7 @@ class TestModelLanguageDetection(unittest.TestCase):
                     return json.dumps({"language": "chinese"}, ensure_ascii=False)
                 raise AssertionError("相同语言不应继续进入分析或翻译")
 
-            with self.assertRaisesRegex(
-                ValueError, "Source and target languages are identical .*zh"
-            ):
+            with pytest.raises(ValueError, match="Source and target languages are identical .*zh"):
                 Orchestrator(cfg, client=FakeClient(handler=handler)).prepare(txt)
 
 

@@ -562,7 +562,7 @@ def test_prune_reports_unreadable_backups_directory(tmp_path, monkeypatch, caplo
     with caplog.at_level(logging.WARNING, logger="wenyi_desktop.updates"):
         outcome = prune_backups(workspace)
     assert outcome == PruneOutcome()
-    assert "Backups directory scan failed" in caplog.text
+    assert any("Backups directory scan failed" in message for message in caplog.messages)
 
 
 def test_prune_keeps_the_newest_and_the_configured_count(tmp_path):

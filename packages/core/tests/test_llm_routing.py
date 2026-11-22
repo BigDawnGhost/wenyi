@@ -525,7 +525,7 @@ def test_http402_emits_one_safe_failure_without_retry_or_fallback(monkeypatch, c
     assert failure["provider"] == "fake"
     assert len({row["call_id"] for row in events}) == 1
     assert not any(row["event"] == "llm_retry_wait" for row in events)
-    assert "PRIVATE_PLACEHOLDER" not in json.dumps(events) + caplog.text
+    assert "PRIVATE_PLACEHOLDER" not in json.dumps(events) + "\n".join(caplog.messages)
 
 
 def test_shared_quota_across_aliases_and_usage_releases_reservations():

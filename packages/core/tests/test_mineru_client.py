@@ -64,9 +64,9 @@ class TestRequestWithRetry(unittest.TestCase):
     def test_exhausted_retries_raise_readable_error(self):
         client = FakeClient([httpx.Response(503, request=httpx.Request("GET", "https://x"))])
         with patch.object(mineru_api, "_sleep", lambda s: None):
-            with self.assertRaisesRegex(MinerUError, "after 3 attempts") as caught:
+            with pytest.raises(MinerUError, match="after 3 attempts") as caught:
                 _request_with_retry(client, "GET", "https://x")
-        self.assertIn("transient HTTP 503", str(caught.exception.__cause__))
+        self.assertIn("transient HTTP 503", str(caught.value.__cause__))
 
     def test_429_is_treated_as_transient(self):
         sleeps: list[float] = []
@@ -227,32 +227,29 @@ def test_failed_result_carries_server_reason(monkeypatch, tmp_path):
     }
     client = _script_batch(monkeypatch, tmp_path, poll)
     try:
-        with pytest.raises(MinerUError) as caught:
+        with pytest.raises(MinerUError, match=r"Extraction failed for test\.pdf: OCR backend crashed"):
             client.submit_batch([str(tmp_path / "test.pdf")])
     finally:
         client.close()
-    assert "Extraction failed for test.pdf: OCR backend crashed" in str(caught.value)
 
 
 def test_upload_response_missing_batch_id_is_reported(monkeypatch, tmp_path):
     upload = {"code": 0, "data": {"file_urls": ["https://upload.example.test/object"]}}
     client = _script_batch(monkeypatch, tmp_path, {}, upload_body=upload)
     try:
-        with pytest.raises(MinerUError) as caught:
+        with pytest.raises(MinerUError, match="missing 'batch_id'"):
             client.submit_batch([str(tmp_path / "test.pdf")])
     finally:
         client.close()
-    assert "missing 'batch_id'" in str(caught.value)
 
 
 def test_upload_response_missing_data_is_reported(monkeypatch, tmp_path):
     client = _script_batch(monkeypatch, tmp_path, {}, upload_body={"code": 0})
     try:
-        with pytest.raises(MinerUError) as caught:
+        with pytest.raises(MinerUError, match="missing 'data'"):
             client.submit_batch([str(tmp_path / "test.pdf")])
     finally:
         client.close()
-    assert "missing 'data'" in str(caught.value)
 
 
 def test_upload_response_non_object_is_reported(monkeypatch, tmp_path):

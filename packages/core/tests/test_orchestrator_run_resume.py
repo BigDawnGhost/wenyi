@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.translate.translation import TranslationService
@@ -42,7 +43,7 @@ class TestOrchestratorRunResume(unittest.TestCase):
                     raise RuntimeError("temporary model failure")
                 return routing_handler(messages, tier, json_mode)
 
-            with self.assertRaisesRegex(RuntimeError, "temporary model failure"):
+            with pytest.raises(RuntimeError, match="temporary model failure"):
                 Orchestrator(cfg, client=FakeClient(handler=fail_analysis)).prepare(txt)
 
             run_dirs = [

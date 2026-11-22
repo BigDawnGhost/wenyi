@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from wenyi_core.agents.reviewer import ReviewOutputError
 from wenyi_core.glossary.store import GlossaryStore
 from wenyi_core.llm.providers.fake import FakeClient
@@ -356,7 +357,7 @@ class TestReviewReporting(unittest.TestCase):
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
             orch.run(txt)
 
-            with self.assertRaisesRegex(ReviewOutputError, "invalid_issue_index"):
+            with pytest.raises(ReviewOutputError, match="invalid_issue_index"):
                 orch.run_review(txt)
 
     def test_review_skips_when_already_completed_with_same_content(self):
@@ -573,7 +574,7 @@ class TestReviewReporting(unittest.TestCase):
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
             store = require_file_storage(orch.run(txt, only_chapter=0))
 
-            with self.assertRaisesRegex(ValueError, "requires every chapter to be translated"):
+            with pytest.raises(ValueError, match="requires every chapter to be translated"):
                 orch.run_review(txt)
 
             self.assertFalse(os.path.exists(store.reviews_dir))
@@ -592,7 +593,7 @@ class TestReviewReporting(unittest.TestCase):
 
             with (
                 patch("wenyi_core.pipeline.prepare.preparation.load_document") as loader,
-                self.assertRaisesRegex(ValueError, "No translation progress found"),
+                pytest.raises(ValueError, match="No translation progress found"),
             ):
                 orch.run_review(pdf)
 
@@ -610,7 +611,7 @@ class TestReviewReporting(unittest.TestCase):
             cfg = _config(os.path.join(d, "state"))
             client = FakeClient(handler=routing_handler)
 
-            with self.assertRaisesRegex(ValueError, "No translation progress found"):
+            with pytest.raises(ValueError, match="No translation progress found"):
                 Orchestrator(cfg, client=client).run_review(txt)
 
             self.assertEqual(client.calls, [])
@@ -635,7 +636,7 @@ class TestReviewReporting(unittest.TestCase):
             usage_before = Path(store.usage_path).read_bytes()
             events_before = Path(store.event_log_path).read_bytes()
 
-            with self.assertRaisesRegex(RuntimeError, "review service unavailable"):
+            with pytest.raises(RuntimeError, match="review service unavailable"):
                 orch.run_review(txt)
 
             review_calls = [
@@ -786,7 +787,7 @@ class TestReviewReporting(unittest.TestCase):
                 )
 
                 if fail:
-                    with self.assertRaisesRegex(RuntimeError, "review failed"):
+                    with pytest.raises(RuntimeError, match="review failed"):
                         orch.run_steps(txt, {"review", "assemble"}, out_format="txt")
                 else:
                     result = orch.run_steps(txt, {"review", "assemble"}, out_format="txt")

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from wenyi_core.agents.base import Agent
 from wenyi_core.config import Config, LLMConfig
 from wenyi_core.glossary.store import GlossaryStore
@@ -180,7 +181,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         with patch.object(
             client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
         ):
-            with self.assertRaisesRegex(EmptyResponseError, "fallback response is invalid JSON"):
+            with pytest.raises(EmptyResponseError, match="fallback response is invalid JSON"):
                 client.complete_json(
                     [{"role": "user", "content": "translate"}], operation="translation.body"
                 )
@@ -213,7 +214,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         with patch.object(
             client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
         ):
-            with self.assertRaisesRegex(EmptyResponseError, "content is empty"):
+            with pytest.raises(EmptyResponseError, match="content is empty"):
                 client.complete(
                     [{"role": "user", "content": "translate"}], operation="translation.body"
                 )
@@ -225,7 +226,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         with patch.object(
             client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
         ):
-            with self.assertRaisesRegex(EmptyResponseError, "content is empty"):
+            with pytest.raises(EmptyResponseError, match="content is empty"):
                 client.complete_json(
                     [{"role": "user", "content": "translate"}], operation="translation.body"
                 )
@@ -333,7 +334,7 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
         self.assertTrue(client.routes["synopsis.chapter"].request_model().options.thinking)
 
     def test_unknown_provider_option_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "unknown_option"):
+        with pytest.raises(ValueError, match="unknown_option"):
             RoutedLLMClient(
                 model_config(
                     profiles={
@@ -954,8 +955,8 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             with open(source, "a", encoding="utf-8") as file:
                 file.write("\n追加された本文。\n")
 
-            with self.assertRaisesRegex(
-                ValueError, "content does not match existing translation state"
+            with pytest.raises(
+                ValueError, match="content does not match existing translation state"
             ):
                 Orchestrator(config, client=FakeClient()).run_assemble(source, out_format="txt")
 
@@ -993,8 +994,8 @@ class TestSourceIdentityAndExport(unittest.TestCase):
                     "locate_existing",
                     side_effect=mutate_then_locate,
                 ),
-                self.assertRaisesRegex(
-                    ValueError, "content does not match existing translation state"
+                pytest.raises(
+                    ValueError, match="content does not match existing translation state"
                 ),
             ):
                 resumed.run_assemble(source, out_format="txt")
@@ -1032,7 +1033,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
                 }
             )
 
-            with self.assertRaisesRegex(ValueError, "has no valid source_sha256"):
+            with pytest.raises(ValueError, match="has no valid source_sha256"):
                 store.ensure_source_identity(source)
 
 
