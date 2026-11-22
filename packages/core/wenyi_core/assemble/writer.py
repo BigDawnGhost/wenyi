@@ -171,6 +171,7 @@ def assemble(
             bilingual=bilingual,
             order=order,
             preserve_source_style=preserve_source_style,
+            source_path=source_path,
         )
     out_path = out_path or _default_out(
         source_path, "epub", "", bilingual=bilingual, target_lang=target_lang

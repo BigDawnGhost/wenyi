@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import io
 import os
+import struct
 import tempfile
 import unittest
 import zipfile
+import zlib
 from unittest.mock import MagicMock, patch
 from xml.etree import ElementTree
 
@@ -18,7 +21,7 @@ from wenyi_core.assemble.docx_writer import _assemble_docx
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.config import Config
 from wenyi_core.document_styles.docx import merge_align_results, proportional_range_placements
-from wenyi_core.ingest.docx_reader import read_docx
+from wenyi_core.ingest.docx_reader import read_docx, read_docx_media
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.document import KIND_HEADING, KIND_TEXT
@@ -584,6 +587,100 @@ class TestDocxAssemble(unittest.TestCase):
             via_writer = assemble(store, path, out_format="docx")
             self.assertTrue(via_writer.endswith(".docx"))
             self.assertTrue(os.path.isfile(via_writer))
+
+    def test_assemble_docx_restores_source_images(self):
+        def png_bytes(width, height):
+            def chunk(tag, data):
+                return (
+                    struct.pack(">I", len(data))
+                    + tag
+                    + data
+                    + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+                )
+
+            header = struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)
+            row = b"\x00" + b"\x00\x00\x00\xff" * width
+            return (
+                b"\x89PNG\r\n\x1a\n"
+                + chunk(b"IHDR", header)
+                + chunk(b"IDAT", zlib.compress(row * height))
+                + chunk(b"IEND", b"")
+            )
+
+        png = png_bytes(1, 1)
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "images.docx")
+            source = DocxDocument()
+            source.add_heading("Chapter One", level=1)
+            source.add_paragraph("Before the picture.")
+            source.add_picture(io.BytesIO(png))
+            source.save(path)
+            self.assertEqual(read_docx_media(path), [("word/media/image1.png", "image/png", png)])
+            book = read_docx(path, "en", "zh")
+            store = FileStorage(os.path.join(directory, "state", "images"))
+            store.save_manifest(
+                {
+                    "title": "images",
+                    "fmt": "docx",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "source_sha256": "x",
+                    "chapters": [
+                        {"index": c.index, "title": c.title, "status": STATUS_DONE}
+                        for c in book.chapters
+                    ],
+                }
+            )
+            for chapter in book.chapters:
+                for segment in chapter.segments:
+                    segment.target = f"译:{segment.source}"
+                store.save_chapter(chapter)
+            out_path = os.path.join(directory, "out.docx")
+            self.assertEqual(assemble(store, path, out_path, out_format="docx"), out_path)
+            with zipfile.ZipFile(out_path) as archive:
+                self.assertIn("word/media/image1.png", archive.namelist())
+                self.assertEqual(archive.read("word/media/image1.png"), png)
+                relationships = archive.read("word/_rels/document.xml.rels").decode("utf-8")
+                self.assertIn("relationships/image", relationships)
+                self.assertIn('Target="media/image1.png"', relationships)
+                content_types = archive.read("[Content_Types].xml").decode("utf-8")
+                self.assertIn('Extension="png"', content_types)
+                body = archive.read("word/document.xml").decode("utf-8")
+                self.assertIn("<w:drawing>", body)
+                self.assertIn('r:embed="rId3"', body)
+            restored = DocxDocument(out_path)
+            self.assertEqual(len(restored.inline_shapes), 1)
+            self.assertIn("译:Before the picture.", [p.text for p in restored.paragraphs])
+
+    def test_assemble_docx_skips_media_for_unreadable_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "sample.docx")
+            _write_sample_docx(path)
+            book = read_docx(path, "en", "zh")
+            missing = os.path.join(directory, "missing.docx")
+            with self.assertRaises(ValueError):
+                read_docx_media(missing)
+            store = FileStorage(os.path.join(directory, "state", "sample"))
+            store.save_manifest(
+                {
+                    "title": "sample",
+                    "fmt": "docx",
+                    "source_lang": "en",
+                    "target_lang": "zh",
+                    "source_sha256": "x",
+                    "chapters": [
+                        {"index": 0, "title": book.chapters[0].title, "status": STATUS_DONE}
+                    ],
+                }
+            )
+            chapter = book.chapters[0]
+            for segment in chapter.segments:
+                segment.target = segment.source
+            store.save_chapter(chapter)
+            out_path = os.path.join(directory, "out.docx")
+            _assemble_docx(store, out_path, source_path=missing)
+            with zipfile.ZipFile(out_path) as archive:
+                self.assertNotIn("word/media/image1.png", archive.namelist())
 
 
 class TestDocxCliDefaults(unittest.TestCase):
