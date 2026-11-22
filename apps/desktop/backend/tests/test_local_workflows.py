@@ -797,6 +797,7 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
     from wenyi_backend.context import current_context
     from wenyi_backend.global_settings import load_settings, save_settings
     from wenyi_backend.workers import tasks
+    from wenyi_backend.workers.signing import SIGNATURE_FIELD, sign_task
     from wenyi_desktop.local_credentials import CredentialStore, credential_store
     from wenyi_desktop.main import create_app
 
@@ -878,12 +879,13 @@ def test_two_apps_isolate_same_project_requests_workers_and_thread_context(tmp_p
         async def workers():
             # Deliberately bind the wrong ambient owner for one worker: ctx must win.
             with use_context(contexts[0]):
-                await asyncio.gather(
-                    *(
-                        tasks.run_parse({"backend": context}, project_id=pid, run_id=run_id)
-                        for context in contexts
-                    )
-                )
+
+                def dispatch(context):
+                    payload = {"project_id": pid, "run_id": run_id}
+                    payload[SIGNATURE_FIELD] = sign_task("run_parse", payload, context.api_token)
+                    return tasks.run_parse({"backend": context}, **payload)
+
+                await asyncio.gather(*(dispatch(context) for context in contexts))
                 assert current_context() is contexts[0]
 
         with ThreadPoolExecutor(max_workers=3) as pool:

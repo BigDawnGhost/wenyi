@@ -305,9 +305,12 @@ def test_export_cancellation_waits_for_render_to_finish(monkeypatch):
     monkeypatch.setattr(exporting, "execute", render)
 
     async def run():
-        task = asyncio.create_task(
-            tasks.run_export({"backend": current_context()}, project_id="p", export_id=1, fmt="txt")
-        )
+        from wenyi_backend.workers.signing import SIGNATURE_FIELD, sign_task
+
+        context = current_context()
+        payload = {"project_id": "p", "export_id": 1, "fmt": "txt"}
+        payload[SIGNATURE_FIELD] = sign_task("run_export", payload, context.api_token)
+        task = asyncio.create_task(tasks.run_export({"backend": context}, **payload))
         assert await asyncio.to_thread(started.wait, 2)
         task.cancel()
         await asyncio.sleep(0)

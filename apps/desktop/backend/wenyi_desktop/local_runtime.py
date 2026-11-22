@@ -288,13 +288,16 @@ class LocalRuntime:
 
     async def _run_observed(self, name: str, values: dict, run_id: str) -> None:
         from wenyi_backend.workers import tasks
+        from wenyi_backend.workers.signing import SIGNATURE_FIELD, sign_task
 
         with scope(self.diagnostics, project_ref=values.get("project_id", ""), run_ref=run_id):
             started = time.monotonic()
             kind = name.removeprefix("run_")
             emit("task_started", kind=kind)
             try:
-                await getattr(tasks, name)({"backend": self.context}, **values)
+                signature = sign_task(name, values, self.context.api_token)
+                payload = {**values, SIGNATURE_FIELD: signature}
+                await getattr(tasks, name)({"backend": self.context}, **payload)
             except asyncio.CancelledError:
                 emit("task_cancelled", kind=kind)
                 raise

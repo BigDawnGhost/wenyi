@@ -261,7 +261,7 @@ def create_context(settings: Settings) -> BackendContext:
     repository = PostgresRepository(settings)
 
     async def submit(name, **kwargs):
-        return await enqueue(settings.redis_url, name, **kwargs)
+        return await enqueue(settings.redis_url, name, settings.api_token, **kwargs)
 
     return BackendContext(
         repository=repository,

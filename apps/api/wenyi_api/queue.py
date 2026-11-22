@@ -2,6 +2,7 @@
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
+from wenyi_backend.workers.signing import SIGNATURE_FIELD, sign_task
 
 WORKFLOW_QUEUE = "wenyi:workflows"
 EXPORT_QUEUE = "wenyi:exports"
@@ -20,8 +21,9 @@ async def _pool_for(redis_url: str) -> ArqRedis:
     return pool
 
 
-async def enqueue(redis_url: str, name: str, **kwargs):
+async def enqueue(redis_url: str, name: str, secret: str | None, **kwargs):
     pool = await _pool_for(redis_url)
+    signed = {**kwargs, SIGNATURE_FIELD: sign_task(name, kwargs, secret)}
     return await pool.enqueue_job(
-        name, _queue_name=EXPORT_QUEUE if name == "run_export" else WORKFLOW_QUEUE, **kwargs
+        name, _queue_name=EXPORT_QUEUE if name == "run_export" else WORKFLOW_QUEUE, **signed
     )

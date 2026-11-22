@@ -19,6 +19,7 @@ from wenyi_backend.execution.bindings import build_config_for
 from wenyi_backend.routers import dependencies as job_service
 from wenyi_backend.routers.dependencies import storage_for
 from wenyi_backend.workers import tasks
+from wenyi_backend.workers.signing import SIGNATURE_FIELD, sign_task
 
 
 def test_creation_requires_an_uploaded_source(api):
@@ -203,7 +204,9 @@ def execute_next(api):
     _, queue = api
     name, params = queue.pop(0)
     params.pop("_job_id")
-    asyncio.run(getattr(tasks, name)({"backend": current_context()}, **params))
+    payload = dict(params)
+    payload[SIGNATURE_FIELD] = sign_task(name, payload, current_context().api_token)
+    asyncio.run(getattr(tasks, name)({"backend": current_context()}, **payload))
 
 
 def upload(api, pid, filename="book.html", data=None):
@@ -343,7 +346,7 @@ def test_live_redis_queue_executes_persisted_parse_job(api, monkeypatch):
     monkeypatch.setattr(queue, "WORKFLOW_QUEUE", queue_name)
 
     async def enqueue(name, **kwargs):
-        return await queue.enqueue(redis_url, name, **kwargs)
+        return await queue.enqueue(redis_url, name, current_context().api_token, **kwargs)
 
     monkeypatch.setattr(job_service, "enqueue", enqueue)
     client, _ = api
