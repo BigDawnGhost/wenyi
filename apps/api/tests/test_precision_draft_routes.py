@@ -38,10 +38,12 @@ def draft_api(monkeypatch, tmp_path):
 
 def test_http_drafts_use_stable_identity_and_do_not_modify_archives(draft_api):
     http, store, result, client, _, tmp_path = draft_api
+    # Lock files gain a fresh holder timestamp on every acquisition, so their
+    # bytes change during the request by design; the archives must not.
     before = {
         path.relative_to(tmp_path): path.read_bytes()
         for path in tmp_path.rglob("*")
-        if path.is_file()
+        if path.is_file() and path.suffix != ".lock"
     }
     response = http.get("/projects/draft-test/chapters/0/segments/11/precision-drafts")
     assert response.status_code == 200, response.text
@@ -60,7 +62,7 @@ def test_http_drafts_use_stable_identity_and_do_not_modify_archives(draft_api):
     after = {
         path.relative_to(tmp_path): path.read_bytes()
         for path in tmp_path.rglob("*")
-        if path.is_file()
+        if path.is_file() and path.suffix != ".lock"
     }
     assert after == before
 
