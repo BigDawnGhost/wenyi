@@ -409,11 +409,16 @@ def test_typography_preserves_escaped_newlines_and_dashes_in_code_spans():
         normalize_latin_typography("The board measures 5' 6\"", source="木板长五尺六寸。")[0]
         == "The board measures 5' 6\""
     )
-    # LaTeX commands starting with \n must never be broken into newlines.
-    latex_math = r"When $x \neq y$, f(x)\neq 0, $\nu > 0$, $\nabla f$, and $A \nRightarrow B$."
+    # LaTeX commands starting with \n (including after punctuation inside math) stay intact,
+    # while ordinary currency ranges still receive prose em-dash normalization.
+    latex_math = (
+        r"When $x \neq y$, $\alpha,\nu$, \(\alpha,\nu\), $$a,\nabla b$$, f(x)\neq 0, "
+        r"and $A \nRightarrow B$."
+    )
     cleaned_math, math_applied = normalize_latin_typography(latex_math)
     assert cleaned_math == latex_math
     assert "escaped_newline" not in math_applied
+    assert normalize_latin_typography("It cost $5 -- or $10.")[0] == "It cost $5—or $10."
 
 
 def test_chapter_typography_ignores_code_span_quotes_for_unification_and_carry():

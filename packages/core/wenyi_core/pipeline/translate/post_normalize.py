@@ -22,13 +22,17 @@ from ...models.glossary import GlossaryTerm
 # Matches protected-object transport tokens such as 〘object:1〙 or ⟦N0⟧ so typography
 # and minority-name normalization never alter them.
 _PROTECTED_MARKER_RE = re.compile(r"〘object:[A-Za-z0-9_.:-]+〙|⟦[^⟧]+⟧")
-# Also shields fenced and inline Markdown code spans during typography normalization so
-# literal `\n` escapes, `--` flags, and code quotes are never rewritten.
+# Also shields fenced/inline Markdown code spans and LaTeX math spans during typography
+# normalization so literal `\n` escapes, `--` flags, LaTeX commands, and code quotes are untouched.
 _TYPOGRAPHY_PROTECTED_RE = re.compile(
     r"〘object:[A-Za-z0-9_.:-]+〙|⟦[^⟧]+⟧"
     r"|(?<!`)(`{3,})(?!`)[\s\S]*?(?<!`)\1(?!`)"
     r"|(?<!`)``(?!`)[^\n]+?(?<!`)``(?!`)"
     r"|(?<!`)`(?!`)[^`\n]+?(?<!`)`(?!`)"
+    r"|(?<!\\)\$\$[\s\S]*?(?<!\\)\$\$"
+    r"|(?<!\\)\\\[[\s\S]*?(?<!\\)\\\]"
+    r"|(?<!\\)\\\([\s\S]*?(?<!\\)\\\)"
+    r"|(?<!\\)\$(?!\$)(?!\s)(?:\\.|[^$\\\n])+?(?<!\s)\$(?![$\d])"
 )
 # Match standalone leaked literal '\n' line breaks without touching LaTeX commands
 # ('\neq', '\nu', '\nabla', '\nRightarrow'), escaped backslashes ('\\n'), or paths ('C:\new').
