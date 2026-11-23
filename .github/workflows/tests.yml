@@ -224,11 +224,11 @@ jobs:
         # Type-checking rolls out per domain through pyrightconfig.json; this
         # step enforces whatever that config includes today. A single run on
         # the 3.12 leg suffices: type resolution follows the configured
-        # pythonVersion, not the matrix interpreter. pyright is not a dev
-        # dependency yet, so uvx fetches it; pin it in the dev group once the
-        # per-domain rollout settles.
+        # pythonVersion, not the matrix interpreter. pyright is pinned in the
+        # dev group so every run type-checks with the same version; bump it
+        # deliberately together with any new diagnostics it introduces.
         if: matrix.python-version == '3.12'
-        run: uvx pyright
+        run: uv run --no-sync pyright
       - name: Install coverage tooling
         # The coverage report stays out of the lockfile: install the plugin
         # into the synced venv right before the report run below.
