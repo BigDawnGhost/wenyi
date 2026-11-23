@@ -427,10 +427,10 @@ class TestAssembleText(unittest.TestCase):
                 chapter = BeautifulSoup(archive.read(chapter_name), "html.parser")
 
         with_alt = chapter.find("img", src="images/inside.png")
-        self.assertIsNotNone(with_alt)
+        assert with_alt is not None
         self.assertEqual(with_alt.get("alt"), "Original & alt")
         without_alt = chapter.find("img", src="images/plain.gif")
-        self.assertIsNotNone(without_alt)
+        assert without_alt is not None
         self.assertEqual(without_alt.get("alt"), "")
 
     def test_txt_input_to_txt(self):

@@ -3,6 +3,7 @@
 import sys
 from importlib.util import find_spec
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import Mock
 
 import pytest
@@ -46,7 +47,7 @@ def require_test_modules() -> None:
 
 require_test_modules()
 
-from wenyi_backend.context import BackendContext, use_context  # noqa: E402
+from wenyi_backend.context import BackendContext, Telemetry, use_context  # noqa: E402
 from wenyi_core.config import Config  # noqa: E402
 from wenyi_core.llm.providers.fake import FakeClient  # noqa: E402
 
@@ -58,11 +59,14 @@ def backend_context(tmp_path):
         repository=repository,
         settings_store=Mock(defaults=lambda: Config()),
         exports=Mock(),
-        telemetry=SimpleNamespace(
-            progress_snapshot=lambda pid: None,
-            statistics_snapshot=lambda pid, job: None,
-            connect=lambda: Mock(),
-            release=lambda cache: None,
+        telemetry=cast(
+            Telemetry,
+            SimpleNamespace(
+                progress_snapshot=lambda pid: None,
+                statistics_snapshot=lambda pid, job: None,
+                connect=lambda: Mock(),
+                release=lambda cache: None,
+            ),
         ),
         storage_for=Mock(),
         read_storage_for=Mock(),

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from wenyi_core.assemble.writer_common import bilingual_out_path
 from wenyi_core.models.errors import ExportPartialError
 from wenyi_core.pipeline.finalize.finalization import AssemblyService
+from wenyi_core.storage.protocol import Storage
 
 _PLAN = object()
 
@@ -30,12 +32,12 @@ def _service(mono: bool = True, bilingual: bool = True) -> AssemblyService:
 
 def _run(service: AssemblyService, tmp_path) -> list[str]:
     return service.assemble_outputs(
-        object(),  # store; only passed to the patched plan/persist helpers
+        cast(Storage, object()),  # store; only passed to the patched plan/persist helpers
         input_path=str(tmp_path / "src.epub"),
         progress=None,
         out_format="epub",
         out_path=str(tmp_path / "out.epub"),
-        policy_store=object(),
+        policy_store=cast(Storage, object()),
     )
 
 

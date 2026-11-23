@@ -36,6 +36,10 @@ class FakeStore:
         self.run_dir = run_dir
         self.chapters = chapters
         self.loads = 0
+        self.manifest: dict = {}
+
+    def save_manifest(self, manifest: dict) -> None:
+        self.manifest = manifest
 
     def load_manifest(self) -> dict:
         return _manifest()

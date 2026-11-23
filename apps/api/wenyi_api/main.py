@@ -2,10 +2,12 @@
 
 import os
 from contextlib import asynccontextmanager
+from typing import cast
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from psycopg_pool import PoolTimeout
+from starlette.types import ExceptionHandler
 from wenyi_backend.application import create_app as create_http_app
 from wenyi_backend.context import BackendContext, use_context
 from wenyi_core.observability import configure_logging
@@ -46,7 +48,7 @@ def create_app(config: Settings | None = None, *, context: BackendContext | None
         lifespan=lifespan,
         origins=os.environ.get("WENYI_CORS_ORIGINS", "*").split(","),
     )
-    application.add_exception_handler(PoolTimeout, pool_timeout_handler)
+    application.add_exception_handler(PoolTimeout, cast(ExceptionHandler, pool_timeout_handler))
     application.version = __version__
     application.description = "Web API and background workers for Wenyi's translation engine."
     return application

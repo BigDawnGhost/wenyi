@@ -266,7 +266,7 @@ class TestGlossary(unittest.TestCase):
         self.assertEqual(terms[0].status, "conflict")
         # Either spelling resolves to the single stored entry, keeping the display form.
         resolved = self.store.get_term("AI")
-        self.assertIsNotNone(resolved)
+        assert resolved is not None
         self.assertEqual(resolved.source, "ＡＩ")
         conflicts = self.store.open_conflicts()
         self.assertEqual(len(conflicts), 1)
@@ -291,10 +291,14 @@ class TestGlossary(unittest.TestCase):
         """Lookups, resolution and term injection work through any equivalent spelling."""
         self.store.upsert_term(GlossaryTerm(source="ＡＩ", target="人工智能"), chapter=1)
         self.store.upsert_term(GlossaryTerm(source="ａｉ", target="机器智能"), chapter=2)
-        self.assertEqual(self.store.get_term("AI").target, "人工智能")
+        ai_term = self.store.get_term("AI")
+        assert ai_term is not None
+        self.assertEqual(ai_term.target, "人工智能")
         self.assertEqual([term.source for term in self.store.get_terms(["AI"])], ["ＡＩ"])
         self.assertTrue(self.store.resolve_term("AI", "人工智能"))
-        self.assertEqual(self.store.get_term("ａｉ").status, "ok")
+        ai_variant = self.store.get_term("ａｉ")
+        assert ai_variant is not None
+        self.assertEqual(ai_variant.status, "ok")
         # Injection stays unique: equivalent spellings hit one stored term.
         injected = GlossaryStore.terms_in(
             self.store.all_terms(), "The AI system and the ＡＩ system."

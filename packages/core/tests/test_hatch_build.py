@@ -4,6 +4,7 @@ import subprocess
 
 import pytest
 from hatch_build import CustomBuildHook, missing_rust_tools, require_rust_toolchain
+from hatchling.metadata.core import ProjectMetadata
 
 
 @pytest.fixture(autouse=True)
@@ -70,7 +71,7 @@ def test_require_rust_toolchain_names_a_single_missing_tool(monkeypatch):
 def test_initialize_preflights_the_toolchain_before_building(tmp_path, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda name: None)
     monkeypatch.setattr(subprocess, "run", _forbid_native_build)
-    hook = CustomBuildHook(str(tmp_path), {}, {}, None, "", "")
+    hook = CustomBuildHook(str(tmp_path), {}, {}, ProjectMetadata(str(tmp_path), None), "", "")
 
     with pytest.raises(SystemExit):
         hook.initialize("editable", {"force_include": {}, "artifacts": []})

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import hmac
+from typing import Final, cast
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ExceptionHandler
 
 from . import __version__
 from .context import BackendContext, ContextMiddleware
@@ -43,10 +45,13 @@ def create_app(
     # Codes are additive: every error keeps its previous "detail" text as well.
     # Starlette resolves handlers by exact class, so register the base exception
     # to also cover fastapi.HTTPException raised by the routers.
-    app.add_exception_handler(ApiError, api_error_handler)
-    app.add_exception_handler(StarletteHTTPException, http_exception_handler)
+    app.add_exception_handler(ApiError, cast(ExceptionHandler, api_error_handler))
+    app.add_exception_handler(
+        StarletteHTTPException, cast(ExceptionHandler, http_exception_handler)
+    )
 
-    if context.api_token and context.require_token:
+    api_token: Final[str | None] = context.api_token
+    if api_token and context.require_token:
 
         class TokenMiddleware(BaseHTTPMiddleware):
             async def dispatch(self, request: Request, call_next):
@@ -58,7 +63,7 @@ def create_app(
                     # Compare bytes, not str: hmac.compare_digest rejects non-ASCII str
                     # with TypeError, which would turn a failing check into a 500 for any
                     # token containing non-ASCII characters. Matches the WebSocket path.
-                    if not hmac.compare_digest(provided.encode(), context.api_token.encode()):
+                    if not hmac.compare_digest(provided.encode(), api_token.encode()):
                         return JSONResponse({"detail": "invalid api token"}, status_code=401)
                 return await call_next(request)
 

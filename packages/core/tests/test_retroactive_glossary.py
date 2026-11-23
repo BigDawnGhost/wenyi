@@ -122,8 +122,11 @@ def test_retroactive_pass_retranslates_matching_chapters(tmp_path):
         events = store.list_events(event_type="glossary_retroactive_chapter", limit=0)
         assert sorted(e["chapter"] for e in events) == [0, 1]
         assert len({e["fingerprint"] for e in events}) == 1
-        assert store.get_term("Alice").target == "爱丽丝"
-        assert store.get_term("letter").target == "信"
+        alice_term = store.get_term("Alice")
+        letter_term = store.get_term("letter")
+        assert alice_term is not None and letter_term is not None
+        assert alice_term.target == "爱丽丝"
+        assert letter_term.target == "信"
     finally:
         store.close()
 

@@ -2,6 +2,7 @@
 
 import inspect
 from contextlib import contextmanager
+from typing import cast
 
 import pytest
 from psycopg_pool import ConnectionPool
@@ -72,7 +73,7 @@ def test_admit_job_writes_job_and_project_in_one_transaction(monkeypatch):
     def fake_set_project_status(pid, status, *, connection, error=None):
         events.append(("set_project_status", connection, status))
 
-    repository._pool = Pool()
+    repository._pool = cast(ConnectionPool, Pool())
     monkeypatch.setattr(dal, "create_job", fake_create_job)
     monkeypatch.setattr(dal, "set_project_status", fake_set_project_status)
 
@@ -125,7 +126,7 @@ def test_admit_job_rolls_back_both_writes_when_project_update_fails(monkeypatch)
     def fake_set_project_status(pid, status, *, connection, error=None):
         raise RuntimeError("crash between the two writes")
 
-    repository._pool = Pool()
+    repository._pool = cast(ConnectionPool, Pool())
     monkeypatch.setattr(dal, "create_job", fake_create_job)
     monkeypatch.setattr(dal, "set_project_status", fake_set_project_status)
 

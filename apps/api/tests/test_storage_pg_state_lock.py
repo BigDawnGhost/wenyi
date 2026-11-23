@@ -9,8 +9,10 @@ SqliteStorage.state_lock reference behavior.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from typing import cast
 
 import pytest
+from psycopg_pool import ConnectionPool
 from wenyi_api.storage_pg import PostgresStorage
 
 
@@ -86,7 +88,7 @@ class FakePool:
 
 def test_nested_state_lock_failure_rolls_back_to_savepoint_and_outer_continues():
     pool = FakePool()
-    storage = PostgresStorage("proj", pool)
+    storage = PostgresStorage("proj", cast(ConnectionPool, pool))
     with storage.state_lock():
         conn = pool.connections[-1]
         conn.execute("UPDATE projects SET title='outer'")
@@ -113,7 +115,7 @@ def test_nested_state_lock_failure_rolls_back_to_savepoint_and_outer_continues()
 
 def test_nested_state_lock_failure_propagating_rolls_back_whole_transaction():
     pool = FakePool()
-    storage = PostgresStorage("proj", pool)
+    storage = PostgresStorage("proj", cast(ConnectionPool, pool))
     with pytest.raises(RuntimeError, match="boom"):
         with storage.state_lock():
             conn = pool.connections[-1]
@@ -136,7 +138,7 @@ def test_nested_state_lock_failure_propagating_rolls_back_whole_transaction():
 
 def test_nested_state_lock_python_error_rolls_back_nested_writes_only():
     pool = FakePool()
-    storage = PostgresStorage("proj", pool)
+    storage = PostgresStorage("proj", cast(ConnectionPool, pool))
     with storage.state_lock():
         conn = pool.connections[-1]
         conn.execute("UPDATE projects SET title='outer'")
@@ -153,7 +155,7 @@ def test_nested_state_lock_python_error_rolls_back_nested_writes_only():
 
 def test_nested_state_lock_success_releases_savepoint_and_commits():
     pool = FakePool()
-    storage = PostgresStorage("proj", pool)
+    storage = PostgresStorage("proj", cast(ConnectionPool, pool))
     with storage.state_lock():
         conn = pool.connections[-1]
         with storage.state_lock():
@@ -172,7 +174,7 @@ def test_nested_state_lock_success_releases_savepoint_and_commits():
 
 def test_deeply_nested_state_lock_releases_each_savepoint():
     pool = FakePool()
-    storage = PostgresStorage("proj", pool)
+    storage = PostgresStorage("proj", cast(ConnectionPool, pool))
     with storage.state_lock():
         with storage.state_lock():
             with storage.state_lock():

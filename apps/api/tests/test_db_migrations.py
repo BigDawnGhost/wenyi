@@ -35,6 +35,7 @@ class FakeConnection:
         if sql.startswith("SELECT version FROM schema_migrations"):
             return FakeResult([(version,) for version in sorted(self.versions)])
         if sql.startswith("INSERT INTO schema_migrations"):
+            assert params is not None
             self.versions.add(params[0])
         return FakeResult([])
 

@@ -93,8 +93,9 @@ def _image_relationships(archive: zipfile.ZipFile) -> dict[str, str]:
             part = target.lstrip("/")
         else:
             part = posixpath.normpath(posixpath.join("word", target))
-        if node.get("Id") and part:
-            targets[node.get("Id")] = part
+        node_id = node.get("Id")
+        if node_id and part:
+            targets[node_id] = part
     return targets
 
 

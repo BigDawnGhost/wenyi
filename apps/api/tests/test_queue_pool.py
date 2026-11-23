@@ -90,6 +90,7 @@ def test_enqueue_replaces_caller_supplied_signature(monkeypatch):
     )
 
     pool = next(iter(queue_module._pools.values()))
+    assert isinstance(pool, FakePool)
     kwargs = pool.calls[0]
     assert kwargs[SIGNATURE_FIELD] != "fake"
     assert verify_task("run_parse", payload_from(kwargs), kwargs[SIGNATURE_FIELD], "secret")

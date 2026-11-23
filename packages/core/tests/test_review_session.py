@@ -301,8 +301,14 @@ def test_chunk_checkpoint_carries_usage_into_ledgers(tmp_path):
     assert usage is not None
     assert usage["totals"]["calls"] == len(client.calls) == 2
     assert usage["totals"]["total_tokens"] == 2 * METERED_TOTAL_TOKENS
-    assert store.load_usage()["totals"]["calls"] == 2
+    store_usage = store.load_usage()
+    assert store_usage is not None
+    assert store_usage["totals"]["calls"] == 2
 
     flush_usage()
-    assert run_store.load_usage()["totals"] == usage["totals"]
-    assert store.load_usage()["totals"]["calls"] == 2
+    rerun_usage = run_store.load_usage()
+    assert rerun_usage is not None
+    assert rerun_usage["totals"] == usage["totals"]
+    flushed_usage = store.load_usage()
+    assert flushed_usage is not None
+    assert flushed_usage["totals"]["calls"] == 2

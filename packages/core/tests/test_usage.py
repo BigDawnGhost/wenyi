@@ -544,10 +544,16 @@ class TestUsageMaxTokens(unittest.TestCase):
         reported = SimpleNamespace(
             prompt_tokens=10, completion_tokens=5, total_tokens=15, max_tokens=77
         )
-        self.assertEqual(normalize_openai_usage(reported, max_tokens=512).max_tokens, 77)
+        usage = normalize_openai_usage(reported, max_tokens=512)
+        assert usage is not None
+        self.assertEqual(usage.max_tokens, 77)
         requested = SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15)
-        self.assertEqual(normalize_openai_usage(requested, max_tokens=512).max_tokens, 512)
-        self.assertIsNone(normalize_openai_usage(requested).max_tokens)
+        usage_capped = normalize_openai_usage(requested, max_tokens=512)
+        assert usage_capped is not None
+        self.assertEqual(usage_capped.max_tokens, 512)
+        usage_uncapped = normalize_openai_usage(requested)
+        assert usage_uncapped is not None
+        self.assertIsNone(usage_uncapped.max_tokens)
 
     def test_adapter_records_requested_max_tokens_in_usage_details(self):
         client = RoutedLLMClient(_minimal_openai_compatible_cfg())

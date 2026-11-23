@@ -227,7 +227,9 @@ def test_incremental_pipeline_resumes_after_note_failure_and_uses_guidance(tmp_p
     assert store.pending_chapters() == []
     assert saved == [s.target for s in store.load_chapter(0).text_segments]
     assert len(body) == 2 and all("LOCAL GUIDANCE" not in prompt for prompt in body)
-    assert "LOCAL GUIDANCE" in (store.get_term("Alice").note or "")
+    alice_term = store.get_term("Alice")
+    assert alice_term is not None
+    assert "LOCAL GUIDANCE" in (alice_term.note or "")
     resumed_notes = [call for call in client.calls if call["operation"] == "glossary.note"]
     assert "LOCAL GUIDANCE" in resumed_notes[-1]["messages"][-1]["content"]
     assert not any(c["operation"].startswith("terminology.") for c in client.calls)

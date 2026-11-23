@@ -258,7 +258,7 @@ def export_execution():
         storage_for=lambda _: storage,
         render=render,
         publish=lambda pid, eid, output: record("publish"),
-        set_status=lambda identity, status, **kwargs: record(f"export:{status}"),
+        set_status=lambda export_id, status, error=None: record(f"export:{status}"),
     )
     return ExportRequest("project", 4, "run"), dependencies, storage, sequence
 

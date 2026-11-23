@@ -13,11 +13,20 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, BinaryIO, ContextManager, Protocol, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    BinaryIO,
+    ContextManager,
+    Literal,
+    Protocol,
+    runtime_checkable,
+)
 
 from fastapi import WebSocket
 from wenyi_core.config import Config
 from wenyi_core.llm.base import LLMClient
+from wenyi_core.models.document import Chapter
 from wenyi_core.pdf_bridge.connection import BridgeResolver
 from wenyi_core.storage.protocol import Storage
 
@@ -36,6 +45,11 @@ class BackendStorage(Storage, Protocol):
 
     def lock(self, *, blocking: bool = True) -> ContextManager[None]: ...
     def export_lock(self, export_id: int, *, blocking: bool = True) -> ContextManager[None]: ...
+    def save_chapter(
+        self, chapter: Chapter, *, revision_kind: Literal["manual"] | None = None
+    ) -> None: ...
+    def set_chapter_review_status(self, ci: int, status: str) -> None: ...
+    def load_segment_history(self, ci: int, si: int) -> list[dict]: ...
 
 
 class Repository(ProjectCatalog, JobCatalog, Protocol):

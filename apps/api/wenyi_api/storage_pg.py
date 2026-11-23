@@ -15,7 +15,7 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from typing import Any, Iterable, Iterator, Literal
+from typing import Any, Iterable, Iterator, Literal, cast
 
 import psycopg
 from psycopg import sql
@@ -84,7 +84,9 @@ class PostgresStorage:
         and running tasks from pinning pooled connections, and the database
         releases the lock automatically if this process dies.
         """
-        return psycopg.connect(self._pool.conninfo, **self._pool.kwargs)
+        return psycopg.connect(
+            cast(str, self._pool.conninfo), **cast(dict[str, Any], self._pool.kwargs)
+        )
 
     @contextmanager
     def _session_lock(self, scope: str, *, blocking: bool = True) -> Iterator[None]:
@@ -397,7 +399,7 @@ class PostgresStorage:
         with self.state_lock(), self._conn as conn:
             for start in range(0, len(chapter_list), self._CHAPTER_BATCH_SIZE):
                 chunk = chapter_list[start : start + self._CHAPTER_BATCH_SIZE]
-                conn.executemany(
+                conn.cursor().executemany(
                     """INSERT INTO chapters(project_id,seq,title,href,template,meta,title_translated)
                     VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(project_id,seq) DO UPDATE
                     SET title=EXCLUDED.title,href=EXCLUDED.href,template=EXCLUDED.template,
@@ -406,7 +408,7 @@ class PostgresStorage:
                 )
                 for chapter in chunk:
                     record_chapter_changes(conn, self.project_id, chapter, kind=revision_kind)
-                conn.executemany(
+                conn.cursor().executemany(
                     "DELETE FROM segments WHERE project_id=%s AND chapter_seq=%s",
                     [(self.project_id, chapter.index) for chapter in chunk],
                 )
@@ -416,7 +418,7 @@ class PostgresStorage:
                     for segment in chapter.segments
                 ]
                 if segment_rows:
-                    conn.executemany(
+                    conn.cursor().executemany(
                         """INSERT INTO segments(project_id,chapter_seq,seg_seq,source,target,
                         target_before_polish,kind,anchor,cont,meta,resource_href)
                         VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",

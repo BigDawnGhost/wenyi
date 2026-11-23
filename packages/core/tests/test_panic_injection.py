@@ -15,5 +15,6 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_panic_injection_probe_converts_panic_to_runtime_error() -> None:
+    assert probe is not None
     with pytest.raises(RuntimeError, match="^native panic: probe boom$"):
         probe("probe boom")

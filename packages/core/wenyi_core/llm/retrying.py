@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Final
 
 import httpx
 from tenacity import (
@@ -383,7 +383,13 @@ class RetryReporter:
         )
 
 
-def provider_retry(max_retries: int, reporter: RetryReporter, *, sleep=None, should_cancel=None):
+def provider_retry(
+    max_retries: int,
+    reporter: RetryReporter,
+    *,
+    sleep: Callable[[float], None] | None = None,
+    should_cancel: Callable[[], bool] | None = None,
+):
     """Build the selective retry decorator shared by remote providers."""
 
     def exhausted(retry_state: RetryCallState):
@@ -398,6 +404,8 @@ def provider_retry(max_retries: int, reporter: RetryReporter, *, sleep=None, sho
 
     def cancellable_sleep(seconds: float) -> None:
         """Bound every backoff slice so cancellation lands without provider permits."""
+        if should_cancel is None:
+            return
         deadline = time.monotonic() + max(0.0, seconds)
         while True:
             if should_cancel():
@@ -411,15 +419,19 @@ def provider_retry(max_retries: int, reporter: RetryReporter, *, sleep=None, sho
         if should_cancel is None:
             wrapped = operation
         else:
+            cancel_check: Final[Callable[[], bool]] = should_cancel
 
             def wrapped(*args, **kwargs):
-                if should_cancel():
+                if cancel_check():
                     raise RequestCancelled(CANCEL_MESSAGE)
                 return operation(*args, **kwargs)
 
         retrying_sleep = sleep
         if retrying_sleep is None and should_cancel is not None:
             retrying_sleep = cancellable_sleep
+        retry_kwargs: dict[str, Any] = {}
+        if retrying_sleep is not None:
+            retry_kwargs["sleep"] = retrying_sleep
         return retry(
             stop=stop_after_attempt(max(1, max_retries + 1)),
             wait=wait_for_provider_retry,
@@ -428,7 +440,7 @@ def provider_retry(max_retries: int, reporter: RetryReporter, *, sleep=None, sho
             ),
             before_sleep=reporter.before_sleep,
             retry_error_callback=exhausted,
-            **({"sleep": retrying_sleep} if retrying_sleep is not None else {}),
+            **retry_kwargs,
         )(wrapped)
 
     return decorate

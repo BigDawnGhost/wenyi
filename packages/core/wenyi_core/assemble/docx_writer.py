@@ -107,7 +107,7 @@ def _assemble_docx(
     )
     with publish_target(out_path) as temporary:
         _epub_native.write_docx(temporary, header, _chapters(store, manifest["chapters"]))
-        _restore_media(temporary, source_path)
+        _restore_media(str(temporary), source_path)
     return out_path
 
 

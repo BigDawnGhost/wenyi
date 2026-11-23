@@ -67,7 +67,7 @@ class ReviewChunkService:
         target_overrides: Mapping[tuple[int, int], str] | None = None,
         review_round: int | None = None,
         on_chunk_finished: Callable[[int], None] | None = None,
-        flush_usage: Callable[[], None] | None = None,
+        flush_usage: Callable[[], Any] | None = None,
     ) -> list[dict]:
         """Review contiguous chapter blocks in parallel and return chapter-local issue indices.
         Use blocks around three translation batches to reduce calls and repeated context.

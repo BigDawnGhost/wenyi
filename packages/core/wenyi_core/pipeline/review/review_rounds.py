@@ -51,7 +51,7 @@ class ReviewRoundService:
         review_round: int,
         target_overrides: Mapping[tuple[int, int], str],
         progress: ProgressFn | None = None,
-        flush_usage: Callable[[], None] | None = None,
+        flush_usage: Callable[[], Any] | None = None,
     ) -> ReviewRoundResult:
         """Review and arbitrate one immutable whole-book shadow snapshot."""
         total = sum(len(chapter.text_segments) for chapter in loaded)

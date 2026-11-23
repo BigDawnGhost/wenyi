@@ -8,8 +8,11 @@ semantics.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 import wenyi_api.storage_pg as storage_pg
+from psycopg_pool import ConnectionPool
 from wenyi_api.storage_pg import PostgresStorage, ProjectBusyError
 
 
@@ -87,7 +90,7 @@ def lock_harness(monkeypatch) -> LockHarness:
 
 
 def test_lock_span_opens_dedicated_connection_and_releases(lock_harness):
-    storage = PostgresStorage("project", LockOnlyPool())
+    storage = PostgresStorage("project", cast(ConnectionPool, LockOnlyPool()))
     with storage.lock():
         assert len(lock_harness.connections) == 1
         conn = lock_harness.connections[0]
@@ -101,7 +104,7 @@ def test_lock_span_opens_dedicated_connection_and_releases(lock_harness):
 
 
 def test_lock_reentry_reuses_span_without_new_connections(lock_harness):
-    storage = PostgresStorage("project", LockOnlyPool())
+    storage = PostgresStorage("project", cast(ConnectionPool, LockOnlyPool()))
     with storage.lock():
         with storage.lock():
             assert len(lock_harness.connections) == 1
@@ -114,7 +117,7 @@ def test_lock_reentry_reuses_span_without_new_connections(lock_harness):
 
 def test_nonblocking_conflict_raises_busy_and_never_unlocks(lock_harness):
     lock_harness.try_results.append(False)
-    storage = PostgresStorage("project", LockOnlyPool())
+    storage = PostgresStorage("project", cast(ConnectionPool, LockOnlyPool()))
     with pytest.raises(ProjectBusyError):
         with storage.lock(blocking=False):
             pass
@@ -125,7 +128,7 @@ def test_nonblocking_conflict_raises_busy_and_never_unlocks(lock_harness):
 
 
 def test_exception_inside_lock_span_releases_and_closes(lock_harness):
-    storage = PostgresStorage("project", LockOnlyPool())
+    storage = PostgresStorage("project", cast(ConnectionPool, LockOnlyPool()))
     with pytest.raises(RuntimeError, match="boom"):
         with storage.lock():
             raise RuntimeError("boom")
@@ -137,7 +140,7 @@ def test_exception_inside_lock_span_releases_and_closes(lock_harness):
 
 
 def test_distinct_scopes_hold_distinct_connections(lock_harness):
-    storage = PostgresStorage("project", LockOnlyPool())
+    storage = PostgresStorage("project", cast(ConnectionPool, LockOnlyPool()))
     with storage.lock(), storage.export_lock(7), storage.assemble_lock():
         assert len(lock_harness.connections) == 3
         assert all(

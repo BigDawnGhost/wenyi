@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
+from psycopg_pool import ConnectionPool
 from wenyi_api import export_retention
 
 
@@ -29,7 +31,7 @@ class FakeConnection:
         self.update_result = update_result
         self.expired_result = expired_result or []
         self.fail_on = fail_on
-        self.watch = None
+        self.watch: Path | None = None
         self._pending = ""
 
     def execute(self, statement, params=None):
@@ -98,7 +100,9 @@ def test_publish_commits_history_before_removing_expired_files(tmp_path):
     old_file, output, conn = _prepare(
         data_dir, expired=[(1, "p1/exports/e-old/translation.txt", "txt")]
     )
-    export_retention.publish_export(FakePool(conn), "p1", 7, str(output), data_dir=str(data_dir))
+    export_retention.publish_export(
+        cast(ConnectionPool, FakePool(conn)), "p1", 7, str(output), data_dir=str(data_dir)
+    )
     delete_at = next(
         index for index, sql in enumerate(conn.statements) if "DELETE FROM exports" in sql
     )
@@ -121,7 +125,7 @@ def test_publish_database_failure_keeps_files_and_rolls_back(tmp_path):
     )
     with pytest.raises(RuntimeError, match="database unavailable"):
         export_retention.publish_export(
-            FakePool(conn), "p1", 7, str(output), data_dir=str(data_dir)
+            cast(ConnectionPool, FakePool(conn)), "p1", 7, str(output), data_dir=str(data_dir)
         )
     # The transaction rolled back, so no compensating cleanup may touch files.
     assert conn.rollback_count == 1
@@ -132,7 +136,9 @@ def test_publish_database_failure_keeps_files_and_rolls_back(tmp_path):
 def test_publish_without_expired_history_skips_file_cleanup(tmp_path):
     data_dir = tmp_path / "data"
     _old_file, output, conn = _prepare(data_dir)
-    export_retention.publish_export(FakePool(conn), "p1", 7, str(output), data_dir=str(data_dir))
+    export_retention.publish_export(
+        cast(ConnectionPool, FakePool(conn)), "p1", 7, str(output), data_dir=str(data_dir)
+    )
     assert all("pg_advisory_lock(" not in sql for sql in conn.statements)
     assert not any("DELETE FROM exports" in sql for sql in conn.statements)
     assert output.exists()

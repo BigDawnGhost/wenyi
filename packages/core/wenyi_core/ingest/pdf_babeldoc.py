@@ -17,7 +17,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 from ..alignment.objects import ObjectResolution, object_marker, resolve_objects
@@ -641,8 +641,22 @@ def _fillback_scratch_path(target: Path) -> Path:
     return target.with_name(f".wenyi-fillback-{uuid4().hex}.tmp")
 
 
+class FillbackBridge(Protocol):
+    """Bridge subset used by chunked fillback: one ``fillback`` request per chunk."""
+
+    def fillback(
+        self,
+        session_id: str,
+        translations: dict[str, str],
+        *,
+        out_path: str | Path,
+        annotations: dict[str, Any] | None = None,
+        rows: dict[str, list[dict[str, int]]] | None = None,
+    ) -> str: ...
+
+
 def fillback_chunked(
-    client: BabeldocBridgeClient,
+    client: FillbackBridge,
     session_id: str,
     translations: dict[str, str],
     *,
@@ -681,7 +695,7 @@ def fillback_chunked(
             result = client.fillback(session_id, dict(chunk), out_path=target, **options)
         finally:
             if done != total:
-                target.unlink(missing_ok=True)
+                Path(target).unlink(missing_ok=True)
         if progress is not None:
             progress(done, total, "progress.stage.assembling")
     return result

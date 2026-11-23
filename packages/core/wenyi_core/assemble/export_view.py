@@ -6,7 +6,7 @@ import hashlib
 import threading
 from collections.abc import Iterable, Iterator
 from copy import deepcopy
-from typing import Any, TypeAlias
+from typing import Any, Protocol, TypeAlias
 
 from ..alignment.objects import resolve_objects
 from ..i18n.policy.models import PolicyContext, PolicyPlan
@@ -19,12 +19,25 @@ from ..storage.run_store import ExportSnapshotStore, RunStore
 from .writer_common import _manifest_target_lang
 
 
+class ExportChapterSource(Protocol):
+    """Storage subset the export view needs: manifest and chapter reads plus manifest saves."""
+
+    @property
+    def run_dir(self) -> str: ...
+
+    def load_manifest(self) -> dict: ...
+
+    def load_chapter(self, ci: int) -> Chapter: ...
+
+    def save_manifest(self, manifest: dict) -> None: ...
+
+
 class ExportViewStore(RunStore):
     """Overlay read-only export transformations on RunStore and delegate other capabilities."""
 
     def __init__(
         self,
-        store: Storage | ExportSnapshotStore,
+        store: ExportChapterSource,
         *,
         plan: PolicyPlan | None = None,
     ) -> None:
