@@ -99,14 +99,20 @@ or returns the wrong paragraph count, the draft stays as the translation and a
 `batch_polish_failed` event is recorded. An interrupted run repolishes the saved
 drafts on resume and does not translate them again.
 
-Ordinary glossary extraction starts with completed source-and-translation pairs.
-Without imported terms, the first batch therefore has no predefined mappings.
-New terms and conflicts inform later batches; they do not automatically rewrite
-earlier translations. Each batch's extraction runs while the next batch translates, so
+Ordinary glossary extraction (`pipeline.glossary_mode: incremental`) starts with completed
+source-and-translation pairs. Without imported terms, the first batch therefore has no
+predefined mappings. New terms and conflicts inform later batches; they do not automatically
+rewrite earlier translations. Each batch's extraction runs while the next batch translates, so
 a new entry reaches the batch after that; the next batch still sees the previous batch's
 wording in its recent-translation context. A chapter is marked done only after its
 terms are stored. The glossary is authoritative for name mappings, while style
 guidance retains source identities and descriptive character information.
+
+With `pipeline.glossary_mode: compiled`, Wenyi instead mines recurring entities from chapter
+digests and the source text, probes and adjudicates a frozen Book Bible before chapter 1, and
+skips per-batch and chapter-end extraction completely (eliminating the one-batch lag and
+unlocking `pipeline.chapter_concurrency` above 1). User-imported and manually edited entries
+are preserved unchanged.
 
 By default (`pipeline.batch_glossary: all`) each pending body batch receives all
 current mappings. With `batch_glossary: relevant`, each batch instead receives only

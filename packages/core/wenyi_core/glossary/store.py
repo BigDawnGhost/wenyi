@@ -168,6 +168,19 @@ def _source_pattern(key: str) -> re.Pattern[str] | None:
     return re.compile(f"{left_boundary}{re.escape(key)}{right_boundary}")
 
 
+def raw_source_pattern(source: str) -> re.Pattern[str]:
+    """Match ``source`` verbatim in unnormalized text, on word boundaries where its script
+    is space-delimited, so Ann never matches inside Anna; CJK sources match as substrings.
+    """
+    key = source.strip()
+    escaped = re.escape(key)
+    if not key or _source_pattern(_match_text(key)) is None:
+        return re.compile(escaped)
+    left_boundary = r"(?<!\w)" if key[0].isalnum() else ""
+    right_boundary = r"(?!\w)" if key[-1].isalnum() else ""
+    return re.compile(f"{left_boundary}{escaped}{right_boundary}")
+
+
 def source_matches_text(source: str, text: str) -> bool:
     """Match source terms without matching inside longer words in space-delimited scripts.
     Use normalized substring matching for continuous scripts such as CJK. Check boundaries

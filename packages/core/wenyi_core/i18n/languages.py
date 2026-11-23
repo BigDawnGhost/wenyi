@@ -109,7 +109,7 @@ def honorific_rule(src: str, tgt: str) -> str:
     pair = f"{normalize_language(src)}__{require_language(tgt)}"
     pairs = read_json("pairs/registry.json")
     if pair in pairs:
-        rule = read_json(f"pairs/{pair}.json").get("honorific", rule)
+        rule = read_json(f"pairs/{pairs[pair]}").get("honorific", rule)
     return rule
 
 

@@ -49,6 +49,43 @@ _AD_BY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Short promo/format watermarks embedding a domain, e.g. "好书尽在www.qinkan.net" or
+# "Txt,Epub,Mobi www.qinkan.net". Story text can mention a URL beside one such word, so
+# a watermark needs a domain, at least two promo words and little other text.
+_PROMO_RE = re.compile(
+    r"好书|尽在|免费|下载|电子书|全文|小说|看书|阅读|更多|精彩|正版|首发|更新|书友|"
+    r"\b(?:txt|epub|mobi|azw3|pdf)\b",
+    re.IGNORECASE,
+)
+# A URL path stops at the first non-ASCII character, so promo text glued to it still counts.
+_DOMAIN_RE = re.compile(
+    r"(?:https?://|www\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[\x21-\x7e]*)?", re.IGNORECASE
+)
+# Characters other than promo words and decoration, e.g. 请访问 or 第一时间.
+_MAX_WATERMARK_FILLER = 6
+_DECOR_CHARS_RE = re.compile(r"[\s\W_]+")
+
+
+_LEADING_DECOR_RE = re.compile(r"^[\s\W_]*")
+
+
+def _is_domain_watermark(text: str) -> bool:
+    """A line that opens with a promo word or a domain, contains a domain, has at least two
+    promo words and little other text. Prose opens with its own words, so it never matches.
+    """
+    body = text[_LEADING_DECOR_RE.match(text).end() :]
+    domain = _DOMAIN_RE.search(body)
+    if domain is None:
+        return False
+    if domain.start() != 0 and _PROMO_RE.match(body) is None:
+        return False
+    rest = f"{body[: domain.start()]} {body[domain.end() :]}"
+    if len(_PROMO_RE.findall(rest)) < 2:
+        return False
+    filler = _DECOR_CHARS_RE.sub("", _PROMO_RE.sub("", rest))
+    return len(filler) <= _MAX_WATERMARK_FILLER
+
+
 _ZH_WATERMARK_PATTERNS: tuple[re.Pattern[str], ...] = (
     # "Remember our book site / domain / URL" banners.
     re.compile(
@@ -127,6 +164,8 @@ def match_boilerplate(
     for pattern in _ZH_WATERMARK_PATTERNS:
         if pattern.search(stripped):
             return "builtin:zh_site_watermark"
+    if _is_domain_watermark(stripped):
+        return "builtin:zh_site_watermark"
 
     for pattern in _STRAY_FRAGMENT_PATTERNS:
         if pattern.match(stripped):

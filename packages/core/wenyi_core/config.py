@@ -49,6 +49,10 @@ pipeline:
   # and chapter digest; glossary extraction then sees only entries present in its batch.
   # Reviewer requests always use the full glossary.
   batch_glossary: all # all | relevant
+  # incremental: extract glossary entries after each batch.
+  # compiled: compile a frozen Book Bible upfront from digests + dual-context entropy probe,
+  # skipping hot-path per-batch extraction.
+  glossary_mode: incremental # incremental | compiled
   # Optional glossary token cap per request (cl100k_base); 0 means no cap, so batch_glossary
   # alone decides what is sent. With a cap, all mode keeps the append-stable leading run within
   # it plus matching later entries, and relevant mode caps matched entries.
@@ -59,9 +63,18 @@ pipeline:
   # Additional structural retries for standard translation and each precision stage; 0 disables retries.
   align_retry_limit: 2
   polish: true # Polish the full translation using polish.body; enabled by default and adds substantial cost
+  # full: rewrite every batch (default). sparse: source-grounded editor patching only defective paragraphs.
+  polish_mode: full # full | sparse
   translation_mode: standard # standard | three_draft_synthesis; three_draft_synthesis requires polish
+  # Concurrent chapter drafting workers; 1 translates chapters serially with cross-chapter target context.
+  # Above 1, chapters translate concurrently with deterministic source lookbehind and a single storage writer.
+  chapter_concurrency: 1
   # Standard-mode polish workers; above 1, polishing runs in the background while translation continues.
   polish_concurrency: 1
+  # Deterministic post-translation typography hygiene and minority-name normalization (zero model calls).
+  deterministic_hygiene: true
+  # Experimental: replace unambiguous high-stability proper nouns with opaque ⟦N#⟧ markers during drafting.
+  entity_markers: false
   rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)
   glossary_note_workers: 0 # Incremental evidence notes: 0 disables, 1-16 workers per batch
   book_understanding: true # Prescan complete chapters for digests and a whole-book synopsis; disable to save prescan cost
@@ -139,6 +152,9 @@ class PipelineConfig(BaseModel):
             return {key: value for key, value in raw.items() if key != "terminology_context"}
         return raw
 
+    # Glossary lifecycle: "incremental" extracts per batch; "compiled" builds a frozen Book Bible
+    # from digests + dual-context entropy probing before chapter 1 and skips hot-path extraction.
+    glossary_mode: Literal["incremental", "compiled"] = "incremental"
     # Glossary sent to body translation, polish, precision and extraction requests:
     # "all" keeps book-wide consistency; "relevant" sends only entries matching each batch.
     batch_glossary: Literal["all", "relevant"] = "all"
@@ -170,9 +186,17 @@ class PipelineConfig(BaseModel):
     # Additional structural retries for standard translation and precision generation/synthesis.
     align_retry_limit: int = 2
     polish: bool = True  # Polish the full translation by default; disable to save cost
+    # "full" rewrites every batch; "sparse" runs a source-grounded semantic editor patching only defects.
+    polish_mode: Literal["full", "sparse"] = "full"
+    # Concurrent chapter drafting workers; >1 uses deterministic source lookbehind and a single writer.
+    chapter_concurrency: int = Field(default=1, ge=1, le=16)
     # Above 1, standard-mode polish jobs run in a bounded background pool while translation
     # continues; 1 polishes each batch inline. Ignored by three_draft_synthesis.
     polish_concurrency: int = Field(default=1, ge=1)
+    # Apply deterministic post-translation typography hygiene and minority-name normalization.
+    deterministic_hygiene: bool = True
+    # Experimental: transport stable proper nouns as opaque ⟦N#⟧ markers during drafting.
+    entity_markers: bool = False
     rolling_context_tokens: int = Field(default=512, ge=0)
     # Note generation requires an opted-in workflow runner.
     glossary_note_workers: int = Field(default=0, ge=0, le=16)

@@ -1,0 +1,580 @@
+"""Pre-translation Book Bible compiler with dual-context entropy probing.
+
+Build a compact, high-signal frozen glossary *before* chapter 1 translates:
+1. Deterministically mine recurring entity candidates from chapter digests (which already
+   quote source-spelling names/terms) and whole-book source frequency (>= 2 occurrences).
+2. Extract two distant short source snippets per candidate and translate them in separate,
+   independent calls using the economical ``glossary.extract`` route to measure whether the
+   model disagrees with itself (high entropy) or produces generic pronouns/titles.
+3. Adjudicate all divergent entities and core cast anchors once globally with synopsis +
+   style context so chapter 1 starts anchored, per-batch extraction is eliminated from the
+   critical path, and parallel chapters share one immutable glossary prefix.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import unicodedata
+from collections import Counter
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
+
+from ..glossary.store import (
+    equivalent_targets,
+    normalize_match_text,
+    source_occurrence_spans,
+)
+from ..i18n.languages import (
+    glossary_context_dependent_sources,
+    glossary_generic_target_words,
+    glossary_single_character_names_only,
+)
+from ..llm.json_parser import JsonParseError
+from ..models.glossary import GlossaryTerm, normalize_gender
+from .base import Agent
+
+_LOGGER = logging.getLogger(__name__)
+
+# CJK runs inside target-language digests (digests quote original source names in source spelling).
+_CJK_SPAN_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]{2,6}")
+
+
+def _bicameral_letter_classes() -> tuple[str, str]:
+    """Return Unicode uppercase and lowercase letter ranges across Latin, Greek and Cyrillic."""
+    upper: list[str] = []
+    lower: list[str] = []
+    for start, end in ((0x0041, 0x024F), (0x0370, 0x052F), (0x1E00, 0x1FFF)):
+        for cp in range(start, end + 1):
+            ch = chr(cp)
+            cat = unicodedata.category(ch)
+            if cat == "Lu":
+                upper.append(ch)
+            elif cat == "Ll":
+                lower.append(ch)
+    return "".join(upper), "".join(lower)
+
+
+_UPPER_LETTERS, _LOWER_LETTERS = _bicameral_letter_classes()
+# Capitalized multi-word / proper-noun sequences across Latin (incl. Extended), Greek and Cyrillic.
+_LATIN_ENTITY_RE = re.compile(
+    rf"\b[{_UPPER_LETTERS}][{_LOWER_LETTERS}]+(?:\s+[{_UPPER_LETTERS}][{_LOWER_LETTERS}]+){{0,3}}\b"
+)
+_WORD_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
+
+
+def _is_unicameral_non_cjk_letter(ch: str) -> bool:
+    """Return True for uncased letter characters outside CJK ideographs (Arabic, Hebrew, Hangul, Indic, etc.)."""
+    cp = ord(ch)
+    if 0x3400 <= cp <= 0x9FFF or 0xF900 <= cp <= 0xFAFF or 0x20000 <= cp <= 0x2FA1F:
+        return False
+    return unicodedata.category(ch) == "Lo"
+
+
+def _extract_unicameral_candidates(text: str) -> set[str]:
+    """Extract 1-2 word spans in uncased non-CJK scripts without relying on capitalization."""
+    runs: list[list[str]] = []
+    current_run: list[str] = []
+    token: list[str] = []
+    base_count = 0
+    for ch in text:
+        if _is_unicameral_non_cjk_letter(ch):
+            token.append(ch)
+            base_count += 1
+        elif token and unicodedata.category(ch) in ("Mn", "Mc"):
+            token.append(ch)
+        else:
+            if token:
+                if base_count >= 2:
+                    current_run.append("".join(token))
+                elif current_run:
+                    runs.append(current_run)
+                    current_run = []
+                token = []
+                base_count = 0
+            if ch not in (" ", "\t") and current_run:
+                runs.append(current_run)
+                current_run = []
+    if token and base_count >= 2:
+        current_run.append("".join(token))
+    if current_run:
+        runs.append(current_run)
+
+    found: set[str] = set()
+    for run in runs:
+        for i, word in enumerate(run):
+            found.add(word)
+            if i + 1 < len(run):
+                found.add(f"{word} {run[i + 1]}")
+    return found
+
+
+# Pure CJK function/glue characters (excluding proper-noun/title/place morphemes like 天王山海門石金星).
+_CJK_STOP_CHARS = frozenset(
+    "的一是在不了有人这這中为為上个個我以要他她它时時来來用们們生到作地于於出就分对對成会會可发發动動同也能下过過说說面而方后後多定所民得进進着著等如自起加量都两兩当當使去把性好应應开開合还還因由其些然前外那事相全间間样樣与與关關各重新内內反你明看原又么麼比或但向此变變只没沒问問意无無很情者最立代想已并並提直很将將把被给給从從往却卻便才呢吗嗎吧啊呀嘛哪谁誰怎何莫非乃即若虽雖故则則且再甚颇頗笑叫听聽知觉覺见見"
+)
+# Tiny subset of structural particles that never belong at edges of a CJK name/title.
+_CJK_EDGE_PARTICLES = frozenset(
+    "的了呢吗嗎吧啊呀嘛着著过過在是有为為与與和及或而但就都也却卻便只才将將把被给給从從向往对對于於之其此那这這哪谁誰怎何不莫无無非乃即若虽雖因故则則且又再还還很太更最极極甚颇頗说說道笑问問叫听聽看知想觉覺见見来來去上下来到"
+)
+
+
+@dataclass(frozen=True)
+class BibleCandidate:
+    source: str
+    count: int
+    from_digest: bool
+    snippet_a: str
+    snippet_b: str
+
+
+@dataclass(frozen=True)
+class BibleResult:
+    terms: tuple[GlossaryTerm, ...]
+    variants_by_source: dict[str, tuple[str, ...]]
+    candidate_count: int
+    divergent_count: int
+
+
+# A reading, or one character plus the combining or sound marks NFKC composes into it.
+_MATCH_UNIT_RE = re.compile(
+    r"〘[^〙]*〙|.[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f"
+    r"\u3099\u309a\uff9e\uff9f]*",
+    re.DOTALL,
+)
+
+
+def _match_index(corpus: str) -> tuple[str, list[int]]:
+    """Normalize ``corpus`` for matching and map each normalized offset to its raw offset.
+
+    Readings are dropped and each character, with any combining marks after it, is
+    normalized on its own, so a span found in the result can be cut from the original text
+    with its case intact.
+    """
+    pieces: list[str] = []
+    offsets: list[int] = []
+    for match in _MATCH_UNIT_RE.finditer(corpus):
+        if match.group(0).startswith("〘") and len(match.group(0)) > 1:
+            continue
+        piece = normalize_match_text(match.group(0))
+        pieces.append(piece)
+        offsets.extend([match.start()] * len(piece))
+    offsets.append(len(corpus))
+    return "".join(pieces), offsets
+
+
+def _extract_distant_snippets(
+    source: str,
+    corpus: str,
+    match_index: tuple[str, list[int]],
+    *,
+    radius: int = 38,
+) -> tuple[str, str]:
+    """Return two distant raw-text snippets (first and ~2/3rd occurrence) for ``source``."""
+    normalized, offsets = match_index
+    spans = source_occurrence_spans(source, normalized)
+    if not spans:
+        return source, source
+    second_idx = max(1, (len(spans) * 2) // 3) if len(spans) > 1 else 0
+    first, second = spans[0], spans[min(second_idx, len(spans) - 1)]
+
+    def _slice(span: tuple[int, int]) -> str:
+        # Map the normalized span back to raw offsets so the model sees original case.
+        lo = max(0, offsets[span[0]] - radius)
+        hi = min(len(corpus), offsets[span[1]] + radius)
+        return " ".join(corpus[lo:hi].split())
+
+    return _slice(first), _slice(second)
+
+
+def _is_generic_target(target: str, generic_words: frozenset[str]) -> bool:
+    if not generic_words:
+        return False
+    words = _WORD_RE.findall(target.casefold())
+    if not words:
+        return True
+    return all(w.replace("’", "'") in generic_words for w in words)
+
+
+def mine_bible_candidates(
+    digests: Sequence[str],
+    source_corpus: str,
+    *,
+    source_lang: str,
+    existing_sources: set[str] | None = None,
+    max_candidates: int = 120,
+) -> list[BibleCandidate]:
+    """Deterministically collect recurring entity candidates from digests + source corpus.
+
+    Priority goes to source-spelling entities explicitly quoted in chapter digests
+    (which are already filtered by the digest LLM to key characters, places and titles),
+    supplemented by high-frequency CJK/Latin spans from the source corpus.
+    """
+    if not source_corpus.strip():
+        return []
+    existing = {normalize_match_text(s).strip() for s in (existing_sources or ())}
+    blocked = {
+        normalize_match_text(s).strip() for s in glossary_context_dependent_sources(source_lang)
+    }
+    normalized_corpus = normalize_match_text(source_corpus)
+    is_cjk_source = glossary_single_character_names_only(source_lang) or source_lang.startswith(
+        ("zh", "ja")
+    )
+
+    digest_candidates: set[str] = set()
+    joined_digests = "\n".join(digests)
+    if is_cjk_source:
+        for match in _CJK_SPAN_RE.finditer(joined_digests):
+            token = match.group(0).strip()
+            if (
+                len(token) >= 2
+                and token[0] not in _CJK_EDGE_PARTICLES
+                and token[-1] not in _CJK_EDGE_PARTICLES
+            ):
+                digest_candidates.add(token)
+    else:
+        nfc_digests = unicodedata.normalize("NFC", joined_digests)
+        for match in _LATIN_ENTITY_RE.finditer(nfc_digests):
+            token = match.group(0).strip()
+            if len(token) >= 3:
+                digest_candidates.add(token)
+        digest_candidates.update(_extract_unicameral_candidates(nfc_digests))
+
+    # Also mine high-frequency 2..5 char CJK sequences from source_corpus when digests are sparse.
+    corpus_counts: Counter[str] = Counter()
+    if is_cjk_source:
+        # Split on punctuation to mine contiguous phrase runs.
+        for chunk in re.findall(r"[\u3400-\u9fff\uf900-\ufaff]{2,}", source_corpus):
+            clen = len(chunk)
+            for n in (2, 3, 4, 5):
+                if clen < n:
+                    continue
+                for start in range(clen - n + 1):
+                    gram = chunk[start : start + n]
+                    if gram[0] in _CJK_EDGE_PARTICLES or gram[-1] in _CJK_EDGE_PARTICLES:
+                        continue
+                    corpus_counts[gram] += 1
+
+    # Score and filter candidates with exact corpus occurrence counts.
+    raw_scored: dict[str, tuple[int, bool]] = {}
+    for cand in digest_candidates:
+        norm = normalize_match_text(cand).strip()
+        if not norm or norm in existing or norm in blocked:
+            continue
+        count = len(source_occurrence_spans(cand, normalized_corpus))
+        if count >= 2:
+            raw_scored[cand] = (count, True)
+
+    # Supplement with top recurring non-digest n-grams (>=3 for 3..5-char compounds, >=4 for 2-char).
+    for gram, approx_count in corpus_counts.most_common(500):
+        min_needed = 4 if len(gram) == 2 else 3
+        if approx_count < 3:
+            break
+        if approx_count < min_needed or gram in raw_scored:
+            continue
+        norm = normalize_match_text(gram).strip()
+        if not norm or norm in existing or norm in blocked:
+            continue
+        if all(ch in _CJK_STOP_CHARS for ch in gram):
+            continue
+        count = len(source_occurrence_spans(gram, normalized_corpus))
+        if count >= min_needed:
+            raw_scored[gram] = (count, False)
+
+    # Prune substrings mostly shadowed by a longer candidate (e.g., drop "弼馬" when
+    # "弼馬溫" covers nearly all its hits; keep standalone recurring short names like "行者").
+    sorted_keys = sorted(
+        raw_scored.keys(),
+        key=lambda k: (raw_scored[k][1], raw_scored[k][0], len(k), k),
+        reverse=True,
+    )
+    kept_keys: list[str] = []
+    for cand in sorted_keys:
+        c_count, c_from_digest = raw_scored[cand]
+        shadowed = False
+        for other in raw_scored:
+            if other == cand or len(other) <= len(cand) or cand not in other:
+                continue
+            o_count, _ = raw_scored[other]
+            ratio = 0.80 if c_from_digest else 0.70
+            if o_count >= c_count * ratio and (c_count - o_count) <= 2:
+                shadowed = True
+                break
+            if not c_from_digest and o_count >= c_count * 0.70:
+                shadowed = True
+                break
+        if not shadowed:
+            kept_keys.append(cand)
+        if len(kept_keys) >= max_candidates:
+            break
+
+    candidates: list[BibleCandidate] = []
+    match_index = _match_index(source_corpus)
+    for cand in kept_keys:
+        count, from_digest = raw_scored[cand]
+        snip_a, snip_b = _extract_distant_snippets(cand, source_corpus, match_index)
+        candidates.append(
+            BibleCandidate(
+                source=cand,
+                count=count,
+                from_digest=from_digest,
+                snippet_a=snip_a,
+                snippet_b=snip_b,
+            )
+        )
+    return candidates
+
+
+class BookBibleAgent(Agent):
+    """Dual-context entropy probe + single global adjudicator for pre-translation bible seeding."""
+
+    def _probe_snippets(
+        self,
+        items: Sequence[tuple[str, str]],
+        *,
+        batch_size: int = 35,
+    ) -> dict[str, str]:
+        """Render each ``(source, snippet)`` independently in batched ``glossary.extract`` calls."""
+        results: dict[str, str] = {}
+        system = (
+            f"You are a fast terminology prober translating {self.src} entity spans into {self.tgt}. "
+            f"For each numbered item, give the natural {self.tgt} rendering of the named entity "
+            "as used in its snippet. If the span is an ordinary verb, common noun, pronoun, or "
+            "context-dependent form of address (like 'I', 'my lord', 'said'), return an empty string. "
+            'Include EVERY numbered source key in renderings (use "" to exclude it).\n'
+            'Return ONLY JSON: {"renderings": {"<source>": "<target or empty>", ...}}.'
+        )
+
+        def _query_chunk(subchunk: list[tuple[str, str]], *, retry: bool = False) -> dict[str, Any]:
+            lines = [f"{i}. {src} | {snip}" for i, (src, snip) in enumerate(subchunk)]
+            reminder = (
+                "The previous reply omitted or returned a non-string value for these keys. "
+                'Include EVERY numbered source key with a string value ("" to exclude).\n'
+                if retry
+                else ""
+            )
+            user = (
+                f"Source language: {self.src}, Target language: {self.tgt}\n"
+                f"{reminder}Render each term in context:\n"
+                + "\n".join(lines)
+                + '\nReturn JSON: {"renderings": {"source": "target"}}'
+            )
+            # A failed or malformed probe batch raises rather than silently dropping candidates
+            # or letting ensure_seeded cache an empty Bible.
+            data = self._complete_json_dict(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                operation="glossary.extract",
+            )
+            raw_map = data.get("renderings") if isinstance(data, dict) else None
+            if not isinstance(raw_map, dict):
+                raise ValueError("Book Bible probe returned no renderings map")
+            return raw_map
+
+        for offset in range(0, len(items), batch_size):
+            chunk = items[offset : offset + batch_size]
+            raw_map = _query_chunk(chunk)
+            missing: list[tuple[str, str]] = []
+            for src, snip in chunk:
+                val = raw_map.get(src)
+                if src in raw_map and isinstance(val, str):
+                    results[src] = val.strip()
+                else:
+                    missing.append((src, snip))
+            if missing:
+                retry_map = _query_chunk(missing, retry=True)
+                for src, _ in missing:
+                    if src not in retry_map:
+                        raise ValueError(f"Book Bible probe omitted candidate: {src}")
+                    val = retry_map[src]
+                    if not isinstance(val, str):
+                        raise ValueError(
+                            f"Book Bible probe returned a non-string rendering for: {src}"
+                        )
+                    results[src] = val.strip()
+        return results
+
+    def _adjudicate(
+        self,
+        candidates: Sequence[tuple[BibleCandidate, str, str, bool]],
+        *,
+        book_synopsis: str,
+        style: str,
+        existing_terms: Sequence[GlossaryTerm],
+    ) -> list[GlossaryTerm]:
+        """Settle all kept candidates once globally with synopsis + genre + probe context."""
+        if not candidates:
+            return []
+        existing_block = "\n".join(
+            f"- {t.source} => {t.target} ({t.type})" for t in existing_terms[:40]
+        )
+        rows = []
+        for cand, rend_a, rend_b, divergent in candidates:
+            tag = "DIVERGENT" if divergent else "ANCHOR"
+            rows.append(
+                f"- {cand.source} (count={cand.count}, {tag}) | probeA={rend_a!r} | probeB={rend_b!r}"
+            )
+        system = (
+            f"You are a senior literary translation editor compiling a frozen Book Bible ({self.src} -> {self.tgt}). "
+            "Given recurring book entities and their two independent draft probe renderings, decide ONE canonical "
+            "translation for each genuine proper noun, title, epithet, place, organization, or setting-specific term.\n"
+            "Rules:\n"
+            "1. EXCLUDE ordinary words, verb phrases, idioms, pronouns, generic standalone common nouns/titles, "
+            "bare forms of address (like 孤, 貧僧, 師父, 大人, 老孫, 小人), and truncated stems/fragments of a longer "
+            "compound term already present in the candidate list.\n"
+            "2. Resolve every DIVERGENT entry decisively into ONE consistent canonical target.\n"
+            "3. Maintain ONE coherent naming policy across the whole book: translate descriptive epithets, titles, "
+            "places, palaces, caves, artifacts, spells, and astronomical/religious terms into idiomatic "
+            f"{self.tgt} rather than opaque transliteration, and keep parallel place/deity pairs in the same "
+            "convention. Every target must be written in the target language "
+            f"({self.tgt}).\n"
+            "4. When the target language uses Latin script, keep standard unsplit romanization for Chinese "
+            "personal and dharma names (e.g. Sanzang, not San Zang; Wukong, not Wu Kong) unless a recurring "
+            "byname is a transparent epithet.\n"
+            "5. Keep linked name families consistent (e.g. a person, their estate, and their title should share one root).\n"
+            "6. Respect any existing user-imported glossary mappings listed below.\n"
+            'Return ONLY JSON: {"terms": [{"source": "...", "target": "...", "type": "person|place|organization|term", '
+            '"gender": "male|female|unknown", "aliases": [], "note": "..."}]}.'
+        )
+        user = (
+            f"[Style guide]\n{style or '(none)'}\n\n"
+            f"[Book synopsis]\n{book_synopsis or '(none)'}\n\n"
+            f"[Existing locked glossary]\n{existing_block or '(none)'}\n\n"
+            f"[Candidates to adjudicate ({len(candidates)})]\n"
+            + "\n".join(rows)
+            + '\n\nReturn JSON: {"terms": [...]}'
+        )
+        # A failed adjudication raises instead of returning no terms: an empty Bible would be
+        # cached as compiled and reused by every later run.
+        data = self._complete_json_dict(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            operation="glossary.extract",
+        )
+        raw_terms = data.get("terms") if isinstance(data, dict) else None
+        if not isinstance(raw_terms, list):
+            raise ValueError("Book Bible adjudication returned no terms list")
+
+        generic_words = glossary_generic_target_words(self.tgt)
+        blocked_sources = {
+            normalize_match_text(s).strip() for s in glossary_context_dependent_sources(self.src)
+        }
+        allowed_sources = {c.source for c, _, _, _ in candidates}
+        out: list[GlossaryTerm] = []
+        seen: set[str] = set()
+        for item in raw_terms:
+            if not isinstance(item, dict):
+                continue
+            src = str(item.get("source") or "").strip()
+            tgt = str(item.get("target") or "").strip()
+            if not src or not tgt or src not in allowed_sources:
+                continue
+            norm = normalize_match_text(src).strip()
+            if norm in seen or norm in blocked_sources:
+                continue
+            if _is_generic_target(tgt, generic_words):
+                continue
+            term_type = str(item.get("type") or "term").strip().lower()
+            if term_type not in {"person", "place", "organization", "term"}:
+                term_type = "term"
+            gender = normalize_gender(str(item.get("gender") or ""))
+            raw_aliases = item.get("aliases")
+            aliases = [
+                a.strip()
+                for a in (raw_aliases if isinstance(raw_aliases, list) else [])
+                if isinstance(a, str) and a.strip() and a.strip() != src
+            ]
+            note = str(item.get("note") or "").strip()
+            seen.add(norm)
+            out.append(
+                GlossaryTerm(
+                    source=src,
+                    target=tgt,
+                    type=term_type,
+                    gender=gender,
+                    aliases=aliases,
+                    first_chapter=0,
+                    note=note,
+                )
+            )
+        return out
+
+    def compile_bible(
+        self,
+        digests: Sequence[str],
+        source_corpus: str,
+        *,
+        book_synopsis: str = "",
+        style: str = "",
+        existing_terms: Sequence[GlossaryTerm] = (),
+        max_candidates: int = 120,
+    ) -> BibleResult:
+        """Mine candidates, run dual-context entropy probe, and adjudicate a frozen Book Bible."""
+        existing_sources = {t.source for t in existing_terms}
+        candidates = mine_bible_candidates(
+            digests,
+            source_corpus,
+            source_lang=self.src,
+            existing_sources=existing_sources,
+            max_candidates=max_candidates,
+        )
+        if not candidates:
+            return BibleResult(
+                terms=(), variants_by_source={}, candidate_count=0, divergent_count=0
+            )
+
+        # Dual-context entropy probe: snippet A and snippet B in two separate calls so neither
+        # biases the other.
+        probe_a = self._probe_snippets([(c.source, c.snippet_a) for c in candidates])
+        probe_b = self._probe_snippets([(c.source, c.snippet_b) for c in candidates])
+
+        generic_words = glossary_generic_target_words(self.tgt)
+        to_adjudicate: list[tuple[BibleCandidate, str, str, bool]] = []
+        variants_by_source: dict[str, tuple[str, ...]] = {}
+        divergent_count = 0
+        for cand in candidates:
+            ra = probe_a.get(cand.source, "").strip()
+            rb = probe_b.get(cand.source, "").strip()
+            if not ra and not rb:
+                continue
+            if (not ra or _is_generic_target(ra, generic_words)) and (
+                not rb or _is_generic_target(rb, generic_words)
+            ):
+                continue
+            divergent = bool(not ra or not rb or not equivalent_targets(ra, rb))
+            if divergent:
+                divergent_count += 1
+            # Keep every divergent entity + core anchors (digest-cited or high frequency >= 5).
+            if divergent or cand.from_digest or cand.count >= 5:
+                to_adjudicate.append((cand, ra, rb, divergent))
+                distinct_vars = tuple(
+                    dict.fromkeys(
+                        v for v in (ra, rb) if v and not _is_generic_target(v, generic_words)
+                    )
+                )
+                if distinct_vars:
+                    variants_by_source[cand.source] = distinct_vars
+
+        terms = self._adjudicate(
+            to_adjudicate,
+            book_synopsis=book_synopsis,
+            style=style,
+            existing_terms=existing_terms,
+        )
+        return BibleResult(
+            terms=tuple(terms),
+            variants_by_source=variants_by_source,
+            candidate_count=len(candidates),
+            divergent_count=divergent_count,
+        )
+
+    def _complete_json_dict(self, messages, *, operation: str) -> dict:
+        data, _raw = self._complete_json_turn(messages, operation=operation)
+        if isinstance(data, dict):
+            return data
+        raise JsonParseError(f"Expected JSON object from {operation}")

@@ -199,18 +199,94 @@ def load_document(
     return doc
 
 
+_CJK_COUPLET_RE = re.compile(
+    r"^[\u3400-\u9fff\uf900-\ufaff]{3,10}[，、；][\u3400-\u9fff\uf900-\ufaff]{3,10}[。！？；]?$"
+)
+_VERSE_DIALOGUE_MARKS = frozenset('“”"「」『』')
+
+
+def is_verse_segment(text: str) -> bool:
+    """Detect standalone verse/couplet lines so batching avoids cleaving a poem mid-stanza."""
+    stripped = text.strip()
+    if not stripped or len(stripped) > 48:
+        return False
+    # Allow a single trailing closing quote on the final couplet of a recited ballad.
+    core = stripped.rstrip('」』”"')
+    if any(ch in _VERSE_DIALOGUE_MARKS for ch in core):
+        return False
+    if _CJK_COUPLET_RE.match(core):
+        return True
+    lines = [line.strip() for line in core.splitlines() if line.strip()]
+    return len(lines) >= 2 and all(len(line) <= 28 for line in lines)
+
+
+_is_verse_segment = is_verse_segment
+
+
 def batch_segments(segments: list[Segment], max_tokens: int) -> list[list[Segment]]:
-    """Group segments into batches by shared token budget (tiktoken cl100k_base)."""
+    """Group segments into batches by shared token budget (tiktoken cl100k_base).
+
+    Avoid splitting contiguous multi-segment verse blocks (e.g., classical couplets) across
+    batch boundaries: if a poem is about to begin late in a prose batch and fits cleanly in a
+    fresh batch, start the batch before the poem; if already inside a poem, allow bounded
+    overflow (+35% of ``max_tokens``) to finish the remaining verse run together.
+    """
+    if not segments:
+        return []
+    lengths = [count_tokens(s.source) for s in segments]
+    is_verse = [_is_verse_segment(s.source) for s in segments]
+    overflow_limit = max(max_tokens, int(max_tokens * 1.35))
+    early_flush_threshold = int(max_tokens * 0.65)
+
+    def _verse_run_end(start: int) -> int:
+        end = start
+        while end < len(segments) and is_verse[end]:
+            end += 1
+        return end
+
     batches: list[list[Segment]] = []
     cur: list[Segment] = []
     cur_tokens = 0
-    for s in segments:
-        slen = count_tokens(s.source)
+    in_verse_run = False
+    i = 0
+    while i < len(segments):
+        s = segments[i]
+        slen = lengths[i]
+        if is_verse[i] and not in_verse_run:
+            run_end = _verse_run_end(i)
+            run_len = run_end - i
+            if run_len >= 2:
+                run_tokens = sum(lengths[i:run_end])
+                # Start a fresh batch before a multi-segment poem if it won't fit here
+                # but does fit cleanly in its own batch.
+                if (
+                    cur
+                    and cur_tokens >= early_flush_threshold
+                    and cur_tokens + run_tokens > max_tokens
+                    and run_tokens <= max_tokens
+                ):
+                    batches.append(cur)
+                    cur, cur_tokens = [], 0
+                in_verse_run = True
+        elif not is_verse[i]:
+            in_verse_run = False
+
         if cur and cur_tokens + slen > max_tokens:
+            # If we are inside a multi-segment verse run and finishing the run fits within
+            # the bounded overflow slack, keep the poem unbroken in this batch.
+            if in_verse_run:
+                run_end = _verse_run_end(i)
+                rem_tokens = sum(lengths[i:run_end])
+                if cur_tokens + rem_tokens <= overflow_limit:
+                    cur.append(s)
+                    cur_tokens += slen
+                    i += 1
+                    continue
             batches.append(cur)
             cur, cur_tokens = [], 0
         cur.append(s)
         cur_tokens += slen
+        i += 1
     if cur:
         batches.append(cur)
     return batches
