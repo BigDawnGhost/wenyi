@@ -158,11 +158,11 @@ BabelDOC 的角色／章节边界进一步限制正文上下文，但不能删�
 
 CLI 或 Web/Desktop 项目开启增量术语备注后，在译后生成备注；准备阶段不建词条，Review 不生产术语备注。
 
-当 `pipeline.glossary_mode` 为 `compiled` 时，`BibleSeedService` 在 `TranslationService.run` 开始阶段（持有书级锁且章节梗概就绪后）通过确定性原文／梗概候选挖掘、双语境熵探测以及一次全局裁定（复用 `glossary.extract` 路由）编译冻结术语表。即使设置了 `only_chapter` 也挖掘全部章节梗概。结果按原文哈希、梗概、概览哈希、风格说明、语言方向与路由身份缓存至 `glossary_bible.json` 产物；裁定或探测失败及返回格式错误时直接报错而不缓存空或残缺术语表，续跑会重新编译；新词条以 `first_chapter = 0` 写入且绝不覆盖用户导入或手动编辑的词条（`first_chapter is None`），并跳过热路径上的逐批与章末抽取。
+当 `pipeline.glossary_mode` 为 `compiled` 时，`BibleSeedService` 在 `TranslationService.run` 开始阶段（持有书级锁且章节梗概就绪后）通过确定性多语种原文／梗概候选挖掘（覆盖中文、日语片假名／敬称／去注音汉字、拉丁／希腊／西里尔连接词专名与无大小写文字）、双语境熵探测、词素家族聚类以及分块全局裁定（复用 `glossary.extract` 路由）编译冻结术语表、防剧透性别策略与紧凑的全书翻译约定，并可预先生成跨章重复引文的标准译法供并发波次共享。即使设置了 `only_chapter` 也挖掘全部章节梗概。结果按原文哈希、梗概、概览哈希、风格说明、人工术语快照、重复引文、语言方向与路由身份缓存至 `glossary_bible.json` 产物；裁定或探测失败及返回格式错误时直接报错而不缓存空或残缺术语表，续跑会重新编译；新词条以 `first_chapter = 0` 写入且绝不覆盖用户导入或手动编辑的词条（`first_chapter is None`），并跳过热路径上的逐批与章末抽取。
 
-标准模式且 `glossary_mode: compiled` 下当 `pipeline.chapter_concurrency` 大于 `1` 时，`TranslationService` 并发翻译多章（超过 12 批的超大单章按每 6 批切分为并发波次）：工作线程仅发起模型调用，不触碰 `Storage`、SQLite、adherence 或用量账本。各章／波次起始上下文采用确定性位置规则——前章梗概加其最后 3 段不可变原文——确保线程完成顺序不影响章节内容与续跑结果；主协调线程严格按全书顺序落盘章节、对齐、事件与用量。BabelDOC 非正文批次与顺序路径一致，不带滚动上下文、梗概或章节摘要。某批失败时，其波次返回此前已起草的批次，不再启动新波次，所有已起草批次都会落盘；全书顺序中失败点之后的章节不发布，续跑只翻译缺失批次。仍带润色标记的已存初稿在章节发布前重新润色。
+标准模式且 `glossary_mode: compiled` 下当 `pipeline.chapter_concurrency` 大于 `1` 时，`TranslationService` 并发翻译多章（超过 12 批的超大单章按每 6 批切分为并发波次）：工作线程持有波次内克隆的 `QuoteMemory` 且仅发起模型调用，不触碰 `Storage`、SQLite、adherence 或用量账本。各章／波次起始上下文采用确定性位置规则——前章梗概加其最后 3 段不可变原文——确保线程完成顺序不影响章节内容与续跑结果；主协调线程严格按全书顺序落盘章节、对齐、事件与用量。BabelDOC 非正文批次与顺序路径一致，不带滚动上下文、梗概或章节摘要。某批失败时，其波次返回此前已起草的批次，不再启动新波次，所有已起草批次都会落盘；全书顺序中失败点之后的章节不发布，续跑只翻译缺失批次。仍带润色标记的已存初稿在章节发布前重新润色。
 
-当 `pipeline.polish_mode` 为 `sparse` 时，`SparseSemanticEditor` 在 `polish.body` 路由上对照 `(原文, 初稿)` 仅对存在实质语义反转、典故或格式缺陷的段落输出 JSON 补丁，保留受保护对象标记并保持合格初稿不变。`QuoteMemory` 索引全书重复引文与诗词以保持逐字一致，`batch_segments` 在有界余量内避免将连续多联诗词截断跨批，`pipeline.deterministic_hygiene` 在章末发布前执行零模型开销的拉丁排版清理与词边界少数译名归一。
+当 `pipeline.polish_mode` 为 `sparse` 时，`SparseSemanticEditor` 先以确定性异常预筛（`batch_risk`）定位可疑段落，仅对高风险批次沿提供商思考阶梯自动升级一档（`ThinkingControl.escalate`），并对照 `(原文, 初稿)` 仅对存在实质语义反转、典故或格式缺陷的段落输出 JSON 补丁，同时保留受保护对象标记并拦截无端改写文风的补丁。`QuoteMemory` 索引全书重复引文与诗词以保持一致，`batch_segments` 在有界余量内避免将连续多联诗词截断跨批，`pipeline.deterministic_hygiene` 在章末发布前执行零模型开销的拉丁／中文排版清理与少数译名归一，启用 `pipeline.consistency_sweep` 时还在章节标题翻译前执行快速跨章一致性扫描且绝不修改绑定偏移量的已对齐段落。
 
 <a id="storage-and-artifacts"></a>
 

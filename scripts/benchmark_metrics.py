@@ -86,6 +86,7 @@ def analyze_run(
     started: dict[str, datetime] = {}
     op_minutes: dict[str, float] = collections.defaultdict(float)
     op_calls: collections.Counter[str] = collections.Counter()
+    escalated_calls = 0
     prompt_tokens = 0
     cache_hit_tokens = 0
     completion_tokens = 0
@@ -100,6 +101,8 @@ def analyze_run(
         kind = ev.get("event")
         if kind == "llm_request_started":
             started[str(ev.get("call_id"))] = datetime.fromisoformat(ev["ts"])
+            if ev.get("thinking_boost"):
+                escalated_calls += 1
         elif kind == "llm_request_completed" and str(ev.get("call_id")) in started:
             op = str(ev.get("operation") or "unknown")
             dt_min = (
@@ -151,6 +154,7 @@ def analyze_run(
         f"{s}={t}" for s, t, _ in glossary_rows if _is_generic_target(t, generic_words)
     ]
 
+    is_cjk_target = target_lang.lower().split("-", 1)[0] in {"zh", "ja", "ko"}
     adherence_scores: list[tuple[float, str, str]] = []
     for src, tgt, _ty in glossary_rows:
         hits = [seg for seg in segments if source_matches_text(src, seg.get("source") or "")]
@@ -159,10 +163,17 @@ def analyze_run(
         key = _target_key(tgt)
         if not key:
             continue
-        pat = re.compile(rf"(?<![^\W\d_]){re.escape(key)}(?![^\W\d_])")
-        used = sum(
-            1 for seg in hits if pat.search(" ".join(normalize_match_text(seg["target"]).split()))
-        )
+        if is_cjk_target:
+            used = sum(
+                1 for seg in hits if key in " ".join(normalize_match_text(seg["target"]).split())
+            )
+        else:
+            pat = re.compile(rf"(?<![^\W\d_]){re.escape(key)}(?![^\W\d_])")
+            used = sum(
+                1
+                for seg in hits
+                if pat.search(" ".join(normalize_match_text(seg["target"]).split()))
+            )
         adherence_scores.append((used / len(hits), src, tgt))
 
     colon_tags = sum(len(_COLON_TAG_RE.findall(seg["target"])) for seg in segments)
@@ -190,6 +201,7 @@ def analyze_run(
         else 0.0,
         "completion_tokens": completion_tokens,
         "op_calls": dict(op_calls),
+        "thinking_escalated_calls": escalated_calls,
         "op_minutes": {
             k: round(v, 2) for k, v in sorted(op_minutes.items(), key=lambda kv: -kv[1])
         },

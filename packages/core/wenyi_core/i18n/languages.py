@@ -103,12 +103,33 @@ def label(code: str) -> str:
     return profile(code)["label"] if normalize_language(code) else "the source language"
 
 
+def resolve_pair_key(src: str, tgt: str) -> str | None:
+    """Resolve the best matching pair key in ``pairs/registry.json``, falling back to base tags."""
+    norm_src = normalize_language(src)
+    norm_tgt = require_language(tgt)
+    pairs = read_json("pairs/registry.json")
+    candidates = [f"{norm_src}__{norm_tgt}"]
+    src_base = norm_src.split("-", 1)[0] if "-" in norm_src else norm_src
+    tgt_base = norm_tgt.split("-", 1)[0] if "-" in norm_tgt else norm_tgt
+    for pair in (
+        f"{norm_src}__{tgt_base}",
+        f"{src_base}__{norm_tgt}",
+        f"{src_base}__{tgt_base}",
+    ):
+        if pair not in candidates:
+            candidates.append(pair)
+    for pair in candidates:
+        if pair in pairs:
+            return pair
+    return None
+
+
 def honorific_rule(src: str, tgt: str) -> str:
     """Select forms-of-address guidance from the language pair, not user configuration."""
     rule = read_json("shared/honorific.json")["rule"]
-    pair = f"{normalize_language(src)}__{require_language(tgt)}"
-    pairs = read_json("pairs/registry.json")
-    if pair in pairs:
+    pair = resolve_pair_key(src, tgt)
+    if pair is not None:
+        pairs = read_json("pairs/registry.json")
         rule = read_json(f"pairs/{pairs[pair]}").get("honorific", rule)
     return rule
 

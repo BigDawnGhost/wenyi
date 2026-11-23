@@ -200,7 +200,7 @@ def load_document(
 
 
 _CJK_COUPLET_RE = re.compile(
-    r"^[\u3400-\u9fff\uf900-\ufaff]{3,10}[，、；][\u3400-\u9fff\uf900-\ufaff]{3,10}[。！？；]?$"
+    r"^([\u3400-\u9fff\uf900-\ufaff]{3,10})[，、；]([\u3400-\u9fff\uf900-\ufaff]{3,10})[。！？；]?$"
 )
 _VERSE_DIALOGUE_MARKS = frozenset('“”"「」『』')
 
@@ -214,8 +214,14 @@ def is_verse_segment(text: str) -> bool:
     core = stripped.rstrip('」』”"')
     if any(ch in _VERSE_DIALOGUE_MARKS for ch in core):
         return False
-    if _CJK_COUPLET_RE.match(core):
-        return True
+    match = _CJK_COUPLET_RE.match(core)
+    if match is not None:
+        # Require symmetrical couplet hemistich lengths (e.g. 5+5, 7+7, 4+4, or off-by-1) so
+        # asymmetric short narrative sentences (e.g. "他站起身，仔细打量着眼前的书生。") are
+        # not misclassified as poetry.
+        left, right = match.group(1), match.group(2)
+        if abs(len(left) - len(right)) <= 1:
+            return True
     lines = [line.strip() for line in core.splitlines() if line.strip()]
     return len(lines) >= 2 and all(len(line) <= 28 for line in lines)
 

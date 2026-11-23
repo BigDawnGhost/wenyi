@@ -69,6 +69,7 @@ from .run import (
 from .translate import (
     babeldoc_context,  # noqa: F401
     bible_seed,  # noqa: F401
+    consistency_sweep,  # noqa: F401
     context,  # noqa: F401
     entity_markers,  # noqa: F401
     extraction_queue,  # noqa: F401

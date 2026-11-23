@@ -51,6 +51,8 @@ pipeline:
   polish_concurrency: 1
   # Deterministic post-translation typography hygiene and minority-name normalization (zero model calls).
   deterministic_hygiene: true
+  # Fast post-translation cross-chapter consistency sweep (unifies repeated quotes and missed glossary terms).
+  consistency_sweep: false
   # Experimental: replace unambiguous high-stability proper nouns with opaque ⟦N#⟧ markers during drafting.
   entity_markers: false
   rolling_context_tokens: 512 # Recent translation budget in tokens (tiktoken cl100k_base)

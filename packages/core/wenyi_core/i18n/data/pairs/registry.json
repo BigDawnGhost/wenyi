@@ -1,5 +1,8 @@
 {
   "ja__zh": "ja__zh.json",
+  "ja__en": "ja__en.json",
   "zh__en": "zh__en.json",
-  "zh-Hant__en": "zh__en.json"
+  "zh-Hant__en": "zh__en.json",
+  "en__zh": "en__zh.json",
+  "en__zh-Hant": "en__zh.json"
 }

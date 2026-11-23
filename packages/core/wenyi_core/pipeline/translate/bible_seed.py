@@ -1,9 +1,10 @@
 """Resumable Book Bible seeding service for compiled glossary mode.
 
 Runs before body translation starts under the book lock. Caches its compiled result as a
-Storage artifact keyed by source hash, digest content, synopsis, style brief, language
-direction and routing fingerprint so resumes never repeat probe/adjudication model calls. User-imported or
-manually edited glossary entries (``first_chapter is None``) are never overwritten.
+Storage artifact keyed by source hash, digest content, synopsis, style brief, existing user
+glossary snapshot, language direction and routing fingerprint so resumes never repeat
+probe/adjudication model calls. User-imported or manually edited glossary entries
+(``first_chapter is None``) are never overwritten.
 """
 
 from __future__ import annotations
@@ -16,12 +17,14 @@ from collections.abc import Sequence
 from ...agents.book_bible import BookBibleAgent
 from ...config import Config
 from ...events import ProgressFn
+from ...glossary.store import normalize_match_text
 from ...llm.routing import inference_snapshot
+from ...models.glossary import GlossaryTerm
 from ...storage.protocol import Storage
 
 _LOGGER = logging.getLogger(__name__)
 _BIBLE_ARTIFACT = "glossary_bible.json"
-_BIBLE_VERSION = 2
+_BIBLE_VERSION = 3
 
 
 def _bible_fingerprint(
@@ -30,7 +33,14 @@ def _bible_fingerprint(
     digests: Sequence[str],
     book_synopsis: str,
     style: str,
+    user_terms: Sequence[GlossaryTerm] = (),
+    repeated_quotes: Sequence[str] = (),
 ) -> str:
+    locked_user_terms = sorted(
+        (normalize_match_text(t.source).strip(), t.target.strip(), t.type, t.gender)
+        for t in user_terms
+        if t.first_chapter is None
+    )
     payload = {
         "version": _BIBLE_VERSION,
         "source_sha256": source_sha256,
@@ -38,8 +48,9 @@ def _bible_fingerprint(
         "target_lang": config.target_lang,
         "digests": list(digests),
         "synopsis_hash": hashlib.sha256(book_synopsis.encode("utf-8")).hexdigest(),
-        # The adjudicator reads the style brief, so a new brief must recompile.
         "style_hash": hashlib.sha256(style.encode("utf-8")).hexdigest(),
+        "user_terms": locked_user_terms,
+        "repeated_quotes": list(repeated_quotes),
         "routing": inference_snapshot(config.llm, ("glossary.extract",)),
     }
     return hashlib.sha256(
@@ -53,6 +64,8 @@ class BibleSeedService:
     def __init__(self, agent: BookBibleAgent, config: Config):
         self._agent = agent
         self._config = config
+        self.last_conventions: tuple[str, ...] = ()
+        self.last_quote_targets: dict[str, str] = {}
 
     def ensure_seeded(
         self,
@@ -62,12 +75,22 @@ class BibleSeedService:
         source_corpus: str,
         book_synopsis: str,
         style: str,
+        repeated_quotes: Sequence[str] = (),
         progress: ProgressFn | None = None,
     ) -> dict[str, tuple[str, ...]]:
         """Seed the glossary once before translation; return observed variant spellings."""
         manifest = store.load_manifest()
         source_hash = str(manifest.get("source_sha256") or "")
-        fp = _bible_fingerprint(self._config, source_hash, digests, book_synopsis, style)
+        existing_terms = store.all_terms()
+        fp = _bible_fingerprint(
+            self._config,
+            source_hash,
+            digests,
+            book_synopsis,
+            style,
+            user_terms=existing_terms,
+            repeated_quotes=repeated_quotes,
+        )
 
         saved = store.read_artifact(_BIBLE_ARTIFACT)
         if isinstance(saved, dict) and saved.get("fingerprint") == fp:
@@ -76,18 +99,27 @@ class BibleSeedService:
                 for k, v in (saved.get("variants_by_source") or {}).items()
                 if isinstance(k, str) and isinstance(v, list)
             }
+            self.last_conventions = tuple(
+                c for c in (saved.get("conventions") or ()) if isinstance(c, str) and c.strip()
+            )
+            self.last_quote_targets = {
+                k: v
+                for k, v in (saved.get("quote_targets") or {}).items()
+                if isinstance(k, str) and isinstance(v, str) and v.strip()
+            }
             store.log_event(
                 "glossary_bible_reused",
                 seeded=len(saved.get("seeded_sources") or []),
                 divergent=saved.get("divergent_count", 0),
+                conventions=len(self.last_conventions),
+                pretranslated_quotes=len(self.last_quote_targets),
             )
             return variants
 
         if progress:
             progress(0, 0, "Compiling Book Bible (entropy probe)…")
 
-        existing_terms = store.all_terms()
-        existing_keys = {t.source for t in existing_terms}
+        existing_keys = {normalize_match_text(t.source).strip() for t in existing_terms}
         max_candidates = min(260, max(120, len(digests) * 12))
         result = self._agent.compile_bible(
             digests,
@@ -100,10 +132,25 @@ class BibleSeedService:
 
         inserted: list[str] = []
         for term in result.terms:
-            if term.source in existing_keys:
+            norm_src = normalize_match_text(term.source).strip()
+            if norm_src in existing_keys:
                 continue
             store.upsert_term(term)
+            existing_keys.add(norm_src)
             inserted.append(term.source)
+
+        quote_targets: dict[str, str] = {}
+        if repeated_quotes:
+            all_terms = store.all_terms()
+            quote_targets = self._agent.pretranslate_quotes(
+                repeated_quotes,
+                terms=all_terms,
+                style=style,
+                conventions=result.conventions,
+            )
+
+        self.last_conventions = result.conventions
+        self.last_quote_targets = quote_targets
 
         record = {
             "version": _BIBLE_VERSION,
@@ -112,6 +159,8 @@ class BibleSeedService:
             "divergent_count": result.divergent_count,
             "seeded_sources": inserted,
             "variants_by_source": {k: list(v) for k, v in result.variants_by_source.items()},
+            "conventions": list(result.conventions),
+            "quote_targets": quote_targets,
         }
         store.write_artifact(_BIBLE_ARTIFACT, record)
         store.log_event(
@@ -119,5 +168,7 @@ class BibleSeedService:
             candidates=result.candidate_count,
             divergent=result.divergent_count,
             seeded=len(inserted),
+            conventions=len(result.conventions),
+            pretranslated_quotes=len(quote_targets),
         )
         return result.variants_by_source

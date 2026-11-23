@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 
 from ...agents.base import Messages
+from ...agents.batch_risk import has_embedded_verse
 from ...agents.polisher import Polisher
 from ...agents.sparse_editor import SparseSemanticEditor
 from ...agents.translator import Translator
@@ -35,6 +36,7 @@ class BatchPlan:
     next_source: str
     allow_empty_translations: bool = False
     entity_markers: bool = False
+    variants_by_source: Mapping[str, Sequence[str]] | None = None
 
     @classmethod
     def capture(
@@ -52,6 +54,7 @@ class BatchPlan:
         *,
         allow_empty_translations: bool = False,
         entity_markers: bool = False,
+        variants_by_source: Mapping[str, Sequence[str]] | None = None,
     ) -> BatchPlan:
         """Detach mutable term and annotation metadata from subsequent chapter updates."""
         return cls(
@@ -68,6 +71,7 @@ class BatchPlan:
             next_source,
             allow_empty_translations,
             entity_markers,
+            dict(variants_by_source) if variants_by_source else None,
         )
 
 
@@ -117,6 +121,7 @@ class PolishJob:
     style: str
     next_source: str
     draft: BatchDraft
+    variants_by_source: Mapping[str, Sequence[str]] | None = None
 
     @classmethod
     def from_plan(cls, plan: BatchPlan, draft: BatchDraft) -> PolishJob:
@@ -129,6 +134,7 @@ class PolishJob:
             plan.style,
             plan.next_source,
             draft,
+            plan.variants_by_source,
         )
 
 
@@ -167,6 +173,7 @@ class TranslationBatchExecutor:
                         glossary_terms=list(plan.terms),
                         style=plan.style,
                         next_source=plan.next_source,
+                        variants_by_source=plan.variants_by_source,
                     )
                     polished = None if sparse.failed else list(sparse.targets)
                 else:
@@ -219,10 +226,14 @@ class TranslationBatchExecutor:
                     else mask_plan.legend_block
                 )
 
-        if sum(1 for src in plan.sources if is_verse_segment(src)) >= 2:
+        has_couplets = sum(1 for src in plan.sources if is_verse_segment(src)) >= 2
+        has_embedded = any(
+            has_embedded_verse(src, source_lang=self._translator.src) for src in plan.sources
+        )
+        if has_couplets or has_embedded:
             verse_note = (
-                "[Verse formatting note: this batch contains rhymed verse couplets. "
-                "Render each couplet as two explicit lines separated by \\n, never inline prose or ' / '.]"
+                "[Verse formatting note: this batch contains verse couplets or embedded poems/lyrics. "
+                "Render each verse line/couplet with explicit \\n line breaks, never inline prose or ' / '.]"
             )
             context_for_model = (
                 f"{context_for_model}\n\n{verse_note}".strip() if context_for_model else verse_note
@@ -279,6 +290,7 @@ class TranslationBatchExecutor:
                 glossary_terms=list(job.terms),
                 style=job.style,
                 next_source=job.next_source,
+                variants_by_source=job.variants_by_source,
             )
             if sparse.failed or len(sparse.targets) != len(job.draft.targets):
                 return None

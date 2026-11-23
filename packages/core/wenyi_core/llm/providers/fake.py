@@ -58,6 +58,7 @@ class FakeClient(LLMClient):
         operation: str,
         json_mode: bool = False,
         max_tokens: int | None = None,
+        thinking_boost: int = 0,
     ) -> str:
         from ..operations import require_operation
         from ..routing import operation_route
@@ -76,6 +77,7 @@ class FakeClient(LLMClient):
                 "max_tokens": route.max_output_tokens,
                 "model": route.model,
                 "provider": route.provider,
+                "thinking_boost": thinking_boost,
             }
         )
         if self.handler is not None:

@@ -1,14 +1,16 @@
 """Pre-translation Book Bible compiler with dual-context entropy probing.
 
-Build a compact, high-signal frozen glossary *before* chapter 1 translates:
-1. Deterministically mine recurring entity candidates from chapter digests (which already
-   quote source-spelling names/terms) and whole-book source frequency (>= 2 occurrences).
+Build a compact, high-signal frozen glossary and book-wide convention sheet *before* chapter 1:
+1. Deterministically mine recurring entity candidates from chapter digests and whole-book
+   source frequency across CJK (Chinese & Japanese incl. katakana/honorifics/ruby-stripped
+   kanji), bicameral scripts (Latin, Greek, Cyrillic with connectors/titles), and unicameral
+   scripts (Arabic, Hebrew, Hangul, Indic, etc.).
 2. Extract two distant short source snippets per candidate and translate them in separate,
    independent calls using the economical ``glossary.extract`` route to measure whether the
    model disagrees with itself (high entropy) or produces generic pronouns/titles.
-3. Adjudicate all divergent entities and core cast anchors once globally with synopsis +
-   style context so chapter 1 starts anchored, per-batch extraction is eliminated from the
-   critical path, and parallel chapters share one immutable glossary prefix.
+3. Cluster linked morpheme families and adjudicate all divergent entities + core cast anchors
+   with synopsis + style context (chunking large books safely), emitting canonical terms,
+   spoiler-safe gender metadata, and a compact book-wide convention sheet.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from __future__ import annotations
 import logging
 import re
 import unicodedata
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -39,6 +41,16 @@ _LOGGER = logging.getLogger(__name__)
 
 # CJK runs inside target-language digests (digests quote original source names in source spelling).
 _CJK_SPAN_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]{2,6}")
+# Japanese katakana entity spans (allow middle-dot / equals / prolonged sound mark).
+_JA_KATAKANA_RE = re.compile(r"[\u30a0-\u30ff][\u30a0-\u30ffー・＝=]{1,15}[\u30a0-\u30ffー]")
+# Japanese honorific-anchored character names (capture stem before honorific).
+_JA_HONORIFIC_NAME_RE = re.compile(
+    r"([\u3400-\u9fff\uf900-\ufaff]{1,5}|[\u30a0-\u30ffー]{2,12})"
+    r"(?:さん|様|さま|殿|どの|君|くん|ちゃん|氏|先生|先輩|卿)"
+)
+# Japanese/Chinese bracketed title/artifact names 《...》 or 『...』.
+_BRACKETED_TITLE_RE = re.compile(r"[《『]([^《》『』\n]{2,14})[》』]")
+_RUBY_MARKER_RE = re.compile(r"〘[^〙]*〙")
 
 
 def _bicameral_letter_classes() -> tuple[str, str]:
@@ -57,17 +69,137 @@ def _bicameral_letter_classes() -> tuple[str, str]:
 
 
 _UPPER_LETTERS, _LOWER_LETTERS = _bicameral_letter_classes()
+_CAP_WORD = rf"(?:[{_UPPER_LETTERS}](?:['’][{_UPPER_LETTERS}])?[{_LOWER_LETTERS}]+(?:-[{_UPPER_LETTERS}][{_LOWER_LETTERS}]+)?)"
+_TITLE_PREFIX = r"(?:(?:Mr|Mrs|Ms|Dr|St|Sir|Lord|Lady|King|Queen|Prince|Princess|Duke|Count|Baron|General|Captain|Professor)\.?\s+)"
+_CONNECTOR = r"(?:\s+(?:of|the|de|du|des|la|le|van|von|der|den)){1,2}"
 # Capitalized multi-word / proper-noun sequences across Latin (incl. Extended), Greek and Cyrillic.
 _LATIN_ENTITY_RE = re.compile(
-    rf"\b[{_UPPER_LETTERS}][{_LOWER_LETTERS}]+(?:\s+[{_UPPER_LETTERS}][{_LOWER_LETTERS}]+){{0,3}}\b"
+    rf"\b{_TITLE_PREFIX}?{_CAP_WORD}(?:(?:{_CONNECTOR})?\s+{_CAP_WORD}){{0,4}}\b"
 )
+_LATIN_SIMPLE_RE = re.compile(rf"\b{_CAP_WORD}(?:\s+{_CAP_WORD}){{0,3}}\b")
 _WORD_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
+
+# High-frequency sentence-initial Latin words that are never proper nouns on their own.
+_LATIN_SENTENCE_NOISE = frozenset(
+    {
+        "the",
+        "this",
+        "that",
+        "these",
+        "those",
+        "they",
+        "their",
+        "them",
+        "there",
+        "then",
+        "when",
+        "where",
+        "while",
+        "which",
+        "what",
+        "who",
+        "whom",
+        "whose",
+        "with",
+        "without",
+        "within",
+        "from",
+        "into",
+        "upon",
+        "under",
+        "over",
+        "after",
+        "before",
+        "between",
+        "through",
+        "during",
+        "against",
+        "about",
+        "however",
+        "moreover",
+        "therefore",
+        "meanwhile",
+        "although",
+        "though",
+        "because",
+        "since",
+        "unless",
+        "until",
+        "indeed",
+        "perhaps",
+        "still",
+        "never",
+        "always",
+        "often",
+        "sometimes",
+        "suddenly",
+        "finally",
+        "first",
+        "second",
+        "third",
+        "chapter",
+        "prologue",
+        "epilogue",
+        "introduction",
+        "preface",
+        "part",
+        "book",
+        "volume",
+        "section",
+        "note",
+        "author",
+        "but",
+        "and",
+        "for",
+        "not",
+        "nor",
+        "yet",
+        "one",
+        "two",
+        "three",
+        "some",
+        "many",
+        "most",
+        "all",
+        "any",
+        "each",
+        "every",
+        "both",
+        "such",
+        "other",
+        "another",
+        "here",
+        "now",
+        "thus",
+        "hence",
+        "even",
+        "only",
+        "just",
+        "also",
+        "very",
+        "much",
+        "more",
+        "less",
+        "well",
+        "yes",
+        "his",
+        "her",
+        "its",
+        "our",
+        "your",
+        "she",
+        "him",
+        "you",
+    }
+)
 
 
 def _is_unicameral_non_cjk_letter(ch: str) -> bool:
     """Return True for uncased letter characters outside CJK ideographs (Arabic, Hebrew, Hangul, Indic, etc.)."""
     cp = ord(ch)
     if 0x3400 <= cp <= 0x9FFF or 0xF900 <= cp <= 0xFAFF or 0x20000 <= cp <= 0x2FA1F:
+        return False
+    if 0x3040 <= cp <= 0x30FF:
         return False
     return unicodedata.category(ch) == "Lo"
 
@@ -118,6 +250,8 @@ _CJK_STOP_CHARS = frozenset(
 _CJK_EDGE_PARTICLES = frozenset(
     "的了呢吗嗎吧啊呀嘛着著过過在是有为為与與和及或而但就都也却卻便只才将將把被给給从從向往对對于於之其此那这這哪谁誰怎何不莫无無非乃即若虽雖因故则則且又再还還很太更最极極甚颇頗说說道笑问問叫听聽看知想觉覺见見来來去上下来到"
 )
+# Male-presenting Chinese titles used to detect disguised-character gender spoilers.
+_ZH_MALE_PRESENTING_TITLES = ("公子", "少爷", "少爺", "先生", "兄弟", "老弟", "郎君")
 
 
 @dataclass(frozen=True)
@@ -135,6 +269,7 @@ class BibleResult:
     variants_by_source: dict[str, tuple[str, ...]]
     candidate_count: int
     divergent_count: int
+    conventions: tuple[str, ...] = ()
 
 
 # A reading, or one character plus the combining or sound marks NFKC composes into it.
@@ -180,7 +315,6 @@ def _extract_distant_snippets(
     first, second = spans[0], spans[min(second_idx, len(spans) - 1)]
 
     def _slice(span: tuple[int, int]) -> str:
-        # Map the normalized span back to raw offsets so the model sees original case.
         lo = max(0, offsets[span[0]] - radius)
         hi = min(len(corpus), offsets[span[1]] + radius)
         return " ".join(corpus[lo:hi].split())
@@ -197,6 +331,52 @@ def _is_generic_target(target: str, generic_words: frozenset[str]) -> bool:
     return all(w.replace("’", "'") in generic_words for w in words)
 
 
+_JA_TRAILING_HONORIFIC_CHARS = frozenset("様殿君氏卿")
+
+
+def _clean_latin_candidate(token: str) -> str:
+    cleaned = token.strip()
+    if cleaned.startswith(("The ", "A ", "An ")) and len(cleaned.split()) >= 2:
+        cleaned = cleaned.split(" ", 1)[1].strip()
+    return cleaned
+
+
+def _is_latin_noise(token: str) -> bool:
+    parts = [p.strip(".,").casefold() for p in token.split() if p.strip(".,")]
+    if not parts:
+        return True
+    if len(parts) == 1:
+        return parts[0] in _LATIN_SENTENCE_NOISE
+    return all(p in _LATIN_SENTENCE_NOISE for p in parts)
+
+
+def _mine_japanese_spans(text: str) -> set[str]:
+    """Extract kanji, katakana, bracketed titles, and honorific-anchored names from Japanese text."""
+    clean = _RUBY_MARKER_RE.sub("", text)
+    found: set[str] = set()
+    for m in _CJK_SPAN_RE.finditer(clean):
+        tok = m.group(0).strip()
+        if (
+            len(tok) >= 2
+            and tok[0] not in _CJK_EDGE_PARTICLES
+            and tok[-1] not in _CJK_EDGE_PARTICLES
+        ):
+            found.add(tok)
+    for m in _JA_KATAKANA_RE.finditer(clean):
+        tok = m.group(0).strip("・＝=")
+        if len(tok) >= 2:
+            found.add(tok)
+    for m in _JA_HONORIFIC_NAME_RE.finditer(clean):
+        stem = m.group(1).strip("・＝=")
+        if len(stem) >= 2:
+            found.add(stem)
+    for m in _BRACKETED_TITLE_RE.finditer(clean):
+        inner = m.group(1).strip()
+        if 2 <= len(inner) <= 14:
+            found.add(inner)
+    return found
+
+
 def mine_bible_candidates(
     digests: Sequence[str],
     source_corpus: str,
@@ -207,9 +387,9 @@ def mine_bible_candidates(
 ) -> list[BibleCandidate]:
     """Deterministically collect recurring entity candidates from digests + source corpus.
 
-    Priority goes to source-spelling entities explicitly quoted in chapter digests
-    (which are already filtered by the digest LLM to key characters, places and titles),
-    supplemented by high-frequency CJK/Latin spans from the source corpus.
+    Priority goes to source-spelling entities explicitly quoted in chapter digests,
+    supplemented by high-frequency CJK, Japanese (kanji/katakana/honorifics), Latin,
+    Greek/Cyrillic, and unicameral spans from the source corpus.
     """
     if not source_corpus.strip():
         return []
@@ -217,14 +397,18 @@ def mine_bible_candidates(
     blocked = {
         normalize_match_text(s).strip() for s in glossary_context_dependent_sources(source_lang)
     }
-    normalized_corpus = normalize_match_text(source_corpus)
-    is_cjk_source = glossary_single_character_names_only(source_lang) or source_lang.startswith(
-        ("zh", "ja")
-    )
+    clean_corpus = _RUBY_MARKER_RE.sub("", source_corpus)
+    normalized_corpus = normalize_match_text(clean_corpus)
+    src_base = (source_lang or "").lower().split("-", 1)[0]
+    is_ja_source = src_base == "ja"
+    is_zh_source = src_base == "zh" or glossary_single_character_names_only(source_lang)
+    is_cjk_source = is_zh_source or is_ja_source
 
     digest_candidates: set[str] = set()
     joined_digests = "\n".join(digests)
-    if is_cjk_source:
+    if is_ja_source:
+        digest_candidates.update(_mine_japanese_spans(joined_digests))
+    elif is_zh_source:
         for match in _CJK_SPAN_RE.finditer(joined_digests):
             token = match.group(0).strip()
             if (
@@ -233,19 +417,54 @@ def mine_bible_candidates(
                 and token[-1] not in _CJK_EDGE_PARTICLES
             ):
                 digest_candidates.add(token)
+        for match in _BRACKETED_TITLE_RE.finditer(joined_digests):
+            inner = match.group(1).strip()
+            if 2 <= len(inner) <= 10:
+                digest_candidates.add(inner)
     else:
         nfc_digests = unicodedata.normalize("NFC", joined_digests)
-        for match in _LATIN_ENTITY_RE.finditer(nfc_digests):
-            token = match.group(0).strip()
-            if len(token) >= 3:
-                digest_candidates.add(token)
+        for pat in (_LATIN_ENTITY_RE, _LATIN_SIMPLE_RE):
+            for match in pat.finditer(nfc_digests):
+                token = match.group(0).strip()
+                if len(token) >= 3 and not _is_latin_noise(token):
+                    digest_candidates.add(token)
         digest_candidates.update(_extract_unicameral_candidates(nfc_digests))
 
-    # Also mine high-frequency 2..5 char CJK sequences from source_corpus when digests are sparse.
+    # Mine recurring candidates from the source corpus too (for ALL scripts!).
     corpus_counts: Counter[str] = Counter()
-    if is_cjk_source:
-        # Split on punctuation to mine contiguous phrase runs.
-        for chunk in re.findall(r"[\u3400-\u9fff\uf900-\ufaff]{2,}", source_corpus):
+    ja_priority_stems: set[str] = set()
+    if is_ja_source:
+        for m in _JA_KATAKANA_RE.finditer(clean_corpus):
+            tok = m.group(0).strip("・＝=")
+            if len(tok) >= 2:
+                corpus_counts[tok] += 1
+                ja_priority_stems.add(tok)
+        for m in _JA_HONORIFIC_NAME_RE.finditer(clean_corpus):
+            stem = m.group(1).strip("・＝=")
+            if len(stem) >= 2:
+                corpus_counts[stem] += 1
+                ja_priority_stems.add(stem)
+        for m in _BRACKETED_TITLE_RE.finditer(clean_corpus):
+            inner = m.group(1).strip()
+            if 2 <= len(inner) <= 14:
+                corpus_counts[inner] += 1
+                ja_priority_stems.add(inner)
+        for chunk in re.findall(r"[\u3400-\u9fff\uf900-\ufaff]{2,}", clean_corpus):
+            clen = len(chunk)
+            for n in (2, 3, 4, 5):
+                if clen < n:
+                    continue
+                for start in range(clen - n + 1):
+                    gram = chunk[start : start + n]
+                    if (
+                        gram[0] in _CJK_EDGE_PARTICLES
+                        or gram[-1] in _CJK_EDGE_PARTICLES
+                        or gram[-1] in _JA_TRAILING_HONORIFIC_CHARS
+                    ):
+                        continue
+                    corpus_counts[gram] += 1
+    elif is_zh_source:
+        for chunk in re.findall(r"[\u3400-\u9fff\uf900-\ufaff]{2,}", clean_corpus):
             clen = len(chunk)
             for n in (2, 3, 4, 5):
                 if clen < n:
@@ -255,6 +474,24 @@ def mine_bible_candidates(
                     if gram[0] in _CJK_EDGE_PARTICLES or gram[-1] in _CJK_EDGE_PARTICLES:
                         continue
                     corpus_counts[gram] += 1
+    else:
+        nfc_corpus = unicodedata.normalize("NFC", clean_corpus)
+        # Count mid-sentence or multi-word capitalized entities directly from source_corpus.
+        for match in _LATIN_ENTITY_RE.finditer(nfc_corpus):
+            token = _clean_latin_candidate(match.group(0))
+            if len(token) < 3 or _is_latin_noise(token):
+                continue
+            pos = match.start()
+            is_multiword = " " in token or "-" in token or "'" in token or "’" in token
+            if not is_multiword and pos > 0:
+                prev_chunk = nfc_corpus[max(0, pos - 3) : pos]
+                if not prev_chunk.strip() or prev_chunk.rstrip().endswith(
+                    (".", "!", "?", "\n", '"', "“")
+                ):
+                    continue
+            elif not is_multiword and pos == 0:
+                continue
+            corpus_counts[token] += 1
 
     # Score and filter candidates with exact corpus occurrence counts.
     raw_scored: dict[str, tuple[int, bool]] = {}
@@ -266,24 +503,29 @@ def mine_bible_candidates(
         if count >= 2:
             raw_scored[cand] = (count, True)
 
-    # Supplement with top recurring non-digest n-grams (>=3 for 3..5-char compounds, >=4 for 2-char).
+    # Supplement with top recurring non-digest candidates.
     for gram, approx_count in corpus_counts.most_common(500):
-        min_needed = 4 if len(gram) == 2 else 3
-        if approx_count < 3:
+        if is_ja_source:
+            min_needed = 2 if (gram in ja_priority_stems or len(gram) >= 3) else 3
+        elif is_cjk_source:
+            min_needed = 4 if len(gram) == 2 else 3
+        else:
+            min_needed = 2 if " " in gram else 3
+        if approx_count < 2:
             break
         if approx_count < min_needed or gram in raw_scored:
             continue
         norm = normalize_match_text(gram).strip()
         if not norm or norm in existing or norm in blocked:
             continue
-        if all(ch in _CJK_STOP_CHARS for ch in gram):
+        if is_cjk_source and all(ch in _CJK_STOP_CHARS for ch in gram):
             continue
         count = len(source_occurrence_spans(gram, normalized_corpus))
         if count >= min_needed:
             raw_scored[gram] = (count, False)
 
-    # Prune substrings mostly shadowed by a longer candidate (e.g., drop "弼馬" when
-    # "弼馬溫" covers nearly all its hits; keep standalone recurring short names like "行者").
+    # Prune substrings mostly shadowed by a longer candidate. Never let a non-digest corpus
+    # n-gram shadow a digest-validated entity.
     sorted_keys = sorted(
         raw_scored.keys(),
         key=lambda k: (raw_scored[k][1], raw_scored[k][0], len(k), k),
@@ -296,7 +538,9 @@ def mine_bible_candidates(
         for other in raw_scored:
             if other == cand or len(other) <= len(cand) or cand not in other:
                 continue
-            o_count, _ = raw_scored[other]
+            o_count, o_from_digest = raw_scored[other]
+            if c_from_digest and not o_from_digest:
+                continue
             ratio = 0.80 if c_from_digest else 0.70
             if o_count >= c_count * ratio and (c_count - o_count) <= 2:
                 shadowed = True
@@ -326,8 +570,109 @@ def mine_bible_candidates(
     return candidates
 
 
+def _cluster_candidate_rows(
+    candidates: Sequence[tuple[BibleCandidate, str, str, bool]],
+) -> list[str]:
+    """Order and group candidates sharing a >=2-char stem so linked families are adjudicated together."""
+    if not candidates:
+        return []
+    sources = [c.source for c, _, _, _ in candidates]
+    # Build stem -> indices map for CJK 2-char prefixes/suffixes or multi-word tokens.
+    stem_groups: dict[str, list[int]] = defaultdict(list)
+    for idx, src in enumerate(sources):
+        clean = src.strip()
+        if " " in clean:
+            for tok in clean.split():
+                if len(tok) >= 4 and tok.casefold() not in _LATIN_SENTENCE_NOISE:
+                    stem_groups[tok.casefold()].append(idx)
+        elif len(clean) >= 3:
+            # Share 2-char prefix (e.g. 明月楼 / 明月公主) or 2-char suffix (e.g. 德亲王 / 齐王 -> 王).
+            stem_groups[clean[:2]].append(idx)
+            stem_groups[clean[-2:]].append(idx)
+
+    # Emit multi-member families first (tagged as family clusters), then remaining standalone items.
+    emitted: set[int] = set()
+    rows: list[str] = []
+
+    def _fmt(idx: int) -> str:
+        cand, rend_a, rend_b, divergent = candidates[idx]
+        tag = "DIVERGENT" if divergent else "ANCHOR"
+        return (
+            f"- {cand.source} (count={cand.count}, {tag}) | probeA={rend_a!r} | probeB={rend_b!r}"
+        )
+
+    for stem, indices in sorted(stem_groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        fresh = list(dict.fromkeys(i for i in indices if i not in emitted))
+        if len(fresh) >= 2:
+            rows.append(f"[Linked family: {stem}]")
+            for i in fresh:
+                rows.append(_fmt(i))
+                emitted.add(i)
+    for idx in range(len(candidates)):
+        if idx not in emitted:
+            rows.append(_fmt(idx))
+    return rows
+
+
+def _apply_spoiler_safe_gender_guard(
+    terms: list[GlossaryTerm],
+    source_corpus: str,
+    *,
+    source_lang: str,
+) -> list[GlossaryTerm]:
+    """Clear frozen gender on disguised/ambiguous Chinese characters so chapter 1 never spoils reveals."""
+    if not source_lang.lower().startswith("zh") or not source_corpus:
+        return terms
+    out: list[GlossaryTerm] = []
+    for term in terms:
+        if term.type != "person" or term.gender not in {"male", "female"}:
+            out.append(term)
+            continue
+        male_only_hits = 0
+        female_only_hits = 0
+        for m in re.finditer(re.escape(term.source), source_corpus):
+            raw_window = source_corpus[m.end() : min(len(source_corpus), m.end() + 35)]
+            # Stop at sentence boundaries so pronouns in the next sentence don't bleed in, and
+            # require exclusive pronoun evidence per mention so mixed-gender dialogue about two
+            # people ("张明看着李芳，他说她应该回家。") is not mistaken for a disguised character.
+            clause = re.split(r"[。！？\n]", raw_window, maxsplit=1)[0]
+            has_male = "他" in clause
+            has_female = "她" in clause
+            if has_male and not has_female:
+                male_only_hits += 1
+            elif has_female and not has_male:
+                female_only_hits += 1
+        title_clash = term.gender == "female" and any(
+            t in term.source for t in _ZH_MALE_PRESENTING_TITLES
+        )
+        # If separate mentions use exclusively 他 vs exclusively 她 for the same character (or pair
+        # a male-presenting title like 公子 with female gender), keep gender unknown so scenes
+        # follow local POV pronouns.
+        if (male_only_hits >= 1 and female_only_hits >= 1) or title_clash:
+            note = term.note
+            spoiler_note = "Follow scene-local POV pronouns; do not spoil gender."
+            if spoiler_note.lower() not in note.lower():
+                note = f"{note}; {spoiler_note}".strip("; ").strip()
+            out.append(
+                GlossaryTerm(
+                    source=term.source,
+                    target=term.target,
+                    type=term.type,
+                    gender="",
+                    aliases=list(term.aliases),
+                    first_chapter=term.first_chapter,
+                    note=note,
+                    reading=term.reading,
+                    status=term.status,
+                )
+            )
+        else:
+            out.append(term)
+    return out
+
+
 class BookBibleAgent(Agent):
-    """Dual-context entropy probe + single global adjudicator for pre-translation bible seeding."""
+    """Dual-context entropy probe + chunked global adjudicator for pre-translation bible seeding."""
 
     def _probe_snippets(
         self,
@@ -339,29 +684,28 @@ class BookBibleAgent(Agent):
         results: dict[str, str] = {}
         system = (
             f"You are a fast terminology prober translating {self.src} entity spans into {self.tgt}. "
-            f"For each numbered item, give the natural {self.tgt} rendering of the named entity "
+            f"For each item, give the natural {self.tgt} rendering of the named entity "
             "as used in its snippet. If the span is an ordinary verb, common noun, pronoun, or "
             "context-dependent form of address (like 'I', 'my lord', 'said'), return an empty string. "
-            'Include EVERY numbered source key in renderings (use "" to exclude it).\n'
-            'Return ONLY JSON: {"renderings": {"<source>": "<target or empty>", ...}}.'
+            'Include EVERY item in renderings (use "" to exclude it), keyed by the EXACT source text.\n'
+            'Return ONLY JSON: {"renderings": {"<exact_source>": "<target or empty>", ...}}.'
         )
 
         def _query_chunk(subchunk: list[tuple[str, str]], *, retry: bool = False) -> dict[str, Any]:
             lines = [f"{i}. {src} | {snip}" for i, (src, snip) in enumerate(subchunk)]
             reminder = (
                 "The previous reply omitted or returned a non-string value for these keys. "
-                'Include EVERY numbered source key with a string value ("" to exclude).\n'
+                'Include EVERY source string as a JSON key with a string value ("" to exclude).\n'
                 if retry
                 else ""
             )
+            example_src = subchunk[0][0] if subchunk else "source"
             user = (
                 f"Source language: {self.src}, Target language: {self.tgt}\n"
                 f"{reminder}Render each term in context:\n"
                 + "\n".join(lines)
-                + '\nReturn JSON: {"renderings": {"source": "target"}}'
+                + f'\nReturn JSON: {{"renderings": {{"{example_src}": "target", ...}}}}'
             )
-            # A failed or malformed probe batch raises rather than silently dropping candidates
-            # or letting ensure_seeded cache an empty Bible.
             data = self._complete_json_dict(
                 [
                     {"role": "system", "content": system},
@@ -374,22 +718,34 @@ class BookBibleAgent(Agent):
                 raise ValueError("Book Bible probe returned no renderings map")
             return raw_map
 
+        def _lookup_entry(raw_map: dict[str, Any], idx: int, src: str) -> tuple[bool, Any]:
+            """Resolve candidate by exact source key, or safely accept numeric index fallback."""
+            if src in raw_map:
+                return True, raw_map[src]
+            idx_key = str(idx)
+            if idx_key in raw_map:
+                return True, raw_map[idx_key]
+            prefixed = f"{idx}. {src}"
+            if prefixed in raw_map:
+                return True, raw_map[prefixed]
+            return False, None
+
         for offset in range(0, len(items), batch_size):
-            chunk = items[offset : offset + batch_size]
+            chunk = list(items[offset : offset + batch_size])
             raw_map = _query_chunk(chunk)
             missing: list[tuple[str, str]] = []
-            for src, snip in chunk:
-                val = raw_map.get(src)
-                if src in raw_map and isinstance(val, str):
+            for idx, (src, snip) in enumerate(chunk):
+                found, val = _lookup_entry(raw_map, idx, src)
+                if found and isinstance(val, str):
                     results[src] = val.strip()
                 else:
                     missing.append((src, snip))
             if missing:
                 retry_map = _query_chunk(missing, retry=True)
-                for src, _ in missing:
-                    if src not in retry_map:
+                for idx, (src, _) in enumerate(missing):
+                    found, val = _lookup_entry(retry_map, idx, src)
+                    if not found:
                         raise ValueError(f"Book Bible probe omitted candidate: {src}")
-                    val = retry_map[src]
                     if not isinstance(val, str):
                         raise ValueError(
                             f"Book Bible probe returned a non-string rendering for: {src}"
@@ -397,47 +753,60 @@ class BookBibleAgent(Agent):
                     results[src] = val.strip()
         return results
 
-    def _adjudicate(
+    def _adjudicate_chunk(
         self,
         candidates: Sequence[tuple[BibleCandidate, str, str, bool]],
         *,
         book_synopsis: str,
         style: str,
         existing_terms: Sequence[GlossaryTerm],
-    ) -> list[GlossaryTerm]:
-        """Settle all kept candidates once globally with synopsis + genre + probe context."""
+        include_conventions: bool = True,
+    ) -> tuple[list[GlossaryTerm], list[str]]:
+        """Adjudicate one bounded chunk of candidates with global synopsis + anchor terms."""
         if not candidates:
-            return []
+            return [], []
         existing_block = "\n".join(
-            f"- {t.source} => {t.target} ({t.type})" for t in existing_terms[:40]
+            f"- {t.source} => {t.target} ({t.type})" for t in existing_terms[:60]
         )
-        rows = []
-        for cand, rend_a, rend_b, divergent in candidates:
-            tag = "DIVERGENT" if divergent else "ANCHOR"
-            rows.append(
-                f"- {cand.source} (count={cand.count}, {tag}) | probeA={rend_a!r} | probeB={rend_b!r}"
-            )
+        rows = _cluster_candidate_rows(candidates)
+        conv_schema = (
+            ', "conventions": ["Short book-wide convention rule (max 8 rules total)"]'
+            if include_conventions
+            else ""
+        )
+        conv_rule = (
+            "7. Also return 4-6 concise book-wide `conventions` for recurring NON-glossary elements "
+            "(social ranks, honorific gradation, verse/tune-title formatting, date style). "
+            "Prioritize natural, idiomatic literary phrasing in the target language — NEVER prescribe "
+            "stiff translationese calques (e.g. prefer natural 'I' over archaic literalized humble "
+            "pronouns, concise polity/place names over repetitive 'the State of X', literary era "
+            "dates over abbreviated numerals, and natural direct-address titles over awkward "
+            "third-person address). Never collapse distinct ranks (e.g. keep a sovereign King/Emperor "
+            "distinct from a subordinate Prince).\n"
+            if include_conventions
+            else ""
+        )
         system = (
             f"You are a senior literary translation editor compiling a frozen Book Bible ({self.src} -> {self.tgt}). "
             "Given recurring book entities and their two independent draft probe renderings, decide ONE canonical "
             "translation for each genuine proper noun, title, epithet, place, organization, or setting-specific term.\n"
             "Rules:\n"
             "1. EXCLUDE ordinary words, verb phrases, idioms, pronouns, generic standalone common nouns/titles, "
-            "bare forms of address (like 孤, 貧僧, 師父, 大人, 老孫, 小人), and truncated stems/fragments of a longer "
-            "compound term already present in the candidate list.\n"
+            "context-dependent bare forms of address, and truncated stems/fragments of a longer compound term "
+            "already present in the candidate list.\n"
             "2. Resolve every DIVERGENT entry decisively into ONE consistent canonical target.\n"
-            "3. Maintain ONE coherent naming policy across the whole book: translate descriptive epithets, titles, "
-            "places, palaces, caves, artifacts, spells, and astronomical/religious terms into idiomatic "
-            f"{self.tgt} rather than opaque transliteration, and keep parallel place/deity pairs in the same "
-            "convention. Every target must be written in the target language "
-            f"({self.tgt}).\n"
-            "4. When the target language uses Latin script, keep standard unsplit romanization for Chinese "
-            "personal and dharma names (e.g. Sanzang, not San Zang; Wukong, not Wu Kong) unless a recurring "
-            "byname is a transparent epithet.\n"
-            "5. Keep linked name families consistent (e.g. a person, their estate, and their title should share one root).\n"
-            "6. Respect any existing user-imported glossary mappings listed below.\n"
+            f"3. Maintain ONE coherent naming policy across the whole book suitable for its genre and era. "
+            f"Every target must be written in the target language ({self.tgt}).\n"
+            "4. Keep linked name families (grouped under [Linked family: ...]) strictly consistent: a person, "
+            "their estate/pavilion/tower, and parallel noble/official titles must share one consistent root and "
+            "syntactic template.\n"
+            "5. Spoiler-safe gender: ONLY set `male` or `female` when unambiguous from the start of the book. "
+            "If a character is disguised, cross-dressing, or has a hidden gender/identity revealed later, set "
+            '`gender: "unknown"` and note "follow scene POV pronouns; do not spoil reveal".\n'
+            "6. Respect any existing locked glossary mappings listed below.\n"
+            f"{conv_rule}"
             'Return ONLY JSON: {"terms": [{"source": "...", "target": "...", "type": "person|place|organization|term", '
-            '"gender": "male|female|unknown", "aliases": [], "note": "..."}]}.'
+            '"gender": "male|female|unknown", "aliases": [], "note": "..."}]' + conv_schema + "}."
         )
         user = (
             f"[Style guide]\n{style or '(none)'}\n\n"
@@ -445,10 +814,10 @@ class BookBibleAgent(Agent):
             f"[Existing locked glossary]\n{existing_block or '(none)'}\n\n"
             f"[Candidates to adjudicate ({len(candidates)})]\n"
             + "\n".join(rows)
-            + '\n\nReturn JSON: {"terms": [...]}'
+            + '\n\nReturn JSON: {"terms": [...]'
+            + (', "conventions": [...]' if include_conventions else "")
+            + "}"
         )
-        # A failed adjudication raises instead of returning no terms: an empty Bible would be
-        # cached as compiled and reused by every later run.
         data = self._complete_json_dict(
             [
                 {"role": "system", "content": system},
@@ -502,7 +871,123 @@ class BookBibleAgent(Agent):
                     note=note,
                 )
             )
-        return out
+
+        conventions: list[str] = []
+        if include_conventions and isinstance(data.get("conventions"), list):
+            for entry in data["conventions"]:
+                if isinstance(entry, str) and entry.strip():
+                    conventions.append(entry.strip()[:280])
+                if len(conventions) >= 8:
+                    break
+        return out, conventions
+
+    def _adjudicate(
+        self,
+        candidates: Sequence[tuple[BibleCandidate, str, str, bool]],
+        *,
+        book_synopsis: str,
+        style: str,
+        existing_terms: Sequence[GlossaryTerm],
+        source_corpus: str = "",
+        chunk_size: int = 55,
+    ) -> list[GlossaryTerm]:
+        """Settle all kept candidates, chunking large sets safely so output never truncates."""
+        terms, _conventions = self._adjudicate_with_conventions(
+            candidates,
+            book_synopsis=book_synopsis,
+            style=style,
+            existing_terms=existing_terms,
+            source_corpus=source_corpus,
+            chunk_size=chunk_size,
+        )
+        return terms
+
+    def _adjudicate_with_conventions(
+        self,
+        candidates: Sequence[tuple[BibleCandidate, str, str, bool]],
+        *,
+        book_synopsis: str,
+        style: str,
+        existing_terms: Sequence[GlossaryTerm],
+        source_corpus: str = "",
+        chunk_size: int = 55,
+    ) -> tuple[list[GlossaryTerm], tuple[str, ...]]:
+        """Settle all kept candidates and compile book-wide non-glossary conventions."""
+        if not candidates:
+            return [], ()
+        all_terms: list[GlossaryTerm] = []
+        conventions: list[str] = []
+        anchors = list(existing_terms)
+        step = len(candidates) if len(candidates) <= 55 else min(chunk_size, 45)
+        for offset in range(0, len(candidates), step):
+            chunk = candidates[offset : offset + step]
+            chunk_terms, chunk_convs = self._adjudicate_chunk(
+                chunk,
+                book_synopsis=book_synopsis,
+                style=style,
+                existing_terms=anchors,
+                include_conventions=(offset == 0),
+            )
+            all_terms.extend(chunk_terms)
+            anchors.extend(chunk_terms)
+            if chunk_convs:
+                conventions.extend(chunk_convs)
+        safe_terms = _apply_spoiler_safe_gender_guard(
+            all_terms, source_corpus, source_lang=self.src
+        )
+        return safe_terms, tuple(conventions[:8])
+
+    def pretranslate_quotes(
+        self,
+        spans: Sequence[str],
+        *,
+        terms: Sequence[GlossaryTerm],
+        style: str = "",
+        conventions: Sequence[str] = (),
+    ) -> dict[str, str]:
+        """Pre-render cross-chapter repeated verbatim quotes/epigraphs once for parallel stability."""
+        items = [s.strip() for s in spans if s and s.strip()][:15]
+        if not items:
+            return {}
+        glossary_lines = "\n".join(f"- {t.source} -> {t.target}" for t in terms[:60])
+        conv_block = "\n".join(f"- {c}" for c in conventions)
+        lines = [f"{i}. {span}" for i, span in enumerate(items)]
+        system = (
+            f"You are a literary translator rendering recurring book quotations, inscriptions, and "
+            f"verse passages ({self.src} -> {self.tgt}) into canonical target phrasing that every "
+            "chapter will reuse verbatim. Format multi-clause verse with explicit '\\n' line breaks.\n"
+            'Return ONLY JSON: {"quotes": {"0": "<canonical translation>", ...}}.'
+        )
+        user = (
+            f"[Style guide]\n{style or '(none)'}\n\n"
+            + (f"[Book conventions]\n{conv_block}\n\n" if conv_block else "")
+            + f"[Glossary]\n{glossary_lines or '(none)'}\n\n"
+            + "[Recurring quotations]\n"
+            + "\n".join(lines)
+            + '\n\nReturn JSON: {"quotes": {"0": "..."}}'
+        )
+        try:
+            data = self._complete_json_dict(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                operation="glossary.extract",
+            )
+        except Exception as exc:  # noqa: BLE001 - optional optimization; chapters still translate.
+            _LOGGER.warning("Pre-translating repeated quotes failed (%s); skipping", exc)
+            return {}
+        raw_quotes = data.get("quotes") if isinstance(data, dict) else None
+        if not isinstance(raw_quotes, dict):
+            return {}
+        rendered: dict[str, str] = {}
+        for idx, span in enumerate(items):
+            val = raw_quotes.get(str(idx))
+            if not isinstance(val, str):
+                val = raw_quotes.get(span)
+            if isinstance(val, str) and val.strip():
+                rendered[span] = val.strip()
+        return rendered
 
     def compile_bible(
         self,
@@ -525,7 +1010,11 @@ class BookBibleAgent(Agent):
         )
         if not candidates:
             return BibleResult(
-                terms=(), variants_by_source={}, candidate_count=0, divergent_count=0
+                terms=(),
+                variants_by_source={},
+                candidate_count=0,
+                divergent_count=0,
+                conventions=(),
             )
 
         # Dual-context entropy probe: snippet A and snippet B in two separate calls so neither
@@ -560,21 +1049,33 @@ class BookBibleAgent(Agent):
                 if distinct_vars:
                     variants_by_source[cand.source] = distinct_vars
 
-        terms = self._adjudicate(
+        terms, conventions = self._adjudicate_with_conventions(
             to_adjudicate,
             book_synopsis=book_synopsis,
             style=style,
             existing_terms=existing_terms,
+            source_corpus=source_corpus,
         )
         return BibleResult(
             terms=tuple(terms),
             variants_by_source=variants_by_source,
             candidate_count=len(candidates),
             divergent_count=divergent_count,
+            conventions=conventions,
         )
 
-    def _complete_json_dict(self, messages, *, operation: str) -> dict:
-        data, _raw = self._complete_json_turn(messages, operation=operation)
+    def _complete_json_dict(
+        self,
+        messages,
+        *,
+        operation: str,
+        thinking_boost: int = 0,
+    ) -> dict:
+        data, _raw = self._complete_json_turn(
+            messages,
+            operation=operation,
+            thinking_boost=thinking_boost,
+        )
         if isinstance(data, dict):
             return data
         raise JsonParseError(f"Expected JSON object from {operation}")

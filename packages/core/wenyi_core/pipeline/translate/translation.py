@@ -44,11 +44,16 @@ from ...storage.run_store import STATUS_DONE
 from ..annotate.docx_styles import DocxStyleService
 from .babeldoc_context import BabeldocContext
 from .bible_seed import BibleSeedService
+from .consistency_sweep import ConsistencySweepService
 from .context import render_recent_translations
 from .extraction_queue import ExtractionQueue
 from .glossary_notes import GlossaryNotes
 from .polish_queue import PolishOutcome, PolishQueue
-from .post_normalize import normalize_chapter_latin_typography, normalize_minority_names
+from .post_normalize import (
+    normalize_chapter_cjk_typography,
+    normalize_chapter_latin_typography,
+    normalize_minority_names,
+)
 from .precision import PrecisionBatchExecutor, PrecisionError
 from .quote_memory import QuoteMemory
 from .title_translation import TitleTranslationService
@@ -92,7 +97,10 @@ def _draft_pairs(
     ]
 
 
-_LATIN_TARGET_LANGS = frozenset({"en", "en-US", "en-GB", "fr", "de", "es", "it", "pt", "vi"})
+_LATIN_TARGET_LANGS = frozenset(
+    {"en", "en-US", "en-GB", "fr", "de", "es", "it", "pt", "pt-BR", "pt-PT", "vi"}
+)
+_CJK_HYGIENE_TARGET_LANGS = frozenset({"zh", "zh-Hant"})
 _HUGE_CHAPTER_BATCH_THRESHOLD = 12
 _HUGE_CHAPTER_WAVE_SIZE = 6
 _SOURCE_LOOKBEHIND_PARAS = 3
@@ -126,6 +134,8 @@ class _ParallelWaveSpec:
     polish_mode: str
     entity_markers: bool
     rolling_context_tokens: int
+    quote_memory: QuoteMemory | None = None
+    variants_by_source: dict[str, tuple[str, ...]] | None = None
 
 
 @dataclass(frozen=True)
@@ -254,14 +264,25 @@ class TranslationService:
                 str(store.load_chapter(row["index"]).meta.get("source_digest") or "")
                 for row in manifest.get("chapters", [])
             ]
+            repeated_quotes = (
+                self._quote_memory.cross_chapter_spans() if self._quote_memory is not None else ()
+            )
             self._bible_variants = self._bible_seed.ensure_seeded(
                 store,
                 digests=digests,
                 source_corpus=source_corpus,
                 book_synopsis=book_synopsis,
                 style=style,
+                repeated_quotes=repeated_quotes,
                 progress=progress,
             )
+            if self._bible_seed.last_conventions:
+                conv_lines = "\n".join(f"- {c}" for c in self._bible_seed.last_conventions)
+                conv_block = f"[Book-wide translation conventions]\n{conv_lines}"
+                style = f"{style}\n\n{conv_block}".strip() if style else conv_block
+            if self._quote_memory is not None and self._bible_seed.last_quote_targets:
+                for q_src, q_tgt in self._bible_seed.last_quote_targets.items():
+                    self._quote_memory.seed_canonical(q_src, q_tgt)
             self._runtime.usage.flush(store, scope="bible")
 
         annotation_context_registry = store.load_annotation_contexts()
@@ -350,6 +371,24 @@ class TranslationService:
                 queue.drain()
             # Translate chapter/TOC titles after the body; keep the original book title and use glossary names.
             if not store.pending_chapters():
+                if pipeline.consistency_sweep and only_chapter is None:
+                    if progress:
+                        progress(done, total, "Running cross-chapter consistency sweep…")
+                    all_chapter_indices = [
+                        chapter["index"] for chapter in manifest.get("chapters", [])
+                    ]
+                    sweep = ConsistencySweepService(
+                        self._runtime.sparse_editor,
+                        source_lang=self._runtime.config.source_lang,
+                        target_lang=self._runtime.config.target_lang,
+                    )
+                    sweep.run(
+                        store,
+                        chapter_indices=all_chapter_indices,
+                        terms=glossary.all_terms(),
+                        style=style,
+                    )
+                    self._runtime.usage.flush(store, scope="consistency_sweep")
                 self._titles.run(store, glossary, progress=progress)
                 self._annotations.repair_fallbacks(store, progress=progress)
         except BaseException:
@@ -852,8 +891,14 @@ class TranslationService:
             else:
                 self.update_translation_history(translation_history, ci, batch_start, b)
             if self._quote_memory is not None:
-                for pos, src, tgt in _draft_pairs(ci, batch_start, b):
-                    self._quote_memory.observe(pos, src, tgt)
+                for offset, seg in enumerate(b):
+                    if seg.target:
+                        self._quote_memory.observe(
+                            (ci, batch_start + offset),
+                            seg.source,
+                            seg.target,
+                            prefer_update=True,
+                        )
             if polish_job is not None:
                 # Queue after extraction so terms come from the draft, not a later polish.
                 self._schedule_polish(store, polish_job)
@@ -961,7 +1006,18 @@ class TranslationService:
         target_lang = self._runtime.config.target_lang
         if target_lang in _LATIN_TARGET_LANGS:
             ch_pairs = [(seg.source, seg.target or "") for seg in text_segs]
-            cleaned_targets, _ = normalize_chapter_latin_typography(ch_pairs)
+            cleaned_targets, _ = normalize_chapter_latin_typography(
+                ch_pairs, target_lang=target_lang
+            )
+            for seg, cleaned in zip(text_segs, cleaned_targets):
+                if id(seg) in protected_ids:
+                    continue
+                if cleaned != seg.target:
+                    _set_hygienic_target(seg, cleaned)
+                    typo_fixes += 1
+        elif target_lang in _CJK_HYGIENE_TARGET_LANGS:
+            ch_pairs = [(seg.source, seg.target or "") for seg in text_segs]
+            cleaned_targets, _ = normalize_chapter_cjk_typography(ch_pairs)
             for seg, cleaned in zip(text_segs, cleaned_targets):
                 if id(seg) in protected_ids:
                     continue
@@ -1023,6 +1079,7 @@ class TranslationService:
             ]
         ] = []
         wave_drafts: list[str] = []
+        wave_qm = spec.quote_memory.clone() if spec.quote_memory is not None else None
         error: BaseException | None = None
         stopped_early = False
 
@@ -1046,6 +1103,14 @@ class TranslationService:
                 if bspec.already_done:
                     if bspec.body_context:
                         wave_drafts.extend(t or "" for t in bspec.existing_targets)
+                        if wave_qm is not None:
+                            for offset, (src, tgt) in enumerate(
+                                zip(bspec.sources, bspec.existing_targets)
+                            ):
+                                if tgt:
+                                    wave_qm.observe(
+                                        (spec.chapter, bspec.batch_start + offset), src, tgt
+                                    )
                     continue
                 if not bspec.body_context:
                     # Like the serial path, isolated material gets no rolling context.
@@ -1057,7 +1122,10 @@ class TranslationService:
                     )
                 else:
                     ctx_text = spec.opening_source_lookbehind
-                quote_ref = spec.quote_references_by_batch[batch_idx]
+                if bspec.body_context and wave_qm is not None:
+                    quote_ref = wave_qm.format_prompt_block(bspec.sources)
+                else:
+                    quote_ref = spec.quote_references_by_batch[batch_idx]
                 if quote_ref:
                     ctx_text = f"{ctx_text}\n\n{quote_ref}".strip() if ctx_text else quote_ref
 
@@ -1075,6 +1143,7 @@ class TranslationService:
                     next_source=bspec.next_source,
                     allow_empty_translations=False,
                     entity_markers=spec.entity_markers,
+                    variants_by_source=spec.variants_by_source,
                 )
                 glossary_tokens = count_tokens(
                     self._runtime.translator.render_glossary_block(
@@ -1085,6 +1154,11 @@ class TranslationService:
                     draft = self._batches.translate(plan)
                     if bspec.body_context:
                         wave_drafts.extend(draft.targets)
+                        if wave_qm is not None:
+                            for offset, (src, tgt) in enumerate(zip(bspec.sources, draft.targets)):
+                                wave_qm.observe(
+                                    (spec.chapter, bspec.batch_start + offset), src, tgt
+                                )
                     job = PolishJob.from_plan(plan, draft)
                     ctx_copy = contextvars.copy_context()
                     fut = polish_executor.submit(
@@ -1108,6 +1182,11 @@ class TranslationService:
                     ]
                     if bspec.body_context:
                         wave_drafts.extend(draft_texts)
+                        if wave_qm is not None:
+                            for offset, (src, tgt) in enumerate(zip(bspec.sources, result.targets)):
+                                wave_qm.observe(
+                                    (spec.chapter, bspec.batch_start + offset), src, tgt
+                                )
                     pending_outcomes.append(
                         (
                             bspec,
@@ -1324,6 +1403,12 @@ class TranslationService:
                             polish_mode=pipeline.polish_mode,
                             entity_markers=pipeline.entity_markers,
                             rolling_context_tokens=pipeline.rolling_context_tokens,
+                            quote_memory=self._quote_memory.clone()
+                            if self._quote_memory is not None
+                            else None,
+                            variants_by_source=dict(self._bible_variants)
+                            if self._bible_variants
+                            else None,
                         )
                     )
                     wave_idx += 1
@@ -1343,6 +1428,12 @@ class TranslationService:
                         polish_mode=pipeline.polish_mode,
                         entity_markers=pipeline.entity_markers,
                         rolling_context_tokens=pipeline.rolling_context_tokens,
+                        quote_memory=self._quote_memory.clone()
+                        if self._quote_memory is not None
+                        else None,
+                        variants_by_source=dict(self._bible_variants)
+                        if self._bible_variants
+                        else None,
                     )
                 )
                 chapter_wave_counts[ci] = 1
@@ -1435,8 +1526,14 @@ class TranslationService:
                         draft_pairs = _draft_pairs(ci, out.batch_start, b)
                         self._adherence.observe(draft_pairs)
                         if self._quote_memory is not None:
-                            for pos, src, tgt in draft_pairs:
-                                self._quote_memory.observe(pos, src, tgt)
+                            for offset, seg in enumerate(b):
+                                if seg.target:
+                                    self._quote_memory.observe(
+                                        (ci, out.batch_start + offset),
+                                        seg.source,
+                                        seg.target,
+                                        prefer_update=True,
+                                    )
                         done += len(b)
                         del outcomes[0]
                         completed_by_key[key] = (outcomes, error, wave_complete)

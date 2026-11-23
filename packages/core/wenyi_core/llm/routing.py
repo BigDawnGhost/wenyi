@@ -129,6 +129,36 @@ def operation_route(
     )
 
 
+def escalate_route_thinking(
+    config: LLMConfig,
+    route: ResolvedRoute,
+    *,
+    steps: int = 1,
+    output_hint: int | None = None,
+) -> ResolvedRoute:
+    """Return a higher-thinking route along the adapter's ladder when supported, else ``route``."""
+    if steps <= 0:
+        return route
+    connection = config.providers[route.provider]
+    adapter = provider_spec(route.provider_kind).adapter_type()
+    control = adapter.route_thinking(connection, route.model)
+    if control is None:
+        return route
+    resolved_options = json.loads(route.options_json)
+    next_level = control.escalate(resolved_options, steps=steps)
+    if next_level is None:
+        return route
+    return model_route(
+        config,
+        route.operation,
+        route.profile,
+        origin=f"{route.origin} (escalated:{next_level})",
+        fallbacks=route.fallbacks,
+        output_hint=output_hint,
+        thinking=next_level,
+    )
+
+
 def resolve_routes(config: LLMConfig) -> Mapping[str, ResolvedRoute]:
     """Compile all registered routes without credentials, SDK construction or network I/O."""
     resolved: dict[str, ResolvedRoute] = {}

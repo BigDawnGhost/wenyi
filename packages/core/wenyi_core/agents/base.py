@@ -77,14 +77,24 @@ class Agent:
         *,
         operation: str,
         max_tokens: int | None = None,
+        thinking_boost: int = 0,
     ) -> tuple[Any, str]:
         """Run ``complete`` on ``messages`` and return ``(parsed_json, raw_assistant_text)``."""
-        text = self.client.complete(
-            messages,
-            operation=operation,
-            json_mode=True,
-            max_tokens=max_tokens,
-        )
+        if thinking_boost > 0:
+            text = self.client.complete(
+                messages,
+                operation=operation,
+                json_mode=True,
+                max_tokens=max_tokens,
+                thinking_boost=thinking_boost,
+            )
+        else:
+            text = self.client.complete(
+                messages,
+                operation=operation,
+                json_mode=True,
+                max_tokens=max_tokens,
+            )
         return parse_json_loose(text), text
 
     def _ask_json(
