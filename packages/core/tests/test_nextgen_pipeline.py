@@ -1625,3 +1625,100 @@ def test_chapter_hygiene_preserves_offset_bound_annotation_and_docx_style_segmen
     assert docx_seg.target == 'Sanzang said: "Wait -- now."'
     # Plain segment still receives both typography hygiene and minority-name normalization.
     assert plain_seg.target == 'Pilgrim said, "Wait—now."'
+
+
+def test_bible_candidates_tiebreak_deterministically_at_max_candidates():
+    digests = ["Alpha met Beta and Gamma and Delta."]
+    corpus = "Alpha Alpha. Beta Beta. Gamma Gamma. Delta Delta."
+    first = [
+        c.source for c in mine_bible_candidates(digests, corpus, source_lang="en", max_candidates=2)
+    ]
+    second = [
+        c.source for c in mine_bible_candidates(digests, corpus, source_lang="en", max_candidates=2)
+    ]
+    assert first == second == ["Gamma", "Delta"]
+
+
+def test_book_bible_treats_single_empty_probe_as_divergent_for_non_digest_candidate():
+    probe_call = 0
+
+    def handler(messages, tier, json_mode):
+        nonlocal probe_call
+        sys_msg = messages[0]["content"]
+        user_msg = messages[-1]["content"]
+        if "terminology prober" in sys_msg:
+            probe_call += 1
+            keys = re.findall(r"^\d+\.\s+(.+?)\s+\|", user_msg, re.MULTILINE)
+            # First probe renders the corpus-mined term; second probe excludes it with "".
+            return json.dumps(
+                {"renderings": {k: ("Tiger Vanguard" if probe_call == 1 else "") for k in keys}}
+            )
+        return json.dumps(
+            {
+                "terms": [
+                    {
+                        "source": "虎先鋒",
+                        "target": "Tiger Vanguard",
+                        "type": "person",
+                        "gender": "male",
+                    }
+                ]
+            }
+        )
+
+    agent = _bible_agent(handler)
+    # Non-digest candidate with exactly 3 occurrences (below count >= 5 anchor threshold).
+    corpus = "虎先鋒出洞。虎先鋒喝道。虎先鋒退去。"
+    result = agent.compile_bible(["Unrelated digest."], corpus)
+    assert result.divergent_count == 1
+    assert any(t.source == "虎先鋒" and t.target == "Tiger Vanguard" for t in result.terms)
+
+
+def test_sparse_editor_returns_failed_on_context_window_overflow(monkeypatch):
+    from wenyi_core.agents import sparse_editor as sparse_mod
+    from wenyi_core.agents.sparse_editor import SparseSemanticEditor
+
+    def _overflow(**kwargs):
+        raise ValueError("prompt exceeds context window")
+
+    monkeypatch.setattr(sparse_mod, "fit_prompt_to_context_window", _overflow)
+    editor = SparseSemanticEditor(FakeClient(handler=lambda *a, **k: "{}"), Config())
+    res = editor.edit_batch(["原文。"], ["Draft text."])
+    assert res.failed is True
+    assert res.targets == ("Draft text.",)
+
+
+def test_entity_markers_plain_retry_rejects_residual_marker_brackets():
+    import pytest
+    from wenyi_core.agents.translator import Translator
+    from wenyi_core.pipeline.translate.translation_batch import BatchPlan, TranslationBatchExecutor
+
+    calls = 0
+
+    def handler(messages, tier, json_mode):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return json.dumps(["He laughed."])  # drops ⟦N0⟧, triggering plain retry
+        return json.dumps(["⟦N99⟧ laughed."])  # residual unknown marker on plain retry
+
+    cfg = Config()
+    cfg.pipeline.entity_markers = True
+    translator = Translator(FakeClient(handler=handler), cfg)
+    executor = TranslationBatchExecutor(translator, polisher=None)
+    plan = BatchPlan(
+        chapter=0,
+        start_index=0,
+        segment_indices=(0,),
+        sources=("行者大笑。",),
+        terms=(GlossaryTerm(source="行者", target="Pilgrim", type="person"),),
+        context="",
+        style="",
+        book_synopsis="",
+        chapter_digest="",
+        annotation_contexts=[[]],
+        next_source="",
+        entity_markers=True,
+    )
+    with pytest.raises(ValueError, match="residual marker"):
+        executor.translate(plan)

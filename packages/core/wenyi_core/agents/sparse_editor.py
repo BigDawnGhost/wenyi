@@ -122,13 +122,19 @@ class SparseSemanticEditor(Agent):
             return system, user
 
         match_text = "\n".join(part for part in (*src_list, next_source) if part)
-        sys_msg, user_msg, _eff, _shrunk = fit_prompt_to_context_window(
-            config=self.config,
-            operation="polish.body",
-            terms=list(glossary_terms or ()),
-            match_text=match_text,
-            render_messages=_render,
-        )
+        try:
+            sys_msg, user_msg, _eff, _shrunk = fit_prompt_to_context_window(
+                config=self.config,
+                operation="polish.body",
+                terms=list(glossary_terms or ()),
+                match_text=match_text,
+                render_messages=_render,
+            )
+        except ValueError as exc:
+            _LOGGER.warning(
+                "Sparse editor prompt does not fit context window (%s); keeping drafts", exc
+            )
+            return SparseEditResult(tuple(draft_list), (), {}, failed=True)
 
         try:
             data, _raw = self._complete_json_turn(

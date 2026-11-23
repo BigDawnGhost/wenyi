@@ -381,3 +381,16 @@ def test_post_normalize_preserves_wenyi_protected_object_markers():
     )
     assert normalized == ["See 〘object:img.Walker〙 while Pilgrim smiles."]
     assert len(subs) == 1
+
+
+def test_typography_preserves_escaped_newlines_and_dashes_in_code_spans():
+    inline = r"Use `\n` for a line break -- or `--verbose` for logs."
+    cleaned, applied = normalize_latin_typography(inline)
+    assert cleaned == r"Use `\n` for a line break—or `--verbose` for logs."
+    assert "escaped_newline" not in applied
+    assert "em_dash" in applied
+
+    fenced = 'Example:\n```python\nprint("a\\nb")\n```'
+    cleaned_fenced, applied_fenced = normalize_latin_typography(fenced)
+    assert cleaned_fenced == fenced
+    assert "escaped_newline" not in applied_fenced

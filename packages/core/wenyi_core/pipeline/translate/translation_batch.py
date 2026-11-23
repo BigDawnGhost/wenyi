@@ -256,6 +256,10 @@ class TranslationBatchExecutor:
                 cleaned_targets, filled, _unresolved = unmask_batch_entities(
                     [strip_ruby_markers(target) for target in targets], mask_plan
                 )
+                if any("⟦" in text or "⟧" in text for text in cleaned_targets):
+                    raise ValueError(
+                        "Plain-source entity-marker retry returned residual marker tokens"
+                    )
                 if filled:
                     # The transcript still holds the echoed markers; never continue it.
                     turn = None

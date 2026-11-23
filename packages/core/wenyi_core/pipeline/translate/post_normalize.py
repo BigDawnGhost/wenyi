@@ -22,6 +22,11 @@ from ...models.glossary import GlossaryTerm
 # Matches protected-object transport tokens such as 〘object:1〙 or ⟦N0⟧ so typography
 # and minority-name normalization never alter them.
 _PROTECTED_MARKER_RE = re.compile(r"〘object:[A-Za-z0-9_.:-]+〙|⟦[^⟧]+⟧")
+# Also shields fenced and inline Markdown code spans during typography normalization so
+# literal `\n` escapes, `--` flags, and code quotes are never rewritten.
+_TYPOGRAPHY_PROTECTED_RE = re.compile(
+    r"〘object:[A-Za-z0-9_.:-]+〙|⟦[^⟧]+⟧|```[\s\S]*?```|``[^\n]+?``|`[^`\n]+`"
+)
 _RAW_DOUBLE_DASH_RE = re.compile(r"(?<!-)(?: -- |--)(?!-)")
 _SPEECH_COLON_RE = re.compile(
     r"\b(said|asked|replied|answered|cried|shouted|whispered|laughed|added|"
@@ -44,7 +49,9 @@ _VERSE_INTRODUCER_RE = re.compile(
 _COUPLET_SOURCE_RE = re.compile(r"^[^，。！？]{4,10}[，、][^，。！？]{4,10}[。！？；]$")
 
 
-def _mask_markers(text: str) -> tuple[str, list[str]]:
+def _mask_markers(
+    text: str, pattern: re.Pattern[str] = _PROTECTED_MARKER_RE
+) -> tuple[str, list[str]]:
     saved: list[str] = []
 
     def _repl(match: re.Match[str]) -> str:
@@ -52,7 +59,7 @@ def _mask_markers(text: str) -> tuple[str, list[str]]:
         saved.append(match.group(0))
         return f"\ue000OBJ{idx}\ue001"
 
-    return _PROTECTED_MARKER_RE.sub(_repl, text), saved
+    return pattern.sub(_repl, text), saved
 
 
 def _unmask_markers(text: str, saved: list[str]) -> str:
@@ -141,7 +148,7 @@ def normalize_latin_typography(
     if not text or not text.strip():
         return text, []
 
-    masked, saved = _mask_markers(text)
+    masked, saved = _mask_markers(text, _TYPOGRAPHY_PROTECTED_RE)
     applied: list[str] = []
 
     # 0. Repair leaked literal '\n' escape sequences in non-code literary prose/verse.
@@ -257,7 +264,7 @@ def normalize_chapter_latin_typography(
             fix_count += 1
 
         if should_unify_quotes:
-            masked, saved = _mask_markers(updated)
+            masked, saved = _mask_markers(updated, _TYPOGRAPHY_PROTECTED_RE)
             unified = _unify_quote_marks(masked)
             if unified != masked:
                 updated = _unmask_markers(unified, saved)

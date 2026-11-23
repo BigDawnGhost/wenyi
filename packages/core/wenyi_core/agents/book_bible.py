@@ -286,7 +286,7 @@ def mine_bible_candidates(
     # "弼馬溫" covers nearly all its hits; keep standalone recurring short names like "行者").
     sorted_keys = sorted(
         raw_scored.keys(),
-        key=lambda k: (raw_scored[k][1], raw_scored[k][0], len(k)),
+        key=lambda k: (raw_scored[k][1], raw_scored[k][0], len(k), k),
         reverse=True,
     )
     kept_keys: list[str] = []
@@ -546,7 +546,7 @@ class BookBibleAgent(Agent):
                 not rb or _is_generic_target(rb, generic_words)
             ):
                 continue
-            divergent = bool(ra and rb and not equivalent_targets(ra, rb))
+            divergent = bool(not ra or not rb or not equivalent_targets(ra, rb))
             if divergent:
                 divergent_count += 1
             # Keep every divergent entity + core anchors (digest-cited or high frequency >= 5).
