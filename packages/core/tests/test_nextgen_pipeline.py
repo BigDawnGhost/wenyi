@@ -254,14 +254,11 @@ def test_parallel_compiled_pipeline_is_order_independent_and_resumable(tmp_path:
                 return "行者 escorts 三藏 on a journey."
             if "terminology prober" in sys_msg:
                 bible_calls += 1
-                return json.dumps(
-                    {
-                        "renderings": {
-                            "行者": "Pilgrim" if bible_calls == 1 else "Xingzhe",
-                            "三藏": "Sanzang",
-                        }
-                    }
-                )
+                keys = re.findall(r"^\d+\.\s+(.+?)\s+\|", user_msg, re.MULTILINE)
+                renderings = {k: "" for k in keys}
+                renderings["行者"] = "Pilgrim" if bible_calls == 1 else "Xingzhe"
+                renderings["三藏"] = "Sanzang"
+                return json.dumps({"renderings": renderings})
             if "Book Bible" in sys_msg:
                 bible_calls += 1
                 return json.dumps(
@@ -585,7 +582,8 @@ def _parallel_handler(translated: list[str], *, fail_on: str | None = None):
         if "whole-book synopsis writer" in sys_msg:
             return "A journey."
         if "terminology prober" in sys_msg:
-            return json.dumps({"renderings": {}})
+            keys = re.findall(r"^\d+\.\s+(.+?)\s+\|", user_msg, re.MULTILINE)
+            return json.dumps({"renderings": {k: "" for k in keys}})
         if "Book Bible" in sys_msg:
             return json.dumps({"terms": []})
         if "literary translator" in sys_msg:
@@ -1274,6 +1272,18 @@ def test_book_bible_probe_failure_raises_instead_of_caching_empty_bible():
     with pytest.raises(ValueError, match="no renderings map"):
         malformed.compile_bible(digests, corpus)
 
+    empty_map = _bible_agent(lambda messages, tier, json_mode: json.dumps({"renderings": {}}))
+    with pytest.raises(ValueError, match="omitted candidate"):
+        empty_map.compile_bible(digests, corpus)
+
+    null_val = _bible_agent(
+        lambda messages, tier, json_mode: json.dumps(
+            {"renderings": {"行者": None, "三藏": "Sanzang"}}
+        )
+    )
+    with pytest.raises(ValueError, match="non-string rendering"):
+        null_val.compile_bible(digests, corpus)
+
 
 def test_bible_candidates_mine_accented_greek_and_latin_extended_names():
     greek_digests = ["Η Αθήνα και η Μαρία συνάντησαν τον Σωκράτης και τον Όμηρος."]
@@ -1369,6 +1379,39 @@ def test_parallel_secondary_save_error_does_not_mask_earlier_chapter_failure(tmp
     FileStorage.save_chapter = failing_ch1_save
     try:
         with pytest.raises(RequestCancelled, match="user cancelled"):
+            orch.run(str(book))
+    finally:
+        FileStorage.save_chapter = real_save
+
+
+def test_parallel_same_chapter_save_error_does_not_mask_its_own_wave_error(tmp_path: Path):
+    import pytest
+    from wenyi_core.llm.limits import RequestCancelled
+    from wenyi_core.storage.file import FileStorage
+
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    cfg = _parallel_config(tmp_path, chapter_concurrency=2)
+    base = _parallel_handler([])
+
+    def handler(messages, tier, json_mode):
+        sys_msg = messages[0]["content"]
+        user_msg = messages[-1]["content"]
+        if "literary translator" in sys_msg and "] 行者笑著說道：前面有山。" in user_msg:
+            raise RequestCancelled("budget cancelled on batch 1")
+        return base(messages, tier, json_mode)
+
+    orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+    real_save = FileStorage.save_chapter
+
+    def failing_ch0_save(self, chapter):
+        if chapter.index == 0 and any(s.target for s in chapter.text_segments):
+            raise OSError("ch0 save failed")
+        return real_save(self, chapter)
+
+    FileStorage.save_chapter = failing_ch0_save
+    try:
+        with pytest.raises(RequestCancelled, match="budget cancelled on batch 1"):
             orch.run(str(book))
     finally:
         FileStorage.save_chapter = real_save

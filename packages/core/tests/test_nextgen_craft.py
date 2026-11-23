@@ -241,6 +241,22 @@ def test_leaked_paragraph_trim_keeps_a_short_legitimate_tail():
     leaked = "Intro line here.\n\nHe waited beside the gate until dawn finally came."
     trimmed = _trim_leaked_next_paragraph("引子。", leaked, "他在门边等到天亮。", next_target)
     assert trimmed == "Intro line here."
+    # Distinct meaning (e.g. negation) sharing vocabulary must never be trimmed.
+    negated = "Intro line here.\n\nHe would never return to the mountain."
+    assert (
+        _trim_leaked_next_paragraph(
+            "引子。\n\n他绝不回山。", negated, "他要回山。", "He would return to the mountain."
+        )
+        == negated
+    )
+    # Extra trailing text beyond next_target must not be trimmed either.
+    extended = (
+        "Intro line here.\n\nHe waited beside the gate until dawn finally came.\nThen he spoke."
+    )
+    assert (
+        _trim_leaked_next_paragraph("引子。", extended, "他在门边等到天亮。", next_target)
+        == extended
+    )
 
 
 def test_quote_memory_keeps_meaning_bearing_punctuation_in_keys():
@@ -298,6 +314,17 @@ def test_chapter_typography_preserves_closing_quote_after_repeated_continuing_op
     assert cleaned[1] == '"Second part continues.'
     assert cleaned[2] == 'Final line of the speech."'
     assert cleaned[3] == "Narration after speech."
+
+
+def test_chapter_typography_clears_quote_carry_when_speech_closes_before_dialogue_tag():
+    pairs = [
+        ("他說道：「第一段話。", '"First part of the speech.'),
+        ("最後一句，」他總結道。", '"Final part of the speech," he concluded.'),
+        ("行者笑道：「再聽這首詩。", 'Pilgrim laughed and said, "Listen to this poem.'),
+        ("山高月小水落石出。", 'The mountains are high, the moon small."'),
+    ]
+    cleaned, _ = normalize_chapter_latin_typography(pairs)
+    assert cleaned[3] == 'The mountains are high, the moon small."'
 
 
 def test_minority_name_normalizer_replaces_all_variants_and_split_pinyin_in_one_paragraph():

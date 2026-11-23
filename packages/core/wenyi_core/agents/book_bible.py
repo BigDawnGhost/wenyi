@@ -291,7 +291,8 @@ class BookBibleAgent(Agent):
             f"You are a fast terminology prober translating {self.src} entity spans into {self.tgt}. "
             f"For each numbered item, give the natural {self.tgt} rendering of the named entity "
             "as used in its snippet. If the span is an ordinary verb, common noun, pronoun, or "
-            "context-dependent form of address (like 'I', 'my lord', 'said'), return an empty string.\n"
+            "context-dependent form of address (like 'I', 'my lord', 'said'), return an empty string. "
+            'Include EVERY numbered source key in renderings (use "" to exclude it).\n'
             'Return ONLY JSON: {"renderings": {"<source>": "<target or empty>", ...}}.'
         )
         for offset in range(0, len(items), batch_size):
@@ -315,18 +316,13 @@ class BookBibleAgent(Agent):
             raw_map = data.get("renderings") if isinstance(data, dict) else None
             if not isinstance(raw_map, dict):
                 raise ValueError("Book Bible probe returned no renderings map")
-            missing = 0
             for src, _ in chunk:
                 if src not in raw_map:
-                    missing += 1
-                    continue
-                val = raw_map.get(src)
-                if isinstance(val, str):
-                    results[src] = val.strip()
-            if missing and raw_map:
-                _LOGGER.warning(
-                    "Bible probe omitted %d/%d candidates in batch", missing, len(chunk)
-                )
+                    raise ValueError(f"Book Bible probe omitted candidate: {src}")
+                val = raw_map[src]
+                if not isinstance(val, str):
+                    raise ValueError(f"Book Bible probe returned a non-string rendering for: {src}")
+                results[src] = val.strip()
         return results
 
     def _adjudicate(

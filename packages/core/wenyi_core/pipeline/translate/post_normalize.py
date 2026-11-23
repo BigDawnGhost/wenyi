@@ -90,8 +90,8 @@ def _collapse_stray_prose_dialogue_breaks(source: str, target: str) -> str:
     return target
 
 
-def _word_set(text: str) -> set[str]:
-    return {w.lower() for w in _WORD_RE.findall(text)}
+def _word_seq(text: str) -> list[str]:
+    return [w.lower() for w in _WORD_RE.findall(text)]
 
 
 def _trim_leaked_next_paragraph(
@@ -111,19 +111,18 @@ def _trim_leaked_next_paragraph(
     src_a, src_b = source.strip(), next_source.strip()
     if src_a and src_b and (src_b in src_a or src_a in src_b):
         return target
-    next_words = _word_set(next_target)
-    if len(next_words) < 5:
+    next_seq = _word_seq(next_target)
+    if len(next_seq) < 5:
         return target
 
-    # Check if a trailing blank-line separated stanza starts with / overlaps next_target.
+    # Require the entire trailing blank-line-separated block (at least 5 words) to match
+    # next_target's ordered word sequence (full match or exact prefix), so related but
+    # distinct sentences (e.g. differing by a negation) are never deleted.
     if "\n\n" in target:
         head, tail = target.rsplit("\n\n", 1)
-        tail_first_lines = " ".join(tail.splitlines()[:2])
-        tail_words = _word_set(tail_first_lines)
-        # A short tail such as "He waited." overlaps any longer paragraph; never trim it.
-        if head.strip() and len(tail_words) >= 5:
-            overlap = len(tail_words & next_words) / len(tail_words)
-            if overlap >= 0.72:
+        tail_seq = _word_seq(tail)
+        if head.strip() and 5 <= len(tail_seq) <= len(next_seq):
+            if next_seq[: len(tail_seq)] == tail_seq:
                 return head.rstrip()
     return target
 
@@ -274,8 +273,8 @@ def normalize_chapter_latin_typography(
             else:
                 open_quote_carry = not open_quote_carry
         elif open_quote_carry and (
-            (stripped.startswith('"') and stripped.endswith('"') and dq_count >= 2)
-            or (stripped.startswith("“") and stripped.endswith("”"))
+            (stripped.startswith('"') and dq_count >= 2)
+            or (stripped.startswith("“") and "”" in stripped)
         ):
             open_quote_carry = False
 

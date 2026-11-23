@@ -1343,6 +1343,8 @@ class TranslationService:
                 # Drop each batch once its targets are persisted, so an interrupt mid-wave
                 # leaves only unsaved batches for the final flush and never retries alignment.
                 outcomes, error, wave_complete = completed_by_key[key]
+                if failure is None and error is not None:
+                    failure = error
                 chapter = chapter_objects[ci]
                 text_segs = chapter.text_segments
                 try:
@@ -1369,6 +1371,8 @@ class TranslationService:
                             )
                             # The saved draft keeps its marker; stop after saving the rest.
                             error = error or res.polish_interrupted
+                            if failure is None:
+                                failure = error
                         if not final and failure is None and error is None and not stop.is_set():
                             # Skip alignment during teardown so a persistent cancel/budget stop
                             # cannot drop remaining drafts; resume aligns already_done batches.
@@ -1413,8 +1417,6 @@ class TranslationService:
                     next_flush_idx += 1
                     continue
                 del completed_by_key[key]
-                if failure is None:
-                    failure = error
                 if failure is None and wave_complete and not stop.is_set():
                     chapters_remaining_waves[ci] -= 1
                     if chapters_remaining_waves[ci] == 0:
