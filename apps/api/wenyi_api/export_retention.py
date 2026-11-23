@@ -29,16 +29,20 @@ def export_history_session_lock(
 ) -> Iterator[Connection]:
     """Exclude export admission/publication/opening without a transaction during cleanup."""
     key = f"wenyi:export-history:{pid}"
-    statement = (
-        "SELECT pg_advisory_lock(hashtextextended(%s,0))"
-        if blocking
-        else "SELECT pg_try_advisory_lock(hashtextextended(%s,0))"
-    )
     with pool.connection() as connection:
         acquired = False
         try:
-            row = connection.execute(statement, (key,)).fetchone()
-            acquired = bool(row and row[0])
+            if blocking:
+                # pg_advisory_lock() returns void: reaching this line means the lock
+                # is held. Reading the result as a boolean would misreport failure and
+                # leave the lock attached to the pooled connection.
+                connection.execute("SELECT pg_advisory_lock(hashtextextended(%s,0))", (key,))
+                acquired = True
+            else:
+                row = connection.execute(
+                    "SELECT pg_try_advisory_lock(hashtextextended(%s,0))", (key,)
+                ).fetchone()
+                acquired = bool(row and row[0])
             connection.commit()
             if not acquired:
                 raise BlockingIOError("Project export history is busy")

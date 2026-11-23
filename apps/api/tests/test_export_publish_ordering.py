@@ -133,6 +133,20 @@ def test_publish_database_failure_keeps_files_and_rolls_back(tmp_path):
     assert old_file.exists() and output.exists()
 
 
+def test_blocking_session_lock_reports_a_held_lock_and_unlocks_it():
+    """pg_advisory_lock() returns void; reaching it means the lock is held."""
+    connection = FakeConnection()
+    with export_retention.export_history_session_lock(
+        cast(ConnectionPool, FakePool(connection)), "p1", blocking=True
+    ):
+        pass
+    assert any(
+        "SELECT pg_advisory_lock(hashtextextended(%s,0))" in sql for sql in connection.statements
+    )
+    assert connection.rollback_count == 1
+    assert any("pg_advisory_unlock" in sql for sql in connection.statements)
+
+
 def test_publish_without_expired_history_skips_file_cleanup(tmp_path):
     data_dir = tmp_path / "data"
     _old_file, output, conn = _prepare(data_dir)
