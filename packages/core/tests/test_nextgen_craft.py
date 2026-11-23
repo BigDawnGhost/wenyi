@@ -394,3 +394,30 @@ def test_typography_preserves_escaped_newlines_and_dashes_in_code_spans():
     cleaned_fenced, applied_fenced = normalize_latin_typography(fenced)
     assert cleaned_fenced == fenced
     assert "escaped_newline" not in applied_fenced
+
+    # 4-backtick nested fences, unmatched double backticks, and unclosed fences stay intact.
+    nested = '````markdown\n```python\nprint("a\\nb") # --flag\n```\n````'
+    assert normalize_latin_typography(nested)[0] == nested
+    latex_and_code = "Say ``hello'' and use `--verbose` here."
+    assert normalize_latin_typography(latex_and_code)[0] == latex_and_code
+    unclosed = '```python # note `x`\nprint("a\\nb")'
+    assert normalize_latin_typography(unclosed)[0] == unclosed
+
+
+def test_chapter_typography_ignores_code_span_quotes_for_unification_and_carry():
+    # Straight quotes inside code must not flatten a uniformly curly-quoted chapter.
+    curly_pairs = [
+        ("原文一。", "“Hello,” she said. “It’s fine.”"),
+        ("原文二。", 'Example:\n```python\nprint("a\\nb")\n```'),
+    ]
+    cleaned_curly, _ = normalize_chapter_latin_typography(curly_pairs)
+    assert cleaned_curly[0] == "“Hello,” she said. “It’s fine.”"
+    assert cleaned_curly[1] == 'Example:\n```python\nprint("a\\nb")\n```'
+
+    # An odd quote inside an inline code span must not break multi-paragraph open_quote_carry.
+    carry_pairs = [
+        ("他說道：「第一段話。", '"First part mentioning `"` in code.'),
+        ("山高月小水落石出。", 'The mountains are high, the moon small."'),
+    ]
+    cleaned_carry, _ = normalize_chapter_latin_typography(carry_pairs)
+    assert cleaned_carry[1] == 'The mountains are high, the moon small."'

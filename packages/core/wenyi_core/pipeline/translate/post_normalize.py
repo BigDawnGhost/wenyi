@@ -25,7 +25,10 @@ _PROTECTED_MARKER_RE = re.compile(r"〘object:[A-Za-z0-9_.:-]+〙|⟦[^⟧]+⟧"
 # Also shields fenced and inline Markdown code spans during typography normalization so
 # literal `\n` escapes, `--` flags, and code quotes are never rewritten.
 _TYPOGRAPHY_PROTECTED_RE = re.compile(
-    r"〘object:[A-Za-z0-9_.:-]+〙|⟦[^⟧]+⟧|```[\s\S]*?```|``[^\n]+?``|`[^`\n]+`"
+    r"〘object:[A-Za-z0-9_.:-]+〙|⟦[^⟧]+⟧"
+    r"|(?<!`)(`{3,})[\s\S]*?\1(?!`)"
+    r"|(?<!`)``(?!`)[^\n]+?(?<!`)``(?!`)"
+    r"|(?<!`)`(?!`)[^`\n]+?(?<!`)`(?!`)"
 )
 _RAW_DOUBLE_DASH_RE = re.compile(r"(?<!-)(?: -- |--)(?!-)")
 _SPEECH_COLON_RE = re.compile(
@@ -152,14 +155,14 @@ def normalize_latin_typography(
     applied: list[str] = []
 
     # 0. Repair leaked literal '\n' escape sequences in non-code literary prose/verse.
-    if "\\n" in masked and not masked.lstrip().startswith("```"):
+    if "\\n" in masked and not text.lstrip().startswith("```"):
         updated = masked.replace("\\n", "\n")
         if updated != masked:
             masked = updated
             applied.append("escaped_newline")
 
     # 1. Normalize raw '--' to em dash '—' (skip markdown rules/code fences).
-    if "--" in masked and not masked.lstrip().startswith(("```", "---")):
+    if "--" in masked and not text.lstrip().startswith(("```", "---")):
         updated = _RAW_DOUBLE_DASH_RE.sub("—", masked)
         if updated != masked:
             masked = updated
@@ -230,8 +233,9 @@ def normalize_chapter_latin_typography(
     open_quote_carry = False
     # Only unify quote marks when the chapter actually mixes curly and straight double quotes;
     # leave uniformly curly-quoted chapters (e.g. Vietnamese or curly-quote English) intact.
-    has_straight = any('"' in t for _, t in pairs if t)
-    has_curly = any(("“" in t or "”" in t) for _, t in pairs if t)
+    prose_texts = [_mask_markers(t, _TYPOGRAPHY_PROTECTED_RE)[0] for _, t in pairs if t]
+    has_straight = any('"' in t for t in prose_texts)
+    has_curly = any(("“" in t or "”" in t) for t in prose_texts)
     should_unify_quotes = unify_quotes and has_straight and has_curly
 
     n = len(pairs)
@@ -270,10 +274,11 @@ def normalize_chapter_latin_typography(
                 updated = _unmask_markers(unified, saved)
                 fix_count += 1
 
-        # Update chapter-level open double-quote carry state.
-        stripped = updated.strip()
-        dq_count = updated.count('"')
-        curly_delta = updated.count("“") - updated.count("”")
+        # Update chapter-level open double-quote carry state on prose outside code spans.
+        quote_text, _ = _mask_markers(updated, _TYPOGRAPHY_PROTECTED_RE)
+        stripped = quote_text.strip()
+        dq_count = quote_text.count('"')
+        curly_delta = quote_text.count("“") - quote_text.count("”")
         if curly_delta != 0:
             open_quote_carry = (open_quote_carry and curly_delta >= 0) or curly_delta > 0
         elif dq_count % 2 == 1:
