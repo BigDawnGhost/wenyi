@@ -72,7 +72,18 @@ _ZH_CLASSICAL_GU_RE = re.compile(r"[，,；;。]\s*故[\u4e00-\u9fff]{1,6}[之�
 _EN_DELIBERATELY_TRAP = re.compile(r"\b(?:deliberately|on purpose|intentionally)\b", re.I)
 
 _ZH_VERSE_LI_ALLUSION_RE = re.compile(r"八百里[^，。！？]{0,6}(?:分|炙|麾下)")
-_EN_EIGHT_HUNDRED_LI_TRAP = re.compile(r"\b(?:eight\s+hundred|800)\s+li\b", re.I)
+_EN_EIGHT_HUNDRED_LI_TRAP = re.compile(
+    r"\b(?:eight\s+hundred|800)\s+(?:li|ox|oxen|steers?|bulls?)\b", re.I
+)
+_EN_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_EN_QUOTED_SPAN_RE = re.compile(r'"[^"]*"|“[^”]*”')
+_EN_MALE_PRONOUN_RE = re.compile(r"\b(?:he|him|his)\b", re.I)
+_EN_FEMALE_PRONOUN_RE = re.compile(r"\b(?:she|her|hers)\b", re.I)
+_EN_MID_CAP_NAME_RE = re.compile(r"(?<!^)(?<![.!?]\s)\b[A-Z][a-z]{2,}\b")
+_ZH_DISGUISE_CUE_RE = re.compile(
+    r"(?:乔装|喬裝|女扮男装|女扮男裝|男装|男裝|扮作|遮挡|遮擋|斗笠|看不清相貌|身材举止|身材舉止)"
+)
+_ZH_QUOTED_SPAN_RE = re.compile(r"“[^”]*”|「[^」]*」|『[^』]*』")
 
 _ZH_AGENCY_PROMISE_RE = re.compile(r"(?:我答应替他|我答應替他|他答应替我|他答應替我)")
 _ZH_AT_LEAST_RE = re.compile(r"至少")
@@ -85,7 +96,7 @@ _ZH_VOCATIVE_SHIFT_RE = re.compile(
 _EN_CALQUE_SENTINEL_RE = re.compile(
     r"\b(?:dream(?:ed|ing)?\s+(?:its\s+|a\s+)?drunken\s+dream\s+of\s+death|"
     r"fire-dwelling\s+daoist|filled\s+in\s+lyrics|flashed\s+with\s+treasure\s+light|"
-    r"to\s+death\s+with\s+her|ten\s+thousand\s+years)\b",
+    r"to\s+death\s+with\s+her|ten\s+thousand\s+years|the\s+sir)\b",
     re.I,
 )
 _ZH_CLASSICAL_PARTICLES_RE = re.compile(r"[之乎者也矣焉哉岂豈孰乃遂故既若非莫勿裣衽斂衽]")
@@ -155,6 +166,53 @@ def _is_generic(text: str, generic_words: frozenset[str]) -> bool:
         return False
     words = _WORD_RE.findall(text.casefold())
     return bool(words) and all(w.replace("’", "'") in generic_words for w in words)
+
+
+def _source_mentions_term_or_stem(
+    term: GlossaryTerm,
+    src: str,
+    *,
+    src_base: str,
+) -> bool:
+    """Return True if ``src`` contains ``term.source``, an alias, or (for persons) a name stem."""
+    if source_matches_text(term.source, src):
+        return True
+    if any(a and source_matches_text(a, src) for a in term.aliases):
+        return True
+    if term.type != "person":
+        return False
+    clean_term = term.source.strip()
+    if src_base in {"zh", "ja"}:
+        # For Chinese/Japanese personal names, allow bare given-name/surname mentions without
+        # triggering false phantom alerts (e.g. '梁' for '梁婉' or '随云' for '江随云').
+        if len(clean_term) >= 2:
+            for i in range(len(clean_term) - 1):
+                if clean_term[i : i + 2] in src:
+                    return True
+            if clean_term[0] in src or clean_term[-1] in src:
+                return True
+    else:
+        for tok in _WORD_RE.findall(clean_term):
+            if len(tok) >= 4 and re.search(rf"\b{re.escape(tok)}\b", src, re.I):
+                return True
+    return False
+
+
+def _has_suspicious_pronoun_flip(src: str, clean_drf: str, *, src_base: str, tgt_base: str) -> bool:
+    """Detect mid-sentence masculine<->feminine pronoun flips in disguise/concealment scenes."""
+    if tgt_base != "en":
+        return False
+    has_disguise_cue = (src_base == "zh" and bool(_ZH_DISGUISE_CUE_RE.search(src))) or (
+        src_base == "ja" and any(k in src for k in ("男装", "女装", "変装", "正体"))
+    )
+    if not has_disguise_cue:
+        return False
+    narration = _EN_QUOTED_SPAN_RE.sub(" ", clean_drf)
+    for sent in _EN_SENTENCE_SPLIT_RE.split(narration):
+        sent = sent.strip()
+        if sent and _EN_MALE_PRONOUN_RE.search(sent) and _EN_FEMALE_PRONOUN_RE.search(sent):
+            return True
+    return False
 
 
 def has_embedded_verse(source: str, *, source_lang: str) -> bool:
@@ -318,6 +376,53 @@ def assess_batch_risk(
             )
             break
 
+        # 5b. Phantom entity / reverse-glossary substitution check (language-agnostic):
+        # Catch when a familiar glossary place/organization/person appears in the draft even
+        # though its source term does NOT appear in this source paragraph (e.g. 襄樊 -> Jingxiang).
+        for term in entity_terms:
+            if term.type not in {"place", "organization", "person"}:
+                continue
+            if len(term.target.strip()) < 4:
+                continue
+            if not _target_contains_term(clean_drf, term.target, target_lang=target_lang):
+                continue
+            if _source_mentions_term_or_stem(term, src, src_base=src_base):
+                continue
+            # Skip if another glossary term with overlapping target wording actually matches src.
+            norm_tgt_term = normalize_match_text(term.target).strip()
+            if any(
+                other is not term
+                and _source_mentions_term_or_stem(other, src, src_base=src_base)
+                and (
+                    norm_tgt_term in normalize_match_text(other.target).strip()
+                    or normalize_match_text(other.target).strip() in norm_tgt_term
+                )
+                for other in entity_terms
+            ):
+                continue
+            alerts.append(
+                ParagraphAlert(
+                    idx,
+                    "phantom_entity",
+                    f"Draft uses glossary {term.type} '{term.target}' ('{term.source}'), which does not "
+                    "appear in this source paragraph; verify no different proper noun/place was substituted.",
+                    high_severity=True,
+                )
+            )
+            break
+
+        # 5c. Intra-sentence pronoun-gender consistency check (e.g. disguise scenes).
+        if _has_suspicious_pronoun_flip(src, clean_drf, src_base=src_base, tgt_base=tgt_base):
+            alerts.append(
+                ParagraphAlert(
+                    idx,
+                    "pronoun_consistency",
+                    "Narration mixes masculine and feminine pronouns within one sentence; verify "
+                    "whether a single character's pronouns flipped mid-sentence and keep them consistent.",
+                    high_severity=True,
+                )
+            )
+
         # 6. High-precision missing-marker semantic traps (zh -> en)
         if src_base == "zh" and tgt_base == "en":
             if _ZH_CONDITIONAL_RE.search(src) and not _EN_CONDITIONAL_MARKERS.search(clean_drf):
@@ -374,7 +479,8 @@ def assess_batch_risk(
                     ParagraphAlert(
                         idx,
                         "allusion",
-                        "'八百里' in this lyric alludes to the famed ox (roasted beef), not a distance of 800 li.",
+                        "'八百里' in this lyric is the singular nickname of a famed ox (meaning roasted "
+                        "beef shared among troops), not a distance of 800 li or 800 oxen.",
                         high_severity=True,
                     )
                 )

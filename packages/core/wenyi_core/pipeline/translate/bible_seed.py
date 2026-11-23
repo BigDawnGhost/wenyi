@@ -14,7 +14,7 @@ import json
 import logging
 from collections.abc import Sequence
 
-from ...agents.book_bible import BookBibleAgent
+from ...agents.book_bible import BookBibleAgent, select_voice_excerpts
 from ...config import Config
 from ...events import ProgressFn
 from ...glossary.store import normalize_match_text
@@ -24,7 +24,7 @@ from ...storage.protocol import Storage
 
 _LOGGER = logging.getLogger(__name__)
 _BIBLE_ARTIFACT = "glossary_bible.json"
-_BIBLE_VERSION = 3
+_BIBLE_VERSION = 4
 
 
 def _bible_fingerprint(
@@ -51,7 +51,7 @@ def _bible_fingerprint(
         "style_hash": hashlib.sha256(style.encode("utf-8")).hexdigest(),
         "user_terms": locked_user_terms,
         "repeated_quotes": list(repeated_quotes),
-        "routing": inference_snapshot(config.llm, ("glossary.extract",)),
+        "routing": inference_snapshot(config.llm, ("glossary.extract", "translation.body")),
     }
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
@@ -66,6 +66,8 @@ class BibleSeedService:
         self._config = config
         self.last_conventions: tuple[str, ...] = ()
         self.last_quote_targets: dict[str, str] = {}
+        self.last_voice_exemplars: tuple[tuple[str, str], ...] = ()
+        self.last_divergent_titles: dict[str, tuple[str, ...]] = {}
 
     def ensure_seeded(
         self,
@@ -107,12 +109,28 @@ class BibleSeedService:
                 for k, v in (saved.get("quote_targets") or {}).items()
                 if isinstance(k, str) and isinstance(v, str) and v.strip()
             }
+            self.last_voice_exemplars = tuple(
+                (pair[0], pair[1])
+                for pair in (saved.get("voice_exemplars") or ())
+                if isinstance(pair, list)
+                and len(pair) == 2
+                and isinstance(pair[0], str)
+                and isinstance(pair[1], str)
+                and pair[0].strip()
+                and pair[1].strip()
+            )
+            self.last_divergent_titles = {
+                k: tuple(v)
+                for k, v in (saved.get("divergent_titles") or {}).items()
+                if isinstance(k, str) and isinstance(v, list)
+            }
             store.log_event(
                 "glossary_bible_reused",
                 seeded=len(saved.get("seeded_sources") or []),
                 divergent=saved.get("divergent_count", 0),
                 conventions=len(self.last_conventions),
                 pretranslated_quotes=len(self.last_quote_targets),
+                voice_exemplars=len(self.last_voice_exemplars),
             )
             return variants
 
@@ -139,9 +157,9 @@ class BibleSeedService:
             existing_keys.add(norm_src)
             inserted.append(term.source)
 
+        all_terms = store.all_terms()
         quote_targets: dict[str, str] = {}
         if repeated_quotes:
-            all_terms = store.all_terms()
             quote_targets = self._agent.pretranslate_quotes(
                 repeated_quotes,
                 terms=all_terms,
@@ -149,8 +167,23 @@ class BibleSeedService:
                 conventions=result.conventions,
             )
 
+        voice_excerpts = select_voice_excerpts(
+            source_corpus,
+            source_lang=self._config.source_lang,
+        )
+        voice_exemplars: tuple[tuple[str, str], ...] = ()
+        if voice_excerpts:
+            voice_exemplars = self._agent.compile_voice_exemplars(
+                voice_excerpts,
+                terms=all_terms,
+                style=style,
+                conventions=result.conventions,
+            )
+
         self.last_conventions = result.conventions
         self.last_quote_targets = quote_targets
+        self.last_voice_exemplars = voice_exemplars
+        self.last_divergent_titles = {src: vars_ for src, vars_ in result.divergent_titles}
 
         record = {
             "version": _BIBLE_VERSION,
@@ -161,6 +194,8 @@ class BibleSeedService:
             "variants_by_source": {k: list(v) for k, v in result.variants_by_source.items()},
             "conventions": list(result.conventions),
             "quote_targets": quote_targets,
+            "voice_exemplars": [[s, t] for s, t in voice_exemplars],
+            "divergent_titles": {k: list(v) for k, v in self.last_divergent_titles.items()},
         }
         store.write_artifact(_BIBLE_ARTIFACT, record)
         store.log_event(
@@ -170,5 +205,6 @@ class BibleSeedService:
             seeded=len(inserted),
             conventions=len(result.conventions),
             pretranslated_quotes=len(quote_targets),
+            voice_exemplars=len(voice_exemplars),
         )
         return result.variants_by_source

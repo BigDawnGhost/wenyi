@@ -60,6 +60,12 @@ _HEAVY_REWRITE_REASON_TOKENS = (
     "honorific",
     "addressee",
     "temporal",
+    "phantom",
+    "entity",
+    "toponym",
+    "title",
+    "consistency",
+    "drift",
 )
 
 
@@ -170,7 +176,8 @@ class SparseSemanticEditor(Agent):
             "or spoilers, broken speaker/addressee shifts, dropped court/humble/formal register, stiff literal "
             "calques, untranslated source-script residue, and unrequested parenthetical inline glosses.\n"
             "3. Idioms, allusions & terminology: literalized idioms or literary allusions, glossary mismatches "
-            "against [Glossary] or [Style guide] conventions, and inconsistent proper-noun spelling.\n"
+            "against [Glossary] or [Style guide] conventions, inconsistent proper-noun spelling, and never "
+            "substituting a familiar glossary place/person name for a different proper noun in the source.\n"
             "4. Verse vs prose craft & paragraph boundaries: standalone and embedded poems/lyrics MUST use "
             "explicit line breaks ('\\n', never inline prose or ' / '); conversely, NEVER split a continuous "
             "prose dialogue paragraph with '\\n' line breaks; and NEVER copy or anticipate text belonging to "
@@ -324,3 +331,63 @@ class SparseSemanticEditor(Agent):
             thinking_boost=thinking_boost,
             risk_reasons=risk.reasons,
         )
+
+    def adjudicate_drift(
+        self,
+        clusters: Sequence[dict[str, object]],
+        *,
+        style: str = "",
+        conventions: Sequence[str] = (),
+    ) -> dict[str, str]:
+        """Pick one canonical target for genuine cross-chapter title/term splits; skip benign synonyms."""
+        if not clusters:
+            return {}
+        rows: list[str] = []
+        allowed: set[str] = set()
+        for item in clusters[:8]:
+            src = str(item.get("source") or "").strip()
+            targets = item.get("targets") or ()
+            if not src or not targets:
+                continue
+            allowed.add(src)
+            tgt_desc = ", ".join(f"{t!r} ({c}x)" for t, c in targets)
+            rows.append(f"- {src}: {tgt_desc}")
+        if not rows:
+            return {}
+        conv_block = "\n".join(f"- {c}" for c in conventions)
+        system = (
+            f"You are a book consistency editor reviewing recurring {self.src} -> {self.tgt} terms "
+            "whose translations split across parallel chapters. Decide ONLY for genuine recurring "
+            "titles, ranks, offices, institutions, or signature recurring objects where the book "
+            "should use ONE uniform rendering (including capitalization). "
+            'For ordinary verbs, adverbs, or context-dependent words where variation is natural, return "".\n'
+            'Return ONLY JSON: {"decisions": {"<source>": "<canonical_target_or_empty>", ...}}.'
+        )
+        user = (
+            f"[Style guide]\n{style or '(none)'}\n\n"
+            + (f"[Book conventions]\n{conv_block}\n\n" if conv_block else "")
+            + "[Cross-chapter split candidates]\n"
+            + "\n".join(rows)
+            + '\n\nReturn ONLY JSON: {"decisions": {...}}'
+        )
+        try:
+            data, _raw = self._complete_json_turn(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                operation="glossary.extract",
+            )
+        except Exception as exc:  # noqa: BLE001 - optional post-pass; never abort completed book.
+            if is_resumable_provider_interrupt(exc):
+                raise
+            _LOGGER.warning("Drift adjudication call failed (%s); skipping drift patches", exc)
+            return {}
+        raw_decisions = data.get("decisions") if isinstance(data, dict) else None
+        if not isinstance(raw_decisions, dict):
+            return {}
+        decisions: dict[str, str] = {}
+        for src, val in raw_decisions.items():
+            if src in allowed and isinstance(val, str) and val.strip():
+                decisions[src] = val.strip()
+        return decisions

@@ -280,6 +280,15 @@ class TranslationService:
                 conv_lines = "\n".join(f"- {c}" for c in self._bible_seed.last_conventions)
                 conv_block = f"[Book-wide translation conventions]\n{conv_lines}"
                 style = f"{style}\n\n{conv_block}".strip() if style else conv_block
+            if self._bible_seed.last_voice_exemplars:
+                ex_lines = "\n".join(
+                    f"- SRC: {s}\n  TGT: {t}" for s, t in self._bible_seed.last_voice_exemplars
+                )
+                ex_block = (
+                    "[Book voice exemplars — match this prose rhythm, dialogue cadence, and register]\n"
+                    f"{ex_lines}"
+                )
+                style = f"{style}\n\n{ex_block}".strip() if style else ex_block
             if self._quote_memory is not None and self._bible_seed.last_quote_targets:
                 for q_src, q_tgt in self._bible_seed.last_quote_targets.items():
                     self._quote_memory.seed_canonical(q_src, q_tgt)
@@ -387,6 +396,8 @@ class TranslationService:
                         chapter_indices=all_chapter_indices,
                         terms=glossary.all_terms(),
                         style=style,
+                        conventions=self._bible_seed.last_conventions,
+                        divergent_titles=self._bible_seed.last_divergent_titles,
                     )
                     self._runtime.usage.flush(store, scope="consistency_sweep")
                 self._titles.run(store, glossary, progress=progress)

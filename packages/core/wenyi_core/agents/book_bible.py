@@ -34,6 +34,7 @@ from ..i18n.languages import (
     glossary_single_character_names_only,
 )
 from ..llm.json_parser import JsonParseError
+from ..llm.retrying import is_resumable_provider_interrupt
 from ..models.glossary import GlossaryTerm, normalize_gender
 from .base import Agent
 
@@ -270,6 +271,63 @@ class BibleResult:
     candidate_count: int
     divergent_count: int
     conventions: tuple[str, ...] = ()
+    divergent_titles: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+
+def select_voice_excerpts(
+    source_corpus: str,
+    *,
+    source_lang: str,
+    max_excerpts: int = 3,
+) -> list[str]:
+    """Deterministically pick 2-3 representative source paragraphs (narration + dialogue) for voice calibration.
+
+    Returns an empty list for very short texts (<2 qualifying paragraphs) so small fixtures and
+    trivial documents do not incur extra calibration calls.
+    """
+    if not source_corpus or max_excerpts <= 0:
+        return []
+    src_base = (source_lang or "").lower().split("-", 1)[0]
+    is_cjk = src_base in {"zh", "ja", "ko"}
+    clean_corpus = _RUBY_MARKER_RE.sub("", source_corpus)
+    raw_paras = [p.strip() for p in re.split(r"\n+", clean_corpus) if p.strip()]
+    qualifying: list[str] = []
+    for para in raw_paras:
+        if is_cjk:
+            if 45 <= len(para) <= 280:
+                qualifying.append(para)
+        else:
+            words = len(_WORD_RE.findall(para))
+            if 25 <= words <= 95:
+                qualifying.append(para)
+    if len(qualifying) < 2:
+        return []
+
+    def _has_quote(text: str) -> bool:
+        return any(q in text for q in ('"', "“", "「", "『"))
+
+    selected: list[str] = []
+    # 1. Early narration paragraph (no dialogue quotes preferred).
+    early_narr = next((p for p in qualifying if not _has_quote(p)), None)
+    if early_narr:
+        selected.append(early_narr)
+    # 2. Early dialogue / rhetoric paragraph.
+    early_dial = next((p for p in qualifying if _has_quote(p) and p not in selected), None)
+    if early_dial:
+        selected.append(early_dial)
+    # 3. Contrast paragraph from the second half of the book.
+    if len(selected) < max_excerpts and len(qualifying) >= 3:
+        later_pool = qualifying[len(qualifying) // 2 :]
+        later_pick = next((p for p in later_pool if p not in selected), None)
+        if later_pick:
+            selected.append(later_pick)
+    # Fill remaining slots if needed (still requiring at least 2 distinct paragraphs).
+    for p in qualifying:
+        if len(selected) >= max_excerpts:
+            break
+        if p not in selected:
+            selected.append(p)
+    return selected[:max_excerpts] if len(selected) >= 2 else []
 
 
 # A reading, or one character plus the combining or sound marks NFKC composes into it.
@@ -332,6 +390,42 @@ def _is_generic_target(target: str, generic_words: frozenset[str]) -> bool:
 
 
 _JA_TRAILING_HONORIFIC_CHARS = frozenset("様殿君氏卿")
+_BARE_PRONOUN_TARGETS = frozenset(
+    {
+        "i",
+        "me",
+        "my",
+        "we",
+        "us",
+        "our",
+        "you",
+        "your",
+        "he",
+        "him",
+        "his",
+        "she",
+        "her",
+        "they",
+        "them",
+        "their",
+        "it",
+        "its",
+        "this",
+        "that",
+        "these",
+        "those",
+        "one",
+        "sir",
+        "madam",
+        "yes",
+        "no",
+    }
+)
+
+
+def _is_bare_pronoun_target(target: str) -> bool:
+    words = _WORD_RE.findall(target.casefold())
+    return not words or all(w.replace("’", "'") in _BARE_PRONOUN_TARGETS for w in words)
 
 
 def _clean_latin_candidate(token: str) -> str:
@@ -761,27 +855,37 @@ class BookBibleAgent(Agent):
         style: str,
         existing_terms: Sequence[GlossaryTerm],
         include_conventions: bool = True,
+        divergent_titles: Sequence[tuple[BibleCandidate, str, str]] = (),
     ) -> tuple[list[GlossaryTerm], list[str]]:
         """Adjudicate one bounded chunk of candidates with global synopsis + anchor terms."""
-        if not candidates:
+        if not candidates and not (include_conventions and divergent_titles):
             return [], []
         existing_block = "\n".join(
             f"- {t.source} => {t.target} ({t.type})" for t in existing_terms[:60]
         )
         rows = _cluster_candidate_rows(candidates)
+        title_rows = [
+            f"- {cand.source} (count={cand.count}) | probeA={ra!r} | probeB={rb!r}"
+            for cand, ra, rb in divergent_titles[:10]
+        ]
         conv_schema = (
             ', "conventions": ["Short book-wide convention rule (max 8 rules total)"]'
             if include_conventions
             else ""
         )
         conv_rule = (
-            "7. Also return 4-6 concise book-wide `conventions` for recurring NON-glossary elements "
-            "(social ranks, honorific gradation, verse/tune-title formatting, date style). "
-            "Prioritize natural, idiomatic literary phrasing in the target language — NEVER prescribe "
+            "7. Also return 5-8 concise book-wide `conventions` for recurring NON-glossary elements "
+            "(social/institutional ranks, honorific gradation, verse/tune-title formatting, uniform date style). "
+            "Explicitly lock ONE canonical rendering and capitalization for every item listed under "
+            "[Divergent recurring titles/offices/motifs] AND for any recurring title/rank/office you exclude "
+            "from `terms` (keeping them in `conventions`, NOT in `terms`). "
+            "Prioritize natural, idiomatic phrasing in the target language — NEVER prescribe "
             "stiff translationese calques (e.g. prefer natural 'I' over archaic literalized humble "
-            "pronouns, concise polity/place names over repetitive 'the State of X', literary era "
-            "dates over abbreviated numerals, and natural direct-address titles over awkward "
-            "third-person address). Never collapse distinct ranks (e.g. keep a sovereign King/Emperor "
+            "pronouns, concise polity/place names over repetitive 'the State of X', one uniform era-date "
+            "format across all chapters, and natural direct-address titles over awkward "
+            "third-person address — e.g. in historical/classical works, specify 'Master [Surname]' / "
+            "'Master' for titled or third-person 先生, never modern 'Mr.' or ungrammatical 'the sir'). "
+            "Never collapse distinct ranks (e.g. keep a sovereign King/Emperor "
             "distinct from a subordinate Prince).\n"
             if include_conventions
             else ""
@@ -812,7 +916,14 @@ class BookBibleAgent(Agent):
             f"[Style guide]\n{style or '(none)'}\n\n"
             f"[Book synopsis]\n{book_synopsis or '(none)'}\n\n"
             f"[Existing locked glossary]\n{existing_block or '(none)'}\n\n"
-            f"[Candidates to adjudicate ({len(candidates)})]\n"
+            + (
+                "[Divergent recurring titles/offices/motifs — lock ONE rendering in conventions, NOT in terms]\n"
+                + "\n".join(title_rows)
+                + "\n\n"
+                if (include_conventions and title_rows)
+                else ""
+            )
+            + f"[Candidates to adjudicate ({len(candidates)})]\n"
             + "\n".join(rows)
             + '\n\nReturn JSON: {"terms": [...]'
             + (', "conventions": [...]' if include_conventions else "")
@@ -911,13 +1022,24 @@ class BookBibleAgent(Agent):
         existing_terms: Sequence[GlossaryTerm],
         source_corpus: str = "",
         chunk_size: int = 55,
+        divergent_titles: Sequence[tuple[BibleCandidate, str, str]] = (),
     ) -> tuple[list[GlossaryTerm], tuple[str, ...]]:
         """Settle all kept candidates and compile book-wide non-glossary conventions."""
-        if not candidates:
+        if not candidates and not divergent_titles:
             return [], ()
         all_terms: list[GlossaryTerm] = []
         conventions: list[str] = []
         anchors = list(existing_terms)
+        if not candidates:
+            _terms, chunk_convs = self._adjudicate_chunk(
+                (),
+                book_synopsis=book_synopsis,
+                style=style,
+                existing_terms=anchors,
+                include_conventions=True,
+                divergent_titles=divergent_titles,
+            )
+            return [], tuple(chunk_convs[:8])
         step = len(candidates) if len(candidates) <= 55 else min(chunk_size, 45)
         for offset in range(0, len(candidates), step):
             chunk = candidates[offset : offset + step]
@@ -927,6 +1049,7 @@ class BookBibleAgent(Agent):
                 style=style,
                 existing_terms=anchors,
                 include_conventions=(offset == 0),
+                divergent_titles=divergent_titles if offset == 0 else (),
             )
             all_terms.extend(chunk_terms)
             anchors.extend(chunk_terms)
@@ -936,6 +1059,66 @@ class BookBibleAgent(Agent):
             all_terms, source_corpus, source_lang=self.src
         )
         return safe_terms, tuple(conventions[:8])
+
+    def compile_voice_exemplars(
+        self,
+        excerpts: Sequence[str],
+        *,
+        terms: Sequence[GlossaryTerm],
+        style: str = "",
+        conventions: Sequence[str] = (),
+    ) -> tuple[tuple[str, str], ...]:
+        """Compile 2-3 gold-standard micro-excerpts to pin voice, register and punctuation across waves."""
+        items = [e.strip() for e in excerpts if e and e.strip()][:3]
+        if len(items) < 2:
+            return ()
+        glossary_lines = "\n".join(f"- {t.source} -> {t.target}" for t in terms[:60])
+        conv_block = "\n".join(f"- {c}" for c in conventions)
+        prompt_vals = dict(self.language_policy.prompt_values)
+        punct_rule = prompt_vals.get("punct_rule", "")
+        lines = [f"{i}. {span}" for i, span in enumerate(items)]
+        system = (
+            f"You are performing pre-translation voice calibration ({self.src} -> {self.tgt}). "
+            "Translate each short representative excerpt from this work into publication-grade "
+            f"{self.tgt} prose that establishes the benchmark voice, sentence rhythm, dialogue cadence, "
+            "and punctuation discipline for every parallel chapter to follow. "
+            "Follow [Style guide], [Book conventions], and [Glossary] strictly. "
+            f"{punct_rule}\n"
+            'Return ONLY JSON: {"exemplars": {"0": "<gold translation>", ...}}.'
+        )
+        user = (
+            f"[Style guide]\n{style or '(none)'}\n\n"
+            + (f"[Book conventions]\n{conv_block}\n\n" if conv_block else "")
+            + f"[Glossary]\n{glossary_lines or '(none)'}\n\n"
+            + "[Representative source excerpts]\n"
+            + "\n".join(lines)
+            + '\n\nReturn ONLY JSON: {"exemplars": {"0": "..."}}'
+        )
+        try:
+            data = self._complete_json_dict(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                operation="translation.body",
+                thinking_boost=1,
+            )
+        except Exception as exc:  # noqa: BLE001 - optional voice anchor; chapters still translate.
+            if is_resumable_provider_interrupt(exc):
+                raise
+            _LOGGER.warning("Compiling voice exemplars failed (%s); skipping", exc)
+            return ()
+        raw_map = data.get("exemplars") if isinstance(data, dict) else None
+        if not isinstance(raw_map, dict):
+            return ()
+        paired: list[tuple[str, str]] = []
+        for idx, src in enumerate(items):
+            val = raw_map.get(str(idx))
+            if not isinstance(val, str):
+                val = raw_map.get(src)
+            if isinstance(val, str) and val.strip():
+                paired.append((src, val.strip()))
+        return tuple(paired)
 
     def pretranslate_quotes(
         self,
@@ -975,6 +1158,8 @@ class BookBibleAgent(Agent):
                 operation="glossary.extract",
             )
         except Exception as exc:  # noqa: BLE001 - optional optimization; chapters still translate.
+            if is_resumable_provider_interrupt(exc):
+                raise
             _LOGGER.warning("Pre-translating repeated quotes failed (%s); skipping", exc)
             return {}
         raw_quotes = data.get("quotes") if isinstance(data, dict) else None
@@ -1024,6 +1209,7 @@ class BookBibleAgent(Agent):
 
         generic_words = glossary_generic_target_words(self.tgt)
         to_adjudicate: list[tuple[BibleCandidate, str, str, bool]] = []
+        divergent_generic: list[tuple[BibleCandidate, str, str]] = []
         variants_by_source: dict[str, tuple[str, ...]] = {}
         divergent_count = 0
         for cand in candidates:
@@ -1031,13 +1217,31 @@ class BookBibleAgent(Agent):
             rb = probe_b.get(cand.source, "").strip()
             if not ra and not rb:
                 continue
-            if (not ra or _is_generic_target(ra, generic_words)) and (
-                not rb or _is_generic_target(rb, generic_words)
-            ):
+            ra_gen = not ra or _is_generic_target(ra, generic_words)
+            rb_gen = not rb or _is_generic_target(rb, generic_words)
+            if ra_gen and rb_gen:
+                # Keep high-frequency generic titles/offices (e.g. 国主 -> King/sovereign) for
+                # book-wide capitalization & lexical conventions even when the two probes agree.
+                if (
+                    ra
+                    and rb
+                    and not _is_bare_pronoun_target(ra)
+                    and not _is_bare_pronoun_target(rb)
+                    and (
+                        ((cand.count >= 4 or cand.from_digest) and not equivalent_targets(ra, rb))
+                        or cand.count >= 6
+                    )
+                ):
+                    divergent_generic.append((cand, ra, rb))
                 continue
             divergent = bool(not ra or not rb or not equivalent_targets(ra, rb))
             if divergent:
                 divergent_count += 1
+                # Also surface half-generic divergent titles (e.g. 'the sovereign' vs 'the king')
+                # into the convention title ledger so they get locked even if excluded from `terms`.
+                if ra and rb and (ra_gen or rb_gen) and (cand.count >= 4 or cand.from_digest):
+                    divergent_generic.append((cand, ra, rb))
+                    continue
             # Keep every divergent entity + core anchors (digest-cited or high frequency >= 5).
             if divergent or cand.from_digest or cand.count >= 5:
                 to_adjudicate.append((cand, ra, rb, divergent))
@@ -1049,19 +1253,42 @@ class BookBibleAgent(Agent):
                 if distinct_vars:
                     variants_by_source[cand.source] = distinct_vars
 
+        divergent_generic.sort(key=lambda item: (-item[0].count, item[0].source))
         terms, conventions = self._adjudicate_with_conventions(
             to_adjudicate,
             book_synopsis=book_synopsis,
             style=style,
             existing_terms=existing_terms,
             source_corpus=source_corpus,
+            divergent_titles=divergent_generic[:10],
         )
+        kept_term_sources = {normalize_match_text(t.source).strip() for t in terms}
+        watched_titles: list[tuple[str, tuple[str, ...]]] = [
+            (cand.source, tuple(dict.fromkeys((ra, rb)))) for cand, ra, rb in divergent_generic[:10]
+        ]
+        watched_seen = {normalize_match_text(src).strip() for src, _ in watched_titles}
+        # Any high-frequency divergent candidate excluded from `terms` (e.g. recurring offices like 状元)
+        # is still watched by ConsistencySweepService for cross-chapter drift.
+        for cand, ra, rb, divergent in to_adjudicate:
+            norm = normalize_match_text(cand.source).strip()
+            if (
+                divergent
+                and ra
+                and rb
+                and cand.count >= 4
+                and norm not in kept_term_sources
+                and norm not in watched_seen
+            ):
+                watched_titles.append((cand.source, tuple(dict.fromkeys((ra, rb)))))
+                watched_seen.add(norm)
+        divergent_title_pairs = tuple(watched_titles[:15])
         return BibleResult(
             terms=tuple(terms),
             variants_by_source=variants_by_source,
             candidate_count=len(candidates),
             divergent_count=divergent_count,
             conventions=conventions,
+            divergent_titles=divergent_title_pairs,
         )
 
     def _complete_json_dict(
