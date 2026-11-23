@@ -212,7 +212,7 @@ class PostgresExports:
                 """SELECT j.id, j.run_id, e.id FROM jobs j
                    JOIN exports e ON e.id=(j.params->>'export_id')::bigint
                    WHERE j.project_id=%s AND j.kind='export'
-                     AND j.status IN ('queued','running') AND e.fmt=%s
+                     AND j.status IN ('queued','running') AND e.format=%s
                    ORDER BY j.id DESC LIMIT 1""",
                 (pid, fmt),
             ).fetchone()
