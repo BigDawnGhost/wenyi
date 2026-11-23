@@ -227,7 +227,9 @@ def test_failed_result_carries_server_reason(monkeypatch, tmp_path):
     }
     client = _script_batch(monkeypatch, tmp_path, poll)
     try:
-        with pytest.raises(MinerUError, match=r"Extraction failed for test\.pdf: OCR backend crashed"):
+        with pytest.raises(
+            MinerUError, match=r"Extraction failed for test\.pdf: OCR backend crashed"
+        ):
             client.submit_batch([str(tmp_path / "test.pdf")])
     finally:
         client.close()

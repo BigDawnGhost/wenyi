@@ -6,7 +6,6 @@ import unittest
 from unittest.mock import patch
 
 import pytest
-
 from wenyi_core.config import Config
 from wenyi_core.llm.configuration import ProviderConfig
 from wenyi_core.llm.providers.opencode_go import USER_AGENT, OpenCodeGoClient
