@@ -151,7 +151,7 @@ jobs:
     # with `force` as the paths that invalidate the filter itself.
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.python == 'true' || needs.changes.outputs.force == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
