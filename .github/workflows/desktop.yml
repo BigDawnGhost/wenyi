@@ -269,7 +269,13 @@ jobs:
           packages/core/tests/test_file_migrations.py
           packages/core/tests/test_precision_pipeline.py
           packages/core/tests/test_locks_contract.py
-          packages/core/tests/test_orchestrator.py
+          packages/core/tests/test_orchestrator_annotation.py
+          packages/core/tests/test_orchestrator_book_understanding.py
+          packages/core/tests/test_orchestrator_contract.py
+          packages/core/tests/test_orchestrator_glossary.py
+          packages/core/tests/test_orchestrator_pipeline.py
+          packages/core/tests/test_orchestrator_review.py
+          packages/core/tests/test_orchestrator_run_resume.py
       # loadgroup keeps tests that drive one runtime on the same worker; --dist
       # defaults to load, which would scatter them and race the scheduler.
       - name: Desktop backend suite
