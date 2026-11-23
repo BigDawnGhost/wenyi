@@ -277,6 +277,29 @@ def test_typography_keeps_a_curly_quote_that_closes_a_straight_opener():
     assert cleaned.endswith("”")
 
 
+def test_typography_keeps_straight_speech_opener_at_paragraph_end_with_prior_curly_quotes():
+    cleaned, applied = normalize_latin_typography(
+        '“Really?” she asked. Then he took a breath and said, "',
+        source="她問了一聲。然後他吸了口氣，道：「",
+    )
+    assert "stray_closing_quote" not in applied
+    assert cleaned.endswith('"')
+
+
+def test_chapter_typography_preserves_closing_quote_after_repeated_continuing_openers():
+    pairs = [
+        ("他說道：「第一段話。", '"First part of the speech.'),
+        ("第二段話繼續。", '"Second part continues.'),
+        ("最後一句詩。", 'Final line of the speech."'),
+        ("旁白。", "Narration after speech."),
+    ]
+    cleaned, _ = normalize_chapter_latin_typography(pairs)
+    assert cleaned[0] == '"First part of the speech.'
+    assert cleaned[1] == '"Second part continues.'
+    assert cleaned[2] == 'Final line of the speech."'
+    assert cleaned[3] == "Narration after speech."
+
+
 def test_minority_name_normalizer_replaces_all_variants_and_split_pinyin_in_one_paragraph():
     terms = [
         GlossaryTerm(source="行者", target="Pilgrim", type="person"),

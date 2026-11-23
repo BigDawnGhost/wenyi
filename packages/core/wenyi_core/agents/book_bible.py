@@ -315,10 +315,18 @@ class BookBibleAgent(Agent):
             raw_map = data.get("renderings") if isinstance(data, dict) else None
             if not isinstance(raw_map, dict):
                 raise ValueError("Book Bible probe returned no renderings map")
+            missing = 0
             for src, _ in chunk:
+                if src not in raw_map:
+                    missing += 1
+                    continue
                 val = raw_map.get(src)
                 if isinstance(val, str):
                     results[src] = val.strip()
+            if missing and raw_map:
+                _LOGGER.warning(
+                    "Bible probe omitted %d/%d candidates in batch", missing, len(chunk)
+                )
         return results
 
     def _adjudicate(

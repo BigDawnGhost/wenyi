@@ -1328,3 +1328,47 @@ def test_batch_executor_inline_polish_preserves_draft_on_request_stopped():
     assert result.before_polish == ("Draft one.",)
     assert result.polish_failed is True
     assert result.polish_interrupted is stop
+
+
+def test_parallel_secondary_save_error_does_not_mask_earlier_chapter_failure(tmp_path: Path):
+    import pytest
+    from wenyi_core.llm.limits import RequestCancelled
+    from wenyi_core.storage.file import FileStorage
+
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    cfg = _parallel_config(tmp_path, chapter_concurrency=3)
+    ch1_finished = threading.Event()
+    base = _parallel_handler([])
+
+    def handler(messages, tier, json_mode):
+        sys_msg = messages[0]["content"]
+        user_msg = messages[-1]["content"]
+        if "literary translator" in sys_msg and "] 行者跟隨三藏走出長安。" in user_msg:
+            ch1_finished.wait(timeout=5)
+            raise RequestCancelled("user cancelled")
+        return base(messages, tier, json_mode)
+
+    orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+    orig_worker = orch._translation._translate_wave_worker
+
+    def paced_worker(spec, polish_executor=None, stop=None):
+        result = orig_worker(spec, polish_executor, stop)
+        if spec.chapter == 1:
+            ch1_finished.set()
+        return result
+
+    orch._translation._translate_wave_worker = paced_worker
+    real_save = FileStorage.save_chapter
+
+    def failing_ch1_save(self, chapter):
+        if chapter.index == 1 and any(s.target for s in chapter.text_segments):
+            raise OSError("ch1 save failed")
+        return real_save(self, chapter)
+
+    FileStorage.save_chapter = failing_ch1_save
+    try:
+        with pytest.raises(RequestCancelled, match="user cancelled"):
+            orch.run(str(book))
+    finally:
+        FileStorage.save_chapter = real_save

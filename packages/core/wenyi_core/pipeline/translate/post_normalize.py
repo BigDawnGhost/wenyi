@@ -36,6 +36,7 @@ _SINGLE_QUOTE_UTTERANCE_RE = re.compile(
 )
 _WORD_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
 _SOURCE_CLOSING_QUOTE_CHARS = ("」", "』", "”", '"')
+_SOURCE_OPENING_QUOTE_CHARS = ("「", "『", "“", '"', "《", "«")
 _VERSE_INTRODUCER_RE = re.compile(
     r"(?:詩曰|诗曰|詞曰|词曰|但見|但见|道是|讚曰|赞曰|偈曰|歌曰|有詩為證|有诗为证|"
     r"詞寄|词寄|西江月|沁園春|沁园春|古風|古风|正是：|真是：|果然是：)"
@@ -175,6 +176,7 @@ def normalize_latin_typography(
     # 4. Drop unambiguous stray unmatched closing quote at paragraph end (0 opens, 1 close),
     # ONLY when we are not closing a multi-paragraph open speech and the source has no close quote.
     src_has_close = any(ch in source for ch in _SOURCE_CLOSING_QUOTE_CHARS)
+    src_ends_open = source.rstrip().endswith(_SOURCE_OPENING_QUOTE_CHARS)
     if not open_quote_carry and not src_has_close:
         if (
             masked.count("“") == 0
@@ -185,15 +187,19 @@ def normalize_latin_typography(
             pos = masked.rfind("”")
             masked = masked[:pos] + masked[pos + 1 :]
             applied.append("stray_closing_quote")
-        # A straight quote closing an unmatched curly opener is a real close, not a stray.
+        # A straight quote closing an unmatched curly opener, or opening a multi-paragraph
+        # speech at paragraph end (after whitespace or when the source ends with an opener),
+        # is not a stray closer.
         elif (
-            masked.count('"') == 1
+            not src_ends_open
+            and masked.count('"') == 1
             and masked.count("“") <= masked.count("”")
             and masked.rstrip().endswith('"')
         ):
             pos = masked.rfind('"')
-            masked = masked[:pos] + masked[pos + 1 :]
-            applied.append("stray_closing_quote")
+            if pos > 0 and not masked[pos - 1].isspace():
+                masked = masked[:pos] + masked[pos + 1 :]
+                applied.append("stray_closing_quote")
 
     return _unmask_markers(masked, saved), applied
 
@@ -256,12 +262,22 @@ def normalize_chapter_latin_typography(
                 fix_count += 1
 
         # Update chapter-level open double-quote carry state.
+        stripped = updated.strip()
         dq_count = updated.count('"')
         curly_delta = updated.count("“") - updated.count("”")
         if curly_delta != 0:
             open_quote_carry = (open_quote_carry and curly_delta >= 0) or curly_delta > 0
         elif dq_count % 2 == 1:
-            open_quote_carry = not open_quote_carry
+            # A continuing paragraph that repeats an opening quote keeps the speech open.
+            if open_quote_carry and stripped.startswith('"') and not stripped.endswith('"'):
+                open_quote_carry = True
+            else:
+                open_quote_carry = not open_quote_carry
+        elif open_quote_carry and (
+            (stripped.startswith('"') and stripped.endswith('"') and dq_count >= 2)
+            or (stripped.startswith("“") and stripped.endswith("”"))
+        ):
+            open_quote_carry = False
 
         results.append(updated)
     return results, fix_count

@@ -1369,9 +1369,6 @@ class TranslationService:
                             )
                             # The saved draft keeps its marker; stop after saving the rest.
                             error = error or res.polish_interrupted
-                        del outcomes[0]
-                        completed_by_key[key] = (outcomes, error, wave_complete)
-                        done += len(b)
                         if not final and failure is None and error is None and not stop.is_set():
                             # Skip alignment during teardown so a persistent cancel/budget stop
                             # cannot drop remaining drafts; resume aligns already_done batches.
@@ -1403,10 +1400,13 @@ class TranslationService:
                         if self._quote_memory is not None:
                             for pos, src, tgt in draft_pairs:
                                 self._quote_memory.observe(pos, src, tgt)
+                        done += len(b)
+                        del outcomes[0]
+                        completed_by_key[key] = (outcomes, error, wave_complete)
                         if progress:
                             progress(done, total, self.chapter_progress_label(chapter.title, ci))
                 except Exception:  # noqa: BLE001 - best-effort teardown saves later chapters.
-                    if not (final and failure is not None):
+                    if failure is None:
                         raise
                     _LOGGER.exception("Could not save drafted batches for chapter %d", ci)
                     del completed_by_key[key]
@@ -1512,7 +1512,9 @@ class TranslationService:
                     _flush_ready(final=True)
                 except Exception:  # noqa: BLE001 - report the original error.
                     _LOGGER.exception("Could not save drafted batches after a failure")
-                raise interrupted
+                # Preserve an earlier chapter's failure over a secondary writer Exception,
+                # while still surfacing a run-stopping BaseException (e.g. Ctrl-C).
+                raise (interrupted if not isinstance(interrupted, Exception) else failure)
         finally:
             if polish_pool is not None:
                 polish_pool.shutdown(wait=True)
