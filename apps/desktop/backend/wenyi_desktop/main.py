@@ -176,12 +176,14 @@ class DesktopServices:
         with self.backend.transaction() as connection:
             connection.execute("SELECT 1")
 
-    async def relay(self, ws, pid):
+    async def relay(self, websocket, pid):
         with self.connect().subscribe(pid) as queue:
             project = await asyncio.to_thread(self.backend.get_project, pid)
             chapters = await asyncio.to_thread(self.backend.chapter_summaries, pid)
-            await ws.send_json({"kind": "snapshot", "project": project or {}, "chapters": chapters})
-            disconnected = asyncio.create_task(ws.receive())
+            await websocket.send_json(
+                {"kind": "snapshot", "project": project or {}, "chapters": chapters}
+            )
+            disconnected = asyncio.create_task(websocket.receive())
             received = None
             try:
                 while not disconnected.done():
@@ -197,13 +199,13 @@ class DesktopServices:
                     if received not in done:
                         # The wait stays pending, so a later event is still
                         # delivered on the next pass through the loop.
-                        await ws.send_text(HEARTBEAT_FRAME)
+                        await websocket.send_text(HEARTBEAT_FRAME)
                         continue
                     data = received.result()
                     received = None
                     if data is None:
                         break
-                    await ws.send_text(data)
+                    await websocket.send_text(data)
             except WebSocketDisconnect:
                 pass
             finally:
@@ -359,14 +361,19 @@ def create_app(
             library_root=library_root,
             install_root=install_root,
         )
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
+    settings = context.settings_store
+    assert isinstance(settings, DesktopSettings)
     services = context.telemetry
+    assert isinstance(services, DesktopServices)
     lifecycle = engine_diagnostics or EngineDiagnostics(diagnostics)
 
     @asynccontextmanager
     async def lifespan(app):
         with use_context(context), scope(diagnostics):
             with lifecycle.observe("runtime"):
-                runtime = LocalRuntime(context.repository, context, diagnostics=diagnostics)
+                runtime = LocalRuntime(backend, context, diagnostics=diagnostics)
             services.runtime = runtime
             try:
                 with lifecycle.observe("runtime"):
@@ -381,8 +388,8 @@ def create_app(
                     finally:
                         await services.babeldoc.stop()
                         services.runtime = None
-                        context.settings_store.credentials.clear_session()
-                        context.repository.close()
+                        settings.credentials.clear_session()
+                        backend.close()
 
     app = create_http_app(
         context,
@@ -413,6 +420,6 @@ def create_app(
     )
     if diagnostics is not None:
         app.add_middleware(DiagnosticsMiddleware, reporter=diagnostics, origins=ORIGINS)
-        if context.settings_store.credentials.vault is None:
+        if settings.credentials.vault is None:
             diagnostics.emit("credentials_degraded")
     return app

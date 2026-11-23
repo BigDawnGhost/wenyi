@@ -6,10 +6,10 @@ import os
 import stat
 import tempfile
 from contextlib import ExitStack, contextmanager
-from io import BufferedReader
+from io import BufferedReader, RawIOBase
 from pathlib import Path
 from threading import Lock
-from typing import BinaryIO, Callable, Iterator
+from typing import BinaryIO, Callable, Iterator, cast
 
 from wenyi_core.storage.io_path import to_io_path
 
@@ -20,7 +20,7 @@ class ExportLease(BufferedReader):
     def __init__(self, stream: BinaryIO, release: Callable[[], None]):
         self._close_lock = Lock()
         self._release: Callable[[], None] | None = release
-        super().__init__(stream)
+        super().__init__(cast(RawIOBase, stream))
 
     def close(self) -> None:
         with self._close_lock:
@@ -47,7 +47,10 @@ def _windows_handle(path: Path, *, directory: bool) -> int:
     import ctypes
     from ctypes import wintypes
 
-    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    win_dll = getattr(ctypes, "WinDLL")
+    win_error = getattr(ctypes, "WinError")
+    last_error = getattr(ctypes, "get_last_error")
+    kernel = win_dll("kernel32", use_last_error=True)
     create = kernel.CreateFileW
     create.argtypes = [
         wintypes.LPCWSTR,
@@ -69,7 +72,7 @@ def _windows_handle(path: Path, *, directory: bool) -> int:
         None,
     )
     if handle == wintypes.HANDLE(-1).value:
-        raise ctypes.WinError(ctypes.get_last_error())
+        raise win_error(last_error())
 
     class AttributeTag(ctypes.Structure):
         _fields_ = [("attributes", wintypes.DWORD), ("tag", wintypes.DWORD)]
@@ -80,7 +83,7 @@ def _windows_handle(path: Path, *, directory: bool) -> int:
     attributes = AttributeTag()
     try:
         if not info(handle, 9, ctypes.byref(attributes), ctypes.sizeof(attributes)):
-            raise ctypes.WinError(ctypes.get_last_error())
+            raise win_error(last_error())
         if attributes.attributes & 0x400:  # FILE_ATTRIBUTE_REPARSE_POINT
             raise ValueError("Export contains a reparse point")
         if bool(attributes.attributes & 0x10) != directory:
@@ -95,7 +98,8 @@ def _close_windows_handle(handle: int) -> None:
     import ctypes
     from ctypes import wintypes
 
-    close = ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle
+    win_dll = getattr(ctypes, "WinDLL")
+    close = win_dll("kernel32", use_last_error=True).CloseHandle
     close.argtypes = [wintypes.HANDLE]
     close.restype = wintypes.BOOL
     close(handle)

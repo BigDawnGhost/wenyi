@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import httpx
 from fastapi import HTTPException
@@ -224,7 +224,7 @@ class BabeldocPlugin:
                 timeout=60,
                 event_hooks={"request": [packages.require_https]},
             ) as client:
-                manifest = await packages.read_manifest(client, self.target)
+                manifest = await packages.read_manifest(client, cast(str, self.target))
             if self.version:
                 packages.version_key(self.version)
             self.latest_version, self._manifest = manifest["version"], manifest
@@ -331,7 +331,7 @@ class BabeldocPlugin:
             event_hooks={"request": [packages.require_https]},
         ) as client:
             if manifest is None:
-                manifest = await packages.read_manifest(client, self.target)
+                manifest = await packages.read_manifest(client, cast(str, self.target))
             version = manifest["version"]
             archives = self.root / "downloads"
             archives.mkdir(exist_ok=True)
@@ -451,7 +451,10 @@ class BabeldocPlugin:
             child_environment(token),
         )
         child = self._child
-        line = await asyncio.wait_for(child.stdout.readline(), timeout=180)
+        assert child is not None
+        stream = child.stdout
+        assert stream is not None
+        line = await asyncio.wait_for(stream.readline(), timeout=180)
         ready = json.loads(line)
         if (
             ready.get("protocol") != 1
@@ -473,8 +476,10 @@ class BabeldocPlugin:
         self._connection = connection
 
     async def _watch(self) -> None:
+        child = self._child
+        assert child is not None
         try:
-            await self._child.wait()
+            await child.wait()
             raise RuntimeError("Plugin exited unexpectedly")
         except asyncio.CancelledError:
             raise

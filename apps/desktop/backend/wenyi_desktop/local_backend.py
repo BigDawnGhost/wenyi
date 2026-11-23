@@ -972,7 +972,7 @@ class LocalBackend:
             return True
 
     def admit_export(
-        self, pid: str, fmt: str, options: dict, run_id: str, config_snapshot: dict
+        self, pid: str, fmt: str, options: dict, run_id: str, snapshot: dict
     ) -> tuple[int, int]:
         with self.transaction() as connection:
             self._reject_removing(pid)
@@ -985,7 +985,7 @@ class LocalBackend:
                 run_id,
                 run_id=run_id,
                 params={"export_id": export_id},
-                config_snapshot=config_snapshot,
+                config_snapshot=snapshot,
                 connection=connection,
             )
             return export_id, job_id

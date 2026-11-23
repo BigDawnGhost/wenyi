@@ -178,11 +178,17 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
         creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
         text=True,
     )
+    stdin = child.stdin
+    assert stdin is not None
+    stdout = child.stdout
+    assert stdout is not None
+    stderr = child.stderr
+    assert stderr is not None
     lines: queue.Queue[str] = queue.Queue()
     observations = []
 
     def collect():
-        for line in child.stdout:
+        for line in stdout:
             if line.startswith("WENYI_DIAGNOSTIC "):
                 observations.append(json.loads(line.removeprefix("WENYI_DIAGNOSTIC ")))
             else:
@@ -192,7 +198,7 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
     reader.start()
     try:
         line = lines.get(timeout=30)
-        assert line.startswith("WENYI_READY "), child.stderr.read() if child.poll() else line
+        assert line.startswith("WENYI_READY "), stderr.read() if child.poll() else line
         ready = json.loads(line.removeprefix("WENYI_READY "))
         assert set(ready) == {"protocol", "port", "pid"}
         assert ready["protocol"] == 1 and ready["pid"] == child.pid
@@ -213,14 +219,14 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
         with request(base, "/health", Host="evil.example") as response:
             assert response.status == 403
         if shutdown == "command":
-            child.stdin.write('{"command":"shutdown"}\n')
-            child.stdin.flush()
+            stdin.write('{"command":"shutdown"}\n')
+            stdin.flush()
         else:
-            child.stdin.close()
+            stdin.close()
         child.wait(timeout=30)
         reader.join(timeout=5)
         assert child.returncode == 0
-        assert token not in json.dumps(observations) + child.stderr.read()
+        assert token not in json.dumps(observations) + stderr.read()
         if diagnostics:
             assert observations[0]["event"] == "engine_bootstrap"
             assert observations[-1] == {
@@ -318,6 +324,7 @@ def test_startup_failure_reports_original_error_before_uvicorn_exit(tmp_path, st
             if child.poll() is None:
                 child.kill()
             child.wait(timeout=5)
+            assert child.stdin is not None
             child.stdin.close()
     protocol = output.read_text()
     assert "WENYI_READY " not in protocol

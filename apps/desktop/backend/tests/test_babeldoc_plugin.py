@@ -8,6 +8,7 @@ import stat
 import threading
 import zipfile
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock
 
 import httpx
@@ -22,7 +23,9 @@ from wenyi_desktop.babeldoc_plugin import (
     child_environment,
     finish_thread,
 )
-from wenyi_desktop.main import create_app, create_context
+from wenyi_desktop.local_backend import LocalBackend
+from wenyi_desktop.local_runtime import LocalRuntime
+from wenyi_desktop.main import DesktopServices, create_app, create_context
 from wenyi_desktop.updates import UpdateGuard
 
 
@@ -138,7 +141,7 @@ def test_plugin_process_connection_is_private_and_restarts_without_changing_save
                 kill=exited.set,
             )
             launches.append((command, env, child))
-            plugin._child = child
+            plugin._child = cast(asyncio.subprocess.Process, child)
 
         def handler(request):
             assert (
@@ -268,7 +271,9 @@ def test_install_commits_only_complete_runtime_and_models(tmp_path, monkeypatch)
         plugin._select_installation(identity, version)
         restored = BabeldocPlugin(tmp_path)
         assert restored.installation == plugin.installation and restored.enabled
-        folder = plugin.root / "installed" / plugin.installation
+        selected = plugin.installation
+        assert selected is not None
+        folder = plugin.root / "installed" / selected
         assert (folder / "runtime" / plugin.executable_name).read_bytes() == b"fake executable"
         assert (folder / "cache/models/model.onnx").read_bytes() == b"fake weights"
         await plugin.disable()
@@ -284,13 +289,19 @@ def test_failed_setup_is_retryable_and_does_not_install(tmp_path, monkeypatch):
         plugin.target = "linux-x86_64"
         monkeypatch.setattr(plugin, "_install", AsyncMock(side_effect=ValueError("private detail")))
         await plugin.enable()
-        await plugin._task
+        task = plugin._task
+        assert task is not None
+        await task
         assert plugin.phase == "error" and plugin.error == "install_failed"
         assert plugin.installation is None
         assert "private detail" not in json.dumps(plugin.status())
         await plugin.enable()
-        await plugin._task
-        assert plugin._install.await_count == 2
+        task = plugin._task
+        assert task is not None
+        await task
+        install_mock = plugin._install
+        assert isinstance(install_mock, AsyncMock)
+        assert install_mock.await_count == 2
         restored = BabeldocPlugin(tmp_path)
         restored.restore()
         assert restored.error == "interrupted"
@@ -314,7 +325,9 @@ def test_initial_install_does_not_select_candidate_before_health_check(tmp_path,
 
         monkeypatch.setattr(plugin, "_start", start)
         await plugin.enable()
-        await plugin._task
+        task = plugin._task
+        assert task is not None
+        await task
         assert plugin.phase == "error" and plugin.error == "start_failed"
         assert plugin.installation is None and plugin.version is None
         assert json.loads((plugin.root / "plugin.json").read_text())["installation"] is None
@@ -351,8 +364,10 @@ def test_cancel_waits_for_archive_writer(tmp_path):
 def test_private_controls_and_active_job_guard(tmp_path, monkeypatch):
     context = create_context(tmp_path, api_token="test-token")
     app = create_app(context=context)
-    context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
-    plugin = context.telemetry.babeldoc
+    services = context.telemetry
+    assert isinstance(services, DesktopServices)
+    services.runtime = cast(LocalRuntime, SimpleNamespace(accepting=True, idle=True))
+    plugin = services.babeldoc
     plugin.target = "linux-x86_64"
     monkeypatch.setattr(plugin, "enable", AsyncMock())
     client = TestClient(app)
@@ -373,14 +388,18 @@ def test_private_controls_and_active_job_guard(tmp_path, monkeypatch):
     assert client.post(endpoint + "/disable", headers=headers).status_code == 409
     assert not app.state.update_guard.closed
     assert endpoint not in app.openapi()["paths"]
-    context.repository.close()
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
+    backend.close()
 
 
 def test_private_plugin_update_controls(tmp_path, monkeypatch):
     context = create_context(tmp_path, api_token="test-token")
     app = create_app(context=context)
-    context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
-    plugin = context.telemetry.babeldoc
+    services = context.telemetry
+    assert isinstance(services, DesktopServices)
+    services.runtime = cast(LocalRuntime, SimpleNamespace(accepting=True, idle=True))
+    plugin = services.babeldoc
     for method in ("check_update", "update", "cancel_update"):
         monkeypatch.setattr(plugin, method, AsyncMock(), raising=False)
     client = TestClient(app)
@@ -398,14 +417,18 @@ def test_private_plugin_update_controls(tmp_path, monkeypatch):
             assert client.post(endpoint, headers=headers).status_code == status
             assert endpoint not in app.openapi()["paths"]
     finally:
-        context.repository.close()
+        backend = context.repository
+        assert isinstance(backend, LocalBackend)
+        backend.close()
 
 
 def test_updates_cannot_interrupt_setup_or_reopen_plugin_admission(tmp_path):
     async def run():
         context = create_context(tmp_path)
-        context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
-        plugin = context.telemetry.babeldoc
+        services = context.telemetry
+        assert isinstance(services, DesktopServices)
+        services.runtime = cast(LocalRuntime, SimpleNamespace(accepting=True, idle=True))
+        plugin = services.babeldoc
         plugin.phase = "models"
         guard = UpdateGuard(context.telemetry)
         with pytest.raises(HTTPException):
@@ -419,6 +442,8 @@ def test_updates_cannot_interrupt_setup_or_reopen_plugin_admission(tmp_path):
         assert guard.closed
         await guard.cancel(allow_plugin_activity=True)
         assert not guard.closed
-        context.repository.close()
+        backend = context.repository
+        assert isinstance(backend, LocalBackend)
+        backend.close()
 
     asyncio.run(run())

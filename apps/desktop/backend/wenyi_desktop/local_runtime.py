@@ -212,7 +212,7 @@ class LocalRuntime:
         self.diagnostics = diagnostics
         self.lock = WorkspaceLock(backend.workspace)
         self.hub = ProgressHub(backend, asyncio.get_running_loop())
-        self.export_queue: asyncio.Queue = asyncio.Queue(maxsize=128)
+        self.export_queue: asyncio.Queue[tuple[str, dict, str] | None] = asyncio.Queue(maxsize=128)
         self._submitted: set[str] = set()
         self._active: dict[str, asyncio.Task] = {}
         self._cancelling: set[asyncio.Task] = set()
@@ -387,7 +387,9 @@ class LocalRuntime:
             # Notifications are advisory and must never change a task's outcome.
             log.debug("Could not queue a Desktop status notice", exc_info=True)
 
-    async def _consume(self, queue: asyncio.Queue, timeout: float) -> None:
+    async def _consume(
+        self, queue: asyncio.Queue[tuple[str, dict, str] | None], timeout: float
+    ) -> None:
         while True:
             item = await queue.get()
             try:

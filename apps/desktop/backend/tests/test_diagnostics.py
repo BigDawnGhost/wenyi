@@ -243,15 +243,15 @@ def test_model_observations_keep_client_scope_across_threads_and_leave_ledger_al
 def test_status_notices_are_separate_bounded_and_free_of_error_text():
     stream = io.StringIO()
     reporter = Reporter(stream)
-    assert reporter.notice(
-        notices.task_notice(
-            "task_failed",
-            project={"id": "abc123", "name": "A\nBook"},
-            run_id="run1",
-            task="translation",
-            reason="io",
-        )
+    payload = notices.task_notice(
+        "task_failed",
+        project={"id": "abc123", "name": "A\nBook"},
+        run_id="run1",
+        task="translation",
+        reason="io",
     )
+    assert payload is not None
+    assert reporter.notice(payload)
     # Missing reason, unknown reason, and unknown fields are dropped.
     for invalid in (
         {
@@ -278,6 +278,8 @@ def test_status_notices_are_separate_bounded_and_free_of_error_text():
             "error": "fake-private-error",
         },
     ):
+        if invalid is None:
+            continue
         assert not reporter.notice(invalid)
     reporter.close()
     lines = [line for line in stream.getvalue().splitlines() if line.startswith("WENYI_NOTICE ")]
@@ -297,14 +299,14 @@ def test_status_notices_are_separate_bounded_and_free_of_error_text():
 def test_status_notice_wire_format_stays_ascii_and_keeps_the_display_name():
     stream = io.StringIO()
     reporter = Reporter(stream)
-    assert reporter.notice(
-        notices.task_notice(
-            "project_completed",
-            project={"id": "abc123", "name": "书名 📚"},
-            run_id="run1",
-            task="translation",
-        )
+    payload = notices.task_notice(
+        "project_completed",
+        project={"id": "abc123", "name": "书名 📚"},
+        run_id="run1",
+        task="translation",
     )
+    assert payload is not None
+    assert reporter.notice(payload)
     reporter.close()
     line = next(line for line in stream.getvalue().splitlines() if line.startswith("WENYI_NOTICE "))
     # A non-UTF-8 Windows pipe must never see raw non-ASCII bytes on this channel.

@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from threading import RLock
-from typing import Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from wenyi_backend.security import validate_credential
@@ -50,7 +50,7 @@ def system_keyring():
 
         backend = keyring.get_keyring()
         candidates = (
-            backend.backends
+            cast(Any, backend).backends
             if type(backend).__module__ == "keyring.backends.chainer"
             else [backend]
         )
@@ -202,7 +202,7 @@ class CredentialStore:
         system_available = self.vault is not None
         record, secret = self._mineru_snapshot()
         available = secret is not None
-        if available:
+        if secret is not None:
             try:
                 self._validate_mineru_token(secret)
             except ValueError:
@@ -425,7 +425,9 @@ class CredentialStore:
 def credential_store() -> CredentialStore:
     from wenyi_backend.context import current_context
 
-    return current_context().settings_store.credentials
+    from .settings import DesktopSettings
+
+    return cast(DesktopSettings, current_context().settings_store).credentials
 
 
 def build_local_client(config: Config, store: CredentialStore | None = None) -> RoutedLLMClient:

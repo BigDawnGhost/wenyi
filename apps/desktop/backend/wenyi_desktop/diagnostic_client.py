@@ -26,7 +26,7 @@ class DesktopLLMClient(RoutedLLMClient):
             if local_diagnostics_enabled():
                 record_local_event(event, data)
             return
-        fields = {**self._diagnostic_context}
+        fields: dict[str, object] = {**self._diagnostic_context}
         call_id = data.get("call_id")
         if isinstance(call_id, str):
             fields["call_ref"] = reporter.reference(call_id)

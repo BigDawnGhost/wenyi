@@ -8,6 +8,7 @@ import shutil
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from fastapi import HTTPException
@@ -15,7 +16,8 @@ from fastapi.testclient import TestClient
 from wenyi_desktop import paths
 from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.local_runtime import LocalRuntime
-from wenyi_desktop.main import create_app, create_context
+from wenyi_desktop.main import DesktopServices, create_app, create_context
+from wenyi_desktop.settings import DesktopSettings
 from wenyi_desktop.updates import (
     RETENTION_KEEP_BACKUPS,
     RETENTION_MAX_BYTES,
@@ -30,16 +32,20 @@ from wenyi_desktop.updates import (
 @pytest.fixture
 def context(tmp_path):
     context = create_context(tmp_path / "updates", api_token="test-token")
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
     yield context
-    context.repository.close()
+    backend.close()
 
 
 def test_authenticated_private_endpoints_and_isolation(context, tmp_path):
     app = create_app(context=context)
     context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
     other = create_context(tmp_path / "other", api_token="other-token")
+    other_services = other.telemetry
+    assert isinstance(other_services, DesktopServices)
     other_app = create_app(context=other)
-    other.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
+    other_services.runtime = cast(LocalRuntime, SimpleNamespace(accepting=True, idle=True))
     try:
         # Lifespan intentionally not entered: no real workers are needed.
         client = TestClient(app)
@@ -69,7 +75,9 @@ def test_authenticated_private_endpoints_and_isolation(context, tmp_path):
         assert client.post("/desktop/updates/prepare", headers=headers).status_code == 503
         assert client.post("/desktop/updates/cancel", headers=headers).status_code == 503
     finally:
-        other.repository.close()
+        other_backend = other.repository
+        assert isinstance(other_backend, LocalBackend)
+        other_backend.close()
 
 
 def test_backup_plan_requires_frozen_authenticated_admission(context, monkeypatch, tmp_path):
@@ -113,22 +121,28 @@ def test_explicit_root_overrides_xdg_for_catalog_credentials_and_backup_plan(
     monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
     root = tmp_path / "workspace"
     context = create_context(root, api_token="test-token")
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
+    settings = context.settings_store
+    assert isinstance(settings, DesktopSettings)
+    services = context.telemetry
+    assert isinstance(services, DesktopServices)
     try:
-        assert context.repository.database == root / "catalog.sqlite3"
-        assert context.settings_store.credentials.database == context.repository.database
-        context.telemetry.runtime = SimpleNamespace(accepting=True, idle=True)
+        assert backend.database == root / "catalog.sqlite3"
+        assert settings.credentials.database == backend.database
+        services.runtime = cast(LocalRuntime, SimpleNamespace(accepting=True, idle=True))
         client = TestClient(create_app(context=context))
         headers = {"Authorization": "Bearer test-token"}
         assert client.post("/desktop/updates/prepare", headers=headers).status_code == 204
         response = client.post("/desktop/updates/backup-plan", headers=headers)
         assert response.status_code == 200
         assert response.json()["sources"] == [
-            {"path": str(context.repository.database), "name": "catalog.sqlite3"},
+            {"path": str(backend.database), "name": "catalog.sqlite3"},
         ]
         assert not data_home.exists()
         assert not (private_profile / "Wenyi").exists()
     finally:
-        context.repository.close()
+        backend.close()
 
 
 def test_missing_authoritative_project_refuses_backup_plan(context, monkeypatch):
@@ -431,7 +445,7 @@ def test_restore_refuses_a_damaged_backup_without_touching_the_workspace(tmp_pat
     outcome = restore_latest_backup(workspace)
 
     assert outcome.status == "failed"
-    assert "checksum mismatch" in outcome.detail
+    assert outcome.detail is not None and "checksum mismatch" in outcome.detail
     assert catalog.read_bytes() == b"half-migrated catalog"
     assert (project / "book.epub").read_bytes() == b"half-migrated project"
     assert (backup / "MANIFEST.json").is_file()
@@ -504,7 +518,7 @@ def test_restore_rejects_entries_outside_the_declared_sources(tmp_path):
     outcome = restore_latest_backup(workspace)
 
     assert outcome.status == "failed"
-    assert "outside declared sources" in outcome.detail
+    assert outcome.detail is not None and "outside declared sources" in outcome.detail
     assert catalog.read_bytes() == b"half-migrated catalog"
 
 
@@ -691,10 +705,12 @@ def test_create_context_prunes_upgrade_backups_on_startup(tmp_path, monkeypatch)
     _seed_backups(workspace, names)
     monkeypatch.setattr("wenyi_desktop.updates._recycle_delete", lambda path: False)
     context = create_context(workspace, api_token="test-token")
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
     try:
         remaining = sorted(entry.name for entry in (workspace / "backups").iterdir())
         assert remaining == names[2:]
         trashed = sorted(entry.name for entry in (workspace / "backups-trash").iterdir())
         assert trashed == names[:2]
     finally:
-        context.repository.close()
+        backend.close()

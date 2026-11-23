@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any, cast
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -27,7 +28,7 @@ class NativeExportPlan(BaseModel):
 
 
 def _backend() -> LocalBackend:
-    return current_context().repository
+    return cast(LocalBackend, current_context().repository)
 
 
 def _plan(filename: str, fmt: str, request: ExportRequest | None = None) -> NativeExportPlan:
@@ -58,7 +59,14 @@ def plan_export(pid: str, body: ExportRequest) -> NativeExportPlan:
     filename = export_filename(
         project, effective_config(project).target_lang, fmt, options["bilingual"]
     )
-    return _plan(filename, fmt, ExportRequest(format=fmt, **options))
+    return _plan(
+        filename,
+        fmt,
+        ExportRequest(
+            format=cast(Any, fmt),
+            **options,
+        ),
+    )
 
 
 @router.get("/exports/{export_id}/plan")

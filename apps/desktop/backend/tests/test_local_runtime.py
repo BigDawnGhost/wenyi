@@ -8,6 +8,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import cast
 
 import anyio
 import pytest
@@ -15,8 +16,9 @@ from desktop_test_support import initialize
 from starlette.websockets import WebSocketDisconnect
 from wenyi_backend.context import current_context, use_context
 from wenyi_desktop import local_runtime
+from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.local_runtime import LocalRuntime, ProgressHub
-from wenyi_desktop.main import create_context
+from wenyi_desktop.main import DesktopServices, create_context
 
 # These cases drive one LocalRuntime through admission, supervision and shutdown.
 # Their assertions depend on how the event loop interleaves those tasks, so they
@@ -30,6 +32,7 @@ pytestmark = pytest.mark.xdist_group("local-runtime")
 def catalog(tmp_path):
     context = create_context(tmp_path / "desktop")
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     try:
         with use_context(context):
             yield backend
@@ -166,6 +169,7 @@ def test_failure_notice_uses_the_catalog_name_and_a_bounded_reason(catalog, monk
 
     async def execute(ctx, *, project_id, run_id, **values):
         job = current_context().repository.get_job_by_arq_id(run_id)
+        assert job is not None
         # The shared runner persists the terminal status before it re-raises.
         current_context().repository.set_job_status(job["id"], "error", error="fake-private-error")
         raise ValueError("fake-private-error")
@@ -254,6 +258,7 @@ def test_completion_notice_requires_the_persisted_terminal_status(
 
     async def execute(ctx, *, project_id, run_id, **values):
         job = current_context().repository.get_job_by_arq_id(run_id)
+        assert job is not None
         current_context().repository.set_job_status(job["id"], "done")
         current_context().repository.set_project_status(project_id, status)
 
@@ -347,7 +352,9 @@ def test_real_workflow_status_notices_follow_the_stop_cause(catalog, monkeypatch
     async def run():
         context = current_context()
         runtime = LocalRuntime(catalog, context, diagnostics=reporter)
-        context.telemetry.runtime = runtime
+        services = context.telemetry
+        assert isinstance(services, DesktopServices)
+        services.runtime = runtime
         started = asyncio.Event()
         loop = asyncio.get_running_loop()
 
@@ -393,7 +400,7 @@ def test_real_workflow_status_notices_follow_the_stop_cause(catalog, monkeypatch
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
             await runtime.stop()
-            context.telemetry.runtime = None
+            services.runtime = None
 
     try:
         asyncio.run(run())
@@ -421,9 +428,12 @@ def test_recovery_pauses_orphan_workflows_and_fails_exports(catalog, status):
         runtime = LocalRuntime(catalog, current_context())
         await runtime.start()
         try:
-            assert current_context().repository.get_job(job)["status"] == "interrupted"
-            assert current_context().repository.get_project(pid)["status"] == "paused"
-            assert current_context().repository.get_job(export_job)["status"] == "error"
+            job_row = current_context().repository.get_job(job)
+            assert job_row is not None and job_row["status"] == "interrupted"
+            project_row = current_context().repository.get_project(pid)
+            assert project_row is not None and project_row["status"] == "paused"
+            export_row = current_context().repository.get_job(export_job)
+            assert export_row is not None and export_row["status"] == "error"
             assert catalog.list_exports(other)[0]["id"] == eid
             assert catalog.list_exports(other)[0]["status"] == "error"
         finally:
@@ -446,6 +456,7 @@ def test_duplicate_delivery_and_independent_two_export_slots(catalog, monkeypatc
         async def execute(ctx, *, project_id, run_id, **values):
             calls.append(run_id)
             job = current_context().repository.get_job_by_arq_id(run_id)
+            assert job is not None
             current_context().repository.set_job_status(job["id"], "running")
             if run_id == "workflow":
                 workflow_started.set()
@@ -671,10 +682,12 @@ def test_progress_cache_is_bounded_expires_and_persists_latest(catalog, monkeypa
         workspace = catalog.workspace
         catalog.close()
         reopened = create_context(workspace)
+        reopened_backend = reopened.repository
+        assert isinstance(reopened_backend, LocalBackend)
         try:
-            assert local_runtime.progress_snapshot(reopened.repository, None, pid) == latest
+            assert local_runtime.progress_snapshot(reopened_backend, None, pid) == latest
         finally:
-            reopened.repository.close()
+            reopened_backend.close()
 
     asyncio.run(run())
 
@@ -755,7 +768,7 @@ def test_an_idle_progress_hub_still_sends_a_heartbeat(catalog, monkeypatch):
         pid = project()
         hub = ProgressHub(catalog, asyncio.get_running_loop())
         services = DesktopServices(catalog)
-        services.runtime = SimpleNamespace(hub=hub)
+        services.runtime = cast(LocalRuntime, SimpleNamespace(hub=hub))
         # A short deadline keeps the test fast; the relay reads this constant.
         monkeypatch.setattr(module, "HEARTBEAT_SECONDS", 0.05)
         sent = []
@@ -796,7 +809,7 @@ def test_progress_after_heartbeats_is_delivered_and_all_receivers_are_drained(ca
         pid = project()
         hub = ProgressHub(catalog, asyncio.get_running_loop())
         services = DesktopServices(catalog)
-        services.runtime = SimpleNamespace(hub=hub)
+        services.runtime = cast(LocalRuntime, SimpleNamespace(hub=hub))
         monkeypatch.setattr(module, "HEARTBEAT_SECONDS", 0.01)
         sent = asyncio.Queue()
         idle = asyncio.Event()
@@ -865,7 +878,7 @@ def test_progress_relay_cancellation_drains_children_and_unsubscribes(catalog, m
         pid = project()
         hub = ProgressHub(catalog, asyncio.get_running_loop())
         services = DesktopServices(catalog)
-        services.runtime = SimpleNamespace(hub=hub)
+        services.runtime = cast(LocalRuntime, SimpleNamespace(hub=hub))
         tasks = []
         drained = []
         create_task = asyncio.create_task
