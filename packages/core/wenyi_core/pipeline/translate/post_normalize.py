@@ -30,6 +30,12 @@ _TYPOGRAPHY_PROTECTED_RE = re.compile(
     r"|(?<!`)``(?!`)[^\n]+?(?<!`)``(?!`)"
     r"|(?<!`)`(?!`)[^`\n]+?(?<!`)`(?!`)"
 )
+# Match standalone leaked literal '\n' line breaks without touching LaTeX commands
+# ('\neq', '\nu', '\nabla', '\nRightarrow'), escaped backslashes ('\\n'), or paths ('C:\new').
+_ESCAPED_NEWLINE_RE = re.compile(
+    r"(?<!\\)(?:\\n)+(?![A-Za-z])"
+    r"|(?<=[.,;!?…\"”'’】》」』])(?<!\\)(?:\\n)+(?=[A-Za-z])"
+)
 _RAW_DOUBLE_DASH_RE = re.compile(r"(?<!-)(?: -- |--)(?!-)")
 _SPEECH_COLON_RE = re.compile(
     r"\b(said|asked|replied|answered|cried|shouted|whispered|laughed|added|"
@@ -156,7 +162,7 @@ def normalize_latin_typography(
 
     # 0. Repair leaked literal '\n' escape sequences in non-code literary prose/verse.
     if "\\n" in masked and not text.lstrip().startswith("```"):
-        updated = masked.replace("\\n", "\n")
+        updated = _ESCAPED_NEWLINE_RE.sub(lambda m: "\n" * (len(m.group(0)) // 2), masked)
         if updated != masked:
             masked = updated
             applied.append("escaped_newline")
