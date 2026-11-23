@@ -1415,3 +1415,213 @@ def test_parallel_same_chapter_save_error_does_not_mask_its_own_wave_error(tmp_p
             orch.run(str(book))
     finally:
         FileStorage.save_chapter = real_save
+
+
+def test_book_bible_probe_retries_omitted_keys_once_before_failing():
+    calls: list[list[str]] = []
+
+    def handler(messages, tier, json_mode):
+        sys_msg = messages[0]["content"]
+        user_msg = messages[-1]["content"]
+        if "terminology prober" in sys_msg:
+            keys = re.findall(r"^\d+\.\s+(.+?)\s+\|", user_msg, re.MULTILINE)
+            calls.append(keys)
+            if len(calls) == 1:
+                # Omit one candidate on the first attempt of probe A.
+                return json.dumps({"renderings": {k: "Sanzang" for k in keys if k != "行者"}})
+            return json.dumps(
+                {"renderings": {k: ("Pilgrim" if k == "行者" else "Sanzang") for k in keys}}
+            )
+        return json.dumps(
+            {
+                "terms": [
+                    {"source": "行者", "target": "Pilgrim", "type": "person", "gender": "male"},
+                    {"source": "三藏", "target": "Sanzang", "type": "person", "gender": "male"},
+                ]
+            }
+        )
+
+    agent = _bible_agent(handler)
+    digests = ["三藏 gives 孫悟空 the byname 行者."]
+    corpus = "行者跟隨三藏。行者大笑。三藏點頭。"
+    result = agent.compile_bible(digests, corpus)
+    assert {t.source for t in result.terms} >= {"行者", "三藏"}
+    # Second call retried only the omitted candidate ("行者"), not the whole chunk.
+    assert calls[1] == ["行者"]
+
+
+def test_bible_candidates_mine_arabic_and_other_unicameral_scripts():
+    ar_digests = ["Muhammad (محمد) met Abu Bakr (أبو بكر) in Cairo (القاهرة)."]
+    ar_corpus = "سافر محمد إلى القاهرة. " * 3 + "وتحدث أبو بكر مع محمد في القاهرة. " * 2
+    ar_sources = {c.source for c in mine_bible_candidates(ar_digests, ar_corpus, source_lang="ar")}
+    assert {"محمد", "أبو بكر", "القاهرة"} <= ar_sources
+
+    ko_digests = ["Hong Gildong (홍길동) left Seoul (서울)."]
+    ko_corpus = "홍길동은 서울을 떠났다. 홍길동은 다시 서울로 돌아왔다."
+    ko_sources = {c.source for c in mine_bible_candidates(ko_digests, ko_corpus, source_lang="ko")}
+    assert {"홍길동", "서울"} <= ko_sources
+
+
+def test_sparse_editor_rejects_patches_that_drop_or_invent_object_markers():
+    from wenyi_core.agents.sparse_editor import SparseSemanticEditor
+
+    def handler(messages, tier, json_mode):
+        return json.dumps(
+            {
+                "patches": [
+                    {"index": 0, "reason": "polish", "text": "He looked carefully."},
+                    {"index": 1, "reason": "polish", "text": "She smiled 〘object:fake〙 warmly."},
+                ]
+            }
+        )
+
+    editor = SparseSemanticEditor(FakeClient(handler=handler), Config())
+    res = editor.edit_batch(
+        ["他仔细看着。", "她温柔地笑了。"],
+        ["He looked 〘object:fig1〙 carefully.", "She smiled warmly."],
+    )
+    assert res.targets == ("He looked 〘object:fig1〙 carefully.", "She smiled warmly.")
+    assert res.patched_indices == ()
+
+
+def test_entity_markers_skip_segments_with_protected_object_offsets():
+    from wenyi_core.agents.translator import Translator
+    from wenyi_core.pipeline.translate.translation_batch import BatchPlan, TranslationBatchExecutor
+
+    seen_prompts: list[str] = []
+
+    def handler(messages, tier, json_mode):
+        user_msg = messages[-1]["content"]
+        seen_prompts.append(user_msg)
+        return json.dumps(
+            [
+                "Great Sage Sun Wukong spoke. 〘object:obj1〙",
+                "Pilgrim 〘object:obj2〙 spoke.",
+                "⟦N0⟧ laughed.",
+            ]
+        )
+
+    cfg = Config()
+    cfg.pipeline.entity_markers = True
+    translator = Translator(FakeClient(handler=handler), cfg)
+    executor = TranslationBatchExecutor(translator, polisher=None)
+    terms = (
+        GlossaryTerm(source="齊天大聖孫悟空", target="Great Sage Sun Wukong", type="person"),
+        GlossaryTerm(source="行者", target="Pilgrim", type="person"),
+    )
+    plan = BatchPlan(
+        chapter=0,
+        start_index=0,
+        segment_indices=(0, 1, 2),
+        sources=("齊天大聖孫悟空說。", "行者說道。", "行者大笑。"),
+        terms=terms,
+        context="",
+        style="",
+        book_synopsis="",
+        chapter_digest="",
+        annotation_contexts=[
+            [
+                {
+                    "target_key": "obj1",
+                    "source": "[figure 1]",
+                    "marker": "〘object:obj1〙",
+                    "source_offset": "9",
+                }
+            ],
+            [
+                {
+                    "target_key": "obj2",
+                    "source": "[figure 2]",
+                    "marker": "〘object:obj2〙",
+                    "source_offset": "2",
+                }
+            ],
+            [],
+        ],
+        next_source="",
+        entity_markers=True,
+    )
+    draft = executor.translate(plan)
+    assert draft.targets == (
+        "Great Sage Sun Wukong spoke. 〘object:obj1〙",
+        "Pilgrim 〘object:obj2〙 spoke.",
+        "Pilgrim laughed.",
+    )
+    # Protected-object segments kept exact source offsets while the plain segment was masked.
+    assert "齊天大聖孫悟空說。〘object:obj1〙" in seen_prompts[0]
+    assert "行者〘object:obj2〙說道。" in seen_prompts[0]
+    assert "⟦N0⟧大笑。" in seen_prompts[0]
+
+
+def test_chapter_hygiene_preserves_offset_bound_annotation_and_docx_style_segments(
+    tmp_path: Path,
+):
+    from wenyi_core.alignment import target_digest
+    from wenyi_core.models.document import Chapter, Segment
+    from wenyi_core.pipeline.annotate.annotations import AnnotationService
+    from wenyi_core.pipeline.run.runtime import PipelineRuntime
+    from wenyi_core.pipeline.translate.translation import TranslationService
+    from wenyi_core.storage.file import FileStorage
+
+    cfg = _parallel_config(tmp_path, chapter_concurrency=1)
+    store = FileStorage(str(tmp_path / "run"), create=True)
+    runtime = PipelineRuntime(cfg, client=FakeClient(handler=_parallel_handler([])))
+    service = TranslationService(runtime, AnnotationService(runtime))
+
+    ann_head = Segment(
+        index=0,
+        source="行者道：「第一段。",
+        target='Walker paused -- "First part.',
+        meta={
+            "annotations": {
+                "items": [{"id": "a1", "mode": "point", "source_start": 0, "source_end": 2}],
+                "target_digest": target_digest(
+                    'Walker paused -- "First part.Continuation -- here.'
+                ),
+                "placements": [
+                    {"id": "a1", "status": "aligned", "target_start": 0, "target_end": 6}
+                ],
+            }
+        },
+    )
+    ann_cont = Segment(
+        index=1,
+        source="續段。",
+        target="Continuation -- here.",
+        cont=True,
+    )
+    docx_seg = Segment(
+        index=2,
+        source="三藏笑道。",
+        target='Sanzang said: "Wait -- now."',
+        meta={
+            "docx_styles": {
+                "items": [{"id": "s1", "mode": "range", "source_start": 0, "source_end": 2}],
+                "target_digest": target_digest('Sanzang said: "Wait -- now."'),
+                "placements": [
+                    {"id": "s1", "status": "aligned", "target_start": 0, "target_end": 7}
+                ],
+            }
+        },
+    )
+    plain_seg = Segment(
+        index=3,
+        source="行者又道。",
+        target='Walker said: "Wait -- now."',
+    )
+    chapter = Chapter(index=0, title="Ch1", segments=[ann_head, ann_cont, docx_seg, plain_seg])
+    terms = [GlossaryTerm(source="行者", target="Pilgrim", type="person")]
+
+    service._apply_chapter_hygiene(
+        store,
+        chapter,
+        terms=terms,
+        variants={"行者": ["Walker"]},
+    )
+
+    # Offset-bound annotation (head + cont) and docx_styles segments stay byte-identical.
+    assert ann_head.target == 'Walker paused -- "First part.'
+    assert ann_cont.target == "Continuation -- here."
+    assert docx_seg.target == 'Sanzang said: "Wait -- now."'
+    # Plain segment still receives both typography hygiene and minority-name normalization.
+    assert plain_seg.target == 'Pilgrim said, "Wait—now."'

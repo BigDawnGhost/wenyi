@@ -19,6 +19,7 @@ import unicodedata
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Any
 
 from ..glossary.store import (
     equivalent_targets,
@@ -61,6 +62,53 @@ _LATIN_ENTITY_RE = re.compile(
     rf"\b[{_UPPER_LETTERS}][{_LOWER_LETTERS}]+(?:\s+[{_UPPER_LETTERS}][{_LOWER_LETTERS}]+){{0,3}}\b"
 )
 _WORD_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
+
+
+def _is_unicameral_non_cjk_letter(ch: str) -> bool:
+    """Return True for uncased letter characters outside CJK ideographs (Arabic, Hebrew, Hangul, Indic, etc.)."""
+    cp = ord(ch)
+    if 0x3400 <= cp <= 0x9FFF or 0xF900 <= cp <= 0xFAFF or 0x20000 <= cp <= 0x2FA1F:
+        return False
+    return unicodedata.category(ch) == "Lo"
+
+
+def _extract_unicameral_candidates(text: str) -> set[str]:
+    """Extract 1-2 word spans in uncased non-CJK scripts without relying on capitalization."""
+    runs: list[list[str]] = []
+    current_run: list[str] = []
+    token: list[str] = []
+    base_count = 0
+    for ch in text:
+        if _is_unicameral_non_cjk_letter(ch):
+            token.append(ch)
+            base_count += 1
+        elif token and unicodedata.category(ch) in ("Mn", "Mc"):
+            token.append(ch)
+        else:
+            if token:
+                if base_count >= 2:
+                    current_run.append("".join(token))
+                elif current_run:
+                    runs.append(current_run)
+                    current_run = []
+                token = []
+                base_count = 0
+            if ch not in (" ", "\t") and current_run:
+                runs.append(current_run)
+                current_run = []
+    if token and base_count >= 2:
+        current_run.append("".join(token))
+    if current_run:
+        runs.append(current_run)
+
+    found: set[str] = set()
+    for run in runs:
+        for i, word in enumerate(run):
+            found.add(word)
+            if i + 1 < len(run):
+                found.add(f"{word} {run[i + 1]}")
+    return found
+
 
 # Pure CJK function/glue characters (excluding proper-noun/title/place morphemes like 天王山海門石金星).
 _CJK_STOP_CHARS = frozenset(
@@ -186,10 +234,12 @@ def mine_bible_candidates(
             ):
                 digest_candidates.add(token)
     else:
-        for match in _LATIN_ENTITY_RE.finditer(unicodedata.normalize("NFC", joined_digests)):
+        nfc_digests = unicodedata.normalize("NFC", joined_digests)
+        for match in _LATIN_ENTITY_RE.finditer(nfc_digests):
             token = match.group(0).strip()
             if len(token) >= 3:
                 digest_candidates.add(token)
+        digest_candidates.update(_extract_unicameral_candidates(nfc_digests))
 
     # Also mine high-frequency 2..5 char CJK sequences from source_corpus when digests are sparse.
     corpus_counts: Counter[str] = Counter()
@@ -295,12 +345,18 @@ class BookBibleAgent(Agent):
             'Include EVERY numbered source key in renderings (use "" to exclude it).\n'
             'Return ONLY JSON: {"renderings": {"<source>": "<target or empty>", ...}}.'
         )
-        for offset in range(0, len(items), batch_size):
-            chunk = items[offset : offset + batch_size]
-            lines = [f"{i}. {src} | {snip}" for i, (src, snip) in enumerate(chunk)]
+
+        def _query_chunk(subchunk: list[tuple[str, str]], *, retry: bool = False) -> dict[str, Any]:
+            lines = [f"{i}. {src} | {snip}" for i, (src, snip) in enumerate(subchunk)]
+            reminder = (
+                "The previous reply omitted or returned a non-string value for these keys. "
+                'Include EVERY numbered source key with a string value ("" to exclude).\n'
+                if retry
+                else ""
+            )
             user = (
                 f"Source language: {self.src}, Target language: {self.tgt}\n"
-                "Render each term in context:\n"
+                f"{reminder}Render each term in context:\n"
                 + "\n".join(lines)
                 + '\nReturn JSON: {"renderings": {"source": "target"}}'
             )
@@ -316,13 +372,29 @@ class BookBibleAgent(Agent):
             raw_map = data.get("renderings") if isinstance(data, dict) else None
             if not isinstance(raw_map, dict):
                 raise ValueError("Book Bible probe returned no renderings map")
-            for src, _ in chunk:
-                if src not in raw_map:
-                    raise ValueError(f"Book Bible probe omitted candidate: {src}")
-                val = raw_map[src]
-                if not isinstance(val, str):
-                    raise ValueError(f"Book Bible probe returned a non-string rendering for: {src}")
-                results[src] = val.strip()
+            return raw_map
+
+        for offset in range(0, len(items), batch_size):
+            chunk = items[offset : offset + batch_size]
+            raw_map = _query_chunk(chunk)
+            missing: list[tuple[str, str]] = []
+            for src, snip in chunk:
+                val = raw_map.get(src)
+                if src in raw_map and isinstance(val, str):
+                    results[src] = val.strip()
+                else:
+                    missing.append((src, snip))
+            if missing:
+                retry_map = _query_chunk(missing, retry=True)
+                for src, _ in missing:
+                    if src not in retry_map:
+                        raise ValueError(f"Book Bible probe omitted candidate: {src}")
+                    val = retry_map[src]
+                    if not isinstance(val, str):
+                        raise ValueError(
+                            f"Book Bible probe returned a non-string rendering for: {src}"
+                        )
+                    results[src] = val.strip()
         return results
 
     def _adjudicate(

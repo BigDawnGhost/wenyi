@@ -25,7 +25,7 @@ from . import prompts
 from .base import Agent
 
 _LOGGER = logging.getLogger(__name__)
-_MARKER_RE = re.compile(r"⟦[^⟧]+⟧")
+_MARKER_RE = re.compile(r"〘object:[A-Za-z0-9_.:-]+〙|⟦[^⟧]+⟧")
 
 
 @dataclass(frozen=True)
@@ -81,7 +81,7 @@ class SparseSemanticEditor(Agent):
             "line breaks ('\\n', never inline prose or ' / '); conversely, NEVER split a continuous prose dialogue "
             "paragraph with '\\n' line breaks; and NEVER copy or anticipate text belonging to [Following source paragraph].\n"
             f"Language & formatting rules:\n{lang_rules}\n{punct_rule}\n"
-            "Preserve every protected marker (e.g. ⟦...⟧) verbatim if present.\n"
+            "Preserve every protected marker (e.g. 〘object:...〙 or ⟦...⟧) verbatim if present.\n"
             'Return ONLY JSON: {"patches": [{"index": 0, "reason": "short_tag", "text": "corrected paragraph"}]}. '
             'If every paragraph is faithful and natural, return {"patches": []}.'
             + protected_guidance
@@ -166,9 +166,8 @@ class SparseSemanticEditor(Agent):
             # Never let a patch blank a non-empty draft.
             if draft_list[idx].strip() and not text.strip():
                 continue
-            # Preserve any protected-object markers present in the draft.
-            draft_markers = _MARKER_RE.findall(draft_list[idx])
-            if draft_markers and _MARKER_RE.findall(text) != draft_markers:
+            # Preserve any protected-object markers present in the draft and reject invented ones.
+            if _MARKER_RE.findall(text) != _MARKER_RE.findall(draft_list[idx]):
                 continue
             if text == updated[idx]:
                 continue

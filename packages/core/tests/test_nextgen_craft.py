@@ -257,6 +257,17 @@ def test_leaked_paragraph_trim_keeps_a_short_legitimate_tail():
         _trim_leaked_next_paragraph("引子。", extended, "他在门边等到天亮。", next_target)
         == extended
     )
+    # Tails differing only by a number must never be treated as duplicates.
+    counted = "Intro line here.\n\nAt dawn we counted 12 soldiers."
+    assert (
+        _trim_leaked_next_paragraph(
+            "引子。\n\n黎明时我们数了十二名士兵。",
+            counted,
+            "黎明时我们数了二十名士兵。",
+            "At dawn we counted 20 soldiers.",
+        )
+        == counted
+    )
 
 
 def test_quote_memory_keeps_meaning_bearing_punctuation_in_keys():
@@ -353,3 +364,20 @@ def test_minority_name_normalizer_replaces_all_variants_and_split_pinyin_in_one_
     # Replacing a longer variant must never re-match a shorter variant inside the canonical name.
     assert normalized[2] == "Sun Wukong laughed, and Sun Wukong leaped."
     assert len(subs) == 6
+
+
+def test_post_normalize_preserves_wenyi_protected_object_markers():
+    cleaned, applied = normalize_latin_typography("See 〘object:eq--1〙 -- right here.")
+    assert "〘object:eq--1〙" in cleaned
+    assert cleaned == "See 〘object:eq--1〙—right here."
+    assert "em_dash" in applied
+
+    terms = [GlossaryTerm(source="行者", target="Pilgrim", type="person")]
+    normalized, subs = normalize_minority_names(
+        [("行者來了。", "See 〘object:img.Walker〙 while Walker smiles.")],
+        terms,
+        variants_by_source={"行者": ["Walker"]},
+        target_lang="en",
+    )
+    assert normalized == ["See 〘object:img.Walker〙 while Pilgrim smiles."]
+    assert len(subs) == 1

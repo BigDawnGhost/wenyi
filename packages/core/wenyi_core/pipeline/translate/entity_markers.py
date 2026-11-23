@@ -63,12 +63,22 @@ def mask_batch_entities(
     terms: Sequence[GlossaryTerm],
     *,
     max_markers: int = 24,
+    skip_indices: Sequence[int] | set[int] = (),
 ) -> EntityMaskPlan:
-    """Replace eligible entity occurrences in ``sources`` with ``⟦N0⟧``..``⟦Nk⟧`` tokens."""
+    """Replace eligible entity occurrences in ``sources`` with ``⟦N0⟧``..``⟦Nk⟧`` tokens.
+
+    Segments listed in ``skip_indices`` (for example, segments carrying protected-object
+    markers whose ``source_offset`` indices refer to the unmodified source string) are left
+    untouched so caller-owned offsets stay valid.
+    """
     # A source that already contains marker brackets would be filled as if masked.
     if any("⟦" in text or "⟧" in text for text in sources):
         return EntityMaskPlan(tuple(sources), {}, "")
-    selected = select_markable_terms(terms, sources, max_markers=max_markers)
+    skipped = set(skip_indices)
+    eligible_sources = [text for i, text in enumerate(sources) if i not in skipped]
+    if not eligible_sources:
+        return EntityMaskPlan(tuple(sources), {}, "")
+    selected = select_markable_terms(terms, eligible_sources, max_markers=max_markers)
     if not selected:
         return EntityMaskPlan(tuple(sources), {}, "")
 
@@ -79,7 +89,10 @@ def mask_batch_entities(
     for idx, term in enumerate(selected):
         marker = f"⟦N{idx}⟧"
         pattern = raw_source_pattern(term.source)
-        new_list = [pattern.sub(marker, text) for text in masked_list]
+        new_list = [
+            text if i in skipped else pattern.sub(marker, text)
+            for i, text in enumerate(masked_list)
+        ]
         if new_list != masked_list:
             masked_list = new_list
             marker_to_term[marker] = term

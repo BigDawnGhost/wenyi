@@ -203,7 +203,14 @@ class TranslationBatchExecutor:
         context_for_model = plan.context
         mask_plan = None
         if plan.entity_markers and plan.terms:
-            mask_plan = mask_batch_entities(sources_for_model, plan.terms)
+            skip_indices = {
+                idx
+                for idx, refs in enumerate(plan.annotation_contexts or ())
+                if any(ref.get("marker") is not None for ref in refs)
+            }
+            mask_plan = mask_batch_entities(
+                sources_for_model, plan.terms, skip_indices=skip_indices
+            )
             if mask_plan.active:
                 sources_for_model = list(mask_plan.masked_sources)
                 context_for_model = (

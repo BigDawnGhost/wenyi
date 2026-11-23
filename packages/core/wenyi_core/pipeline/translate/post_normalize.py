@@ -19,9 +19,9 @@ from ...glossary.store import STATUS_OK, source_matches_text
 from ...i18n.languages import glossary_generic_target_words
 from ...models.glossary import GlossaryTerm
 
-# Matches protected-object transport tokens such as ⟦OBJ:1⟧ or similar markers so typography
-# normalization never alters them.
-_PROTECTED_MARKER_RE = re.compile(r"⟦[^⟧]+⟧")
+# Matches protected-object transport tokens such as 〘object:1〙 or ⟦N0⟧ so typography
+# and minority-name normalization never alter them.
+_PROTECTED_MARKER_RE = re.compile(r"〘object:[A-Za-z0-9_.:-]+〙|⟦[^⟧]+⟧")
 _RAW_DOUBLE_DASH_RE = re.compile(r"(?<!-)(?: -- |--)(?!-)")
 _SPEECH_COLON_RE = re.compile(
     r"\b(said|asked|replied|answered|cried|shouted|whispered|laughed|added|"
@@ -90,8 +90,11 @@ def _collapse_stray_prose_dialogue_breaks(source: str, target: str) -> str:
     return target
 
 
+_SEQ_TOKEN_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*|\d+")
+
+
 def _word_seq(text: str) -> list[str]:
-    return [w.lower() for w in _WORD_RE.findall(text)]
+    return [w.lower() for w in _SEQ_TOKEN_RE.findall(text)]
 
 
 def _trim_leaked_next_paragraph(

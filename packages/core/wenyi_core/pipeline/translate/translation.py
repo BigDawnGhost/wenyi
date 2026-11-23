@@ -36,7 +36,7 @@ from ...glossary.prompt_scope import prompt_terms
 from ...glossary.store import GlossaryStore
 from ...ingest.tokens import count_tokens
 from ...llm.retrying import is_resumable_provider_interrupt
-from ...markup.contexts import annotation_contexts_for_segments
+from ...markup.contexts import annotation_contexts_for_segments, annotation_metadata
 from ...models.document import Chapter, Segment
 from ...models.glossary import GlossaryTerm
 from ...storage.protocol import Storage
@@ -919,6 +919,20 @@ class TranslationService:
             pass
         return variants_by_source
 
+    @staticmethod
+    def _has_offset_bound_metadata(head: Segment) -> bool:
+        """Return True when a logical paragraph stores offset-bound alignment placements."""
+        ann = annotation_metadata(head)
+        if isinstance(ann, dict) and isinstance(ann.get("items"), list) and ann["items"]:
+            return True
+        docx_styles = head.meta.get("docx_styles")
+        return bool(
+            not head.meta.get("docx_style")
+            and isinstance(docx_styles, dict)
+            and isinstance(docx_styles.get("items"), list)
+            and docx_styles["items"]
+        )
+
     def _apply_chapter_hygiene(
         self,
         store: Storage,
@@ -930,6 +944,16 @@ class TranslationService:
         """Apply zero-cost deterministic typography hygiene and minority-name normalization."""
         if not self._runtime.config.pipeline.deterministic_hygiene:
             return
+        # Segments belonging to logical paragraphs with offset-bound annotation, protected-object,
+        # or DOCX run-style placements must not be mutated after alignment without invalidating
+        # their target_digest and character offsets.
+        protected_ids: set[int] = set()
+        current_head: Segment | None = None
+        for seg in chapter.text_segments:
+            if not seg.cont or current_head is None:
+                current_head = seg
+            if self._has_offset_bound_metadata(current_head):
+                protected_ids.add(id(seg))
         text_segs = [s for s in chapter.text_segments if s.target]
         if not text_segs:
             return
@@ -937,22 +961,31 @@ class TranslationService:
         target_lang = self._runtime.config.target_lang
         if target_lang in _LATIN_TARGET_LANGS:
             ch_pairs = [(seg.source, seg.target or "") for seg in text_segs]
-            cleaned_targets, typo_fixes = normalize_chapter_latin_typography(ch_pairs)
+            cleaned_targets, _ = normalize_chapter_latin_typography(ch_pairs)
             for seg, cleaned in zip(text_segs, cleaned_targets):
-                _set_hygienic_target(seg, cleaned)
+                if id(seg) in protected_ids:
+                    continue
+                if cleaned != seg.target:
+                    _set_hygienic_target(seg, cleaned)
+                    typo_fixes += 1
 
         effective_terms = list(terms) if terms is not None else store.all_terms()
         variants_by_source = variants if variants is not None else self._hygiene_variants(store)
 
         pairs = [(seg.source, seg.target or "") for seg in text_segs]
-        normalized_targets, name_subs = normalize_minority_names(
+        normalized_targets, raw_name_subs = normalize_minority_names(
             pairs,
             effective_terms,
             variants_by_source=variants_by_source,
             target_lang=target_lang,
         )
         for seg, updated in zip(text_segs, normalized_targets):
+            if id(seg) in protected_ids:
+                continue
             _set_hygienic_target(seg, updated)
+        name_subs = [
+            sub for sub in raw_name_subs if id(text_segs[sub["index"]]) not in protected_ids
+        ]
 
         if typo_fixes or name_subs:
             store.log_event(
