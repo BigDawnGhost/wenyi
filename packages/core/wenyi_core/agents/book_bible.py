@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
+import unicodedata
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -30,7 +31,6 @@ from ..i18n.languages import (
     glossary_single_character_names_only,
 )
 from ..llm.json_parser import JsonParseError
-from ..llm.retrying import TruncatedResponseError, is_resumable_provider_interrupt
 from ..models.glossary import GlossaryTerm, normalize_gender
 from .base import Agent
 
@@ -38,10 +38,27 @@ _LOGGER = logging.getLogger(__name__)
 
 # CJK runs inside target-language digests (digests quote original source names in source spelling).
 _CJK_SPAN_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]{2,6}")
-# Capitalized multi-word / proper-noun sequences for Latin-script sources.
-# Capitalized words in Latin, Greek and Cyrillic scripts, so Russian or Greek names mine too.
+
+
+def _bicameral_letter_classes() -> tuple[str, str]:
+    """Return Unicode uppercase and lowercase letter ranges across Latin, Greek and Cyrillic."""
+    upper: list[str] = []
+    lower: list[str] = []
+    for start, end in ((0x0041, 0x024F), (0x0370, 0x052F), (0x1E00, 0x1FFF)):
+        for cp in range(start, end + 1):
+            ch = chr(cp)
+            cat = unicodedata.category(ch)
+            if cat == "Lu":
+                upper.append(ch)
+            elif cat == "Ll":
+                lower.append(ch)
+    return "".join(upper), "".join(lower)
+
+
+_UPPER_LETTERS, _LOWER_LETTERS = _bicameral_letter_classes()
+# Capitalized multi-word / proper-noun sequences across Latin (incl. Extended), Greek and Cyrillic.
 _LATIN_ENTITY_RE = re.compile(
-    r"\b[A-ZÀ-ÖØ-ÞΑ-ΩА-ЯЁ][a-zß-öø-ÿα-ωа-яё]+(?:\s+[A-ZÀ-ÖØ-ÞΑ-ΩА-ЯЁ][a-zß-öø-ÿα-ωа-яё]+){0,3}\b"
+    rf"\b[{_UPPER_LETTERS}][{_LOWER_LETTERS}]+(?:\s+[{_UPPER_LETTERS}][{_LOWER_LETTERS}]+){{0,3}}\b"
 )
 _WORD_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
 
@@ -169,7 +186,7 @@ def mine_bible_candidates(
             ):
                 digest_candidates.add(token)
     else:
-        for match in _LATIN_ENTITY_RE.finditer(joined_digests):
+        for match in _LATIN_ENTITY_RE.finditer(unicodedata.normalize("NFC", joined_digests)):
             token = match.group(0).strip()
             if len(token) >= 3:
                 digest_candidates.add(token)
@@ -286,28 +303,22 @@ class BookBibleAgent(Agent):
                 + "\n".join(lines)
                 + '\nReturn JSON: {"renderings": {"source": "target"}}'
             )
-            try:
-                data = self._complete_json_dict(
-                    [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user},
-                    ],
-                    operation="glossary.extract",
-                )
-            except (JsonParseError, TruncatedResponseError, ValueError) as exc:
-                _LOGGER.warning("Bible probe batch failed (%s); skipping batch", exc)
-                continue
-            except Exception as exc:
-                if is_resumable_provider_interrupt(exc):
-                    raise
-                _LOGGER.warning("Bible probe batch error (%s); skipping batch", exc)
-                continue
+            # A failed or malformed probe batch raises rather than silently dropping candidates
+            # or letting ensure_seeded cache an empty Bible.
+            data = self._complete_json_dict(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                operation="glossary.extract",
+            )
             raw_map = data.get("renderings") if isinstance(data, dict) else None
-            if isinstance(raw_map, dict):
-                for src, _ in chunk:
-                    val = raw_map.get(src)
-                    if isinstance(val, str):
-                        results[src] = val.strip()
+            if not isinstance(raw_map, dict):
+                raise ValueError("Book Bible probe returned no renderings map")
+            for src, _ in chunk:
+                val = raw_map.get(src)
+                if isinstance(val, str):
+                    results[src] = val.strip()
         return results
 
     def _adjudicate(

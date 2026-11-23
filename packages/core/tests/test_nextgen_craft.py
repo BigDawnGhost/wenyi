@@ -33,6 +33,8 @@ from wenyi_core.pipeline.translate.quote_memory import QuoteMemory
         "更多精彩，请访问www.xxx.com",
         "https://www.foo.com/book全文免费阅读",
         "【阅读https://www.foo.com/book下载】",
+        "——好书尽在www.qinkan.net，第一时间更新",
+        "★好书尽在www.qinkan.net，免费阅读",
     ],
 )
 def test_boilerplate_catches_embedded_domain_watermarks(text: str):
@@ -267,3 +269,37 @@ def test_typography_keeps_a_straight_quote_that_closes_a_curly_opener():
     cleaned, applied = normalize_latin_typography('He said, “Come here."', source="他说：来这里。")
     assert "stray_closing_quote" not in applied
     assert cleaned.endswith('"') or cleaned.endswith("”")
+
+
+def test_typography_keeps_a_curly_quote_that_closes_a_straight_opener():
+    cleaned, applied = normalize_latin_typography('He said, "Come here.”', source="他说：来这里。")
+    assert "stray_closing_quote" not in applied
+    assert cleaned.endswith("”")
+
+
+def test_minority_name_normalizer_replaces_all_variants_and_split_pinyin_in_one_paragraph():
+    terms = [
+        GlossaryTerm(source="行者", target="Pilgrim", type="person"),
+        GlossaryTerm(source="三藏", target="Sanzang", type="person"),
+        GlossaryTerm(source="孫悟空", target="Sun Wukong", type="person"),
+    ]
+    pairs = [
+        ("行者笑著對行者點頭。", "Xingzhe laughed, and Walker nodded."),
+        ("三藏與三藏同席。", "Tripitaka spoke to San Zang."),
+        ("孫悟空大笑，孫悟空躍起。", "Monkey King laughed, and Wukong leaped."),
+    ]
+    normalized, subs = normalize_minority_names(
+        pairs,
+        terms,
+        variants_by_source={
+            "行者": ["Xingzhe", "Walker"],
+            "三藏": ["Tripitaka"],
+            "孫悟空": ["Monkey King", "Wukong"],
+        },
+        target_lang="en",
+    )
+    assert normalized[0] == "Pilgrim laughed, and Pilgrim nodded."
+    assert normalized[1] == "Sanzang spoke to Sanzang."
+    # Replacing a longer variant must never re-match a shorter variant inside the canonical name.
+    assert normalized[2] == "Sun Wukong laughed, and Sun Wukong leaped."
+    assert len(subs) == 6

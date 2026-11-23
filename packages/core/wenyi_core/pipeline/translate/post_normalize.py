@@ -176,12 +176,21 @@ def normalize_latin_typography(
     # ONLY when we are not closing a multi-paragraph open speech and the source has no close quote.
     src_has_close = any(ch in source for ch in _SOURCE_CLOSING_QUOTE_CHARS)
     if not open_quote_carry and not src_has_close:
-        if masked.count("“") == 0 and masked.count("”") == 1 and masked.rstrip().endswith("”"):
+        if (
+            masked.count("“") == 0
+            and masked.count("”") == 1
+            and masked.count('"') % 2 == 0
+            and masked.rstrip().endswith("”")
+        ):
             pos = masked.rfind("”")
             masked = masked[:pos] + masked[pos + 1 :]
             applied.append("stray_closing_quote")
-        # A straight quote closing a curly opener is a real close, not a stray.
-        elif masked.count('"') == 1 and "“" not in masked and masked.rstrip().endswith('"'):
+        # A straight quote closing an unmatched curly opener is a real close, not a stray.
+        elif (
+            masked.count('"') == 1
+            and masked.count("“") <= masked.count("”")
+            and masked.rstrip().endswith('"')
+        ):
             pos = masked.rfind('"')
             masked = masked[:pos] + masked[pos + 1 :]
             applied.append("stray_closing_quote")
@@ -280,19 +289,20 @@ def _auto_space_variants(canonical: str) -> list[str]:
     return []
 
 
-def _find_split_pinyin_variant(canonical: str, target_text: str) -> str | None:
-    """Detect a space-split Title-Case spelling of ``canonical`` (e.g. 'San Zang' for 'Sanzang')."""
+def _find_split_pinyin_variants(canonical: str, target_text: str) -> list[str]:
+    """Detect space-split Title-Case spellings of ``canonical`` (e.g. 'San Zang' for 'Sanzang')."""
     if " " in canonical or len(canonical) < 5 or not canonical.isalpha():
-        return None
+        return []
     if not (canonical[0].isupper() and canonical[1:].islower()):
-        return None
-    # Split canonical into two parts of length >= 2 and check if "Part1 Part2" appears.
+        return []
+    # Split canonical into two parts of length >= 2 and collect any "Part1 Part2" occurrences.
     lower = canonical.lower()
+    found: list[str] = []
     for split_at in range(2, len(canonical) - 1):
         candidate = canonical[:split_at] + " " + lower[split_at:].capitalize()
         if _latin_boundary_pattern(candidate).search(target_text):
-            return candidate
-    return None
+            found.append(candidate)
+    return found
 
 
 def normalize_minority_names(
@@ -368,31 +378,39 @@ def normalize_minority_names(
             canonical = term.target.strip()
             if canon_pat.search(masked):
                 continue
-            replaced = False
-            for variant, var_pat in safe_variants:
-                if var_pat.search(masked):
-                    masked = var_pat.sub(canonical, masked)
-                    substitutions.append(
-                        {
-                            "index": idx,
-                            "source": term.source,
-                            "from": variant,
-                            "to": canonical,
-                        }
-                    )
-                    replaced = True
-                    break
-            if not replaced:
-                split_var = _find_split_pinyin_variant(canonical, masked)
-                if split_var is not None and not collides(split_var, canonical):
-                    masked = _latin_boundary_pattern(split_var).sub(canonical, masked)
-                    substitutions.append(
-                        {
-                            "index": idx,
-                            "source": term.source,
-                            "from": split_var,
-                            "to": canonical,
-                        }
-                    )
+            candidates = [variant for variant, var_pat in safe_variants if var_pat.search(masked)]
+            seen_candidates = {v.casefold() for v in candidates}
+            for split_var in _find_split_pinyin_variants(canonical, masked):
+                if split_var.casefold() not in seen_candidates and not collides(
+                    split_var, canonical
+                ):
+                    candidates.append(split_var)
+                    seen_candidates.add(split_var.casefold())
+            if not candidates:
+                continue
+            # Match every variant in one non-overlapping longest-first pass so replacing one
+            # spelling never re-matches inside the inserted canonical name.
+            ordered = sorted(candidates, key=len, reverse=True)
+            combined_pat = re.compile(
+                rf"(?<![^\W\d_])(?:{'|'.join(re.escape(v) for v in ordered)})(?![^\W\d_])"
+            )
+            matched_variants: list[str] = []
+
+            def _replace(match: re.Match[str], _canon: str = canonical) -> str:
+                matched = match.group(0)
+                if matched not in matched_variants:
+                    matched_variants.append(matched)
+                return _canon
+
+            masked = combined_pat.sub(_replace, masked)
+            for variant in matched_variants:
+                substitutions.append(
+                    {
+                        "index": idx,
+                        "source": term.source,
+                        "from": variant,
+                        "to": canonical,
+                    }
+                )
         results.append(_unmask_markers(masked, saved))
     return results, substitutions

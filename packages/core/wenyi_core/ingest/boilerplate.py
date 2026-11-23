@@ -66,7 +66,7 @@ _MAX_WATERMARK_FILLER = 6
 _DECOR_CHARS_RE = re.compile(r"[\s\W_]+")
 
 
-_LEADING_DECOR_RE = re.compile(r"^[\s\[\]【】()（）<>《》*_~!！。.,，-]*")
+_LEADING_DECOR_RE = re.compile(r"^[\s\W_]*")
 
 
 def _is_domain_watermark(text: str) -> bool:

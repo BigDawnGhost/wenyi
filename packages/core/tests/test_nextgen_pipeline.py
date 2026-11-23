@@ -636,9 +636,10 @@ def test_parallel_failure_saves_every_drafted_batch_and_resume_skips_them(tmp_pa
 
     resumed: list[str] = []
     store = Orchestrator(cfg, client=FakeClient(handler=_parallel_handler(resumed))).run(str(book))
-    # Only the failed batch is translated again; batches drafted before and after it are kept.
-    assert len(resumed) == 1
-    assert "] 行者答道" in resumed[0]
+    # Every batch drafted before the stop was saved and skipped; resume translates only what
+    # failed or was stopped early, and never pays for any batch twice.
+    assert len(first) + len(resumed) == 9
+    assert any("] 行者答道" in msg for msg in resumed)
     for ci in range(3):
         assert all(s.target for s in store.load_chapter(ci).text_segments)
 
@@ -741,8 +742,8 @@ def test_parallel_worker_gives_non_body_batches_no_context(tmp_path: Path):
         entity_markers=False,
         rolling_context_tokens=1000,
     )
-    _, _, outcomes, error = service._translate_wave_worker(spec)
-    assert error is None and len(outcomes) == 3
+    _, _, outcomes, error, completed = service._translate_wave_worker(spec)
+    assert error is None and completed and len(outcomes) == 3
     body, caption, after = plans
     assert body.context == "LOOKBEHIND" and body.book_synopsis == "SYNOPSIS"
     assert (caption.context, caption.book_synopsis, caption.chapter_digest) == ("", "", "")
@@ -857,10 +858,10 @@ def test_parallel_worker_stops_its_wave_on_a_polish_interrupt(tmp_path: Path):
         entity_markers=False,
         rolling_context_tokens=1000,
     )
-    _, _, outcomes, error = service._translate_wave_worker(spec)
+    _, _, outcomes, error, completed = service._translate_wave_worker(spec)
     # The interrupted batch is returned for saving, the error stops the run, and no
     # further batch is translated.
-    assert error is stop
+    assert error is stop and not completed
     assert len(plans) == 1 and len(outcomes) == 1
 
 
@@ -954,8 +955,8 @@ def test_parallel_worker_translates_nothing_after_the_run_stops(tmp_path: Path):
         entity_markers=False,
         rolling_context_tokens=1000,
     )
-    _, _, outcomes, error = service._translate_wave_worker(spec, None, stop)
-    assert plans == [] and outcomes == [] and error is None
+    _, _, outcomes, error, completed = service._translate_wave_worker(spec, None, stop)
+    assert plans == [] and outcomes == [] and error is None and not completed
 
 
 def test_marker_retry_that_echoes_a_marker_is_filled_and_not_continued():
@@ -1037,8 +1038,8 @@ def test_parallel_worker_returns_drafted_batches_on_a_budget_stop(tmp_path: Path
         entity_markers=False,
         rolling_context_tokens=1000,
     )
-    _, _, outcomes, error = service._translate_wave_worker(spec)
-    assert error is stop
+    _, _, outcomes, error, completed = service._translate_wave_worker(spec)
+    assert error is stop and not completed
     assert len(outcomes) == 1 and len(calls) == 2
 
 
@@ -1111,3 +1112,219 @@ def test_parallel_failed_batch_save_keeps_the_rest_of_the_wave(tmp_path: Path):
     ).run(str(book))
     # The wave's later batches are saved by the final flush, so nothing is paid twice.
     assert fired and spent + len(resumed) == 9
+
+
+def test_parallel_stopped_earlier_wave_is_never_published_incomplete(tmp_path: Path):
+    import pytest
+    from wenyi_core.storage.file import FileStorage
+
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    cfg = _parallel_config(tmp_path, chapter_concurrency=2)
+    ch0_batch0_done = threading.Event()
+    stop_ref: list[threading.Event | None] = [None]
+    first_calls: list[str] = []
+    base = _parallel_handler(first_calls)
+
+    def handler(messages, tier, json_mode):
+        sys_msg = messages[0]["content"]
+        user_msg = messages[-1]["content"]
+        if "literary translator" in sys_msg:
+            if "] 行者跟隨三藏走出長安。" in user_msg:
+                res = base(messages, tier, json_mode)
+                ch0_batch0_done.set()
+                # Hold chapter 0 until chapter 1's failure sets the shared stop event.
+                assert stop_ref[0] is not None
+                assert stop_ref[0].wait(timeout=5)
+                return res
+            if "] 三藏問行者：此山何名？" in user_msg:
+                assert ch0_batch0_done.wait(timeout=5)
+                raise RuntimeError("chapter 1 down")
+        return base(messages, tier, json_mode)
+
+    orch = Orchestrator(cfg, client=FakeClient(handler=handler))
+    orig_worker = orch._translation._translate_wave_worker
+
+    def wrapped_worker(spec, polish_executor=None, stop=None):
+        stop_ref[0] = stop
+        return orig_worker(spec, polish_executor, stop)
+
+    orch._translation._translate_wave_worker = wrapped_worker
+    with pytest.raises(RuntimeError, match="chapter 1 down"):
+        orch.run(str(book))
+
+    # Chapter 0 stopped early: batch 0 was saved, later batches remain None, and chapter 0
+    # must NOT be marked done in manifest.json.
+    run_dir = next((tmp_path / "state").glob("*/targets/*"))
+    store = FileStorage(str(run_dir), create=False)
+    manifest = store.load_manifest()
+    ch0_row = next(r for r in manifest["chapters"] if r["index"] == 0)
+    ch0 = store.load_chapter(0)
+    assert ch0.text_segments[0].target is not None
+    assert any(s.target is None for s in ch0.text_segments)
+    assert ch0_row["status"] != "done"
+
+    resumed_calls: list[str] = []
+    store = Orchestrator(cfg, client=FakeClient(handler=_parallel_handler(resumed_calls))).run(
+        str(book)
+    )
+    assert len(first_calls) + len(resumed_calls) == 9
+    for ci in range(3):
+        assert all(s.target for s in store.load_chapter(ci).text_segments)
+
+
+def test_parallel_persistent_align_stop_saves_remaining_waves_and_resume_aligns(tmp_path: Path):
+    import pytest
+    from wenyi_core.llm.limits import RequestStopped
+
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    cfg = _parallel_config(tmp_path, chapter_concurrency=3)
+    calls: list[str] = []
+    orch = Orchestrator(
+        cfg, client=FakeClient(handler=_count_translations(_parallel_handler([]), calls))
+    )
+    service = orch._translation
+
+    # Simulate a persistent budget/cancel stop during alignment (every align call raises).
+    def always_stop_align(store, chapter, segments, start, count):
+        if chapter.index == 0 and start >= 1:
+            raise RequestStopped("budget exhausted")
+
+    service._align_batch_context = always_stop_align
+    with pytest.raises(RequestStopped):
+        orch.run(str(book))
+    spent = len(calls)
+
+    resumed: list[str] = []
+    aligned_on_resume: list[tuple[int, int]] = []
+    orch2 = Orchestrator(
+        cfg, client=FakeClient(handler=_count_translations(_parallel_handler([]), resumed))
+    )
+    real_align = orch2._translation._align_batch_context
+
+    def record_align(store, chapter, segments, start, count):
+        aligned_on_resume.append((chapter.index, start))
+        return real_align(store, chapter, segments, start, count)
+
+    orch2._translation._align_batch_context = record_align
+    store = orch2.run(str(book))
+    # Every drafted batch across all waves was saved despite the persistent align stop.
+    assert spent + len(resumed) == 9
+    # Chapter 0's already_done batches were aligned on resume before publishing.
+    assert (0, 1) in aligned_on_resume
+    assert (0, 2) in aligned_on_resume
+    for ci in range(3):
+        assert all(s.target for s in store.load_chapter(ci).text_segments)
+
+
+def test_parallel_persistent_save_error_on_one_chapter_still_saves_other_chapters(tmp_path: Path):
+    import pytest
+    from wenyi_core.storage.file import FileStorage
+
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    cfg = _parallel_config(tmp_path, chapter_concurrency=3)
+    calls: list[str] = []
+    orch = Orchestrator(
+        cfg, client=FakeClient(handler=_count_translations(_parallel_handler([]), calls))
+    )
+    real_save = FileStorage.save_chapter
+    ch1_finished = threading.Event()
+    orig_worker = orch._translation._translate_wave_worker
+
+    def paced_worker(spec, polish_executor=None, stop=None):
+        if spec.chapter == 0:
+            ch1_finished.wait(timeout=5)
+        result = orig_worker(spec, polish_executor, stop)
+        if spec.chapter == 1:
+            ch1_finished.set()
+        return result
+
+    orch._translation._translate_wave_worker = paced_worker
+
+    def failing_ch0_save(self, chapter):
+        if chapter.index == 0 and any(s.target for s in chapter.text_segments):
+            raise OSError("ch0 permanently unwritable")
+        return real_save(self, chapter)
+
+    FileStorage.save_chapter = failing_ch0_save
+    try:
+        with pytest.raises(OSError, match="ch0 permanently unwritable"):
+            orch.run(str(book))
+    finally:
+        FileStorage.save_chapter = real_save
+
+    # Chapter 1's finished wave was still saved during final teardown despite chapter 0's error.
+    run_dir = next((tmp_path / "state").glob("*/targets/*"))
+    store = FileStorage(str(run_dir), create=False)
+    assert all(s.target for s in store.load_chapter(1).text_segments)
+
+
+def test_book_bible_probe_failure_raises_instead_of_caching_empty_bible():
+    import pytest
+
+    agent = _bible_agent(lambda messages, tier, json_mode: "NOT JSON")
+    digests = ["三藏 gives 孫悟空 the byname 行者."]
+    corpus = "行者跟隨三藏。行者大笑。三藏點頭。"
+    with pytest.raises(Exception):
+        agent.compile_bible(digests, corpus)
+
+    malformed = _bible_agent(lambda messages, tier, json_mode: json.dumps({"oops": 1}))
+    with pytest.raises(ValueError, match="no renderings map"):
+        malformed.compile_bible(digests, corpus)
+
+
+def test_bible_candidates_mine_accented_greek_and_latin_extended_names():
+    greek_digests = ["Η Αθήνα και η Μαρία συνάντησαν τον Σωκράτης και τον Όμηρος."]
+    greek_corpus = "Η Αθήνα μίλησε. " * 4 + "Ο Σωκράτης απάντησε. " * 4 + "Ο Όμηρος έγραψε. " * 4
+    greek_sources = {
+        c.source for c in mine_bible_candidates(greek_digests, greek_corpus, source_lang="el")
+    }
+    assert {"Αθήνα", "Σωκράτης", "Όμηρος"} <= greek_sources
+
+    latin_digests = ["Łukasz met Nguyễn and Čapek in Prague."]
+    latin_corpus = "Łukasz arrived. " * 4 + "Nguyễn smiled. " * 4 + "Čapek wrote. " * 4
+    latin_sources = {
+        c.source for c in mine_bible_candidates(latin_digests, latin_corpus, source_lang="pl")
+    }
+    assert {"Łukasz", "Nguyễn", "Čapek"} <= latin_sources
+
+
+def test_batch_executor_inline_polish_preserves_draft_on_request_stopped():
+    from wenyi_core.agents.translator import Translator
+    from wenyi_core.llm.limits import RequestStopped
+    from wenyi_core.pipeline.translate.translation_batch import BatchPlan, TranslationBatchExecutor
+
+    stop = RequestStopped("budget exhausted")
+
+    class _StoppingEditor:
+        def edit_batch(self, *args, **kwargs):
+            raise stop
+
+    cfg = Config.from_dict(
+        {"language": {"source": "zh-Hant", "target": "en"}, "llm": {"preset": "fake"}}
+    )
+    translator = Translator(
+        FakeClient(handler=lambda m, t, j: json.dumps({"translations": ["Draft one."]})), cfg
+    )
+    executor = TranslationBatchExecutor(translator, None, _StoppingEditor())
+    plan = BatchPlan(
+        chapter=0,
+        start_index=0,
+        segment_indices=(0,),
+        sources=("第一段。",),
+        terms=(),
+        context="",
+        style="",
+        book_synopsis="",
+        chapter_digest="",
+        annotation_contexts=[[]],
+        next_source="",
+        allow_empty_translations=False,
+    )
+    result = executor.execute(plan, polish=True, polish_mode="sparse")
+    assert result.targets == ("Draft one.",)
+    assert result.before_polish == ("Draft one.",)
+    assert result.polish_failed is True
+    assert result.polish_interrupted is stop

@@ -179,8 +179,8 @@ class TranslationBatchExecutor:
                             next_source=plan.next_source,
                             sources=list(plan.sources),
                         )
-            except Exception as exc:
-                if not is_resumable_provider_interrupt(exc):
+            except BaseException as exc:  # noqa: BLE001 - budget/cancel stops must still save the draft.
+                if isinstance(exc, Exception) and not is_resumable_provider_interrupt(exc):
                     raise
                 polish_failed = True
                 polish_interrupted = exc

@@ -968,7 +968,7 @@ class TranslationService:
         spec: _ParallelWaveSpec,
         polish_executor: ThreadPoolExecutor | None = None,
         stop: threading.Event | None = None,
-    ) -> tuple[int, int, list[_WaveBatchOutcome], BaseException | None]:
+    ) -> tuple[int, int, list[_WaveBatchOutcome], BaseException | None, bool]:
         """Execute one chapter/wave's batches serially in a worker thread (model calls only).
 
         Never reads or writes Storage, SQLite, adherence or usage ledgers. Rolling context
@@ -976,8 +976,8 @@ class TranslationService:
         the deterministic positional source lookbehind captured before launch.
         When ``polish_executor`` is supplied and polishing is enabled, polish/sparse-edit
         calls overlap concurrently with subsequent batch translations inside the wave.
-        A failed batch stops the wave; the batches drafted before it are still returned,
-        with the error, so the writer can save them and a resume never pays for them again.
+        A failed batch or stop signal ends the wave early; drafted batches are still returned,
+        with ``completed=False``, so the writer saves them without publishing an incomplete chapter.
         """
         pending_outcomes: list[
             tuple[
@@ -991,6 +991,7 @@ class TranslationService:
         ] = []
         wave_drafts: list[str] = []
         error: BaseException | None = None
+        stopped_early = False
 
         def polish_interrupt() -> BaseException | None:
             """Return a finished polish job's provider interrupt, which stops the run."""
@@ -1007,6 +1008,7 @@ class TranslationService:
                     (stop is not None and stop.is_set()) or polish_interrupt() is not None
                 ):
                     # Spend nothing more on a wave whose run is stopping.
+                    stopped_early = True
                     break
                 if bspec.already_done:
                     if bspec.body_context:
@@ -1131,7 +1133,8 @@ class TranslationService:
                     glossary_tokens=glossary_tokens,
                 )
             )
-        return spec.chapter, spec.wave_index, outcomes, error
+        completed = error is None and not stopped_early
+        return spec.chapter, spec.wave_index, outcomes, error, completed
 
     def _run_parallel_chapters(
         self,
@@ -1163,8 +1166,10 @@ class TranslationService:
         waves: list[_ParallelWaveSpec] = []
         chapter_wave_counts: dict[int, int] = {}
         chapter_objects: dict[int, Chapter] = {}
+        # Already-saved batches whose alignment may have been interrupted; aligned before publish.
+        align_existing_batches: dict[int, list[tuple[int, int]]] = {}
         # Saved drafts whose polish a previous run never applied; repolished before publish.
-        repolish_jobs: dict[int, list[PolishJob]] = {}
+        repolish_specs: dict[int, list[tuple[int, int, tuple[GlossaryTerm, ...], str]]] = {}
 
         for ci in targets:
             chapter = loaded_all[ci]
@@ -1219,29 +1224,15 @@ class TranslationService:
                     )
                 )
                 already_done = all(s.target is not None for s in b)
+                if already_done:
+                    align_existing_batches.setdefault(ci, []).append((batch_start, len(b)))
                 if already_done and any(
                     s.meta.get(POLISH_PENDING) or s.meta.get(POLISH_FAILED) for s in b
                 ):
                     if pipeline.polish:
-                        # Repolish the saved draft; never retranslate it.
-                        repolish_jobs.setdefault(ci, []).append(
-                            PolishJob(
-                                ci,
-                                batch_start,
-                                tuple(s.index for s in b),
-                                tuple(s.source for s in b),
-                                terms_for_batch,
-                                style,
-                                next_source,
-                                BatchDraft(
-                                    tuple(
-                                        s.target_before_polish
-                                        if s.target_before_polish is not None
-                                        else s.target or ""
-                                        for s in b
-                                    )
-                                ),
-                            )
+                        # Repolish the saved draft after alignment; never retranslate it.
+                        repolish_specs.setdefault(ci, []).append(
+                            (batch_start, len(b), terms_for_batch, next_source)
                         )
                     else:
                         # Polishing is now off; the saved draft is final.
@@ -1328,13 +1319,15 @@ class TranslationService:
 
         # Run model calls concurrently; persist results on THIS single writer thread in book order.
         completed_by_key: dict[
-            tuple[int, int], tuple[list[_WaveBatchOutcome], BaseException | None]
+            tuple[int, int], tuple[list[_WaveBatchOutcome], BaseException | None, bool]
         ] = {}
         ordered_keys = [(w.chapter, w.wave_index) for w in waves]
         next_flush_idx = 0
         chapters_remaining_waves = dict(chapter_wave_counts)
         # The first failure in book order; later chapters are then saved but never published.
         failure: BaseException | None = None
+        # Tells running waves to translate no further batches once the run is failing.
+        stop = threading.Event()
 
         def _flush_ready(*, final: bool = False) -> None:
             nonlocal next_flush_idx, done, failure
@@ -1347,75 +1340,118 @@ class TranslationService:
                     next_flush_idx += 1
                     continue
                 ci, _wave_idx = key
-                # Drop each batch only once it is saved, so an interrupt mid-wave leaves the
-                # rest for the final flush.
-                outcomes, error = completed_by_key[key]
+                # Drop each batch once its targets are persisted, so an interrupt mid-wave
+                # leaves only unsaved batches for the final flush and never retries alignment.
+                outcomes, error, wave_complete = completed_by_key[key]
                 chapter = chapter_objects[ci]
                 text_segs = chapter.text_segments
-                while outcomes:
-                    out = outcomes[0]
-                    b = text_segs[out.batch_start : out.batch_start + len(out.sources)]
-                    res = out.result
-                    for seg, tgt, bp in zip(b, res.targets, res.before_polish):
-                        seg.target = tgt
-                        seg.target_before_polish = bp
-                        if res.polish_failed:
-                            seg.meta[POLISH_FAILED] = True
-                        else:
-                            seg.meta.pop(POLISH_FAILED, None)
-                    store.save_chapter(chapter)
-                    if res.polish_interrupted is not None:
-                        self._runtime.usage.flush(store, scope="translation")
+                try:
+                    while outcomes:
+                        out = outcomes[0]
+                        b = text_segs[out.batch_start : out.batch_start + len(out.sources)]
+                        res = out.result
+                        for seg, tgt, bp in zip(b, res.targets, res.before_polish):
+                            seg.target = tgt
+                            seg.target_before_polish = bp
+                            if res.polish_failed:
+                                seg.meta[POLISH_FAILED] = True
+                            else:
+                                seg.meta.pop(POLISH_FAILED, None)
+                        store.save_chapter(chapter)
+                        if res.polish_interrupted is not None:
+                            self._runtime.usage.flush(store, scope="translation")
+                            store.log_event(
+                                "batch_polish_failed",
+                                chapter=ci,
+                                start_index=out.batch_start,
+                                count=len(b),
+                                reason="provider_interrupted",
+                            )
+                            # The saved draft keeps its marker; stop after saving the rest.
+                            error = error or res.polish_interrupted
+                        del outcomes[0]
+                        completed_by_key[key] = (outcomes, error, wave_complete)
+                        done += len(b)
+                        if not final and failure is None and error is None and not stop.is_set():
+                            # Skip alignment during teardown so a persistent cancel/budget stop
+                            # cannot drop remaining drafts; resume aligns already_done batches.
+                            self._align_batch_context(
+                                store, chapter, text_segs, out.batch_start, len(b)
+                            )
                         store.log_event(
-                            "batch_polish_failed",
+                            "batch_translated",
                             chapter=ci,
                             start_index=out.batch_start,
                             count=len(b),
-                            reason="provider_interrupted",
+                            polished=pipeline.polish and not res.polish_failed,
+                            parallel_chapter=True,
+                            translation_mode=pipeline.translation_mode,
+                            glossary_terms=out.glossary_terms,
+                            glossary_tokens=out.glossary_tokens,
+                            segments=[
+                                {
+                                    "index": out.batch_start + i,
+                                    "source": s.source,
+                                    "target": s.target,
+                                }
+                                for i, s in enumerate(b)
+                            ],
                         )
-                        # The saved draft keeps its marker; stop after saving the rest.
-                        error = error or res.polish_interrupted
-                    self._align_batch_context(store, chapter, text_segs, out.batch_start, len(b))
-                    store.log_event(
-                        "batch_translated",
-                        chapter=ci,
-                        start_index=out.batch_start,
-                        count=len(b),
-                        polished=pipeline.polish and not res.polish_failed,
-                        parallel_chapter=True,
-                        translation_mode=pipeline.translation_mode,
-                        glossary_terms=out.glossary_terms,
-                        glossary_tokens=out.glossary_tokens,
-                        segments=[
-                            {
-                                "index": out.batch_start + i,
-                                "source": s.source,
-                                "target": s.target,
-                            }
-                            for i, s in enumerate(b)
-                        ],
-                    )
-                    self.update_translation_history(translation_history, ci, out.batch_start, b)
-                    draft_pairs = _draft_pairs(ci, out.batch_start, b)
-                    self._adherence.observe(draft_pairs)
-                    if self._quote_memory is not None:
-                        for pos, src, tgt in draft_pairs:
-                            self._quote_memory.observe(pos, src, tgt)
-                    done += len(b)
-                    del outcomes[0]
-                    completed_by_key[key] = (outcomes, error)
-                    if progress:
-                        progress(done, total, self.chapter_progress_label(chapter.title, ci))
+                        self.update_translation_history(translation_history, ci, out.batch_start, b)
+                        draft_pairs = _draft_pairs(ci, out.batch_start, b)
+                        self._adherence.observe(draft_pairs)
+                        if self._quote_memory is not None:
+                            for pos, src, tgt in draft_pairs:
+                                self._quote_memory.observe(pos, src, tgt)
+                        if progress:
+                            progress(done, total, self.chapter_progress_label(chapter.title, ci))
+                except Exception:  # noqa: BLE001 - best-effort teardown saves later chapters.
+                    if not (final and failure is not None):
+                        raise
+                    _LOGGER.exception("Could not save drafted batches for chapter %d", ci)
+                    del completed_by_key[key]
+                    next_flush_idx += 1
+                    continue
                 del completed_by_key[key]
                 if failure is None:
                     failure = error
-                if failure is None:
+                if failure is None and wave_complete and not stop.is_set():
                     chapters_remaining_waves[ci] -= 1
                     if chapters_remaining_waves[ci] == 0:
-                        for job in repolish_jobs.pop(ci, ()):
-                            self._schedule_polish(store, job)
-                        self._publish_chapter(store, ci, terms=term_snapshot)
-                        self._runtime.usage.flush(store, scope="chapter")
+                        for batch_start, batch_len in align_existing_batches.pop(ci, ()):
+                            self._align_batch_context(
+                                store, chapter, text_segs, batch_start, batch_len
+                            )
+                        for (
+                            batch_start,
+                            batch_len,
+                            terms_for_batch,
+                            next_source,
+                        ) in repolish_specs.pop(ci, ()):
+                            b = text_segs[batch_start : batch_start + batch_len]
+                            self._schedule_polish(
+                                store,
+                                PolishJob(
+                                    ci,
+                                    batch_start,
+                                    tuple(s.index for s in b),
+                                    tuple(s.source for s in b),
+                                    terms_for_batch,
+                                    style,
+                                    next_source,
+                                    BatchDraft(
+                                        tuple(
+                                            s.target_before_polish
+                                            if s.target_before_polish is not None
+                                            else s.target or ""
+                                            for s in b
+                                        )
+                                    ),
+                                ),
+                            )
+                        if all(s.target is not None for s in text_segs):
+                            self._publish_chapter(store, ci, terms=term_snapshot)
+                            self._runtime.usage.flush(store, scope="chapter")
                 else:
                     self._runtime.usage.flush(store, scope="translation")
                 next_flush_idx += 1
@@ -1429,8 +1465,6 @@ class TranslationService:
         )
         collected: set[tuple[int, int]] = set()
         interrupted: BaseException | None = None
-        # Tells running waves to translate no further batches once the run is failing.
-        stop = threading.Event()
         try:
             with ThreadPoolExecutor(
                 max_workers=max_workers, thread_name_prefix="wenyi-chapter"
@@ -1449,9 +1483,9 @@ class TranslationService:
                     for future in as_completed(futures):
                         if future.cancelled():
                             continue
-                        ci, wave_idx, outcomes, error = future.result()
+                        ci, wave_idx, outcomes, error, wave_complete = future.result()
                         collected.add((ci, wave_idx))
-                        completed_by_key[(ci, wave_idx)] = (outcomes, error)
+                        completed_by_key[(ci, wave_idx)] = (outcomes, error, wave_complete)
                         _flush_ready()
                         if error is not None or failure is not None:
                             # Start no new waves; running ones stop and are saved below.
@@ -1471,8 +1505,8 @@ class TranslationService:
                     if key in collected or not future.done() or future.cancelled():
                         continue
                     if future.exception() is None:
-                        _, _, outcomes, error = future.result()
-                        completed_by_key[key] = (outcomes, error)
+                        _, _, outcomes, error, wave_complete = future.result()
+                        completed_by_key[key] = (outcomes, error, wave_complete)
                 failure = failure or interrupted
                 try:
                     _flush_ready(final=True)
