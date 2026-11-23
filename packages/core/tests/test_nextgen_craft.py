@@ -402,6 +402,13 @@ def test_typography_preserves_escaped_newlines_and_dashes_in_code_spans():
     assert normalize_latin_typography(latex_and_code)[0] == latex_and_code
     unclosed = '```python # note `x`\nprint("a\\nb")'
     assert normalize_latin_typography(unclosed)[0] == unclosed
+    quad_inside_triple = 'Example:\n```python\ns = "````"\nprint("a\\nb") # --flag\n```'
+    assert normalize_latin_typography(quad_inside_triple)[0] == quad_inside_triple
+    # Inch / arcsecond marks after a digit must never be stripped as stray closing quotes.
+    assert (
+        normalize_latin_typography("The board measures 5' 6\"", source="木板长五尺六寸。")[0]
+        == "The board measures 5' 6\""
+    )
 
 
 def test_chapter_typography_ignores_code_span_quotes_for_unification_and_carry():

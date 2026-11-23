@@ -26,7 +26,7 @@ _PROTECTED_MARKER_RE = re.compile(r"〘object:[A-Za-z0-9_.:-]+〙|⟦[^⟧]+⟧"
 # literal `\n` escapes, `--` flags, and code quotes are never rewritten.
 _TYPOGRAPHY_PROTECTED_RE = re.compile(
     r"〘object:[A-Za-z0-9_.:-]+〙|⟦[^⟧]+⟧"
-    r"|(?<!`)(`{3,})[\s\S]*?\1(?!`)"
+    r"|(?<!`)(`{3,})(?!`)[\s\S]*?(?<!`)\1(?!`)"
     r"|(?<!`)``(?!`)[^\n]+?(?<!`)``(?!`)"
     r"|(?<!`)`(?!`)[^`\n]+?(?<!`)`(?!`)"
 )
@@ -209,7 +209,7 @@ def normalize_latin_typography(
             and masked.rstrip().endswith('"')
         ):
             pos = masked.rfind('"')
-            if pos > 0 and not masked[pos - 1].isspace():
+            if pos > 0 and not masked[pos - 1].isspace() and not masked[pos - 1].isdigit():
                 masked = masked[:pos] + masked[pos + 1 :]
                 applied.append("stray_closing_quote")
 
