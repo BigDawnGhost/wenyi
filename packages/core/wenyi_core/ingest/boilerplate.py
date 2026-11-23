@@ -57,18 +57,33 @@ _PROMO_RE = re.compile(
     r"\b(?:txt|epub|mobi|azw3|pdf)\b",
     re.IGNORECASE,
 )
+# A URL path stops at the first non-ASCII character, so promo text glued to it still counts.
 _DOMAIN_RE = re.compile(
-    r"(?:https?://|www\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[^\s]*)?", re.IGNORECASE
+    r"(?:https?://|www\.)[A-Za-z0-9.-]+\.[A-Za-z]{2,}(?:/[\x21-\x7e]*)?", re.IGNORECASE
 )
-_MAX_WATERMARK_TEXT = 32
+# Characters other than promo words and decoration, e.g. 请访问 or 第一时间.
+_MAX_WATERMARK_FILLER = 6
+_DECOR_CHARS_RE = re.compile(r"[\s\W_]+")
+
+
+_LEADING_DECOR_RE = re.compile(r"^[\s\[\]【】()（）<>《》*_~!！。.,，-]*")
 
 
 def _is_domain_watermark(text: str) -> bool:
-    domain = _DOMAIN_RE.search(text)
+    """A line that opens with a promo word or a domain, contains a domain, has at least two
+    promo words and little other text. Prose opens with its own words, so it never matches.
+    """
+    body = text[_LEADING_DECOR_RE.match(text).end() :]
+    domain = _DOMAIN_RE.search(body)
     if domain is None:
         return False
-    rest = f"{text[: domain.start()]} {text[domain.end() :]}".strip()
-    return len(rest) <= _MAX_WATERMARK_TEXT and len(_PROMO_RE.findall(rest)) >= 2
+    if domain.start() != 0 and _PROMO_RE.match(body) is None:
+        return False
+    rest = f"{body[: domain.start()]} {body[domain.end() :]}"
+    if len(_PROMO_RE.findall(rest)) < 2:
+        return False
+    filler = _DECOR_CHARS_RE.sub("", _PROMO_RE.sub("", rest))
+    return len(filler) <= _MAX_WATERMARK_FILLER
 
 
 _ZH_WATERMARK_PATTERNS: tuple[re.Pattern[str], ...] = (

@@ -20,6 +20,7 @@ from __future__ import annotations
 import contextvars
 import logging
 import re
+import threading
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
@@ -137,6 +138,11 @@ class _WaveBatchOutcome:
     glossary_tokens: int
 
 
+def _stops_run(error: BaseException) -> bool:
+    """A provider interrupt, or a budget, deadline or cancel stop (``BaseException``)."""
+    return not isinstance(error, Exception) or is_resumable_provider_interrupt(error)
+
+
 def _set_hygienic_target(segment: Segment, cleaned: str) -> None:
     """Apply a hygiene fix; a target still equal to its draft keeps that equality, so an
     unpolished draft remains eligible when a resumed run repolishes it.
@@ -182,7 +188,7 @@ class TranslationService:
         self._awaiting_polish: set[int] = set()
         # Hygiene terms fixed when a chapter's text and terms are final, used if it publishes
         # later once its polish lands, so job timing never changes the published text.
-        self._publish_terms: dict[int, list[GlossaryTerm] | None] = {}
+        self._publish_terms: dict[int, tuple[list[GlossaryTerm] | None, dict[str, list[str]]]] = {}
         # Extracted mappings the translator keeps overriding are left out of later prompts.
         self._adherence = GlossaryAdherence()
         self._left_out: frozenset[str] = frozenset()
@@ -232,9 +238,10 @@ class TranslationService:
         self._adherence.observe(drafts)
         self._left_out = frozenset()
         self._bible_variants = {}
+        # Index the whole book, so a single-chapter run still sees quotes repeated elsewhere.
         chapter_sources_for_quotes = [
-            (ci, [seg.source for seg in store.load_chapter(ci).text_segments])
-            for ci in progress_chapters
+            (row["index"], [seg.source for seg in store.load_chapter(row["index"]).text_segments])
+            for row in manifest.get("chapters", [])
         ]
         self._quote_memory = QuoteMemory.from_chapters(chapter_sources_for_quotes)
         for pos, src, tgt in drafts:
@@ -858,7 +865,7 @@ class TranslationService:
             # The chapter is done only once its terms are stored and its polish is applied.
             if self._polish_queue is not None and ci in self._polish_queue.pending_chapters():
                 self._awaiting_polish.add(ci)
-                self._publish_terms[ci] = terms
+                self._publish_terms[ci] = (terms, self._hygiene_variants(store))
             else:
                 self._publish_chapter(store, ci, terms=terms)
 
@@ -897,12 +904,28 @@ class TranslationService:
         )
         return done
 
+    def _hygiene_variants(self, store: Storage) -> dict[str, list[str]]:
+        """Known alternative spellings: Bible probe renderings plus open conflict proposals."""
+        variants_by_source: dict[str, list[str]] = {
+            k: list(v) for k, v in self._bible_variants.items()
+        }
+        try:
+            for conflict in store.open_conflicts():
+                src = conflict.get("source")
+                prop = conflict.get("proposed_target")
+                if isinstance(src, str) and isinstance(prop, str) and prop.strip():
+                    variants_by_source.setdefault(src, []).append(prop.strip())
+        except Exception:  # noqa: BLE001 - optional conflict enrichment
+            pass
+        return variants_by_source
+
     def _apply_chapter_hygiene(
         self,
         store: Storage,
         chapter: Chapter,
         *,
         terms: list[GlossaryTerm] | None = None,
+        variants: dict[str, list[str]] | None = None,
     ) -> None:
         """Apply zero-cost deterministic typography hygiene and minority-name normalization."""
         if not self._runtime.config.pipeline.deterministic_hygiene:
@@ -919,17 +942,7 @@ class TranslationService:
                 _set_hygienic_target(seg, cleaned)
 
         effective_terms = list(terms) if terms is not None else store.all_terms()
-        variants_by_source: dict[str, list[str]] = {
-            k: list(v) for k, v in self._bible_variants.items()
-        }
-        try:
-            for conflict in store.open_conflicts():
-                src = conflict.get("source")
-                prop = conflict.get("proposed_target")
-                if isinstance(src, str) and isinstance(prop, str) and prop.strip():
-                    variants_by_source.setdefault(src, []).append(prop.strip())
-        except Exception:  # noqa: BLE001 - optional conflict enrichment
-            pass
+        variants_by_source = variants if variants is not None else self._hygiene_variants(store)
 
         pairs = [(seg.source, seg.target or "") for seg in text_segs]
         normalized_targets, name_subs = normalize_minority_names(
@@ -954,6 +967,7 @@ class TranslationService:
         self,
         spec: _ParallelWaveSpec,
         polish_executor: ThreadPoolExecutor | None = None,
+        stop: threading.Event | None = None,
     ) -> tuple[int, int, list[_WaveBatchOutcome], BaseException | None]:
         """Execute one chapter/wave's batches serially in a worker thread (model calls only).
 
@@ -983,13 +997,15 @@ class TranslationService:
             for _, _, fut, _, _, _ in pending_outcomes:
                 if fut is not None and fut.done() and not fut.cancelled():
                     exc = fut.exception()
-                    if exc is not None and is_resumable_provider_interrupt(exc):
+                    if exc is not None and _stops_run(exc):
                         return exc
             return None
 
         try:
             for batch_idx, bspec in enumerate(spec.batches):
-                if not bspec.already_done and polish_interrupt() is not None:
+                if not bspec.already_done and (
+                    (stop is not None and stop.is_set()) or polish_interrupt() is not None
+                ):
                     # Spend nothing more on a wave whose run is stopping.
                     break
                 if bspec.already_done:
@@ -1070,7 +1086,8 @@ class TranslationService:
                     if result.polish_interrupted is not None:
                         error = result.polish_interrupted
                         break
-        except Exception as exc:  # noqa: BLE001 - returned so drafted batches are saved first.
+        except BaseException as exc:  # noqa: BLE001 - returned so drafted batches are saved first.
+            # Includes budget and cancel stops, which subclass BaseException.
             error = exc
 
         outcomes: list[_WaveBatchOutcome] = []
@@ -1085,9 +1102,9 @@ class TranslationService:
                 polish_interrupted: BaseException | None = None
                 try:
                     polished = fut.result() if fut is not None else None
-                except Exception as exc:  # noqa: BLE001
+                except BaseException as exc:  # noqa: BLE001 - a budget stop is a BaseException.
                     polish_failed = True
-                    if is_resumable_provider_interrupt(exc):
+                    if _stops_run(exc):
                         polish_interrupted = exc
                 else:
                     if polished is not None and len(polished) == len(targets):
@@ -1330,10 +1347,13 @@ class TranslationService:
                     next_flush_idx += 1
                     continue
                 ci, _wave_idx = key
-                outcomes, error = completed_by_key.pop(key)
+                # Drop each batch only once it is saved, so an interrupt mid-wave leaves the
+                # rest for the final flush.
+                outcomes, error = completed_by_key[key]
                 chapter = chapter_objects[ci]
                 text_segs = chapter.text_segments
-                for out in outcomes:
+                while outcomes:
+                    out = outcomes[0]
                     b = text_segs[out.batch_start : out.batch_start + len(out.sources)]
                     res = out.result
                     for seg, tgt, bp in zip(b, res.targets, res.before_polish):
@@ -1382,8 +1402,11 @@ class TranslationService:
                         for pos, src, tgt in draft_pairs:
                             self._quote_memory.observe(pos, src, tgt)
                     done += len(b)
+                    del outcomes[0]
+                    completed_by_key[key] = (outcomes, error)
                     if progress:
                         progress(done, total, self.chapter_progress_label(chapter.title, ci))
+                del completed_by_key[key]
                 if failure is None:
                     failure = error
                 if failure is None:
@@ -1406,6 +1429,8 @@ class TranslationService:
         )
         collected: set[tuple[int, int]] = set()
         interrupted: BaseException | None = None
+        # Tells running waves to translate no further batches once the run is failing.
+        stop = threading.Event()
         try:
             with ThreadPoolExecutor(
                 max_workers=max_workers, thread_name_prefix="wenyi-chapter"
@@ -1416,6 +1441,7 @@ class TranslationService:
                         self._translate_wave_worker,
                         wave,
                         polish_pool,
+                        stop,
                     ): wave
                     for wave in waves
                 }
@@ -1428,12 +1454,14 @@ class TranslationService:
                         completed_by_key[(ci, wave_idx)] = (outcomes, error)
                         _flush_ready()
                         if error is not None or failure is not None:
-                            # Start no new waves; running ones finish and are saved below.
+                            # Start no new waves; running ones stop and are saved below.
+                            stop.set()
                             for pending in futures:
                                 pending.cancel()
                 except BaseException as exc:
                     # A writer error or Ctrl-C: start no new waves either.
                     interrupted = exc
+                    stop.set()
                     for pending in futures:
                         pending.cancel()
             if interrupted is not None:
@@ -1466,10 +1494,11 @@ class TranslationService:
         ci: int,
         *,
         terms: list[GlossaryTerm] | None = None,
+        variants: dict[str, list[str]] | None = None,
     ) -> None:
         chapter = self._open_chapters.pop(ci)
         self._awaiting_polish.discard(ci)
-        self._apply_chapter_hygiene(store, chapter, terms=terms)
+        self._apply_chapter_hygiene(store, chapter, terms=terms, variants=variants)
         unpolished = any(segment.meta.get(POLISH_FAILED) for segment in chapter.text_segments)
         if unpolished:
             chapter.meta["unpolished"] = True
@@ -1643,9 +1672,8 @@ class TranslationService:
         if job.chapter in self._awaiting_polish and (
             queue is None or job.chapter not in queue.pending_chapters()
         ):
-            self._publish_chapter(
-                store, job.chapter, terms=self._publish_terms.pop(job.chapter, None)
-            )
+            terms, variants = self._publish_terms.pop(job.chapter, (None, None))
+            self._publish_chapter(store, job.chapter, terms=terms, variants=variants)
 
     def _align_batch_context(
         self,

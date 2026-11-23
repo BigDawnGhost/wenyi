@@ -30,6 +30,9 @@ from wenyi_core.pipeline.translate.quote_memory import QuoteMemory
         "免费下载www.foo.com全文阅读",
         "【阅读 www.foo.com 下载】",
         "好书尽在www.qinkan.net，第一时间更新",
+        "更多精彩，请访问www.xxx.com",
+        "https://www.foo.com/book全文免费阅读",
+        "【阅读https://www.foo.com/book下载】",
     ],
 )
 def test_boilerplate_catches_embedded_domain_watermarks(text: str):
@@ -43,6 +46,10 @@ def test_boilerplate_catches_embedded_domain_watermarks(text: str):
         "She typed https://example.org into the terminal and waited.",
         "他打开www.example.com阅读那封信，随后关掉了电脑。",
         "小说里提到的网址是www.example.com。",
+        '他打开www.baidu.com，搜索"免费小说"。',
+        "Get the free EPUB or PDF at https://example.org.",
+        "他更新了小说里的设定，网址www.foo.com",
+        "更多细节请看他的阅读笔记：https://foo.org/x",
         "PDF version at https://example.org.",
         "https://example.org 值得仔细阅读。",
     ],
@@ -254,3 +261,9 @@ def test_quote_memory_skips_inner_quotes_without_a_target_quote():
         "He said, 'The empire long divided must unite,' then fell silent.",
     )
     assert memory.references_for_batch([f"她也说{quote}，众人都笑了起来。"]) == []
+
+
+def test_typography_keeps_a_straight_quote_that_closes_a_curly_opener():
+    cleaned, applied = normalize_latin_typography('He said, “Come here."', source="他说：来这里。")
+    assert "stray_closing_quote" not in applied
+    assert cleaned.endswith('"') or cleaned.endswith("”")

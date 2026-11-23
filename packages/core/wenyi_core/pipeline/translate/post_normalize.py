@@ -180,7 +180,8 @@ def normalize_latin_typography(
             pos = masked.rfind("”")
             masked = masked[:pos] + masked[pos + 1 :]
             applied.append("stray_closing_quote")
-        elif masked.count('"') == 1 and masked.rstrip().endswith('"'):
+        # A straight quote closing a curly opener is a real close, not a stray.
+        elif masked.count('"') == 1 and "“" not in masked and masked.rstrip().endswith('"'):
             pos = masked.rfind('"')
             masked = masked[:pos] + masked[pos + 1 :]
             applied.append("stray_closing_quote")

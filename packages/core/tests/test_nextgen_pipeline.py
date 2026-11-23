@@ -522,8 +522,10 @@ def test_entity_markers_accept_a_pronoun_for_a_repeated_name():
     filled, _, unresolved = unmask_batch_entities(["⟦N0⟧ spoke.", "He laughed."], plan)
     assert filled == ["Sun Wukong spoke.", "He laughed."]
     assert unresolved == 0
-    _, _, mangled = unmask_batch_entities(["⟦N0⟧ spoke.", "⟦N7⟧ laughed."], plan)
-    assert mangled == 1
+    _, _, unknown = unmask_batch_entities(["⟦N0⟧ spoke.", "⟦N7⟧ laughed."], plan)
+    assert unknown > 0
+    _, _, half = unmask_batch_entities(["⟦N0⟧ spoke.", "N0⟧ laughed."], plan)
+    assert half > 0
 
 
 def test_batch_translation_retranslates_plain_source_when_a_marker_is_dropped():
@@ -860,3 +862,252 @@ def test_parallel_worker_stops_its_wave_on_a_polish_interrupt(tmp_path: Path):
     # further batch is translated.
     assert error is stop
     assert len(plans) == 1 and len(outcomes) == 1
+
+
+def test_book_bible_adjudication_failure_raises_instead_of_caching_nothing():
+    import pytest
+    from wenyi_core.agents.book_bible import BibleCandidate
+
+    agent = _bible_agent(lambda messages, tier, json_mode: json.dumps({"oops": 1}))
+    candidates = [(BibleCandidate("行者", 5, True, "", ""), "Pilgrim", "Xingzhe", True)]
+    with pytest.raises(ValueError, match="no terms list"):
+        agent._adjudicate(candidates, book_synopsis="", style="", existing_terms=[])
+
+
+def test_bible_candidates_mine_cyrillic_names():
+    digests = ["Иван встретил Марию у реки."]
+    corpus = "Иван пришёл. " * 6 + "Мария ждала. " * 6
+    sources = {c.source for c in mine_bible_candidates(digests, corpus, source_lang="ru")}
+    assert "Иван" in sources
+
+
+def test_entity_markers_leave_sources_with_literal_marker_brackets_unmasked():
+    terms = [GlossaryTerm(source="孫悟空", target="Sun Wukong", type="person")]
+    plan = mask_batch_entities(["孫悟空寫下⟦N0⟧。"], terms)
+    assert not plan.active
+
+
+def test_only_chapter_indexes_quotes_from_the_whole_book(tmp_path: Path):
+    from unittest.mock import patch
+
+    from wenyi_core.pipeline.translate import translation as translation_module
+
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    orch = Orchestrator(
+        _parallel_config(tmp_path), client=FakeClient(handler=_parallel_handler([]))
+    )
+    seen: list[list[int]] = []
+    original = translation_module.QuoteMemory.from_chapters
+
+    def spy(chapters):
+        seen.append([ci for ci, _ in chapters])
+        return original(chapters)
+
+    with patch.object(translation_module.QuoteMemory, "from_chapters", side_effect=spy):
+        orch.run(str(book), only_chapter=1)
+    assert seen == [[0, 1, 2]]
+
+
+def test_book_bible_snippets_match_decomposed_accents():
+    from wenyi_core.agents.book_bible import _extract_distant_snippets, _match_index
+
+    corpus = "José rode north. " + "filler text. " * 10 + "José came home."
+    snip_a, snip_b = _extract_distant_snippets("José", corpus, _match_index(corpus))
+    assert "rode north" in snip_a and "came home" in snip_b
+
+
+def test_parallel_worker_translates_nothing_after_the_run_stops(tmp_path: Path):
+    import threading
+
+    from wenyi_core.pipeline.translate.translation import _ParallelWaveSpec, _WaveBatchSpec
+
+    orch = Orchestrator(
+        _parallel_config(tmp_path), client=FakeClient(handler=_parallel_handler([]))
+    )
+    service = orch._translation
+    plans = []
+    service._batches.execute = lambda plan, **_: plans.append(plan)
+    stop = threading.Event()
+    stop.set()
+    batch = _WaveBatchSpec(
+        batch_start=0,
+        segment_indices=(0,),
+        sources=("S0",),
+        terms=(),
+        annotation_contexts=[[]],
+        next_source="",
+        already_done=False,
+        existing_targets=(None,),
+    )
+    spec = _ParallelWaveSpec(
+        chapter=0,
+        wave_index=0,
+        chapter_digest="",
+        opening_source_lookbehind="",
+        style="",
+        book_synopsis="",
+        batches=(batch,),
+        quote_references_by_batch=("",),
+        polish=False,
+        polish_mode="full",
+        entity_markers=False,
+        rolling_context_tokens=1000,
+    )
+    _, _, outcomes, error = service._translate_wave_worker(spec, None, stop)
+    assert plans == [] and outcomes == [] and error is None
+
+
+def test_marker_retry_that_echoes_a_marker_is_filled_and_not_continued():
+    from wenyi_core.agents.translator import Translator
+    from wenyi_core.pipeline.translate.translation_batch import BatchPlan, TranslationBatchExecutor
+
+    def handler(messages, tier, json_mode):
+        if "⟦N0⟧" in messages[-1]["content"]:
+            return json.dumps({"translations": ["He came back."]})
+        return json.dumps({"translations": ["⟦N0⟧ came back."]})
+
+    cfg = Config.from_dict(
+        {"language": {"source": "zh-Hant", "target": "en"}, "llm": {"preset": "fake"}}
+    )
+    executor = TranslationBatchExecutor(Translator(FakeClient(handler=handler), cfg), None)
+    plan = BatchPlan(
+        chapter=0,
+        start_index=0,
+        segment_indices=(0,),
+        sources=("孫悟空回來了。",),
+        terms=(GlossaryTerm(source="孫悟空", target="Sun Wukong", type="person"),),
+        context="",
+        style="",
+        book_synopsis="",
+        chapter_digest="",
+        annotation_contexts=[[]],
+        next_source="",
+        allow_empty_translations=False,
+        entity_markers=True,
+    )
+    draft = executor.translate(plan)
+    assert draft.targets == ("Sun Wukong came back.",)
+    assert draft.turn is None
+
+
+def test_parallel_worker_returns_drafted_batches_on_a_budget_stop(tmp_path: Path):
+    from wenyi_core.llm.limits import RequestStopped
+    from wenyi_core.pipeline.translate.translation import _ParallelWaveSpec, _WaveBatchSpec
+    from wenyi_core.pipeline.translate.translation_batch import BatchResult
+
+    orch = Orchestrator(
+        _parallel_config(tmp_path), client=FakeClient(handler=_parallel_handler([]))
+    )
+    service = orch._translation
+    stop = RequestStopped("budget exhausted")
+    calls = []
+
+    def execute(plan, *, polish, polish_mode):
+        calls.append(plan)
+        if len(calls) == 2:
+            raise stop
+        return BatchResult(("T",), (None,))
+
+    service._batches.execute = execute
+    batches = tuple(
+        _WaveBatchSpec(
+            batch_start=i,
+            segment_indices=(i,),
+            sources=(f"S{i}",),
+            terms=(),
+            annotation_contexts=[[]],
+            next_source="",
+            already_done=False,
+            existing_targets=(None,),
+        )
+        for i in range(3)
+    )
+    spec = _ParallelWaveSpec(
+        chapter=0,
+        wave_index=0,
+        chapter_digest="",
+        opening_source_lookbehind="",
+        style="",
+        book_synopsis="",
+        batches=batches,
+        quote_references_by_batch=("", "", ""),
+        polish=False,
+        polish_mode="full",
+        entity_markers=False,
+        rolling_context_tokens=1000,
+    )
+    _, _, outcomes, error = service._translate_wave_worker(spec)
+    assert error is stop
+    assert len(outcomes) == 1 and len(calls) == 2
+
+
+def test_parallel_interrupt_mid_wave_still_saves_the_rest_of_the_wave(tmp_path: Path):
+    import pytest
+    from wenyi_core.llm.limits import RequestStopped
+
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    cfg = _parallel_config(tmp_path)
+    calls: list[str] = []
+    orch = Orchestrator(
+        cfg, client=FakeClient(handler=_count_translations(_parallel_handler([]), calls))
+    )
+    service = orch._translation
+    real_align = service._align_batch_context
+    fired: list[int] = []
+
+    def align(store, chapter, segments, start, count):
+        if chapter.index == 0 and start == 1 and not fired:
+            fired.append(1)
+            raise RequestStopped("cancelled")
+        return real_align(store, chapter, segments, start, count)
+
+    service._align_batch_context = align
+    with pytest.raises(RequestStopped):
+        orch.run(str(book))
+    spent = len(calls)
+
+    resumed: list[str] = []
+    store = Orchestrator(
+        cfg, client=FakeClient(handler=_count_translations(_parallel_handler([]), resumed))
+    ).run(str(book))
+    assert spent + len(resumed) == 9
+    for ci in range(3):
+        assert all(s.target for s in store.load_chapter(ci).text_segments)
+
+
+def test_parallel_failed_batch_save_keeps_the_rest_of_the_wave(tmp_path: Path):
+    import pytest
+    from wenyi_core.storage.file import FileStorage
+
+    book = tmp_path / "novel.txt"
+    book.write_text(_PARALLEL_BOOK, encoding="utf-8")
+    cfg = _parallel_config(tmp_path)
+    calls: list[str] = []
+    orch = Orchestrator(
+        cfg, client=FakeClient(handler=_count_translations(_parallel_handler([]), calls))
+    )
+    real_save = FileStorage.save_chapter
+    fired: list[int] = []
+
+    def flaky_save(self, chapter):
+        if chapter.index == 0 and chapter.text_segments[1].target and not fired:
+            fired.append(1)
+            raise OSError("disk hiccup")
+        return real_save(self, chapter)
+
+    FileStorage.save_chapter = flaky_save
+    try:
+        with pytest.raises(OSError, match="disk hiccup"):
+            orch.run(str(book))
+    finally:
+        FileStorage.save_chapter = real_save
+    spent = len(calls)
+
+    resumed: list[str] = []
+    Orchestrator(
+        cfg, client=FakeClient(handler=_count_translations(_parallel_handler([]), resumed))
+    ).run(str(book))
+    # The wave's later batches are saved by the final flush, so nothing is paid twice.
+    assert fired and spent + len(resumed) == 9

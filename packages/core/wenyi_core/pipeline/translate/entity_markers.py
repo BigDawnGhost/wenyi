@@ -65,6 +65,9 @@ def mask_batch_entities(
     max_markers: int = 24,
 ) -> EntityMaskPlan:
     """Replace eligible entity occurrences in ``sources`` with ``⟦N0⟧``..``⟦Nk⟧`` tokens."""
+    # A source that already contains marker brackets would be filled as if masked.
+    if any("⟦" in text or "⟧" in text for text in sources):
+        return EntityMaskPlan(tuple(sources), {}, "")
     selected = select_markable_terms(terms, sources, max_markers=max_markers)
     if not selected:
         return EntityMaskPlan(tuple(sources), {}, "")
@@ -134,7 +137,7 @@ def unmask_batch_entities(
                 updated = updated.replace(marker, term.target.strip())
                 filled_count += hits
         # Any bracket left after filling is an unknown or mangled marker.
-        unresolved_count += updated.count("⟦")
+        unresolved_count += updated.count("⟦") + updated.count("⟧")
         out.append(updated)
     joined_targets = "\n".join(targets)
     joined_sources = "\n".join(plan.masked_sources)

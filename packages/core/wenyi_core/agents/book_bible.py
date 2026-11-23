@@ -39,7 +39,10 @@ _LOGGER = logging.getLogger(__name__)
 # CJK runs inside target-language digests (digests quote original source names in source spelling).
 _CJK_SPAN_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]{2,6}")
 # Capitalized multi-word / proper-noun sequences for Latin-script sources.
-_LATIN_ENTITY_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}\b")
+# Capitalized words in Latin, Greek and Cyrillic scripts, so Russian or Greek names mine too.
+_LATIN_ENTITY_RE = re.compile(
+    r"\b[A-ZÀ-ÖØ-ÞΑ-ΩА-ЯЁ][a-zß-öø-ÿα-ωа-яё]+(?:\s+[A-ZÀ-ÖØ-ÞΑ-ΩА-ЯЁ][a-zß-öø-ÿα-ωа-яё]+){0,3}\b"
+)
 _WORD_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
 
 # Pure CJK function/glue characters (excluding proper-noun/title/place morphemes like 天王山海門石金星).
@@ -69,15 +72,24 @@ class BibleResult:
     divergent_count: int
 
 
+# A reading, or one character plus the combining or sound marks NFKC composes into it.
+_MATCH_UNIT_RE = re.compile(
+    r"〘[^〙]*〙|.[\u0300-\u036f\u1ab0-\u1aff\u1dc0-\u1dff\u20d0-\u20ff\ufe20-\ufe2f"
+    r"\u3099\u309a\uff9e\uff9f]*",
+    re.DOTALL,
+)
+
+
 def _match_index(corpus: str) -> tuple[str, list[int]]:
     """Normalize ``corpus`` for matching and map each normalized offset to its raw offset.
 
-    Readings are dropped and each remaining character is normalized on its own, so a span
-    found in the result can be cut from the original text with its case intact.
+    Readings are dropped and each character, with any combining marks after it, is
+    normalized on its own, so a span found in the result can be cut from the original text
+    with its case intact.
     """
     pieces: list[str] = []
     offsets: list[int] = []
-    for match in re.finditer(r"〘[^〙]*〙|.", corpus, re.DOTALL):
+    for match in _MATCH_UNIT_RE.finditer(corpus):
         if match.group(0).startswith("〘") and len(match.group(0)) > 1:
             continue
         piece = normalize_match_text(match.group(0))
@@ -348,26 +360,18 @@ class BookBibleAgent(Agent):
             + "\n".join(rows)
             + '\n\nReturn JSON: {"terms": [...]}'
         )
-        try:
-            data = self._complete_json_dict(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                operation="glossary.extract",
-            )
-        except (JsonParseError, TruncatedResponseError, ValueError) as exc:
-            _LOGGER.warning("Bible adjudication failed (%s); falling back to probe results", exc)
-            return []
-        except Exception as exc:
-            if is_resumable_provider_interrupt(exc):
-                raise
-            _LOGGER.warning("Bible adjudication error (%s)", exc)
-            return []
-
+        # A failed adjudication raises instead of returning no terms: an empty Bible would be
+        # cached as compiled and reused by every later run.
+        data = self._complete_json_dict(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            operation="glossary.extract",
+        )
         raw_terms = data.get("terms") if isinstance(data, dict) else None
         if not isinstance(raw_terms, list):
-            return []
+            raise ValueError("Book Bible adjudication returned no terms list")
 
         generic_words = glossary_generic_target_words(self.tgt)
         blocked_sources = {

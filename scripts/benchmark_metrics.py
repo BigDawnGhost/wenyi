@@ -21,7 +21,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from wenyi_core.glossary.store import normalize_match_text
+from wenyi_core.glossary.store import normalize_match_text, source_matches_text
 from wenyi_core.i18n.languages import glossary_generic_target_words
 
 _WORD_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)*")
@@ -153,7 +153,7 @@ def analyze_run(
 
     adherence_scores: list[tuple[float, str, str]] = []
     for src, tgt, _ty in glossary_rows:
-        hits = [seg for seg in segments if src in (seg.get("source") or "")]
+        hits = [seg for seg in segments if source_matches_text(src, seg.get("source") or "")]
         if len(hits) < 5:
             continue
         key = _target_key(tgt)
