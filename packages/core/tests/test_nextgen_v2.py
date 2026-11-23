@@ -333,6 +333,21 @@ def test_is_verse_segment_avoids_asymmetric_prose_false_positive():
     assert is_verse_segment("他站起身，仔细打量着眼前的书生。") is False
 
 
+def test_is_verse_segment_requires_shi_metre_not_balanced_modern_prose():
+    # Classical 5- and 7-character couplets stay verse.
+    assert is_verse_segment("床前明月光，疑是地上霜。") is True
+    assert is_verse_segment("两岸猿声啼不住，轻舟已过万重山。") is True
+    assert is_verse_segment("世人都晓神仙好，惟有功名忘不了。") is True
+    # Balanced modern prose and four-character parallel pairs are not verse.
+    assert is_verse_segment("剑光一闪，血雨纷飞！") is False
+    assert is_verse_segment("他慢慢抬起头，望向远处的山。") is False
+    assert is_verse_segment("雨停了很久，街上依旧没人。") is False
+    assert is_verse_segment("她终于笑了，眼里全是光。") is False
+    # Exclamations and vernacular particles rule out an otherwise 5+5 line.
+    assert is_verse_segment("风雪满城关，谁人敢独行？") is False
+    assert is_verse_segment("这天很冷啊，那人不回家。") is False
+
+
 def test_consistency_sweep_unifies_quotes_and_detects_mid_freq_drift(tmp_path):
     from wenyi_core.storage.file import FileStorage
 

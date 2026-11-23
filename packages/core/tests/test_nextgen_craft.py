@@ -65,7 +65,7 @@ def test_zh_en_and_zh_hant_en_register_sheet_and_verse_policy_render():
         prompt = render("translator_system", src=src, tgt="en")
         assert "Forms of address and self-reference register sheet" in prompt
         assert "孤" in prompt
-        assert "莫…只管…" in prompt
+        assert "negation scope across multi-clause sentences" in prompt
         assert "em dashes" in prompt
         assert "line breaks" in prompt
 
