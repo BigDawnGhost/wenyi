@@ -71,10 +71,6 @@ _EN_LONE_TRAP = re.compile(r"\b(?:the\s+)?lone(?:\s+one)?\b", re.I)
 _ZH_CLASSICAL_GU_RE = re.compile(r"[，,；;。]\s*故[\u4e00-\u9fff]{1,6}[之矣也焉。，]")
 _EN_DELIBERATELY_TRAP = re.compile(r"\b(?:deliberately|on purpose|intentionally)\b", re.I)
 
-_ZH_VERSE_LI_ALLUSION_RE = re.compile(r"八百里[^，。！？]{0,6}(?:分|炙|麾下)")
-_EN_EIGHT_HUNDRED_LI_TRAP = re.compile(
-    r"\b(?:eight\s+hundred|800)\s+(?:li|ox|oxen|steers?|bulls?)\b", re.I
-)
 _EN_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _EN_QUOTED_SPAN_RE = re.compile(r'"[^"]*"|“[^”]*”')
 _EN_MALE_PRONOUN_RE = re.compile(r"\b(?:he|him|his)\b", re.I)
@@ -85,19 +81,13 @@ _ZH_DISGUISE_CUE_RE = re.compile(
 )
 _ZH_QUOTED_SPAN_RE = re.compile(r"“[^”]*”|「[^」]*」|『[^』]*』")
 
-_ZH_AGENCY_PROMISE_RE = re.compile(r"(?:我答应替他|我答應替他|他答应替我|他答應替我)")
 _ZH_AT_LEAST_RE = re.compile(r"至少")
 _EN_AT_MOST_TRAP = re.compile(r"\b(?:no\s+more\s+than|at\s+most)\b", re.I)
 _ZH_INLAW_KINSHIP_RE = re.compile(r"(?:大姨|二姨|三姨|小姨|大舅子|小舅子)")
 _EN_AUNT_UNCLE_TRAP = re.compile(r"\b(?:aunts?|uncles?)\b", re.I)
-_ZH_VOCATIVE_SHIFT_RE = re.compile(
-    r"(?:别走|別走|莫走|休走|且慢|慢着|慢著)[^。！？]{0,8}[，,]\s*[\u4e00-\u9fff]{1,3}(?:大人|先生|将军|將軍|殿下|公子|师父|師父|长老|長老)[，,]"
-)
+# Generic register calques only (literal 万岁 / 先生 renderings); never book-specific phrases.
 _EN_CALQUE_SENTINEL_RE = re.compile(
-    r"\b(?:dream(?:ed|ing)?\s+(?:its\s+|a\s+)?drunken\s+dream\s+of\s+death|"
-    r"fire-dwelling\s+daoist|filled\s+in\s+lyrics|flashed\s+with\s+treasure\s+light|"
-    r"to\s+death\s+with\s+her|ten\s+thousand\s+years|the\s+sir)\b",
-    re.I,
+    r"\b(?:long\s+live\s+the\s+ten\s+thousand|ten\s+thousand\s+years|the\s+sir)\b", re.I
 )
 _ZH_CLASSICAL_PARTICLES_RE = re.compile(r"[之乎者也矣焉哉岂豈孰乃遂故既若非莫勿裣衽斂衽]")
 
@@ -474,25 +464,6 @@ def assess_batch_risk(
                         high_severity=True,
                     )
                 )
-            if _ZH_VERSE_LI_ALLUSION_RE.search(src) and _EN_EIGHT_HUNDRED_LI_TRAP.search(clean_drf):
-                alerts.append(
-                    ParagraphAlert(
-                        idx,
-                        "allusion",
-                        "'八百里' in this lyric is the singular nickname of a famed ox (meaning roasted "
-                        "beef shared among troops), not a distance of 800 li or 800 oxen.",
-                        high_severity=True,
-                    )
-                )
-            if _ZH_AGENCY_PROMISE_RE.search(src):
-                alerts.append(
-                    ParagraphAlert(
-                        idx,
-                        "agency_direction",
-                        "Verify who promised to act for whom (答应替他 = promised to do it for him).",
-                        high_severity=True,
-                    )
-                )
             if (
                 _ZH_AT_LEAST_RE.search(src)
                 and _EN_AT_MOST_TRAP.search(clean_drf)
@@ -516,15 +487,6 @@ def assess_batch_risk(
                         idx,
                         "kinship_relation",
                         "Verify in-law kinship (大姨/二姨/小舅子 from a spouse's perspective = sister-in-law/brother-in-law, not aunt/uncle).",
-                        high_severity=True,
-                    )
-                )
-            if _ZH_VOCATIVE_SHIFT_RE.search(src):
-                alerts.append(
-                    ParagraphAlert(
-                        idx,
-                        "addressee_shift",
-                        "Mid-sentence vocative after imperative; verify the vocative attaches to the right clause.",
                         high_severity=True,
                     )
                 )

@@ -105,11 +105,11 @@ def _pair_specific_audit_note(src: str, tgt: str) -> str:
     tgt_base = (tgt or "").lower().split("-", 1)[0]
     if src_base == "zh" and tgt_base == "en":
         return (
-            "Pair-specific checks (zh -> en): verify classical negation scope (莫…只管…), "
-            "correlative conditionals (不A就B), delayed realization (良久…才), traditional time "
-            "and numeric ranges (時辰 = two hours; 三五 = three to five), classical chronicle "
-            "verb-vs-name parsing, royal/humble register (孤/臣/陛下/大人), kinship seniority, "
-            "literary allusions (do not translate surface words literally), and embedded poems/lyrics."
+            "Pair-specific checks (zh -> en): verify negation scope across clauses, "
+            "correlative conditionals (不A就B), delayed realization (良久…才), quantifier polarity "
+            "and exact numbers, verb-vs-name parsing, forms of address and self-reference register, "
+            "kinship seniority, idioms and allusions (do not translate surface words literally), "
+            "and embedded poems/lyrics."
         )
     if src_base == "ja" and tgt_base == "en":
         return (

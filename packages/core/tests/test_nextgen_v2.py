@@ -198,7 +198,9 @@ def test_batch_risk_screener_catches_traps_and_escalates_sparse_editor():
     )
     codes = {a.code for a in report.alerts}
     assert report.should_escalate is True
-    assert {"conditional_logic", "glossary_miss", "allusion", "royal_pronoun"} <= codes
+    assert {"conditional_logic", "glossary_miss", "royal_pronoun"} <= codes
+    # Book-specific allusion traps are not shipped; allusions are left to the general editor.
+    assert "allusion" not in codes
     assert has_embedded_verse(sources[1], source_lang="zh") is True
 
     # Verify SparseSemanticEditor passes thinking_boost=1 on risky batch and 0 on clean batch.
@@ -512,7 +514,7 @@ def test_pr30_review_regressions(tmp_path):
     assert store.load_chapter(1).text_segments[0].target == "Protected DOCX styled line."
 
 
-def test_batch_risk_catches_phantom_entity_pronoun_flip_and_oxen_allusion():
+def test_batch_risk_catches_phantom_entity_and_pronoun_flip():
     terms = [
         GlossaryTerm(source="荆襄", target="Jingxiang", type="place"),
         GlossaryTerm(source="南楚", target="Southern Chu", type="place"),
@@ -539,7 +541,7 @@ def test_batch_risk_catches_phantom_entity_pronoun_flip_and_oxen_allusion():
     by_idx = {(a.index, a.code) for a in report.alerts}
     assert (0, "phantom_entity") in by_idx
     assert (1, "pronoun_consistency") in by_idx
-    assert (2, "allusion") in by_idx
+    assert not any(code == "allusion" for _, code in by_idx)
     # Paragraph 3 genuinely contains 荆襄 in source, so no false phantom_entity alert.
     assert (3, "phantom_entity") not in by_idx
     assert report.should_escalate is True
