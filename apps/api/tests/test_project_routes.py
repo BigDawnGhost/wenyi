@@ -430,7 +430,7 @@ def test_websocket_skips_token_check_when_require_token_disabled(api):
 
     client, _ = api
     pid = new_project(api)
-    open_context = replace(current_context(), api_token="test-access-token")
+    open_context = replace(current_context(), api_token="test-access-token", require_token=False)
 
     async def local_relay(websocket, project_id):
         # Serve the socket until the client hangs up; no token was required.
@@ -478,9 +478,9 @@ def test_start_job_reuses_in_flight_task_of_same_kind(api):
     client, queue = api
     pid = new_project(api)
     upload(api, pid)
-    dal.set_project_status(pid, "paused")
-    parse_job = must(dal.latest_resumable_job(pid))
+    parse_job = must(dal.latest_workflow_job(pid))
     dal.set_job_status(parse_job["id"], "paused")
+    dal.set_project_status(pid, "paused")
     in_flight = dal.create_job(pid, "parse", "resumed-parse", run_id="resumed-run")
     result = asyncio.run(job_service.start_job(pid, "parse"))
     assert result == {"job_id": "resumed-run", "project_id": pid, "kind": "parse"}
@@ -493,9 +493,9 @@ def test_concurrent_resume_dispatches_exactly_one_task(api):
     client, queue = api
     pid = new_project(api)
     upload(api, pid)
-    dal.set_project_status(pid, "paused")
-    parse_job = must(dal.latest_resumable_job(pid))
+    parse_job = must(dal.latest_workflow_job(pid))
     dal.set_job_status(parse_job["id"], "paused")
+    dal.set_project_status(pid, "paused")
     with ThreadPoolExecutor(max_workers=4) as pool:
         responses = list(pool.map(lambda _: client.post(f"/projects/{pid}/resume"), range(4)))
     assert sum(response.status_code == 200 for response in responses) >= 1

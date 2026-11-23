@@ -591,7 +591,8 @@ def test_locks_do_not_starve_shared_pool_connections(pg_pool, tmp_path):
         # pool still serves state reads and accepts new checkouts instantly.
         with pg_pool.connection(timeout=2) as conn:
             assert conn.execute("SELECT 1").fetchone() == (1,)
-        assert holders[0].exists()
+        # exists() reports a committed manifest, not merely a catalog row.
+        assert not holders[0].exists()
         extra = PostgresStorage(uuid.uuid4().hex, pg_pool, run_dir=str(tmp_path / "extra"))
         with extra.lock(blocking=False):
             pass
@@ -630,13 +631,18 @@ def test_save_chapters_batches_chapter_writes(pg_storage, tmp_path, monkeypatch)
     pg_storage.finish_initialization()
 
     for chapter in chapters:
-        stored = pg_storage.read_artifact(f"chapters/ch{chapter.index}.json")
-        assert stored is not None
-        assert stored["title"] == chapter.title
+        # PostgreSQL keeps chapters in relational tables; the chapter artifact key
+        # belongs to the file and SQLite backends.
+        assert pg_storage.read_artifact(f"chapters/ch{chapter.index}.json") is None
+        assert pg_storage.load_chapter(chapter.index).title == chapter.title
 
     def revision_count() -> int:
+        # The module-scoped schema is shared by every test here; count only this project.
         with pg_storage._conn as conn:
-            return conn.execute("SELECT COUNT(*) FROM segment_revisions").fetchone()[0]
+            return conn.execute(
+                "SELECT COUNT(*) FROM segment_revisions WHERE project_id=%s",
+                (pg_storage.project_id,),
+            ).fetchone()[0]
 
     initial = revision_count()
     assert initial == 5
