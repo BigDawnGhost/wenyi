@@ -145,6 +145,11 @@ const en = {
   "events.exportedFiles": "Exported files: {files}",
   "events.projectInitializedChapters":
     "Project initialized — chapters: {count}",
+  "events.glossaryBibleCompiled":
+    "Book Bible compiled ({seeded} terms, {quotes} quotes)",
+  "events.glossaryBibleReused": "Book Bible reused ({seeded} terms)",
+  "events.consistencySweepCompleted":
+    "Consistency sweep completed ({quotes} quotes, {glossary} glossary, {drift} drift fixes)",
   "events.noEventsYet": "No events yet.",
   "export.exportTaskSubmitted": "Export task submitted",
   "export.saveAs": "Save as",
@@ -529,6 +534,25 @@ const en = {
   "settings.operationModel": "Model: {operation}",
   "settings.bookUnderstanding": "Book understanding",
   "settings.polishing": "Polishing",
+  "settings.consistencySweep": "Book-wide consistency sweep",
+  "settings.consistencySweepHelp":
+    "After all chapters finish, unify repeated quotes, patch missed glossary terms, and reconcile cross-chapter title or epithet drift.",
+  "settings.deterministicHygiene": "Deterministic formatting hygiene",
+  "settings.deterministicHygieneHelp":
+    "Normalize punctuation, quotation marks, line breaks, and stray markup artifacts deterministically after each chapter.",
+  "settings.glossaryMode": "Glossary mode",
+  "settings.glossaryModeHelp":
+    "Incremental extracts terms batch by batch. Compiled pre-compiles a book-wide glossary, conventions, and repeated quotes before translation so chapters can run in parallel.",
+  "settings.glossaryModeIncremental": "Incremental (batch by batch)",
+  "settings.glossaryModeCompiled": "Compiled Book Bible",
+  "settings.polishMode": "Polishing mode",
+  "settings.polishModeHelp":
+    "Full rewrites every batch. Sparse audits each batch and only rewrites spans with detected meaning, term, voice, or formatting defects.",
+  "settings.polishModeFull": "Full rewrite",
+  "settings.polishModeSparse": "Sparse semantic edit",
+  "settings.chapterConcurrency": "Chapter concurrency",
+  "settings.chapterConcurrencyHelp":
+    "Number of chapters translated in parallel. Available when Glossary mode is Compiled Book Bible.",
   "settings.batchGlossary": "Batch glossary",
   "settings.batchGlossaryHelp":
     "Full sends every glossary term to each translation and polish batch. Relevant sends only entries matching the batch's source, following-source reference, annotations, and chapter digest (recommended for long books); whole-book review still receives the full glossary.",

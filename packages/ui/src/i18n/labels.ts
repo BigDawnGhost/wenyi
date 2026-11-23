@@ -14,6 +14,7 @@ const stages: Record<string, MessageKey> = {
   polish: "settings.polishing",
   annotation_alignment: "settings.paragraphAnnotationAlignment",
   term_extract: "workflow.terms",
+  consistency_sweep: "settings.consistencySweep",
   review: "common.wholeBookReview",
   review_autofix: "data.autofix",
   assemble: "workflow.export",

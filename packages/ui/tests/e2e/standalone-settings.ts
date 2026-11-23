@@ -63,7 +63,7 @@ for (const theme of ["light", "dark"]) {
     for (const scope of ["global", "project"]) {
       await page.goto(scope === "global" ? "/settings/workflow" : `/projects/${pid}/settings`);
       const main = page.getByRole("main");
-      await expect(main.getByRole("region", { name: "Workflow", exact: true }).getByRole("switch")).toHaveCount(4);
+      await expect(main.getByRole("region", { name: "Workflow", exact: true }).getByRole("switch")).toHaveCount(6);
       await expect(main.getByRole("checkbox")).toHaveCount(0);
       for (const [key, name] of [
         ["book_understanding", "Book understanding"],
@@ -419,7 +419,7 @@ for (const chinese of [false, true]) {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto("/settings/workflow");
     const main = page.getByRole("main");
-    await expect(main.getByRole("switch")).toHaveCount(4);
+    await expect(main.getByRole("switch")).toHaveCount(6);
     const workflow = main.getByRole("region", { name: chinese ? "翻译流程" : "Workflow", exact: true });
     await expect(workflow.getByRole("spinbutton", { includeHidden: true })).toHaveCount(0);
     await expect(page.getByLabel(chinese ? "逐段注释定位" : "Paragraph annotation alignment", { exact: true })).toHaveCount(0);
@@ -455,8 +455,8 @@ for (const chinese of [false, true]) {
     const yaml = page.getByRole("textbox", { name: advancedName, exact: true });
     await expect(yaml).toBeVisible();
     await expect(page.getByRole("link", { name: advancedName, exact: true })).toHaveCount(0);
-    await expect(main.getByRole("combobox")).toHaveCount(8);
-    await expect(main.getByRole("switch")).toHaveCount(6);
+    await expect(main.getByRole("combobox")).toHaveCount(11);
+    await expect(main.getByRole("switch")).toHaveCount(8);
     await expect(main.getByRole("spinbutton", { includeHidden: true })).toHaveCount(0);
     await expect(page.getByLabel(chinese ? "分批翻译章节" : "Translate chapters in batches", { exact: true })).toHaveCount(0);
     await expect(main.locator("details, summary")).toHaveCount(0);
@@ -466,9 +466,30 @@ for (const chinese of [false, true]) {
         ? ["各阶段模型", "翻译风格", "翻译流程", "导出偏好", advancedName]
         : ["Stage models", "Translation style", "Workflow", "Export preferences", advancedName],
     );
+    const polishMode = page.getByRole("combobox", { name: chinese ? "润色模式" : "Polishing mode", exact: true });
+    const chapterConcurrency = page.getByRole("combobox", { name: chinese ? "章节并行数" : "Chapter concurrency", exact: true });
+    await expect(polishMode).toBeEnabled();
+    await expect(chapterConcurrency).toBeDisabled();
+    await chooseOption(polishMode, chinese ? "稀疏精修" : "Sparse semantic edit");
+    expect(JSON.parse(await yaml.inputValue()).pipeline.polish_mode).toBe("sparse");
+    await chooseOption(
+      page.getByRole("combobox", { name: chinese ? "术语模式" : "Glossary mode", exact: true }),
+      chinese ? "全书预编译词典" : "Compiled Book Bible",
+    );
+    await expect(chapterConcurrency).toBeEnabled();
+    await chooseOption(chapterConcurrency, "4");
+    const consistencySweep = page.getByLabel(chinese ? "全书一致性巡检" : "Book-wide consistency sweep", { exact: true });
+    await consistencySweep.check();
     const polish = page.getByLabel(chinese ? "润色" : "Polishing", { exact: true });
     await polish.uncheck();
-    expect(JSON.parse(await yaml.inputValue()).pipeline.polish).toBe(false);
+    await expect(polishMode).toBeDisabled();
+    expect(JSON.parse(await yaml.inputValue()).pipeline).toMatchObject({
+      polish: false,
+      glossary_mode: "compiled",
+      polish_mode: "sparse",
+      chapter_concurrency: 4,
+      consistency_sweep: true,
+    });
     await chooseOption(
       page.getByRole("combobox", { name: chinese ? "批次术语范围" : "Batch glossary", exact: true }),
       chinese ? "仅当前批次相关" : "Relevant to each batch",
@@ -711,7 +732,7 @@ test("running projects keep both basic and advanced settings read-only", async (
   await page.goto(`/projects/${pid}/settings`);
   await expect(page.locator('[id="route-translation.body"]')).toBeDisabled();
   const switches = page.getByRole("main").getByRole("switch");
-  await expect(switches).toHaveCount(6);
+  await expect(switches).toHaveCount(8);
   for (const control of await switches.all()) {
     await expect(control).toBeDisabled();
   }

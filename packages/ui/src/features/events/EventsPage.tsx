@@ -34,6 +34,18 @@ function badgeFor(type: string) {
       variant: "secondary",
       label: tr("common.terms"),
     },
+    glossary_bible_compiled: {
+      variant: "secondary",
+      label: tr("common.terms"),
+    },
+    glossary_bible_reused: {
+      variant: "secondary",
+      label: tr("common.terms"),
+    },
+    consistency_sweep_completed: {
+      variant: "info",
+      label: tr("events.translation"),
+    },
     assembled: { variant: "success", label: tr("common.export") },
   };
 
@@ -85,6 +97,21 @@ function describe(e: EventOut): string {
       });
     case "run_initialized":
       return tr("events.projectInitializedChapters", { count: p.chapters });
+    case "glossary_bible_compiled":
+      return tr("events.glossaryBibleCompiled", {
+        seeded: p.seeded ?? 0,
+        quotes: p.pretranslated_quotes ?? 0,
+      });
+    case "glossary_bible_reused":
+      return tr("events.glossaryBibleReused", {
+        seeded: p.seeded ?? 0,
+      });
+    case "consistency_sweep_completed":
+      return tr("events.consistencySweepCompleted", {
+        quotes: p.quotes_unified ?? 0,
+        glossary: p.glossary_misses_patched ?? 0,
+        drift: p.drift_patches_applied ?? 0,
+      });
     default:
       return e.type;
   }

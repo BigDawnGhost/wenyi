@@ -170,7 +170,12 @@ Options not supplied on the command line retain their YAML values.
 | Option | Effect |
 |---|---|
 | `--chapter N` | Translate and save one zero-based chapter; skip whole-book Review and export. |
+| `--pipeline-preset classic\|nextgen` | Apply a workflow preset. `nextgen` enables Compiled Book Bible, sparse semantic editing, 4× chapter parallelism, deterministic hygiene, and book-wide consistency sweep (disabling separate whole-book Review unless `--review` is also passed). |
+| `--glossary-mode incremental\|compiled` | Override `pipeline.glossary_mode` (`incremental` batch-by-batch or `compiled` Book Bible). |
 | `--polish` / `--no-polish` | Override `pipeline.polish` for pending translation work. |
+| `--polish-mode full\|sparse` | Override `pipeline.polish_mode` (`full` rewrite or `sparse` defect-targeted edit). |
+| `--chapter-concurrency N` | Translate up to `N` chapters in parallel (requires `compiled` glossary mode). |
+| `--consistency-sweep` / `--no-consistency-sweep` | Override the post-translation book-wide consistency sweep. |
 | `--translation-mode standard\|three_draft_synthesis` | Override the translation method; precision requires polishing. |
 | `--review` / `--no-review` | Override automatic final whole-book Review. |
 | `--format epub\|txt\|html\|markdown\|pdf\|docx` | Choose an export format; PDF is only available for saved BabelDOC projects. |

@@ -28,6 +28,21 @@ class TranslationMode(str, Enum):
     three_draft_synthesis = "three_draft_synthesis"
 
 
+class PipelinePreset(str, Enum):
+    classic = "classic"
+    nextgen = "nextgen"
+
+
+class GlossaryMode(str, Enum):
+    incremental = "incremental"
+    compiled = "compiled"
+
+
+class PolishMode(str, Enum):
+    full = "full"
+    sparse = "sparse"
+
+
 def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> None:
     @app.command(rich_help_panel="Main workflow")
     def mineru_epub(
@@ -90,6 +105,11 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         out: str | None = None,
         polish: bool | None = None,
         translation_mode: TranslationMode | None = None,
+        pipeline_preset: PipelinePreset | None = None,
+        glossary_mode: GlossaryMode | None = None,
+        polish_mode: PolishMode | None = None,
+        chapter_concurrency: int | None = None,
+        consistency_sweep: bool | None = None,
         review: bool | None = None,
         mono: bool | None = None,
         bilingual: bool | None = None,
@@ -115,6 +135,11 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 out=out,
                 polish=polish,
                 translation_mode=translation_mode,
+                pipeline_preset=pipeline_preset,
+                glossary_mode=glossary_mode,
+                polish_mode=polish_mode,
+                chapter_concurrency=chapter_concurrency,
+                consistency_sweep=consistency_sweep,
                 review=review,
                 mono=mono,
                 bilingual=bilingual,
@@ -142,6 +167,11 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         out: str | None = None,
         polish: bool | None = None,
         translation_mode: TranslationMode | None = None,
+        pipeline_preset: PipelinePreset | None = None,
+        glossary_mode: GlossaryMode | None = None,
+        polish_mode: PolishMode | None = None,
+        chapter_concurrency: int | None = None,
+        consistency_sweep: bool | None = None,
         review: bool | None = None,
         mono: bool | None = None,
         bilingual: bool | None = None,
@@ -154,10 +184,38 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         fmt = resolve_output_format(input_path, fmt, console=console)
         config = context().load_config()
         pipeline_values = config.pipeline.model_dump()
+        if pipeline_preset is PipelinePreset.nextgen:
+            pipeline_values["book_understanding"] = True
+            pipeline_values["glossary_mode"] = "compiled"
+            pipeline_values["polish"] = True
+            pipeline_values["polish_mode"] = "sparse"
+            pipeline_values["chapter_concurrency"] = max(
+                4, int(pipeline_values.get("chapter_concurrency") or 1)
+            )
+            pipeline_values["polish_concurrency"] = max(
+                4, int(pipeline_values.get("polish_concurrency") or 1)
+            )
+            pipeline_values["deterministic_hygiene"] = True
+            pipeline_values["consistency_sweep"] = True
+            pipeline_values["review"] = False
+            pipeline_values["review_autofix"] = False
+        elif pipeline_preset is PipelinePreset.classic:
+            pipeline_values["glossary_mode"] = "incremental"
+            pipeline_values["polish_mode"] = "full"
+            pipeline_values["chapter_concurrency"] = 1
+            pipeline_values["consistency_sweep"] = False
         if polish is not None:
             pipeline_values["polish"] = polish
         if translation_mode is not None:
             pipeline_values["translation_mode"] = translation_mode.value
+        if glossary_mode is not None:
+            pipeline_values["glossary_mode"] = glossary_mode.value
+        if polish_mode is not None:
+            pipeline_values["polish_mode"] = polish_mode.value
+        if chapter_concurrency is not None:
+            pipeline_values["chapter_concurrency"] = chapter_concurrency
+        if consistency_sweep is not None:
+            pipeline_values["consistency_sweep"] = consistency_sweep
         try:
             config.pipeline = PipelineConfig.model_validate(pipeline_values)
         except ValueError:
@@ -327,6 +385,33 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             "--translation-mode",
             help="Book translation mode; three_draft_synthesis requires polishing",
         ),
+        pipeline_preset: PipelinePreset | None = typer.Option(
+            None,
+            "--pipeline-preset",
+            help="Workflow preset: 'nextgen' enables compiled Book Bible, chapter concurrency, sparse semantic editing, and consistency sweep; 'classic' restores sequential incremental mode",
+        ),
+        glossary_mode: GlossaryMode | None = typer.Option(
+            None,
+            "--glossary-mode",
+            help="Override pipeline.glossary_mode ('incremental' or 'compiled')",
+        ),
+        polish_mode: PolishMode | None = typer.Option(
+            None,
+            "--polish-mode",
+            help="Override pipeline.polish_mode ('full' or 'sparse')",
+        ),
+        chapter_concurrency: int | None = typer.Option(
+            None,
+            "--chapter-concurrency",
+            min=1,
+            max=16,
+            help="Override pipeline.chapter_concurrency (1-16; parallel waves require compiled glossary mode)",
+        ),
+        consistency_sweep: bool | None = typer.Option(
+            None,
+            "--consistency-sweep/--no-consistency-sweep",
+            help="Override pipeline.consistency_sweep to enable or disable cross-chapter consistency sweep",
+        ),
         review: bool | None = typer.Option(
             None,
             "--review/--no-review",
@@ -357,6 +442,11 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             out=out,
             polish=polish,
             translation_mode=translation_mode,
+            pipeline_preset=pipeline_preset,
+            glossary_mode=glossary_mode,
+            polish_mode=polish_mode,
+            chapter_concurrency=chapter_concurrency,
+            consistency_sweep=consistency_sweep,
             review=review,
             mono=mono,
             bilingual=bilingual,

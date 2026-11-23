@@ -33,7 +33,7 @@ Use **Settings → Advanced → Advanced YAML configuration** to change [connect
 
 Validate or save edited YAML before returning to ordinary controls; unvalidated YAML disables them. Ordinary edits preserve advanced values already in the draft. **Validate configuration** checks the current draft without sending a model request.
 
-Built-in workflow defaults enable whole-book understanding, polishing, Review, and Review Autofix. Existing project overrides still apply. In particular, Review is **not read-only by default**; see [Whole-book Review](#whole-book-review) before starting a run.
+Built-in workflow defaults enable whole-book understanding, polishing, Review, and Review Autofix. In **Settings → Workflow** or **Project settings → Workflow**, you can also configure **Glossary mode** (`Incremental` or `Compiled Book Bible`), **Polishing mode** (`Full rewrite` or `Sparse semantic edit`), **Chapter concurrency** (available with `Compiled Book Bible`), **Book-wide consistency sweep**, and **Deterministic formatting hygiene**. Existing project overrides still apply. In particular, Review is **not read-only by default**; see [Whole-book Review](#whole-book-review) before starting a run.
 
 New and resumed tasks use saved settings; active tasks keep their captured configuration. Pause a project before changing its configuration. In global Settings, switching categories preserves drafts, but leaving Settings or reloading discards unsaved changes. Restoring defaults creates a draft and takes effect only after saving. Configuration reference: [Models and pipeline options](../reference/configuration.md).
 
