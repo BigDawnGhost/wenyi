@@ -44,7 +44,8 @@ The full maintenance rules are in [AGENTS.md](../../AGENTS.md#文档维护).
 
 ## Documentation preview
 
-With the [shared Node and pnpm versions](frontend.md#validation-in-both-hosts), run from the repository root:
+Set up the [frontend toolchain](frontend.md#validation-in-both-hosts), then run
+from the repository root:
 
 ```bash
 pnpm install --frozen-lockfile
@@ -77,11 +78,11 @@ The documentation site is published at
 the language menu switches between English and Simplified Chinese. Keep the
 VitePress `base` set to `/wenyi/` for this project-site address.
 
-The [Documentation workflow](../../.github/workflows/docs.yml) builds with Node 22,
-pnpm 9, the frozen lockfile and `pnpm docs:build`. Pull requests validate the site
-without publishing. Relevant changes merged into `main` build and deploy
-automatically; maintainers can also run **Actions → Documentation → Run workflow**
-with `main` selected.
+The [Documentation workflow](../../.github/workflows/docs.yml) uses the toolchain
+declared in the root `package.json`, the frozen lockfile and `pnpm docs:build`.
+Pull requests validate the site without publishing. Relevant changes merged into
+`main` build and deploy automatically; maintainers can also run
+**Actions → Documentation → Run workflow** with `main` selected.
 
 In repository **Settings → Pages**, set **Build and deployment → Source** to
 **GitHub Actions**. The deployment uses the `github-pages` environment, which should

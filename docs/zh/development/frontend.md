@@ -182,8 +182,9 @@ Radix Select 的 Portal 选项必须能在弹窗上方使用。不要改用会�
 
 ## 两端验证
 
-使用 Node 22（Vite 要求 22.x 系列至少为 22.12.0）和 pnpm 9，与根目录
-`package.json` 的 `engines` 字段一致。通过 `pnpm install --frozen-lockfile` 安装依赖。
+使用 Node 26 LTS 和仓库根目录 [`package.json`](../../../package.json) 的
+`packageManager` 字段固定的 pnpm 9 版本。Node 26 不再内置 Corepack；通过 npm 或工具
+版本管理器单独安装 pnpm 后，再运行 `pnpm install --frozen-lockfile`。
 尚无 Playwright Chromium 时执行 `pnpm -C apps/web exec playwright install chromium`。
 从仓库根目录运行：
 

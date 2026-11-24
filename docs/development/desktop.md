@@ -7,7 +7,8 @@ Packaging and upgrades belong in [Releasing](releasing.md); shared UI rules are 
 
 ## Run from source
 
-Use Python 3.10+, `uv`, the [shared Node and pnpm versions](frontend.md#validation-in-both-hosts), Rust stable and the
+Use Python 3.10+, `uv`, the [frontend toolchain](frontend.md#validation-in-both-hosts),
+Rust stable and the
 [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/).
 Debian/Ubuntu also needs `libdbus-1-dev` for the native tray availability checks.
 These are development requirements; packaged applications carry their Python engine.

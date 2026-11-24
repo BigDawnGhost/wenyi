@@ -225,10 +225,12 @@ remains visible in the open form after its toast expires.
 
 ## Validation in both hosts
 
-Use Node 22 (22.12.0 or later in the 22.x series, as required by Vite) and pnpm 9,
-matching the root `package.json` `engines`. Install dependencies with `pnpm install --frozen-lockfile`
-and Playwright Chromium with `pnpm -C apps/web exec playwright install chromium`
-when it is not already available. From the repository root:
+Use Node 26 LTS and the pnpm 9 version pinned in the root
+[`package.json`](../../package.json) (`packageManager`). Node 26 does not bundle
+Corepack; install pnpm separately with npm or your tool manager before running
+`pnpm install --frozen-lockfile`. If Playwright Chromium is not already available,
+install it with `pnpm -C apps/web exec playwright install chromium`.
+From the repository root:
 
 ```bash
 pnpm -C apps/web typecheck

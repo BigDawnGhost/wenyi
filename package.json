@@ -3,6 +3,7 @@
   "private": true,
   "license": "GPL-3.0-only",
   "description": "Frontend tooling for the Wenyi workspace.",
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "dev:web": "pnpm -C apps/web dev",
     "build:web": "pnpm -C apps/web build",
@@ -12,7 +13,7 @@
     "test:docs": "node --test docs/.vitepress/docs.test.mjs",
     "dev:desktop-ui": "pnpm -C apps/desktop/frontend dev",
     "build:desktop-ui": "pnpm -C apps/desktop/frontend build",
-    "test:frontend-boundaries": "node --experimental-strip-types --test \"packages/ui/tests/*.test.mjs\"",
+    "test:frontend-boundaries": "node --test \"packages/ui/tests/*.test.mjs\"",
     "desktop": "node scripts/dev/desktop.mjs dev",
     "desktop:build": "node scripts/dev/desktop.mjs build",
     "dev:api": "uv run uvicorn wenyi_api.main:app --reload --port 8000",
@@ -30,8 +31,8 @@
     "vitepress": "^1.6.4"
   },
   "engines": {
-    "node": "^22.12.0",
-    "pnpm": "^9.0.0"
+    "node": "^26.13.0",
+    "pnpm": "^9.15.9"
   },
   "browserslist": [
     "safari >= 15.4",

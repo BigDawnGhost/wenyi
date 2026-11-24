@@ -6,7 +6,9 @@
 
 ## 本地开发环境
 
-使用 Python 3.10+、`uv`、PostgreSQL 16、Redis 7 和[共享的 Node 与 pnpm 版本](frontend.md#两端验证)。命令从仓库根目录执行。默认 Python 工作区安装仅选择 CLI/Core，开发 Web 需安装完整 workspace：
+使用 Python 3.10+、`uv`、[前端工具链](frontend.md#两端验证)、PostgreSQL 16
+和 Redis 7。命令从仓库根目录执行。默认 Python 工作区安装仅选择 CLI/Core，
+开发 Web 需安装完整 workspace：
 
 ```bash
 uv sync --locked --all-packages --group dev
