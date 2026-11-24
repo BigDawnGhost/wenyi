@@ -13,7 +13,7 @@ from threading import Event
 
 import pytest
 from wenyi_core.config import Config
-from wenyi_core.errors import SchemaTooNew
+from wenyi_core.errors import SchemaTooNew, WenyiError
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
 from wenyi_core.models.document import Chapter, Document, Segment
@@ -1041,10 +1041,9 @@ def test_a_database_from_a_newer_build_is_refused_before_it_is_read(tmp_path):
     with sqlite3.connect(run_dir / "state.sqlite3") as connection:
         connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
         connection.commit()
-    with pytest.raises(SchemaTooNew) as refused:
+    with pytest.raises(SchemaTooNew, match="newer version of Wenyi") as refused:
         SqliteStorage(str(run_dir))
     assert refused.value.code == "database_schema_too_new"
-    assert "newer version of Wenyi" in str(refused.value)
     # The refusal must not rewrite the version, or the newer build would find
     # its own database claiming to be older than it is.
     with sqlite3.connect(run_dir / "state.sqlite3") as connection:
@@ -1213,3 +1212,102 @@ def test_chapter_snapshot_releases_reader_after_load_error(store, document):
     assert store._readers == 0
     store.close()
     assert store.exists()
+
+
+def test_open_rejects_a_corrupted_database_with_recovery_guidance(tmp_path):
+    run_dir = tmp_path / "corrupt"
+    storage = SqliteStorage(str(run_dir))
+    storage.write_artifact("chapters/ch0.json", {"text": "word " * 4096})
+    storage.close_all()
+    database = run_dir / "state.sqlite3"
+    garbage = b"this file is not a sqlite database" * 128
+    database.write_bytes(garbage)
+    broken = SqliteStorage(str(run_dir), create=False)
+    with pytest.raises(WenyiError) as raised:
+        broken._connection()
+    assert raised.value.code == "database_corrupt"
+    message = str(raised.value)
+    assert "corrupted" in message
+    assert str(database) in message
+    assert "Restore the database from a backup" in message
+    with pytest.raises(WenyiError, match="corrupted"):
+        SqliteStorage(str(run_dir))._connection()
+    assert database.read_bytes() == garbage
+
+
+def test_open_rejects_a_database_corrupted_beyond_its_header(tmp_path):
+    run_dir = tmp_path / "damaged"
+    storage = SqliteStorage(str(run_dir))
+    storage.write_artifact("chapters/ch0.json", {"text": "word " * 8192})
+    storage.close_all()
+    database = run_dir / "state.sqlite3"
+    with database.open("r+b") as handle:
+        handle.seek(4096)
+        handle.write(b"\xde\xad\xbe\xef" * 512)
+    broken = SqliteStorage(str(run_dir), create=False)
+    with pytest.raises(WenyiError, match="corrupted") as raised:
+        broken._connection()
+    assert raised.value.code == "database_corrupt"
+
+
+def _batch_chapters(count: int) -> list[Chapter]:
+    return [
+        Chapter(
+            index=index,
+            title=f"Chapter {index}",
+            href=f"chapter-{index}.xhtml",
+            segments=[
+                Segment(index=0, source=f"Source {index}", anchor="a"),
+                Segment(index=1, source=f"Second {index}", target=f"Target {index}"),
+            ],
+        )
+        for index in range(count)
+    ]
+
+
+def test_save_chapters_upserts_every_chunk_and_retry_is_idempotent(store, monkeypatch):
+    monkeypatch.setattr(SqliteStorage, "_CHAPTER_BATCH_SIZE", 2)
+    chapters = _batch_chapters(5)
+
+    store.save_chapters(chapters)
+
+    for chapter in chapters:
+        stored = store.read_artifact(f"chapters/ch{chapter.index}.json")
+        assert stored is not None
+        assert stored["title"] == chapter.title
+    conn = store._connection()
+    statistics = conn.execute(
+        "SELECT chapter_index, word_count FROM chapter_statistics ORDER BY chapter_index"
+    ).fetchall()
+    assert [tuple(row) for row in statistics] == [(index, 2) for index in range(5)]
+    revisions = conn.execute("SELECT COUNT(*) FROM segment_revisions").fetchone()[0]
+    assert revisions == 5
+
+    store.save_chapters(chapters)
+    assert conn.execute("SELECT COUNT(*) FROM segment_revisions").fetchone()[0] == revisions
+
+
+def test_stage_document_batches_chapter_writes(store, tmp_path, monkeypatch):
+    monkeypatch.setattr(SqliteStorage, "_CHAPTER_BATCH_SIZE", 2)
+    source = tmp_path / "batch-source.txt"
+    source.write_text("batch source", encoding="utf-8")
+    doc = Document(
+        title="Batch",
+        fmt="text",
+        source_lang="en",
+        target_lang="zh",
+        source_path=str(source),
+        meta={},
+        chapters=_batch_chapters(5),
+    )
+    digest = source_sha256(doc.source_path)
+
+    store.begin_initialization(digest)
+    manifest = store.stage_document(doc, source_hash=digest)
+    store.save_manifest(manifest)
+    store.finish_initialization()
+
+    for chapter in doc.chapters:
+        stored = store.read_artifact(f"chapters/ch{chapter.index}.json")
+        assert stored is not None
+        assert stored["title"] == chapter.title

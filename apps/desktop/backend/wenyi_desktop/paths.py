@@ -109,8 +109,8 @@ def project_id(value: str) -> str:
 
 
 def project_name(pid: str, name: str) -> str:
-    """Stable identity first; bound the readable suffix for Windows path lengths."""
-    return f"{pid}-{slugify(name)[:64]}"
+    """Stable identity first; the shared slug rule bounds the readable suffix."""
+    return f"{pid}-{slugify(name)}"
 
 
 def split_project_name(name: str) -> tuple[str, str]:
@@ -161,6 +161,7 @@ class ProjectDirectoryIndex:
         try:
             entries = sorted(root.iterdir())
         except FileNotFoundError:
+            # A missing library root simply has no projects to index.
             return
         for entry in entries:
             named, _ = split_project_name(entry.name)

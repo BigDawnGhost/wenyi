@@ -1,6 +1,7 @@
 """Explicit execution ports preserve cleanup, identity and publication lock ownership."""
 
 import asyncio
+import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
 from types import SimpleNamespace
@@ -257,7 +258,7 @@ def export_execution():
         storage_for=lambda _: storage,
         render=render,
         publish=lambda pid, eid, output: record("publish"),
-        set_status=lambda identity, status, **kwargs: record(f"export:{status}"),
+        set_status=lambda export_id, status, error=None: record(f"export:{status}"),
     )
     return ExportRequest("project", 4, "run"), dependencies, storage, sequence
 
@@ -289,3 +290,104 @@ def test_export_failure_keeps_error_writes_under_the_lock(export_execution, stag
         exporting.execute(request, dependencies)
     assert sequence[-3:] == ["job:error", "export:error", "unlock"]
     storage.close.assert_called_once()
+
+
+def test_native_panic_lands_failed_terminal_state(execution):
+    """pyo3 wraps Rust panics in BaseException subclasses; the run must not stay running."""
+    request, dependencies, storage = execution
+
+    class NativePanic(BaseException):
+        pass
+
+    dependencies.operation.side_effect = NativePanic("native engine panicked")
+    with pytest.raises(NativePanic, match="native engine panicked"):
+        runner.execute(request, dependencies)
+    dependencies.projects.set_project_status.assert_called_once_with(
+        "project", "error", error="native engine panicked"
+    )
+    dependencies.jobs.set_job_status.assert_any_call(1, "error", error="native engine panicked")
+    assert dependencies.metrics.snapshot()["tasks"] == {("error", "pipeline_failed"): 1}
+    fields = next(
+        call.kwargs
+        for call in storage.log_event.call_args_list
+        if call.args and call.args[0] == "pipeline_error"
+    )
+    assert fields["error_type"] == "NativePanic"
+    assert storage.close.call_count >= 1
+    dependencies.telemetry.release.assert_called_once()
+
+
+def test_export_native_panic_keeps_error_writes_under_the_lock(export_execution):
+    """An export panic still writes its error terminal states inside the lock."""
+    request, dependencies, storage, sequence = export_execution
+
+    class NativePanic(BaseException):
+        pass
+
+    def fail(*args):
+        raise NativePanic("native render panicked")
+
+    dependencies = replace(dependencies, render=fail)
+    with pytest.raises(NativePanic, match="native render panicked"):
+        exporting.execute(request, dependencies)
+    assert sequence[-3:] == ["job:error", "export:error", "unlock"]
+    storage.close.assert_called_once()
+
+
+def test_cancelled_workflow_drains_checkpoint_and_reports_drained(execution):
+    request, dependencies, _ = execution
+    release = asyncio.Event()
+    entered = asyncio.Event()
+
+    def operation(request, store, progress, bind_client):
+        return "done"
+
+    async def run_sync(operation):
+        operation()
+        entered.set()
+        await release.wait()
+
+    async def scenario():
+        task = asyncio.create_task(
+            runner.run(request, replace(dependencies, operation=operation, run_sync=run_sync))
+        )
+        await asyncio.wait_for(entered.wait(), 5.0)
+        task.cancel()
+        await asyncio.sleep(0)
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 5.0)
+
+    asyncio.run(scenario())
+    assert dependencies.metrics.snapshot()["task_cancel_drains"] == {("drained", "lt_1s"): 1}
+
+
+def test_cancelled_workflow_forces_paused_status_when_drain_expires(execution, monkeypatch):
+    request, dependencies, _ = execution
+    monkeypatch.setattr(runner, "CANCEL_DRAIN_TIMEOUT_SECONDS", 0.05)
+    stuck = asyncio.Event()
+    entered = asyncio.Event()
+
+    def operation(request, store, progress, bind_client):
+        return "done"
+
+    async def run_sync(operation):
+        operation()
+        entered.set()
+        await stuck.wait()
+
+    async def scenario():
+        task = asyncio.create_task(
+            runner.run(request, replace(dependencies, operation=operation, run_sync=run_sync))
+        )
+        await asyncio.wait_for(entered.wait(), 5.0)
+        started = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert time.monotonic() - started < 5.0
+
+    asyncio.run(scenario())
+    stuck.set()
+    assert dependencies.metrics.snapshot()["task_cancel_drains"] == {("forced", "lt_1s"): 1}
+    dependencies.jobs.set_job_status.assert_any_call(1, "paused", error=None)

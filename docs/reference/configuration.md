@@ -151,7 +151,12 @@ Connection and quota IDs start with a letter and contain only letters,
 digits, underscores, or hyphens. Unknown operations, fields, and references in
 the routing schema fail validation.
 
-Preset overrides replace **whole connection, model, or route entries** by key. In project YAML, supplied routes replace the corresponding global operation routes; omitted operations retain their global selections.
+Preset overrides replace **whole connection, model, or route entries** by key.
+Project YAML overrides `llm.routes` and `llm.budget` **field by field**. Omitted fields
+inherit the global value, even when the project sets a different primary model for
+the same operation. Lists replace rather than append: use `fallbacks: []` to clear
+inherited backup models. Use `thinking: null` to clear an inherited operation-level
+thinking override and use the selected model's own settings.
 
 Thinking overrides affect only the operation's primary model. The same registered model can use different efforts across operations, for example `translation.body: {model: deepseek/deepseek-flash, thinking: high}` and `language.detect: {model: deepseek/deepseek-flash, thinking: "off"}`. DeepSeek offers `off`, `low`, `high`, and `max`; other adapters provide their own choices, and the endpoint ultimately determines which values its model accepts. Gemini 3 overrides replace the model's thinking budget with a level for that operation. If raw request overrides already set thinking fields, use those settings instead of a stage override. Fallbacks use their own registered settings.
 
@@ -285,6 +290,7 @@ its stage is disabled; reachable checks follow the selected workflow switches.
 | `llm.budget.max_requests` | Unset | Positive integer |
 | `llm.budget.max_tokens` | Unset | Positive integer |
 | `llm.budget.deadline_seconds` | Unset | Positive finite seconds |
+| `llm.budget.token_estimate_divisor` | `2.0` | Positive finite divisor for the prompt-byte estimate |
 
 ```yaml
 llm:
@@ -312,9 +318,12 @@ Connections sharing a `quota_group` share reservations within the invocation.
 Connection concurrency spans all operations using it. Neither coordinates other
 processes nor replaces the provider's account limits.
 
-Token limits reserve a conservative prompt-byte estimate plus the configured
-output cap, then adjust against returned usage. Every reachable primary and
-fallback profile needs a finite output cap when token limits are enabled.
+Token limits reserve the number of UTF-8 prompt bytes divided by
+`token_estimate_divisor`, rounded down, plus a fixed 256-token buffer and the
+configured output cap. Returned usage replaces that estimate when available.
+Set the divisor to `1.0` to retain the previous, more conservative byte estimate.
+Every reachable primary and fallback profile needs a finite output cap when
+token limits are enabled.
 Reservations are not billed usage or a currency spending cap.
 Deadline/Ctrl+C cancellation is cooperative; in-flight requests may finish or
 time out. Restarting creates a new invocation budget.

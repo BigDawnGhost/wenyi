@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 import time
 from contextlib import closing
@@ -93,7 +94,17 @@ class MinerUApi:
             },
         )
         resp.raise_for_status()
-        data = _check(resp.json())["data"]
+        body = _json_body(resp)
+        if not isinstance(body, dict):
+            raise MinerUError(
+                "MinerU upload response is not a JSON object; "
+                f"server reason: {_server_reason(body)}"
+            )
+        data = _check(body).get("data")
+        if not isinstance(data, dict):
+            raise MinerUError(
+                f"MinerU upload response is missing 'data'; server reason: {_server_reason(body)}"
+            )
         upload_urls = data.get("file_urls")
         if not isinstance(upload_urls, list) or len(upload_urls) != len(file_paths):
             # A short URL list would silently skip chunks and misassemble the book.
@@ -115,7 +126,13 @@ class MinerUApi:
 
         # 3. Poll until all done, matching results back to the upload manifest by name
         expected_names = [Path(p).name for p in file_paths]
-        return self._poll_batch(data["batch_id"], timeout, expected_names=expected_names)
+        batch_id = data.get("batch_id")
+        if not batch_id:
+            raise MinerUError(
+                "MinerU upload response is missing 'batch_id'; "
+                f"server reason: {_server_reason(data)}"
+            )
+        return self._poll_batch(batch_id, timeout, expected_names=expected_names)
 
     def _poll_batch(self, batch_id: str, timeout: int, *, expected_names: list[str]) -> list[bytes]:
         deadline = time.monotonic() + timeout
@@ -123,8 +140,14 @@ class MinerUApi:
         while True:
             resp = _request_with_retry(self._client, "GET", f"/extract-results/batch/{batch_id}")
             resp.raise_for_status()
-            results = resp.json()["data"]["extract_result"]
-            states = [r["state"] for r in results]
+            results = _poll_results(resp)
+            for result in results:
+                if not result.get("state"):
+                    raise MinerUError(
+                        f"MinerU polling result for {result.get('file_name', 'unknown file')} "
+                        f"is missing 'state'; server reason: {_server_reason(result)}"
+                    )
+            states = [result["state"] for result in results]
             if all(s in ("done", "failed") for s in states):
                 if len(results) != len(expected_names):
                     # Result order/length must match the upload manifest; chunks arriving
@@ -145,9 +168,16 @@ class MinerUApi:
                     r = by_name[name]
                     if r["state"] == "failed":
                         raise MinerUError(
-                            f"Extraction failed for {r['file_name']}: {r.get('err_msg', 'unknown')}"
+                            f"Extraction failed for {r.get('file_name', 'unknown file')}: "
+                            f"{r.get('err_msg', 'unknown')}"
                         )
-                    zips.append(self._download_zip(r["full_zip_url"]))
+                    zip_url = r.get("full_zip_url")
+                    if not zip_url:
+                        raise MinerUError(
+                            f"Extraction result for {r.get('file_name', 'unknown file')} "
+                            f"is missing 'full_zip_url'; server reason: {_server_reason(r)}"
+                        )
+                    zips.append(self._download_zip(zip_url))
                 return zips
             if time.monotonic() > deadline:
                 raise MinerUTimeoutError(f"Batch {batch_id} timed out")
@@ -204,6 +234,39 @@ def _check(body: dict) -> dict:
     if body.get("code") != 0:
         raise MinerUError(f"API error: code={body.get('code')} msg={body.get('msg')}")
     return body
+
+
+def _server_reason(body: object) -> str:
+    """Return the server-provided failure reason, or a short JSON snippet."""
+    if isinstance(body, dict):
+        for key in ("msg", "message", "err_msg", "error"):
+            reason = body.get(key)
+            if reason:
+                return str(reason)
+        if "code" in body:
+            return f"code={body.get('code')}"
+    return json.dumps(body, ensure_ascii=False, default=str)[:200]
+
+
+def _json_body(response: httpx.Response) -> object:
+    """Parse a JSON body, wrapping decode failures in MinerUError with a short snippet."""
+    try:
+        return response.json()
+    except ValueError:
+        raise MinerUError(f"MinerU returned a non-JSON body: {response.text[:200]!r}") from None
+
+
+def _poll_results(response: httpx.Response) -> list[dict]:
+    """Extract polling results, reporting the server reason instead of a bare KeyError."""
+    body = _json_body(response)
+    data = body.get("data") if isinstance(body, dict) else None
+    results = data.get("extract_result") if isinstance(data, dict) else None
+    if not isinstance(results, list) or not all(isinstance(item, dict) for item in results):
+        raise MinerUError(
+            "MinerU polling response is missing 'data.extract_result'; "
+            f"server reason: {_server_reason(body)}"
+        )
+    return results
 
 
 def extract_pdf(pdf_path: str, *, api_token: str) -> list[bytes]:

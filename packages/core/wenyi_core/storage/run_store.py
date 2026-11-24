@@ -16,6 +16,7 @@ autofix publication indices.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -32,7 +33,7 @@ from ..ingest.source_hash import source_sha256
 from ..models.document import Chapter, Document
 from ..timing import save_timing
 from .artifacts import FileArtifacts
-from .atomic_write import sweep_temporary, write_text_atomic
+from .atomic_write import sweep_temporary, write_text_atomic, write_texts_atomic
 from .io_path import to_io_path
 from .locks import (
     ASSEMBLE_LOCK,
@@ -48,12 +49,33 @@ STATUS_PENDING = "pending"
 STATUS_DONE = "done"
 
 
+#: Cap for the slug component so "state/<slug>/targets/<lang>/..." stays well
+#: below the Windows MAX_PATH limit even for very long titles.
+SLUG_MAX_LENGTH = 64
+_SLUG_SUFFIX_LENGTH = 8
+
+
 def slugify(name: str) -> str:
-    """Convert a book title into a stable short state-directory name."""
+    """Convert a book title into a stable short state-directory name.
+
+    Slugs longer than SLUG_MAX_LENGTH are truncated and disambiguated with a
+    deterministic sha256 suffix, so the same title always maps to the same
+    directory and long titles sharing a prefix never collide.
+    """
     s = re.sub(r"[^\w一-鿿぀-ヿ-]+", "_", name).strip("_")
     # The reserved-name escape prefixes an underscore, so it has to come after
     # the separator trim that would otherwise remove it again.
-    return escape_reserved(strip_trailing(s)) or DEFAULT_COMPONENT
+    slug = escape_reserved(strip_trailing(s)) or DEFAULT_COMPONENT
+    return _cap_slug(slug)
+
+
+def _cap_slug(slug: str) -> str:
+    """Truncate an over-long slug and append a short sha256 suffix for uniqueness."""
+    if len(slug) <= SLUG_MAX_LENGTH:
+        return slug
+    suffix = hashlib.sha256(slug.encode("utf-8")).hexdigest()[:_SLUG_SUFFIX_LENGTH]
+    stem = slug[: SLUG_MAX_LENGTH - _SLUG_SUFFIX_LENGTH - 1].rstrip("_") or DEFAULT_COMPONENT
+    return f"{stem}-{suffix}"
 
 
 def translation_run_dir(state_dir: str, title: str, target_lang: str) -> str:
@@ -72,6 +94,7 @@ class RunStore(FileArtifacts):
         self._state_local = local()
         if create:
             self.ensure_dirs()
+        self.clear_stale_initialization()
 
     def ensure_dirs(self) -> None:
         """Create run and chapter-state directories."""
@@ -175,9 +198,14 @@ class RunStore(FileArtifacts):
 
     # Shared JSON helpers.
     @staticmethod
-    def _write_json(path: str, data) -> None:
+    def _json_text(data) -> str:
+        """Serialize run state the way every JSON file in the run directory is written."""
+        return json.dumps(data, ensure_ascii=False, indent=2)
+
+    @classmethod
+    def _write_json(cls, path: str, data) -> None:
         """Write formatted JSON atomically through a temporary file in the same directory."""
-        write_text_atomic(path, json.dumps(data, ensure_ascii=False, indent=2))
+        write_text_atomic(path, cls._json_text(data))
 
     @staticmethod
     def _read_json(path: str):
@@ -273,6 +301,22 @@ class RunStore(FileArtifacts):
     def finish_initialization(self) -> None:
         """Remove temporary initialization identity after the manifest commits successfully."""
         self._remove(self.initialization_path)
+
+    def clear_stale_initialization(self) -> bool:
+        """Drop an initialization marker left behind by a completed initialization.
+
+        A crash between the manifest commit and `finish_initialization` leaves
+        `.initializing.json` in place even though initialization succeeded, and
+        resumed runs never touch it. The committed manifest is the completion
+        authority, so such a marker is removable garbage; the unlink is idempotent
+        and needs no lock. A marker without a manifest is not stale: it carries the
+        source identity `begin_initialization` needs to recover pending usage, so
+        it is kept until that takeover. Returns True when a marker was removed.
+        """
+        if not self._exists(self.manifest_path) or not self._exists(self.initialization_path):
+            return False
+        self._remove(self.initialization_path)
+        return True
 
     # ── manifest ──────────────────────────────────────────────────────────
     def stage_document(
@@ -410,15 +454,27 @@ class RunStore(FileArtifacts):
             self._write_json(self.chapter_path(chapter.index), chapter.model_dump())
 
     def save_chapter_with_status(self, chapter: Chapter, status: str) -> None:
-        """Publish final chapter content and its manifest status under the same state lock."""
+        """Publish final chapter content and its manifest status as one commit.
+
+        Both files are written to private temporary files before either name is
+        replaced, and the manifest - the commit marker - is replaced last. A
+        crash before that last replacement leaves the previous manifest, which
+        still marks the chapter pending; a resuming run re-reads the saved
+        chapter and skips the batches whose targets are already present instead
+        of retranslating them.
+        """
         with self.state_lock():
-            self._write_json(self.chapter_path(chapter.index), chapter.model_dump())
             manifest = self.load_manifest()
             for entry in manifest["chapters"]:
                 if entry["index"] == chapter.index:
                     entry["status"] = status
                     break
-            self._write_json(self.manifest_path, manifest)
+            write_texts_atomic(
+                [
+                    (self.chapter_path(chapter.index), self._json_text(chapter.model_dump())),
+                    (self.manifest_path, self._json_text(manifest)),
+                ]
+            )
 
     def load_chapter(self, ci: int) -> Chapter:
         """Read and validate chapter state."""

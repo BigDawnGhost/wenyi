@@ -122,7 +122,9 @@ def execute(request: ExportRequest, dependencies: ExportDependencies) -> int:
             if job:
                 dependencies.jobs.set_job_status(job["id"], "done")
             return export_id
-        except Exception as error:
+        except BaseException as error:
+            # Native render panics arrive as BaseException subclasses; record the
+            # failure states under the export lock before re-raising.
             if job:
                 dependencies.jobs.set_job_status(job["id"], "error", error=str(error))
             dependencies.set_status(export_id, "error", error=str(error))
@@ -130,7 +132,7 @@ def execute(request: ExportRequest, dependencies: ExportDependencies) -> int:
 
 
 def _record_failure(
-    request: ExportRequest, dependencies: ExportDependencies, error: Exception
+    request: ExportRequest, dependencies: ExportDependencies, error: BaseException
 ) -> None:
     dependencies.set_status(request.export_id, "error", error=str(error))
     job = dependencies.jobs.get_job_by_arq_id(request.run_id) if request.run_id else None
@@ -147,5 +149,9 @@ async def run(request: ExportRequest, dependencies: ExportDependencies) -> int:
         await asyncio.shield(task)
         raise
     except Exception as error:
+        await asyncio.to_thread(_record_failure, request, dependencies, error)
+        raise
+    except BaseException as error:
+        # Native render panics arrive as BaseException subclasses; still record failure.
         await asyncio.to_thread(_record_failure, request, dependencies, error)
         raise

@@ -10,6 +10,7 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from bs4 import BeautifulSoup
 from bs4.element import Comment
 from wenyi_cli.commands.validation import runstore_for
@@ -130,7 +131,7 @@ class TestPdfIngest(unittest.TestCase):
                     "wenyi_core.ingest.pdf_reader.convert_pdf_to_epub",
                     side_effect=RuntimeError("connection reset"),
                 ),
-                self.assertRaisesRegex(MinerUError, "PDF conversion failed") as raised,
+                pytest.raises(MinerUError, match="PDF conversion failed") as raised,
             ):
                 load_document(
                     pdf_path,
@@ -140,8 +141,8 @@ class TestPdfIngest(unittest.TestCase):
                     pdf_backend="mineru",
                 )
 
-        self.assertIsNone(raised.exception.__cause__)
-        self.assertIsNone(raised.exception.__context__)
+        self.assertIsNone(raised.value.__cause__)
+        self.assertIsNone(raised.value.__context__)
 
     def test_pdf_failed_conversion_cannot_leave_a_reusable_partial_cache(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -271,7 +272,7 @@ class TestPdfIngest(unittest.TestCase):
             )
             with (
                 patch.object(RunStore, "save_manifest", side_effect=OSError("disk full")),
-                self.assertRaisesRegex(OSError, "disk full"),
+                pytest.raises(OSError, match="disk full"),
             ):
                 Orchestrator(config, client=FakeClient(handler=routing_handler)).prepare(pdf_path)
 
@@ -338,7 +339,7 @@ class TestPdfIngest(unittest.TestCase):
                     "wenyi_core.ingest.pdf_reader.convert_pdf_to_epub",
                     side_effect=convert,
                 ),
-                self.assertRaisesRegex(ValueError, "changed during conversion or parsing"),
+                pytest.raises(ValueError, match="changed during conversion or parsing"),
             ):
                 Orchestrator(config, client=FakeClient()).prepare(pdf_path)
 
@@ -394,9 +395,9 @@ class TestPdfIngest(unittest.TestCase):
                 {"language": {"source": "en", "target": "zh"}, "llm": {"preset": "fake"}}
             )
             before = store.load_manifest()
-            with self.assertRaisesRegex(ValueError, "retired HTML format"):
+            with pytest.raises(ValueError, match="retired HTML format"):
                 Orchestrator(config, client=FakeClient(), storage=store).prepare(pdf_path)
-            with self.assertRaisesRegex(ValueError, "retired HTML format"):
+            with pytest.raises(ValueError, match="retired HTML format"):
                 assemble(store, pdf_path, out_path=output_path, out_format="epub")
             self.assertEqual(store.load_manifest(), before)
             self.assertFalse(os.path.exists(output_path))

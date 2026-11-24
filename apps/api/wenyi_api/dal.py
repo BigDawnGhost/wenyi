@@ -115,8 +115,14 @@ def get_project(pid: str) -> Optional[dict]:
     }
 
 
-def set_project_status(pid: str, status: str, *, error: str | None = None) -> None:
-    with _conn() as c:
+def set_project_status(
+    pid: str,
+    status: str,
+    *,
+    error: str | None = None,
+    connection: Connection[Any] | None = None,
+) -> None:
+    with _conn(connection) as c:
         c.execute(
             "UPDATE projects SET status=%s, error=%s, updated_at=now() WHERE id=%s",
             (status, error, pid),
@@ -262,7 +268,7 @@ def create_job(
                VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
             (pid, kind, status, arq_job_id, Jsonb(saved_params), run_id or uuid.uuid4().hex),
         ).fetchone()
-    assert r is not None
+    assert r is not None, f"job insert returned no row (project {pid}, kind {kind})"
     return r[0]
 
 
@@ -358,7 +364,7 @@ def create_export(
                VALUES (%s,%s,%s,'pending') RETURNING id""",
             (pid, fmt, Jsonb(options)),
         ).fetchone()
-    assert row is not None
+    assert row is not None, f"export insert returned no row (project {pid}, format {fmt})"
     return row[0]
 
 

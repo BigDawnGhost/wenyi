@@ -48,6 +48,11 @@ def test_project_names_preserve_identity_and_bound_the_suffix():
     assert paths.project_name(PROJECT, "a-b-c") == f"{PROJECT}-a-b-c"
     assert paths.split_project_name(f"{PROJECT}-a-b-c") == (PROJECT, "a-b-c")
     assert len(paths.project_name(PROJECT, "x" * 200)) == 16 + 1 + 64
+    long_left = paths.project_name(PROJECT, "まどか" * 30 + "上")
+    long_right = paths.project_name(PROJECT, "まどか" * 30 + "下")
+    assert long_left != long_right
+    assert long_left.startswith(f"{PROJECT}-まどか")
+    assert len(long_left) == 16 + 1 + 64
     for invalid in ("../escape", "0123456789ABCDEF", "a" * 17, ""):
         assert paths.project_id(invalid) == ""
 

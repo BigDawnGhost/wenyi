@@ -15,15 +15,17 @@ from fastapi.testclient import TestClient
 from wenyi_backend import paths
 from wenyi_backend.context import current_context, use_context
 from wenyi_backend.global_settings import load_settings, save_settings
+from wenyi_core.storage.io_path import plain_path
 from wenyi_desktop import paths as desktop_paths
 from wenyi_desktop.local_backend import LocalBackend
-from wenyi_desktop.main import create_context
+from wenyi_desktop.main import DesktopServices, create_context
 
 
 @pytest.fixture
 def backend(tmp_path, monkeypatch):
     context = create_context(tmp_path / "desktop")
     value = context.repository
+    assert isinstance(value, LocalBackend)
     # Core SqliteStorage is tested separately; catalog tests do not depend on its schema.
     stores = {}
 
@@ -75,18 +77,21 @@ def test_catalog_durability_and_workspace_isolation(backend, tmp_path):
         identity, "error", "offline", result={"stage": "translate"}
     )
     saved = current_context().repository.get_job(identity)
+    assert saved is not None
     assert saved["run_id"] == "run"
     assert current_context().repository.latest_resumable_job(pid) == saved
     workspace = backend.workspace
     backend.close()
     # The complete data root, including the catalog, is isolated per app.
     other = create_context(tmp_path / "second")
+    other_backend = other.repository
+    assert isinstance(other_backend, LocalBackend)
     try:
         with use_context(other):
-            assert other.repository.all_jobs() == []
+            assert other_backend.all_jobs() == []
             assert current_context().repository.list_projects() == []
     finally:
-        other.repository.close()
+        other_backend.close()
     reopened = LocalBackend(workspace)
     try:
         assert reopened.get_job(identity) == saved
@@ -104,9 +109,13 @@ def test_run_identity_and_conditional_transitions(backend):
         current_context().repository.create_job(pid, "parse", "other-task", run_id="unique")
     assert backend.set_job_status(identity, "running", expected_status="queued")
     assert not backend.set_job_status(identity, "done", expected_status="queued")
-    assert current_context().repository.get_job(identity)["status"] == "running"
+    job = current_context().repository.get_job(identity)
+    assert job is not None
+    assert job["status"] == "running"
     assert backend.set_job_status(identity, "interrupted", expected_status={"running"})
-    assert current_context().repository.get_job_by_arq_id("task")["status"] == "interrupted"
+    arq_job = current_context().repository.get_job_by_arq_id("task")
+    assert arq_job is not None
+    assert arq_job["status"] == "interrupted"
 
 
 def test_catalog_transaction_rolls_back_project_and_config(backend):
@@ -184,8 +193,8 @@ def test_retired_export_waits_for_last_stream_and_cleans_on_close(
     attempted = []
 
     def unlink(path, *args, **kwargs):
-        if path == output:
-            attempted.append(path)
+        if Path(plain_path(path)) == output:
+            attempted.append(Path(plain_path(path)))
             # Model Windows deny-delete handles on every test platform.
             if not first.closed or not second.closed:
                 raise PermissionError("Export still has an open download")
@@ -323,7 +332,7 @@ def test_failed_removal_leaves_retryable_hidden_tombstone(backend, monkeypatch, 
     original = Path.unlink
 
     def denied(path, *args, **kwargs):
-        if path == old_file:
+        if Path(plain_path(path)) == old_file:
             raise PermissionError("temporarily open on Windows")
         return original(path, *args, **kwargs)
 
@@ -390,10 +399,13 @@ def test_export_sql_failure_never_restores_deleted_file_as_done(
     # Reopen the catalog as after process restart; no in-memory recovery assumptions.
     reopened = LocalBackend(str(backend.workspace))
     old = reopened._get("exports", old_id)
+    assert old is not None
     assert old["status"] == ("done" if phase == "publication" else "deleting")
     assert old_file.exists() == (phase == "publication")
     if phase == "publication":
-        assert reopened._get("exports", new_id)["status"] == "pending"
+        published = reopened._get("exports", new_id)
+        assert published is not None
+        assert published["status"] == "pending"
         reopened.publish_export(pid, new_id, str(new_file))
     else:
         with pytest.raises(FileNotFoundError):
@@ -415,7 +427,7 @@ def test_interruption_after_unlink_keeps_committed_tombstone(backend, monkeypatc
 
     def interrupted(path, *args, **kwargs):
         result = unlink(path, *args, **kwargs)
-        if path == old_file:
+        if Path(plain_path(path)) == old_file:
             raise KeyboardInterrupt
         return result
 
@@ -425,7 +437,9 @@ def test_interruption_after_unlink_keeps_committed_tombstone(backend, monkeypatc
             backend.publish_export(pid, new_id, str(new_file))
     reopened = LocalBackend(str(backend.workspace))
     assert not old_file.exists()
-    assert reopened._get("exports", old_id)["status"] == "deleting"
+    tombstone = reopened._get("exports", old_id)
+    assert tombstone is not None
+    assert tombstone["status"] == "deleting"
     with pytest.raises(FileNotFoundError):
         reopened.open_export(pid, old_id)
     reopened.recover_export_cleanup(pid)
@@ -440,13 +454,13 @@ def _crash_during_export_cleanup(workspace, pid, new_id, new_file, old_file, aft
     original = Path.unlink
 
     def crash(path, *args, **kwargs):
-        if str(path) == old_file:
+        if plain_path(path) == old_file:
             if after_unlink:
                 original(path, *args, **kwargs)
             os._exit(23)
         return original(path, *args, **kwargs)
 
-    Path.unlink = crash
+    setattr(Path, "unlink", crash)
     LocalBackend(workspace).publish_export(pid, new_id, new_file)
 
 
@@ -493,7 +507,7 @@ def test_download_open_and_retention_share_only_project_history_lock(backend, mo
     path_open = local_export_files.open_regular
 
     def delayed_open(path, *args, **kwargs):
-        if path == old_file:
+        if Path(plain_path(path)) == old_file:
             entered.set()
             assert release.wait(10)
         return path_open(path, *args, **kwargs)
@@ -530,6 +544,7 @@ def test_retention_refuses_unsafe_paths(backend, tmp_path, unsafe):
     )
     protected.write_text("original")
     document = backend._get("exports", old_id)
+    assets = tmp_path / "protected.assets"
     if unsafe in {"source", "outside"}:
         document["path"] = str(protected)
         backend._put("exports", old_id, document)
@@ -537,7 +552,6 @@ def test_retention_refuses_unsafe_paths(backend, tmp_path, unsafe):
         old_file.unlink()
         old_file.symlink_to(protected)
     else:
-        assets = tmp_path / "protected.assets"
         assets.mkdir()
         (assets / "image").write_text("image")
         old_file.with_suffix(".assets").symlink_to(assets, target_is_directory=True)
@@ -738,30 +752,40 @@ def test_a_marked_project_is_still_refused_while_a_task_is_active(backend):
 def test_backend_cannot_be_replaced_implicitly(backend, tmp_path):
     original = current_context()
     other = create_context(tmp_path / "other")
+    other_backend = other.repository
+    assert isinstance(other_backend, LocalBackend)
     try:
         assert current_context() is original
         with use_context(other):
             assert current_context().repository is other.repository
         assert current_context().repository is backend
     finally:
-        other.repository.close()
+        other_backend.close()
 
 
 def test_atomic_admission_and_late_compensation(backend):
     pid = new_project()
     identity = backend.admit_job(pid, "parse", "first", project_status="parsing")
-    assert current_context().repository.get_project(pid)["status"] == "parsing"
+    project = current_context().repository.get_project(pid)
+    assert project is not None
+    assert project["status"] == "parsing"
     with pytest.raises(HTTPException) as error:
         backend.admit_job(pid, "parse", "second", project_status="parsing")
     assert error.value.status_code == 409
     assert len(current_context().repository.list_jobs(pid)) == 1
     assert backend.fail_admission(identity, "uploaded", "queue rejected")
-    assert current_context().repository.get_project(pid)["status"] == "uploaded"
+    project = current_context().repository.get_project(pid)
+    assert project is not None
+    assert project["status"] == "uploaded"
     second = backend.admit_job(pid, "parse", "second", project_status="parsing")
     backend.set_job_status(second, "running", expected_status="queued")
     assert not backend.fail_admission(second, "uploaded", "late rejection")
-    assert current_context().repository.get_project(pid)["status"] == "parsing"
-    assert current_context().repository.get_job(second)["status"] == "running"
+    project = current_context().repository.get_project(pid)
+    assert project is not None
+    assert project["status"] == "parsing"
+    job = current_context().repository.get_job(second)
+    assert job is not None
+    assert job["status"] == "running"
 
 
 def test_export_admission_is_atomic_and_late_compensation_is_ignored(backend):
@@ -787,6 +811,8 @@ def test_model_rename_updates_projects_not_frozen_jobs(backend):
     from wenyi_desktop.main import create_app
 
     client = TestClient(create_app(context=current_context()))
+    repository = current_context().repository
+    assert isinstance(repository, LocalBackend)
     pid = new_project()
     settings = client.get("/settings").json()
     document = settings["effective"]
@@ -796,10 +822,10 @@ def test_model_rename_updates_projects_not_frozen_jobs(backend):
         json={"yaml": json.dumps({"llm": {"routes": {"translation.body": {"model": old}}}})},
     )
     assert response.status_code == 200, response.text
-    job_id = current_context().repository.create_job(
-        pid, "translation", "frozen", config_snapshot=document
-    )
-    frozen = current_context().repository.get_job(job_id)["params"]
+    job_id = repository.create_job(pid, "translation", "frozen", config_snapshot=document)
+    frozen_job = repository.get_job(job_id)
+    assert frozen_job is not None
+    frozen = frozen_job["params"]
     llm = document["llm"]
     llm["preset"] = None
     new = "deepseek/new-model"
@@ -812,13 +838,15 @@ def test_model_rename_updates_projects_not_frozen_jobs(backend):
         "model_renames": {old: new},
     }
     assert client.post("/settings/validate", json=body).status_code == 200
-    selections = current_context().repository.get_project_config(pid)["llm"]["routes"]
+    selections = repository.get_project_config(pid)["llm"]["routes"]
     assert selections["translation.body"]["model"] == old
     response = client.put("/settings", json=body)
     assert response.status_code == 200, response.text
-    selections = current_context().repository.get_project_config(pid)["llm"]["routes"]
+    selections = repository.get_project_config(pid)["llm"]["routes"]
     assert selections["translation.body"]["model"] == new
-    assert current_context().repository.get_job(job_id)["params"] == frozen
+    final_job = repository.get_job(job_id)
+    assert final_job is not None
+    assert final_job["params"] == frozen
 
 
 def test_local_lifespan_starts_runner_without_pg_and_closes_backend(backend, monkeypatch):
@@ -847,7 +875,9 @@ def test_local_lifespan_starts_runner_without_pg_and_closes_backend(backend, mon
         assert client.get("/health").status_code == 200
         assert calls == ["start"]
     assert calls == ["start", "stop"]
-    assert context.telemetry.runtime is None
+    services = context.telemetry
+    assert isinstance(services, DesktopServices)
+    assert services.runtime is None
     assert closed == [True]
 
 
@@ -926,7 +956,9 @@ def test_workspace_reopens_existing_catalog(tmp_path, verbatim):
     reopened = LocalBackend("\\\\?\\" + str(workspace) if verbatim else str(workspace))
     try:
         assert reopened.workspace == workspace
-        assert reopened.get_project(pid)["name"] == "Existing project"
+        reopened_project = reopened.get_project(pid)
+        assert reopened_project is not None
+        assert reopened_project["name"] == "Existing project"
         assert reopened.get_project_config(pid) == config
         from wenyi_desktop import paths as desktop_paths
 

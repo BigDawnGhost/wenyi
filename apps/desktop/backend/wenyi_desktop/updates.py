@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
+import logging
+import os
 import secrets
+import shutil
+import sys
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from starlette.responses import JSONResponse
 
 from .routers.credentials import desktop_only
+
+log = logging.getLogger(__name__)
 
 CONTROL_PATHS = frozenset(
     {
@@ -147,3 +159,339 @@ async def cancel(request: Request) -> Response:
 @router.post("/backup-plan")
 async def backup_plan(request: Request) -> dict:
     return await request.app.state.update_guard.backup_plan()
+
+
+BACKUPS_DIR = "backups"
+MANIFEST_NAME = "MANIFEST.json"
+RESTORED_MARKER = "MANIFEST.restored.json"
+SINGLE_SOURCE_SCHEMA_VERSION = 1
+MULTI_SOURCE_SCHEMA_VERSION = 2
+EXCLUDED_SUFFIX = ".lock"
+_HASH_CHUNK_BYTES = 1024 * 1024
+# Retention: the newest snapshot is the restore anchor after a failed upgrade;
+# three copies cover it plus one failed-upgrade cycle and one in-flight or
+# same-second duplicate snapshot. Restoring never looks past the newest, so
+# more copies add no recovery value. 5 GiB mirrors a whole data root (catalog
+# plus project sources and exports) with headroom, so the size cap only bites
+# once snapshots have genuinely piled up, never on one legitimate snapshot.
+RETENTION_KEEP_BACKUPS = 3
+RETENTION_MAX_BYTES = 5 * 1024**3
+# Expired snapshots are moved here when the OS recycle bin is unavailable, so
+# a retention mistake stays recoverable instead of destroying the only copy.
+TRASH_DIR = "backups-trash"
+
+
+@dataclass(frozen=True)
+class RestoreOutcome:
+    """What happened when rolling workspace data back to its pre-upgrade state."""
+
+    status: str  # "restored", "absent", or "failed"
+    backup: str | None = None
+    files: int = 0
+    detail: str | None = None
+
+
+class _RestoreRejected(Exception):
+    """The backup cannot be vouched for; restoring it would risk user data."""
+
+
+def restore_latest_backup(workspace: str | Path) -> RestoreOutcome:
+    """Restore the newest pre-upgrade snapshot written by the native updater.
+
+    The shell snapshots the workspace before installing an update
+    (``apps/desktop/src/migration/backup.rs``). When the upgraded engine then
+    refuses the migrated data, this is the fallback that keeps user data on the
+    version that wrote it instead of stranding it half-migrated. Every listed
+    file is verified against the manifest (existence, size, SHA-256, no
+    symlinks) before anything is copied, so a damaged backup is refused whole
+    rather than partially restored. On success the manifest is renamed to
+    ``MANIFEST.restored.json``: an interrupted restore leaves it in place and
+    converges on the next launch, and an already-consumed backup never
+    clobbers newer data. Superseded and consumed backups are reclaimed by :func:`prune_backups`.
+    """
+    root = Path(workspace).expanduser().resolve() / BACKUPS_DIR
+    try:
+        candidates = [entry for entry in root.iterdir() if entry.is_dir()]
+    except FileNotFoundError:
+        return RestoreOutcome("absent")
+    except OSError as error:
+        # A missing backups directory means "never backed up"; an unreadable
+        # one is a real failure the shell must see instead of an absent state.
+        log.warning("Backups directory is unreadable: %s", error)
+        return RestoreOutcome("failed", detail=f"backups directory is unreadable: {error}")
+    if not candidates:
+        return RestoreOutcome("absent")
+    # Only the newest backup is considered: falling back to an older snapshot
+    # could roll data back past the upgrade the user actually attempted.
+    newest = max(candidates, key=lambda entry: entry.name)
+    if (newest / RESTORED_MARKER).is_file() or not (newest / MANIFEST_NAME).is_file():
+        return RestoreOutcome("absent", str(newest))
+    return _restore_from(newest)
+
+
+def _restore_from(backup: Path) -> RestoreOutcome:
+    try:
+        manifest = json.loads((backup / MANIFEST_NAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        return RestoreOutcome("failed", str(backup), detail=f"unreadable manifest: {error}")
+    try:
+        plan = _restore_plan(manifest, backup)
+    except _RestoreRejected as error:
+        return RestoreOutcome("failed", str(backup), detail=str(error))
+    try:
+        for source, target in plan:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+    except OSError as error:
+        # The manifest survives until the last copy, so an interrupted restore
+        # is retried in full by the next launch instead of staying partial.
+        return RestoreOutcome("failed", str(backup), len(plan), f"copy failed: {error}")
+    os.replace(backup / MANIFEST_NAME, backup / RESTORED_MARKER)
+    return RestoreOutcome("restored", str(backup), len(plan))
+
+
+def _restore_plan(manifest: object, backup: Path) -> list[tuple[Path, Path]]:
+    if not isinstance(manifest, dict):
+        raise _RestoreRejected("manifest is not an object")
+    schema = manifest.get("schema_version")
+    sources: list[tuple[str, Path]] = []
+    if schema == MULTI_SOURCE_SCHEMA_VERSION:
+        declared = manifest.get("sources")
+        if not isinstance(declared, list) or not declared:
+            raise _RestoreRejected("multi-source manifest declares no sources")
+        for source in declared:
+            if not isinstance(source, dict):
+                raise _RestoreRejected("malformed backup source")
+            name, path = source.get("name"), source.get("path")
+            if not isinstance(name, str) or not name or not isinstance(path, str) or not path:
+                raise _RestoreRejected("malformed backup source")
+            sources.append((name, Path(path)))
+    elif schema == SINGLE_SOURCE_SCHEMA_VERSION:
+        source_path = manifest.get("source_path")
+        if not isinstance(source_path, str) or not source_path:
+            raise _RestoreRejected("single-source manifest has no source path")
+        sources.append(("", Path(source_path)))
+    else:
+        raise _RestoreRejected(f"unsupported manifest schema: {schema!r}")
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        raise _RestoreRejected("manifest lists no files")
+    plan: list[tuple[Path, Path]] = []
+    for entry in files:
+        copy = _restore_entry(entry, sources, backup)
+        if copy is not None:
+            plan.append(copy)
+    return plan
+
+
+def _restore_entry(
+    entry: object, sources: list[tuple[str, Path]], backup: Path
+) -> tuple[Path, Path] | None:
+    if not isinstance(entry, dict):
+        raise _RestoreRejected("malformed manifest entry")
+    relative, size, digest = entry.get("path"), entry.get("size"), entry.get("sha256")
+    if (
+        not isinstance(relative, str)
+        or not relative
+        or not isinstance(size, int)
+        or isinstance(size, bool)
+        or not isinstance(digest, str)
+    ):
+        raise _RestoreRejected("malformed manifest entry")
+    if relative in {MANIFEST_NAME, RESTORED_MARKER} or relative.endswith(EXCLUDED_SUFFIX):
+        return None
+    if relative.startswith("/") or "\\" in relative or ".." in PurePosixPath(relative).parts:
+        raise _RestoreRejected(f"unsafe backup path: {relative}")
+    source_root, rest = _locate_source(relative, sources)
+    source_file = backup / relative
+    target = source_root / rest if rest else source_root
+    resolved_target = target.resolve()
+    if resolved_target == backup or backup in resolved_target.parents:
+        raise _RestoreRejected(f"backup source points at the backup itself: {relative}")
+    if source_file.is_symlink() or not source_file.is_file():
+        raise _RestoreRejected(f"missing backup file: {relative}")
+    if source_file.stat().st_size != size:
+        raise _RestoreRejected(f"size mismatch for {relative}")
+    if _sha256(source_file) != digest.lower():
+        raise _RestoreRejected(f"checksum mismatch for {relative}")
+    return source_file, target
+
+
+def _locate_source(relative: str, sources: list[tuple[str, Path]]) -> tuple[Path, str]:
+    """Map a namespaced manifest path to its declared source root and remainder."""
+    for name, root in sources:
+        if not name:
+            return root, relative
+        if relative == name:
+            return root, ""
+        if relative.startswith(f"{name}/"):
+            return root, relative[len(name) + 1 :]
+    raise _RestoreRejected(f"backup file outside declared sources: {relative}")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(_HASH_CHUNK_BYTES), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+@dataclass(frozen=True)
+class PruneOutcome:
+    """Which upgrade snapshots survived retention and which were cleared."""
+
+    kept: tuple[str, ...] = ()
+    evicted: tuple[str, ...] = ()
+    failed: tuple[str, ...] = ()
+
+
+def prune_backups(
+    workspace: str | Path,
+    *,
+    keep: int = RETENTION_KEEP_BACKUPS,
+    max_bytes: int = RETENTION_MAX_BYTES,
+    delete: Callable[[Path], None] | None = None,
+) -> PruneOutcome:
+    """Keep the pre-upgrade snapshots bounded by count and total size.
+
+    Every upgrade writes a fresh snapshot and nothing removed the old ones, so
+    the backups directory grows without limit. Retention walks the snapshot
+    directories newest first, in the same name order restore_latest_backup()
+    uses. The newest directory is always kept: it is the snapshot a failed
+    upgrade would roll back to, and deleting it could either drop the only
+    recovery point or turn "no usable backup" into an unintended fallback to
+    an older snapshot. Older snapshots stay while they fit both the count
+    limit (keep) and the cumulative size budget (max_bytes); the rest are
+    cleared through a recoverable delete (the Windows recycle bin, else a move
+    to <workspace>/backups-trash), never a permanent erase. Pruning is best
+    effort: individual failures are reported in PruneOutcome.failed and never
+    prevent engine startup.
+    """
+    root = Path(workspace).expanduser().resolve()
+    try:
+        candidates = sorted(
+            (
+                entry
+                for entry in (root / BACKUPS_DIR).iterdir()
+                if entry.is_dir() and not entry.name.startswith(".")
+            ),
+            key=lambda entry: entry.name,
+            reverse=True,
+        )
+    except FileNotFoundError:
+        return PruneOutcome()
+    except OSError as error:
+        # Retention is best effort; an unreadable backups directory must not
+        # silently keep every snapshot forever.
+        log.warning("Backups directory scan failed: %s", error)
+        return PruneOutcome()
+    if not candidates:
+        return PruneOutcome()
+    trash_root = root / TRASH_DIR
+
+    def remove(path: Path) -> None:
+        if delete is not None:
+            delete(path)
+        else:
+            _recoverable_delete(path, trash_root)
+
+    kept: list[Path] = []
+    evicted: list[Path] = []
+    failed: list[Path] = []
+    budget = 0
+    for index, entry in enumerate(candidates):
+        size = _tree_size(entry)
+        if index == 0 or (len(kept) < keep and budget + size <= max_bytes):
+            kept.append(entry)
+            budget += size
+            continue
+        try:
+            remove(entry)
+        except OSError:
+            failed.append(entry)
+        else:
+            evicted.append(entry)
+    return PruneOutcome(
+        kept=tuple(entry.name for entry in kept),
+        evicted=tuple(entry.name for entry in evicted),
+        failed=tuple(entry.name for entry in failed),
+    )
+
+
+def _tree_size(root: Path) -> int:
+    """Total size of the files below root; symlinks and unreadable parts are skipped."""
+    total = 0
+    stack = [root]
+    while stack:
+        try:
+            entries = list(os.scandir(stack.pop()))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.is_symlink():
+                    continue
+                if entry.is_dir(follow_symlinks=False):
+                    stack.append(Path(entry.path))
+                else:
+                    total += entry.stat(follow_symlinks=False).st_size
+            except OSError:
+                continue
+    return total
+
+
+def _recoverable_delete(path: Path, trash_root: Path) -> None:
+    """Delete through a recoverable path: the OS recycle bin, else a trash move.
+
+    A retention mistake must never destroy the only copy of a snapshot. On
+    Windows the directory goes to the recycle bin (FOF_ALLOWUNDO), where the
+    user can restore it; anywhere else, or when that fails, it is moved to
+    'backups-trash' beside the backups it came from. Permanent deletion is
+    never attempted: if both recoverable paths fail, the backup stays in place
+    and the caller reports it as failed.
+    """
+    if _recycle_delete(path):
+        return
+    trash_root.mkdir(parents=True, exist_ok=True)
+    target = trash_root / path.name
+    if target.exists():
+        target = trash_root / f"{path.name}-{time.time_ns()}"
+    os.replace(path, target)
+
+
+def _recycle_delete(path: Path) -> bool:
+    """Move path into the Windows recycle bin; False when unavailable or refused."""
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class SHFILEOPSTRUCTW(ctypes.Structure):
+            _fields_ = [
+                ("hwnd", wintypes.HWND),
+                ("wFunc", ctypes.c_uint),
+                ("pFrom", wintypes.LPCWSTR),
+                ("pTo", wintypes.LPCWSTR),
+                ("fFlags", ctypes.c_ushort),
+                ("fAnyOperationsAborted", wintypes.BOOL),
+                ("hNameMappings", ctypes.c_void_p),
+                ("lpszProgressTitle", wintypes.LPCWSTR),
+            ]
+
+        # FO_DELETE with FOF_ALLOWUNDO | FOF_SILENT | FOF_NOCONFIRMATION: the
+        # directory becomes restorable from the recycle bin, without dialogs.
+        operation = SHFILEOPSTRUCTW(
+            hwnd=None,
+            wFunc=3,
+            pFrom=str(path) + "\0",
+            pTo=None,
+            fFlags=0x40 | 0x4 | 0x10,
+        )
+        code = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(operation))
+    except Exception:
+        # The recycle-bin API fails in arbitrary win32 ways; every failure
+        # just falls back to the trash move in the caller.
+        return False
+    return code == 0 and not operation.fAnyOperationsAborted

@@ -26,6 +26,7 @@ from wenyi_core.i18n.policy.resolver import resolve_policy
 from wenyi_core.ingest.segmenter import load_document
 from wenyi_core.markup import _epub_native
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.io_path import plain_path
 
 NS = {
     "container": "urn:oasis:names:tc:opendocument:xmlns:container",
@@ -115,8 +116,8 @@ def test_about_page_is_written_in_the_only_epub_archive(tmp_path, monkeypatch, f
     original_replace = os.replace
 
     def track_replace(temporary, target):
-        if Path(target) == output:
-            publishes.append(Path(temporary))
+        if Path(plain_path(target)) == output:
+            publishes.append(Path(plain_path(temporary)))
         original_replace(temporary, target)
 
     monkeypatch.setattr("wenyi_core.atomicio.os.replace", track_replace)
@@ -144,11 +145,14 @@ def test_about_page_is_written_in_the_only_epub_archive(tmp_path, monkeypatch, f
     if fmt == "epub":
         writers["generate"].assert_not_called()
         writers["export"].assert_called_once()
-        assert [Path(p) for p in writers["export"].call_args.args[:2]] == [source, publishes[0]]
+        assert [Path(plain_path(p)) for p in writers["export"].call_args.args[:2]] == [
+            source,
+            publishes[0],
+        ]
     else:
         writers["export"].assert_not_called()
         writers["generate"].assert_called_once()
-        assert Path(writers["generate"].call_args.args[0]) == publishes[0]
+        assert Path(plain_path(writers["generate"].call_args.args[0])) == publishes[0]
     with ZipFile(output) as archive:
         names = archive.namelist()
         mimetype = archive.infolist()[0]

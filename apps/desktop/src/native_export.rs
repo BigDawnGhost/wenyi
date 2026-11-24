@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::Manager;
 
+use crate::ipc_error::codes;
 use crate::local_connection::Connection;
 use crate::mutex::lock;
 use crate::publish::Temporary;
@@ -59,7 +60,7 @@ impl SourceIdentity {
             } == 0
             {
                 return Err(crate::ipc_error::IpcError::new(
-                    "export_source_unavailable",
+                    codes::EXPORT_SOURCE_UNAVAILABLE,
                     "Cannot identify source file.",
                 ));
             }
@@ -139,11 +140,11 @@ impl Saves {
         if (new_identity && state.sources.len() >= MAX_SOURCE_IDENTITIES)
             || (new_alias && state.aliases.len() >= MAX_SOURCE_ALIASES)
         {
-            return Err(crate::ipc_error::IpcError::new("export_protection_limit", "Source protection limit reached. No upload was started. Restart Wenyi before uploading more files."));
+            return Err(crate::ipc_error::IpcError::new(codes::EXPORT_PROTECTION_LIMIT, "Source protection limit reached. No upload was started. Restart Wenyi before uploading more files."));
         }
         if state.closing {
             return Err(crate::ipc_error::IpcError::new(
-                "export_closing",
+                codes::EXPORT_CLOSING,
                 "Wenyi is closing. No upload was started.",
             ));
         }
@@ -220,7 +221,7 @@ impl Saves {
     fn check(&self) -> Result<()> {
         if lock(&self.0 .0).closing {
             Err(crate::ipc_error::IpcError::new(
-                "export_closing",
+                codes::EXPORT_CLOSING,
                 "Saving stopped because Wenyi is closing.",
             ))
         } else {
@@ -232,7 +233,7 @@ impl Saves {
         let mut state = lock(&self.0 .0);
         if state.closing {
             return Err(crate::ipc_error::IpcError::new(
-                "export_closing",
+                codes::EXPORT_CLOSING,
                 "Wenyi is closing.",
             ));
         }
@@ -246,7 +247,7 @@ impl Saves {
         let mut state = lock(&self.0 .0);
         if state.closing {
             return Err(crate::ipc_error::IpcError::new(
-                "export_closing",
+                codes::EXPORT_CLOSING,
                 "Wenyi is closing.",
             ));
         }
@@ -265,7 +266,7 @@ impl Saves {
                 .map_err(|_| "Internal workspace is unavailable.")?;
             if path.starts_with(root) {
                 return Err(crate::ipc_error::IpcError::new(
-                    "export_destination_invalid",
+                    codes::EXPORT_DESTINATION_INVALID,
                     "Choose a destination outside Wenyi's internal workspace.",
                 ));
             }
@@ -275,7 +276,7 @@ impl Saves {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(_) => {
                 return Err(crate::ipc_error::IpcError::new(
-                    "export_destination_invalid",
+                    codes::EXPORT_DESTINATION_INVALID,
                     "Cannot inspect destination source protection.",
                 ))
             }
@@ -291,7 +292,7 @@ impl Saves {
         }) || identity.is_some_and(|identity| state.sources.contains(&identity))
         {
             return Err(crate::ipc_error::IpcError::new(
-                "export_destination_invalid",
+                codes::EXPORT_DESTINATION_INVALID,
                 "The original source cannot be overwritten.",
             ));
         }
@@ -434,9 +435,9 @@ impl Connection {
                 let mut body = Vec::new();
                 if response.take(4097).read_to_end(&mut body).is_ok() && body.len() <= 4096 {
                     if let Ok(envelope) = serde_json::from_slice::<Value>(&body) {
-                        if envelope["code"].as_str() == Some("source_not_ready") {
+                        if envelope["code"].as_str() == Some(codes::SOURCE_NOT_READY) {
                             return Err(crate::ipc_error::IpcError::new(
-                                "source_not_ready",
+                                codes::SOURCE_NOT_READY,
                                 "Export becomes available once the source has been parsed.",
                             ));
                         }
@@ -444,7 +445,7 @@ impl Connection {
                 }
             }
             return Err(crate::ipc_error::IpcError::new(
-                "export_engine_unavailable",
+                codes::EXPORT_ENGINE_UNAVAILABLE,
                 "The local engine could not prepare this save. Retry saving.",
             ));
         }
@@ -459,7 +460,7 @@ impl Connection {
             .map_err(|_| "Invalid export response.")?;
         if bytes.len() > 1024 * 1024 {
             return Err(crate::ipc_error::IpcError::new(
-                "export_response_invalid",
+                codes::EXPORT_RESPONSE_INVALID,
                 "Export response is too large.",
             ));
         }
@@ -483,7 +484,7 @@ impl Connection {
                     .map_err(|_| "Export transfer failed.")?;
                 if !response.status().is_success() {
                     return Err(crate::ipc_error::IpcError::new(
-                        "export_engine_unavailable",
+                        codes::EXPORT_ENGINE_UNAVAILABLE,
                         "The local engine could not provide this export.",
                     ));
                 }
@@ -524,7 +525,7 @@ impl Connection {
         match download.next()? {
             DownloadPart::Length(length) => Ok((length, download)),
             _ => Err(crate::ipc_error::IpcError::new(
-                "export_response_invalid",
+                codes::EXPORT_RESPONSE_INVALID,
                 "Invalid export response.",
             )),
         }
@@ -551,7 +552,7 @@ impl Download {
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
                 Err(_) => {
                     return Err(crate::ipc_error::IpcError::new(
-                        "export_transfer_interrupted",
+                        codes::EXPORT_TRANSFER_INTERRUPTED,
                         "Export transfer interrupted.",
                     ))
                 }
@@ -613,7 +614,7 @@ fn no_symlinks(path: &Path) -> Result<()> {
             .any(|c| matches!(c, std::path::Component::ParentDir))
     {
         return Err(crate::ipc_error::IpcError::new(
-            "export_destination_invalid",
+            codes::EXPORT_DESTINATION_INVALID,
             "Choose an absolute destination without parent traversal.",
         ));
     }
@@ -622,7 +623,7 @@ fn no_symlinks(path: &Path) -> Result<()> {
             .map_err(|_| "Destination folder is unavailable.")?;
         if meta.is_symlink() {
             return Err(crate::ipc_error::IpcError::new(
-                "export_destination_invalid",
+                codes::EXPORT_DESTINATION_INVALID,
                 "Choose a destination without symbolic links.",
             ));
         }
@@ -682,7 +683,7 @@ impl Target {
             Ok(meta) => {
                 if !meta.is_file() || meta.is_symlink() {
                     return Err(crate::ipc_error::IpcError::new(
-                        "export_destination_invalid",
+                        codes::EXPORT_DESTINATION_INVALID,
                         "The destination must be a regular file, not a link.",
                     ));
                 }
@@ -700,7 +701,7 @@ impl Target {
                         .is_symlink()
                 {
                     return Err(crate::ipc_error::IpcError::new(
-                        "export_destination_changed",
+                        codes::EXPORT_DESTINATION_CHANGED,
                         "The destination changed.",
                     ));
                 }
@@ -715,7 +716,7 @@ impl Target {
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(_) => Err(crate::ipc_error::IpcError::new(
-                "export_destination_invalid",
+                codes::EXPORT_DESTINATION_INVALID,
                 "Cannot inspect destination.",
             )),
         }
@@ -745,7 +746,7 @@ impl Target {
             || Self::inspect(&self.dir, &self.name)? != self.existing
         {
             return Err(crate::ipc_error::IpcError::new(
-                "export_destination_changed",
+                codes::EXPORT_DESTINATION_CHANGED,
                 "The destination changed. Choose it again.",
             ));
         }
@@ -793,7 +794,7 @@ impl Target {
             copied += count as u64;
             if copied > length {
                 return Err(crate::ipc_error::IpcError::new(
-                    "export_transfer_interrupted",
+                    codes::EXPORT_TRANSFER_INTERRUPTED,
                     "Export length does not match.",
                 ));
             }
@@ -802,7 +803,7 @@ impl Target {
         }
         if copied != length {
             return Err(crate::ipc_error::IpcError::new(
-                "export_transfer_interrupted",
+                codes::EXPORT_TRANSFER_INTERRUPTED,
                 "Export transfer was truncated; the destination was not changed.",
             ));
         }
@@ -819,7 +820,7 @@ impl Target {
         let state = lock(&saves.0 .0);
         if state.closing {
             return Err(crate::ipc_error::IpcError::new(
-                "export_closing",
+                codes::EXPORT_CLOSING,
                 "Saving stopped because Wenyi is closing.",
             ));
         }
@@ -830,7 +831,7 @@ impl Target {
             != Some((&identity, length))
         {
             return Err(crate::ipc_error::IpcError::new(
-                "export_transfer_interrupted",
+                codes::EXPORT_TRANSFER_INTERRUPTED,
                 "The temporary export changed; the destination was not changed.",
             ));
         }
@@ -877,7 +878,7 @@ fn pin_windows_parents(parent: &Path) -> Result<Vec<File>> {
                 .is_symlink()
             {
                 return Err(crate::ipc_error::IpcError::new(
-                    "export_destination_invalid",
+                    codes::EXPORT_DESTINATION_INVALID,
                     "Choose a destination without symbolic links.",
                 ));
             }
@@ -956,7 +957,7 @@ fn run_save(
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
     {
         return Err(crate::ipc_error::IpcError::new(
-            "export_request_invalid",
+            codes::EXPORT_REQUEST_INVALID,
             "Invalid project identity.",
         ));
     }
@@ -983,7 +984,7 @@ fn run_save(
         || plan.protected_roots.is_empty()
     {
         return Err(crate::ipc_error::IpcError::new(
-            "export_request_invalid",
+            codes::EXPORT_REQUEST_INVALID,
             "Invalid export plan.",
         ));
     }
@@ -1058,7 +1059,7 @@ fn save_created_export(
             }
             _ => {
                 return Err(crate::ipc_error::IpcError::new(
-                    "export_failed",
+                    codes::EXPORT_FAILED,
                     "Export generation failed. Check export history.",
                 ))
             }
@@ -1094,7 +1095,7 @@ async fn save_native(
 ) -> Result<Option<Saved>> {
     if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
         return Err(crate::ipc_error::IpcError::new(
-            "export_unavailable",
+            codes::EXPORT_UNAVAILABLE,
             "Native saving is unavailable.",
         ));
     }
@@ -1103,7 +1104,7 @@ async fn save_native(
         let state = lock(&state);
         if state.closing || state.error.is_some() {
             return Err(crate::ipc_error::IpcError::new(
-                "export_engine_unavailable",
+                codes::EXPORT_ENGINE_UNAVAILABLE,
                 "Local engine unavailable.",
             ));
         }

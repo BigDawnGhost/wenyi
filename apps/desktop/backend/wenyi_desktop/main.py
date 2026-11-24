@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import importlib.metadata
+import json
+import logging
+import os
+import sqlite3
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,7 +21,7 @@ from wenyi_backend.errors import ApiError, api_error_handler
 from wenyi_core.errors import SchemaTooNew
 from wenyi_core.observability import configure_logging
 
-from . import paths
+from . import catalog, paths
 from .babeldoc_plugin import BabeldocPlugin
 from .diagnostics import DiagnosticsMiddleware, EngineDiagnostics, Reporter, scope
 from .local_backend import PROJECT_SCHEMA_TOO_NEW, LocalBackend
@@ -27,14 +33,117 @@ from .local_runtime import (
     statistics_snapshot,
 )
 from .settings import DesktopSettings
-from .updates import UpdateAdmissionMiddleware, UpdateGuard
+from .updates import (
+    UpdateAdmissionMiddleware,
+    UpdateGuard,
+    prune_backups,
+    restore_latest_backup,
+)
 from .updates import router as updates_router
+
+log = logging.getLogger(__name__)
 
 # A local run can legitimately publish nothing for minutes (one long model call),
 # and an idle socket looks exactly like a dead one to the renderer. The frame is
 # the only proof that the link is still carrying data.
 HEARTBEAT_SECONDS = 30.0
 HEARTBEAT_FRAME = '{"kind": "heartbeat"}'
+
+# Old Desktop releases kept everything in one SQLite database and admitted any
+# project folder beside it. The unified layout never adopts that data: the
+# catalog refuses it and old folders stay unregistered. Startup only detects
+# the situation so the user can be given the explicit steps below; nothing is
+# migrated, moved, or rewritten (docs/development/desktop.md).
+LEGACY_IMPORT_STEPS = (
+    "Old-format Wenyi Desktop data was found in the selected data directory; "
+    "this version does not migrate it automatically.",
+    "A project folder that contains a current project.json (schema_version 2) "
+    "can be brought over with the library's Import project action; the "
+    "original stays untouched.",
+    "Folders without a current project.json use an unsupported old layout and "
+    "cannot be imported; keep using the Wenyi version that created them or "
+    "export their content from that version first.",
+    "To start fresh, choose a new empty Desktop data directory; the old data is left as is.",
+)
+LEGACY_DATA_GUIDANCE = " ".join(LEGACY_IMPORT_STEPS)
+
+
+def legacy_data_report(workspace: str | Path) -> dict:
+    """Read-only scan of a data root for old-format Desktop data.
+
+    The report never writes, adopts, or moves anything, and every failure
+    degrades to "nothing found" so the check itself can never break startup.
+    """
+    root = Path(workspace)
+    report: dict = {"legacy_catalog": False, "legacy_database": False, "old_project_folders": []}
+    catalog_file = root / "catalog.sqlite3"
+    if catalog_file.is_file():
+        try:
+            connection = sqlite3.connect(f"{catalog_file.resolve().as_uri()}?mode=ro", uri=True)
+            try:
+                populated = connection.execute(
+                    "SELECT count(*) FROM sqlite_master"
+                    " WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+                ).fetchone()[0]
+                application_id = connection.execute("PRAGMA application_id").fetchone()[0]
+                user_version = connection.execute("PRAGMA user_version").fetchone()[0]
+            finally:
+                connection.close()
+            current = (catalog.APPLICATION_ID, catalog.FORMAT_VERSION)
+            found = (application_id, user_version)
+            report["legacy_catalog"] = bool(populated) and found != current
+        except sqlite3.Error:
+            # A catalog file that cannot be confirmed as current counts as old
+            # for guidance only; catalog admission still decides startup.
+            report["legacy_catalog"] = True
+    projects = root / "projects"
+    if projects.is_dir():
+        try:
+            entries = sorted(projects.iterdir())
+        except OSError:
+            # An unreadable projects directory still yields a usable report.
+            entries = []
+        for entry in entries:
+            try:
+                if not entry.is_dir() or entry.is_symlink():
+                    continue
+                if not any(entry.iterdir()):
+                    continue
+                if (entry / paths.PROJECT_DELETING).exists():
+                    continue
+                marker = entry / paths.PROJECT_MARKER
+                if not marker.is_file():
+                    report["old_project_folders"].append(entry.name)
+                    continue
+                try:
+                    data = json.loads(marker.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    report["old_project_folders"].append(entry.name)
+                    continue
+                schema = data.get("schema_version") if isinstance(data, dict) else None
+                if schema != paths.PROJECT_SCHEMA_VERSION:
+                    report["old_project_folders"].append(entry.name)
+            except OSError:
+                continue
+    report["legacy_database"] = (root / "local.sqlite3").is_file()
+    return report
+
+
+def _report_legacy_data(workspace: str | Path) -> None:
+    """Guide the user about old-format data on the sidecar's own stderr.
+
+    stdout carries the parent/child protocol; a stray line before readiness
+    would break the handshake, so guidance goes to stderr, which the shell
+    only logs.
+    """
+    try:
+        report = legacy_data_report(workspace)
+    except OSError as error:
+        # Guidance is best effort; never block startup on it.
+        log.warning("Legacy data report failed: %s", error)
+        return
+    if report["legacy_catalog"] or report["legacy_database"] or report["old_project_folders"]:
+        print(LEGACY_DATA_GUIDANCE, file=sys.stderr, flush=True)
 
 
 class DesktopServices:
@@ -67,12 +176,14 @@ class DesktopServices:
         with self.backend.transaction() as connection:
             connection.execute("SELECT 1")
 
-    async def relay(self, ws, pid):
+    async def relay(self, websocket, pid):
         with self.connect().subscribe(pid) as queue:
             project = await asyncio.to_thread(self.backend.get_project, pid)
             chapters = await asyncio.to_thread(self.backend.chapter_summaries, pid)
-            await ws.send_json({"kind": "snapshot", "project": project or {}, "chapters": chapters})
-            disconnected = asyncio.create_task(ws.receive())
+            await websocket.send_json(
+                {"kind": "snapshot", "project": project or {}, "chapters": chapters}
+            )
+            disconnected = asyncio.create_task(websocket.receive())
             received = None
             try:
                 while not disconnected.done():
@@ -88,13 +199,13 @@ class DesktopServices:
                     if received not in done:
                         # The wait stays pending, so a later event is still
                         # delivered on the next pass through the loop.
-                        await ws.send_text(HEARTBEAT_FRAME)
+                        await websocket.send_text(HEARTBEAT_FRAME)
                         continue
                     data = received.result()
                     received = None
                     if data is None:
                         break
-                    await ws.send_text(data)
+                    await websocket.send_text(data)
             except WebSocketDisconnect:
                 pass
             finally:
@@ -119,12 +230,36 @@ def create_context(
     library_root: str | Path | None = None,
     install_root: str | Path | None = None,
 ) -> BackendContext:
-    backend = LocalBackend(
-        workspace,
-        config_path,
-        library_root=library_root,
-        install_root=install_root,
-    )
+    try:
+        backend = LocalBackend(
+            workspace,
+            config_path,
+            library_root=library_root,
+            install_root=install_root,
+        )
+    except (RuntimeError, ValueError, sqlite3.Error, SchemaTooNew) as error:
+        # The upgraded engine refused this workspace's data. Roll it back to the
+        # snapshot the shell wrote before the update, and report the outcome on
+        # stdout so the native shell can tell the user, instead of leaving the
+        # data half-migrated behind a generic bootstrap timeout.
+        outcome = restore_latest_backup(workspace)
+        payload = {
+            "reason": "migration",
+            "restored": outcome.status == "restored",
+            "detail": outcome.detail or str(error)[:200],
+        }
+        if "not a current-format Desktop catalog" in str(error):
+            # The refusal is about old-format data, not a failed update: attach
+            # the explicit import steps so the shell and the logs can guide the
+            # user instead of the generic migration text.
+            payload["legacy_data"] = True
+            payload["guidance"] = list(LEGACY_IMPORT_STEPS)
+        print(f"WENYI_FAILED {json.dumps(payload, separators=(',', ':'))}", flush=True)
+        raise
+    # Retention runs only on a healthy start: a failed migration must keep
+    # every snapshot it may still need to roll back to.
+    prune_backups(workspace)
+    _report_legacy_data(workspace)
     credentials = credentials or CredentialStore(backend.workspace, vault_factory=system_keyring)
     if credentials.database != backend.database:
         raise ValueError("Desktop credentials must belong to the selected data root")
@@ -153,6 +288,45 @@ def create_context(
     )
 
 
+def verify_version_handshake() -> None:
+    """Refuse to serve when the native shell and this engine are different builds.
+
+    The shell injects the version it was compiled with before spawning this
+    process. A mismatch means the Python package on disk belongs to another
+    install, so serving it could corrupt data written by a different schema.
+    A missing variable means an older launcher started the engine; keep that
+    startup path working and only note the skipped check.
+    """
+    shell_version = os.environ.get("WENYI_DESKTOP_VERSION")
+    if shell_version is None:
+        print(
+            "wenyi-desktop: launcher did not set WENYI_DESKTOP_VERSION; "
+            "skipping the shell/engine version handshake.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    try:
+        engine_version = importlib.metadata.version("wenyi-desktop")
+    except importlib.metadata.PackageNotFoundError:
+        print(
+            "wenyi-desktop: installed engine version is unknown; "
+            "skipping the shell/engine version handshake.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return
+    if engine_version != shell_version:
+        print(
+            "wenyi-desktop: version mismatch between the desktop shell "
+            f"({shell_version}) and the Python engine ({engine_version}); "
+            "refusing to start. Install matching desktop components.",
+            file=sys.stderr,
+            flush=True,
+        )
+        raise SystemExit(2)
+
+
 def create_app(
     workspace: str | Path | None = None,
     *,
@@ -163,6 +337,8 @@ def create_app(
     install_root: str | Path | None = None,
     engine_diagnostics: EngineDiagnostics | None = None,
 ):
+    verify_version_handshake()
+
     from .desktop import ORIGINS
     from .routers import (
         babeldoc_plugin,
@@ -185,14 +361,19 @@ def create_app(
             library_root=library_root,
             install_root=install_root,
         )
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
+    settings = context.settings_store
+    assert isinstance(settings, DesktopSettings)
     services = context.telemetry
+    assert isinstance(services, DesktopServices)
     lifecycle = engine_diagnostics or EngineDiagnostics(diagnostics)
 
     @asynccontextmanager
     async def lifespan(app):
         with use_context(context), scope(diagnostics):
             with lifecycle.observe("runtime"):
-                runtime = LocalRuntime(context.repository, context, diagnostics=diagnostics)
+                runtime = LocalRuntime(backend, context, diagnostics=diagnostics)
             services.runtime = runtime
             try:
                 with lifecycle.observe("runtime"):
@@ -207,8 +388,8 @@ def create_app(
                     finally:
                         await services.babeldoc.stop()
                         services.runtime = None
-                        context.settings_store.credentials.clear_session()
-                        context.repository.close()
+                        settings.credentials.clear_session()
+                        backend.close()
 
     app = create_http_app(
         context,
@@ -239,6 +420,6 @@ def create_app(
     )
     if diagnostics is not None:
         app.add_middleware(DiagnosticsMiddleware, reporter=diagnostics, origins=ORIGINS)
-        if context.settings_store.credentials.vault is None:
+        if settings.credentials.vault is None:
             diagnostics.emit("credentials_degraded")
     return app

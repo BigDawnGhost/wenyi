@@ -11,6 +11,38 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 from packaging.tags import platform_tags
 
 
+def missing_rust_tools() -> list[str]:
+    """Return the Rust toolchain commands the native build needs but cannot find."""
+    missing = []
+    if shutil.which("cargo") is None:
+        missing.append("cargo")
+    # rust_std_notices honours RUSTC/CARGO_BUILD_RUSTC, so only require rustc on
+    # PATH when the build would fall back to the default compiler command.
+    rustc_override = os.environ.get("RUSTC") or os.environ.get("CARGO_BUILD_RUSTC")
+    if rustc_override is None and shutil.which("rustc") is None:
+        missing.append("rustc")
+    return missing
+
+
+def require_rust_toolchain() -> None:
+    """Fail the build early with installation guidance instead of a raw linker error."""
+    missing = missing_rust_tools()
+    if not missing:
+        return
+    missing_text = " and ".join(missing)
+    was_were = "was" if len(missing) == 1 else "were"
+    guidance = (
+        "Install the Rust toolchain via rustup: https://rustup.rs",
+        "  - Windows: winget install Rustlang.Rustup  (or download https://win.rustup.rs)",
+        "  - Linux/macOS: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
+        "Then open a new shell so ~/.cargo/bin joins PATH and retry, e.g. 'uv sync'.",
+    )
+    raise SystemExit(
+        f"Building wenyi-core compiles a native Rust extension, but {missing_text} "
+        f"{was_were} not found on PATH.\n" + "\n".join(guidance)
+    )
+
+
 def rust_std_notices() -> dict[str, str]:
     """Include the standard library's own attribution from the toolchain used to build the wheel."""
     if override := os.environ.get("WENYI_RUST_LICENSE_DIR"):
@@ -35,6 +67,7 @@ def rust_std_notices() -> dict[str, str]:
 
 class CustomBuildHook(BuildHookInterface):
     def initialize(self, version, build_data):
+        require_rust_toolchain()
         root = Path(self.root)
         rust = root / "rust"
         target = rust / "target"

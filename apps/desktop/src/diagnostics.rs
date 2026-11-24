@@ -273,6 +273,7 @@ fn attributes(input: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
                         | "protocol_eof"
                         | "ready_timeout"
                         | "channel_closed"
+                        | "migration_failed"
                         | "process_exited"
                         | "shutdown_requested"
                         | "forced"

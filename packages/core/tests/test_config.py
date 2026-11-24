@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
 import yaml
 from pydantic import ValidationError
 from wenyi_core.config import _DEFAULT_CONFIG_YAML, Config
@@ -97,7 +98,7 @@ class TestConfigFileCreation(unittest.TestCase):
     def test_removed_glossary_scope_is_rejected(self):
         for scope in ("chapter", "full", None):
             with self.subTest(scope=scope):
-                with self.assertRaisesRegex(ValidationError, "glossary_scope"):
+                with pytest.raises(ValidationError, match="glossary_scope"):
                     Config.from_dict({"pipeline": {"glossary_scope": scope}})
 
     def test_removed_segment_char_keys_are_rejected(self):
@@ -107,7 +108,7 @@ class TestConfigFileCreation(unittest.TestCase):
     def test_rolling_context_tokens_accept_zero_and_reject_negative_budgets(self):
         cfg = Config.from_dict({"pipeline": {"rolling_context_tokens": 0}})
         self.assertEqual(cfg.pipeline.rolling_context_tokens, 0)
-        with self.assertRaisesRegex(ValidationError, "rolling_context_tokens"):
+        with pytest.raises(ValidationError, match="rolling_context_tokens"):
             Config.from_dict({"pipeline": {"rolling_context_tokens": -1}})
 
     def test_synopsis_token_budgets_load_from_yaml(self):
@@ -126,7 +127,7 @@ class TestConfigFileCreation(unittest.TestCase):
         for key in ("synopsis_source_tokens", "synopsis_reduce_tokens"):
             for value in (0, -1, 1.5, "invalid", None):
                 with self.subTest(key=key, value=value):
-                    with self.assertRaisesRegex(ValidationError, key):
+                    with pytest.raises(ValidationError, match=key):
                         Config.from_dict({"pipeline": {key: value}})
             cfg = Config.from_dict({"pipeline": {key: 1}})
             self.assertEqual(getattr(cfg.pipeline, key), 1)
@@ -134,7 +135,7 @@ class TestConfigFileCreation(unittest.TestCase):
     def test_segment_budgets_guard_batch_only(self):
         # max_tokens_per_batch=0 would degrade packing to one request per segment
         # (audit Y-3); max_tokens_per_segment=0 legitimately disables splitting.
-        with self.assertRaisesRegex(ValidationError, "max_tokens_per_batch"):
+        with pytest.raises(ValidationError, match="max_tokens_per_batch"):
             Config.from_dict({"segment": {"max_tokens_per_batch": 0}})
         cfg = Config.from_dict({"segment": {"max_tokens_per_segment": 0}})
         self.assertEqual(cfg.segment.max_tokens_per_segment, 0)
@@ -145,7 +146,7 @@ class TestConfigFileCreation(unittest.TestCase):
             {"rolling_context_segments": 0, "rolling_context_tokens": 128},
         ):
             with self.subTest(pipeline=pipeline):
-                with self.assertRaisesRegex(ValidationError, "rolling_context_segments"):
+                with pytest.raises(ValidationError, match="rolling_context_segments"):
                     Config.from_dict({"pipeline": pipeline})
 
     def test_load_never_overwrites_existing_config(self):
@@ -192,11 +193,11 @@ class TestConfigFileCreation(unittest.TestCase):
     def test_unknown_config_sections_are_rejected(self):
         for section in ("punctuation", "pipline"):
             with self.subTest(section=section):
-                with self.assertRaisesRegex(ValueError, "Unknown configuration sections"):
+                with pytest.raises(ValueError, match="Unknown configuration sections"):
                     Config.from_dict({section: {}})
 
     def test_config_root_must_be_a_mapping(self):
-        with self.assertRaisesRegex(ValueError, "must be a mapping"):
+        with pytest.raises(ValueError, match="must be a mapping"):
             Config.from_dict(["pipeline"])
 
     def test_compatible_reasoning_style_is_loaded(self):

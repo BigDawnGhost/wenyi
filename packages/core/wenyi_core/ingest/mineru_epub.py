@@ -23,6 +23,7 @@ from markdown_it import MarkdownIt
 from mdit_py_plugins.dollarmath import dollarmath_plugin
 
 from wenyi_core.assemble.epub_package import EpubChapter, EpubResource, EpubTocEntry, write_epub
+from wenyi_core.models.errors import MinerUError
 
 LOGGER = logging.getLogger(__name__)
 XHTML = "http://www.w3.org/1999/xhtml"
@@ -277,7 +278,7 @@ def _visual(kind: str, content: dict[str, Any]) -> str:
     if kind == "table" and table is not None:
         if caption and not table.find("caption", recursive=False):
             node = _fragment(f"<caption>{caption}</caption>").caption
-            assert node is not None
+            assert node is not None, f"caption fragment lost its <caption> node: {caption!r}"
             table.insert(0, node)
         else:
             # Do not discard either caption if both are independently supplied.
@@ -496,6 +497,12 @@ def _write_source_epub(
     _format_math_paragraphs(body)
     if not body.find(True):
         raise ValueError("Content List V2 did not contain readable blocks.")
+    if not body.get_text(strip=True):
+        raise MinerUError(
+            "MinerU extracted no text from the PDF: the pages look like scanned images "
+            "without a text layer. Check the scan quality, or add a searchable text layer "
+            "with OCR, then retry."
+        )
     source_markup, replaced = INVALID_XML_CHAR.subn("\N{REPLACEMENT CHARACTER}", body.decode())
     if replaced:
         LOGGER.warning("Replaced %d characters that XHTML cannot represent.", replaced)

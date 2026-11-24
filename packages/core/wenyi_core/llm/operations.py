@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING
 
+from ..config import PipelineConfig
 from .operation_names import require_operation_name
 
 if TYPE_CHECKING:
@@ -27,8 +28,15 @@ class OperationSpec:
     protocol_version: int = 1
 
 
+KNOWN_OPERATION_FLAGS = frozenset(PipelineConfig.model_fields) | {"language_auto"}
+
+
 def register_operations(specs: Iterable[OperationSpec]) -> Mapping[str, OperationSpec]:
-    """Validate registrations before publishing an immutable registry."""
+    """Validate registrations before publishing an immutable registry.
+
+    Flags must name known routing settings: an unknown flag would otherwise be
+    treated as enabled by ``workflow_operations`` instead of failing loudly.
+    """
     registry: dict[str, OperationSpec] = {}
     for spec in specs:
         if not re.fullmatch(r"[a-z][a-z_]*\.[a-z][a-z_]*", spec.id):
@@ -37,6 +45,12 @@ def register_operations(specs: Iterable[OperationSpec]) -> Mapping[str, Operatio
             raise ValueError(f"Duplicate operation: {spec.id}")
         if spec.protocol_version <= 0:
             raise ValueError(f"Invalid operation protocol version: {spec.id}")
+        unknown = [flag for flag in spec.flags if flag not in KNOWN_OPERATION_FLAGS]
+        if unknown:
+            raise ValueError(
+                f"Unknown operation flag on {spec.id}: {', '.join(unknown)}; "
+                f"known flags: {', '.join(sorted(KNOWN_OPERATION_FLAGS))}"
+            )
         registry[spec.id] = spec
     return MappingProxyType(registry)
 

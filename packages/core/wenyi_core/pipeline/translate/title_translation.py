@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any
 
 from ...agents import prompts
 from ...agents.title_translator import TitleOutputError, TitleTranslator
+from ...events import ProgressFn
 from ...glossary.store import GlossaryStore
 from ...models.document import Chapter, uses_epub_template
 from ...models.glossary import GlossaryTerm
@@ -272,7 +273,7 @@ class TitleTranslationService:
         self,
         store: Storage,
         glossary: Storage | GlossaryStore,
-        progress: Callable[[int, int, str], None] | None = None,
+        progress: ProgressFn | None = None,
     ) -> None:
         """Reuse complete headings, then translate and commit only pending title batches."""
         manifest = store.load_manifest()
@@ -329,6 +330,11 @@ class TitleTranslationService:
             )
             completed += len(batch)
             if progress:
-                progress(completed, len(plan.pending), "Translating chapter titles")
+                progress(
+                    completed,
+                    len(plan.pending),
+                    "Translating chapter titles",
+                    {"batch": batch_index, "batch_size": len(batch)},
+                )
         # Commit titles first so an interrupted glossary write can resume without model calls.
         _store_navigation_terms(plan, glossary)

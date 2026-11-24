@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from api_test_support import new_project
@@ -18,6 +20,7 @@ from wenyi_backend.execution.bindings import build_config_for
 from wenyi_backend.routers import dependencies as job_service
 from wenyi_backend.routers.dependencies import storage_for
 from wenyi_backend.workers import tasks
+from wenyi_backend.workers.signing import SIGNATURE_FIELD, sign_task
 
 
 def test_creation_requires_an_uploaded_source(api):
@@ -202,7 +205,9 @@ def execute_next(api):
     _, queue = api
     name, params = queue.pop(0)
     params.pop("_job_id")
-    asyncio.run(getattr(tasks, name)({"backend": current_context()}, **params))
+    payload = dict(params)
+    payload[SIGNATURE_FIELD] = sign_task(name, payload, current_context().api_token)
+    asyncio.run(getattr(tasks, name)({"backend": current_context()}, **payload))
 
 
 def upload(api, pid, filename="book.html", data=None):
@@ -342,7 +347,7 @@ def test_live_redis_queue_executes_persisted_parse_job(api, monkeypatch):
     monkeypatch.setattr(queue, "WORKFLOW_QUEUE", queue_name)
 
     async def enqueue(name, **kwargs):
-        return await queue.enqueue(redis_url, name, **kwargs)
+        return await queue.enqueue(redis_url, name, current_context().api_token, **kwargs)
 
     monkeypatch.setattr(job_service, "enqueue", enqueue)
     client, _ = api
@@ -412,4 +417,89 @@ def test_http_download_and_websocket_require_token(api, monkeypatch):
         with pytest.raises(WebSocketDisconnect) as raised:
             connection.receive_json()
         assert raised.value.code == 1008
+    with secured_client.websocket_connect(f"/ws/projects/{pid}/progress") as connection:
+        connection.send_json({"token": "caf\u00e9"})
+        with pytest.raises(WebSocketDisconnect) as raised:
+            connection.receive_json()
+        assert raised.value.code == 1008
     secured_client.close()
+
+
+def test_websocket_skips_token_check_when_require_token_disabled(api):
+    from starlette.websockets import WebSocketDisconnect
+
+    client, _ = api
+    pid = new_project(api)
+    open_context = replace(current_context(), api_token="test-access-token", require_token=False)
+
+    async def local_relay(websocket, project_id):
+        # Serve the socket until the client hangs up; no token was required.
+        await websocket.receive()
+        await websocket.close(code=1000)
+
+    open_context = replace(open_context, telemetry=SimpleNamespace(relay=local_relay))
+    open_client = TestClient(create_app(context=open_context))
+    with open_client.websocket_connect(f"/ws/projects/{pid}/progress") as connection:
+        connection.send_json({"token": "wrong"})
+        connection.close()
+        with pytest.raises(WebSocketDisconnect) as raised:
+            connection.receive_json()
+        assert raised.value.code != 1008
+    open_client.close()
+
+
+def test_duplicate_export_requests_share_one_task(api):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    first = client.post(f"/projects/{pid}/exports", json={"format": "txt"})
+    second = client.post(f"/projects/{pid}/exports", json={"format": "txt"})
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert second.json() == {
+        "job_id": first.json()["job_id"],
+        "project_id": pid,
+        "kind": "export",
+        "export_id": first.json()["export_id"],
+    }
+    assert [name for name, _ in queue if name == "run_export"] == ["run_export"]
+    export_jobs = [row for row in dal.list_jobs(pid) if row["kind"] == "export"]
+    assert len(export_jobs) == 1
+    # A finished export no longer deduplicates: a new request gets a fresh task.
+    dal.set_job_status(export_jobs[0]["id"], "done")
+    dal.set_export_status(first.json()["export_id"], "done")
+    third = client.post(f"/projects/{pid}/exports", json={"format": "txt"})
+    assert third.status_code == 200, third.text
+    assert third.json()["export_id"] != first.json()["export_id"]
+    assert [name for name, _ in queue if name == "run_export"] == ["run_export", "run_export"]
+
+
+def test_start_job_reuses_in_flight_task_of_same_kind(api):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    parse_job = must(dal.latest_workflow_job(pid))
+    dal.set_job_status(parse_job["id"], "paused")
+    dal.set_project_status(pid, "paused")
+    in_flight = dal.create_job(pid, "parse", "resumed-parse", run_id="resumed-run")
+    result = asyncio.run(job_service.start_job(pid, "parse"))
+    assert result == {"job_id": "resumed-run", "project_id": pid, "kind": "parse"}
+    assert [name for name, _ in queue if name == "run_parse"] == []
+    resumed = must(dal.get_job(in_flight))
+    assert resumed["run_id"] == "resumed-run" and resumed["status"] == "queued"
+
+
+def test_concurrent_resume_dispatches_exactly_one_task(api):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    parse_job = must(dal.latest_workflow_job(pid))
+    dal.set_job_status(parse_job["id"], "paused")
+    dal.set_project_status(pid, "paused")
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        responses = list(pool.map(lambda _: client.post(f"/projects/{pid}/resume"), range(4)))
+    assert sum(response.status_code == 200 for response in responses) >= 1
+    assert all(response.status_code in (200, 409) for response in responses)
+    assert [name for name, _ in queue if name == "run_parse"].count("run_parse") == 1
+    parse_jobs = [row for row in dal.list_jobs(pid) if row["kind"] == "parse"]
+    assert len(parse_jobs) == 2  # the upload's parse plus exactly one resumed task

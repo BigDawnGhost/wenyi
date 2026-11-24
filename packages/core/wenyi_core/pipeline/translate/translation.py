@@ -306,6 +306,8 @@ class TranslationService:
                 seg_base += len(b)
                 if progress:
                     progress(done, total, label)
+                # Persist skipped-batch usage (e.g. recovered glossary extraction) before continuing.
+                self._runtime.usage.flush(store, scope="batch")
                 continue
 
             if term_snapshot_stale:
@@ -402,6 +404,8 @@ class TranslationService:
             glossary_checkpoints.add(glossary_key)
             # The glossary may have changed; refresh before the next real translation, not after the final batch.
             term_snapshot_stale = True
+            # Persist each batch's usage immediately so a crash between batches keeps completed work billed.
+            self._runtime.usage.flush(store, scope="batch")
 
         # Keep chapter-wide extraction as a fallback for address, speech and fixed expressions needing context.
         # Final review reads the stable glossary after the entire book finishes translating.

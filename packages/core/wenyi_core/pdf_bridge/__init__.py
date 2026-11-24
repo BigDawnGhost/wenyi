@@ -3,6 +3,6 @@
 This package must never import babeldoc / pdf2zh. It only talks HTTP.
 """
 
-from .client import BabeldocBridgeClient, BabeldocBridgeError
+from .client import BabeldocBridgeClient, BabeldocBridgeError, BabeldocBridgeUnavailableError
 
-__all__ = ["BabeldocBridgeClient", "BabeldocBridgeError"]
+__all__ = ["BabeldocBridgeClient", "BabeldocBridgeError", "BabeldocBridgeUnavailableError"]

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from wenyi_backend.context import BackendContext
+from wenyi_backend.execution.runner import CANCEL_DRAIN_TIMEOUT_SECONDS
 from wenyi_backend.live_statistics import read_live_statistics
 from wenyi_core.storage.locks import FileLockHandle, StorageBusyError
 
@@ -178,14 +179,26 @@ async def run_workflow_sync(operation: Callable[[], None]) -> None:
     """Own one thread per run, leaving the default executor free for control requests."""
     loop = asyncio.get_running_loop()
     # This executor belongs to one invocation, not to a fixed set of workflow slots.
-    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="desktop-workflow") as executor:
-        future = loop.run_in_executor(executor, copy_context().run, operation)
+    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="desktop-workflow")
+    future = loop.run_in_executor(executor, copy_context().run, operation)
+    abandoned = False
+    try:
+        await asyncio.shield(future)
+    except asyncio.CancelledError:
+        # The task adapter signals cooperative stop before waiting for this dispatcher, but a
+        # stuck drain must never keep the workflow slot hostage.
+        abandoned = True
         try:
-            await asyncio.shield(future)
-        except asyncio.CancelledError:
-            # The task adapter signals cooperative stop before waiting for this dispatcher.
-            await asyncio.shield(future)
-            raise
+            await asyncio.wait_for(asyncio.shield(future), timeout=CANCEL_DRAIN_TIMEOUT_SECONDS)
+            abandoned = False
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            log.warning(
+                "Desktop workflow thread ignored cancellation for %.1fs; abandoning it",
+                CANCEL_DRAIN_TIMEOUT_SECONDS,
+            )
+        raise
+    finally:
+        executor.shutdown(wait=not abandoned)
 
 
 class LocalRuntime:
@@ -199,7 +212,7 @@ class LocalRuntime:
         self.diagnostics = diagnostics
         self.lock = WorkspaceLock(backend.workspace)
         self.hub = ProgressHub(backend, asyncio.get_running_loop())
-        self.export_queue: asyncio.Queue = asyncio.Queue(maxsize=128)
+        self.export_queue: asyncio.Queue[tuple[str, dict, str] | None] = asyncio.Queue(maxsize=128)
         self._submitted: set[str] = set()
         self._active: dict[str, asyncio.Task] = {}
         self._cancelling: set[asyncio.Task] = set()
@@ -275,13 +288,16 @@ class LocalRuntime:
 
     async def _run_observed(self, name: str, values: dict, run_id: str) -> None:
         from wenyi_backend.workers import tasks
+        from wenyi_backend.workers.signing import SIGNATURE_FIELD, sign_task
 
         with scope(self.diagnostics, project_ref=values.get("project_id", ""), run_ref=run_id):
             started = time.monotonic()
             kind = name.removeprefix("run_")
             emit("task_started", kind=kind)
             try:
-                await getattr(tasks, name)({"backend": self.context}, **values)
+                signature = sign_task(name, values, self.context.api_token)
+                payload = {**values, SIGNATURE_FIELD: signature}
+                await getattr(tasks, name)({"backend": self.context}, **payload)
             except asyncio.CancelledError:
                 emit("task_cancelled", kind=kind)
                 raise
@@ -371,7 +387,9 @@ class LocalRuntime:
             # Notifications are advisory and must never change a task's outcome.
             log.debug("Could not queue a Desktop status notice", exc_info=True)
 
-    async def _consume(self, queue: asyncio.Queue, timeout: float) -> None:
+    async def _consume(
+        self, queue: asyncio.Queue[tuple[str, dict, str] | None], timeout: float
+    ) -> None:
         while True:
             item = await queue.get()
             try:

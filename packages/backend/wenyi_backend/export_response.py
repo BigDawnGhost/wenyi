@@ -6,6 +6,7 @@ import os
 from typing import BinaryIO
 
 import anyio
+import anyio.to_thread
 from starlette.responses import StreamingResponse
 from starlette.types import Receive, Scope, Send
 

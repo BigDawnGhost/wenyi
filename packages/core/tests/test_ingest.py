@@ -8,6 +8,7 @@ import tempfile
 import unittest
 import zipfile
 
+import pytest
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 from wenyi_core.assemble.html_renderer import _render_chapter_html
@@ -1341,7 +1342,7 @@ class TestEpubIngest(unittest.TestCase):
                     "<container><rootfiles><rootfile/></rootfiles></container>",
                 )
             with zipfile.ZipFile(path) as zf:
-                with self.assertRaisesRegex(ValueError, "full-path"):
+                with pytest.raises(ValueError, match="full-path"):
                     _find_opf_path(zf)
 
             opf_path = os.path.join(d, "opf.epub")

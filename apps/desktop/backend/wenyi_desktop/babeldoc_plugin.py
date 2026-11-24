@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import secrets
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import httpx
 from fastapi import HTTPException
@@ -22,6 +23,8 @@ from . import plugin_packages as packages
 
 if TYPE_CHECKING:
     from .updates import UpdateGuard
+
+log = logging.getLogger(__name__)
 
 DEFAULT_BRIDGE = "http://127.0.0.1:8765"
 ACTIVE_PHASES = {"checking", "runtime", "models", "unpacking", "starting", "stopping"}
@@ -111,8 +114,11 @@ class BabeldocPlugin:
                     self.installation = directory
                     self.version = saved.get("version")
         except FileNotFoundError:
+            # Never installed: the saved-state file is simply absent.
             return
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            # Never echo saved-state contents; the class name is enough.
+            log.warning("BabelDOC saved state is unreadable: %s", type(error).__name__)
             self.error = "state_failed"
             self.phase = "error"
 
@@ -218,13 +224,14 @@ class BabeldocPlugin:
                 timeout=60,
                 event_hooks={"request": [packages.require_https]},
             ) as client:
-                manifest = await packages.read_manifest(client, self.target)
+                manifest = await packages.read_manifest(client, cast(str, self.target))
             if self.version:
                 packages.version_key(self.version)
             self.latest_version, self._manifest = manifest["version"], manifest
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
+            log.warning("BabelDOC update check failed: %s", type(error).__name__)
             self.update_error = "check_failed"
         finally:
             self.checking_update = False
@@ -275,7 +282,8 @@ class BabeldocPlugin:
             raise
         except HTTPException:
             failure = "update_busy"
-        except Exception:
+        except Exception as error:
+            log.warning("BabelDOC update failed: %s", type(error).__name__)
             failure = "update_failed"
         finally:
 
@@ -289,7 +297,10 @@ class BabeldocPlugin:
                                 try:
                                     await self._start(previous)
                                     self._task = asyncio.create_task(self._watch())
-                                except Exception:
+                                except Exception as error:
+                                    log.warning(
+                                        "BabelDOC rollback failed: %s", type(error).__name__
+                                    )
                                     await self._stop_child()
                                     failure = "rollback_failed"
                         if self._connection is not None:
@@ -320,7 +331,7 @@ class BabeldocPlugin:
             event_hooks={"request": [packages.require_https]},
         ) as client:
             if manifest is None:
-                manifest = await packages.read_manifest(client, self.target)
+                manifest = await packages.read_manifest(client, cast(str, self.target))
             version = manifest["version"]
             archives = self.root / "downloads"
             archives.mkdir(exist_ok=True)
@@ -404,14 +415,16 @@ class BabeldocPlugin:
                 raise ValueError("Plugin installation is missing")
             await self._start(identity)
             if install:
-                assert version is not None
+                assert version is not None, "install requested without a BabelDOC version"
                 self._select_installation(identity, version)
             self.phase, self.error = "ready", None
         except asyncio.CancelledError:
             await self._stop_child()
             raise
-        except Exception:
-            # Do not echo arbitrary HTTP bodies, process output, or credentials.
+        except Exception as error:
+            # Do not echo arbitrary HTTP bodies, process output, or credentials;
+            # the exception class name alone is enough to troubleshoot.
+            log.warning("BabelDOC %s failed: %s", self.phase, type(error).__name__)
             self.error = (
                 "install_failed"
                 if self.phase in {"checking", "runtime", "models", "unpacking"}
@@ -438,7 +451,10 @@ class BabeldocPlugin:
             child_environment(token),
         )
         child = self._child
-        line = await asyncio.wait_for(child.stdout.readline(), timeout=180)
+        assert child is not None
+        stream = child.stdout
+        assert stream is not None
+        line = await asyncio.wait_for(stream.readline(), timeout=180)
         ready = json.loads(line)
         if (
             ready.get("protocol") != 1
@@ -460,12 +476,15 @@ class BabeldocPlugin:
         self._connection = connection
 
     async def _watch(self) -> None:
+        child = self._child
+        assert child is not None
         try:
-            await self._child.wait()
+            await child.wait()
             raise RuntimeError("Plugin exited unexpectedly")
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as error:
+            log.warning("BabelDOC child exited unexpectedly: %s", type(error).__name__)
             if not self.updating or self.phase == "ready":
                 self.phase, self.error = "error", "start_failed"
         finally:
@@ -502,6 +521,7 @@ class BabeldocPlugin:
             try:
                 await drain_owned(operation)
             except asyncio.CancelledError:
+                # Cancelling the cancel path is a no-op by design.
                 pass
 
     async def _stop_service(self) -> None:

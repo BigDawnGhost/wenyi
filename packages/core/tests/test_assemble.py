@@ -17,6 +17,8 @@ from wenyi_core.assemble.about import about_xhtml, append_about_page
 from wenyi_core.assemble.epub_package import EpubChapter, EpubTocEntry, write_epub
 from wenyi_core.assemble.epub_presentation import _rewrite_html_document
 from wenyi_core.assemble.html_renderer import _render_chapter_html, _render_segments_html
+from wenyi_core.assemble.html_resources import _package_html_resources
+from wenyi_core.assemble.html_source import _render_html_source
 from wenyi_core.assemble.writer import assemble
 from wenyi_core.assemble.writer_common import bilingual_out_path
 from wenyi_core.config import Config
@@ -50,6 +52,38 @@ _FB2_WITH_IMAGES = """\
 </section></body>
 <binary id="cover.jpg" content-type="image/jpeg">Y292ZXItYnl0ZXM=</binary>
 <binary id="inside.png" content-type="image/png">aW5zaWRlLWJ5dGVz</binary>
+</FictionBook>
+"""
+
+_FB2_WITH_MISSING_IMAGE = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"
+             xmlns:xlink="http://www.w3.org/1999/xlink">
+<description><title-info>
+  <book-title>Ghost Image Book</book-title>
+</title-info></description>
+<body><section><title><p>Chapter</p></title>
+  <image xlink:href="#ghost.png"/><p>Illustrated text.</p>
+</section></body>
+<binary id="cover.jpg" content-type="image/jpeg">Y292ZXItYnl0ZXM=</binary>
+</FictionBook>
+"""
+
+_FB2_WITH_IMAGE_ALT = """\
+<?xml version="1.0" encoding="utf-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"
+             xmlns:xlink="http://www.w3.org/1999/xlink">
+<description><title-info>
+  <book-title>Alt Text Book</book-title>
+  <coverpage><image xlink:href="#cover.jpg"/></coverpage>
+</title-info></description>
+<body><section><title><p>Chapter</p></title>
+  <image xlink:href="#inside.png" alt="Original &amp; alt"/>
+  <image xlink:href="#plain.gif"/><p>Illustrated text.</p>
+</section></body>
+<binary id="cover.jpg" content-type="image/jpeg">Y292ZXItYnl0ZXM=</binary>
+<binary id="inside.png" content-type="image/png">aW5zaWRlLWJ5dGVz</binary>
+<binary id="plain.gif" content-type="image/gif">cGxhaW4tYnl0ZXM=</binary>
 </FictionBook>
 """
 
@@ -293,6 +327,64 @@ class TestAssembleText(unittest.TestCase):
                 [chapter.model_dump() for chapter in document.chapters],
             )
 
+    def test_html_heading_levels_and_epub_toc_hierarchy(self):
+        parents = [None, None, 1, 2, 1, None]
+
+        def linked_parents(tree, node_tag, link_tag, attribute):
+            result = []
+            for node in tree.find_all(node_tag):
+                link = node.find(link_tag, recursive=False)
+                parent = node.find_parent(node_tag)
+                parent_link = parent.find(link_tag, recursive=False) if parent else None
+                result.append((link[attribute], parent_link[attribute] if parent_link else None))
+            return result
+
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "headings.html")
+            with open(source_path, "w", encoding="utf-8") as source:
+                source.write(
+                    "<!DOCTYPE html><html><head><title>Book</title></head><body>"
+                    "<p>Front matter.</p>"
+                    + "".join(
+                        f"<h{level}>Title {index}</h{level}><p>Body {index}.</p>"
+                        for index, level in enumerate([1, 2, 3, 2, 1], start=1)
+                    )
+                    + "</body></html>"
+                )
+            document = load_document(source_path, "en", "en")
+            store = FileStorage(os.path.join(directory, "state"))
+            store.init_from_document(document)
+            output_path = assemble(store, source_path, out_format="epub", about_page=False)
+
+            with zipfile.ZipFile(output_path) as archive:
+                paths = {os.path.basename(name): name for name in archive.namelist()}
+                for index, level in enumerate([None, 1, 2, 3, 2, 1]):
+                    body = BeautifulSoup(
+                        archive.read(paths[f"ch{index}.xhtml"]), "html.parser"
+                    ).body
+                    assert isinstance(body, Tag)
+                    self.assertEqual(
+                        [
+                            (heading.name, heading.get_text())
+                            for heading in body.find_all(["h1", "h2", "h3", "h4", "h5", "h6"])
+                        ],
+                        [(f"h{level}", f"Title {index}")] if level is not None else [],
+                    )
+                nav = BeautifulSoup(archive.read(paths["nav.xhtml"]), "html.parser").find("nav")
+                ncx = BeautifulSoup(archive.read(paths["toc.ncx"]), "xml").find("navMap")
+                assert isinstance(nav, Tag)
+                assert isinstance(ncx, Tag)
+
+            expected = [
+                (f"ch{index}.xhtml", f"ch{parent}.xhtml" if parent is not None else None)
+                for index, parent in enumerate(parents)
+            ]
+            self.assertEqual(linked_parents(nav, "li", "a", "href"), expected)
+            self.assertEqual(linked_parents(ncx, "navPoint", "content", "src"), expected)
+            self.assertTrue(
+                all(ordered_list.find("li", recursive=False) for ordered_list in nav.find_all("ol"))
+            )
+
     def test_fb2_images_and_cover_are_preserved_in_generated_epub(self):
         with tempfile.TemporaryDirectory() as d:
             fb2 = os.path.join(d, "illustrated.fb2")
@@ -319,6 +411,28 @@ class TestAssembleText(unittest.TestCase):
         self.assertIsNotNone(image)
         cover_item = package.find("item", properties="cover-image")
         self.assertIsNotNone(cover_item)
+
+    def test_fb2_image_alt_is_passed_through_to_generated_epub(self):
+        with tempfile.TemporaryDirectory() as d:
+            fb2 = os.path.join(d, "alt-text.fb2")
+            with open(fb2, "w", encoding="utf-8") as file:
+                file.write(_FB2_WITH_IMAGE_ALT)
+            store, _ = _run(fb2, os.path.join(d, "state"))
+
+            out = assemble(store, fb2, out_format="epub")
+
+            with zipfile.ZipFile(out) as archive:
+                chapter_name = next(
+                    name for name in archive.namelist() if name.endswith("/ch0.xhtml")
+                )
+                chapter = BeautifulSoup(archive.read(chapter_name), "html.parser")
+
+        with_alt = chapter.find("img", src="images/inside.png")
+        assert with_alt is not None
+        self.assertEqual(with_alt.get("alt"), "Original & alt")
+        without_alt = chapter.find("img", src="images/plain.gif")
+        assert without_alt is not None
+        self.assertEqual(without_alt.get("alt"), "")
 
     def test_txt_input_to_txt(self):
         with tempfile.TemporaryDirectory() as d:
@@ -510,6 +624,204 @@ class TestAssembleEpub(unittest.TestCase):
                 self.assertIsNotNone(link.find("sup", id="key-1"))
                 self.assertEqual(paragraph.get_text().replace("1", ""), "边境隧道通了。")
             self.assertEqual(len(client.calls), 1)
+
+    def test_bilingual_epub_keeps_footnotes_from_continuation_slices(self):
+        """Footnotes inside long-paragraph continuation slices survive bilingual export."""
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "split-notes.epub")
+            container = """<?xml version="1.0" encoding="UTF-8"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf"
+    media-type="application/oebps-package+xml"/></rootfiles>
+</container>"""
+            opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Split Notes</dc:title><dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="body" href="text/body.xhtml" media-type="application/xhtml+xml"/>
+    <item id="notes" href="notes/notes.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="body"/><itemref idref="notes"/></spine>
+</package>"""
+            head = " ".join(f"Sentence {i} continues the tale." for i in range(1, 11))
+            tail = " ".join(f"Sentence {i} continues the tale." for i in range(11, 17))
+            body = (
+                '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>'
+                + head
+                + ' <a href="../notes/notes.xhtml#note-1">alpha<sup id="key-1">1</sup></a> '
+                + tail
+                + ' <a href="../notes/notes.xhtml#note-2">beta<sup id="key-2">2</sup></a>'
+                + "</p></body></html>"
+            )
+            notes = (
+                '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+                '<p id="note-1"><a href="../text/body.xhtml#key-1">1 alpha</a>: first note.</p>'
+                '<p id="note-2"><a href="../text/body.xhtml#key-2">2 beta</a>: second note.</p>'
+                "</body></html>"
+            )
+            with zipfile.ZipFile(source_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr("META-INF/container.xml", container)
+                archive.writestr("OEBPS/content.opf", opf)
+                archive.writestr("OEBPS/text/body.xhtml", body)
+                archive.writestr("OEBPS/notes/notes.xhtml", notes)
+
+            document = load_document(source_path, "en", "zh", split_segments=2)
+            store = FileStorage(os.path.join(directory, "state"))
+            manifest = store.stage_document(document)
+            config = _config(os.path.join(directory, "state"))
+            config.source_lang = "en"
+
+            def handler(messages, tier, json_mode):
+                payload = json.loads(messages[-1]["content"].split("INPUT JSON:\n", 1)[1])
+                focus = payload.get("source_with_focus", "")
+                quote = "alpha" if "alpha" in focus else "beta"
+                return json.dumps({"target_quote": quote, "context": quote})
+
+            orchestrator = Orchestrator(config, client=FakeClient(handler=handler))
+            for chapter_meta in manifest["chapters"]:
+                chapter = store.load_chapter(chapter_meta["index"])
+                assert chapter.href is not None
+                is_body = chapter.href.endswith("text/body.xhtml")
+                for segment in chapter.segments:
+                    segment.target = (
+                        segment.source.replace("Sentence", "句子") if is_body else "注释译文。"
+                    )
+                store.save_chapter(chapter)
+                if is_body:
+                    # The footnotes sit in the continuation slices; the anchor slice must
+                    # have absorbed their metadata before alignment.
+                    self.assertTrue(any(segment.cont for segment in chapter.segments))
+                    orchestrator._annotations.align_annotations_after_batch(
+                        chapter.index, chapter, 0, len(chapter.text_segments), store
+                    )
+                    saved = store.load_chapter(chapter.index).segments[0].meta["epub_annotations"]
+                    self.assertEqual(len(saved["items"]), 2)
+                    self.assertEqual(len(saved["placements"]), 2)
+            manifest["initialized"] = True
+            store.save_manifest(manifest)
+
+            output_path = os.path.join(directory, "output-bi.epub")
+            assemble(
+                store,
+                source_path,
+                out_path=output_path,
+                out_format="epub",
+                bilingual=True,
+                about_page=False,
+            )
+            with zipfile.ZipFile(output_path) as archive:
+                rendered = BeautifulSoup(archive.read("OEBPS/text/body.xhtml"), "html.parser")
+                notes_soup = BeautifulSoup(archive.read("OEBPS/notes/notes.xhtml"), "html.parser")
+            paragraph = rendered.select_one("p:not(.tn-source)")
+            self.assertIsNotNone(paragraph)
+            assert isinstance(paragraph, Tag)
+            text = paragraph.get_text()
+            self.assertIn("句子 1 continues", text)
+            self.assertIn("句子 16 continues", text)
+            for note_id, key_id in (("note-1", "key-1"), ("note-2", "key-2")):
+                link = paragraph.find("a", href=f"../notes/notes.xhtml#{note_id}")
+                self.assertIsNotNone(link)
+                self.assertIsNotNone(paragraph.find("sup", id=key_id))
+                self.assertIsNotNone(notes_soup.find("a", href=f"../text/body.xhtml#{key_id}"))
+
+    def test_epub_export_survives_href_starting_with_continuation(self):
+        """An href whose first slice is a continuation no longer crashes export: the
+        original template block (footnote markup included) and the notes page survive."""
+        with tempfile.TemporaryDirectory() as directory:
+            source_path = os.path.join(directory, "orphan-notes.epub")
+            container = """<?xml version="1.0" encoding="UTF-8"?>
+<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles><rootfile full-path="OEBPS/content.opf"
+    media-type="application/oebps-package+xml"/></rootfiles>
+</container>"""
+            opf = """<?xml version="1.0" encoding="UTF-8"?>
+<package xmlns="http://www.idpf.org/2007/opf" version="3.0">
+  <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+    <dc:title>Orphan Notes</dc:title><dc:language>en</dc:language>
+  </metadata>
+  <manifest>
+    <item id="body" href="text/body.xhtml" media-type="application/xhtml+xml"/>
+    <item id="notes" href="notes/notes.xhtml" media-type="application/xhtml+xml"/>
+  </manifest>
+  <spine><itemref idref="body"/><itemref idref="notes"/></spine>
+</package>"""
+            head = " ".join(f"Sentence {i} continues the tale." for i in range(1, 11))
+            tail = " ".join(f"Sentence {i} continues the tale." for i in range(11, 17))
+            body = (
+                '<html xmlns="http://www.w3.org/1999/xhtml"><body><p>'
+                + head
+                + ' <a href="../notes/notes.xhtml#note-1">alpha<sup id="key-1">1</sup></a>'
+                + " "
+                + tail
+                + "</p></body></html>"
+            )
+            notes = (
+                '<html xmlns="http://www.w3.org/1999/xhtml"><body>'
+                '<p id="note-1"><a href="../text/body.xhtml#key-1">1 alpha</a>: first note.</p>'
+                "</body></html>"
+            )
+            with zipfile.ZipFile(source_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("mimetype", "application/epub+zip", zipfile.ZIP_STORED)
+                archive.writestr("META-INF/container.xml", container)
+                archive.writestr("OEBPS/content.opf", opf)
+                archive.writestr("OEBPS/text/body.xhtml", body)
+                archive.writestr("OEBPS/notes/notes.xhtml", notes)
+
+            document = load_document(source_path, "en", "zh", split_segments=2)
+            body_chapter = next(
+                chapter
+                for chapter in document.chapters
+                if (chapter.href or "").endswith("text/body.xhtml")
+            )
+            anchor_slice = body_chapter.segments[0]
+            self.assertTrue(anchor_slice.anchor)
+            self.assertFalse(anchor_slice.cont)
+            self.assertTrue(any(segment.cont for segment in body_chapter.segments))
+            # Simulate state that lost the anchor slice: the href now starts with a
+            # continuation, which used to raise ValueError inside options().
+            anchor_slice.anchor = None
+            anchor_slice.cont = True
+
+            store = FileStorage(os.path.join(directory, "state"))
+            manifest = store.stage_document(document)
+            for chapter_meta in manifest["chapters"]:
+                chapter = store.load_chapter(chapter_meta["index"])
+                assert chapter.href is not None
+                is_body = chapter.href.endswith("text/body.xhtml")
+                for segment in chapter.segments:
+                    segment.target = (
+                        segment.source.replace("Sentence", "句子") if is_body else "注释译文。"
+                    )
+                store.save_chapter(chapter)
+            manifest["initialized"] = True
+            store.save_manifest(manifest)
+
+            output_path = os.path.join(directory, "output-bi.epub")
+            assemble(
+                store,
+                source_path,
+                out_path=output_path,
+                out_format="epub",
+                bilingual=True,
+                about_page=False,
+            )
+            with zipfile.ZipFile(output_path) as archive:
+                rendered = BeautifulSoup(archive.read("OEBPS/text/body.xhtml"), "html.parser")
+                notes_soup = BeautifulSoup(archive.read("OEBPS/notes/notes.xhtml"), "html.parser")
+            paragraph = rendered.select_one("p:not(.tn-source)")
+            self.assertIsNotNone(paragraph)
+            assert isinstance(paragraph, Tag)
+            # No saved block matches the orphaned continuation, so the template
+            # paragraph keeps its original text and its footnote markup.
+            self.assertIn("Sentence 1 continues", paragraph.get_text())
+            self.assertIsNotNone(paragraph.find("a", href="../notes/notes.xhtml#note-1"))
+            self.assertIsNotNone(paragraph.find("sup", id="key-1"))
+            # The note itself still lands on the notes page.
+            self.assertIsNotNone(notes_soup.find("p", id="note-1"))
+            self.assertIn("注释译文。", notes_soup.get_text())
 
     def test_nested_fragment_id_survives_textual_markup_flattening(self):
         html = '<html><body><h2><span id="inside">Section</span></h2></body></html>'
@@ -2156,6 +2468,150 @@ class TestEpubTocMisdetectRegression(unittest.TestCase):
         self.assertNotIn("↩", heading.get_text())
         self.assertNotIn("目录", heading.get_text())
         self.assertIsNone(rendered.select_one("[data-tn-annotation-id]"))
+
+
+class TestEpubHrefWarnings(unittest.TestCase):
+    """Unresolved EPUB hrefs are recorded as queryable warnings, never silently dropped."""
+
+    def test_package_html_resources_records_unresolved_internal_refs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "present.png").write_bytes(b"present-bytes")
+            html = (
+                '<p><img src="present.png"/><img src="missing.png"/></p>'
+                '<img src="#anchor"/><img src="https://example.com/remote.png"/>'
+            )
+            warnings: list[str] = []
+            packaged_html, packaged = _package_html_resources(
+                html, source_dir=directory, href_prefix="assets", warnings=warnings
+            )
+            self.assertEqual(warnings, ["unresolved media reference: missing.png"])
+            self.assertIn('src="missing.png"', packaged_html)
+            self.assertIn("assets/", packaged_html)
+            self.assertEqual(len(packaged), 1)
+
+    def test_package_html_resources_without_collector_keeps_behavior(self):
+        html = '<p><img src="missing.png"/></p>'
+        packaged_html, packaged = _package_html_resources(
+            html, source_dir=".", href_prefix="assets"
+        )
+        self.assertEqual(packaged, {})
+        self.assertIn('src="missing.png"', packaged_html)
+
+    def test_fb2_missing_image_reference_is_recorded_not_silent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "ghost.fb2")
+            Path(source).write_text(_FB2_WITH_MISSING_IMAGE, encoding="utf-8")
+            store, _ = _run(source, os.path.join(directory, "state"))
+            warnings: list[str] = []
+            out = assemble(store, source, out_format="epub", about_page=False, warnings=warnings)
+            self.assertTrue(any("ghost.png" in w and "chapter" in w for w in warnings), warnings)
+            sidecar = Path(f"{out}.warnings.json")
+            self.assertTrue(sidecar.exists())
+            self.assertEqual(json.loads(sidecar.read_text(encoding="utf-8")), warnings)
+            self.assertTrue(os.path.exists(out))
+
+    def test_html_template_missing_image_is_recorded_not_silent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "broken.html")
+            Path(source).write_text(
+                "<!DOCTYPE html><html><head><title>Book</title></head><body>"
+                "<h1>Chapter</h1><p>Text.</p>"
+                '<p><img src="present.png"/><img src="missing.png"/></p>'
+                "</body></html>",
+                encoding="utf-8",
+            )
+            Path(directory, "present.png").write_bytes(b"present-bytes")
+            document = load_document(source, "en", "en")
+            store = FileStorage(os.path.join(directory, "state"))
+            store.init_from_document(document)
+            warnings: list[str] = []
+            out = assemble(store, source, out_format="epub", about_page=False, warnings=warnings)
+            self.assertTrue(any("missing.png" in w and "chapter" in w for w in warnings), warnings)
+            sidecar = Path(f"{out}.warnings.json")
+            self.assertTrue(sidecar.exists())
+            self.assertEqual(json.loads(sidecar.read_text(encoding="utf-8")), warnings)
+            with zipfile.ZipFile(out) as archive:
+                assets = [name for name in archive.namelist() if "/assets/" in name]
+            self.assertEqual(len(assets), 1)
+
+
+class TestHtmlOrphanContinuation(unittest.TestCase):
+    """The merge-back continuity check names the chapter, the segment and the repair."""
+
+    def test_orphaned_continuation_error_names_chapter_segment_and_fix(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = os.path.join(directory, "book.html")
+            html = (
+                "<!DOCTYPE html><html><head><title>Book</title></head><body>"
+                "<h1>Chapter</h1><p>First paragraph.</p>"
+                "</body></html>"
+            )
+            Path(source).write_text(html, encoding="utf-8")
+            manifest = {
+                "source_sha256": hashlib.sha256(html.encode("utf-8")).hexdigest(),
+                "source_lang": "en",
+                "target_lang": "zh",
+            }
+            chapters = [
+                Chapter(
+                    index=3,
+                    title="Broken Chapter",
+                    segments=[Segment(index=0, source="continued slice", cont=True)],
+                )
+            ]
+            with self.assertRaises(ValueError) as raised:
+                _render_html_source(
+                    source,
+                    manifest,
+                    chapters,
+                    bilingual=False,
+                    order="source_first",
+                    preserve_source_style=False,
+                )
+            message = str(raised.exception)
+            self.assertIn("chapter 3", message)
+            self.assertIn("Broken Chapter", message)
+            self.assertIn("segment 0", message)
+            self.assertIn("anchor", message)
+            self.assertIn("re-run", message.lower())
+
+
+class TestStandaloneExport(unittest.TestCase):
+    def test_export_preserves_saved_punctuation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "novel.txt"
+            source.write_text("Hello world.", encoding="utf-8")
+            config = Config.from_dict(
+                {
+                    "language": {"source": "en", "target": "zh"},
+                    "llm": {"preset": "fake"},
+                    "pipeline": {
+                        "book_understanding": False,
+                        "polish": False,
+                        "annotation_alignment": False,
+                    },
+                    "paths": {"state_dir": str(Path(directory) / "state")},
+                }
+            )
+
+            def handler(messages, tier, json_mode):
+                if "literary translator" in messages[0]["content"]:
+                    return json.dumps({"translations": ["他说,真的吗?"]}, ensure_ascii=False)
+                return routing_handler(messages, tier, json_mode)
+
+            orchestrator = Orchestrator(config, client=FakeClient(handler=handler))
+            store = orchestrator.run(str(source))
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "他说,真的吗?")
+
+            output = Path(
+                orchestrator.run_assemble(
+                    str(source),
+                    out_format="txt",
+                    out_path=str(Path(directory) / "novel.zh.txt"),
+                )["output"]
+            )
+            self.assertIn("他说,真的吗?", output.read_text(encoding="utf-8"))
+            self.assertEqual(store.load_chapter(0).text_segments[0].target, "他说,真的吗?")
 
 
 if __name__ == "__main__":

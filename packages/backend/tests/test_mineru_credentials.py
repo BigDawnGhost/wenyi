@@ -2,10 +2,11 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
+from typing import cast
 
 import pytest
 from tests.fake_llm import routing_handler
-from wenyi_backend.context import current_context, use_context
+from wenyi_backend.context import BackendStorage, current_context, use_context
 from wenyi_backend.execution import operations
 from wenyi_backend.execution.bindings import operation_services
 from wenyi_backend.execution.contracts import ExecutionRequest
@@ -57,15 +58,21 @@ def test_worker_conversion_resolves_execution_credentials_only(
     with use_context(context):
         services = operation_services(context)
         if operation in {"parse", "parse_then_prepare"}:
-            operations.parse_source("p", storage, config, lambda *args: None, services)
-            operations.parse_source("p", storage, config, lambda *args: None, services)
-            assert storage.read_artifact("preview.json")["fmt"] == "pdf"
+            operations.parse_source(
+                "p", cast(BackendStorage, storage), config, lambda *args: None, services
+            )
+            operations.parse_source(
+                "p", cast(BackendStorage, storage), config, lambda *args: None, services
+            )
+            preview = storage.read_artifact("preview.json")
+            assert preview is not None
+            assert preview["fmt"] == "pdf"
         if operation != "parse":
             operations.book_operation(
                 ExecutionRequest(
                     "translation" if operation == "translation" else "prepare", "p", params=params
                 ),
-                storage,
+                cast(BackendStorage, storage),
                 config,
                 FakeClient(handler=routing_handler),
                 lambda *args: None,
@@ -101,7 +108,7 @@ def test_pdf_resolvers_remain_context_local(backend_context, monkeypatch, tmp_pa
         with use_context(context):
             operations.parse_source(
                 "p",
-                FileStorage(str(tmp_path / f"state-{index}")),
+                cast(BackendStorage, FileStorage(str(tmp_path / f"state-{index}"))),
                 Config.from_dict({"language": {"source": "en", "target": "zh"}}),
                 lambda *args: None,
                 operation_services(context),

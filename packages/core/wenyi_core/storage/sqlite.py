@@ -18,9 +18,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 
-from ..errors import ArtifactCorrupt, SchemaTooNew
+from ..errors import ArtifactCorrupt, SchemaTooNew, WenyiError
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..models.document import Chapter, Document
 from .io_path import require_sqlite_path
@@ -141,6 +141,7 @@ class SqliteStorage:
         conn.row_factory = sqlite3.Row
         try:
             conn.execute("PRAGMA busy_timeout = 5000")
+            self._check_database_integrity(conn)
             conn.execute("PRAGMA foreign_keys = ON")
             if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
                 conn.execute("PRAGMA journal_mode = WAL")
@@ -217,6 +218,33 @@ class SqliteStorage:
             conn.close()
             raise
         return conn
+
+    def _check_database_integrity(self, conn: sqlite3.Connection) -> None:
+        """Refuse to open a database whose contents fail SQLite's quick check.
+
+        A damaged file otherwise surfaces later as arbitrary
+        sqlite3.DatabaseError values from unrelated statements. The check
+        runs once per opened connection, and connections are cached per
+        thread, so ordinary statements do not pay for it again.
+        """
+        guidance = (
+            "Restore the database from a backup, or move or delete state.sqlite3 "
+            "so a fresh database is created; source files and exports in the run "
+            "directory are separate files and stay untouched."
+        )
+        try:
+            report = conn.execute("PRAGMA quick_check").fetchone()[0]
+        except sqlite3.DatabaseError as error:
+            report = str(error)
+            raise WenyiError(
+                f"Local state database is corrupted ({report}): {self.database_path}. {guidance}",
+                code="database_corrupt",
+            ) from error
+        if report != "ok":
+            raise WenyiError(
+                f"Local state database is corrupted ({report}): {self.database_path}. {guidance}",
+                code="database_corrupt",
+            )
 
     def _check_schema_version(self, conn: sqlite3.Connection) -> int:
         """Refuse newer schemas before reading data or attempting an upgrade.
@@ -526,8 +554,7 @@ class SqliteStorage:
                 self.save_annotation_contexts(annotations)
             else:
                 self.delete_artifact("annotation_contexts.json")
-            for chapter in doc.chapters:
-                self.save_chapter(chapter)
+            self.save_chapters(doc.chapters)
         return {
             "title": doc.title,
             "fmt": doc.fmt,
@@ -617,35 +644,112 @@ class SqliteStorage:
                     break
             self.save_manifest(manifest)
 
+    _CHAPTER_BATCH_SIZE = 500
+
     def save_chapter(
         self, chapter: Chapter, *, revision_kind: Literal["manual"] | None = None
     ) -> None:
         if revision_kind not in (None, "manual"):
             raise ValueError("Invalid chapter revision kind")
-        key = f"chapters/ch{chapter.index}.json"
+        self.save_chapters([chapter], revision_kind=revision_kind)
+
+    def save_chapters(
+        self,
+        chapters: Iterable[Chapter],
+        *,
+        revision_kind: Literal["manual"] | None = None,
+    ) -> None:
+        """Upsert many chapters in one transaction with chunked statements.
+
+        Staging hundreds of chapters one by one commits one transaction per
+        chapter; batching keeps a single transaction and about one statement
+        round trip per _CHAPTER_BATCH_SIZE chunk. Chapter upserts and
+        segment rewrites are idempotent, and revision records only log actual
+        segment changes, so retrying or resuming a batch never double-counts
+        history.
+        """
+        if revision_kind not in (None, "manual"):
+            raise ValueError("Invalid chapter revision kind")
+        chapter_list = list(chapters)
+        if not chapter_list:
+            return
         with self.state_lock():
-            previous = self.read_artifact(key)
-            self.write_artifact(key, chapter.model_dump())
-            self._record_chapter_changes(chapter, previous, kind=revision_kind)
-            self._save_chapter_statistics(self._connection(), chapter)
+            conn = self._connection()
+            index_version = conn.execute("PRAGMA user_version").fetchone()[0]
+            for start in range(0, len(chapter_list), self._CHAPTER_BATCH_SIZE):
+                chunk = chapter_list[start : start + self._CHAPTER_BATCH_SIZE]
+                entries = [
+                    (self._key(f"chapters/ch{chapter.index}.json"), chapter, chapter.model_dump())
+                    for chapter in chunk
+                ]
+                previous = self._read_artifact_bodies(conn, [entry[0] for entry in entries])
+                conn.executemany(
+                    "DELETE FROM artifact_records WHERE key=?",
+                    [(entry[0],) for entry in entries],
+                )
+                conn.executemany(
+                    "INSERT INTO artifacts(key,value) VALUES (?,?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    [(key, json.dumps(payload, ensure_ascii=False)) for key, _, payload in entries],
+                )
+                if index_version >= 3:
+                    from .sqlite_reader_index import refresh
+
+                    for key, _, payload in entries:
+                        refresh(conn, key, payload)
+                conn.executemany(
+                    "DELETE FROM chapter_statistics WHERE artifact_key=?",
+                    [(entry[0],) for entry in entries],
+                )
+                for key, chapter, payload in entries:
+                    self._record_chapter_changes(chapter, previous.get(key), kind=revision_kind)
+                    previous[key] = payload
+                conn.executemany(
+                    "INSERT INTO chapter_statistics "
+                    "(chapter_index, artifact_key, title, meta, word_count, target_word_count) "
+                    "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chapter_index) DO UPDATE SET "
+                    "artifact_key=excluded.artifact_key, title=excluded.title, meta=excluded.meta, "
+                    "word_count=excluded.word_count, target_word_count=excluded.target_word_count",
+                    [self._chapter_statistics_row(chapter) for _, chapter, _ in entries],
+                )
+
+    def _read_artifact_bodies(self, conn: sqlite3.Connection, keys: list[str]) -> dict[str, dict]:
+        """Read the committed bodies stored under the given keys in one query."""
+        if not keys or not self._database_present():
+            return {}
+        placeholders = ",".join("?" * len(keys))
+        rows = conn.execute(
+            f"SELECT key, value FROM artifacts WHERE key IN ({placeholders})", keys
+        ).fetchall()
+        bodies: dict[str, dict] = {}
+        for key, value in rows:
+            try:
+                bodies[key] = json.loads(value)
+            except json.JSONDecodeError as error:
+                raise ArtifactCorrupt(f"Artifact {key} is corrupt at byte {error.pos}") from error
+        return bodies
+
+    @staticmethod
+    def _chapter_statistics_row(chapter: Chapter) -> tuple:
+        segments = chapter.text_segments
+        return (
+            chapter.index,
+            f"chapters/ch{chapter.index}.json",
+            chapter.title,
+            json.dumps(chapter.meta, ensure_ascii=False),
+            len(segments),
+            sum(segment.target is not None for segment in segments),
+        )
 
     @staticmethod
     def _save_chapter_statistics(conn: sqlite3.Connection, chapter: Chapter) -> None:
-        segments = chapter.text_segments
         conn.execute(
             "INSERT INTO chapter_statistics "
             "(chapter_index, artifact_key, title, meta, word_count, target_word_count) "
             "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chapter_index) DO UPDATE SET "
             "artifact_key=excluded.artifact_key, title=excluded.title, meta=excluded.meta, "
             "word_count=excluded.word_count, target_word_count=excluded.target_word_count",
-            (
-                chapter.index,
-                f"chapters/ch{chapter.index}.json",
-                chapter.title,
-                json.dumps(chapter.meta, ensure_ascii=False),
-                len(segments),
-                sum(segment.target is not None for segment in segments),
-            ),
+            SqliteStorage._chapter_statistics_row(chapter),
         )
 
     def chapter_statistics(self) -> list[dict]:

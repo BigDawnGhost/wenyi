@@ -209,11 +209,9 @@ class RoutedLLMClient(LLMClient):
             def attempt_scope():
                 nonlocal active_reservation, attempt_number
                 self._validate_token_reservation(route)
-                estimate = (
-                    len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
-                    + 256
-                    + (route.max_output_tokens or 0)
-                )
+                payload = len(json.dumps(messages, ensure_ascii=False).encode("utf-8"))
+                divisor = self.config.budget.token_estimate_divisor
+                estimate = int(payload / divisor) + 256 + (route.max_output_tokens or 0)
                 with self.limits.attempt(route.provider, estimate, emit) as reservation:
                     active_reservation = reservation
                     attempt_number += 1
@@ -232,6 +230,7 @@ class RoutedLLMClient(LLMClient):
                 attempt_scope,
                 self.limits.wait_for_retry,
                 self._redact,
+                self.limits.cancelled.is_set,
             )
             safe_error = None
             try:

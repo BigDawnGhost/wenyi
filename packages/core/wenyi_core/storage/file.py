@@ -124,10 +124,11 @@ class FileStorage(FileArtifacts):
         return self._run.stage_document(doc, source_hash=source_hash)
 
     def init_from_document(self, doc: Document) -> dict:
-        """Stage a document and commit the manifest as the initialization marker."""
+        """Stage a document, commit the manifest last and drop the initialization marker."""
         manifest = self._run.stage_document(doc)
         manifest["initialized"] = True
         self._run.save_manifest(manifest)
+        self._run.finish_initialization()
         return manifest
 
     @contextmanager

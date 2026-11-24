@@ -55,9 +55,14 @@ class RedisCounters:
         with self._connect() as cache, cache.pipeline() as transaction:
             transaction.hgetall(f"{self.namespace}:tasks")
             transaction.hgetall(f"{self.namespace}:retries")
-            tasks, retries = transaction.execute()
-        counts: Counters = {"tasks": {}, "retries": {}}
-        for metric, rows in (("tasks", tasks), ("retries", retries)):
+            transaction.hgetall(f"{self.namespace}:task_cancel_drains")
+            tasks, retries, drains = transaction.execute()
+        counts: Counters = {"tasks": {}, "retries": {}, "task_cancel_drains": {}}
+        for metric, rows in (
+            ("tasks", tasks),
+            ("retries", retries),
+            ("task_cancel_drains", drains),
+        ):
             for key, value in rows.items():
                 first, second = json.loads(key)
                 counts[metric][first, second] = int(value)

@@ -64,6 +64,17 @@ async def enqueue_export(pid: str, body: ExportRequest, *, kind: str = "export")
         raise ApiError(
             QUEUE_UNAVAILABLE, 503, "Export queue is unavailable; retry the operation"
         ) from error
+    admitted = current_context().repository.get_job(job_id)
+    admitted_run_id = admitted.get("run_id") if isinstance(admitted, dict) else None
+    if admitted_run_id and admitted_run_id != run_id:
+        # An identical in-flight export already owns this admission slot; reuse it
+        # instead of dispatching a duplicate queue task.
+        return {
+            "job_id": admitted_run_id,
+            "project_id": pid,
+            "kind": kind,
+            "export_id": export_id,
+        }
     try:
         job = await enqueue(
             "run_export",

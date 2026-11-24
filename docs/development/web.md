@@ -6,7 +6,7 @@ This guide covers the Web application's development environment and backend cont
 
 ## Local development environment
 
-Use Python 3.10+, `uv`, Node 22, pnpm 9, PostgreSQL 16, and Redis 7. Run commands from the repository root. The default Python workspace installation only selects CLI/Core; Web development needs the full workspace:
+Use Python 3.10+, `uv`, Node 22, pnpm 9 (the versions pinned in CI and mirrored in the root `package.json` `engines` field), PostgreSQL 16, and Redis 7. Run commands from the repository root. The default Python workspace installation only selects CLI/Core; Web development needs the full workspace:
 
 ```bash
 uv sync --locked --all-packages --group dev
@@ -151,7 +151,7 @@ The API admits durable jobs before enqueueing them. Workflow admission captures 
 
 `BackendContext` injects application-owned repositories, storage, telemetry, model construction, and queue ports. ASGI requests, WebSocket handlers, worker entry points, and recovery loops bind their own context. `asyncio.to_thread` and AnyIO propagate it; raw threads need an explicit copied context. Do not introduce a process-global “current platform” selector or let a callback use another application's adapters.
 
-Long workflows use a PostgreSQL **session advisory lock** for project execution ownership. State changes use short transactions and transaction-scoped advisory locks. A session lock can remain held during a model request without leaving a database write transaction open. Keep model requests, parsing, and rendering out of short state transactions.
+Long workflows use a PostgreSQL **session advisory lock** for project execution ownership, held on a dedicated connection so waiting or running tasks never pin shared pool connections. State changes use short transactions and transaction-scoped advisory locks. A session lock can remain held during a model request without leaving a database write transaction open. Keep model requests, parsing, and rendering out of short state transactions. The shared pool serves short request and state connections; its depth is set by `WENYI_DB_POOL_MAX_SIZE`, and pool saturation answers `503` with `Retry-After` instead of a `500`.
 
 Exports have a durable job/export identity and an independent execution lock. Their saved consistent snapshot allows rendering beside translation without holding the project's long-running write lock. Duplicate delivery must not regenerate a completed export.
 

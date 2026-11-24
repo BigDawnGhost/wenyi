@@ -10,6 +10,8 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
+import os
 import queue
 import secrets
 import sqlite3
@@ -21,6 +23,10 @@ from typing import Any, TextIO
 from uuid import uuid4
 
 from . import notices
+
+LOCAL_DIAGNOSTICS_ENV = "WENYI_DIAGNOSTICS_LOCAL"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_logger = logging.getLogger(__name__)
 
 EVENTS = frozenset(
     {
@@ -91,6 +97,7 @@ REASONS = frozenset(
         "shutdown_requested",
         "forced",
         "wait_failed",
+        "migration_failed",
     }
 )
 # Match known base classes, never serialize a user-defined exception class name.
@@ -162,6 +169,27 @@ def project_attributes(data: dict[str, Any]) -> dict:
             if value in EXCEPTION_NAMES:
                 result[key] = value
     return result
+
+
+def local_diagnostics_enabled() -> bool:
+    """True when the local diagnostic switch asks for in-process recording."""
+    return os.environ.get(LOCAL_DIAGNOSTICS_ENV, "").strip().lower() in _TRUTHY
+
+
+def record_local_event(event: str, data: dict[str, Any]) -> None:
+    """Project one content-free diagnostic into the local logging channel."""
+    payload = json.dumps(
+        {"event": event, "attributes": project_attributes(data)}, separators=(",", ":")
+    )
+    _logger.info("%s", payload)
+
+
+def deliver(reporter: Reporter | None, event: str, **data: Any) -> None:
+    """Emit to the parent receiver; with no receiver, record locally only if switched on."""
+    if reporter is not None:
+        reporter.emit(event, **data)
+    elif local_diagnostics_enabled():
+        record_local_event(event, data)
 
 
 def failure_attributes(error: BaseException) -> dict:
@@ -243,22 +271,22 @@ class EngineDiagnostics:
                     for key in ("os_error", "win_error", "sqlite_error"):
                         if key in original:
                             fields[key] = original[key]
-                if self.reporter is not None:
-                    self.reporter.emit(
-                        "engine_runtime_failed" if self.ready else "engine_bootstrap_failed",
-                        stage=stage,
-                        **fields,
-                    )
+                deliver(
+                    self.reporter,
+                    "engine_runtime_failed" if self.ready else "engine_bootstrap_failed",
+                    stage=stage,
+                    **fields,
+                )
             raise
 
     def stopped(self) -> None:
-        if self.reporter is not None:
-            self.reporter.emit(
-                "engine_stopped",
-                stage="running" if self.ready else "bootstrap",
-                reason="failed" if self.failed else "completed",
-                exit_code=self.exit_code,
-            )
+        deliver(
+            self.reporter,
+            "engine_stopped",
+            stage="running" if self.ready else "bootstrap",
+            reason="failed" if self.failed else "completed",
+            exit_code=self.exit_code,
+        )
 
 
 class Reporter:
@@ -328,8 +356,11 @@ class Reporter:
                 self.stream.write(value)
                 self.stream.flush()
             except (OSError, ValueError):
-                # The parent is gone. Never fall back to arbitrary console logging.
+                # The parent is gone. Never fall back to arbitrary console logging;
+                # the local diagnostic switch is the only opt-in record channel.
                 self.closed = True
+                if local_diagnostics_enabled():
+                    _logger.warning("desktop diagnostics receiver lost; stopping IPC writer")
                 return
             finally:
                 self.queue.task_done()
@@ -367,8 +398,7 @@ def current() -> tuple[Reporter | None, dict[str, str]]:
 
 def emit(event: str, **attributes: Any) -> None:
     reporter, context = current()
-    if reporter is not None:
-        reporter.emit(event, **{**context, **attributes})
+    deliver(reporter, event, **{**context, **attributes})
 
 
 class DiagnosticsMiddleware:

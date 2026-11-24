@@ -102,6 +102,15 @@ def options(
                     "heading": segment.kind == KIND_HEADING,
                     "annotations": segment.meta.get(ANNOTATION_META_KEY),
                 }
+            elif segment.cont:
+                # The anchor slice is missing, so no template block can absorb this
+                # continuation. Keep the template's original block (footnote markup
+                # included) instead of failing the whole export.
+                logging.getLogger(__name__).warning(
+                    "Omitting orphaned continuation segment %s on %s: no anchor slice",
+                    segment.index,
+                    href,
+                )
             else:
                 raise ValueError(
                     f"EPUB state is inconsistent: segment {segment.index} has no anchor"

@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from contextlib import ExitStack, closing
 from contextvars import copy_context
 from functools import partial
@@ -18,6 +19,10 @@ from ..live_statistics import LiveStatistics
 from .contracts import ExecutionDependencies, ExecutionRequest
 
 log = logging.getLogger(__name__)
+
+# A cancelled workflow gets this long to flush synchronous checkpoints before its slot is
+# released forcibly; a stuck in-flight model call must not block the queue indefinitely.
+CANCEL_DRAIN_TIMEOUT_SECONDS: float = 30.0
 
 
 def error_code(error: BaseException) -> str:
@@ -111,12 +116,33 @@ def execute(
         resources.callback(stop_watcher)
         emitter = redis_progress_fn(cache, pid, kind=kind, run_id=run_id)
 
-        def progress(done: int, total: int, label: str) -> None:
+        def progress(done: int, total: int, label: str, payload: dict | None = None) -> None:
             if stop.is_set() or projects.is_paused(pid):
                 if client is not None:
                     client.cancel()
                 raise PauseRequested(pid)
-            emitter(done, total, label)
+            emitter(done, total, label, payload)
+
+        def record_failure(error: BaseException) -> None:
+            # Provider credentials are stripped before they reach this point; the
+            # traceback stays on the operator side and is never returned to clients.
+            log.exception("Pipeline task failed: kind=%s run_id=%s", kind, run_id)
+            record_terminal_status(request, dependencies, error)
+            storage.log_event(
+                "pipeline_error",
+                kind=kind,
+                run_id=run_id,
+                error=str(error),
+                error_type=type(error).__name__,
+            )
+            # Tell live subscribers the run is over; failure here must not mask the
+            # original error, so publish_error swallows transport problems.
+            publish_error(cache, pid, code=error_code(error), message=str(error), run_id=run_id)
+            # Observability only: the counter swallows its own failures.
+            if job or not run_id:
+                dependencies.metrics.record_task(
+                    status="error", code=error_code(error), identity=metric_identity
+                )
 
         job = None
         try:
@@ -173,25 +199,12 @@ def execute(
                     status="paused", code="none", identity=metric_identity
                 )
         except Exception as error:
-            # Provider credentials are stripped before they reach this point; the
-            # traceback stays on the operator side and is never returned to clients.
-            log.exception("Pipeline task failed: kind=%s run_id=%s", kind, run_id)
-            record_terminal_status(request, dependencies, error)
-            storage.log_event(
-                "pipeline_error",
-                kind=kind,
-                run_id=run_id,
-                error=str(error),
-                error_type=type(error).__name__,
-            )
-            # Tell live subscribers the run is over; failure here must not mask the
-            # original error, so publish_error swallows transport problems.
-            publish_error(cache, pid, code=error_code(error), message=str(error), run_id=run_id)
-            # Observability only: the counter swallows its own failures.
-            if job or not run_id:
-                dependencies.metrics.record_task(
-                    status="error", code=error_code(error), identity=metric_identity
-                )
+            record_failure(error)
+            raise
+        except BaseException as error:
+            # Native panics reach Python as BaseException subclasses (pyo3's
+            # PanicException); catch them too or the task would stay running forever.
+            record_failure(error)
             raise
         finally:
             stop_watcher()
@@ -210,11 +223,31 @@ async def run(request: ExecutionRequest, dependencies: ExecutionDependencies) ->
     try:
         await asyncio.shield(task)
     except asyncio.CancelledError:
-        # Timeout/shutdown must drain synchronous checkpoint writes before releasing the slot.
+        # Timeout/shutdown must drain synchronous checkpoint writes before releasing the slot,
+        # but a stuck drain must never hold the workflow slot indefinitely.
         stop.set()
-        await asyncio.shield(task)
+        started = time.monotonic()
+        outcome = "forced"
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=CANCEL_DRAIN_TIMEOUT_SECONDS)
+            outcome = "drained"
+        except asyncio.TimeoutError:
+            log.warning(
+                "Workflow %s ignored cancellation for %.1fs; forcing terminal paused state",
+                request.run_id or request.project_id,
+                CANCEL_DRAIN_TIMEOUT_SECONDS,
+            )
+            await asyncio.to_thread(record_terminal_status, request, dependencies, status="paused")
+        finally:
+            dependencies.metrics.record_cancel_drain(
+                outcome=outcome, seconds=time.monotonic() - started, identity=request.run_id
+            )
         raise
     except Exception as error:
         # Startup may fail before the synchronous runner can enter its recovery scope.
+        await asyncio.to_thread(record_terminal_status, request, dependencies, error)
+        raise
+    except BaseException as error:
+        # Native panics arrive as BaseException subclasses; still land the terminal state.
         await asyncio.to_thread(record_terminal_status, request, dependencies, error)
         raise

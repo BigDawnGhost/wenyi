@@ -2,6 +2,7 @@
 name = "wenyi-core-native"
 version = "0.0.0"
 edition = "2021"
+rust-version = "1.89"
 publish = false
 license = "GPL-3.0-only"
 
@@ -12,6 +13,9 @@ license = "GPL-3.0-only"
 # Preserve the wenyi_core.markup._epub_native Python import path.
 name = "_epub_native"
 crate-type = ["cdylib"]
+
+[features]
+panic-injection = []
 
 [dependencies]
 anyhow = "1"

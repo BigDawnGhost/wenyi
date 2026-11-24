@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@wenyi/ui/primitives";
 import { SettingsSection } from "@wenyi/ui/settings";
+import { IpcErrorCodes } from "@wenyi/shared-schema";
 import { useDesktopI18n } from "./i18n";
 import { useCredentialSafety } from "./updateSafety";
 import { ReleaseNotes } from "./ReleaseNotes";
@@ -19,13 +20,14 @@ type Status = {
   error?: "check_failed" | "download_failed" | "install_failed" | "busy" | "unavailable";
 };
 // Command code -> the label this page already knows how to render. The codes
-// come from apps/desktop/src/{updates,native_export,native_drop,diagnostics_ui}.rs.
+// come from the shared registry that both ends use; the native mirror lives in
+// apps/desktop/src/ipc_error.rs.
 const SUCCESS_LABELS: Record<string, NonNullable<Status["error"]>> = {
-  update_busy: "busy",
-  update_unavailable: "unavailable",
-  update_check_failed: "check_failed",
-  update_download_failed: "download_failed",
-  update_install_failed: "install_failed",
+  [IpcErrorCodes.updateBusy]: "busy",
+  [IpcErrorCodes.updateUnavailable]: "unavailable",
+  [IpcErrorCodes.updateCheckFailed]: "check_failed",
+  [IpcErrorCodes.updateDownloadFailed]: "download_failed",
+  [IpcErrorCodes.updateInstallFailed]: "install_failed",
 };
 
 function invoke<T>(command: string): Promise<T> {

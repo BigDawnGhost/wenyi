@@ -78,6 +78,29 @@ schema 生成与传输契约见 [Web 开发](web.md)。
 每次操作的 Storage 由创建方在成功和失败路径中关闭。读取路由使用显式关闭作用域；
 runner 每取得一个资源就登记清理，包括启动遥测时失败的情况。
 
+<a id="locks-backend"></a>
+
+### 跨进程文件锁
+
+本地存储使用跨进程建议锁（`packages/core/wenyi_core/storage/locks.py`）串行化
+工作流关键段。两个可互换的后端满足同一契约
+（`packages/core/tests/test_locks_contract.py`）：经 ctypes 加载的可选
+`wenyi-locks` 原生库，以及纯 Python 回退。后端在每个进程内只探测一次：
+
+- `WENYI_LOCKS_BACKEND` 取 `auto`（默认）、`rust` 或 `python`。`auto` 与 `rust`
+  优先使用原生库，`python` 始终使用回退；未知取值抛出 `ValueError`。
+- `WENYI_LOCKS_LIB` 指定共享库的显式路径（`wenyi_locks.dll`、
+  `libwenyi_locks.dylib` 或 `libwenyi_locks.so`），并最先尝试；若加载失败，
+  记录错误日志后忽略该覆盖并继续搜索。未设置时按顺序探测 PyInstaller 打包目录、
+  `$CARGO_TARGET_DIR/{release,debug}` 与仓库根目录 `target/{release,debug}`——
+  原生 crate 共用仓库根 Cargo 工作区，检出版本构建后无需设置该变量即可被找到。
+- `WENYI_LOCKS_MODE` 决定原生库加载失败时的行为：`warn`（默认）记录一次包含
+  尝试路径与原因的警告并保留 Python 回退；`error` 以相同原因使取锁直接失败；
+  `silent` 保留回退且不告警。未知取值抛出 `ValueError`。
+
+原生库使用 `cargo build -p wenyi-locks`（或 `--release`）构建；发布打包如何
+捆绑该库见[桌面发布](releasing.md)。
+
 ### 已保存设置重建
 
 重建与书籍状态、账本迁移分离，在 CLI 加载配置，以及 Web repository、

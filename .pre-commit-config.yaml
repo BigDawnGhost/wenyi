@@ -1,9 +1,19 @@
 # Run Ruff before commits: fix lint issues, including import order, then format.
 # Enable once with: uv run pre-commit install
+# The Ruff version is pinned once in pyproject.toml (dev group); these local
+# hooks run that same pinned Ruff, so there is no separate hook revision to bump.
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.21
+  - repo: local
     hooks:
       - id: ruff-check
-        args: [--fix]
+        name: ruff-check
+        entry: uv run --no-sync ruff check --force-exclude --fix
+        language: system
+        types: [python]
+        require_serial: true
       - id: ruff-format
+        name: ruff-format
+        entry: uv run --no-sync ruff format --force-exclude
+        language: system
+        types: [python]
+        require_serial: true

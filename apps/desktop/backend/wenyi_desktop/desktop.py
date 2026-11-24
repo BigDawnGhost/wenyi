@@ -10,9 +10,9 @@ import socket
 import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
-from .diagnostics import EngineDiagnostics, Reporter
+from .diagnostics import EngineDiagnostics, Reporter, deliver
 from .ownership import NativeOwner, profile_lock
 
 if TYPE_CHECKING:
@@ -149,6 +149,7 @@ def watch_parent(server: uvicorn.Server) -> None:
             if json.loads(line) == {"command": "shutdown"}:
                 break
         except (ValueError, TypeError):
+            # Only a well-formed shutdown command matters; ignore the rest.
             continue
     server.should_exit = True
     # EOF means the owner may already be gone and cannot enforce its own deadline.
@@ -237,14 +238,13 @@ def main() -> None:
     reporter = (
         Reporter(protocol_stream) if os.environ.get("WENYI_DIAGNOSTICS_PROTOCOL") == "1" else None
     )
-    if reporter is not None:
-        reporter.emit("engine_bootstrap")
+    deliver(reporter, "engine_bootstrap")
     lifecycle = EngineDiagnostics(reporter)
     try:
         with lifecycle.observe("bootstrap"):
             if args.native_startup:
                 # The native pipe uses UTF-8 regardless of the Windows locale.
-                sys.stdin.reconfigure(encoding="utf-8")
+                cast(Any, sys.stdin).reconfigure(encoding="utf-8")
             # An injected directory is authoritative; the fallback is CLI-only.
             workspace = (args.data_dir or default_workspace()).expanduser().resolve()
             owner = NativeOwner.read(sys.stdin, workspace) if args.native_startup else None

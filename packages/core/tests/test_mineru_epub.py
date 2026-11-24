@@ -14,6 +14,7 @@ from wenyi_core.ingest.epub_reader import read_epub
 from wenyi_core.ingest.mineru_epub import convert_json
 from wenyi_core.ingest.pdf_reader import pdf_cache_epub_path
 from wenyi_core.ingest.source_hash import source_sha256
+from wenyi_core.models.errors import MinerUError
 from wenyi_core.pipeline.prepare.input_preparation import parse_document
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
@@ -534,3 +535,16 @@ def test_mineru_epub_export_updates_head_title_from_translated_chapter(tmp_path)
         xhtml = ET.fromstring(archive.read("EPUB/source.xhtml"))
     assert "<dc:title>Quantum Notes-wenyi-zh</dc:title>" in opf
     assert xhtml.findtext("x:head/x:title", namespaces=NS) == "量子笔记"
+
+
+def test_image_only_content_list_reports_missing_text_layer(tmp_path):
+    (tmp_path / "scan.gif").write_bytes(GIF)
+    source = tmp_path / "example_content_list_v2.json"
+    source.write_text(
+        json.dumps([[_block("image", image_source={"path": "scan.gif"})]]),
+        encoding="utf-8",
+    )
+    output = tmp_path / "source.epub"
+    with pytest.raises(MinerUError, match="no text from the PDF"):
+        convert_json(source, output)
+    assert not output.exists()

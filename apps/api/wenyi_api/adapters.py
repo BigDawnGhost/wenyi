@@ -65,7 +65,7 @@ class PostgresRepository:
         return self._pool
 
     def start(self):
-        self._pool = init_pool(self.settings.psycopg_dsn)
+        self._pool = init_pool(self.settings.psycopg_dsn, max_size=self.settings.db_pool_max_size)
         try:
             from .config_rebuild import rebuild_saved_settings
 
@@ -132,8 +132,11 @@ class PostgresRepository:
             return row[0]
 
     def admit_job(self, pid, kind, job_id, *, project_status, **kwargs):
-        result = dal.create_job(pid, kind, job_id, status="queued", **kwargs)
-        dal.set_project_status(pid, project_status)
+        with self.pool.connection() as connection, connection.transaction():
+            result = dal.create_job(
+                pid, kind, job_id, status="queued", connection=connection, **kwargs
+            )
+            dal.set_project_status(pid, project_status, connection=connection)
         return result
 
     def fail_admission(self, job_id, status, error):
@@ -205,6 +208,17 @@ class PostgresExports:
             export_history_lock(connection, pid)
             if connection.execute("SELECT 1 FROM projects WHERE id=%s", (pid,)).fetchone() is None:
                 raise ApiError(PROJECT_NOT_FOUND, 404, "project not found")
+            active = connection.execute(
+                """SELECT j.id, j.run_id, e.id FROM jobs j
+                   JOIN exports e ON e.id=(j.params->>'export_id')::bigint
+                   WHERE j.project_id=%s AND j.kind='export'
+                     AND j.status IN ('queued','running') AND e.format=%s
+                   ORDER BY j.id DESC LIMIT 1""",
+                (pid, fmt),
+            ).fetchone()
+            if active is not None:
+                # Idempotent admission: one in-flight export per project and format.
+                return int(active[2]), int(active[0])
             export_id = dal.create_export(pid, fmt, options, connection=connection)
             job_id = dal.create_job(
                 pid,
@@ -237,7 +251,7 @@ class PostgresExports:
 def postgres_repository(context: BackendContext) -> PostgresRepository:
     """Narrow platform capabilities without adding PostgreSQL to the shared port."""
     repository = context.repository
-    assert isinstance(repository, PostgresRepository)
+    assert isinstance(repository, PostgresRepository), "expected a PostgresRepository backend"
     return repository
 
 
@@ -247,7 +261,7 @@ def create_context(settings: Settings) -> BackendContext:
     repository = PostgresRepository(settings)
 
     async def submit(name, **kwargs):
-        return await enqueue(settings.redis_url, name, **kwargs)
+        return await enqueue(settings.redis_url, name, settings.api_token, **kwargs)
 
     return BackendContext(
         repository=repository,
@@ -263,6 +277,7 @@ def create_context(settings: Settings) -> BackendContext:
         health=repository.health,
         update_term=repository.update_term,
         api_token=settings.api_token,
+        require_token=settings.require_token,
         remove_project=repository.remove_project,
         metrics=Metrics(RedisCounters(settings.redis_url)),
     )
