@@ -19,7 +19,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 same-file = "1"
 cap-std = "3"
-cap-fs-ext = "3"
+cap-fs-ext = "4"
 rfd = "0.15"
 semver = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
