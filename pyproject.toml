@@ -40,7 +40,7 @@ dev = [
     "httpx2>=2.13", # Starlette's TestClient HTTP transport.
     "pre-commit>=3.7",
     "python-docx>=1.2.0", # Independent DOCX fixtures and output checks.
-    "ruff==0.15.21", # Single ruff version source; CI, dev and pre-commit all run this pin.
+    "ruff==0.17.6", # Single ruff version source; CI, dev and pre-commit all run this pin.
     "pytest>=8",
     "pytest-rerunfailures>=14",
     "pytest-xdist>=3",
