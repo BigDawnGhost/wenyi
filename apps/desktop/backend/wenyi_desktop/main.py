@@ -221,6 +221,19 @@ class DesktopServices:
                     await asyncio.gather(*pending, return_exceptions=True)
 
 
+def _is_format_refusal(error: Exception) -> bool:
+    """Whether the engine refused the workspace's stored data format.
+
+    Only a format refusal may roll the workspace back to the pre-update
+    snapshot. Unrelated construction failures (a corrupt database file, a bad
+    configuration path, a lock conflict) must surface as-is: restoring a
+    backup there would overwrite live data that the failure did not touch.
+    """
+    if isinstance(error, SchemaTooNew):
+        return True
+    return "not a current-format Desktop catalog" in str(error)
+
+
 def create_context(
     workspace: str | Path,
     *,
@@ -238,6 +251,8 @@ def create_context(
             install_root=install_root,
         )
     except (RuntimeError, ValueError, sqlite3.Error, SchemaTooNew) as error:
+        if not _is_format_refusal(error):
+            raise
         # The upgraded engine refused this workspace's data. Roll it back to the
         # snapshot the shell wrote before the update, and report the outcome on
         # stdout so the native shell can tell the user, instead of leaving the
