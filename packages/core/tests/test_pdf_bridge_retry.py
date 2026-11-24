@@ -125,7 +125,7 @@ class BridgeRetryTests(unittest.TestCase):
         self.assertEqual(get.call_count, 3)
         self.assertEqual(sleep.call_args_list, [call(0.5), call(1.0)])
 
-    def test_extract_retries_server_errors_then_succeeds(self):
+    def test_extract_retries_connection_setup_then_succeeds(self):
         client = self._client()
         with tempfile.TemporaryDirectory() as directory:
             pdf = self._pdf(directory)
@@ -135,8 +135,8 @@ class BridgeRetryTests(unittest.TestCase):
                 patch(SLEEP_TARGET),
             ):
                 post.side_effect = [
-                    _plain_response(503, b"busy", "POST", EXTRACT_URL),
-                    _plain_response(500, b"broken", "POST", EXTRACT_URL),
+                    httpx.ConnectError("connection refused"),
+                    httpx.ConnectTimeout("connection not established"),
                     _json_response({"session_id": "session-1", "paragraphs": {"paragraphs": []}}),
                 ]
                 payload = client.extract(pdf)
@@ -178,22 +178,29 @@ class BridgeRetryTests(unittest.TestCase):
         self.assertEqual(post.call_count, 1)
         sleep.assert_not_called()
 
-    def test_extract_timeout_is_retryable(self):
+    def test_extract_does_not_replay_when_the_server_may_have_created_a_session(self):
         client = self._client()
         with tempfile.TemporaryDirectory() as directory:
             pdf = self._pdf(directory)
             with (
                 patch("wenyi_core.pdf_bridge.client.httpx.get", return_value=_health_response()),
                 patch("wenyi_core.pdf_bridge.client.httpx.post") as post,
-                patch(SLEEP_TARGET),
+                patch(SLEEP_TARGET) as sleep,
             ):
-                post.side_effect = [
-                    httpx.ReadTimeout("slow"),
-                    _json_response({"session_id": "session-1", "paragraphs": {"paragraphs": []}}),
-                ]
-                payload = client.extract(pdf)
-        self.assertEqual(payload["session_id"], "session-1")
-        self.assertEqual(post.call_count, 2)
+                for failure in (
+                    httpx.ReadTimeout("response lost"),
+                    httpx.ReadError("disconnected"),
+                    httpx.WriteError("upload interrupted"),
+                    _plain_response(503, b"service failure", "POST", EXTRACT_URL),
+                ):
+                    with self.subTest(failure=failure):
+                        post.reset_mock()
+                        post.side_effect = [failure]
+                        with self.assertRaises(BabeldocBridgeError) as raised:
+                            client.extract(pdf)
+                        self.assertFalse(raised.exception.retryable)
+                        post.assert_called_once()
+                        sleep.assert_not_called()
 
     def test_extract_network_exhaustion_raises_unavailable(self):
         client = self._client()

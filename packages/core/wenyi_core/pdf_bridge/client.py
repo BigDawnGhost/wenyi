@@ -56,8 +56,8 @@ def _error_preview(response: httpx.Response, limit: int = 500) -> str:
 class BabeldocBridgeError(IngestError):
     """Raised when the external BabelDOC bridge cannot complete a request.
 
-    Terminal condition: retrying cannot succeed — HTTP 4xx, bridge protocol
-    violations and local usage errors.
+    A terminal error is not safe or useful to retry automatically, including
+    an extract request whose outcome is unknown.
     """
 
     retryable: bool = False
@@ -101,11 +101,13 @@ def _failure_status(error: BaseException) -> int | None:
     return None
 
 
-def _is_retryable_failure(error: BaseException) -> bool:
-    """True for network/timeout failures and 408/409/429/5xx; False for terminal ones."""
+def _is_retryable_failure(error: BaseException, *, replay_safe: bool) -> bool:
+    """For session creation, only retry failures known to precede transmission."""
     for item in _exception_chain(error):
         if isinstance(item, BabeldocBridgeError) or isinstance(item, _TERMINAL_PROTOCOL_TYPES):
             return False
+    if not replay_safe:
+        return isinstance(error, (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout))
     status = _failure_status(error)
     if status is not None:
         return status in _RETRYABLE_STATUS_CODES or status >= 500
@@ -138,6 +140,8 @@ class BabeldocBridgeClient:
         operation: str,
         send: Callable[[], _T],
         wrap: Callable[[BaseException, bool], BabeldocBridgeError],
+        *,
+        replay_safe: bool,
     ) -> _T:
         """Run send() with bounded retries on transient network or 5xx failures."""
         attempt = 1
@@ -147,7 +151,7 @@ class BabeldocBridgeClient:
             except BabeldocBridgeError:
                 raise
             except Exception as error:
-                retryable = _is_retryable_failure(error)
+                retryable = _is_retryable_failure(error, replay_safe=replay_safe)
                 if not retryable or attempt >= self.max_attempts:
                     raise wrap(error, retryable) from error
                 delay = _retry_delay(attempt)
@@ -182,7 +186,7 @@ class BabeldocBridgeClient:
                 "Start wenyi-babeldoc-bridge from its separate repository first."
             )
 
-        return self._send_with_retry("health", send, wrap)
+        return self._send_with_retry("health", send, wrap, replay_safe=True)
 
     def extract(self, pdf_path: str | Path, *, pages: str | None = None) -> dict[str, Any]:
         pdf_path = Path(pdf_path)
@@ -218,7 +222,7 @@ class BabeldocBridgeClient:
                 return error_class(str(error))
             return error_class(f"extract request failed: {error}")
 
-        return self._send_with_retry("extract", send, wrap)
+        return self._send_with_retry("extract", send, wrap, replay_safe=False)
 
     def fillback(
         self,
@@ -305,4 +309,4 @@ class BabeldocBridgeClient:
                 return error_class(str(error))
             return error_class(f"fillback request failed: {error}")
 
-        return self._send_with_retry("fillback", send, wrap)
+        return self._send_with_retry("fillback", send, wrap, replay_safe=True)

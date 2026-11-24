@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -478,6 +480,56 @@ def test_duplicate_export_requests_share_one_task(api):
     assert third.status_code == 200, third.text
     assert third.json()["export_id"] != first.json()["export_id"]
     assert [name for name, _ in queue if name == "run_export"] == ["run_export", "run_export"]
+
+
+def test_export_after_edit_does_not_reuse_a_running_snapshot(api, monkeypatch):
+    from wenyi_core.assemble import writer
+
+    client, _ = api
+    pid = new_project(api)
+    upload(api, pid, filename="book.txt", data=b"One source paragraph.")
+    client.post(f"/projects/{pid}/prepare").raise_for_status()
+    execute_next(api)
+    endpoint = f"/projects/{pid}/exports"
+    segment = f"/projects/{pid}/review/0/segments/0"
+
+    def edit(before, after):
+        client.put(segment, json={"expected_target": before, "target": after}).raise_for_status()
+
+    def submit():
+        response = client.post(endpoint, json={"format": "txt"})
+        response.raise_for_status()
+        return response.json()["export_id"]
+
+    def download(eid):
+        response = client.get(f"{endpoint}/{eid}/download")
+        response.raise_for_status()
+        return response.text
+
+    rendering, release = threading.Event(), threading.Event()
+    render = writer.assemble
+
+    def hold_snapshot(*args, **kwargs):
+        rendering.set()
+        assert release.wait(10)
+        return render(*args, **kwargs)
+
+    edit(None, "First edition")
+    first = submit()
+    with monkeypatch.context() as patch, ThreadPoolExecutor(1) as pool:
+        patch.setattr(writer, "assemble", hold_snapshot)
+        worker = pool.submit(copy_context().run, execute_next, api)
+        try:
+            assert rendering.wait(10)
+            edit("First edition", "Corrected edition")
+            second = submit()
+        finally:
+            release.set()
+        worker.result(timeout=10)
+    assert second != first
+    execute_next(api)
+    assert "First edition" in download(first)
+    assert "Corrected edition" in download(second)
 
 
 def test_export_admission_distinguishes_options_config_and_source(api, monkeypatch):

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 
+from ..export_paths import bilingual_out_path as bilingual_out_path
 from ..i18n.languages import require_language
 from ..i18n.policy.models import PolicyContext
 from ..i18n.policy.resolver import resolve_policy
@@ -98,12 +99,6 @@ def _default_out(
         output_dir,
         f"{os.path.basename(base)}{suffix}{ext}",
     )
-
-
-def bilingual_out_path(out_path: str) -> str:
-    """Derive the bilingual path from an explicit out_path by appending -bi to the stem."""
-    base, ext = os.path.splitext(out_path)
-    return f"{base}-bi{ext}"
 
 
 def _ch_title(c: dict) -> str:

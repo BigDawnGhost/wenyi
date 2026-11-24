@@ -17,6 +17,7 @@ from typing import Any
 
 from ..config import Config
 from ..events import ProgressFn
+from ..export_paths import NumberedOutput
 from ..storage.protocol import Storage
 from .annotate.annotations import AnnotationService
 from .autofix.review_autofix import ReviewAutofixService
@@ -189,7 +190,7 @@ class Orchestrator:
         input_path: str,
         *,
         out_format: str | None = None,
-        out_path: str | None = None,
+        out_path: str | NumberedOutput | None = None,
         progress: ProgressFn | None = None,
     ) -> dict[str, Any]:
         """Export an existing-state snapshot without waiting for ongoing whole-book
@@ -230,7 +231,7 @@ class Orchestrator:
         *,
         progress: ProgressFn | None = None,
         out_format: str | None = None,
-        out_path: str | None = None,
+        out_path: str | NumberedOutput | None = None,
     ) -> dict[str, Any]:
         """Run any requested subset of ALL_STEPS."""
         steps = set(steps)
@@ -283,7 +284,7 @@ class Orchestrator:
         run_steps_input: list[str],
         progress: ProgressFn | None,
         out_format: str | None,
-        out_path: str | None,
+        out_path: str | NumberedOutput | None,
     ) -> dict[str, Any]:
         """Delegate review and assembly under the book lock and return combined results."""
         self._runtime.log_event(
@@ -347,7 +348,7 @@ class Orchestrator:
         *,
         progress: ProgressFn | None = None,
         out_format: str | None = None,
-        out_path: str | None = None,
+        out_path: str | NumberedOutput | None = None,
     ) -> dict[str, Any]:
         """Translate, optionally review and assemble, returning combined results."""
         steps = {"translate", "assemble"}
