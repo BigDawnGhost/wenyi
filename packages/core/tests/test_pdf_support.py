@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from bs4 import BeautifulSoup
@@ -597,6 +598,124 @@ class TestHtmlAndMarkdownIntegration(unittest.TestCase):
             document.chapters[0].segments[0].source,
             "A paragraph without a heading.",
         )
+
+
+def _babeldoc_payload() -> dict:
+    return {
+        "session_id": "sess-atomic",
+        "paragraphs": {
+            "paragraphs": [
+                {
+                    "id": "0:0",
+                    "source": "First paragraph body.",
+                    "layout_label": "plain text",
+                    "page": 0,
+                },
+                {
+                    "id": "0:1",
+                    "source": "Second paragraph body.",
+                    "layout_label": "plain text",
+                    "page": 0,
+                },
+            ]
+        },
+    }
+
+
+def _fake_inspection(monkeypatch) -> None:
+    from wenyi_core.ingest import pdf_babeldoc
+
+    class FakeInspection:
+        def __init__(self, _path):
+            pass
+
+        def is_image_only(self, pages=None):
+            return False
+
+        def chapter_starts(self):
+            return [(0, "Chapter One")]
+
+    monkeypatch.setattr(pdf_babeldoc, "_PdfInspection", FakeInspection)
+
+
+def _bridge_returning(monkeypatch, payload: dict) -> None:
+    from wenyi_core.ingest import pdf_babeldoc
+
+    bridge = MagicMock()
+    bridge.extract.return_value = payload
+    monkeypatch.setattr(pdf_babeldoc, "BabeldocBridgeClient", MagicMock(return_value=bridge))
+
+
+def test_babeldoc_extract_cache_is_published_complete(monkeypatch, tmp_path):
+    from wenyi_core.ingest.pdf_babeldoc import read_pdf_babeldoc
+
+    payload = _babeldoc_payload()
+    # Reading the document consumes the paragraph slots, so keep a snapshot.
+    expected = json.loads(json.dumps(payload))
+    _fake_inspection(monkeypatch)
+    _bridge_returning(monkeypatch, payload)
+    cache_dir = tmp_path / "cache"
+
+    read_pdf_babeldoc(
+        "book.pdf", "en", "zh", bridge_url="http://bridge.test", cache_dir=str(cache_dir)
+    )
+
+    cached = cache_dir / "babeldoc_extract.json"
+    assert json.loads(cached.read_text(encoding="utf-8")) == expected
+    assert [path.name for path in cache_dir.iterdir()] == ["babeldoc_extract.json"]
+
+
+def test_babeldoc_extract_cache_failure_keeps_no_partial_file(monkeypatch, tmp_path):
+    from wenyi_core.ingest import pdf_babeldoc
+    from wenyi_core.ingest.pdf_babeldoc import read_pdf_babeldoc
+
+    payload = _babeldoc_payload()
+    _fake_inspection(monkeypatch)
+    _bridge_returning(monkeypatch, payload)
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    cached = cache_dir / "babeldoc_extract.json"
+    previous = '{"session_id": "previous-run"}'
+    cached.write_text(previous, encoding="utf-8")
+
+    def dump_then_fail(_payload, handle, **_kwargs):
+        handle.write('{"session_id": "interrupted")')
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pdf_babeldoc.json, "dump", dump_then_fail)
+
+    with pytest.raises(OSError, match="disk full"):
+        read_pdf_babeldoc(
+            "book.pdf", "en", "zh", bridge_url="http://bridge.test", cache_dir=str(cache_dir)
+        )
+
+    # The interrupted dump neither replaces nor accompanies the previous cache.
+    assert cached.read_text(encoding="utf-8") == previous
+    assert [path.name for path in cache_dir.iterdir()] == ["babeldoc_extract.json"]
+
+
+def test_babeldoc_extract_cache_failure_leaves_no_cache_without_a_previous_one(
+    monkeypatch, tmp_path
+):
+    from wenyi_core.ingest import pdf_babeldoc
+    from wenyi_core.ingest.pdf_babeldoc import read_pdf_babeldoc
+
+    _fake_inspection(monkeypatch)
+    _bridge_returning(monkeypatch, _babeldoc_payload())
+    cache_dir = tmp_path / "cache"
+
+    def fail_before_writing(_payload, _handle, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(pdf_babeldoc.json, "dump", fail_before_writing)
+
+    with pytest.raises(OSError, match="disk full"):
+        read_pdf_babeldoc(
+            "book.pdf", "en", "zh", bridge_url="http://bridge.test", cache_dir=str(cache_dir)
+        )
+
+    assert not cache_dir.joinpath("babeldoc_extract.json").exists()
+    assert [path.name for path in cache_dir.iterdir() if path.suffix == ".tmp"] == []
 
 
 if __name__ == "__main__":
