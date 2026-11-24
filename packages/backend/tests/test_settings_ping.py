@@ -1,5 +1,6 @@
-"""Global model connectivity tests use saved settings and the platform credential snapshot."""
+"""Saved and draft model probes use isolated settings and platform credentials."""
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -120,3 +121,73 @@ def test_ping_route_is_in_the_shared_schema(backend_context):
     schema = create_app(backend_context).openapi()
     assert "post" in schema["paths"]["/settings/models/ping"]
     assert "ModelPingResult" in schema["components"]["schemas"]
+
+
+@pytest.fixture
+def draft_probe(monkeypatch):
+    calls = []
+
+    def probe(connection, provider, models, *, credentials, timeout):
+        calls.append((connection, provider, models, credentials, timeout))
+        return [_result(connection=connection, model="new-model")]
+
+    monkeypatch.setattr("wenyi_backend.routers.settings.probe_draft_connection", probe)
+    return calls
+
+
+def test_web_tests_the_draft_without_persisting_it(api, draft_probe):
+    client, state, saved = api
+    state.client = ProbingClient(saved)
+    body = {
+        "draft_id": "draft",
+        "provider": {"kind": "deepseek", "base_url": "https://draft.invalid"},
+        "models": {"new-model": {"max_output_tokens": 200}},
+    }
+    response = client.post("/settings/models/ping/draft", json=body)
+    assert response.status_code == 200, response.text
+    connection, provider, models, credentials, timeout = draft_probe.pop()
+    assert connection == "draft" and provider.base_url == "https://draft.invalid"
+    assert models["new-model"].max_output_tokens == 200
+    assert credentials is None and timeout == 30
+    assert client.get("/settings").json()["effective"]["llm"]["providers"].keys() == {"deepseek"}
+    assert state.configs == []
+    for extra in (
+        {"api_key": "fake-probe-key"},
+        {"provider": {"kind": "deepseek", "api_key_env": "HOME"}},
+    ):
+        rejected = client.post("/settings/models/ping/draft", json=body | extra)
+        assert rejected.status_code == 422
+        assert "fake-probe-key" not in rejected.text
+    assert not draft_probe
+
+
+def test_desktop_draft_takes_typed_or_stored_key_only_in_memory(backend_context, draft_probe):
+    stored = []
+
+    def resolve(connection, provider):
+        stored.append((connection, provider.kind))
+        return "fake-stored-key"
+
+    context = replace(backend_context, connection_credential=resolve)
+    body = {
+        "connection": "deepseek",
+        "draft_id": "renamed",
+        "provider": {"kind": "deepseek"},
+        "models": {"new-model": {}},
+    }
+    with TestClient(create_app(context)) as client:
+        for key in (None, " fake-new-key ", ""):
+            response = client.post("/settings/models/ping/draft", json=body | {"api_key": key})
+            assert response.status_code == 200, response.text
+            assert "fake-" not in response.text
+        invalid = client.post(
+            "/settings/models/ping/draft", json=body | {"api_key": ["fake-unparseable-key"]}
+        )
+        assert invalid.status_code == 422
+        assert "fake-unparseable-key" not in invalid.text
+    assert stored == [("deepseek", "deepseek"), (None, "deepseek")]
+    assert [call[3] for call in draft_probe] == [
+        {"renamed": "fake-stored-key"},
+        {"renamed": "fake-new-key"},
+        {"renamed": "fake-stored-key"},
+    ]

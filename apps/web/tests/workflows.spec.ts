@@ -162,9 +162,6 @@ test("autofix defaults on in project settings and review sends no temporary over
   await page
     .getByLabel("Apply autofixes to the saved translation after review")
     .uncheck();
-  await page
-    .getByRole("button", { name: "Save configuration", exact: true })
-    .click();
   await expect.poll(() => saved.pipeline.review_autofix).toBe(false);
   await page.reload();
   await expect(
@@ -205,15 +202,15 @@ test("failed manual edit keeps the draft and does not show a success state", asy
   ).toHaveCount(0);
 });
 
-test("advanced configuration reports validation errors", async ({
+test("applying advanced configuration reports validation errors", async ({
   page,
 }, testInfo) => {
   await fakeApi(page);
-  await page.route(`**/api/projects/${pid}/config/validate`, async (r) =>
-    r.fulfill({
+  await page.route(`**/api/projects/${pid}/config`, async (r) =>
+    r.request().method() === "PUT" ? r.fulfill({
       status: 422,
       json: { detail: "Unknown pipeline option invalid_option" },
-    }),
+    }) : r.fallback(),
   );
   await page.goto(`/projects/${pid}/settings`);
   await expect(
@@ -227,7 +224,7 @@ test("advanced configuration reports validation errors", async ({
     .getByRole("textbox", { name: "Advanced YAML configuration", exact: true })
     .fill("pipeline:\n  invalid_option: true");
   await page
-    .getByRole("button", { name: "Validate configuration", exact: true })
+    .getByRole("button", { name: "Apply YAML", exact: true })
     .click();
   await expect(page.getByRole("alert")).toContainText("invalid_option");
 });
