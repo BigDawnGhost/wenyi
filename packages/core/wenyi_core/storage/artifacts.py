@@ -12,6 +12,7 @@ from threading import RLock
 from typing import Any
 
 from ..errors import ArtifactCorrupt
+from .artifact_keys import validate_artifact_key
 from .atomic_write import write_text_atomic
 from .io_path import to_io_path
 
@@ -21,17 +22,7 @@ class FileArtifacts:
         self._artifact_root = os.path.abspath(run_dir)
         self._artifact_lock = RLock()
 
-    @staticmethod
-    def _artifact_key(key: str, *, prefix: bool = False) -> str:
-        """Accept portable relative keys only, never filesystem-dependent aliases."""
-        if not isinstance(key, str) or "\\" in key or "\0" in key or ":" in key:
-            raise ValueError("Artifact key must be a portable relative path")
-        value = key.removesuffix("/") if prefix else key
-        if not value and prefix and not key:
-            return key
-        if not value or any(part in ("", ".", "..") for part in value.split("/")):
-            raise ValueError("Artifact key must remain within the run")
-        return key
+    _artifact_key = staticmethod(validate_artifact_key)
 
     def _artifact_path(self, key: str, *, prefix: bool = False) -> Path:
         if not isinstance(key, str) or "\0" in key:
