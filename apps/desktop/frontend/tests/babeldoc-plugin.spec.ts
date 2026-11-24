@@ -58,9 +58,11 @@ test("plugin setup persists across navigation, retries and shares update progres
   expect(buttonBox!.y + buttonBox!.height).toBeLessThanOrEqual(barBox!.y);
   expect(Math.abs(buttonBox!.x + buttonBox!.width - barBox!.x - barBox!.width)).toBeLessThanOrEqual(1);
   await plugin.screenshot({ path: testInfo.outputPath("plugin-progress.png") });
+  const progressClass = await plugin.locator('[data-slot="transfer-progress"]').getAttribute("class");
+  await page.getByRole("link", { name: "关于", exact: true }).click();
   const update = page.getByTestId("desktop-updates");
-  expect(await plugin.locator('[data-slot="transfer-progress"]').getAttribute("class"))
-    .toEqual(await update.locator('[data-slot="transfer-progress"]').getAttribute("class"));
+  await expect(update.getByRole("progressbar")).toBeVisible();
+  expect(await update.locator('[data-slot="transfer-progress"]').getAttribute("class")).toEqual(progressClass);
   await page.getByRole("button", { name: "返回", exact: true }).click();
   await page.getByRole("link", { name: "设置", exact: true }).click();
   await page.getByRole("link", { name: "PDF", exact: true }).click();
