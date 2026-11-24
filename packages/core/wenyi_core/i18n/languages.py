@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any
 
 from .genres import DEFAULT_GENRE, compose
@@ -85,6 +86,7 @@ def glossary_single_character_names_only(code: str) -> bool:
     )
 
 
+@lru_cache(maxsize=64)
 def glossary_generic_target_words(code: str) -> frozenset[str]:
     """Return target-language words that never identify one character or thing.
 

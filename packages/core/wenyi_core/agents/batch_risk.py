@@ -17,8 +17,9 @@ import re
 import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from functools import lru_cache
 
-from ..glossary.store import STATUS_OK, normalize_match_text, source_matches_text
+from ..glossary.store import STATUS_OK, normalize_match_text, source_matches_normalized
 from ..i18n.languages import glossary_generic_target_words
 from ..ingest.segmenter import verse_block_indices
 from ..models.glossary import GlossaryTerm
@@ -49,8 +50,19 @@ _JA_TANKA_QUOTE_RE = re.compile(
 )
 
 # High-precision missing-marker semantic traps (zh -> en).
+# Explicit conditional introducers (如果/要是/假如/倘若/只要/万一/一旦 + optional short subject,
+# or 若不) always fire without the bare-不 exclusion list. Bare 不…，就 fires only at a
+# sentence/quote/ellipsis/paren/line start and uses a conservative heuristic exclusion list
+# for common non-conditional temporal/modal 不-compounds (also intentionally excluding
+# 不是…，就是 disjunctions). None of the spans may cross clause/quote/line boundaries.
+_ZH_COND_SPAN = r"[^，,。！？”」』’）)\"'；;：:\n]"
 _ZH_CONDITIONAL_RE = re.compile(
-    r"(?:不[^，。！？]{2,18}[，,]就|若非|如若不然|若是[^，。！？]{2,16}[，,](?:便|就|则|則))"
+    rf"(?:如果|要是|假如|倘若|只要|万一|萬一|一旦){_ZH_COND_SPAN}{{0,4}}不{_ZH_COND_SPAN}{{1,18}}[，,](?:就|便|则|則)"
+    rf"|若不{_ZH_COND_SPAN}{{1,18}}[，,](?:就|便|则|則)"
+    rf"|(?:^|[。！？；;：:“「『‘（(…\"'\n])不"
+    r"(?!到|等|久|管|论|論|仅|僅|但|过|過|禁|由|免|料|愧|顾|顧|待|及|必|用|需要|知|清楚|敢|会|會|可能|太|是|能因|代表|一会|一會|片刻|远|遠|得不|幸|多时|多時|多久|一时|一時|大一会|大一會|消|出|经意|經意|得已)"
+    rf"{_ZH_COND_SPAN}{{2,18}}[，,]就"
+    rf"|若非|如若不然|若是{_ZH_COND_SPAN}{{2,16}}[，,](?:便|就|则|則)"
 )
 _EN_CONDITIONAL_MARKERS = re.compile(
     r"\b(?:if|unless|otherwise|or else|then|either|were it not)\b", re.I
@@ -134,21 +146,105 @@ def _is_latin_lang(lang: str) -> bool:
     return base in {"en", "fr", "de", "es", "it", "pt", "vi"}
 
 
-def _target_contains_term(target_clean: str, canonical: str, *, target_lang: str) -> bool:
-    norm_canon = " ".join(normalize_match_text(canonical).split())
+@lru_cache(maxsize=1 << 14)
+def _normalized_canonical(canonical: str) -> str:
+    """Whitespace-collapsed normalized form of a glossary canonical target.
+
+    Keyed only on bounded glossary vocabulary strings (never paragraph text).
+    """
+    return " ".join(normalize_match_text(canonical).split())
+
+
+@lru_cache(maxsize=1 << 14)
+def _normalized_target_strip(target: str) -> str:
+    """Normalized, edge-stripped target string cached for phantom overlap checks."""
+    return normalize_match_text(target).strip()
+
+
+def _en_plural_body(form: str) -> str | None:
+    """Return a regex body for ``form`` tolerating common English ``-s/-es/-ies`` plurals.
+
+    Only the final word is inflected, and only when it is pure ASCII letters of length >= 3:
+    consonant+y alternates y/ies ("City" -> "Cities"), ``-ch`` accepts ``-s`` or ``-es``
+    ("Church" -> "Churches", "Monarch" -> "Monarchs"), sibilant endings (s/x/z/sh) take an
+    optional "es" ("Glass" -> "Glasses"), and other words take an optional "s"
+    ("Empire" -> "Empires"; vowel+y words like "Key" become "Keys"). Irregular plurals
+    (e.g. ``Hero`` -> ``Heroes``, ``Quiz`` -> ``Quizzes``, ``-f/-ves``) are intentionally not
+    guessed. Word boundaries stay with the caller, so "Ann" never matches "Anna" and "War"
+    never matches "Ward".
+    """
+    words = form.split()
+    if not words:
+        return None
+    final = words[-1]
+    if len(final) < 3 or not final.isascii() or not final.isalpha():
+        return None
+    if final.endswith("y") and final[-2] not in "aeiou":
+        tail = rf"{re.escape(final[:-1])}(?:y|ies)"
+    elif final.endswith("ch"):
+        tail = rf"{re.escape(final)}(?:e?s)?"
+    elif final.endswith(("s", "x", "z", "sh")):
+        tail = rf"{re.escape(final)}(?:es)?"
+    else:
+        tail = rf"{re.escape(final)}s?"
+    head = " ".join(re.escape(w) for w in words[:-1])
+    return f"{head} {tail}" if head else tail
+
+
+def _latin_term_body(form: str, tgt_base: str, *, allow_plural: bool = True) -> str:
+    """Regex body for one normalized canonical form; English optionally adds plural inflection."""
+    if tgt_base == "en" and allow_plural:
+        body = _en_plural_body(form)
+        if body is not None:
+            return body
+    return re.escape(form)
+
+
+@lru_cache(maxsize=1 << 14)
+def _target_term_patterns(
+    canonical: str, tgt_base: str, allow_plural: bool = True
+) -> tuple[re.Pattern[str], ...]:
+    """Compile boundary-anchored Latin patterns for ``canonical`` once per target language.
+
+    Covers the full normalized form plus its leading-article-stripped variant
+    ("the Duke of North" -> "Duke of North"); English non-person targets additionally
+    tolerate common ``-s/-es/-ies`` plural inflection of the final word.
+    """
+    norm_canon = _normalized_canonical(canonical)
     if not norm_canon:
-        return True
-    norm_tgt = " ".join(normalize_match_text(target_clean).split())
-    if _is_cjk_lang(target_lang):
-        return norm_canon in norm_tgt
-    pat = re.compile(rf"(?<![^\W\d_]){re.escape(norm_canon)}(?![^\W\d_])", re.I)
-    if pat.search(norm_tgt):
-        return True
-    # Also accept canonical without a leading article ("the Duke of North" -> "Duke of North").
+        return ()
+    forms = [norm_canon]
     stripped = re.sub(r"^(?:the|a|an)\s+", "", norm_canon, flags=re.I)
     if stripped and stripped != norm_canon:
-        pat2 = re.compile(rf"(?<![^\W\d_]){re.escape(stripped)}(?![^\W\d_])", re.I)
-        return bool(pat2.search(norm_tgt))
+        forms.append(stripped)
+    return tuple(
+        re.compile(
+            rf"(?<![^\W\d_]){_latin_term_body(form, tgt_base, allow_plural=allow_plural)}(?![^\W\d_])",
+            re.I,
+        )
+        for form in forms
+    )
+
+
+def _target_contains_term(
+    target_clean: str,
+    canonical: str,
+    *,
+    target_lang: str,
+    norm_tgt: str | None = None,
+    allow_plural: bool = True,
+) -> bool:
+    norm_canon = _normalized_canonical(canonical)
+    if not norm_canon:
+        return True
+    if norm_tgt is None:
+        norm_tgt = " ".join(normalize_match_text(target_clean).split())
+    if _is_cjk_lang(target_lang):
+        return norm_canon in norm_tgt
+    tgt_base = (target_lang or "").lower().split("-", 1)[0]
+    for pat in _target_term_patterns(canonical, tgt_base, allow_plural):
+        if pat.search(norm_tgt):
+            return True
     return False
 
 
@@ -296,6 +392,36 @@ def _lowercase_words(drafts: Sequence[str]) -> frozenset[str]:
     )
 
 
+@lru_cache(maxsize=1 << 14)
+def _phantom_form_data(
+    canonical: str, term_type: str
+) -> tuple[tuple[re.Pattern[str], str, bool], ...] | None:
+    """Compile ``_phantom_target_hit`` forms once per ``(canonical, term_type)``.
+
+    Returns per-form ``(pattern, casefolded, is_single_word)`` so callers can apply the
+    batch-dependent ambiguity rules (curated English collisions and words seen lowercase
+    elsewhere) per hit without recompiling. Returns None for an effectively empty canonical.
+    """
+    canon = " ".join(unicodedata.normalize("NFKC", canonical).replace("’", "'").split())
+    if not canon:
+        return None
+    forms = [canon]
+    # Support sentence-initial capitalization of lowercase-particle names ("de Gaulle" -> "De Gaulle").
+    if canon[:1].islower():
+        forms.append(canon[:1].upper() + canon[1:])
+    article_re = _LEADING_THE_RE if term_type == "person" else _LEADING_ARTICLE_RE
+    stripped = article_re.sub("", canon)
+    if stripped and stripped != canon and stripped not in forms:
+        forms.append(stripped)
+    entries = []
+    for form in forms:
+        folded = form.casefold()
+        form_pattern = r"\s+".join(re.escape(part) for part in form.split())
+        pat = re.compile(rf"(?<![^\W\d_]){form_pattern}(?![^\W\d_])")
+        entries.append((pat, folded, bool(_SINGLE_WORD_RE.fullmatch(form))))
+    return tuple(entries)
+
+
 def _phantom_target_hit(
     target_clean: str,
     canonical: str,
@@ -303,6 +429,8 @@ def _phantom_target_hit(
     target_lang: str,
     lowercase_words: frozenset[str] = frozenset(),
     term_type: str = "",
+    prepared_text: str | None = None,
+    norm_tgt: str | None = None,
 ) -> bool:
     """Return True if ``target_clean`` really uses the proper noun ``canonical``.
 
@@ -312,37 +440,59 @@ def _phantom_target_hit(
     is also an ordinary word (curated English collisions for ``en``, or a word written
     lowercase elsewhere in the batch) is ignored at sentence/utterance start, where
     capitalization is ambiguous; a mid-sentence capitalized use still counts. Distinctive
-    names ("Jingxiang fell.") still match at sentence start.
+    names ("Jingxiang fell.") still match at sentence start. ``prepared_text`` and
+    ``norm_tgt`` let batch callers pass pre-normalized forms of ``target_clean``.
     """
     if not _is_latin_lang(target_lang):
-        return _target_contains_term(target_clean, canonical, target_lang=target_lang)
-    tgt_base = (target_lang or "").lower().split("-", 1)[0]
-    canon = " ".join(unicodedata.normalize("NFKC", canonical).replace("’", "'").split())
-    if not canon:
-        return False
-    text = _INLINE_SPACE_RE.sub(" ", unicodedata.normalize("NFKC", target_clean).replace("’", "'"))
-    forms = [canon]
-    # Support sentence-initial capitalization of lowercase-particle names ("de Gaulle" -> "De Gaulle").
-    if canon[:1].islower():
-        forms.append(canon[:1].upper() + canon[1:])
-    article_re = _LEADING_THE_RE if term_type == "person" else _LEADING_ARTICLE_RE
-    stripped = article_re.sub("", canon)
-    if stripped and stripped != canon and stripped not in forms:
-        forms.append(stripped)
-    for form in forms:
-        folded = form.casefold()
-        is_en_collision = tgt_base == "en" and folded in _EN_NAME_WORD_COLLISIONS
-        ambiguous = bool(_SINGLE_WORD_RE.fullmatch(form)) and (
-            is_en_collision or folded in lowercase_words
+        return _target_contains_term(
+            target_clean, canonical, target_lang=target_lang, norm_tgt=norm_tgt
         )
-        form_pattern = r"\s+".join(re.escape(part) for part in form.split())
-        pat = re.compile(rf"(?<![^\W\d_]){form_pattern}(?![^\W\d_])")
+    tgt_base = (target_lang or "").lower().split("-", 1)[0]
+    entries = _phantom_form_data(canonical, term_type)
+    if entries is None:
+        return False
+    text = (
+        prepared_text
+        if prepared_text is not None
+        else _INLINE_SPACE_RE.sub(
+            " ", unicodedata.normalize("NFKC", target_clean).replace("’", "'")
+        )
+    )
+    for pat, folded, is_single_word in entries:
+        is_en_collision = tgt_base == "en" and folded in _EN_NAME_WORD_COLLISIONS
+        ambiguous = is_single_word and (is_en_collision or folded in lowercase_words)
         for m in pat.finditer(text):
             if not ambiguous or not _is_sentence_initial(text, m.start()):
                 return True
     return False
 
 
+def _batch_target_prehit(
+    canonical: str, batch_text: str, *, target_lang: str, term_type: str
+) -> bool:
+    """Cheap batch-level pre-filter: can ``canonical`` hit anywhere in ``batch_text``?
+
+    ``batch_text`` must be the batch's target drafts pre-normalized the way the exact
+    matcher normalizes single paragraphs, then casefolded with all whitespace (including
+    the newlines joining paragraphs) collapsed to single spaces. Under that normalization
+    a plain substring test is a sound superset of :func:`_phantom_target_hit`: every exact
+    per-paragraph hit stays a contiguous substring, so no candidate is ever lost, while
+    sentence-initial ambiguity and word boundaries are deliberately ignored (the exact
+    matcher re-runs on surviving candidates).
+    """
+    if _is_latin_lang(target_lang):
+        entries = _phantom_form_data(canonical, term_type)
+        return entries is not None and any(folded in batch_text for _, folded, _ in entries)
+    norm_canon = _normalized_canonical(canonical)
+    if not norm_canon:
+        return True
+    if _is_cjk_lang(target_lang):
+        return norm_canon in batch_text
+    tgt_base = (target_lang or "").lower().split("-", 1)[0]
+    return any(pat.search(batch_text) for pat in _target_term_patterns(canonical, tgt_base, True))
+
+
+@lru_cache(maxsize=1 << 14)
 def _is_generic(text: str, generic_words: frozenset[str]) -> bool:
     if not generic_words:
         return False
@@ -355,11 +505,18 @@ def _source_mentions_term_or_stem(
     src: str,
     *,
     src_base: str,
+    norm_src: str | None = None,
 ) -> bool:
-    """Return True if ``src`` contains ``term.source``, an alias, or (for persons) a name stem."""
-    if source_matches_text(term.source, src):
+    """Return True if ``src`` contains ``term.source``, an alias, or (for persons) a name stem.
+
+    ``norm_src`` lets batch callers pass the pre-normalized source paragraph so matching
+    does not re-normalize it for every term.
+    """
+    if norm_src is None:
+        norm_src = normalize_match_text(src)
+    if source_matches_normalized(term.source, norm_src):
         return True
-    if any(a and source_matches_text(a, src) for a in term.aliases):
+    if any(a and source_matches_normalized(a, norm_src) for a in term.aliases):
         return True
     if term.type != "person":
         return False
@@ -435,11 +592,82 @@ def assess_batch_risk(
         and not _is_generic(t.target, generic_words)
     ]
 
+    # Strip protected markup once per draft so batch_lowercase_words and paragraph checks
+    # share the result, then pre-normalize each non-empty pair once.
+    para_srcs = [raw_src.strip() for raw_src in sources]
+    para_drfs = [raw_drf.strip() for raw_drf in drafts]
+    stripped_drfs = [_strip_protected(d) if d else "" for d in para_drfs]
+
     batch_lowercase_words = (
-        _lowercase_words([_strip_protected(d) for d in drafts])
+        _lowercase_words(stripped_drfs)
         if _is_latin_lang(tgt_base) and entity_terms
         else frozenset()
     )
+
+    clean_drfs: list[str] = []
+    norm_srcs: list[str] = []
+    norm_drfs: list[str] = []
+    phantom_texts: list[str] = []
+    for src, drf, clean_drf in zip(para_srcs, para_drfs, stripped_drfs):
+        if not src or not drf:
+            clean_drfs.append("")
+            norm_srcs.append("")
+            norm_drfs.append("")
+            phantom_texts.append("")
+            continue
+        clean_drfs.append(clean_drf)
+        norm_srcs.append(normalize_match_text(src))
+        norm_drfs.append(" ".join(normalize_match_text(clean_drf).split()))
+        phantom_texts.append(
+            _INLINE_SPACE_RE.sub(" ", unicodedata.normalize("NFKC", clean_drf).replace("’", "'"))
+        )
+
+    # Pre-filter terms once per batch. "\n" is a non-word character, so word boundaries at
+    # paragraph starts and ends stay valid in the joined text and CJK substring matches are
+    # unaffected; a term with no batch-level hit can never fire in any single paragraph.
+    batch_norm_src = "\n".join(norm_srcs)
+    miss_candidates = [
+        t for t in entity_terms if source_matches_normalized(t.source, batch_norm_src)
+    ]
+    phantom_candidates: list[tuple[GlossaryTerm, tuple[GlossaryTerm, ...]]] = []
+    phantom_indices = [
+        i
+        for i, t in enumerate(entity_terms)
+        if t.type in {"place", "organization", "person"} and len(t.target.strip()) >= 4
+    ]
+    if phantom_indices:
+        # Casefold and collapse whitespace (including the paragraph-joining newlines) once
+        # so the batch pre-filter needs only plain substring checks; any exact per-paragraph
+        # hit stays a contiguous substring, so no candidate is lost.
+        if _is_latin_lang(tgt_base):
+            batch_tgt_text = " ".join("\n".join(phantom_texts).casefold().split())
+        else:
+            batch_tgt_text = " ".join("\n".join(norm_drfs).split())
+        prehit_indices = [
+            i
+            for i in phantom_indices
+            if _batch_target_prehit(
+                entity_terms[i].target,
+                batch_tgt_text,
+                target_lang=target_lang,
+                term_type=entity_terms[i].type,
+            )
+        ]
+        if prehit_indices:
+            norm_targets = [_normalized_target_strip(t.target) for t in entity_terms]
+            for i in prehit_indices:
+                t = entity_terms[i]
+                # Skip if another glossary term with overlapping target wording actually matches
+                # src; precompute the overlapping pairs once so the per-paragraph check only has
+                # to test whether the overlapping term's source appears in that paragraph.
+                norm_tgt_term = norm_targets[i]
+                overlapping = tuple(
+                    other
+                    for other, other_norm in zip(entity_terms, norm_targets)
+                    if other is not t
+                    and (norm_tgt_term in other_norm or other_norm in norm_tgt_term)
+                )
+                phantom_candidates.append((t, overlapping))
 
     verse_indices = verse_block_indices(sources)
     unlineated_couplets: list[int] = []
@@ -447,12 +675,12 @@ def assess_batch_risk(
     dialogue_paras = 0
     high_sev_count = 0
 
-    for idx, (raw_src, raw_drf) in enumerate(zip(sources, drafts)):
-        src = raw_src.strip()
-        drf = raw_drf.strip()
+    for idx, (src, drf) in enumerate(zip(para_srcs, para_drfs)):
         if not src or not drf:
             continue
-        clean_drf = _strip_protected(drf)
+        clean_drf = clean_drfs[idx]
+        norm_src = norm_srcs[idx]
+        norm_drf = norm_drfs[idx]
         para_alerts_before = len(alerts)
 
         # 1. Cross-script / furigana residue
@@ -537,18 +765,30 @@ def assess_batch_risk(
             )
 
         # 5. Glossary canonical miss (cap at 1 alert per paragraph to avoid noise)
-        for term in entity_terms:
-            if not source_matches_text(term.source, src):
+        for term in miss_candidates:
+            if not source_matches_normalized(term.source, norm_src):
                 continue
-            if _target_contains_term(clean_drf, term.target, target_lang=target_lang):
+            if _target_contains_term(
+                clean_drf,
+                term.target,
+                target_lang=target_lang,
+                norm_tgt=norm_drf,
+                allow_plural=term.type != "person",
+            ):
                 continue
             # Avoid false positives when a longer glossary term covering term.source is matched.
             if any(
                 other.source != term.source
                 and term.source in other.source
-                and source_matches_text(other.source, src)
-                and _target_contains_term(clean_drf, other.target, target_lang=target_lang)
-                for other in entity_terms
+                and source_matches_normalized(other.source, norm_src)
+                and _target_contains_term(
+                    clean_drf,
+                    other.target,
+                    target_lang=target_lang,
+                    norm_tgt=norm_drf,
+                    allow_plural=other.type != "person",
+                )
+                for other in miss_candidates
             ):
                 continue
             variant_note = ""
@@ -568,31 +808,23 @@ def assess_batch_risk(
         # 5b. Phantom entity / reverse-glossary substitution check (language-agnostic):
         # Catch when a familiar glossary place/organization/person appears in the draft even
         # though its source term does NOT appear in this source paragraph (e.g. substituting one city name for another).
-        for term in entity_terms:
-            if term.type not in {"place", "organization", "person"}:
-                continue
-            if len(term.target.strip()) < 4:
-                continue
+        for term, overlapping in phantom_candidates:
             if not _phantom_target_hit(
                 clean_drf,
                 term.target,
                 target_lang=target_lang,
                 lowercase_words=batch_lowercase_words,
                 term_type=term.type,
+                prepared_text=phantom_texts[idx],
+                norm_tgt=norm_drf,
             ):
                 continue
-            if _source_mentions_term_or_stem(term, src, src_base=src_base):
+            if _source_mentions_term_or_stem(term, src, src_base=src_base, norm_src=norm_src):
                 continue
             # Skip if another glossary term with overlapping target wording actually matches src.
-            norm_tgt_term = normalize_match_text(term.target).strip()
             if any(
-                other is not term
-                and _source_mentions_term_or_stem(other, src, src_base=src_base)
-                and (
-                    norm_tgt_term in normalize_match_text(other.target).strip()
-                    or normalize_match_text(other.target).strip() in norm_tgt_term
-                )
-                for other in entity_terms
+                _source_mentions_term_or_stem(other, src, src_base=src_base, norm_src=norm_src)
+                for other in overlapping
             ):
                 continue
             alerts.append(

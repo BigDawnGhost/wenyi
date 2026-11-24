@@ -866,13 +866,23 @@ class ConsistencySweepService:
                 for term in entity_terms:
                     if not source_matches_text(term.source, seg.source):
                         continue
-                    if _target_contains_term(seg.target, term.target, target_lang=self._tgt):
+                    if _target_contains_term(
+                        seg.target,
+                        term.target,
+                        target_lang=self._tgt,
+                        allow_plural=term.type != "person",
+                    ):
                         continue
                     if any(
                         other.source != term.source
                         and term.source in other.source
                         and source_matches_text(other.source, seg.source)
-                        and _target_contains_term(seg.target, other.target, target_lang=self._tgt)
+                        and _target_contains_term(
+                            seg.target,
+                            other.target,
+                            target_lang=self._tgt,
+                            allow_plural=other.type != "person",
+                        )
                         for other in entity_terms
                     ):
                         continue

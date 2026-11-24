@@ -13,8 +13,46 @@ from wenyi_core.glossary.store import (
     TYPE_PERSON,
     GlossaryStore,
     GlossaryTerm,
+    normalize_match_text,
+    source_matches_normalized,
     source_matches_text,
+    source_occurrence_spans,
 )
+
+# (source, text, expected) across scripts whose matching rules differ.
+_MATCH_CASES = [
+    # ASCII: case-insensitive, word boundaries.
+    ("Ann", "Ann opened the door.", True),
+    ("ANN", "ann opened the door.", True),
+    ("Ann", "Anna opened the door.", False),
+    ("Ann", "Joann waved.", False),
+    ("R2-D2", "Then R2-D2 beeped.", True),
+    # Full-width ASCII folds to ASCII under NFKC.
+    ("ＡＢＣ", "abc corp", True),
+    ("ABC", "ＡＢＣ社", True),
+    # Latin with accents, including decomposed (NFD) spellings on either side.
+    ("Zoë", "Then Zoë left.", True),
+    ("Zoe\u0308", "Then Zoë left.", True),
+    ("Zoë", "Then Zoe\u0308 left.", True),
+    ("Zoë", "Zoëlla arrived.", False),
+    ("Élodie", "élodie smiled.", True),
+    # Greek and Cyrillic use word boundaries.
+    ("Αθηνά", "Η Αθηνά μίλησε.", True),
+    ("Αθηνά", "Η Αθηνάς μίλησε.", False),
+    ("гад", "Этот гад снова пришёл.", True),
+    ("гад", "Этот гадкий человек снова пришёл.", False),
+    # CJK and kana match as substrings.
+    ("綾小路", "綾小路くんが来た。", True),
+    ("小路", "綾小路くんが来た。", True),
+    ("堀北", "綾小路くんが来た。", False),
+    # Embedded furigana markers are ignored on the text side.
+    ("与り", "与〘あずか〙り知らぬ", True),
+    ("綾小路", "綾〘あや〙小路〘のこうじ〙が来た", True),
+    # Empty and whitespace-only sources never match.
+    ("", "anything", False),
+    ("   ", "anything", False),
+    ("\u3000", "anything", False),
+]
 
 
 class TestGlossary(unittest.TestCase):
@@ -69,6 +107,39 @@ class TestGlossary(unittest.TestCase):
         self.assertTrue(source_matches_text("Ann", "Ann opened the door."))
         self.assertTrue(source_matches_text("ANN", "ann opened the door."))
         self.assertFalse(source_matches_text("Ann", "Anna opened the door."))
+
+    def test_source_matches_normalized_agrees_with_source_matches_text(self):
+        for source, text, expected in _MATCH_CASES:
+            with self.subTest(source=source, text=text):
+                self.assertEqual(source_matches_text(source, text), expected)
+                self.assertEqual(
+                    source_matches_normalized(source, normalize_match_text(text)), expected
+                )
+
+    def test_source_occurrence_spans_follow_match_rules(self):
+        text = normalize_match_text("Ann met Anna and ANN; 綾小路と綾小路")
+        self.assertEqual(source_occurrence_spans("Ann", text), [(0, 3), (17, 20)])
+        self.assertEqual(len(source_occurrence_spans("綾小路", text)), 2)
+        self.assertEqual(source_occurrence_spans("  ", text), [])
+
+    def test_terms_in_keeps_input_order_and_alias_rules(self):
+        terms = [
+            GlossaryTerm(source="Zoë", target="佐伊", type=TYPE_PERSON),
+            GlossaryTerm(source="綾小路", target="绫小路", type=TYPE_PERSON, aliases=["清隆"]),
+            GlossaryTerm(source="Ann", target="安", type=TYPE_PERSON),
+            GlossaryTerm(
+                source="夏帆ちゃん", target="小夏帆", type=TYPE_APPELLATION, aliases=["夏帆"]
+            ),
+            GlossaryTerm(source="Αθηνά", target="雅典娜", type=TYPE_PERSON, aliases=["  "]),
+            GlossaryTerm(source="Bob", target="鲍勃", type=TYPE_PERSON, aliases=["Bobby"]),
+        ]
+        text = "ＡＮＮ saw 清隆 and 夏帆 with Zoe\u0308; Αθηνάς and Bobby were absent? No, Bobby."
+
+        hits = GlossaryStore.terms_in(terms, text)
+
+        # Input order is preserved, aliases match ordinary entities, appellations match only
+        # by their full source, and blank aliases never match.
+        self.assertEqual([term.source for term in hits], ["Zoë", "綾小路", "Ann", "Bob"])
 
     def test_cyrillic_source_match_respects_word_boundaries(self):
         self.assertTrue(source_matches_text("гад", "Этот гад снова пришёл."))

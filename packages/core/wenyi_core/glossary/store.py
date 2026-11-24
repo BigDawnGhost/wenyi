@@ -15,6 +15,7 @@ import tempfile
 import time
 import unicodedata
 from collections.abc import Iterable
+from functools import lru_cache
 from typing import Any
 
 from ..models.glossary import (
@@ -54,6 +55,7 @@ __all__ = [
     "merge_context_senses",
     "normalize_match_text",
     "search_term_page",
+    "source_matches_normalized",
     "source_matches_text",
     "source_occurrence_spans",
     "term_match_sources",
@@ -149,9 +151,10 @@ def search_term_page(
     return items, total
 
 
+@lru_cache(maxsize=1 << 14)
 def _source_pattern(key: str) -> re.Pattern[str] | None:
     """Build word boundaries for space-delimited scripts; return None for substring-matched
-    scripts.
+    scripts. Keyed only on bounded glossary source strings (never paragraph text).
     """
     if key.isascii():
         return re.compile(rf"(?<![a-z0-9_]){re.escape(key)}(?![a-z0-9_])")
@@ -166,6 +169,16 @@ def _source_pattern(key: str) -> re.Pattern[str] | None:
     left_boundary = r"(?<!\w)" if key[0].isalnum() else ""
     right_boundary = r"(?!\w)" if key[-1].isalnum() else ""
     return re.compile(f"{left_boundary}{re.escape(key)}{right_boundary}")
+
+
+@lru_cache(maxsize=1 << 14)
+def _compiled_source_key(source: str) -> tuple[str, re.Pattern[str] | None]:
+    """Return the normalized match key for ``source`` and its boundary pattern, if any.
+    Glossary sources recur across every segment and batch, so cache the normalization and
+    script detection instead of repeating them for each lookup.
+    """
+    key = _match_text(source).strip()
+    return key, (_source_pattern(key) if key else None)
 
 
 def raw_source_pattern(source: str) -> re.Pattern[str]:
@@ -187,11 +200,23 @@ def source_matches_text(source: str, text: str) -> bool:
     for ASCII, Latin, Greek and Cyrillic to avoid matching Ann inside Anna or a short
     Cyrillic word inside a longer one.
     """
-    key = _match_text(source).strip()
+    key, pattern = _compiled_source_key(source)
     if not key:
         return False
     normalized_text = _match_text(text)
-    if pattern := _source_pattern(key):
+    if pattern is not None:
+        return pattern.search(normalized_text) is not None
+    return key in normalized_text
+
+
+def source_matches_normalized(source: str, normalized_text: str) -> bool:
+    """Match like ``source_matches_text`` against text already passed through
+    ``normalize_match_text``, so callers testing many terms normalize the text only once.
+    """
+    key, pattern = _compiled_source_key(source)
+    if not key:
+        return False
+    if pattern is not None:
         return pattern.search(normalized_text) is not None
     return key in normalized_text
 
@@ -225,10 +250,10 @@ def trusted_match_sources(term: GlossaryTerm, all_terms: list[GlossaryTerm]) -> 
 
 def source_occurrence_spans(source: str, normalized_text: str) -> list[tuple[int, int]]:
     """Return nonoverlapping source-term spans in normalized text."""
-    key = normalize_match_text(source).strip()
+    key, pattern = _compiled_source_key(source)
     if not key:
         return []
-    if pattern := _source_pattern(key):
+    if pattern is not None:
         return [match.span() for match in pattern.finditer(normalized_text)]
 
     spans: list[tuple[int, int]] = []
@@ -536,7 +561,7 @@ class GlossaryStore:
             # Forms of address, verbal habits and fixed expressions carry tone or context. A bare-name alias
             # must not inject their derived translation into an ordinary address.
             keys = term_match_sources(term)
-            if any(source_matches_text(k, normalized_text) for k in keys):
+            if any(source_matches_normalized(k, normalized_text) for k in keys):
                 out.append(term)
         return out
 
