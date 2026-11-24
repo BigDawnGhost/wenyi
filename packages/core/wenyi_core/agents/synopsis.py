@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..ingest.tokens import count_tokens, split_balanced_tokens
@@ -62,7 +63,10 @@ class Synopsizer(Agent):
         budget = self.config.pipeline.synopsis_reduce_tokens
         items = [chunk for item in items for chunk in split_balanced_tokens(item, budget)]
         return self._reduce(
-            items, lambda group: self._synth(group, analysis_brief, glossary), synthesize_one=True
+            items,
+            lambda group: self._synth(group, analysis_brief, glossary),
+            synthesize_one=True,
+            max_workers=max(1, self.config.pipeline.prescan_concurrency),
         )
 
     def _reduce(
@@ -71,6 +75,7 @@ class Synopsizer(Agent):
         synthesize: Callable[[list[str]], str],
         *,
         synthesize_one: bool = False,
+        max_workers: int = 1,
     ) -> str:
         """Bound every group and require strict progress to prevent runaway reductions."""
         if len(items) == 1 and not synthesize_one:
@@ -82,13 +87,9 @@ class Synopsizer(Agent):
                 result = synthesize(groups[0]).strip()
                 return result if count_tokens(result) <= budget else ""
             # Summarize each group first, then merge those summaries in the next round.
-            summaries = []
-            for group in groups:
-                summary = synthesize(group).strip()
-                if not summary or count_tokens(summary) > budget:
-                    # Every group is required; dropping one would hide missing chapters on resume.
-                    return ""
-                summaries.append(summary)
+            summaries = self._reduce_round(groups, synthesize, budget, max_workers=max_workers)
+            if summaries is None:
+                return ""
             if (len(summaries), sum(map(count_tokens, summaries))) >= (
                 len(items),
                 sum(map(count_tokens, items)),
@@ -96,6 +97,81 @@ class Synopsizer(Agent):
                 return ""
             items = summaries
         return ""
+
+    @staticmethod
+    def _reduce_round(
+        groups: list[list[str]],
+        synthesize: Callable[[list[str]], str],
+        budget: int,
+        *,
+        max_workers: int,
+    ) -> list[str] | None:
+        """Synthesize every group in one round while preserving original group order.
+
+        Returns ``None`` if any group produces an empty or over-budget summary. When
+        ``max_workers > 1`` and multiple groups exist, keeps at most ``max_workers`` groups
+        in flight so a failure stops scheduling remaining groups while draining in-flight
+        calls cleanly.
+        """
+        workers = min(max(1, max_workers), len(groups))
+        if workers <= 1:
+            summaries: list[str] = []
+            for group in groups:
+                summary = synthesize(group).strip()
+                if not summary or count_tokens(summary) > budget:
+                    # Every group is required; dropping one would hide missing chapters on resume.
+                    return None
+                summaries.append(summary)
+            return summaries
+
+        results: list[str | None] = [None] * len(groups)
+        errors: dict[int, BaseException] = {}
+        invalid_indices: set[int] = set()
+        next_idx = 0
+        in_flight: dict[Future[str], int] = {}
+        aborted = False
+
+        with ThreadPoolExecutor(
+            max_workers=workers, thread_name_prefix="wenyi-synopsis-reduce"
+        ) as executor:
+            try:
+                while (next_idx < len(groups) and not aborted) or in_flight:
+                    while not aborted and next_idx < len(groups) and len(in_flight) < workers:
+                        fut = executor.submit(synthesize, groups[next_idx])
+                        in_flight[fut] = next_idx
+                        next_idx += 1
+                    if not in_flight:
+                        break
+                    done, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                    for fut in done:
+                        idx = in_flight.pop(fut)
+                        try:
+                            summary = fut.result().strip()
+                        except BaseException as exc:  # noqa: BLE001 - drain in-flight work before propagating.
+                            errors[idx] = exc
+                            aborted = True
+                            continue
+                        if not summary or count_tokens(summary) > budget:
+                            invalid_indices.add(idx)
+                            aborted = True
+                            continue
+                        results[idx] = summary
+            except BaseException:
+                for fut in in_flight:
+                    fut.cancel()
+                raise
+
+        if aborted:
+            # Preserve deterministic serial precedence across completed groups.
+            for idx in range(len(groups)):
+                if idx in errors:
+                    raise errors[idx]
+                if idx in invalid_indices:
+                    return None
+            return None
+        if any(summary is None for summary in results):
+            return None
+        return [summary for summary in results if summary is not None]
 
     # Internal helpers.
     @staticmethod
