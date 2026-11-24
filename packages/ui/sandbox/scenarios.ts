@@ -2,7 +2,7 @@
  * injected faults and runtime seeds. A dev host selects one via a URL
  * parameter or an environment variable (docs/development/web.md). */
 
-import { pid, type SandboxState } from "./fixtures";
+import { pid, type SandboxState } from "./fixtures.ts";
 
 export interface FaultRule {
   /** Match this uppercase method only; omit to match every method. */
