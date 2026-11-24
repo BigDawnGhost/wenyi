@@ -20,7 +20,7 @@ serde_json = "1"
 same-file = "1"
 cap-std = "3"
 cap-fs-ext = "3"
-rfd = "0.15"
+rfd = "0.18"
 semver = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 sha2 = "0.10"
