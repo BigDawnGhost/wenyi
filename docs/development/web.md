@@ -160,10 +160,11 @@ Long workflows use a PostgreSQL **session advisory lock** for project execution 
 
 Exports have a durable job/export identity and an independent execution lock. Their saved consistent snapshot allows rendering beside translation without holding the project's long-running write lock. Duplicate delivery must not regenerate a completed export.
 
-Admission reuses an in-flight export only if its resolved format, options, frozen
-configuration and source identity all match. The catalog returns the run identity and
-whether to dispatch it from the same admission operation. A new request after completion
-always gets a fresh job. Publication keeps the five newest successful artifacts in
+Admission reuses only a queued export with matching resolved format, options, frozen
+configuration and source identity. Once the worker claims it, it may already have taken
+its chapter snapshot. A later request must get its own snapshot to include intervening
+edits. The catalog returns the run identity and whether to dispatch it from the same
+admission operation. Publication keeps the five newest successful artifacts in
 completion order and records older ones as hidden retirements. Their files are removed
 after commit, under the project export-history lock; the worker recovery loop also
 retries this cleanup without regenerating exports.

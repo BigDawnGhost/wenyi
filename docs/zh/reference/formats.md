@@ -40,6 +40,9 @@ CLI 默认在原文件旁的 `output/` 目录输出：
 `editions/book-bi.epub`，不额外插入语言后缀。
 即使只请求双语，也使用相同的 `-bi` 派生规则。
 请让文件扩展名与所选格式一致。
+未传 `--overwrite` 时，即使其他进程在渲染期间写入了同名文件，发布时也会避让，
+选用下一个可用名称（如 `book (1).epub`）。CLI 会报告每份产物的实际路径。
+在 POSIX 系统上，输出文件系统必须支持硬链接；否则 CLI 会报错，不会冒险覆盖文件。
 
 默认只启用单语版。`--bilingual` 开启双语输出；
 `--no-mono --bilingual` 只请求双语版。
@@ -202,6 +205,10 @@ MinerU 不支持重建 PDF；之后改为 BabelDOC 配置，也不能补出版�
 `pipeline.babeldoc_pages` 可选择从 1 起计的页码。
 文译不 import BabelDOC，也不在 Core/CLI 中包含其 AGPL 运行时；
 提取和回填仅经 HTTP。外部服务的部署及许可证要求需另行核对。
+
+提取会创建新的 bridge 会话。文译会自动重试建立连接时的失败，但上传或读取响应失败、
+或收到 HTTP 错误后，不再自动重发 PDF，因为 bridge 可能已经创建了会话。
+手动重试前请先检查 bridge 状态。
 
 调用 bridge 前，文译会检查所选页面是否只有图像。
 没有可提取文本层时应使用 MinerU 或先 OCR。

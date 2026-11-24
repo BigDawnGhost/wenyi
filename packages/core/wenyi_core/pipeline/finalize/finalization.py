@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from ...events import ProgressFn
+from ...export_paths import NumberedOutput, bilingual_out_path
 from ...models.errors import ExportPartialError, ExportProductOutcome
 from ...storage.protocol import Storage
 from ...storage.run_store import source_sha256
@@ -34,7 +35,7 @@ class AssemblyService:
         input_path: str,
         progress: ProgressFn | None,
         out_format: str,
-        out_path: str | None,
+        out_path: str | NumberedOutput | None,
         policy_store: Storage,
     ) -> list[str]:
         """Generate every configured artifact from live state or a read-only snapshot.
@@ -44,8 +45,7 @@ class AssemblyService:
         callers can report which outputs succeeded and which failed.
         """
         from ...assemble.policy import export_plan
-        from ...assemble.writer import assemble
-        from ...assemble.writer_common import bilingual_out_path
+        from ...assemble.writer import assemble, validate_output_path
 
         if progress:
             progress(0, 0, "progress.stage.assembling")
@@ -69,20 +69,22 @@ class AssemblyService:
             persist_plan(policy_store, plan)
 
         products: list[tuple[bool, str | None]] = []
+        base = out_path.path if isinstance(out_path, NumberedOutput) else out_path
         if do_mono:
-            products.append((False, out_path))
+            products.append((False, base))
         if do_bilingual:
-            products.append((True, bilingual_out_path(out_path) if out_path else None))
+            products.append((True, bilingual_out_path(base) if base else None))
         outputs: list[str] = []
         outcomes: list[ExportProductOutcome] = []
         first_error: Exception | None = None
         for bilingual, product_out_path in products:
             label = "bilingual" if bilingual else "monolingual"
-            try:
-                path = assemble(
+
+            def render(destination: str | None) -> str:
+                return assemble(
                     store,
                     input_path,
-                    out_path=product_out_path,
+                    out_path=destination,
                     out_format=out_format,
                     bilingual=bilingual,
                     order=out_cfg.bilingual_order if bilingual else "target_first",
@@ -93,6 +95,17 @@ class AssemblyService:
                     babeldoc_timeout=self._runtime.config.pipeline.babeldoc_timeout,
                     language_policy=plans[bilingual],
                 )
+
+            try:
+                if isinstance(out_path, NumberedOutput) and product_out_path is not None:
+                    validate_output_path(store, store.load_manifest(), input_path, product_out_path)
+                    path = out_path.publish(
+                        render,
+                        bilingual=bilingual,
+                        include_bilingual=do_bilingual,
+                    )
+                else:
+                    path = render(product_out_path)
             except Exception as error:
                 outcomes.append(
                     ExportProductOutcome(
@@ -115,7 +128,7 @@ class AssemblyService:
         input_path: str,
         progress: ProgressFn | None,
         out_format: str | None,
-        out_path: str | None,
+        out_path: str | NumberedOutput | None,
     ) -> list[str]:
         """Export under the book run lock, adding the assembly lock to serialize output
         writers.
@@ -146,7 +159,7 @@ class AssemblyService:
         input_path: str,
         progress: ProgressFn | None,
         out_format: str | None,
-        out_path: str | None,
+        out_path: str | NumberedOutput | None,
     ) -> list[str]:
         """Capture an immutable snapshot under the assembly lock and validate source hashes
         around rendering.
