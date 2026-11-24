@@ -5,7 +5,7 @@ resolution-markers = [
     "python_full_version >= '3.14'",
     "python_full_version == '3.13.*'",
     "python_full_version == '3.12.*' and sys_platform == 'emscripten'",
-    "(python_full_version < '3.13' and sys_platform != 'emscripten') or (python_full_version < '3.12' and sys_platform == 'emscripten')",
+    "python_full_version < '3.12' or (python_full_version == '3.12.*' and sys_platform != 'emscripten')",
 ]
 
 [manifest]
@@ -923,11 +923,11 @@ wheels = [
 
 [[package]]
 name = "json-repair"
-version = "0.61.7"
+version = "0.64.9"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f0/a3/6001c2448ee54a80f35a2501b848f4bbd87987bd41ead8cc17367a2bfd56/json_repair-0.61.7.tar.gz", hash = "sha256:a3754543f050093efcda6c9ab00b20a236b5d082c8c622bc65b88fa74ff8d51f", size = 51573, upload-time = "2026-07-21T13:01:15.085Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/2b/537bf1dab1c058bfb2287662bf6c10de0c3907570781ccc0fc56878e39a7/json_repair-0.64.9.tar.gz", hash = "sha256:0e7e02e1c04d14b3677f97d13a8ff6b473cacb07b7111857c4202721b14efdc2", size = 56686, upload-time = "2026-11-10T04:29:13.966Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/76/da/7f9e2b0a1120b107a204bbab6d0ef7ff2ae37790bddc5ee21c9c1f961f3b/json_repair-0.61.7-py3-none-any.whl", hash = "sha256:45c99b8cffef404e846b60d3dc21fc6f0fd5a4595cebad169dfab083ffb8246a", size = 50146, upload-time = "2026-07-21T13:01:13.734Z" },
+    { url = "https://files.pythonhosted.org/packages/40/1c/b38f71c1b4e859e10568336d8fbb271170150033c3a9d02b3e126b500828/json_repair-0.64.9-py3-none-any.whl", hash = "sha256:531c7d429db82731f3c9811157c025599a2ef620823c56d9143bab0b5ad97930", size = 54891, upload-time = "2026-11-10T04:29:12.575Z" },
 ]
 
 [[package]]
