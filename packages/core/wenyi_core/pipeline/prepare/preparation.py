@@ -21,7 +21,7 @@ from ...ingest.segmenter import load_document
 from ...llm.errors import ProviderFailure, describe_provider_failure
 from ...models.document import Document
 from ...storage.protocol import Storage
-from ...storage.run_store import source_sha256, translation_run_dir
+from ...storage.run_store import resolve_translation_run_dir, source_sha256
 from ..run.language_policies import commit_revision, initialize_policies, translation_revision
 from .book_understanding import BookUnderstandingService
 from .epub_objects import refresh_epub_objects
@@ -96,7 +96,7 @@ class PreparationService:
             title = doc.title
 
         store = self._runtime.get_store(
-            translation_run_dir(
+            resolve_translation_run_dir(
                 self._runtime.config.state_dir, title, self._runtime.config.target_lang
             ),
             create=False,

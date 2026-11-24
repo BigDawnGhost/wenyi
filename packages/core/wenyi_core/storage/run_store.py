@@ -62,11 +62,15 @@ def slugify(name: str) -> str:
     deterministic sha256 suffix, so the same title always maps to the same
     directory and long titles sharing a prefix never collide.
     """
+    return _cap_slug(_uncapped_slug(name))
+
+
+def _uncapped_slug(name: str) -> str:
+    """Normalize a title into a directory name without applying the length cap."""
     s = re.sub(r"[^\w一-鿿぀-ヿ-]+", "_", name).strip("_")
     # The reserved-name escape prefixes an underscore, so it has to come after
     # the separator trim that would otherwise remove it again.
-    slug = escape_reserved(strip_trailing(s)) or DEFAULT_COMPONENT
-    return _cap_slug(slug)
+    return escape_reserved(strip_trailing(s)) or DEFAULT_COMPONENT
 
 
 def _cap_slug(slug: str) -> str:
@@ -82,6 +86,27 @@ def translation_run_dir(state_dir: str, title: str, target_lang: str) -> str:
     """Use the same target-isolated layout for every translation language."""
     target = require_language(target_lang)
     return os.path.join(state_dir, slugify(title), "targets", target)
+
+
+def resolve_translation_run_dir(state_dir: str, title: str, target_lang: str) -> str:
+    """Resolve the run directory, falling back to a pre-cap legacy directory.
+
+    Titles whose uncapped slug exceeded SLUG_MAX_LENGTH stored their state under
+    the full-length name before the cap existed. The capped layout wins once it
+    exists; when only the legacy directory is present, keep using it so earlier
+    progress is not orphaned under the shorter capped name.
+    """
+    target = require_language(target_lang)
+    capped_slug = slugify(title)
+    capped = os.path.join(state_dir, capped_slug, "targets", target)
+    if os.path.isdir(to_io_path(capped)):
+        return capped
+    legacy_slug = _uncapped_slug(title)
+    if legacy_slug != capped_slug:
+        legacy = os.path.join(state_dir, legacy_slug, "targets", target)
+        if os.path.isdir(to_io_path(legacy)):
+            return legacy
+    return capped
 
 
 class RunStore(FileArtifacts):

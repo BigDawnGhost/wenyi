@@ -1,5 +1,6 @@
 """Offline source parsing must not initialize translation or call models."""
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -164,7 +165,7 @@ def test_filename_location_matches_parser(tmp_path, extension):
     with patch.object(input_preparation, "load_document", side_effect=AssertionError("parsed")):
         store, _ = input_preparation.locate_input_storage(str(source), config, FileStorage)
     assert parsed.title == source.stem
-    assert store.run_dir == input_preparation.translation_run_dir(
+    assert store.run_dir == input_preparation.resolve_translation_run_dir(
         config.state_dir, parsed.title, config.target_lang
     )
 
@@ -206,7 +207,7 @@ def test_local_title_location_does_not_parse_twice(tmp_path):
             )
     load.assert_called_once()
     assert parsed.title == source.stem
-    assert store.run_dir == input_preparation.translation_run_dir(
+    assert store.run_dir == input_preparation.resolve_translation_run_dir(
         config.state_dir, parsed.title, config.target_lang
     )
 
@@ -312,3 +313,17 @@ def test_parse_then_prepare_reuses_artifact_and_preserves_initialized_state(tmp_
         input_preparation.parse_document(store, str(source), config)
     assert store.load_manifest() == manifest
     assert store.load_chapter(0) == chapter
+
+
+def test_long_title_location_reuses_pre_cap_legacy_directory(tmp_path):
+    """A pre-cap full-length slug directory keeps receiving runs for its title."""
+    _, config, _ = inputs(tmp_path)
+    title = "まどか" * 23  # 69-character slug, past the cap
+    source = tmp_path / (title + ".txt")
+    source.write_text("A story.", encoding="utf-8")
+    legacy = os.path.join(config.state_dir, title, "targets", "zh")
+    os.makedirs(legacy)
+
+    store, _ = input_preparation.locate_input_storage(str(source), config, FileStorage)
+
+    assert store.run_dir == legacy

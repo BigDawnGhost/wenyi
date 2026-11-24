@@ -20,7 +20,7 @@ from ...ingest.segmenter import load_document
 from ...markup.objects import OBJECT_SCHEMA_VERSION
 from ...models.document import MINERU_EPUB_DIGEST, Document, uses_epub_template
 from ...storage.protocol import Storage
-from ...storage.run_store import source_sha256, translation_run_dir
+from ...storage.run_store import resolve_translation_run_dir, source_sha256
 
 
 def ingest_config(config: Config) -> dict[str, Any]:
@@ -161,5 +161,7 @@ def locate_input_storage(
         )
     if source_sha256(input_path) != digest:
         raise ValueError("Source changed during parsing; ensure the file is stable and retry.")
-    store = storage_factory(translation_run_dir(config.state_dir, title, config.target_lang))
+    store = storage_factory(
+        resolve_translation_run_dir(config.state_dir, title, config.target_lang)
+    )
     return store, digest

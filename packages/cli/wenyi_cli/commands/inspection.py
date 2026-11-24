@@ -24,7 +24,7 @@ from .validation import (
 def _resolve_run_store(source: str, config_path: str):
     """Locate the existing run store for a source without creating or locking state."""
     from wenyi_core.config_rebuild import load_rebuilt_config
-    from wenyi_core.storage.run_store import RunStore, translation_run_dir
+    from wenyi_core.storage.run_store import RunStore, resolve_translation_run_dir
 
     config = load_rebuilt_config(config_path)
     if os.path.splitext(source)[1].lower() == ".pdf":
@@ -33,7 +33,7 @@ def _resolve_run_store(source: str, config_path: str):
         from wenyi_core.ingest.segmenter import load_document
 
         title = load_document(source, config.source_lang, config.target_lang).title
-    run_dir = translation_run_dir(config.state_dir, title, config.target_lang)
+    run_dir = resolve_translation_run_dir(config.state_dir, title, config.target_lang)
     return RunStore(run_dir, create=False)
 
 

@@ -57,6 +57,35 @@ class TestLocateExistingStore(unittest.TestCase):
             self.assertEqual(located.run_dir, store.run_dir)
             self.assertTrue(located.exists())
 
+    def test_pdf_locate_reuses_pre_cap_legacy_slug_directory(self):
+        """A long PDF filename keeps using its pre-cap full-length state directory."""
+        with tempfile.TemporaryDirectory() as directory:
+            title = "まどか" * 23  # uncapped slug is 69 characters, past the cap
+            pdf = os.path.join(directory, title + ".pdf")
+            with open(pdf, "wb") as f:
+                f.write(b"%PDF-1.4\n%legacy-fallback-test\n")
+            digest = source_sha256(pdf)
+            legacy = os.path.join(directory, "state", title, "targets", "zh")
+            store = FileStorage(legacy)
+            store.save_manifest(
+                {
+                    "title": title,
+                    "fmt": "pdf",
+                    "source_path": pdf,
+                    "source_sha256": digest,
+                    "source_lang": "ja",
+                    "target_lang": "zh",
+                    "chapters": [],
+                }
+            )
+            cfg = fake_pipeline_config(os.path.join(directory, "state"))
+            orch = Orchestrator(cfg, client=FakeClient())
+
+            located = orch._preparation.locate_existing(pdf)
+
+            self.assertEqual(located.run_dir, legacy)
+            self.assertTrue(located.exists())
+
 
 def _preparation_inputs(tmp_path, book_understanding=True):
     source = tmp_path / "book.txt"

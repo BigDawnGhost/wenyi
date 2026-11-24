@@ -10,7 +10,12 @@ import os
 
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.run_store import SLUG_MAX_LENGTH, slugify, translation_run_dir
+from wenyi_core.storage.run_store import (
+    SLUG_MAX_LENGTH,
+    resolve_translation_run_dir,
+    slugify,
+    translation_run_dir,
+)
 
 
 def test_slugify_caps_long_titles_with_deterministic_suffix():
@@ -69,3 +74,40 @@ def test_long_cjk_title_creates_run_dir_and_glossary(tmp_path):
         store.close()
     terms = GlossaryStore.load_terms_readonly(storage.glossary_path)
     assert [(term.source, term.target) for term in terms] == [("魔法少女", "Magical girl")]
+
+
+def test_resolve_prefers_legacy_directory_when_capped_missing(tmp_path):
+    """State saved under a pre-cap full-length slug keeps resolving there."""
+    state_dir = str(tmp_path / "state")
+    title = "まどか" * 23  # 69-character slug, past the cap
+    legacy = os.path.join(state_dir, title, "targets", "zh")
+    os.makedirs(legacy)
+
+    resolved = resolve_translation_run_dir(state_dir, title, "zh")
+
+    assert resolved == legacy
+    slug_dir = os.path.basename(os.path.dirname(os.path.dirname(resolved)))
+    assert len(slug_dir) > SLUG_MAX_LENGTH
+
+
+def test_resolve_prefers_capped_directory_when_both_exist(tmp_path):
+    """Once a capped run exists it wins, so the newest state keeps being used."""
+    state_dir = str(tmp_path / "state")
+    title = "まどか" * 23
+    os.makedirs(os.path.join(state_dir, title, "targets", "zh"))
+    capped = os.path.join(state_dir, slugify(title), "targets", "zh")
+    os.makedirs(capped)
+
+    assert resolve_translation_run_dir(state_dir, title, "zh") == capped
+
+
+def test_resolve_returns_capped_layout_for_new_title(tmp_path):
+    """Titles without any state on disk keep the capped layout."""
+    state_dir = str(tmp_path / "state")
+    title = "まどか" * 23
+
+    resolved = resolve_translation_run_dir(state_dir, title, "zh")
+
+    assert resolved == translation_run_dir(state_dir, title, "zh")
+    slug_dir = os.path.basename(os.path.dirname(os.path.dirname(resolved)))
+    assert len(slug_dir) == SLUG_MAX_LENGTH

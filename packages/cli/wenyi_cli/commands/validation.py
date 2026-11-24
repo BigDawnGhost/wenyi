@@ -66,17 +66,17 @@ def runstore_for(config: Config, input_path: str, *, console: Console | None = N
     """Resolve the title and locate existing state without creating a directory."""
     # Deferred: reading a title pulls the ingest stack (bs4/lxml) in; --help
     # must not pay for that.
-    from wenyi_core.storage.run_store import RunStore, translation_run_dir
+    from wenyi_core.storage.run_store import RunStore, resolve_translation_run_dir
 
     console = console or Console()
     require_input_file(input_path, console=console)
     if os.path.splitext(input_path)[1].lower() == ".pdf":
         title = os.path.splitext(os.path.basename(input_path))[0]
-        run_dir = translation_run_dir(config.state_dir, title, config.target_lang)
+        run_dir = resolve_translation_run_dir(config.state_dir, title, config.target_lang)
         store = RunStore(run_dir, create=False)
     else:
         doc = load_document(input_path, config.source_lang, config.target_lang)
-        run_dir = translation_run_dir(config.state_dir, doc.title, config.target_lang)
+        run_dir = resolve_translation_run_dir(config.state_dir, doc.title, config.target_lang)
         store = RunStore(run_dir, create=False)
     if store.exists():
         with store.lock():
