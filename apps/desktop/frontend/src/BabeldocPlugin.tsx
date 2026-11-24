@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card } from "@wenyi/ui/primitives";
 import { request } from "./transport";
-import { TransferProgress } from "./TransferProgress";
+import { TransferStatus } from "./TransferStatus";
 import { translateDesktop, useDesktopI18n } from "./i18n";
 
 type Status = {
@@ -125,40 +125,22 @@ export function BabeldocPlugin({ disabled }: { disabled: boolean }) {
       )}
     </>
   );
+  const version = data?.version ? t("babeldoc.version", { version: data.version }) : undefined;
   return (
-    // A bordered group card: sibling rows share the hairline divider rhythm,
-    // matching the canonical settings rows on every other page. An active
-    // setup has no idle status to show, so its actions join the progress
-    // label row instead of leaving an empty row beside them.
     <Card className="overflow-hidden" data-testid="babeldoc-plugin">
-      {data && active ? (
-        <>
-          <div className="px-4 py-3">
-            <TransferProgress
-              label={t(`babeldoc.${data.phase}`)}
-              downloaded={downloading ? data.downloaded : undefined}
-              total={downloading ? data.total : undefined}
-              actions={actions}
-            />
-          </div>
-          {/* The active version stays visible while an update runs. */}
-          {data.version && (
-            <p className={rowStatus}>
-              {t("babeldoc.version", { version: data.version })}
-            </p>
-          )}
-        </>
-      ) : (
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-3">
-          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-            {data?.version && <span>{t("babeldoc.version", { version: data.version })}</span>}
-            {data && (
-              <span role="status" className="text-muted-foreground">{t(`babeldoc.${data.phase}`)}</span>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-2">{actions}</div>
-        </div>
-      )}
+      <div className="px-4 py-3">
+        {/* Keep the action buttons mounted when polling changes the phase. */}
+        <TransferStatus
+          label={data && t(`babeldoc.${data.phase}`)}
+          statusDetail={active ? undefined : version}
+          transfer={data && active ? {
+            downloaded: downloading ? data.downloaded : undefined,
+            total: downloading ? data.total : undefined,
+          } : undefined}
+          actions={actions}
+        />
+      </div>
+      {active && version && <p className={rowStatus}>{version}</p>}
       {data?.latest_version && !data.checking_update && (
         <p role="status" className={rowStatus}>
           {t(data.update_available ? "babeldoc.availableVersion" : "babeldoc.current", {

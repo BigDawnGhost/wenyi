@@ -75,6 +75,30 @@ test("plugin setup persists across navigation, retries and shares update progres
   expect(actions).toEqual(["enable", "enable", "disable"]);
 });
 
+test("plugin startup keeps keyboard focus on the action when it becomes ready", async ({ page }) => {
+  await page.addInitScript(() => Object.assign(window, {
+    __WENYI_DESKTOP__: { apiBase: `${location.origin}/api`, token: "fixture" },
+  }));
+  await fakeApi(page);
+  let phase = "starting";
+  await page.route("**/api/desktop/plugins/babeldoc", route => route.fulfill({
+    json: {
+      enabled: true, installed: true, supported: true, phase,
+      downloaded: 0, total: null, error: null, version: "0.1.0",
+    },
+  }));
+  await page.goto("/settings/pdf");
+  const plugin = page.getByTestId("babeldoc-plugin");
+  const cancel = plugin.getByRole("button", { name: "Cancel setup", exact: true });
+  await cancel.focus();
+  await expect(cancel).toBeFocused();
+
+  phase = "ready";
+  const disable = plugin.getByRole("button", { name: "Disable plugin", exact: true });
+  await expect(disable).toBeFocused();
+  await expect(plugin.getByRole("progressbar")).toHaveCount(0);
+});
+
 for (const [detail, copy] of [
   ["Plugin update check is unavailable", "Could not check for plugin updates"],
   ["BabelDOC is not available for this platform", "Supported platforms"],
