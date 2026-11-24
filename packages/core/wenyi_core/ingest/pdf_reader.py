@@ -63,7 +63,8 @@ def convert_pdf_to_epub(path: str, output: Path, *, api_token: str, title: str, 
     from .mineru_api import extract_pdf
     from .mineru_epub import render_mineru_results
 
-    render_mineru_results(extract_pdf(path, api_token=api_token), output, title=title, lang=lang)
+    with extract_pdf(path, api_token=api_token) as results:
+        render_mineru_results(results, output, title=title, lang=lang)
 
 
 def read_pdf(

@@ -6,8 +6,11 @@ import io
 import json
 import logging
 import traceback
+import tracemalloc
 import unittest
+import zipfile
 from contextlib import ExitStack, closing
+from pathlib import Path
 from unittest.mock import patch
 from zipfile import ZipFile
 
@@ -22,6 +25,7 @@ from wenyi_core.ingest.mineru_api import (
     MinerUTimeoutError,
     _request_with_retry,
 )
+from wenyi_core.ingest.mineru_epub import render_mineru_results
 from wenyi_core.llm.providers.fake import FakeClient as FakeLLMClient
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
@@ -32,6 +36,40 @@ _BATCH_ID = "fake-batch-DO-NOT-LOG"
 _UPSTREAM_TEXT = "untrusted-upstream-text-DO-NOT-LOG"
 _OBJECT_URL = f"https://objects.example.test/private-path?signature={_SIGNATURE}"
 _REFLECTED = f"{_TOKEN}\n{_UPSTREAM_TEXT}\n{_OBJECT_URL}"
+
+
+class StreamedResponse(httpx.Response):
+    """Response body delivered in parts; buffering it is a contract break.
+
+    The parts are handed to a byte stream rather than a buffered body, so iter_bytes()
+    yields them one at a time and read()/.content on the received response would mean
+    the downloader kept the whole body instead of writing it out.
+    """
+
+    def __init__(self, chunks: list[bytes], **kwargs) -> None:
+        self.parts = _Parts(chunks)
+        kwargs["stream"] = self.parts
+        super().__init__(**kwargs)
+
+    def read(self) -> bytes:
+        raise AssertionError("the result body was buffered instead of streamed")
+
+    @property
+    def content(self) -> bytes:
+        raise AssertionError("the result body was buffered instead of streamed")
+
+
+class _Parts(httpx.SyncByteStream):
+    """A response stream that yields recorded parts and records how often it ran."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self.chunks = chunks
+        self.iterations = 0
+
+    def __iter__(self):
+        for chunk in self.chunks:
+            self.iterations += 1
+            yield chunk
 
 
 @pytest.fixture
@@ -49,6 +87,7 @@ def fake_http(monkeypatch):
             transport = httpx.MockTransport(dispatch)
             anonymous = stack.enter_context(client_type(transport=transport))
             monkeypatch.setattr(httpx, "request", anonymous.request)
+            monkeypatch.setattr(httpx, "stream", anonymous.stream)
             monkeypatch.setattr(
                 httpx,
                 "Client",
@@ -205,7 +244,7 @@ def test_external_failures_expose_only_safe_diagnostics(
     fake_http(respond)
     with closing(MinerUApi(_TOKEN)) as client:
         with pytest.raises(MinerUError) as caught:
-            client.submit_batch([str(source)])
+            client.submit_batch([str(source)], tmp_path)
 
     _assert_safe(caught.value, caplog)
     assert f"MinerU {stage}" in str(caught.value)
@@ -230,7 +269,7 @@ def test_poll_deadline_does_not_report_the_batch_id(fake_http, tmp_path, caplog)
     caplog.set_level(logging.DEBUG)
     with closing(MinerUApi(_TOKEN)) as client:
         with pytest.raises(MinerUTimeoutError, match="polling timed out") as caught:
-            client.submit_batch([str(source)], timeout=-1)
+            client.submit_batch([str(source)], tmp_path, timeout=-1)
     _assert_safe(caught.value, caplog)
 
 
@@ -357,7 +396,7 @@ def test_transport_debug_logs_are_suppressed_only_during_mineru_requests(
     source.write_bytes(b"fake PDF")
     with closing(MinerUApi(_TOKEN)) as client:
         with pytest.raises(MinerUError, match="HTTP 401") as caught:
-            client.submit_batch([str(source)])
+            client.submit_batch([str(source)], tmp_path)
 
     _assert_safe(caught.value, caplog)
     logger.debug("unrelated HTTP request")
@@ -414,6 +453,16 @@ class TestRequestWithRetry(unittest.TestCase):
                 _request_with_retry(client, "GET", "https://x", operation="download")
         self.assertEqual(sleeps, [])
 
+    def test_destination_write_failure_is_not_described_as_an_http_failure(self):
+        class FullDisk(io.BytesIO):
+            def write(self, data):
+                raise OSError("disk full")
+
+        client = FakeClient([httpx.Response(200, content=b"result ZIP")])
+        with pytest.raises(OSError, match="disk full"):
+            _request_with_retry(client, "GET", "https://x", operation="download", sink=FullDisk())
+        self.assertEqual(client.calls, 1)
+
     def test_429_is_treated_as_transient(self):
         sleeps: list[float] = []
         client = FakeClient(
@@ -434,6 +483,7 @@ def test_batch_requests_standard_result_without_html(tmp_path, monkeypatch):
     result_url = "https://result.example.test/result.zip"
     upload_url = "https://upload.example.test/object"
     got = []
+    uploaded = []
 
     def request(_client, method, url, **kwargs):
         got.append((method, url))
@@ -447,10 +497,16 @@ def test_batch_requests_standard_result_without_html(tmp_path, monkeypatch):
             }
             body = {"code": 0, "data": {"file_urls": [upload_url], "batch_id": "batch"}}
         elif url == upload_url:
-            assert kwargs["content"] == source.read_bytes()
+            with kwargs["body"]() as handle:
+                uploaded.append(handle.read())
             return httpx.Response(200, request=request)
         elif url == result_url:
-            return httpx.Response(200, content=b"standard result ZIP", request=request)
+            body = StreamedResponse(
+                [b"standard ", b"result ", b"ZIP"], status_code=200, request=request
+            )
+            for chunk in body.iter_bytes():
+                kwargs["sink"].write(chunk)
+            return body
         else:
             body = {
                 "data": {
@@ -464,9 +520,12 @@ def test_batch_requests_standard_result_without_html(tmp_path, monkeypatch):
     monkeypatch.setattr(mineru_api, "_request_with_retry", request)
     client = MinerUApi("test-token")
     try:
-        assert client.submit_batch([str(source)]) == [b"standard result ZIP"]
+        downloaded = client.submit_batch([str(source)], tmp_path)
     finally:
         client.close()
+    assert uploaded == [source.read_bytes()]
+    assert downloaded == [tmp_path / "result-1.zip"]
+    assert downloaded[0].read_bytes() == b"standard result ZIP"
     assert got == [
         ("POST", "/file-urls/batch"),
         ("PUT", upload_url),
@@ -533,9 +592,194 @@ def test_malformed_envelopes_name_only_the_invalid_field(
 ):
     with closing(_script_batch(monkeypatch, tmp_path, poll, upload_body=upload)) as client:
         with pytest.raises(MinerUError) as caught:
-            client.submit_batch([str(tmp_path / "test.pdf")])
+            client.submit_batch([str(tmp_path / "test.pdf")], tmp_path)
     _assert_safe(caught.value, caplog)
     assert reason in str(caught.value)
+
+
+def test_download_streams_the_result_body_to_disk(fake_http, tmp_path):
+    """The result ZIP is written chunk by chunk; the body is never held whole."""
+    payload = b"".join(b"part-%03d" % index for index in range(1, 41))
+    captured = []
+
+    def respond(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"code": 0, "data": _upload_data()})
+        if request.method == "PUT":
+            return httpx.Response(200)
+        if request.url.host == "mineru.net":
+            return httpx.Response(200, json={"data": _poll_data()})
+        response = StreamedResponse(
+            [payload[:400], payload[400:]], status_code=200, request=request
+        )
+        captured.append(response)
+        return response
+
+    fake_http(respond)
+    source = tmp_path / "book.pdf"
+    source.write_bytes(b"fake PDF")
+    with closing(MinerUApi(_TOKEN)) as client:
+        downloaded = client.submit_batch([str(source)], tmp_path)
+
+    assert downloaded == [tmp_path / "result-1.zip"]
+    assert downloaded[0].read_bytes() == payload
+    (response,) = captured
+    # The body went straight to the destination file: no buffered copy was created.
+    assert not hasattr(response, "_content")
+    assert response.parts.iterations == 2
+
+
+def test_retried_upload_reopens_the_file_for_each_attempt(fake_http, tmp_path, monkeypatch):
+    """Every attempt streams from its own handle, so the retry sends the full body."""
+    payload = b"synthetic upload payload"
+    source = tmp_path / "book.pdf"
+    source.write_bytes(payload)
+    attempts = []
+    handles = []
+    original_open = Path.open
+
+    def tracking_open(self, *args, **kwargs):
+        handle = original_open(self, *args, **kwargs)
+        if self == source:
+            handles.append(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+
+    def respond(request):
+        if request.method == "POST":
+            return httpx.Response(200, json={"code": 0, "data": _upload_data()})
+        if request.method == "PUT":
+            attempts.append(bytes(request.content))
+            if len(attempts) == 1:
+                raise httpx.ConnectError("reset")
+            return httpx.Response(200)
+        if request.url.host == "mineru.net":
+            return httpx.Response(200, json={"data": _poll_data()})
+        return httpx.Response(200, content=b"result ZIP")
+
+    fake_http(respond)
+    with closing(MinerUApi(_TOKEN)) as client:
+        downloaded = client.submit_batch([str(source)], tmp_path)
+
+    assert attempts == [payload, payload]
+    assert len(handles) == 2 and all(handle.closed for handle in handles)
+    assert [path.read_bytes() for path in downloaded] == [b"result ZIP"]
+
+
+def _synthetic_bundle(path, text, filler):
+    blocks = [
+        [
+            {
+                "type": "paragraph",
+                "content": {"paragraph_content": [{"type": "text", "content": text}]},
+            }
+        ]
+    ]
+    with ZipFile(path, "w", compression=zipfile.ZIP_STORED) as archive:
+        archive.writestr("book_content_list_v2.json", json.dumps(blocks))
+        archive.writestr("book/full.md", filler)
+    return path
+
+
+def _render_peak(filler, count, root):
+    """Render count synthetic bundles and report the on-disk size and traced peak."""
+    bundles = [
+        _synthetic_bundle(root / f"result-{index}.zip", f"Chunk {index}.", filler)
+        for index in range(count)
+    ]
+    total = sum(path.stat().st_size for path in bundles)
+    tracemalloc.start()
+    try:
+        render_mineru_results(bundles, root / "source.epub", title="Synthetic book", lang="en")
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    return total, peak
+
+
+def test_render_peak_memory_does_not_follow_the_result_set(tmp_path):
+    """Rendering reads one archive at a time, so the peak tracks one chunk, not the book."""
+    filler = bytes(range(256)) * (10 * 1024)
+    small_root, large_root = tmp_path / "small", tmp_path / "large"
+    small_root.mkdir()
+    large_root.mkdir()
+    small_total, small_peak = _render_peak(filler, 2, small_root)
+    large_total, large_peak = _render_peak(filler, 8, large_root)
+
+    # Four times the result payload must not mean four times the resident archive data.
+    assert large_total >= small_total * 3.5
+    assert large_peak < large_total / 4
+    assert large_peak < small_peak * 2
+
+
+def test_render_reads_bundles_without_keeping_them_whole(tmp_path, monkeypatch):
+    """Only the chunk being rendered is open; earlier archives are already closed."""
+    filler = bytes(range(256)) * (2 * 1024)
+    bundles = [
+        _synthetic_bundle(tmp_path / f"result-{index}.zip", f"Chunk {index}.", filler)
+        for index in range(3)
+    ]
+    opened = []
+    closed = []
+    real_archive = ZipFile
+
+    class TrackedArchive:
+        def __init__(self, path):
+            self._archive = real_archive(path)
+            opened.append(path)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self._archive.close()
+            closed.append(True)
+
+        def namelist(self):
+            return self._archive.namelist()
+
+        def read(self, name):
+            return self._archive.read(name)
+
+    monkeypatch.setattr("wenyi_core.ingest.mineru_epub.ZipFile", TrackedArchive)
+    output = tmp_path / "source.epub"
+    render_mineru_results(bundles, output, title="Synthetic book", lang="en")
+
+    assert output.is_file()
+    assert opened == bundles
+    assert len(closed) == len(bundles)
+
+
+def test_interrupted_conversion_leaves_no_reusable_cache(fake_http, tmp_path, monkeypatch):
+    """An interrupted render publishes nothing and keeps no downloaded bundle."""
+    _serve_result(fake_http, _bundle(_paragraph_block()))
+    source = tmp_path / "book.pdf"
+    _write_pdf(source)
+    cache = tmp_path / "cache"
+    received = []
+
+    def interrupted(results, output, *, title, lang):
+        received.extend(results)
+        assert all(path.is_file() for path in received)
+        output.write_bytes(b"partial derived EPUB")
+        raise MinerUError("conversion interrupted")
+
+    monkeypatch.setattr("wenyi_core.ingest.mineru_epub.render_mineru_results", interrupted)
+    with pytest.raises(MinerUError, match="conversion interrupted"):
+        pdf_reader.read_pdf(str(source), "en", "zh", cache_dir=str(cache), api_token=_TOKEN)
+
+    assert received
+    assert not list(cache.rglob("*.epub"))
+    assert not list(cache.rglob("*.zip"))
+    assert not any(path.exists() for path in received)
+
+
+def _paragraph_block():
+    return {
+        "type": "paragraph",
+        "content": {"paragraph_content": [{"type": "text", "content": "Synthetic text."}]},
+    }
 
 
 if __name__ == "__main__":

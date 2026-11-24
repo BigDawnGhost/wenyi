@@ -215,8 +215,11 @@ emit both bilingual orders and restore simple annotations with verified offsets.
 Complex link rewrites, nested or stale placements and noncanonical inputs use
 the Python compatibility renderer.
 Large MinerU PDFs are split in a private directory using `pdf/`, with pypdf page
-cloning for unsupported page features. Python reads the Content List V2 result
-ZIPs in chunk order and publishes one `converted.epub`. New runs use the regular
+cloning for unsupported page features. Uploads stream from a file handle reopened on
+every attempt, and result ZIPs are streamed to that private directory instead of being
+buffered in memory, so peak memory follows one chunk rather than the whole book. Python
+reads the Content List V2 result ZIPs in chunk order, closing each archive before the
+next opens, and publishes one `converted.epub`. New runs use the regular
 EPUB reader and writer. The manifest binds the original PDF hash and the derived
 EPUB hash; `fmt` remains `pdf` for the project and its previews. Template-aware
 operations use the derived EPUB, not the uploaded file. Exports never request

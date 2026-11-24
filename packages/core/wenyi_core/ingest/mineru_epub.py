@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import io
 import json
 import logging
 import re
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import ExitStack
 from html import escape, unescape
 from pathlib import Path, PurePosixPath
@@ -463,6 +462,7 @@ def _build_toc(body: Tag) -> list[EpubTocEntry]:
 
 
 def _bundle_data(archive: ZipFile) -> tuple[bytes, Callable[[PurePosixPath], bytes]]:
+    """Read one Content List V2 member and return it with a reader for its images."""
     members = [name for name in archive.namelist() if name.endswith("_content_list_v2.json")]
     if len(members) != 1:
         raise ValueError("Expected one *_content_list_v2.json in the MinerU ZIP.")
@@ -471,20 +471,23 @@ def _bundle_data(archive: ZipFile) -> tuple[bytes, Callable[[PurePosixPath], byt
 
 
 def _write_source_epub(
-    chunks: list[tuple[bytes, Callable[[PurePosixPath], bytes]]],
+    chunks: Iterable[tuple[bytes, Callable[[PurePosixPath], bytes]]],
     output: Path,
     *,
     title: str | None,
     lang: str,
+    chunk_count: int,
 ) -> None:
     body = _fragment("")
     resources: list[EpubResource] = []
+    # Read one chunk at a time; only the number of chunks has to be known up front, and
+    # callers already hold it, so the chunks themselves can stay a lazy iterator.
     for index, (data, read_image) in enumerate(chunks, 1):
         pages = json.loads(data)
         if not isinstance(pages, list) or not all(isinstance(page, list) for page in pages):
             raise ValueError("Expected Content List V2: a list of pages containing block arrays.")
         fragment = _render_document(pages)
-        if len(chunks) > 1:
+        if chunk_count > 1:
             # Separately parsed chunks can contain the same local IDs and image paths.
             prefix = f"chunk-{index}-"
             for node in fragment.select("[id]"):
@@ -525,12 +528,22 @@ def _write_source_epub(
     )
 
 
-def render_mineru_results(results: list[bytes], output: Path, *, title: str, lang: str) -> None:
-    """Render result ZIPs in PDF chunk order without extracting their files."""
+def render_mineru_results(results: Iterable[Path], output: Path, *, title: str, lang: str) -> None:
+    """Render result ZIPs in PDF chunk order, one open archive at a time.
+
+    Bundles arrive as paths because the downloader streams them to disk. Each archive is
+    closed before the next one opens, so memory follows the chunk being rendered rather
+    than the whole book. Rendering reads members by name; it never extracts them.
+    """
+    paths = list(results)
     with ExitStack() as stack:
-        archives = [stack.enter_context(ZipFile(io.BytesIO(result))) for result in results]
+
+        def bundles() -> Iterator[tuple[bytes, Callable[[PurePosixPath], bytes]]]:
+            for result in paths:
+                yield _bundle_data(stack.enter_context(ZipFile(result)))
+
         _write_source_epub(
-            [_bundle_data(archive) for archive in archives], output, title=title, lang=lang
+            bundles(), output, title=title, lang=lang, chunk_count=len(paths)
         )
 
 
@@ -542,7 +555,9 @@ def convert_json(source: Path, output: Path, *, title: str | None = None, lang: 
         raise ValueError("Output must have an .epub extension.")
     if source.suffix.lower() == ".zip":
         with ZipFile(source) as archive:
-            _write_source_epub([_bundle_data(archive)], output, title=title, lang=lang)
+            _write_source_epub(
+                [_bundle_data(archive)], output, title=title, lang=lang, chunk_count=1
+            )
     else:
         directory = source.parent.resolve()
         _write_source_epub(
@@ -550,4 +565,5 @@ def convert_json(source: Path, output: Path, *, title: str | None = None, lang: 
             output,
             title=title,
             lang=lang,
+            chunk_count=1,
         )
