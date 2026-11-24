@@ -101,10 +101,7 @@ for (const locale of ["en", "zh-CN"] as const) {
       }).click();
       const add = page.getByRole("dialog");
       const addType = add.getByRole("combobox", { name: typeLabel, exact: true });
-      await addType.click();
-      await expect(page.getByRole("option")).toHaveText(labels);
-      await page.keyboard.press("Escape");
-      await chooseOption(addType, type[locale]);
+      await chooseOption(addType, type[locale], labels);
       await add.getByRole("textbox").nth(0).fill(`New ${type.id}`);
       await add.getByRole("textbox").nth(1).fill(`New translation ${type.id}`);
       const added = page.waitForRequest((request) =>
@@ -123,10 +120,7 @@ for (const locale of ["en", "zh-CN"] as const) {
       const edit = page.getByRole("dialog");
       const editType = edit.getByRole("combobox", { name: typeLabel, exact: true });
       await expect(editType).toHaveText(type[locale]);
-      await editType.click();
-      await expect(page.getByRole("option")).toHaveText(labels);
-      await page.keyboard.press("Escape");
-      await chooseOption(editType, type[locale]);
+      await chooseOption(editType, type[locale], labels);
       const saved = page.waitForRequest((request) => request.method() === "PUT");
       await edit.getByRole("button", { name: chinese ? "保存" : "Save", exact: true }).click();
       expect((await saved).postDataJSON()).toMatchObject({ type: type.id });

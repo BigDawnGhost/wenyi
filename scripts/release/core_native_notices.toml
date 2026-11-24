@@ -4,17 +4,17 @@
 # Group files and per-crate extras are required, never guessed. Select either a
 # full archive path, path#Lfirst-Llast (inclusive), or @supplement. Supplemental
 # text is kept here with its upstream provenance for offline regeneration.
-review_sha256 = "a6197cdbc05ebdb0fd237b7e0d0f2f5b7db7bb20c15b9dd3ee8013bda4d54369"
+review_sha256 = "42e75ca29e570a84e218d7e6f9b1240dacc6ab0685664afed95bb2fe17fa5719"
 
 [group.dual]
 files = ["LICENSE-APACHE", "LICENSE-MIT"]
 crates = [
     "aes 0.9.4", "anyhow 1.0.104", "arbitrary 1.5.0", "base64 0.22.1", "bitflags 2.13.2",
-    "block-buffer 0.10.4", "block-buffer 0.12.1", "block-padding 0.4.2", "cbc 0.2.1",
+    "block-buffer 0.12.1", "block-padding 0.4.2", "cbc 0.2.1",
     "cfg-if 1.0.5", "chacha20 0.10.2", "cipher 0.5.2", "const-oid 0.10.3",
-    "core_detect 1.0.0", "cpubits 0.1.1", "cpufeatures 0.2.17", "cpufeatures 0.3.1",
+    "core_detect 1.0.0", "cpubits 0.1.1", "cpufeatures 0.3.1",
     "crc32fast 1.5.5", "crossbeam-deque 0.8.8", "crossbeam-epoch 0.9.21", "crossbeam-utils 0.8.23",
-    "crypto-common 0.1.7", "crypto-common 0.2.2", "derive_arbitrary 1.5.0", "digest 0.10.7",
+    "crypto-common 0.2.2", "derive_arbitrary 1.5.0",
     "digest 0.11.3", "ecb 0.2.1", "either 1.19.0", "equivalent 1.0.3", "fastrand 2.5.0",
     "flate2 1.1.11", "getrandom 0.4.3", "hashbrown 0.17.1", "heck 0.5.0", "html5ever 0.39.0",
     "hybrid-array 0.4.15", "indexmap 2.14.2", "inout 0.2.6", "itoa 1.0.19", "libc 0.2.191",
@@ -25,10 +25,10 @@ crates = [
     "rangemap 1.8.0", "rayon 1.12.0", "rayon-core 1.13.0", "regex 1.13.2", "regex-automata 0.4.19",
     "regex-syntax 0.8.12", "roxmltree 0.21.2", "rustversion 1.0.23", "scopeguard 1.2.0",
     "serde 1.0.229", "serde_core 1.0.229", "serde_derive 1.0.229", "serde_json 1.0.154",
-    "sha2 0.10.9", "sha2 0.11.1", "smallvec 1.16.6", "string_cache 0.9.0",
+    "sha2 0.11.1", "smallvec 1.16.6", "string_cache 0.9.0",
     "string_cache_codegen 0.6.1", "stringprep 0.1.5", "syn 2.0.119", "syn 3.0.10", "tendril 0.5.1",
     "thiserror 2.0.21", "thiserror-impl 2.0.21", "typenum 1.20.1", "unicode-ident 1.0.27",
-    "unicode-normalization 0.1.26", "unicode-properties 0.1.5", "version_check 0.9.5",
+    "unicode-normalization 0.1.26", "unicode-properties 0.1.5",
     "web_atoms 0.2.6", "weezl 0.2.1", "chardetng 1.0.0", "encoding_rs 0.8.44",
     "multiversion_no_op 1.0.0", "rand 0.10.4", "rand_core 0.10.1", "unicode-bidi 0.3.18",
     "siphasher 1.0.4", "adler2 2.0.1",
@@ -37,7 +37,7 @@ crates = [
 [group.license]
 files = ["LICENSE"]
 crates = [
-    "alloc-no-stdlib 2.0.4", "brotli-decompressor 5.0.3", "foldhash 0.2.0", "generic-array 0.14.7",
+    "alloc-no-stdlib 2.0.4", "brotli-decompressor 5.0.3", "foldhash 0.2.0",
     "lopdf 0.47.0", "nom 8.0.0", "phf 0.13.1", "phf_codegen 0.13.1", "phf_generator 0.13.1",
     "phf_shared 0.13.1", "precomputed-hash 0.1.1", "redox_syscall 0.5.18",
     "target-lexicon 0.13.6", "zip 2.6.1", "zlib-rs 0.6.8",
@@ -97,7 +97,6 @@ crates = [
 "rand_core 0.10.1" = ["COPYRIGHT"]
 "regex-syntax 0.8.12" = ["src/unicode_tables/LICENSE-UNICODE"]
 "serde_json 1.0.154" = ["src/lexical/mod.rs#L1-L9"]
-"sha2 0.10.9" = ["@mbed-tls"]
 "sha2 0.11.1" = ["@mbed-tls"]
 "simd-adler32 0.3.10" = ["LICENSE.md", "@chromium-zlib-notice", "@chromium-bsd"]
 "simdutf8 0.1.5" = ["LICENSE-Apache", "LICENSE-MIT", "README.md#L153-L166", "@simdjson"]
@@ -130,7 +129,6 @@ crates = [
 "pyo3 0.29.2" = "PyO3 credits the Cython traversal code in `src/impl_/pymethods.rs`; its [Apache-2.0 terms](https://github.com/cython/cython/blob/7acfb375fb54a033f021b0982a3cd40c34fb22ac/LICENSE.txt) are the same terms reproduced in `LICENSE-APACHE`."
 "pyo3-ffi 0.29.2" = "PyO3 ports a CPython exception helper to Rust (`src/pyerrors.rs`) and adapts `pythoncapi-compat` for compatibility shims (`src/compat/mod.rs`). This attribution is for the ported code, not the separately installed Python runtime."
 "r-efi 6.0.0" = "This target-specific crate offers three alternatives; the MIT option is used for this notice. The upstream `AUTHORS` file contains the full MIT terms and copyright."
-"sha2 0.10.9" = "The AArch64 backends credit Mbed TLS. For those adaptations see the Mbed TLS notice and the Apache-2.0 terms in `LICENSE-APACHE`."
 "sha2 0.11.1" = "The AArch64 backends credit Mbed TLS. For those adaptations see the Mbed TLS notice and the Apache-2.0 terms in `LICENSE-APACHE`."
 "simd-adler32 0.3.10" = "The AArch64 NEON implementation adapts Chromium's zlib code and retains its attribution and BSD-style license here."
 "simdutf8 0.1.5" = "Upstream credits the Rust simd-json port and C++ simdjson. For the Apache-2.0 terms see `LICENSE-Apache`."

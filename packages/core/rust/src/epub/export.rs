@@ -13,7 +13,8 @@ use indexmap::IndexMap;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
+
+use crate::alignment::target_digest;
 
 use super::{
     archive::{open, read, rewrite, Archive},
@@ -446,7 +447,7 @@ pub(crate) fn backfill(
         .collect();
     let correct = stored["target_digest"]
         .as_str()
-        .is_some_and(|expected| expected == format!("{:x}", Sha256::digest(text.as_bytes())));
+        .is_some_and(|expected| expected == target_digest(text));
     let objects: HashSet<_> = items
         .iter()
         .filter(|v| v["relation"] == OBJECT)

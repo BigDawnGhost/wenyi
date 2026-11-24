@@ -33,7 +33,7 @@ regex = "1"
 roxmltree = "0.21"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-sha2 = "0.10"
+sha2 = "0.11"
 zip = { version = "=2.6.1", default-features = false, features = ["deflate-flate2", "flate2"] }
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
