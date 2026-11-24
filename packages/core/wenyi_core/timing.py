@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -14,6 +13,8 @@ from datetime import datetime
 from types import TracebackType
 from typing import Any, Protocol
 from uuid import uuid4
+
+from .storage.atomic_write import write_text_atomic
 
 _observer: ContextVar[Callable[[RunTimer], None] | None] = ContextVar(
     "timing_observer", default=None
@@ -55,18 +56,13 @@ def save_timing(run_dir: str, record: dict[str, Any]) -> dict[str, Any]:
         "total_seconds": sum(run["elapsed_seconds"] for run in runs.values()),
         "runs": list(runs.values()),
     }
-    temporary_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=run_dir, prefix=".timing-", suffix=".tmp", delete=False
-        ) as handle:
-            temporary_path = handle.name
-            json.dump(ledger, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-        os.replace(temporary_path, os.path.join(run_dir, "timing.json"))
-    finally:
-        if temporary_path is not None and os.path.exists(temporary_path):
-            os.unlink(temporary_path)
+    # The ledger is one more run-directory writer, so it publishes through the
+    # same temporary namespace as every other state file; a sweep can then tell
+    # its leftover apart from a file a person named.
+    write_text_atomic(
+        os.path.join(run_dir, "timing.json"),
+        json.dumps(ledger, ensure_ascii=False, indent=2) + "\n",
+    )
     return ledger
 
 

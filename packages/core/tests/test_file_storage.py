@@ -16,6 +16,7 @@ import pytest
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.llm.usage import UsageSample, UsageTracker
 from wenyi_core.models.document import Chapter, Segment
+from wenyi_core.storage.atomic_write import is_temporary_name, resolve_temporary
 from wenyi_core.storage.chapter_publication import JOURNAL_NAME
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.run_store import STATUS_DONE, STATUS_PENDING, RunStore, slugify
@@ -164,7 +165,7 @@ def test_windows_runstore_json_uses_valid_io_paths(monkeypatch, directory, io_di
     temporary = calls[1][1]
     assert ntpath.dirname(temporary) == io_directory
     assert re.fullmatch(
-        re.escape("context.json") + r"\.[0-9a-f]{32}\.tmp", ntpath.basename(temporary)
+        re.escape(".wenyi-context.json") + r"\.[0-9a-f]{32}\.tmp", ntpath.basename(temporary)
     )
     assert calls == [
         ("mkdir", io_directory, {"exist_ok": True}),
@@ -314,24 +315,36 @@ def test_slugify_avoids_reserved_names_and_trailing_dots(title, expected):
 def test_sweep_removes_only_temporary_files_this_writer_produced(tmp_path):
     """A startup sweep must not delete a file the program never wrote.
 
-    `*.tmp` also matches a name a person chose, so the sweep accepts only the
-    private suffix written here and the legacy single `.tmp` form it replaced.
+    The sweep accepts only names in this toolkit's own namespaces: the current
+    `.wenyi-` prefix, the 32-hex middle older versions appended to the target
+    name, and the `.timing-` files the timing ledger wrote before it used the
+    atomic writer. A file a person or another tool named `*.tmp` matches none of
+    them, so it survives.
     """
     storage = RunStore(str(tmp_path))
     reviews = tmp_path / "reviews" / "review-a" / "chunks"
     reviews.mkdir(parents=True)
     stale = [
-        tmp_path / ("manifest.json." + "a" * 32 + ".tmp"),
-        tmp_path / "manifest.json.tmp",
-        tmp_path / "ch0.json.tmp",
+        tmp_path / (".wenyi-manifest.json." + "a" * 32 + ".tmp"),
+        tmp_path / (".wenyi-ch0.json." + "b" * 32 + ".tmp"),
+        # Older versions appended the writer's random middle to the target name.
+        tmp_path / ("manifest.json." + "c" * 32 + ".tmp"),
+        # The timing ledger wrote this shape before it used the atomic writer.
+        tmp_path / ".timing-0123456789abcdef.tmp",
         # A writer keeps its temporary file beside its target, so the sweep has
         # to reach every directory an interrupted write could have used.
-        reviews / "ch0.json.tmp",
+        reviews / (".wenyi-ch0.json." + "d" * 32 + ".tmp"),
     ]
     kept = [
+        # A person's own temporary files are not in the toolkit's namespace.
+        tmp_path / "foo.tmp",
+        tmp_path / "report.tmp",
         tmp_path / "notes.tmp.bak",
         tmp_path / "draft.txt",
+        # The prefix alone, without the temporary suffix, is a file of its own.
+        tmp_path / ".wenyi-notes.json",
         reviews / "ch0.json",
+        reviews / "foo.tmp",
     ]
     for path in [*stale, *kept]:
         path.write_text("{}", encoding="utf-8")
@@ -343,21 +356,58 @@ def test_sweep_removes_only_temporary_files_this_writer_produced(tmp_path):
     assert sorted(Path(entry).name for entry in removed) == sorted(p.name for p in stale)
     assert all(path.exists() for path in kept)
     assert not any(path.exists() for path in stale)
+    assert (tmp_path / "foo.tmp").read_text(encoding="utf-8") == "{}"
     assert (tmp_path / "archive.tmp").is_dir()
 
 
 def test_initialization_sweeps_temporary_files_from_the_run_directory(tmp_path):
     storage = RunStore(str(tmp_path))
-    stale = tmp_path / "chapters" / "ch0.json.tmp"
+    stale = tmp_path / "chapters" / (".wenyi-ch0.json." + "a" * 32 + ".tmp")
     stale.write_text('{"index": 0}', encoding="utf-8")
-    nested = tmp_path / "analysis.json.tmp"
+    nested = tmp_path / ("analysis.json." + "b" * 32 + ".tmp")
     nested.write_text("{}", encoding="utf-8")
+    foreign = tmp_path / "user-draft.tmp"
+    foreign.write_text("{}", encoding="utf-8")
 
     storage.begin_initialization("a" * 64)
 
     assert not stale.exists()
     assert not nested.exists()
+    assert foreign.exists()
     assert storage._read_json(storage.initialization_path) == {"source_sha256": "a" * 64}
+
+
+@pytest.mark.parametrize(
+    ("name", "temporary"),
+    [
+        # Written today: the toolkit prefix, the target name, a random middle.
+        (".wenyi-manifest.json." + "0" * 32 + ".tmp", True),
+        (".wenyi-ch0.json." + "a" * 32 + ".tmp", True),
+        # Older versions put the random middle after the target name.
+        ("manifest.json." + "b" * 32 + ".tmp", True),
+        # The timing ledger's namespace before it used the atomic writer.
+        (".timing-0123456789abcdef.tmp", True),
+        # Names a person or another tool may keep in a run directory.
+        ("foo.tmp", False),
+        ("report.tmp", False),
+        ("manifest.json.tmp", False),
+        ("ch0.json.tmp", False),
+        ("notes.tmp.bak", False),
+        ("archive.tmp", False),
+        (".wenyi-notes.json", False),
+        ("manifest.json", False),
+    ],
+)
+def test_temporary_name_namespaces(name, temporary):
+    """Each accepted name belongs to a namespace this toolkit wrote; nothing else does."""
+    assert is_temporary_name(name) is temporary
+
+
+def test_resolve_temporary_keeps_the_name_inside_the_toolkit_namespace():
+    """A published write never leaves a `*.tmp` name a sweep would take for a user's file."""
+    assert re.fullmatch(
+        r"\.wenyi-manifest\.json\.[0-9a-f]{32}\.tmp", resolve_temporary("manifest.json")
+    )
 
 
 def test_replacement_retries_while_another_process_holds_the_target(tmp_path):

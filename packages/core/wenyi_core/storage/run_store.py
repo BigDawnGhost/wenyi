@@ -402,10 +402,12 @@ class RunStore(FileArtifacts):
     def sweep_temporary_files(self) -> list[str]:
         """Delete temporary files left by an interrupted write in the run directory.
 
-        Only the names `write_text_atomic` produces and the legacy single
-        `<name>.tmp` form it replaced are removed. The run directory also holds
-        exported documents and cached sources, so matching every `*.tmp` would
-        eventually delete a file this program never wrote.
+        Only the names this toolkit writes are removed: the current `.wenyi-*`
+        namespace that `write_text_atomic` and the export writers share, plus the
+        leftovers older versions named after their target. The run directory also
+        holds exported documents and cached sources, and a person may keep a file
+        named `*.tmp` there, so matching every `*.tmp` would eventually delete a
+        file this program never wrote.
         """
         return sweep_temporary(self.run_dir)
 

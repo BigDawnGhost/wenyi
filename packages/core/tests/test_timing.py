@@ -64,13 +64,13 @@ def test_timing_write_failure_preserves_previous_ledger_and_original_error(tmp_p
     def fail_replace(*args):
         raise OSError("disk full")
 
-    monkeypatch.setattr("wenyi_core.timing.os.replace", fail_replace)
+    monkeypatch.setattr("wenyi_core.storage.atomic_write.os.replace", fail_replace)
     with pytest.raises(RuntimeError, match="workflow failed"):
         with RunTimer("translate") as timer:
             timer.store = store
             raise RuntimeError("workflow failed")
     assert load_timing(store.run_dir) == before
-    assert not list(Path(store.run_dir).glob(".timing-*.tmp"))
+    assert not list(Path(store.run_dir).glob("*.tmp"))
 
 
 def test_concurrent_timing_writers_do_not_lose_invocations(tmp_path):
