@@ -1,14 +1,14 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
-import { frontendManualChunks } from "../../../packages/ui/vite.shared";
-import { thirdPartyNotices } from "./scripts/third-party-notices";
+import { frontendManualChunks } from "../../../packages/ui/vite.shared.ts";
+import { thirdPartyNotices } from "./scripts/third-party-notices.ts";
 
 export default defineConfig({
   plugins: [react(), thirdPartyNotices()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
   build: {
