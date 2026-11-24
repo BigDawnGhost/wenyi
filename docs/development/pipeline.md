@@ -35,6 +35,14 @@ signature before invocation. A callback that cannot bind four positional
 arguments, or whose signature cannot be inspected, receives the same tick
 without the payload. Callback exceptions propagate without retrying the callback.
 
+PDF assembly reports one stage-level tick, `progress(0, 0, "progress.stage.assembling")`,
+before the writers run, so a PDF export shows no per-chunk position. Finer
+granularity needs a bridge protocol that renders a page range per request; a
+client-side chunk loop over the current single-request fillback would re-render
+the whole book once per chunk. Treat the single tick as the current contract
+rather than a missing callback, and do not derive export progress from the
+number of PDF objects.
+
 <a id="initialization"></a>
 
 ## Initialization and source identity
@@ -170,6 +178,19 @@ and optional extracted `object_source` text, used like EPUB's original markup
 references. Missing/empty references from older bridges use a generic object
 description. PDF objects retain their markers in formal targets through Review/Autofix;
 missing or damaged markers use the same bounded repair as EPUB.
+
+`pdf_bridge.client` retries its own requests: transient statuses, transport failures
+and server errors are retried with bounded exponential backoff, and the bridge SDK's
+own retries stay disabled. Nothing else consumes `BabeldocBridgeUnavailableError`
+(`client.py`), so a raised bridge error is terminal for its caller. Do not add a
+retry branch around a bridge call or branch on that class: by the time it escapes the
+client the attempts are already spent. Health and extract were the original authorized
+retry scope; fillback is retried as a deliberate widening of it, because the bridge
+loads a fresh copy of the frozen IL for every `/fillback` request, so a repeated
+request re-renders from the same source instead of continuing an earlier pass
+("Every `/fillback` loads a fresh copy of the frozen IL, so retries do not reuse
+objects modified by an earlier fillback or typesetting pass", bridge `docs/api.md`,
+Session recovery).
 Review evidence hashes still bind the actual saved target, with object references
 supplied separately. Annotation offsets/digests bind the marker-free text. Export
 resolves markers only on a disposable chapter copy. Failed objects remain pending
@@ -392,6 +413,16 @@ under the state lock. It durably prepares the absolute ledger snapshots in
 preparation commits before that advance; publication uses a separate short
 transaction. A publication or event failure leaves a recoverable journal. A later
 flush recovers earlier work before preparing its own increment.
+
+Appended events stay buffered unless losing one would repeat completed work. A file
+ledger flushes and fsyncs only the batch-glossary checkpoint record, which is what a
+resumed run reads to skip extraction again; every other event keeps the buffered
+append that batch translation depends on. The checkpoint is recognised from the record
+itself, so add-only storage ports keep their signature. A durable append must not
+reorder records or hold the state lock longer, and it must stay inside the existing
+event lock. The SQL adapter commits every append on a connection opened with the FULL
+synchronous mode, so it needs no separate branch. Text written by the atomic write
+helper is still flushed and synced before its rename.
 
 Track actual available usage for successful and failed paid attempts. Do not infer
 usage from batch counts, repeat a cache hit as a call, or report unavailable provider

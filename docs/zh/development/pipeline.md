@@ -30,6 +30,11 @@ Runtime 提供配置、冻结语言计划、存储及一个路由模型客户端
 不能绑定四个位置参数或无法检查签名时，照常报告该条进度，只省略载荷。
 回调自身抛出的异常直接传播，不会重试回调。
 
+PDF 装配在 writer 执行前只报告一次阶段级进度 `progress(0, 0, "progress.stage.assembling")`，
+因此 PDF 导出没有按分块推进的位置。更细的粒度需要桥侧提供按页范围渲染的协议；
+在当前单请求回填之上做客户端分块，等于每个分块重渲整本书。
+应把这次阶段级进度视为现状契约，而不是缺失的回调，也不要用 PDF 对象数量推算导出进度。
+
 <a id="initialization"></a>
 
 ## 初始化与原文身份
@@ -141,6 +146,15 @@ Review 证据摘要仍绑定真实保存的译文，对象参考单独提供；�
 `protected-object-omission-v1` 的 bridge 发送明确的 `omitted_protected_objects` ID。
 bridge 保留正常对象与译文正文，记录省略项，不修改冻结的原始对象。
 旧 PDF 会话需重新导入，不原地重写源文。
+
+`pdf_bridge.client` 在自己的调用内完成重试：可重试状态码、传输失败和服务端错误按有界指数退避重试，
+并关闭 SDK 自带重试。`BabeldocBridgeUnavailableError`（`client.py`）没有其他生产消费方，
+抛出即代表该调用的终态。不要围绕桥调用再加一层重试分支，也不要按该异常类分支：
+异常逃出 client 时重试次数已经用完。
+health 与 extract 是最初授权的重试范围；fillback 的可重试是对该范围的**有意扩大**——
+桥对每个 `/fillback` 请求都重新加载冻结 IL 的副本，因此重复请求是从同一源重新渲染，
+而不是接着上一次渲染继续（桥 `docs/api.md` Session recovery："Every `/fillback` loads a fresh copy
+of the frozen IL, so retries do not reuse objects modified by an earlier fillback or typesetting pass"）。
 
 EPUB 将 `epub_annotations` 条目及既有注释上下文索引适配到上述契约。
 可安全清理的片段与绑定摘要的位置一起保存。
@@ -323,6 +337,13 @@ Review 保存自身增量，各增量只合并进书籍总账**一次**；
 先将账本绝对快照持久写入 `usage-pending.json`，再推进内存检查点。
 SQL 日志准备事务在检查点推进前提交，真正发布使用另一个短事务。
 发布或事件失败后仍有可恢复日志；下次 flush 先恢复旧工作，再准备自身增量。
+
+追加事件默认只留在缓冲区，只有丢失后会重做已完成工作的记录才立即落盘。
+文件账本仅对批次术语检查点记录执行 flush 与 fsync，续跑正是靠它跳过重复抽取；
+其余事件保持分批写入所需的缓冲追加。检查点按记录本身判定，只追加的存储端口因此不必改签名。
+落盘不得改变记录顺序或延长状态锁持有时间，并且必须在既有事件锁内完成。
+SQL 适配器在开启 `synchronous=FULL` 的连接上逐条提交，无需单独分支。
+原子写工具写入的文本在重命名前仍会 flush 并 fsync。
 
 成功及失败的付费尝试都记录实际可取得的用量。
 不能用批次数推算用量、把缓存复用计为调用，或将 provider 未报告的值当成零。
