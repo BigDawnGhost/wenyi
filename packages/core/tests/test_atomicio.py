@@ -8,7 +8,35 @@ import unittest
 from pathlib import Path
 
 from wenyi_core.atomicio import PublishError, publish_bytes, publish_target
+from wenyi_core.export_paths import NumberedOutput
 from wenyi_core.storage.io_path import plain_path, to_io_path
+
+
+def test_numbered_output_does_not_replace_a_late_file_at_a_long_path(tmp_path, monkeypatch):
+    target = tmp_path / ("a" * 180) / "book.pdf"
+    Path(to_io_path(target.parent)).mkdir()
+    actual_exists = os.path.lexists
+    outputs = []
+
+    def render(path):
+        Path(path).write_bytes(b"new output")
+        return path
+
+    def another_writer_wins_after_probe(path):
+        if path == to_io_path(target):
+            assert not actual_exists(path)
+            Path(path).write_bytes(b"other output")
+            return False
+        return actual_exists(path)
+
+    monkeypatch.setattr(os.path, "lexists", another_writer_wins_after_probe)
+    output = NumberedOutput(str(target), lambda _, actual: outputs.append(actual)).publish(
+        render, bilingual=False, include_bilingual=False
+    )
+    assert Path(to_io_path(target)).read_bytes() == b"other output"
+    assert output == str(target.with_name("book (1).pdf"))
+    assert Path(to_io_path(output)).read_bytes() == b"new output"
+    assert outputs == [output]
 
 
 class TestPublishBytes(unittest.TestCase):

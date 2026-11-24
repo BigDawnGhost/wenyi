@@ -226,18 +226,11 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
             config.output.mono = mono
         if bilingual is not None:
             config.output.bilingual = bilingual
-        out = resolve_export_out_path(
-            out,
-            source_path=input,
-            bilingual=bool(config.output.bilingual),
-            overwrite=overwrite,
-            console=console,
-        )
         try:
             result = Orchestrator(config, client=FakeClient()).run_assemble(
                 input,
                 out_format=fmt,
-                out_path=out,
+                out_path=resolve_export_out_path(out, overwrite=overwrite, console=console),
             )
         except ExportPartialError as error:
             for outcome in error.outcomes:
