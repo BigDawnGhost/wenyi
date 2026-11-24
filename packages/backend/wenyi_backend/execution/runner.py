@@ -7,7 +7,7 @@ import json
 import logging
 import threading
 import time
-from contextlib import ExitStack, closing
+from contextlib import ExitStack, closing, nullcontext
 from contextvars import copy_context
 from functools import partial
 
@@ -43,8 +43,14 @@ def record_terminal_status(
     error: BaseException | None = None,
     *,
     status: str = "error",
+    blocking: bool = True,
 ) -> None:
-    """A late Future or duplicate delivery may update only its own task's project."""
+    """A late Future or duplicate delivery may update only its own task's project.
+
+    With blocking=False, reserved for the forced cancellation drain, a contended run
+    lock is not waited on: the stuck worker still holds it, and waiting would hold
+    the workflow slot forever. The status is then written without the lock.
+    """
     projects, jobs = dependencies.projects, dependencies.jobs
     pid, run_id = request.project_id, request.run_id
     message = str(error) if error is not None else None
@@ -65,12 +71,27 @@ def record_terminal_status(
             ):
                 return
             # Wait for a brief API write boundary rather than dropping the terminal status.
-            with closing(dependencies.storage_for(pid)) as storage, storage.lock():
-                latest = next(
-                    (item for item in jobs.list_jobs(pid) if item["kind"] != "export"), None
-                )
-                if latest and latest["id"] == job["id"]:
-                    projects.set_project_status(pid, status, error=message)
+            with closing(dependencies.storage_for(pid)) as storage:
+                try:
+                    lock = storage.lock(blocking=blocking)
+                except BlockingIOError:
+                    if blocking:
+                        raise
+                    # The drain expired with the worker still holding the run lock. The
+                    # stuck worker converges on the same terminal state when it unwinds,
+                    # so write the status unlocked instead of blocking the slot release.
+                    log.warning(
+                        "Run lock for project %s is still held; writing %s status unlocked",
+                        pid,
+                        status,
+                    )
+                    lock = nullcontext()
+                with lock:
+                    latest = next(
+                        (item for item in jobs.list_jobs(pid) if item["kind"] != "export"), None
+                    )
+                    if latest and latest["id"] == job["id"]:
+                        projects.set_project_status(pid, status, error=message)
         finally:
             jobs.set_job_status(job["id"], status, error=message)
     elif not run_id:
@@ -237,7 +258,9 @@ async def run(request: ExecutionRequest, dependencies: ExecutionDependencies) ->
                 request.run_id or request.project_id,
                 CANCEL_DRAIN_TIMEOUT_SECONDS,
             )
-            await asyncio.to_thread(record_terminal_status, request, dependencies, status="paused")
+            await asyncio.to_thread(
+                record_terminal_status, request, dependencies, status="paused", blocking=False
+            )
         finally:
             dependencies.metrics.record_cancel_drain(
                 outcome=outcome, seconds=time.monotonic() - started, identity=request.run_id

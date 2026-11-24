@@ -1,6 +1,7 @@
 """Explicit execution ports preserve cleanup, identity and publication lock ownership."""
 
 import asyncio
+import threading
 import time
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
@@ -390,4 +391,56 @@ def test_cancelled_workflow_forces_paused_status_when_drain_expires(execution, m
     asyncio.run(scenario())
     stuck.set()
     assert dependencies.metrics.snapshot()["task_cancel_drains"] == {("forced", "lt_1s"): 1}
+    dependencies.jobs.set_job_status.assert_any_call(1, "paused", error=None)
+
+
+@pytest.mark.parametrize("contended", [False, True], ids=["try-lock-free", "try-lock-busy"])
+def test_forced_cancel_does_not_block_on_the_worker_run_lock(execution, monkeypatch, contended):
+    """The forced drain must not wait for the run lock the stuck worker still holds."""
+    request, dependencies, storage = execution
+    monkeypatch.setattr(runner, "CANCEL_DRAIN_TIMEOUT_SECONDS", 0.05)
+    entered = threading.Event()
+    held = threading.Lock()
+
+    def lock(*, blocking=True):
+        if blocking:
+            # The worker owns the run lock for its whole stuck operation; any further
+            # blocking acquisition would wait forever, as the pre-fix forced path did.
+            if not held.acquire(blocking=False):
+                held.acquire(timeout=6.0)
+            return nullcontext()
+        if contended:
+            raise BlockingIOError("project busy")
+        return nullcontext()
+
+    storage.lock.side_effect = lock
+
+    def operation(request, store, progress, bind_client):
+        entered.set()
+        threading.Event().wait()  # the model call never returns: the worker stays stuck
+
+    async def run_sync(operation):
+        threading.Thread(target=operation, daemon=True).start()
+        await asyncio.Event().wait()  # the stuck worker never completes its task
+
+    async def scenario():
+        task = asyncio.create_task(
+            runner.run(request, replace(dependencies, operation=operation, run_sync=run_sync))
+        )
+        for _ in range(200):
+            if entered.is_set():
+                break
+            await asyncio.sleep(0.05)
+        assert entered.is_set(), "worker never entered the locked region"
+        started = time.monotonic()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, 5.0)
+        assert time.monotonic() - started < 5.0
+
+    asyncio.run(scenario())
+    assert dependencies.metrics.snapshot()["task_cancel_drains"] == {("forced", "lt_1s"): 1}
+    dependencies.projects.set_project_status.assert_called_once_with(
+        "project", "paused", error=None
+    )
     dependencies.jobs.set_job_status.assert_any_call(1, "paused", error=None)
