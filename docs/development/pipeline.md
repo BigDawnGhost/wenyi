@@ -209,7 +209,17 @@ scoped for navigation titles and fitted to the review model's `context_window`
 (bisecting multi-paragraph chunks on overflow). `pipeline.batch_glossary`
 selects each body batch's entries once, in `TranslationService.batch_terms`, and the
 batch plan carries them to translation, polish (inline, deferred and resumed) and
-precision; extraction filters its existing entries by the extracted source text. Selective evidence and Fixer
+precision; extraction filters its existing entries by the extracted source text. `Translator`
+places book-wide style guidance, whole-book synopsis and entity glossary entries at the end of
+`system` wrapped as untrusted reference blocks (keeping per-batch `navigation` titles, matched
+supplementary glossary notes and protected-object guidance outside that shared prefix, while
+remaining compatible with legacy frozen `translator_user` templates containing `$style`,
+`$book_synopsis` or `$glossary`). `SparseSemanticEditor` similarly places book-wide style
+guidance and entity glossary entries at the end of `system` as untrusted reference blocks and
+keeps per-batch `navigation` titles in `user`. When consecutive batches share the same entity
+glossary and synopsis without context-window shrinking (such as standard body batches under
+`batch_glossary: all`), both agents preserve a byte-identical leading prefix of `system` for
+KV caching across batches. Selective evidence and Fixer
 requests may use relevant subsets. Japanese readings are source metadata supported
 by explicit source evidence, not target-language transliterations; non-Japanese
 sources do not inject them through structured glossary rendering.

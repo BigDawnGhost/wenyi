@@ -23,7 +23,7 @@ from ..ingest.segmenter import verse_block_indices
 from ..llm.json_parser import JsonParseError
 from ..llm.preflight import fit_prompt_to_context_window
 from ..llm.retrying import TruncatedResponseError, is_resumable_provider_interrupt
-from ..models.glossary import GlossaryTerm
+from ..models.glossary import TYPE_NAVIGATION, GlossaryTerm
 from . import prompts
 from .base import Agent
 from .batch_risk import assess_batch_risk
@@ -162,7 +162,7 @@ class SparseSemanticEditor(Agent):
         )
         thinking_boost = 1 if risk.should_escalate else 0
 
-        system = (
+        base_system = (
             f"You are a senior bilingual literary editor auditing a {self.src} -> {self.tgt} draft translation "
             "against the original source text. Unlike a full rewriter, you ONLY emit patches for paragraphs "
             "that contain a concrete defect. Leave accurate, vivid, natural paragraphs UNCHANGED — never flatten "
@@ -186,8 +186,8 @@ class SparseSemanticEditor(Agent):
             "Preserve every protected marker (e.g. 〘object:...〙 or ⟦...⟧) verbatim if present.\n"
             'Return ONLY JSON: {"patches": [{"index": 0, "reason": "short_tag", "text": "corrected paragraph"}]}. '
             'If every paragraph is faithful and natural, return {"patches": []}.'
-            + protected_guidance
         )
+        style_block = prompts.wrap_untrusted_style("Style guide", style or "(none)")
 
         pairs_lines = []
         for idx, (src, tgt) in enumerate(zip(src_list, draft_list)):
@@ -213,20 +213,38 @@ class SparseSemanticEditor(Agent):
         extra_alerts = ("\n" + "\n".join(alert_blocks) + "\n") if alert_blocks else ""
 
         def _render(terms_for_prompt: list[GlossaryTerm]) -> tuple[str, str]:
+            # Place book-wide style guidance and entity glossary at the end of system so
+            # consecutive batches share a byte-identical prefix on a complete message boundary
+            # for KV prefix caching even on large prompts. Per-batch navigation titles stay in
+            # user and protected-object guidance stays after the shared prefix.
+            entity_terms = [t for t in terms_for_prompt if t.type != TYPE_NAVIGATION]
+            nav_terms = [t for t in terms_for_prompt if t.type == TYPE_NAVIGATION]
             glossary_block = prompts.render_glossary(
-                terms_for_prompt,
+                entity_terms,
                 source_lang=self.src,
                 genre=self.language_policy.context.genre,
             )
-            user = (
-                f"[Style guide]\n{style or '(none)'}\n\n"
-                f"[Glossary]\n{glossary_block}\n\n"
-                f"[Paragraphs to audit] ({n} paragraphs, 0..{n - 1})\n{paired_block}\n"
-                f"{extra_alerts}\n"
-                f"[Following source paragraph] (reference only)\n{next_ref}\n\n"
-                'Return ONLY JSON: {"patches": [{"index": <int>, "reason": "<tag>", "text": "<full revised paragraph>"}]}'
+            wrapped_glossary = prompts.wrap_untrusted_glossary(glossary_block)
+            system_text = (
+                f"{base_system}\n\n{style_block}\n\n{wrapped_glossary}{protected_guidance}"
             )
-            return system, user
+            nav_block = (
+                prompts.render_glossary(
+                    nav_terms,
+                    source_lang=self.src,
+                    genre=self.language_policy.context.genre,
+                )
+                if nav_terms
+                else ""
+            )
+            user = (
+                (f"[Navigation titles]\n{nav_block}\n\n" if nav_block else "")
+                + f"[Paragraphs to audit] ({n} paragraphs, 0..{n - 1})\n{paired_block}\n"
+                + f"{extra_alerts}\n"
+                + f"[Following source paragraph] (reference only)\n{next_ref}\n\n"
+                + 'Return ONLY JSON: {"patches": [{"index": <int>, "reason": "<tag>", "text": "<full revised paragraph>"}]}'
+            )
+            return system_text, user
 
         match_text = "\n".join(part for part in (*src_list, next_source) if part)
         try:

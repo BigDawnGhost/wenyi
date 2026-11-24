@@ -626,10 +626,11 @@ def test_resume_refreshes_full_glossary_before_pending_batches(
     calls = [call for call in client.calls if call["operation"] == "translation.body"]
     assert len(calls) == 2
     for call in calls:
+        system = call["messages"][0]["content"]
         user = call["messages"][-1]["content"]
-        assert "Alice → 爱丽丝" in user
-        assert "Outside → 外部术语" in user
-        assert user.index("Zebra → 斑马") < user.index("Apple → 苹果")
+        assert "Alice → 爱丽丝" in system
+        assert "Outside → 外部术语" in system
+        assert system.index("Zebra → 斑马") < system.index("Apple → 苹果")
         assert "Alice waited by the window." not in _numbered_sources(user)
     cached_client = FakeClient(handler=handler)
     Orchestrator(config, client=cached_client).run(str(source))

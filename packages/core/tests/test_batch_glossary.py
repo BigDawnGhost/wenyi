@@ -43,8 +43,13 @@ def config(tmp_path):
     )
 
 
-def _glossary_block(user: str, heading: str) -> list[str]:
-    block = user.split(heading, 1)[1].split("\n\n", 1)[0]
+def _glossary_block(text: str, heading: str) -> list[str]:
+    block = text.split(heading, 1)[1].split("\n\n", 1)[0]
+    return GLOSSARY_LINE.findall(block)
+
+
+def _tagged_glossary_block(system: str) -> list[str]:
+    block = system.split("<glossary_data>\n", 1)[1].split("\n</glossary_data>", 1)[0]
     return GLOSSARY_LINE.findall(block)
 
 
@@ -94,15 +99,18 @@ def test_all_scope_sends_every_entry_in_insertion_order(tmp_path, config):
     calls = [c for c in client.calls if c["operation"] == "translation.body"]
     assert len(calls) == 4
     for call in calls:
+        system = call["messages"][0]["content"]
         user = call["messages"][-1]["content"]
-        assert _glossary_block(user, "[Glossary] (required mappings)\n") == [
+        assert _tagged_glossary_block(system) == [
             "Zebra",
             "Alice",
             "Physician",
             "letter",
         ]
-        # Book-stable glossary precedes the per-chapter digest for prefix caching.
-        assert user.index("[Glossary]") < user.index("[Chapter digest]")
+        # Book-stable style, synopsis and glossary live in system ahead of dynamic user context.
+        assert system.index("<style_data>") < system.index("<synopsis_data>")
+        assert system.index("<synopsis_data>") < system.index("<glossary_data>")
+        assert "[Chapter digest]" in user
     events = _batch_events(store)
     assert [e["glossary_terms"] for e in events] == [4, 4, 4, 4]
     assert all(e["glossary_tokens"] > 0 for e in events)
@@ -129,7 +137,13 @@ def test_relevant_scope_filters_translation_polish_and_extraction(
     # Each batch also sees the following-source reference.
     full = ["Alice", "Physician", "letter"]
     expected = [["Alice", "Physician"], ["Physician", "letter"], full, full]
-    assert blocks("translation.body", "[Glossary] (required mappings)\n") == expected
+    trans_blocks = [
+        _tagged_glossary_block(c["messages"][0]["content"])
+        for c in client.calls
+        if c["operation"] == "translation.body"
+        and "<glossary_data>\n" in c["messages"][0]["content"]
+    ]
+    assert trans_blocks == expected
     polish = blocks("polish.body", "[Glossary]\n")
     assert sorted(polish) == sorted(expected)
     # Extraction sees only entries occurring in the extracted batch (chapter fallback last).
@@ -180,7 +194,7 @@ def test_relevant_scope_bounds_prompt_size_for_large_glossaries(tmp_path, config
     orchestrator.run(str(source))
     for call in client.calls:
         if call["operation"] in {"translation.body", "glossary.extract"}:
-            assert "Term0" not in call["messages"][-1]["content"]
+            assert all("Term0" not in message["content"] for message in call["messages"])
     events = _batch_events(store)
     assert max(e["glossary_terms"] for e in events) == 3
     assert max(e["glossary_tokens"] for e in events) < 100

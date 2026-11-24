@@ -10,17 +10,20 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 
 from ..alignment.objects import marked_sources
+from ..i18n import genres
 from ..llm.json_parser import JsonParseError
 from ..llm.preflight import fit_prompt_to_context_window
 from ..llm.retrying import TruncatedResponseError
-from ..models.glossary import GlossaryTerm
+from ..models.glossary import TYPE_NAVIGATION, GlossaryTerm
 from . import prompts
 from .base import Agent, Messages
 from .note_tools import batch_note_tools
 
 _LOGGER = logging.getLogger(__name__)
+_LEGACY_GLOSSARY_PLACEHOLDER_RE = re.compile(r"\$(?:\{glossary\}|glossary\b)")
 
 
 class AlignmentError(Exception):
@@ -103,7 +106,12 @@ class Translator(Agent):
         return normalized
 
     def render_glossary_block(self, glossary_terms: list[GlossaryTerm], sources: list[str]) -> str:
-        """Render the ``[Glossary]`` block exactly as a body translation request sends it."""
+        """Render combined glossary entries and optional local notes for token accounting.
+
+        Body translation requests split entity terms into ``system`` (``<glossary_data>``) and
+        matched navigation titles or local notes into ``user``; this helper preserves a single
+        combined rendering for prompt-size and event token metrics.
+        """
         return prompts.render_glossary(
             glossary_terms,
             source_lang=self.src,
@@ -131,12 +139,28 @@ class Translator(Agent):
         Returns the translations and the three-turn transcript for optional polish continuation.
         """
         n = len(sources)
+        joined_sources = "\n".join(sources)
         model_sources = marked_sources(sources, annotation_contexts or [[] for _ in sources])
-        system_template = self.render(
+        base_system = self.render(
             "translator_system",
             src=self.src,
             tgt=self.tgt,
-        ) + prompts.protected_object_guidance(model_sources)
+        )
+        protected_guidance = prompts.protected_object_guidance(model_sources)
+        style_heading = genres.compose(
+            "${genre_style_heading}", genre=self.language_policy.context.genre
+        )
+        style_block = prompts.wrap_untrusted_style(style_heading, style or "(none)")
+        synopsis_block = prompts.wrap_untrusted_reference(
+            "Whole-book synopsis",
+            "synopsis_data",
+            book_synopsis or "(none)",
+            item_label="book synopsis",
+        )
+        legacy_user_has_glossary = any(
+            name == "translator_user" and _LEGACY_GLOSSARY_PLACEHOLDER_RE.search(text) is not None
+            for name, text in self.language_policy.templates
+        )
         rendered_annotations = prompts.render_annotation_contexts(
             annotation_contexts or [[] for _ in sources]
         )
@@ -149,13 +173,54 @@ class Translator(Agent):
         )
 
         def _render(terms_for_prompt: list[GlossaryTerm]) -> tuple[str, str]:
+            # Keep book-wide style, synopsis and entity glossary at the end of the system
+            # message so consecutive batches share a byte-identical prefix on a complete
+            # message boundary for KV prefix caching. Per-batch navigation titles, local
+            # glossary notes and protected-object guidance stay outside that shared prefix.
+            entity_terms = [t for t in terms_for_prompt if t.type != TYPE_NAVIGATION]
+            nav_terms = [t for t in terms_for_prompt if t.type == TYPE_NAVIGATION]
+            shared_glossary = prompts.render_glossary(
+                entity_terms,
+                source_lang=self.src,
+                genre=self.language_policy.context.genre,
+            )
+            glossary_block = prompts.wrap_untrusted_glossary(shared_glossary)
+            system_text = (
+                f"{base_system}\n\n{style_block}\n\n{synopsis_block}\n\n"
+                f"{glossary_block}{protected_guidance}"
+            )
+            nav_glossary = (
+                prompts.render_glossary(
+                    nav_terms,
+                    source_lang=self.src,
+                    genre=self.language_policy.context.genre,
+                )
+                if nav_terms
+                else ""
+            )
+            batch_notes = (
+                prompts.render_glossary_notes(
+                    terms_for_prompt,
+                    note_source=joined_sources,
+                    genre=self.language_policy.context.genre,
+                ).strip()
+                if self.config.pipeline.use_glossary_notes
+                else ""
+            )
+            legacy_glossary_parts = [part for part in (nav_glossary, batch_notes) if part]
             user_text = self.render(
                 "translator_user",
                 src=self.src,
                 tgt=self.tgt,
-                style=style or "(none)",
-                book_synopsis=book_synopsis or "(none)",
-                glossary=self.render_glossary_block(terms_for_prompt, sources),
+                # Retained for projects whose frozen language-policy snapshot still holds
+                # the pre-cache-boundary translator_user template placeholders.
+                style="(see style guide in system instructions)",
+                book_synopsis="(see [Whole-book synopsis] in system instructions)",
+                glossary=(
+                    "\n\n".join(legacy_glossary_parts)
+                    if legacy_glossary_parts
+                    else "(see [Glossary] in system instructions)"
+                ),
                 annotation_contexts=rendered_annotations,
                 chapter_digest=chapter_digest or "(none)",
                 context=context or "(none)",
@@ -164,11 +229,19 @@ class Translator(Agent):
                 numbered_source=numbered_source,
                 next_source=next_ref,
             )
+            if not legacy_user_has_glossary:
+                user_prefix_parts: list[str] = []
+                if nav_glossary:
+                    user_prefix_parts.append(f"[Navigation titles]\n{nav_glossary}")
+                if batch_notes:
+                    user_prefix_parts.append(batch_notes)
+                if user_prefix_parts:
+                    user_text = "\n\n".join(user_prefix_parts) + "\n\n" + user_text
             if note_lookup_suffix:
-                has_tools = batch_note_tools(terms_for_prompt, "\n".join(sources)) is not None
+                has_tools = batch_note_tools(terms_for_prompt, joined_sources) is not None
                 if has_tools:
                     user_text += note_lookup_suffix
-            return system_template, user_text
+            return system_text, user_text
 
         match_text = "\n".join(part for part in (*sources, next_source, chapter_digest) if part)
         system, user, effective_terms, _shrunk = fit_prompt_to_context_window(

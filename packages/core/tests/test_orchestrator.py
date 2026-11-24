@@ -624,8 +624,8 @@ class TestBookUnderstanding(unittest.TestCase):
                 self.assertTrue(
                     all(segment.target is not None for segment in chapter.text_segments)
                 )
-            user = self._translate_user(client.calls)
-            self.assertIn("[Whole-book synopsis]\n(none)", user)
+            system, user = self._translate_messages(client.calls)
+            self.assertIn("<synopsis_data>\n(none)\n</synopsis_data>", system)
             self.assertIn("本章梗概", user)
 
             resumed = FakeClient(handler=routing_handler)
@@ -678,17 +678,21 @@ class TestBookUnderstanding(unittest.TestCase):
             assert usage is not None
             self.assertEqual(usage["totals"], client.usage_summary()["totals"])
 
-    def _translate_user(self, calls) -> str:
-        """Return user text from the last translation.body call (not a polish continuation)."""
+    def _translate_messages(self, calls) -> tuple[str, str]:
+        """Return (system, user) from the last translation.body call (not a polish continuation)."""
         for c in reversed(calls):
             if c.get("operation") == "translation.body":
-                return c["messages"][-1]["content"]
+                return c["messages"][0]["content"], c["messages"][-1]["content"]
             if "literary translator" in c["messages"][0]["content"] and (
                 "Polish the translations from your previous JSON response"
                 not in c["messages"][-1]["content"]
             ):
-                return c["messages"][-1]["content"]
-        return ""
+                return c["messages"][0]["content"], c["messages"][-1]["content"]
+        return "", ""
+
+    def _translate_user(self, calls) -> str:
+        """Return user text from the last translation.body call (not a polish continuation)."""
+        return self._translate_messages(calls)[1]
 
     def test_prepass_builds_and_injects(self):
         """Prescan produces and injects chapter digests and the whole-book synopsis."""
@@ -706,10 +710,10 @@ class TestBookUnderstanding(unittest.TestCase):
             self.assertTrue((store.load_analysis() or {}).get("book_synopsis"))
 
             # Translation prompts contain actual synopsis/digest content instead of empty placeholders.
-            user = self._translate_user(client.calls)
-            self.assertIn("[Whole-book synopsis]", user)
+            system, user = self._translate_messages(client.calls)
+            self.assertIn("[Whole-book synopsis:", system)
+            self.assertIn("全书概览", system)  # Fake whole-book synopsis text.
             self.assertIn("[Chapter digest]", user)
-            self.assertIn("全书概览", user)  # Fake whole-book synopsis text.
             self.assertIn("本章梗概", user)  # Fake chapter digest text.
 
     def test_prepare_for_translation_builds_understanding_without_targets(self):

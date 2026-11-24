@@ -1,12 +1,3 @@
-[${genre_style_heading}]
-$style
-
-[Whole-book synopsis]
-$book_synopsis
-
-[Glossary] (required mappings)
-$glossary
-
 [Chapter digest]
 $chapter_digest
 

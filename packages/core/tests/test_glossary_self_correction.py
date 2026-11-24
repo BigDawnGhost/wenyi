@@ -243,8 +243,8 @@ def _prompt_entries(client) -> list[list[str]]:
     for call in client.calls:
         if call["operation"] != "translation.body":
             continue
-        user = call["messages"][-1]["content"]
-        block = user.split("[Glossary] (required mappings)\n", 1)[1].split("\n\n", 1)[0]
+        system = call["messages"][0]["content"]
+        block = system.split("<glossary_data>\n", 1)[1].split("\n</glossary_data>", 1)[0]
         blocks.append(re.findall(r"^- (\S+) ", block, re.MULTILINE))
     return blocks
 

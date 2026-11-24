@@ -126,7 +126,7 @@ def test_each_agent_consumes_only_local_notes_when_enabled(enabled, agent):
     assert _terms()[2].note not in user
     assert _terms()[0].note not in system
     glossary = render_glossary(_terms(), source_lang=config.source_lang)
-    glossary_container = system if agent == "reviewer" else user
+    glossary_container = system if agent in {"reviewer", "translator"} else user
     assert (
         json.dumps(glossary, ensure_ascii=False)[1:-1] if agent == "precision" else glossary
     ) in glossary_container
