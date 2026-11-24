@@ -182,3 +182,66 @@ def test_title_string_conversion_and_empty_fallback_remain_unchanged(title_proje
         "3",
         "T",
     ]
+
+
+def test_plan_titles_scopes_opf_metadata_and_handles_subject_resume():
+    manifest = {
+        "title": "Shadow Empire",
+        "fmt": "epub",
+        "chapters": [{"index": 0, "title": "Chapter 1", "title_translated": "第一章"}],
+        "meta": {
+            "opf_path": "OEBPS/content.opf",
+            "epub_description": "A story.",
+            "epub_subjects": ["Fiction", "Drama"],
+            "epub_subjects_translated": ["小说", ""],
+        },
+    }
+    plan = plan_titles(manifest, {})
+    assert [(item.field, item.source, item.list_index) for item in plan.pending] == [
+        ("book_title_translated", "Shadow Empire", None),
+        ("epub_subjects_translated", "Drama", 1),
+    ]
+    plan.apply(plan.pending, ["阴影帝国", "剧情"])
+    assert plan.manifest["title"] == "Shadow Empire"
+    assert plan.manifest["meta"]["book_title_translated"] == "阴影帝国"
+    assert "epub_description_translated" not in plan.manifest["meta"]
+    assert plan.manifest["meta"]["epub_subjects_translated"] == ["小说", "剧情"]
+
+    # Truncated subject list must re-plan all entries rather than wiping skipped prefix slots.
+    truncated = {
+        "title": "Shadow Empire",
+        "fmt": "epub",
+        "chapters": [],
+        "meta": {
+            "opf_path": "OEBPS/content.opf",
+            "book_title_translated": "阴影帝国",
+            "epub_subjects": ["Fiction", "Drama"],
+            "epub_subjects_translated": ["小说"],
+        },
+    }
+    truncated_plan = plan_titles(truncated, {})
+    assert [(item.source, item.list_index) for item in truncated_plan.pending] == [
+        ("Fiction", 0),
+        ("Drama", 1),
+    ]
+    truncated_plan.apply(truncated_plan.pending, ["小说", "剧情"])
+    assert truncated_plan.manifest["meta"]["epub_subjects_translated"] == ["小说", "剧情"]
+
+    # MinerU PDFs (fmt='pdf' with opf_path) and EPUB manifests without opf_path skip OPF metadata.
+    for non_opf in (
+        {
+            "title": "paper-stem",
+            "fmt": "pdf",
+            "chapters": [{"index": 0, "title": "Intro", "title_translated": "引言"}],
+            "meta": {"opf_path": "EPUB/package.opf", "mineru_epub_sha256": "a" * 64},
+        },
+        {
+            "title": "Synthetic",
+            "fmt": "epub",
+            "chapters": [{"index": 0, "title": "Intro", "title_translated": "引言"}],
+            "meta": {"toc_entries": []},
+        },
+    ):
+        skipped = plan_titles(non_opf, {})
+        assert skipped.pending == []
+        assert "book_title_translated" not in skipped.manifest["meta"]

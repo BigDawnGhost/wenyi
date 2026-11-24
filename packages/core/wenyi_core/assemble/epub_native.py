@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from os import PathLike
 
 from wenyi_core.assemble.html_bilingual import _BILINGUAL_CSS
@@ -43,6 +43,10 @@ def options(
     preserve_source_style: bool,
     target_lang: str | None = None,
     export_title: str = "",
+    original_title: str | None = None,
+    description: str | None = None,
+    subjects: list[str] | None = None,
+    chapter_titles: Mapping[int, str] | None = None,
     horizontal: bool = False,
     about: str | None = None,
 ) -> bytes:
@@ -51,6 +55,7 @@ def options(
     raw_entries = meta.get("toc_entries")
     package_path = meta.get("opf_path")
     entries = []
+    resource_titles: dict[str, str] = {}
     for record in raw_entries if isinstance(raw_entries, list) else []:
         if not isinstance(record, dict):
             continue
@@ -62,12 +67,27 @@ def options(
             if isinstance(value := record.get(key), str):
                 row[key] = value
         entries.append(row)
+        resource, title = record.get("resource_href"), row.get("title_translated")
+        if (
+            target_lang is not None
+            and isinstance(resource, str)
+            and resource
+            and record.get("fragment") == ""
+            and not record.get("external")
+            and isinstance(title, str)
+            and (title := title.strip())
+        ):
+            resource_titles.setdefault(resource, title)
+    chapter_resource_titles: dict[str, str] = {}
     merged = {}
     for chapter in chapters:
+        chapter_hrefs: set[str] = set()
         for segment in chapter.segments:
             href = segment.resource_href
             if not href:
                 continue
+            if chapter_titles is not None:
+                chapter_hrefs.add(href)
             current = merged.setdefault(href, {})
             if segment.cont and current:
                 previous = next(reversed(current.values()))
@@ -86,6 +106,17 @@ def options(
                 raise ValueError(
                     f"EPUB state is inconsistent: segment {segment.index} has no anchor"
                 )
+        if chapter_titles is not None:
+            # Only use a chapter title when the chapter and page are one-to-one.
+            for href in chapter_hrefs:
+                chapter_resource_titles[href] = (
+                    chapter_titles.get(chapter.index, "").strip()
+                    if len(chapter_hrefs) == 1 and href not in chapter_resource_titles
+                    else ""
+                )
+    for href, title in chapter_resource_titles.items():
+        if title:
+            resource_titles.setdefault(href, title)
     return json.dumps(
         {
             "title": book_title,
@@ -101,12 +132,16 @@ def options(
             "segments": [record for page in merged.values() for record in page.values()],
             "about": about,
             "package_path": package_path if isinstance(package_path, str) else None,
+            "resource_titles": resource_titles,
             "presentation": (
                 {
                     "lang": target_lang,
                     "title": export_title,
                     "css": _BILINGUAL_CSS,
                     "horizontal": horizontal,
+                    "original_title": original_title,
+                    "description": description,
+                    "subjects": subjects or [],
                 }
                 if target_lang is not None
                 else None
