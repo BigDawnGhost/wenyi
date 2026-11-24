@@ -5170,7 +5170,7 @@ dependencies = [
  "cap-std",
  "chrono",
  "dbus",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "gtk",
  "libc",
  "objc2",
