@@ -186,6 +186,12 @@ class SqliteStorage:
             conn.execute("PRAGMA foreign_keys = ON")
             if conn.execute("PRAGMA journal_mode").fetchone()[0] != "wal":
                 conn.execute("PRAGMA journal_mode = WAL")
+            # Pin the durability of a committed checkpoint event instead of inheriting it.
+            # SQLite already defaults to FULL in both journal modes, so this costs nothing
+            # today; it stops a database left at NORMAL by another tool from committing an
+            # event synchronously in memory only. Setting it here is required: SQLite
+            # refuses a safety-level change inside the transaction that writes the row.
+            conn.execute("PRAGMA synchronous = FULL")
             # Every connection passes here, including the readers that drain on
             # close, so the guard is stated once rather than at each open site.
             version = self._check_schema_version(conn)
@@ -538,6 +544,11 @@ class SqliteStorage:
             return [row[0] for row in rows]
 
     def append_artifact_record(self, key: str, record: dict) -> None:
+        """Append one record in its own transaction.
+
+        Every append commits on a connection opened with synchronous=FULL, so a
+        checkpoint record is durable without a branch here.
+        """
         key = self._key(key)
         with self.state_lock():
             conn = self._connection()

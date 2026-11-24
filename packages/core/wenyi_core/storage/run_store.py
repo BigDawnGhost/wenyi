@@ -34,7 +34,7 @@ from ..i18n.languages import require_language, validate_run_languages
 from ..ingest.source_hash import source_sha256
 from ..models.document import Chapter, Document
 from ..timing import save_timing
-from .artifacts import FileArtifacts
+from .artifacts import FileArtifacts, is_durable_record
 from .atomic_write import sweep_temporary, write_text_atomic
 from .chapter_publication import JOURNAL_NAME, ChapterPublication
 from .io_path import to_io_path
@@ -823,6 +823,10 @@ class RunStore(FileArtifacts):
         with self.event_lock():
             with open(to_io_path(self.event_log_path), "a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n")
+                # Only a checkpoint pays for a sync; diagnostics stay buffered.
+                if is_durable_record(row):
+                    f.flush()
+                    os.fsync(f.fileno())
         if event == "batch_glossary_extracted" and self._batch_glossary_event_cache is not None:
             chapter = data.get("chapter")
             start = data.get("start_index")
