@@ -14,18 +14,34 @@ from typing import Any, Iterator, Optional
 
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..models.document import Chapter, Document
-from .artifacts import FileArtifacts
 from .protocol import STATUS_PENDING  # noqa: F401
 from .run_store import STATUS_DONE, RunStore  # noqa: F401 (re-export)
 
 
-class FileStorage(FileArtifacts):
+class FileStorage:
     """Expose run state and glossary operations through a single file backend."""
 
     def __init__(self, run_dir: str, *, create: bool = True):
-        FileArtifacts.__init__(self, run_dir)
         self._run = RunStore(run_dir, create=create)
         self._glossary: Optional[GlossaryStore] = None
+
+    def read_artifact(self, key: str) -> Any | None:
+        return self._run.read_artifact(key)
+
+    def write_artifact(self, key: str, value: Any) -> None:
+        self._run.write_artifact(key, value)
+
+    def delete_artifact(self, key: str) -> None:
+        self._run.delete_artifact(key)
+
+    def list_artifacts(self, prefix: str = "") -> list[str]:
+        return self._run.list_artifacts(prefix)
+
+    def append_artifact_record(self, key: str, record: dict) -> None:
+        self._run.append_artifact_record(key, record)
+
+    def read_artifact_records(self, key: str) -> list[dict]:
+        return self._run.read_artifact_records(key)
 
     @property
     def _batch_glossary_event_cache(self):
@@ -45,7 +61,9 @@ class FileStorage(FileArtifacts):
         self._run.finish_initialization()
 
     def ensure_source_identity(self, input_path: str, *, actual_sha256: str | None = None) -> str:
-        return self._run.ensure_source_identity(input_path, actual_sha256=actual_sha256)
+        return self._run.ensure_source_identity(
+            input_path, actual_sha256=actual_sha256, recover_if_run_locked=True
+        )
 
     def create_export_snapshot(self, *, actual_sha256: str):
         return self._run.create_export_snapshot(actual_sha256=actual_sha256)
@@ -124,10 +142,11 @@ class FileStorage(FileArtifacts):
         return self._run.stage_document(doc, source_hash=source_hash)
 
     def init_from_document(self, doc: Document) -> dict:
-        """Stage a document and commit the manifest as the initialization marker."""
+        """Stage a document, commit the manifest last and drop the initialization marker."""
         manifest = self._run.stage_document(doc)
         manifest["initialized"] = True
         self._run.save_manifest(manifest)
+        self._run.finish_initialization()
         return manifest
 
     @contextmanager

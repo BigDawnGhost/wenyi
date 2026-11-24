@@ -16,16 +16,15 @@ from ...events import ProgressFn
 from ...i18n.languages import normalize_language
 from ...i18n.policy.models import Phase, content_hash
 from ...i18n.prompts import render
-from ...ingest.epub_reader import peek_epub_title
-from ...ingest.segmenter import load_document
 from ...llm.errors import ProviderFailure, describe_provider_failure
 from ...models.document import Document
 from ...storage.protocol import Storage
-from ...storage.run_store import source_sha256, translation_run_dir
+from ...storage.run_store import source_sha256
 from ..run.language_policies import commit_revision, initialize_policies, translation_revision
 from .book_understanding import BookUnderstandingService
 from .epub_objects import refresh_epub_objects
 from .input_preparation import (
+    locate_input_run,
     locate_input_storage,
     parse_document,
 )
@@ -65,42 +64,11 @@ class PreparationService:
         *,
         progress: ProgressFn | None = None,
     ) -> Storage:
-        """Locate existing state without creating or initializing a translation task.
-        PDF state follows the filename and can be checked before MinerU. EPUB needs only the
-        OPF title, avoiding full-resource annotation that export will later repeat. Other
-        formats parse their local title to match preparation's state path.
-        """
-        if self._runtime.storage is not None:
-            store = self._runtime.storage
-            if not store.exists():
-                raise ValueError("No translation progress found. Run translate first.")
-            self._runtime.ensure_store_source(store, input_path)
-            self._runtime.bind_llm_events(store)
-            return store
-        ext = os.path.splitext(input_path)[1].lower()
-        if ext == ".pdf":
-            title = os.path.splitext(os.path.basename(input_path))[0]
-        elif ext == ".epub":
-            if progress:
-                progress(0, 0, "progress.stage.locateProgress")
-            title = peek_epub_title(input_path)
-        else:
-            if progress:
-                progress(0, 0, "progress.stage.locateProgress")
-            doc = load_document(
-                input_path,
-                self._runtime.config.source_lang,
-                self._runtime.config.target_lang,
-                split_segments=self._runtime.config.segment.max_tokens_per_segment,
-            )
-            title = doc.title
-
-        store = self._runtime.get_store(
-            translation_run_dir(
-                self._runtime.config.state_dir, title, self._runtime.config.target_lang
-            ),
-            create=False,
-        )
+        """Locate initialized state; injected storage is authoritative."""
+        store = self._runtime.storage
+        if store is None:
+            run_dir, _ = locate_input_run(input_path, self._runtime.config, progress=progress)
+            store = self._runtime.get_store(run_dir, create=False)
         if not store.exists():
             raise ValueError("No translation progress found. Run translate first.")
         self._runtime.ensure_store_source(store, input_path)

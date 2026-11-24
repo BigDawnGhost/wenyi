@@ -54,10 +54,12 @@ wenyi models list
 wenyi languages
 ```
 
-The CLI creates a documented `config.yaml` if it is missing, including on help
-and version invocations. `models list` previews effective model routes without
-making requests. Review the model provider, languages, workflow, and output
-settings before translating.
+The CLI creates a documented `config.yaml` at the default location if it is
+missing, including on help and version invocations. An explicit `--config` path
+must already exist: a missing file is reported as a configuration error and the
+command exits. `models list` previews effective model routes without making
+requests. Review the model provider, languages, workflow, and output settings
+before translating.
 
 Use a different file with the root option `--config` (`-c`), before the command:
 
@@ -289,6 +291,12 @@ cannot resume. For a deliberately fresh run, choose a new `paths.state_dir`;
 do not delete an existing state directory just to try another setting.
 CLI, Web, and Desktop do not share project state.
 
+New CLI runs shorten long book directory names. An existing run with the older
+full-length name stays where it is: use the original source and target configuration
+as usual. If both names exist for the selected target language, Wenyi stops instead
+of choosing or merging them. Back up both directories and keep only the state you
+intend to use under the configured state root.
+
 Ctrl+C cooperatively stops queued requests and retries. An in-flight request
 may finish or reach its provider timeout. A forced kill can lose the last
 unsaved work or usage information; prefer normal interruption.
@@ -506,7 +514,7 @@ Each invocation generates a fresh `run_id`. Files include `protocol_version`,
 
 | File / state | Fields and meaning |
 |---|---|
-| Progress while running | `status: "running"`, `done`, nullable `total`, `label`; counts describe the current stage, not overall percentage. |
+| Progress while running | `status: "running"`, `done`, nullable `total`, `label`; counts describe the current stage, not overall percentage. An optional `payload` object repeats whitelisted structured locating fields for the current tick, such as `chapter`, `batch`, and `batch_size`; it is omitted when the stage has none. |
 | Result before preflight | `status: "running"`, empty `outputs`; replaces a previous receipt. |
 | Successful result | `status: "success"`, `source_sha256`, absolute `state_dir`, and `outputs` containing absolute `path`, byte `size`, and `sha256`. |
 | Failed result | `status: "failed"`, empty `outputs`, generic `error`; details remain in terminal/log output. |

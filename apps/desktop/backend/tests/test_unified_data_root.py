@@ -8,6 +8,7 @@ from wenyi_desktop import paths
 from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.local_credentials import CredentialStore
 from wenyi_desktop.main import create_app, create_context
+from wenyi_desktop.settings import DesktopSettings
 
 
 def test_catalog_credentials_and_projects_belong_to_the_explicit_root(tmp_path):
@@ -29,18 +30,24 @@ def test_catalog_credentials_and_projects_belong_to_the_explicit_root(tmp_path):
 def test_two_explicit_roots_do_not_share_settings_projects_or_credentials(tmp_path):
     first = create_context(tmp_path / "first")
     second = create_context(tmp_path / "second")
+    first_backend = first.repository
+    assert isinstance(first_backend, LocalBackend)
+    second_backend = second.repository
+    assert isinstance(second_backend, LocalBackend)
+    first_settings = first.settings_store
+    assert isinstance(first_settings, DesktopSettings)
+    second_settings = second.settings_store
+    assert isinstance(second_settings, DesktopSettings)
     try:
-        first.repository.create_project("Only in first", "en", "zh", {})
-        with first.repository.transaction() as connection:
-            first.repository.save_settings({"revision": 7}, connection)
-        assert second.repository.list_projects() == []
-        assert second.repository.load_settings() is None
-        assert (
-            first.settings_store.credentials.database != second.settings_store.credentials.database
-        )
+        first_backend.create_project("Only in first", "en", "zh", {})
+        with first_backend.transaction() as connection:
+            first_backend.save_settings({"revision": 7}, connection)
+        assert second_backend.list_projects() == []
+        assert second_backend.load_settings() is None
+        assert first_settings.credentials.database != second_settings.credentials.database
     finally:
-        first.repository.close()
-        second.repository.close()
+        first_backend.close()
+        second_backend.close()
 
 
 def test_startup_does_not_scan_or_modify_unregistered_project_directories(tmp_path):

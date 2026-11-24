@@ -31,6 +31,7 @@ use sha2::{Digest, Sha256};
 use super::Error;
 
 const MANIFEST: &str = "MANIFEST.json";
+const ATTEMPT: &str = ".upgrade-attempt.json";
 const SCHEMA_VERSION: u32 = 1;
 const MULTI_SOURCE_SCHEMA_VERSION: u32 = 2;
 /// Headroom over the source size. A copy is not the only thing the update does
@@ -58,6 +59,60 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// Bind the install target to this exact verified snapshot before the installer starts.
+    pub fn arm_upgrade(&self, target_version: &str) -> Result<(), Error> {
+        let parent = self.root.parent().ok_or_else(|| mismatch(MANIFEST))?;
+        let name = self
+            .root
+            .file_name()
+            .and_then(|value| value.to_str())
+            .ok_or_else(|| mismatch(MANIFEST))?;
+        let marker = parent.join(ATTEMPT);
+        match fs::symlink_metadata(&marker) {
+            Ok(_) => return Err(Error::Unsupported("an unfinished upgrade attempt".into())),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(Error::Target(error)),
+        }
+        let value = serde_json::json!({
+            "schema_version": 1,
+            "snapshot": name,
+            "target_version": target_version,
+            "manifest_sha256": digest(&self.root.join(MANIFEST))?,
+            "phase": "prepared",
+        });
+        let temporary = parent.join(format!(".{name}-attempt.tmp"));
+        let mut file = File::create_new(&temporary).map_err(Error::Target)?;
+        let result = (|| {
+            serde_json::to_writer(&mut file, &value)
+                .map_err(|error| Error::Target(std::io::Error::other(error)))?;
+            file.sync_all().map_err(Error::Target)?;
+            drop(file);
+            #[cfg(unix)]
+            {
+                fs::rename(&temporary, &marker).map_err(Error::Target)?;
+                sync_directory(parent)?;
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::ffi::OsStrExt;
+                use windows_sys::Win32::Storage::FileSystem::{
+                    MoveFileExW, MOVEFILE_WRITE_THROUGH,
+                };
+                let from: Vec<_> = temporary.as_os_str().encode_wide().chain([0]).collect();
+                let to: Vec<_> = marker.as_os_str().encode_wide().chain([0]).collect();
+                // SAFETY: both values are NUL-terminated UTF-16 path buffers.
+                if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_WRITE_THROUGH) } == 0 {
+                    return Err(Error::Target(std::io::Error::last_os_error()));
+                }
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(temporary);
+        }
+        result
+    }
+
     /// Read back a snapshot that a previous process wrote.
     ///
     /// The backup and the verification are not in the same process: the update
@@ -119,6 +174,13 @@ pub fn snapshot_sources(
     if sources.is_empty() {
         return Err(Error::Unsupported("empty backup plan".into()));
     }
+    unlinked_ancestors(target)?;
+    match fs::symlink_metadata(target) {
+        Ok(metadata) if owned(&metadata) && metadata.is_dir() => {}
+        Ok(_) => return Err(Error::Unsupported("the backup location".into())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(Error::Target(error)),
+    }
     let mut planned = Vec::new();
     let mut names = BTreeSet::new();
     let mut bytes = 0u64;
@@ -136,8 +198,9 @@ pub fn snapshot_sources(
         }
         crate::paths::check_disjoint(&[("source", &source.path), ("backup", target)])
             .map_err(|_| Error::Unsupported("backup overlaps source".into()))?;
+        unlinked_ancestors(&source.path)?;
         let metadata = fs::symlink_metadata(&source.path).map_err(Error::Source)?;
-        if metadata.is_symlink() {
+        if !owned(&metadata) {
             return Err(Error::Unsupported(source.name.clone()));
         }
         let entries = if metadata.is_dir() {
@@ -177,7 +240,8 @@ pub fn snapshot_sources(
     }
     planned.sort_by(|left, right| left.1.cmp(&right.1));
     let root = free_root(target, version);
-    fs::create_dir_all(&root).map_err(Error::Target)?;
+    fs::create_dir_all(target).map_err(Error::Target)?;
+    fs::create_dir(&root).map_err(Error::Target)?;
     let mut files = Vec::with_capacity(planned.len());
     for (path, name) in planned {
         files.push(copy_file(&path, &root, &name)?);
@@ -202,7 +266,64 @@ pub fn snapshot_sources(
         let _ = fs::remove_file(snapshot.root.join(MANIFEST));
         return Err(error);
     }
+    #[cfg(unix)]
+    {
+        sync_tree(&snapshot.root)?;
+        sync_directory(target)?;
+        if let Some(parent) = target.parent() {
+            sync_directory(parent)?;
+        }
+    }
     Ok(snapshot)
+}
+
+fn owned(metadata: &fs::Metadata) -> bool {
+    if crate::profile::linked(metadata) {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        // SAFETY: geteuid has no preconditions.
+        if metadata.uid() != unsafe { libc::geteuid() }
+            || (metadata.is_file() && metadata.nlink() != 1)
+        {
+            return false;
+        }
+    }
+    true
+}
+
+fn unlinked_ancestors(path: &Path) -> Result<(), Error> {
+    for ancestor in path.ancestors() {
+        match fs::symlink_metadata(ancestor) {
+            Ok(metadata) if crate::profile::linked(&metadata) => {
+                return Err(Error::Unsupported("a linked backup path".into()));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(Error::Source(error)),
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> Result<(), Error> {
+    File::open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(Error::Target)
+}
+
+#[cfg(unix)]
+fn sync_tree(path: &Path) -> Result<(), Error> {
+    for entry in fs::read_dir(path).map_err(Error::Target)? {
+        let entry = entry.map_err(Error::Target)?;
+        if entry.file_type().map_err(Error::Target)?.is_dir() {
+            sync_tree(&entry.path())?;
+        }
+    }
+    sync_directory(path)
 }
 
 /// Refuse a snapshot that the target volume cannot hold.
@@ -367,7 +488,7 @@ fn walk(directory: &Path, prefix: &Path, plan: &mut Plan, rebuild: bool) -> Resu
         // Never a follow: a link under the source would copy its target, which
         // is neither the file the old version owned nor reproducible on restore.
         let metadata = fs::symlink_metadata(&path).map_err(Error::Source)?;
-        if metadata.is_symlink() {
+        if !owned(&metadata) {
             return Err(Error::Unsupported(relative.to_string_lossy().into_owned()));
         }
         if metadata.is_dir() {
@@ -439,7 +560,7 @@ fn copy_file(source: &Path, root: &Path, relative: &str) -> Result<Entry, Error>
         writer.write_all(&buffer[..read]).map_err(Error::Target)?;
         size += read as u64;
     }
-    writer.flush().map_err(Error::Target)?;
+    writer.sync_all().map_err(Error::Target)?;
     Ok(Entry {
         path: relative.to_owned(),
         size,
@@ -450,7 +571,7 @@ fn copy_file(source: &Path, root: &Path, relative: &str) -> Result<Entry, Error>
 fn write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     let mut file = File::create(path).map_err(Error::Target)?;
     file.write_all(bytes).map_err(Error::Target)?;
-    file.flush().map_err(Error::Target)?;
+    file.sync_all().map_err(Error::Target)?;
     Ok(())
 }
 
@@ -585,7 +706,7 @@ mod tests {
             ));
             let _ = fs::remove_dir_all(&path);
             fs::create_dir_all(&path).unwrap();
-            Self(path)
+            Self(path.canonicalize().unwrap())
         }
 
         fn path(&self, name: &str) -> PathBuf {
@@ -972,8 +1093,39 @@ mod tests {
         let target = alias.join("not-created/backup");
         assert!(snapshot_sources(&sources, &target, "1.4.0").is_err());
         assert!(!source.join("not-created").exists());
-        let snapshot = snapshot_sources(&sources, &alias.join("../backup"), "1.4.0").unwrap();
+        assert!(snapshot_sources(&sources, &alias.join("../backup"), "1.4.0").is_err());
+        let snapshot = snapshot_sources(&sources, &scratch.path("backup"), "1.4.0").unwrap();
         verify(&snapshot).unwrap();
+    }
+
+    #[test]
+    fn an_install_attempt_binds_the_exact_verified_manifest_and_target() {
+        let scratch = Scratch::new();
+        let source = scratch.path("catalog.sqlite3");
+        let target = scratch.path("backups");
+        fs::write(&source, b"catalog").unwrap();
+        let sources = [BackupSource {
+            name: "catalog.sqlite3".into(),
+            path: source,
+        }];
+        let snapshot = snapshot_sources(&sources, &target, "1.9.0").unwrap();
+        snapshot.arm_upgrade("1.10.0").unwrap();
+        let marker = target.join(ATTEMPT);
+        let saved = fs::read(&marker).unwrap();
+        let attempt: serde_json::Value = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(
+            attempt["snapshot"],
+            snapshot.root.file_name().unwrap().to_str().unwrap()
+        );
+        assert_eq!(attempt["target_version"], "1.10.0");
+        assert_eq!(attempt["phase"], "prepared");
+        assert_eq!(
+            attempt["manifest_sha256"],
+            digest(&snapshot.root.join(MANIFEST)).unwrap()
+        );
+        let second = snapshot_sources(&sources, &target, "1.9.0").unwrap();
+        assert!(second.arm_upgrade("1.11.0").is_err());
+        assert_eq!(fs::read(marker).unwrap(), saved);
     }
 
     #[test]

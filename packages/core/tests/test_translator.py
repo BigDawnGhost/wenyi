@@ -6,6 +6,7 @@ import json
 import re
 import unittest
 
+import pytest
 from wenyi_core.agents.translator import Translator
 from wenyi_core.config import Config
 from wenyi_core.i18n.prompts import template
@@ -75,7 +76,7 @@ class TestTranslatorAlignment(unittest.TestCase):
         )
         translator = Translator(client, self._config())
 
-        with self.assertRaisesRegex(Exception, "failed at paragraph 1"):
+        with pytest.raises(Exception, match="failed at paragraph 1"):
             translator.translate_batch(["-", "本文", "42"])
 
     def test_fallback_to_per_segment_on_mismatch(self):
@@ -103,7 +104,7 @@ class TestTranslatorAlignment(unittest.TestCase):
         )
         translator = Translator(client, self._config())
 
-        with self.assertRaisesRegex(Exception, "failed at paragraph 0"):
+        with pytest.raises(Exception, match="failed at paragraph 0"):
             translator.translate_batch(["あ", "い"])
 
     def test_mineru_allows_empty_string_translations(self):
@@ -126,7 +127,7 @@ class TestTranslatorAlignment(unittest.TestCase):
         )
         translator = Translator(client, self._config())
 
-        with self.assertRaisesRegex(Exception, "failed at paragraph 0"):
+        with pytest.raises(Exception, match="failed at paragraph 0"):
             translator.translate_batch(["あ"], allow_empty_translations=True)
 
     def test_non_string_translation_is_rejected(self):
@@ -135,7 +136,7 @@ class TestTranslatorAlignment(unittest.TestCase):
         )
         translator = Translator(client, self._config())
 
-        with self.assertRaisesRegex(Exception, "failed at paragraph 0"):
+        with pytest.raises(Exception, match="failed at paragraph 0"):
             translator.translate_batch(["あ"])
 
     def test_provider_failure_is_not_retried_by_alignment_layer(self):
@@ -148,7 +149,7 @@ class TestTranslatorAlignment(unittest.TestCase):
         client = FakeClient(handler=fail_provider)
         translator = Translator(client, self._config())
 
-        with self.assertRaisesRegex(RuntimeError, "provider unavailable"):
+        with pytest.raises(RuntimeError, match="provider unavailable"):
             translator.translate_batch(["あ", "い"])
 
         self.assertEqual(len(client.calls), 1)
@@ -249,16 +250,16 @@ class TestTranslatorAnnotationContexts(unittest.TestCase):
         )
         translator = Translator(client, self._config())
 
-        with self.assertRaisesRegex(ValueError, "Annotation context count mismatch"):
+        with pytest.raises(ValueError, match="Annotation context count mismatch"):
             translator.translate_batch(["first", "second"], annotation_contexts=[[]])
         self.assertEqual(client.calls, [])
 
     def test_each_context_requires_target_key_and_source(self):
         translator = Translator(FakeClient(), self._config())
 
-        with self.assertRaisesRegex(ValueError, "valid target_key"):
+        with pytest.raises(ValueError, match="valid target_key"):
             translator.translate_batch(["first"], annotation_contexts=[[{"source": "note"}]])
-        with self.assertRaisesRegex(ValueError, "string source"):
+        with pytest.raises(ValueError, match="string source"):
             translator.translate_batch(
                 ["first"], annotation_contexts=[[{"target_key": "notes.xhtml#n1"}]]
             )
@@ -266,7 +267,7 @@ class TestTranslatorAnnotationContexts(unittest.TestCase):
     def test_conflicting_duplicate_target_is_rejected(self):
         translator = Translator(FakeClient(), self._config())
 
-        with self.assertRaisesRegex(ValueError, "Inconsistent text for annotation target"):
+        with pytest.raises(ValueError, match="Inconsistent text for annotation target"):
             translator.translate_batch(
                 ["first", "second"],
                 annotation_contexts=[

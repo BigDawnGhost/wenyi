@@ -67,9 +67,18 @@ Do not add it as a dependency of the [GPLv3-licensed](../../LICENSE) CLI/Core pa
    The existing CLI/Desktop binary workflows run separately.
 
 The build job checks tag/checkout/version consistency, packaging contracts,
-strict distribution metadata, and bundled language/prompt resources. It installs
-the wheels and source distributions into separate clean Python 3.12 environments,
-checks installed versions and dependency isolation, and runs CLI smoke tests.
+strict distribution metadata, and bundled language/prompt resources. The CLI
+declares `wenyi-core==<CLI version>` from Hatch's SCM metadata; an sdist retains
+that requirement when rebuilt without Git. The uv workspace resolves Core from
+the local member, so `uv.lock` records the workspace source, not a development
+version pin. The CLI and Core editable builds share cache inputs so uv refreshes
+them together when the Git identity or their packaging files change.
+
+The build job installs only the CLI wheel or sdist into separate clean Python
+3.12 environments. The resolver must select the matching Core from a local
+wheelhouse that also contains an incompatible older Core fixture. The check does
+not consult PyPI for Wenyi candidates. It verifies both installed versions,
+dependency isolation, CLI startup and packaged resources.
 A synthetic Markdown → DOCX → HTML → EPUB → TXT round trip exercises the installed
 document adapters. A separate PDF fixture checks native bilingual spread assembly
 without a model or a PDF service.

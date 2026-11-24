@@ -29,6 +29,7 @@ def test_installed_web_service_calls_are_forbidden():
             call = module
             for name in path.split("."):
                 call = getattr(call, name)
+            assert callable(call)
             # Guards are synchronous, including the async Redis entry points:
             # no socket, coroutine, pool worker, or real vault should be reached.
             with pytest.raises(AssertionError, match="Offline Desktop"):

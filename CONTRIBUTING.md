@@ -57,6 +57,12 @@ dispatch remains available for build validation. Fixes follow the same branch â†
 PR â†’ `main` path and can then be released with a new tag. Do not move an existing
 release tag or maintain a separate long-lived hotfix branch.
 
+Keep `CHANGELOG.md` current by summarizing merged Conventional Commits into its
+`Unreleased` section with
+`uv run --no-sync python scripts/release/update_changelog.py`. When tagging a
+release, convert that section with `--version <tag>` and draft the bilingual
+GitHub Release description with the release-notes skill.
+
 ### Repository settings and migration
 
 Repository administrators should keep `main` as the default branch, require

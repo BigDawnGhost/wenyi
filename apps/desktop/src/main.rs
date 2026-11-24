@@ -44,7 +44,7 @@ fn trusted(url: &tauri::Url) -> bool {
 #[derive(Default)]
 struct State {
     connection: Option<String>,
-    error: Option<&'static str>,
+    error: Option<String>,
     closing: bool,
     background: bool,
 }
@@ -63,7 +63,7 @@ impl State {
     fn script(&self) -> String {
         let status: String = if self.closing {
             "window.__WENYI_DESKTOP_CLOSING__=true;window.dispatchEvent(new Event('wenyi:desktop-closing'));".into()
-        } else if let Some(error) = self.error {
+        } else if let Some(error) = &self.error {
             format!("window.__WENYI_DESKTOP_ERROR__={};window.dispatchEvent(new CustomEvent('wenyi:desktop-error',{{detail:window.__WENYI_DESKTOP_ERROR__}}));", serde_json::to_string(error).unwrap())
         } else if let Some(connection) = &self.connection {
             format!("window.__WENYI_DESKTOP_CLOSING__=false;window.__WENYI_DESKTOP_ERROR__=undefined;window.__WENYI_DESKTOP_STATUS__=undefined;window.__WENYI_DESKTOP__={connection};window.dispatchEvent(new Event('wenyi:desktop-ready'));")
@@ -85,11 +85,7 @@ struct Engine {
 }
 
 /// The same launch path is used at startup and to recover a failed installation.
-fn start_backend(
-    app: &tauri::AppHandle,
-    engine: &Engine,
-    recovery: bool,
-) -> Result<(), &'static str> {
+fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Result<(), String> {
     let diagnostics = app.state::<diagnostics::Diagnostics>();
     let notifications = app.state::<notifications::Center>();
     let resources = app.path().resource_dir().map_err(|_| {
@@ -100,10 +96,10 @@ fn start_backend(
         if engine.closed.load(Ordering::SeqCst)
             || (!recovery && engine.closing.load(Ordering::SeqCst))
         {
-            return Err("Wenyi is closing.");
+            return Err("Wenyi is closing.".into());
         }
         if owner.as_mut().is_some_and(|backend| !backend.exited()) {
-            return Err("The previous local engine has not stopped. Quit and reopen Wenyi.");
+            return Err("The previous local engine has not stopped. Quit and reopen Wenyi.".into());
         }
         let (backend, ready) = process::Backend::spawn(
             &resources,
@@ -167,8 +163,8 @@ fn publish_background(app: &tauri::AppHandle, state: &Mutex<State>) {
     }
 }
 
-fn fail(app: &tauri::AppHandle, state: &Mutex<State>, error: &'static str) {
-    lock(state).error = Some(error);
+fn fail(app: &tauri::AppHandle, state: &Mutex<State>, error: &str) {
+    lock(state).error = Some(error.to_string());
     publish(app, state);
 }
 
@@ -418,7 +414,7 @@ fn main() {
             std::thread::spawn(move || {
                 if backend_engine.closing.load(Ordering::SeqCst) { return; }
                 if let Err(error) = start_backend(&handle, &backend_engine, false) {
-                    fail(&handle, &backend_state, error);
+                    fail(&handle, &backend_state, &error);
                     return;
                 }
                 publish(&handle, &backend_state);
@@ -612,7 +608,7 @@ mod tests {
             connection: Some("secret".into()),
             ..Default::default()
         };
-        state.error = Some("Safe failure");
+        state.error = Some("Safe failure".to_string());
         assert!(!state.script().contains("secret"));
         assert!(state.script().contains("__WENYI_DESKTOP_ERROR__"));
         state.closing = true;
@@ -657,7 +653,7 @@ mod tests {
         state.background = true;
         for status in 0..4 {
             state.connection = (status == 1).then(|| "{}".into());
-            state.error = (status == 2).then_some("Safe failure");
+            state.error = (status == 2).then(|| "Safe failure".to_string());
             state.closing = status == 3;
             assert!(state
                 .script()

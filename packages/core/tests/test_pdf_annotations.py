@@ -532,5 +532,5 @@ def test_pdf_client_logs_bridge_statistics_without_changing_export(tmp_path, mon
     with caplog.at_level("INFO", logger="wenyi_core.pdf_bridge.client"):
         client.fillback("session", {"0:0": "中文译文"}, out_path=tmp_path / "out.pdf")
     assert (tmp_path / "out.pdf").read_bytes() == b"%PDF translated output"
-    assert "PDF annotation statistics:" in caplog.text
-    assert '"skipped": 1' in caplog.text
+    assert any("PDF annotation statistics:" in message for message in caplog.messages)
+    assert any('"skipped": 1' in message for message in caplog.messages)

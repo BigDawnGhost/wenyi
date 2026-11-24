@@ -272,7 +272,7 @@ def html_translation_targets(soup: BeautifulSoup) -> list[Tag]:
             continue
         if whole_parent:
             parent = nodes[parent_index]
-            assert isinstance(parent, Tag)
+            assert isinstance(parent, Tag), f"expected a Tag at nodes[{parent_index}]"
             targets.append(parent)
         else:
             wrapper = soup.new_tag("span")

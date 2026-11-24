@@ -76,7 +76,7 @@ class GlossaryExtractor(Agent):
             self._recurrence_matcher = GlossaryOccurrenceMatcher(source_corpus)
             self._recurrence_cache.clear()
 
-        assert self._recurrence_matcher is not None
+        assert self._recurrence_matcher is not None, "recurrence matcher was not initialised"
         missing: list[GlossaryTerm] = []
         for term in terms:
             signature = (term.source, term.type, tuple(term.aliases))

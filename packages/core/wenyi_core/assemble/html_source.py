@@ -100,7 +100,13 @@ def _render_html_source(
     stored_sources: dict[str, str] = {}
     for chapter in chapters:
         if chapter.segments and chapter.segments[0].cont:
-            raise ValueError("HTML state is inconsistent: chapter starts with a continuation")
+            orphan = chapter.segments[0]
+            raise ValueError(
+                "HTML state is inconsistent: chapter "
+                f"{chapter.index} ({chapter.title or 'untitled'}) starts with orphaned "
+                f"continuation segment {orphan.index} without its anchor segment; "
+                "the saved state is incomplete, re-run the translation run to rebuild it"
+            )
         seen: set[str] = set()
         for segment in chapter.segments:
             if segment.anchor and not segment.cont:

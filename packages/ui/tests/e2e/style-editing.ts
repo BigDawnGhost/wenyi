@@ -88,20 +88,20 @@ test("saving summaries does not discard unsaved style or synopsis drafts", async
   const submitted = await analysisFixture(page);
   await page.goto(`/projects/${pid}/style`);
   await page.getByRole("textbox", { name: "Tone", exact: true }).fill("Draft tone");
-  await page.getByRole("button", { name: "Book synopsis", exact: true }).click();
+  await page.getByRole("tab", { name: "Book synopsis", exact: true }).click();
   await page.getByRole("textbox", { name: "Whole-book synopsis", exact: true }).fill("Draft synopsis");
-  await page.getByRole("button", { name: "Chapter summaries", exact: true }).click();
+  await page.getByRole("tab", { name: "Chapter summaries", exact: true }).click();
   await page.getByRole("button", { name: "Original chapter summary", exact: true }).click();
   await page.getByRole("textbox", { name: "Chapter 1 summary", exact: true }).fill("Saved summary");
   await page.getByRole("button", { name: "Save summary", exact: true }).click();
   await expect(page.getByRole("button", { name: "Saved summary", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Book synopsis", exact: true }).click();
+  await page.getByRole("tab", { name: "Book synopsis", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Whole-book synopsis", exact: true }))
     .toHaveValue("Draft synopsis");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => submitted.length).toBe(1);
   expect(submitted[0].tone).toBe(original.tone);
-  await page.getByRole("button", { name: "Style analysis", exact: true }).click();
+  await page.getByRole("tab", { name: "Style analysis", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Tone", exact: true })).toHaveValue("Draft tone");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect.poll(() => submitted.length).toBe(2);
@@ -121,14 +121,14 @@ test("style and synopsis drafts survive visiting the glossary and going back", a
   );
   await page.goto(`/projects/${pid}/style`);
   await page.getByRole("textbox", { name: "Tone", exact: true }).fill("Unsaved tone");
-  await page.getByRole("button", { name: "Book synopsis", exact: true }).click();
+  await page.getByRole("tab", { name: "Book synopsis", exact: true }).click();
   await page.getByRole("textbox", { name: "Whole-book synopsis", exact: true }).fill("Unsaved synopsis");
   await page.getByRole("link", { name: "Glossary", exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`/projects/${pid}/glossary$`));
   await page.goBack();
-  await page.getByRole("button", { name: "Style analysis", exact: true }).click();
+  await page.getByRole("tab", { name: "Style analysis", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Tone", exact: true })).toHaveValue("Unsaved tone");
-  await page.getByRole("button", { name: "Book synopsis", exact: true }).click();
+  await page.getByRole("tab", { name: "Book synopsis", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Whole-book synopsis", exact: true }))
     .toHaveValue("Unsaved synopsis");
 });
@@ -257,7 +257,7 @@ test("failed saves retain drafts for retry and busy projects remain read-only", 
   for (const [, label] of dimensions) {
     await expect(page.getByRole("textbox", { name: label, exact: true })).toBeDisabled();
   }
-  await page.getByRole("button", { name: "Book synopsis", exact: true }).click();
+  await page.getByRole("tab", { name: "Book synopsis", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Whole-book synopsis", exact: true })).toBeDisabled();
 });
 

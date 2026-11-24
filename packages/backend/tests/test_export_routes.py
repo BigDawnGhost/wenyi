@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
+from wenyi_backend.context import ExportAdmission
 from wenyi_backend.routers import export
 from wenyi_backend.schemas import ExportRequest
 
@@ -36,9 +37,12 @@ def test_export_defaults_and_failure_records(
         "storage_for",
         lambda pid: SimpleNamespace(load_manifest=lambda: {"meta": meta}, close=lambda: None),
     )
-    backend_context.exports.admit_export.side_effect = lambda pid, fmt, opts, run, config: (
-        records.append((fmt, opts)) or (9, 7)
-    )
+
+    def admit(pid, fmt, opts, run, config, *, source):
+        records.append((fmt, opts))
+        return ExportAdmission(9, 7, run, created=True)
+
+    backend_context.exports.admit_export.side_effect = admit
     backend_context.exports.fail_export_admission.side_effect = lambda job, error: statuses.append(
         (9, "error", {"error": error})
     )

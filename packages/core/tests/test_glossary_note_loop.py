@@ -217,12 +217,14 @@ def test_incremental_pipeline_resumes_after_note_failure_and_uses_guidance(tmp_p
 
     with pytest.raises(RuntimeError, match="interrupted note"):
         run()
+    assert len(body) == 1, "A failed chapter must stop translation before the next chapter"
     assert store.completed_batch_glossary_keys(0)
     saved = [s.target for s in store.load_chapter(0).text_segments]
     assert saved and all(t is not None for t in saved)
     run()
     assert store.pending_chapters() == []
     assert saved == [s.target for s in store.load_chapter(0).text_segments]
+    assert len(body) == 2, "Resume should translate only the remaining chapter"
     assert "LOCAL GUIDANCE" not in body[0] and "LOCAL GUIDANCE" in body[1]
     assert not any(c["operation"].startswith("terminology.") for c in client.calls)
 

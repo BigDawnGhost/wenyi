@@ -9,11 +9,13 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from wenyi_backend.context import use_context
 from wenyi_core.config import Config
 from wenyi_core.llm.configuration import ProviderConfig
 from wenyi_core.llm.retrying import ProviderRequestError
 from wenyi_desktop import local_credentials
+from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.local_credentials import (
     CredentialStore,
     CredentialUnavailable,
@@ -21,6 +23,7 @@ from wenyi_desktop.local_credentials import (
 )
 from wenyi_desktop.main import create_app, create_context
 from wenyi_desktop.routers import credentials
+from wenyi_desktop.settings import DesktopSettings
 
 system_keyring = local_credentials.system_keyring
 
@@ -69,7 +72,7 @@ def test_local_client_sanitizes_real_provider_failure(tmp_path, monkeypatch, cap
     assert len(calls) == 2
     assert secret not in str(caught.value)
     assert secret not in json.dumps(events)
-    assert secret not in caplog.text
+    assert not any(secret in message for message in caplog.messages)
     assert caught.value.__context__ is None
 
 
@@ -129,12 +132,16 @@ def desktop_context(tmp_path, isolated_vault):
         credentials=CredentialStore(tmp_path, vault=isolated_vault),
         api_token="fake-local-token",
     )
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
+    settings = context.settings_store
+    assert isinstance(settings, DesktopSettings)
     try:
         with use_context(context):
             yield context
     finally:
-        context.settings_store.credentials.clear_session()
-        context.repository.close()
+        settings.credentials.clear_session()
+        backend.close()
 
 
 def provider():
@@ -203,7 +210,7 @@ def test_empty_input_preserves_key_and_save_does_not_read_vault(desktop_context,
 
     isolated_vault.get_password = unexpected_read
     result = credentials.save_credential(
-        name, credentials.CredentialInput(mode="manual", secret="fake-save")
+        name, credentials.CredentialInput(mode="manual", secret=SecretStr("fake-save"))
     )
     assert result["available"] and result["storage"] == "system"
     assert not reads
@@ -231,7 +238,8 @@ def test_fallback_commit_failure_releases_session_and_keeps_old_key(
     monkeypatch.setattr(store, "_commit", fail)
     with pytest.raises(HTTPException) as caught:
         credentials.save_credential(
-            name, credentials.CredentialInput(mode="manual", secret="fake-session-staged")
+            name,
+            credentials.CredentialInput(mode="manual", secret=SecretStr("fake-session-staged")),
         )
     assert caught.value.status_code == 503
     assert not store._session
@@ -386,6 +394,15 @@ def test_router_is_local_authenticated_origin_restricted_and_never_echoes(
     )
 
 
+def test_non_ascii_bearer_token_is_rejected(private_profile, desktop_context):
+    client = TestClient(create_app(context=desktop_context))
+    headers = [
+        (b"authorization", "Bearer caf\u00e9".encode("utf-8")),
+        (b"origin", b"tauri://localhost"),
+    ]
+    assert client.get("/desktop/credentials", headers=headers).status_code == 401
+
+
 def test_non_system_keyring_is_rejected(monkeypatch):
     import keyring
 
@@ -449,7 +466,7 @@ def test_vault_wait_does_not_hold_catalog_writer(desktop_context, isolated_vault
 
         def action():
             return credentials.save_credential(
-                name, credentials.CredentialInput(mode="manual", secret="fake-after")
+                name, credentials.CredentialInput(mode="manual", secret=SecretStr("fake-after"))
             )
 
     def catalog_write():
@@ -504,7 +521,7 @@ def test_vault_write_cannot_bind_to_changed_connection(desktop_context, isolated
     isolated_vault.set_password = concurrent_edit
     with pytest.raises(HTTPException) as caught:
         credentials.save_credential(
-            name, credentials.CredentialInput(mode="manual", secret="fake-new")
+            name, credentials.CredentialInput(mode="manual", secret=SecretStr("fake-new"))
         )
     assert caught.value.status_code == 409
     assert "fake-new" not in isolated_vault.values.values()
@@ -527,7 +544,7 @@ def test_commit_failure_cleans_staged_key_and_preserves_old(
     monkeypatch.setattr(store, "_commit", fail)
     with pytest.raises(HTTPException) as caught:
         credentials.save_credential(
-            name, credentials.CredentialInput(mode="manual", secret="fake-staged")
+            name, credentials.CredentialInput(mode="manual", secret=SecretStr("fake-staged"))
         )
     assert caught.value.status_code == 503
     assert store._records() == previous
@@ -540,12 +557,16 @@ def test_release_drops_session_values_before_reopening_same_workspace(tmp_path, 
         store.update("one", mode="manual", storage="session", secret="fake-session")
     assert not store.snapshot({"one": provider()})["one"]
     context = create_context(tmp_path, credentials=CredentialStore(tmp_path))
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
+    settings = context.settings_store
+    assert isinstance(settings, DesktopSettings)
     try:
-        reopened = context.settings_store.credentials
+        reopened = settings.credentials
         assert reopened is not store
         assert not reopened.status("one", provider())["available"]
     finally:
-        context.repository.close()
+        backend.close()
 
 
 def test_concurrent_credential_edit_keeps_winning_key(desktop_context, isolated_vault):
@@ -564,7 +585,7 @@ def test_concurrent_credential_edit_keeps_winning_key(desktop_context, isolated_
     isolated_vault.set_password = concurrent_write
     with pytest.raises(HTTPException) as caught:
         credentials.save_credential(
-            name, credentials.CredentialInput(mode="manual", secret="fake-loser")
+            name, credentials.CredentialInput(mode="manual", secret=SecretStr("fake-loser"))
         )
     assert caught.value.status_code == 409
     assert list(isolated_vault.values.values()) == ["fake-winner"]
@@ -594,7 +615,7 @@ def test_transaction_exit_failure_cleans_new_key_only(desktop_context, isolated_
     monkeypatch.setattr(credentials, "registry_guard", fail_commit)
     with pytest.raises(HTTPException) as caught:
         credentials.save_credential(
-            name, credentials.CredentialInput(mode="manual", secret="fake-staged")
+            name, credentials.CredentialInput(mode="manual", secret=SecretStr("fake-staged"))
         )
     assert caught.value.status_code == 503
     assert store._records() == previous

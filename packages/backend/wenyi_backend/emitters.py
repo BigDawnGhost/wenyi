@@ -7,7 +7,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from wenyi_core.events import ERROR_KIND, TranslationEvent, make_progress_fn
+from wenyi_core.events import ERROR_KIND, StructuredProgressFn, TranslationEvent, make_progress_fn
 
 from .live_statistics import StatisticsCache
 
@@ -53,7 +53,7 @@ class RedisEmitter:
 
 def redis_progress_fn(
     redis: StatisticsCache, project_id: str, *, kind: str = "progress", run_id: str | None = None
-):
+) -> StructuredProgressFn:
     """Build a core progress callback for the configured telemetry transport."""
     return make_progress_fn(RedisEmitter(redis, project_id, run_id), project_id, kind=kind)
 

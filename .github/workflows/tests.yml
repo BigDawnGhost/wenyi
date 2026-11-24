@@ -7,9 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
   schedule:
-    # A nightly full run is what replaced the unconditional push run (T-35): a
-    # stale path filter is caught within a day instead of on every merge. The
-    # end-to-end specs and the Docker proxy suite ride along here too.
+    # The nightly run is the safety net for the filtered pull-request tier: a
+    # stale path filter is caught within a day instead of on every merge. It is
+    # also the only tier that carries the Docker proxy suite.
     - cron: "0 18 * * *"
 
 permissions:
@@ -27,10 +27,10 @@ jobs:
     steps:
       # A push diffs the before/after commits locally, so this job needs full
       # history on every event that can reach it.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
-      - uses: dorny/paths-filter@v4
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         id: filter
         with:
           filters: |
@@ -90,15 +90,15 @@ jobs:
     outputs:
       changed: ${{ steps.compare.outputs.changed }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           # The base revision is read from the same clone.
           fetch-depth: 0
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.12"
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -145,13 +145,13 @@ jobs:
 
   python:
     needs: changes
-    # A manual or scheduled run is always the full suite. A push and a pull
-    # request are both filtered: the merged commit was already tested on the pull
-    # request ref, and the nightly run covers what a stale filter could miss.
-    # `force` is the paths that invalidate the filter itself.
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.python == 'true' || needs.changes.outputs.force == 'true'
+    # A push, manual or scheduled run is always the full suite: the merge was
+    # already tested on the pull request ref, and the push tier must catch what
+    # a stale filter or a broken merge could miss. A pull request is filtered,
+    # with `force` as the paths that invalidate the filter itself.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.python == 'true' || needs.changes.outputs.force == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -179,14 +179,17 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       WENYI_TEST_REDIS_URL: redis://localhost:6379/1
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: ${{ matrix.python-version }}
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: astral-sh/setup-uv@v9.0.0
+      # Both native crates built here declare rust-version = "1.89"; pin the
+      # job to that toolchain so CI verifies the declared MSRV floor instead
+      # of only whatever latest stable ships.
+      - uses: dtolnay/rust-toolchain@d92bbbb03544f480ed5c7ba4b54020e4ed2c4f65 # 1.89
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -195,6 +198,7 @@ jobs:
           UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/wenyi-cli-smoke
         run: |
           uv sync --locked --no-dev --python ${{ matrix.python-version }}
+          uv pip check --python "$UV_PROJECT_ENVIRONMENT/bin/python"
           uv run --no-sync python -m wenyi_cli --version
           uv run --no-sync wenyi --version
           uv run --no-sync wenyi --help
@@ -217,6 +221,19 @@ jobs:
           uv run --no-sync ruff check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
           uv run --no-sync ruff format --check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
           git diff --check
+      - name: Python type check (pyright)
+        # Type-checking rolls out per domain through pyrightconfig.json; this
+        # step enforces whatever that config includes today. A single run on
+        # the 3.12 leg suffices: type resolution follows the configured
+        # pythonVersion, not the matrix interpreter. pyright is pinned in the
+        # dev group so every run type-checks with the same version; bump it
+        # deliberately together with any new diagnostics it introduces.
+        if: matrix.python-version == '3.12'
+        run: uv run --no-sync pyright
+      - name: Install coverage tooling
+        # The coverage report stays out of the lockfile: install the plugin
+        # into the synced venv right before the report run below.
+        run: uv pip install pytest-cov
       - name: Offline Python regression tests
         # loadgroup keeps tests that share a group on one worker; -n auto sizes
         # to the runner. Both supported interpreters verify the full workspace.
@@ -224,7 +241,9 @@ jobs:
           WENYI_LOCKS_LIB: ${{ github.workspace }}/target/release/libwenyi_locks.so
         # Packaging coverage builds distributions and belongs to the release workflows,
         # which run this marker explicitly; the regression job stays offline and fast.
-        run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration and not packaging"
+        # Coverage is report-only: the per-domain table documents reach and no
+        # fail-under threshold gates the suite.
+        run: uv run --no-sync pytest -q -n auto --dist loadgroup -m "not integration and not packaging" --cov=wenyi_core --cov=wenyi_cli --cov=wenyi_backend --cov=wenyi_api --cov=wenyi_desktop --cov-report=term-missing
       - name: Prepare Docker proxy test images
         if: github.event_name == 'schedule'
         # The proxy fixture inspects local images and starts containers with --pull=never.
@@ -252,12 +271,46 @@ jobs:
           uv run --no-sync python scripts/release/check_wheel_resources.py dist
           uv run --no-sync python scripts/release/check_backend_packages.py dist
 
+  python-windows:
+    needs: changes
+    # fsync, path-length limits and atomic rename behave differently on
+    # Windows, and crash-class defects such as 01-1.3 only surfaced there.
+    # This tier stays a smoke sample within the time budget: install, style,
+    # and the platform-sensitive file-handling tests instead of the full suite.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || needs.changes.outputs.python == 'true' || needs.changes.outputs.force == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+      - name: Install workspace
+        run: uv sync --locked --all-packages --group dev --python 3.12
+      - name: Python style
+        run: |
+          uv run --no-sync ruff check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
+          uv run --no-sync ruff format --check packages/core packages/cli packages/backend apps/api apps/desktop/backend scripts
+          git diff --check
+      - name: Platform-sensitive file-handling tests
+        env:
+          PYTHONUTF8: "1"
+        run: >-
+          uv run --no-sync pytest -q -n auto
+          packages/core/tests/test_atomicio.py packages/core/tests/test_file_storage.py
+
   web:
     needs: [changes, contract]
-    # A manual or scheduled run is always full; a filtered run is decided here.
+    # A push, manual or scheduled run is always full; a filtered run is decided here.
     if: |
       always() &&
-      (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' ||
+       github.event_name == 'workflow_dispatch' ||
        github.event_name == 'schedule' ||
        needs.changes.outputs.web == 'true' ||
        needs.changes.outputs.e2e == 'true' ||
@@ -266,20 +319,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
         with:
           version: 9
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
@@ -336,16 +389,16 @@ jobs:
             results: apps/desktop/frontend/test-results/
             report: apps/desktop/frontend/playwright-report/
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
         with:
           version: 9
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: actions/cache@v5
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: ~/.cache/ms-playwright
           # The browser flavour is part of the key so the WebKit entry cannot
@@ -374,7 +427,7 @@ jobs:
             --label "${{ matrix.name }}" \
             --output "${{ runner.temp }}/${{ matrix.name }}-timings.md" || true
           cat "${{ runner.temp }}/${{ matrix.name }}-timings.md" >> "$GITHUB_STEP_SUMMARY" || true
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:
           name: spec-timings-${{ matrix.name }}
@@ -383,7 +436,7 @@ jobs:
             ${{ runner.temp }}/${{ matrix.name }}-timings.md
           if-no-files-found: ignore
           retention-days: 14
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: failure()
         with:
           name: playwright-results-${{ matrix.name }}

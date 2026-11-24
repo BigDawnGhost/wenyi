@@ -10,6 +10,7 @@ import typer
 from rich.progress import Progress
 from wenyi_core.config import PipelineConfig
 from wenyi_core.errors import WenyiError
+from wenyi_core.events import ProgressPayload
 from wenyi_core.timing import load_timing
 
 from wenyi_cli.commands import presentation
@@ -19,6 +20,7 @@ from .context import ContextAccessor
 from .machine_output import MachineOutput
 from .validation import (
     require_input_file,
+    resolve_export_out_path,
     resolve_output_format,
 )
 
@@ -93,6 +95,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         review: bool | None = None,
         mono: bool | None = None,
         bilingual: bool | None = None,
+        overwrite: bool = False,
         progress_json: str | None = None,
         result_json: str | None = None,
     ) -> None:
@@ -118,6 +121,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 review=review,
                 mono=mono,
                 bilingual=bilingual,
+                overwrite=overwrite,
                 machine=machine,
             )
         except typer.Exit:
@@ -145,6 +149,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         review: bool | None = None,
         mono: bool | None = None,
         bilingual: bool | None = None,
+        overwrite: bool = False,
         machine: MachineOutput,
     ) -> None:
         """Run translation; let ``_translate_impl`` convert exceptions to CLI errors."""
@@ -197,6 +202,13 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             config.pipeline.review = False
         context().validate_api_configuration(config, "translate")
         require_input_file(input_path, console=console)
+        out = resolve_export_out_path(
+            out,
+            source_path=input_path,
+            bilingual=bool(config.output.bilingual),
+            overwrite=overwrite,
+            console=console,
+        )
         orch = Orchestrator(config, allow_glossary_notes=True)
 
         with (
@@ -208,9 +220,11 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         ):
             rich_progress = progress_view.RichProgressBridge(prog, "Preparing…")
 
-            def cb(done: int, total: int, label: str) -> None:
+            def cb(
+                done: int, total: int, label: str, payload: ProgressPayload | None = None
+            ) -> None:
                 rich_progress(done, total, label)
-                machine(done, total, label)
+                machine(done, total, label, payload)
 
             if chapter is not None:
                 try:
@@ -342,6 +356,11 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             "--bilingual/--no-bilingual",
             help="Override output.bilingual to enable or disable bilingual output",
         ),
+        overwrite: bool = typer.Option(
+            False,
+            "--overwrite",
+            help="Replace existing --out files instead of writing numbered alternatives",
+        ),
         progress_json: str | None = typer.Option(
             None, "--progress-json", help="Atomically publish protocol-1 progress JSON"
         ),
@@ -360,6 +379,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             review=review,
             mono=mono,
             bilingual=bilingual,
+            overwrite=overwrite,
             progress_json=progress_json,
             result_json=result_json,
         )

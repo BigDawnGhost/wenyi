@@ -1,4 +1,5 @@
 //! Native diagnostic controls work without the loopback server or the React tree.
+use crate::ipc_error::codes;
 use serde_json::json;
 use std::{
     path::PathBuf,
@@ -25,7 +26,7 @@ fn trusted(window: &tauri::WebviewWindow) -> Result<(), crate::ipc_error::IpcErr
         Ok(())
     } else {
         Err(crate::ipc_error::IpcError::new(
-            "diagnostics_untrusted_window",
+            codes::DIAGNOSTICS_UNTRUSTED_WINDOW,
             "Desktop diagnostics are unavailable.",
         ))
     }
@@ -41,7 +42,7 @@ pub async fn desktop_diagnostics_status(
         .await
         .map_err(|_| {
             crate::ipc_error::IpcError::new(
-                "diagnostics_unavailable",
+                codes::DIAGNOSTICS_UNAVAILABLE,
                 "Cannot inspect diagnostics.",
             )
         })
@@ -135,7 +136,7 @@ impl<'a> Admission<'a> {
             .is_err()
         {
             return Err(crate::ipc_error::IpcError::new(
-                "diagnostics_busy",
+                codes::DIAGNOSTICS_BUSY,
                 "A diagnostic operation is already running.",
             ));
         }
@@ -172,7 +173,7 @@ fn save(app: &tauri::AppHandle, range: Range) -> Result<Option<Saved>, crate::ip
             diagnostics
                 .bundle(range, || control.cancel.load(Ordering::SeqCst))
                 .map_err(|message| {
-                    crate::ipc_error::IpcError::new("diagnostics_collection_failed", message)
+                    crate::ipc_error::IpcError::new(codes::DIAGNOSTICS_COLLECTION_FAILED, message)
                 })
         },
         || control.cancel.load(Ordering::SeqCst),
@@ -200,7 +201,7 @@ pub async fn desktop_diagnostics_export(
         .await
         .map_err(|_| {
             crate::ipc_error::IpcError::new(
-                "diagnostics_interrupted",
+                codes::DIAGNOSTICS_INTERRUPTED,
                 "Diagnostic export stopped unexpectedly.",
             )
         })?
@@ -233,7 +234,7 @@ pub fn startup_failure(diagnostics: &Diagnostics) {
         let roots = diagnostics.status().directory.into_iter().map(PathBuf::from).collect::<Vec<_>>();
         if crate::native_export::save_diagnostics(&Saves::default(), &roots,
             || diagnostics.bundle(Range::Day, || false).map_err(|message| {
-                crate::ipc_error::IpcError::new("diagnostics_collection_failed", message)
+                crate::ipc_error::IpcError::new(codes::DIAGNOSTICS_COLLECTION_FAILED, message)
             }), || false).is_err() {
             rfd::MessageDialog::new().set_title("Wenyi Desktop")
                 .set_description("Could not save the diagnostic report. Check destination permissions and free space.")

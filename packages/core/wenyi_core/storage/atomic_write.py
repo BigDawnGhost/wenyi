@@ -99,6 +99,17 @@ def write_text_atomic(path: str | Path, text: str) -> None:
         raise
 
 
+def sync_directory(path: str) -> None:
+    """Persist directory-entry changes on POSIX, where directories can be fsynced."""
+    if os.name == "nt":
+        return
+    descriptor = os.open(to_io_path(path), os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def sweep_temporary(directory: str | Path) -> list[str]:
     """Delete leftover temporary files below one directory, returning what was removed.
 

@@ -7,22 +7,10 @@ from typing import TYPE_CHECKING
 
 import typer
 from rich.console import Console
-from wenyi_core.i18n.languages import validate_run_languages
 
 if TYPE_CHECKING:
     from wenyi_core.config import Config
     from wenyi_core.storage.run_store import RunStore
-
-
-def load_document(*args, **kwargs):
-    """Defer the ingest stack while keeping a patchable module attribute.
-
-    Callers and tests have always reached this name through the module, so the
-    import stays behind the call rather than moving out of the namespace.
-    """
-    from wenyi_core.ingest.segmenter import load_document as parse
-
-    return parse(*args, **kwargs)
 
 
 def require_input_file(input_path: str, *, console: Console | None = None) -> None:
@@ -62,27 +50,15 @@ def resolve_output_format(
     return "epub"
 
 
-def runstore_for(config: Config, input_path: str, *, console: Console | None = None) -> RunStore:
+def runstore_for(config: Config, input_path: str) -> RunStore:
     """Resolve the title and locate existing state without creating a directory."""
     # Deferred: reading a title pulls the ingest stack (bs4/lxml) in; --help
     # must not pay for that.
-    from wenyi_core.storage.run_store import RunStore, translation_run_dir
+    from wenyi_core.pipeline.prepare.input_preparation import locate_input_run
+    from wenyi_core.storage.run_store import RunStore
 
-    console = console or Console()
-    require_input_file(input_path, console=console)
-    if os.path.splitext(input_path)[1].lower() == ".pdf":
-        title = os.path.splitext(os.path.basename(input_path))[0]
-        run_dir = translation_run_dir(config.state_dir, title, config.target_lang)
-        store = RunStore(run_dir, create=False)
-    else:
-        doc = load_document(input_path, config.source_lang, config.target_lang)
-        run_dir = translation_run_dir(config.state_dir, doc.title, config.target_lang)
-        store = RunStore(run_dir, create=False)
-    if store.exists():
-        with store.lock():
-            validate_run_languages(store.load_manifest(), config.source_lang, config.target_lang)
-            store.ensure_source_identity(input_path)
-    return store
+    run_dir, _ = locate_input_run(input_path, config)
+    return RunStore(run_dir, create=False)
 
 
 def runstore_for_cli(
@@ -92,8 +68,54 @@ def runstore_for_cli(
     from wenyi_core.models.errors import IngestError
 
     console = console or Console()
+    require_input_file(input_path, console=console)
     try:
-        return runstore_for(config, input_path, console=console)
+        return runstore_for(config, input_path)
     except (IngestError, OSError, ValueError) as error:
         console.print(f"[red]Error: {error}[/]")
         raise typer.Exit(1) from None
+
+
+def resolve_export_out_path(
+    out_path: str | None,
+    *,
+    source_path: str,
+    bilingual: bool = False,
+    overwrite: bool = False,
+    console: Console | None = None,
+) -> str | None:
+    """Keep an existing ``--out`` target by exporting to a free numbered name instead.
+
+    Unless ``overwrite`` is set, an existing output file and its bilingual companion
+    are never replaced: the export moves to the next free ``name (n).ext`` path and
+    the console explains the change. A path equal to the source is returned unchanged
+    so the core source-protection error still fires.
+    """
+    if out_path is None or overwrite:
+        return out_path
+    if os.path.realpath(out_path) == os.path.realpath(source_path):
+        return out_path
+
+    def occupied(path: str) -> bool:
+        if os.path.exists(path):
+            return True
+        if not bilingual:
+            return False
+        from wenyi_core.assemble.writer_common import bilingual_out_path
+
+        return os.path.exists(bilingual_out_path(path))
+
+    if not occupied(out_path):
+        return out_path
+    base, ext = os.path.splitext(out_path)
+    index = 1
+    candidate = f"{base} ({index}){ext}"
+    while occupied(candidate):
+        index += 1
+        candidate = f"{base} ({index}){ext}"
+    console = console or Console()
+    console.print(
+        f"[yellow]Output exists: {out_path}; writing to {candidate} instead"
+        " (pass --overwrite to replace it)[/]"
+    )
+    return candidate

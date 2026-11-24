@@ -4,7 +4,11 @@
     "packages/cli/wenyi_cli",
     "packages/core/tests",
     "apps/api/wenyi_api",
-    "apps/api/tests"
+    "apps/api/tests",
+    "packages/backend/wenyi_backend",
+    "packages/backend/tests",
+    "apps/desktop/backend/wenyi_desktop",
+    "apps/desktop/backend/tests"
   ],
   "exclude": [
     "**/__pycache__",
@@ -29,6 +33,10 @@
     "packages/cli",
     "packages/core/tests",
     "apps/api",
-    "apps/api/tests"
+    "apps/api/tests",
+    "packages/backend",
+    "packages/backend/tests",
+    "apps/desktop/backend",
+    "apps/desktop/backend/tests"
   ]
 }

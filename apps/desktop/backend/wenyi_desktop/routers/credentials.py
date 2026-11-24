@@ -17,7 +17,7 @@ from ..local_credentials import CredentialConflict, CredentialUnavailable, crede
 def desktop_only(request: Request) -> None:
     token = current_context().api_token
     provided = request.headers.get("authorization", "").removeprefix("Bearer ")
-    if not token or not secrets.compare_digest(provided, token):
+    if not token or not secrets.compare_digest(provided.encode("utf-8"), token.encode("utf-8")):
         raise HTTPException(401, "Invalid local token")
     origin = request.headers.get("origin")
     from ..desktop import ORIGINS

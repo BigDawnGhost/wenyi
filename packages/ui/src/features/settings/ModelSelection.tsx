@@ -60,7 +60,8 @@ export function ModelSelection({
       route.fallbacks = route.fallbacks.filter(id => id !== model);
     }
     if (typeof route.thinking === "string" && !thinkingChoices(model).includes(route.thinking)) {
-      delete route.thinking;
+      // Omission would inherit the global route's override when saving a project.
+      route.thinking = null;
     }
     changeRoute(operation, route);
   };

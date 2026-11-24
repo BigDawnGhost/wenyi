@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 from wenyi_core.assemble.pdf_writer import _assemble_pdf
 from wenyi_core.ingest.pdf_babeldoc import _is_image_only_pdf, read_pdf_babeldoc
 from wenyi_core.pdf_bridge.client import BabeldocBridgeClient, BabeldocBridgeError
@@ -34,7 +35,7 @@ class BabeldocBridgeClientTests(unittest.TestCase):
                 patch.object(client, "health", return_value={"capabilities": capabilities}),
                 patch("wenyi_core.pdf_bridge.client.httpx.stream") as stream,
             ):
-                with self.assertRaisesRegex(BabeldocBridgeError, "omission support"):
+                with pytest.raises(BabeldocBridgeError, match="omission support"):
                     client.fillback(
                         "session", {"0:0": "译文"}, out_path=output, annotations=annotations
                     )
@@ -67,7 +68,7 @@ class BabeldocBridgeClientTests(unittest.TestCase):
                 ),
                 patch("wenyi_core.pdf_bridge.client.httpx.stream") as stream,
             ):
-                with self.assertRaisesRegex(BabeldocBridgeError, "protected object"):
+                with pytest.raises(BabeldocBridgeError, match="protected object"):
                     client.fillback(
                         "session",
                         {"0:0": "译文"},
@@ -100,7 +101,8 @@ class BabeldocBridgeClientTests(unittest.TestCase):
             with (
                 patch.object(client, "health", return_value={}),
                 patch("wenyi_core.pdf_bridge.client.httpx.stream", stream),
-                self.assertRaisesRegex(BabeldocBridgeError, "interrupted"),
+                patch("wenyi_core.pdf_bridge.client._sleep"),
+                pytest.raises(BabeldocBridgeError, match="interrupted"),
             ):
                 client.fillback("session", {"0:0": "text"}, out_path=output)
             self.assertEqual(output.read_bytes(), b"unchanged")
@@ -131,11 +133,12 @@ class BabeldocBridgeClientTests(unittest.TestCase):
         self.assertEqual(resolve_connection(logical).headers, {})
         self.assertNotIn("synthetic", repr(local))
 
-    def test_fillback_uses_configured_timeout(self):
+    def test_fillback_sends_all_paragraphs_in_one_request_with_configured_timeout(self):
+        translations = {f"0:{index}": f"译文 {index}" for index in range(33)}
         with (
             patch(
                 "wenyi_core.assemble.pdf_writer.fillback_from_store",
-                return_value=("session", "http://bridge.test", {"0:0": "译文"}, {}),
+                return_value=("session", "http://bridge.test", translations, {}),
             ),
             patch("wenyi_core.assemble.pdf_writer.BabeldocBridgeClient") as client_class,
         ):
@@ -149,7 +152,7 @@ class BabeldocBridgeClientTests(unittest.TestCase):
         client_class.assert_called_once_with("http://bridge.test", timeout=3600)
         client_class.return_value.fillback.assert_called_once_with(
             "session",
-            {"0:0": "译文"},
+            translations,
             out_path="output.pdf",
         )
         self.assertIs(result, client_class.return_value.fillback.return_value)

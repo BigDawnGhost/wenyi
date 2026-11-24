@@ -42,6 +42,7 @@ class RequestContext:
     attempt_scope: Callable[..., Any]
     sleep: Callable[[float], None] | None = None
     redact_diagnostic: Callable[[str], str] | None = None
+    should_cancel: Callable[[], bool] | None = None
 
 
 class ProviderAdapter(ABC):
@@ -113,7 +114,12 @@ class ProviderAdapter(ABC):
             redact=context.redact_diagnostic,
         )
 
-        return provider_retry(self.cfg.max_retries, reporter, sleep=context.sleep)(request)()
+        return provider_retry(
+            self.cfg.max_retries,
+            reporter,
+            sleep=context.sleep,
+            should_cancel=context.should_cancel,
+        )(request)()
 
     @abstractmethod
     def _request(

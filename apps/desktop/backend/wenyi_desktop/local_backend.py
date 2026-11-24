@@ -20,10 +20,11 @@ from typing import TYPE_CHECKING, Any, BinaryIO, Iterator
 
 from fastapi import HTTPException
 from wenyi_backend.config_rebuild import load_bootstrap_defaults
+from wenyi_backend.context import ExportAdmission
 from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_core.config import Config
 from wenyi_core.errors import SchemaTooNew
-from wenyi_core.storage.io_path import plain_path
+from wenyi_core.storage.io_path import plain_path, to_io_path
 
 from . import catalog, library_location, paths
 
@@ -910,7 +911,7 @@ class LocalBackend:
                 (pid, run_id, arq_job_id, json.dumps(document)),
             )
             identity = cursor.lastrowid
-            assert identity is not None
+            assert identity is not None, f"job insert returned no rowid (project {pid})"
             document["id"] = identity
             self._put("jobs", identity, document, conn)
         return identity
@@ -972,8 +973,8 @@ class LocalBackend:
             return True
 
     def admit_export(
-        self, pid: str, fmt: str, options: dict, run_id: str, config_snapshot: dict
-    ) -> tuple[int, int]:
+        self, pid: str, fmt: str, options: dict, run_id: str, snapshot: dict, *, source: dict
+    ) -> ExportAdmission:
         with self.transaction() as connection:
             self._reject_removing(pid)
             if self._get("projects", pid, connection) is None:
@@ -984,11 +985,11 @@ class LocalBackend:
                 "export",
                 run_id,
                 run_id=run_id,
-                params={"export_id": export_id},
-                config_snapshot=config_snapshot,
+                params={"export_id": export_id, "export_source": source},
+                config_snapshot=snapshot,
                 connection=connection,
             )
-            return export_id, job_id
+            return ExportAdmission(export_id, job_id, run_id, created=True)
 
     def fail_export_admission(self, job_id: int, error: str) -> bool:
         with self.transaction() as connection:
@@ -1169,7 +1170,7 @@ class LocalBackend:
                 "INSERT INTO exports(project_id,document) VALUES(?,?)", (pid, json.dumps(document))
             )
             identity = cursor.lastrowid
-            assert identity is not None
+            assert identity is not None, f"export insert returned no rowid (project {pid})"
             document["id"] = identity
             self._put("exports", identity, document, conn)
         return identity
@@ -1218,6 +1219,7 @@ class LocalBackend:
         try:
             directory = directory.resolve()
         except OSError:
+            # Keep the recorded spelling; containment checks fail closed later.
             pass
         return str(directory.parent), directory.name
 
@@ -1230,20 +1232,34 @@ class LocalBackend:
         storage = SqliteStorage(str(self.project_dir(pid)), create=False)
         return storage.export_history_lock()
 
-    def publish_export(self, pid: str, export_id: int, output: str) -> None:
-        from wenyi_backend.export_paths import EXPORT_LIMIT, export_path
+    def publish_export(
+        self, pid: str, export_id: int, output: str, *, job_id: int | None = None
+    ) -> None:
+        from wenyi_backend.export_paths import EXPORT_LIMIT, export_path, log
 
         root, name = self._export_location(pid)
         with self._export_history_lock(pid):
             file = export_path(root, name, str(Path(output).absolute()))
-            if file is None or not file.is_file():
+            if file is None or not Path(to_io_path(file)).is_file():
                 raise ValueError("Export output must be a file in the project's export directory")
-            size = file.stat().st_size
+            size = Path(to_io_path(file)).stat().st_size
             # Publish and retire atomically, before any destructive filesystem operation.
             with self.transaction() as conn:
                 export = self._get("exports", export_id, conn)
                 if export is None or export["project_id"] != pid or export["status"] == "deleting":
                     raise ValueError("Export record does not belong to this project's live history")
+                if job_id is not None:
+                    job = self._get("jobs", job_id, conn)
+                    if (
+                        job is None
+                        or job["project_id"] != pid
+                        or job["kind"] != "export"
+                        or job["status"] != "running"
+                        or job["params"].get("export_id") != export_id
+                    ):
+                        raise ValueError("Export job is not running or does not own this export")
+                    job.update(status="done", error=None, updated_at=_now())
+                    self._put("jobs", job_id, job, conn)
                 export.update(
                     status="done",
                     path=file.relative_to(root).as_posix(),
@@ -1264,7 +1280,10 @@ class LocalBackend:
                 for old in completed[EXPORT_LIMIT:]:
                     old["status"] = "deleting"
                     self._put("exports", old["id"], old, conn)
-            self._cleanup_exports(pid)
+            try:
+                self._cleanup_exports(pid)
+            except Exception:
+                log.warning("Could not reclaim retired exports for project %s", pid, exc_info=True)
 
     def recover_export_cleanup(self, pid: str) -> None:
         """Retry committed tombstones after an interrupted or failed file cleanup."""
@@ -1289,9 +1308,9 @@ class LocalBackend:
                     assets = old_file.with_name(f"{old_file.stem}.assets")
                     if export_path(root, name, str(assets)) is None:
                         raise OSError("Export assets resolve outside their owned directory")
-                    if assets.exists():
-                        shutil.rmtree(assets)
-                old_file.unlink(missing_ok=True)
+                    if Path(to_io_path(assets)).exists():
+                        shutil.rmtree(to_io_path(assets))
+                Path(to_io_path(old_file)).unlink(missing_ok=True)
             except OSError:
                 log.warning("Could not remove expired export %s", old["id"], exc_info=True)
                 continue
@@ -1337,11 +1356,15 @@ class LocalBackend:
                 and export["path"]
                 else None
             )
-            if file is None or not file.is_file():
+            if file is None or not Path(to_io_path(file)).is_file():
                 raise FileNotFoundError("Completed export not found")
             # Convert legacy multi-file history without changing published artifacts.
             # Keep owned assets alive during conversion, without a catalog transaction.
-            if inline_html and file.suffix == ".html" and file.with_suffix(".assets").exists():
+            if (
+                inline_html
+                and file.suffix == ".html"
+                and Path(to_io_path(file.with_suffix(".assets"))).exists()
+            ):
                 return html_document(file), file
             stream = open_regular(file)
             try:

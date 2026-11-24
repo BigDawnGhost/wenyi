@@ -5,6 +5,7 @@ import { frontendManualChunks } from "../../packages/ui/vite.shared";
 import { createSandboxState, resolveFixture } from "../../packages/ui/sandbox/fixtures";
 import { attachProgressServer } from "../../packages/ui/sandbox/progress-server";
 import { matchFault, pickScenario } from "../../packages/ui/sandbox/scenarios";
+import { thirdPartyNotices } from "./scripts/third-party-notices";
 
 // MOCK_API=1 pnpm dev:web serves the same fixture data the Playwright suites
 // use, directly from the dev server — click around every page without a
@@ -69,6 +70,7 @@ export default defineConfig({
   plugins: [
     react(),
     mockApi(),
+    thirdPartyNotices(),
     {
       name: "browser-platform-boundary",
       generateBundle(_options, bundle) {

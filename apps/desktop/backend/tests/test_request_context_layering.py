@@ -10,6 +10,7 @@ from wenyi_backend.errors import ApiError
 from wenyi_backend.request_context import RequestContextMiddleware
 from wenyi_core.observability import current_request_id
 from wenyi_desktop.diagnostics import DiagnosticsMiddleware, Reporter
+from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.main import create_app, create_context
 
 
@@ -43,6 +44,8 @@ def test_desktop_layering_does_not_duplicate_correlation_headers():
 def test_assembled_desktop_correlates_safe_errors_and_keeps_cors(tmp_path, monkeypatch, handled):
     monkeypatch.setattr("wenyi_desktop.main.system_keyring", lambda: None)
     context = create_context(tmp_path)
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
     stream = io.StringIO()
     reporter = Reporter(stream)
     app = create_app(context=context, diagnostics=reporter)
@@ -63,7 +66,7 @@ def test_assembled_desktop_correlates_safe_errors_and_keeps_cors(tmp_path, monke
         )
     finally:
         reporter.close()
-        context.repository.close()
+        backend.close()
     records = [
         json.loads(line.removeprefix("WENYI_DIAGNOSTIC "))
         for line in stream.getvalue().splitlines()

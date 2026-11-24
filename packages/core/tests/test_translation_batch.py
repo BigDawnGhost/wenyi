@@ -201,6 +201,7 @@ class TestTranslationService(unittest.TestCase):
                 {
                     "title": "Book",
                     "fmt": "epub",
+                    "source_sha256": "a" * 64,
                     "source_lang": "en",
                     "target_lang": "zh",
                     "chapters": [{"index": 0, "title": "", "status": "pending"}],

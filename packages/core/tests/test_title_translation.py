@@ -117,6 +117,27 @@ def test_resume_only_reissues_uncommitted_title_batch(title_project):
     assert store.load_manifest() == before
 
 
+def test_title_completion_callback_type_error_propagates_without_retry(title_project):
+    config, store, glossary, initialize = title_project
+    initialize([Chapter(index=0, title="A title")])
+    client = FakeClient(handler=lambda *args: '{"titles": ["标题"]}')
+    service = Orchestrator(config, client)._translation._titles
+    error = TypeError("raised inside the callback")
+    completion_payloads = []
+
+    def progress(done: int, total: int, label: str, payload: dict | None = None) -> None:
+        if done:
+            assert store.load_manifest()["chapters"][0]["title_translated"] == "标题"
+            completion_payloads.append(payload)
+            raise error
+
+    with pytest.raises(TypeError) as raised:
+        service.run(store, glossary, progress=progress)
+
+    assert raised.value is error
+    assert completion_payloads == [{"batch": 0, "batch_size": 1}]
+
+
 def test_title_requests_preserve_character_budget_and_location_duplicates(title_project):
     config, store, glossary, initialize = title_project
     titles = ["a" * 2000, "b" * 2000, "Repeated", "Repeated", "c" * 4001, "Last\n title"]

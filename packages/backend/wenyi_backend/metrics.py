@@ -8,9 +8,18 @@ from collections import OrderedDict
 from typing import Literal, Protocol
 
 log = logging.getLogger(__name__)
-Metric = Literal["tasks", "retries"]
+Metric = Literal["tasks", "retries", "task_cancel_drains"]
 Counters = dict[str, dict[tuple[str, str], int]]
 MAX_SEEN = 20_000
+_CANCEL_DRAIN_BUCKETS = ((1.0, "lt_1s"), (10.0, "lt_10s"), (60.0, "lt_60s"))
+
+
+def _drain_bucket(seconds: float) -> str:
+    """Bucket cancellation drain latency for the Prometheus exposition."""
+    for limit, label in _CANCEL_DRAIN_BUCKETS:
+        if seconds < limit:
+            return label
+    return "gt_60s"
 
 
 class CounterStore(Protocol):
@@ -25,7 +34,7 @@ class MemoryCounters:
 
     def __init__(self, *, max_seen: int = MAX_SEEN) -> None:
         self._lock = threading.Lock()
-        self._counts: Counters = {"tasks": {}, "retries": {}}
+        self._counts: Counters = {"tasks": {}, "retries": {}, "task_cancel_drains": {}}
         self._seen: OrderedDict[tuple[str, str], None] = OrderedDict()
         self.max_seen = max_seen
 
@@ -68,6 +77,9 @@ class Metrics:
         identity = f"{call_id}:{attempt}" if call_id else None
         self._record("retries", (provider, reason), identity)
 
+    def record_cancel_drain(self, *, seconds: float, identity: str | None = None) -> None:
+        self._record("task_cancel_drains", ("drained", _drain_bucket(seconds)), identity)
+
     def record_event(self, event: str, **data) -> None:
         if event != "llm_retry_wait":
             return
@@ -109,6 +121,13 @@ def render(counts: Counters, *, depth: int) -> str:
     for (provider, reason), value in sorted(counts["retries"].items()):
         labels = _labels({"provider": provider, "reason": reason})
         lines.append(f"wenyi_llm_retries_total{labels} {value}")
+    lines += [
+        "# HELP wenyi_task_cancel_drains_total Completed cancellation drains by latency bucket.",
+        "# TYPE wenyi_task_cancel_drains_total counter",
+    ]
+    for (outcome, bucket), value in sorted(counts["task_cancel_drains"].items()):
+        labels = _labels({"outcome": outcome, "bucket": bucket})
+        lines.append(f"wenyi_task_cancel_drains_total{labels} {value}")
     lines += [
         "# HELP wenyi_queue_depth Admitted workflow and export jobs waiting to run.",
         "# TYPE wenyi_queue_depth gauge",

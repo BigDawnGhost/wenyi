@@ -10,6 +10,7 @@ const DEFAULT_UPDATE_REPO: &str = "BigDawnGhost/wenyi";
 fn main() {
     println!("cargo:rerun-if-env-changed=WENYI_UPDATE_REPO");
     println!("cargo:rerun-if-env-changed=WENYI_DESKTOP_VERSION");
+    println!("cargo:rerun-if-env-changed=WENYI_BUILD_PYTHON_VERSION");
     println!("cargo:rerun-if-env-changed=WENYI_BUILD_TAG");
     println!("cargo:rerun-if-env-changed=WENYI_UPDATER_PUBLIC_KEY");
     println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
@@ -39,31 +40,7 @@ fn main() {
             String::from_utf8_lossy(&location.stdout).trim()
         );
     }
-    let version = std::env::var("WENYI_DESKTOP_VERSION").unwrap_or_else(|_| {
-        let output = std::process::Command::new("uv")
-            .args([
-                "run",
-                "--no-project",
-                "--with",
-                "hatch-vcs",
-                "python",
-                "scripts/release/release_version.py",
-            ])
-            .current_dir(&root)
-            .output()
-            .expect("uv is required to resolve the Git application version");
-        assert!(
-            output.status.success(),
-            "Cannot resolve application version: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let identity: serde_json::Value =
-            serde_json::from_slice(&output.stdout).expect("Invalid version helper response");
-        identity["version"]
-            .as_str()
-            .expect("Missing version")
-            .to_owned()
-    });
+    let (version, python_version) = application_versions(&root);
     let mut config: serde_json::Value =
         serde_json::from_str(&std::env::var("TAURI_CONFIG").unwrap_or_else(|_| "{}".into()))
             .expect("Invalid TAURI_CONFIG");
@@ -75,6 +52,7 @@ fn main() {
     );
     println!("cargo:rustc-env=WENYI_UPDATER_PUBLIC_KEY={public_key}");
     println!("cargo:rustc-env=WENYI_DESKTOP_VERSION={version}");
+    println!("cargo:rustc-env=WENYI_BUILD_PYTHON_VERSION={python_version}");
     // Validated here rather than at the call site: the value becomes part of a
     // URL prefix that `trusted_artifact` compares, so a typo would not produce a
     // visible failure -- it would produce an updater that silently rejects every
@@ -98,6 +76,58 @@ fn main() {
             .windows_attributes(tauri_build::WindowsAttributes::new().app_manifest(APP_MANIFEST)),
     )
     .expect("failed to run tauri-build");
+}
+
+/// The launcher supplies both forms from one Git identity. Direct Cargo builds
+/// resolve the same pair themselves; do not mix either form with a stale override.
+fn application_versions(root: &std::path::Path) -> (String, String) {
+    let versions = match (
+        std::env::var("WENYI_DESKTOP_VERSION"),
+        std::env::var("WENYI_BUILD_PYTHON_VERSION"),
+    ) {
+        (Ok(native), Ok(python)) => (native, python),
+        (Err(std::env::VarError::NotPresent), Err(std::env::VarError::NotPresent)) => {
+            let output = std::process::Command::new("uv")
+                .args([
+                    "run",
+                    "--no-project",
+                    "--with",
+                    "hatch-vcs",
+                    "python",
+                    "scripts/release/release_version.py",
+                ])
+                .current_dir(root)
+                .output()
+                .expect("uv is required to resolve the Git application version");
+            assert!(
+                output.status.success(),
+                "Cannot resolve application version: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let identity: serde_json::Value =
+                serde_json::from_slice(&output.stdout).expect("Invalid version helper response");
+            let get = |key: &str| {
+                identity[key]
+                    .as_str()
+                    .expect("Missing version in helper response")
+                    .to_owned()
+            };
+            (get("version"), get("python"))
+        }
+        _ => {
+            panic!("WENYI_DESKTOP_VERSION and WENYI_BUILD_PYTHON_VERSION must be supplied together")
+        }
+    };
+    for version in [&versions.0, &versions.1] {
+        assert!(
+            !version.is_empty()
+                && version
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'+' | b'-')),
+            "Invalid application version"
+        );
+    }
+    versions
 }
 
 /// Whether a value names one GitHub repository and nothing else.

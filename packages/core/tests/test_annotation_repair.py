@@ -96,10 +96,18 @@ def test_completed_book_retries_only_fallback_annotations_at_translation_end(sto
     client = MeteredFakeClient(handler=repair_response)
     translation = Orchestrator(repair_config(), client)._translation
     monkeypatch.setattr(translation._titles, "run", lambda *args, **kwargs: None)
+    ticks: list[tuple[int, int, str]] = []
+
+    def progress(done: int, total: int, label: str) -> None:
+        ticks.append((done, total, label))
 
     with store.lock():
-        translation.run(store, book_synopsis="")
+        translation.run(store, book_synopsis="", progress=progress)
 
+    assert [tick for tick in ticks if tick[2] == "Repairing fallback annotations"] == [
+        (0, 1, "Repairing fallback annotations"),
+        (1, 1, "Repairing fallback annotations"),
+    ]
     assert [call["operation"] for call in client.calls] == ["annotation.align"]
     saved = store.load_chapter(0)
     placements = saved.segments[0].meta["epub_annotations"]["placements"]

@@ -72,10 +72,10 @@ jobs:
           fi
       # Full history so the path filter can diff a push; a pull request reads it
       # through the API, but the shallow clone costs little here.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
-      - uses: dorny/paths-filter@v4
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4
         id: filter
         with:
           filters: |
@@ -126,13 +126,13 @@ jobs:
       matrix:
         os: [ubuntu-22.04, windows-latest]
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
       # The desktop build script shells out to uv during compilation to
       # resolve the Git version, so a runner without uv fails before cargo
       # writes a single object file. Same step as the packaging job.
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
           enable-cache: true
@@ -141,18 +141,18 @@ jobs:
       # must exist before cargo runs -- the packaging job builds it for the same
       # reason. pnpm/action-setup comes first because setup-node resolves the
       # pnpm binary when caching is enabled.
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
         with:
           version: 9
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build the frontend the Tauri context embeds
         run: pnpm -C apps/desktop/frontend build
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: apps/desktop -> target
           # The cache has to be readable from the packaging job, so both jobs
@@ -183,11 +183,11 @@ jobs:
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.event.release.tag_name || github.ref }}
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
           enable-cache: true
@@ -224,24 +224,24 @@ jobs:
           fi
       # pnpm/action-setup must run first: setup-node resolves the pnpm binary
       # when caching is enabled, so the reverse order fails on a clean runner.
-      - uses: pnpm/action-setup@v5
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
         with:
           version: "9"
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: "22"
           cache: pnpm
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       # nextest runs every test in its own process and reports per-test timings,
       # which the plain harness cannot do.
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@2b545d4fd42fdd72ed2a44eab8fedd1850e8f731 # nextest
       - name: Build and test the wenyi-locks native library
         # Runs per platform so each target's own lock implementation is executed,
         # not just compiled.
         run: |
           cargo build --release --manifest-path native/wenyi-locks/Cargo.toml
           cargo test --manifest-path native/wenyi-locks/Cargo.toml
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: apps/desktop -> target
           # Keep the key in step with cargo-warm, which writes this cache on
@@ -269,7 +269,13 @@ jobs:
           packages/core/tests/test_file_migrations.py
           packages/core/tests/test_precision_pipeline.py
           packages/core/tests/test_locks_contract.py
-          packages/core/tests/test_orchestrator.py
+          packages/core/tests/test_orchestrator_annotation.py
+          packages/core/tests/test_orchestrator_book_understanding.py
+          packages/core/tests/test_orchestrator_contract.py
+          packages/core/tests/test_orchestrator_glossary.py
+          packages/core/tests/test_orchestrator_pipeline.py
+          packages/core/tests/test_orchestrator_review.py
+          packages/core/tests/test_orchestrator_run_resume.py
       # loadgroup keeps tests that drive one runtime on the same worker; --dist
       # defaults to load, which would scatter them and race the scheduler.
       - name: Desktop backend suite
@@ -382,7 +388,7 @@ jobs:
           --version "${{ steps.version.outputs.version }}"
           --platform "${{ matrix.platform }}"
           --source target/release/bundle
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: matrix.tier == 'full'
         with:
           name: wenyi-desktop-${{ steps.version.outputs.version }}-${{ matrix.platform }}
@@ -400,11 +406,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag || github.event.release.tag_name }}
-      - uses: astral-sh/setup-uv@v9.0.0
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           python-version: "3.12"
           enable-cache: true
@@ -414,7 +420,7 @@ jobs:
         env:
           WENYI_BUILD_TAG: ${{ inputs.tag || github.event.release.tag_name }}
         run: uv run --no-project --with hatch-vcs python scripts/release/release_version.py --github-output "$GITHUB_OUTPUT"
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           pattern: wenyi-desktop-*
           path: release-assets

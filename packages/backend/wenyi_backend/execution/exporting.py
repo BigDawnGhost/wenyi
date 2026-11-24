@@ -19,12 +19,18 @@ class ExportStatusWriter(Protocol):
     def __call__(self, export_id: int, status: str, *, error: str | None = None) -> None: ...
 
 
+class ExportPublisher(Protocol):
+    def __call__(
+        self, pid: str, export_id: int, output: str, *, job_id: int | None = None
+    ) -> None: ...
+
+
 @dataclass(frozen=True)
 class ExportDependencies:
     jobs: JobRepository
     storage_for: Callable[[str], BackendStorage]
     render: Callable[[ExportRequest], str]
-    publish: Callable[[str, int, str], object]
+    publish: ExportPublisher
     set_status: ExportStatusWriter
 
 
@@ -101,41 +107,57 @@ def render_export(
 
 
 def execute(request: ExportRequest, dependencies: ExportDependencies) -> int:
-    pid, export_id, run_id = request.project_id, request.export_id, request.run_id
-    job = None
+    pid, export_id = request.project_id, request.export_id
     with closing(dependencies.storage_for(pid)) as storage, storage.export_lock(export_id):
-        if run_id:
-            job = dependencies.jobs.get_job_by_arq_id(run_id)
-            if (
-                not job
-                or job["status"] != "queued"
-                or job["kind"] != "export"
-                or job["project_id"] != pid
-                or job["params"].get("export_id") != export_id
-            ):
+        job_id = None
+        if request.run_id:
+            job = _matching_job(request, dependencies)
+            if job is None or job["status"] != "queued":
                 return export_id
-            dependencies.jobs.set_job_status(job["id"], "running")
-        dependencies.set_status(export_id, "running")
+            job_id = job["id"]
+            if not dependencies.jobs.set_job_status(job_id, "running", expected_status="queued"):
+                return export_id
         try:
+            dependencies.set_status(export_id, "running")
             output = dependencies.render(request)
-            dependencies.publish(pid, export_id, output)
-            if job:
-                dependencies.jobs.set_job_status(job["id"], "done")
+            dependencies.publish(pid, export_id, output, job_id=job_id)
             return export_id
-        except Exception as error:
-            if job:
-                dependencies.jobs.set_job_status(job["id"], "error", error=str(error))
-            dependencies.set_status(export_id, "error", error=str(error))
+        except BaseException as error:
+            # Native render panics arrive as BaseException subclasses; record the
+            # failure states under the export lock before re-raising.
+            _record_failure(export_id, job_id, dependencies, error)
             raise
 
 
-def _record_failure(
-    request: ExportRequest, dependencies: ExportDependencies, error: Exception
-) -> None:
-    dependencies.set_status(request.export_id, "error", error=str(error))
+def _matching_job(request: ExportRequest, dependencies: ExportDependencies) -> dict | None:
     job = dependencies.jobs.get_job_by_arq_id(request.run_id) if request.run_id else None
-    if job and job["project_id"] == request.project_id:
-        dependencies.jobs.set_job_status(job["id"], "error", error=str(error))
+    if (
+        job
+        and job["kind"] == "export"
+        and job["project_id"] == request.project_id
+        and job["params"].get("export_id") == request.export_id
+    ):
+        return job
+    return None
+
+
+def _record_failure(
+    export_id: int, job_id: int | None, dependencies: ExportDependencies, error: BaseException
+) -> None:
+    message = str(error)
+    if job_id is not None:
+        dependencies.jobs.set_job_status(
+            job_id, "error", error=message, expected_status={"queued", "running"}
+        )
+    dependencies.set_status(export_id, "error", error=message)
+
+
+def _record_startup_failure(
+    request: ExportRequest, dependencies: ExportDependencies, error: BaseException
+) -> None:
+    job = _matching_job(request, dependencies)
+    if not request.run_id or (job and job["status"] in {"queued", "running", "error"}):
+        _record_failure(request.export_id, job["id"] if job else None, dependencies, error)
 
 
 async def run(request: ExportRequest, dependencies: ExportDependencies) -> int:
@@ -146,6 +168,7 @@ async def run(request: ExportRequest, dependencies: ExportDependencies) -> int:
         # A snapshot render must finish publication before its worker slot is released.
         await asyncio.shield(task)
         raise
-    except Exception as error:
-        await asyncio.to_thread(_record_failure, request, dependencies, error)
+    except BaseException as error:
+        # Also handle startup/lock failures before execute could record the error.
+        await asyncio.to_thread(_record_startup_failure, request, dependencies, error)
         raise

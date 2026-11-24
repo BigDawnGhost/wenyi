@@ -1,8 +1,10 @@
 """PostgreSQL implementation of the core storage port.
 
 All mutable run state lives in PostgreSQL. ``run_dir`` contains only source resources
-and exported artifacts. Long workflow locks use session advisory locks, while state
-writes and export snapshots use short transactions with no model calls inside them.
+and exported artifacts. Long workflow locks use session advisory locks held on
+dedicated connections, so waiting or running tasks never pin shared pool connections,
+while state writes and export snapshots use short transactions with no model calls
+inside them.
 """
 
 from __future__ import annotations
@@ -13,8 +15,9 @@ import re
 import threading
 import time
 from contextlib import contextmanager
-from typing import Any, Iterator, Literal
+from typing import Any, Iterable, Iterator, Literal, cast
 
+import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
@@ -73,6 +76,18 @@ class PostgresStorage:
         digest = hashlib.blake2b(f"wenyi:{scope}:{self.project_id}".encode(), digest_size=8)
         return int.from_bytes(digest.digest(), "big", signed=True)
 
+    def _lock_connection(self) -> psycopg.Connection[Any]:
+        """Open a dedicated connection for one session advisory lock.
+
+        A session lock must stay on a single connection for its whole span.
+        Using a dedicated connection instead of the shared pool keeps waiting
+        and running tasks from pinning pooled connections, and the database
+        releases the lock automatically if this process dies.
+        """
+        return psycopg.connect(
+            cast(str, self._pool.conninfo), **cast(dict[str, Any], self._pool.kwargs)
+        )
+
     @contextmanager
     def _session_lock(self, scope: str, *, blocking: bool = True) -> Iterator[None]:
         depths = getattr(self._local, "lock_depths", None)
@@ -86,7 +101,7 @@ class PostgresStorage:
                 depths[scope] -= 1
             return
         key = self._lock_key(scope)
-        with self._pool.connection() as conn:
+        with self._lock_connection() as conn:
             acquired = False
             try:
                 if blocking:
@@ -121,9 +136,11 @@ class PostgresStorage:
 
     @contextmanager
     def state_lock(self) -> Iterator[None]:
-        """Serialize a brief state update and make its nested calls one transaction."""
-        if getattr(self._local, "state_conn", None) is not None:
-            yield
+        """Serialize a brief state update; nested failures roll back to their savepoint."""
+        state_conn = getattr(self._local, "state_conn", None)
+        if state_conn is not None:
+            with state_conn.transaction():
+                yield
             return
         with self._pool.connection() as conn:
             with conn.transaction():
@@ -231,8 +248,7 @@ class PostgresStorage:
                     self.project_id,
                 ),
             )
-            for chapter in doc.chapters:
-                self.save_chapter(chapter)
+            self.save_chapters(doc.chapters)
         return manifest
 
     def init_from_document(self, doc: Document) -> dict:
@@ -355,56 +371,88 @@ class PostgresStorage:
             ).fetchall()
         return [row[0] for row in rows]
 
+    _CHAPTER_BATCH_SIZE = 500
+
     def save_chapter(
         self, chapter: Chapter, *, revision_kind: Literal["manual"] | None = None
     ) -> None:
+        self.save_chapters([chapter], revision_kind=revision_kind)
+
+    def save_chapters(
+        self,
+        chapters: Iterable[Chapter],
+        *,
+        revision_kind: Literal["manual"] | None = None,
+    ) -> None:
+        """Upsert many chapters with chunked multi-row statements.
+
+        Staging or republishing hundreds of chapters one by one costs several
+        round trips per chapter; batching keeps one transaction and about one
+        round trip per _CHAPTER_BATCH_SIZE chunk. Chapter upserts and
+        segment rewrites are idempotent, and revision records only log actual
+        segment changes, so retrying or resuming a batch never double-counts
+        history.
+        """
+        chapter_list = list(chapters)
+        if not chapter_list:
+            return
         with self.state_lock(), self._conn as conn:
-            translated = getattr(chapter, "title_translated", None) or chapter.meta.get(
-                "title_translated"
-            )
-            conn.execute(
-                """INSERT INTO chapters(project_id,seq,title,href,template,meta,title_translated)
-                VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(project_id,seq) DO UPDATE
-                SET title=EXCLUDED.title,href=EXCLUDED.href,template=EXCLUDED.template,
-                meta=EXCLUDED.meta,title_translated=COALESCE(EXCLUDED.title_translated,chapters.title_translated)""",
-                (
-                    self.project_id,
-                    chapter.index,
-                    chapter.title,
-                    chapter.href,
-                    chapter.template,
-                    Jsonb(chapter.meta),
-                    translated,
-                ),
-            )
-            record_chapter_changes(conn, self.project_id, chapter, kind=revision_kind)
-            conn.execute(
-                "DELETE FROM segments WHERE project_id=%s AND chapter_seq=%s",
-                (self.project_id, chapter.index),
-            )
-            if chapter.segments:
-                with conn.cursor() as cursor:
-                    cursor.executemany(
+            for start in range(0, len(chapter_list), self._CHAPTER_BATCH_SIZE):
+                chunk = chapter_list[start : start + self._CHAPTER_BATCH_SIZE]
+                conn.cursor().executemany(
+                    """INSERT INTO chapters(project_id,seq,title,href,template,meta,title_translated)
+                    VALUES(%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(project_id,seq) DO UPDATE
+                    SET title=EXCLUDED.title,href=EXCLUDED.href,template=EXCLUDED.template,
+                    meta=EXCLUDED.meta,title_translated=COALESCE(EXCLUDED.title_translated,chapters.title_translated)""",
+                    [self._chapter_row(chapter) for chapter in chunk],
+                )
+                for chapter in chunk:
+                    record_chapter_changes(conn, self.project_id, chapter, kind=revision_kind)
+                conn.cursor().executemany(
+                    "DELETE FROM segments WHERE project_id=%s AND chapter_seq=%s",
+                    [(self.project_id, chapter.index) for chapter in chunk],
+                )
+                segment_rows = [
+                    self._segment_row(chapter, segment)
+                    for chapter in chunk
+                    for segment in chapter.segments
+                ]
+                if segment_rows:
+                    conn.cursor().executemany(
                         """INSERT INTO segments(project_id,chapter_seq,seg_seq,source,target,
                         target_before_polish,kind,anchor,cont,meta,resource_href)
                         VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                        [
-                            (
-                                self.project_id,
-                                chapter.index,
-                                s.index,
-                                s.source,
-                                s.target,
-                                s.target_before_polish,
-                                s.kind,
-                                s.anchor,
-                                s.cont,
-                                Jsonb(s.meta),
-                                s.resource_href,
-                            )
-                            for s in chapter.segments
-                        ],
+                        segment_rows,
                     )
+
+    def _chapter_row(self, chapter: Chapter) -> tuple:
+        translated = getattr(chapter, "title_translated", None) or chapter.meta.get(
+            "title_translated"
+        )
+        return (
+            self.project_id,
+            chapter.index,
+            chapter.title,
+            chapter.href,
+            chapter.template,
+            Jsonb(chapter.meta),
+            translated,
+        )
+
+    def _segment_row(self, chapter: Chapter, segment: Segment) -> tuple:
+        return (
+            self.project_id,
+            chapter.index,
+            segment.index,
+            segment.source,
+            segment.target,
+            segment.target_before_polish,
+            segment.kind,
+            segment.anchor,
+            segment.cont,
+            Jsonb(segment.meta),
+            segment.resource_href,
+        )
 
     def save_chapter_with_status(self, chapter: Chapter, status: str) -> None:
         with self.state_lock():
