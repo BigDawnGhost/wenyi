@@ -24,6 +24,8 @@ from psycopg_pool import ConnectionPool
 from wenyi_core.errors import WenyiError
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm, search_term_page
 from wenyi_core.models.document import Chapter, Document, Segment
+from wenyi_core.storage.artifact_keys import validate_artifact_key
+from wenyi_core.storage.chapter_reading import ChapterDigestRow
 from wenyi_core.storage.run_store import ExportSnapshotStore, source_sha256
 
 from .segment_history import load_history, record_chapter_changes
@@ -311,6 +313,15 @@ class PostgresStorage:
             manifest["chapters"].append(entry)
         return manifest
 
+    def read_chapter_digests(self) -> list[ChapterDigestRow]:
+        """Use the same chapter inventory and order as load_manifest."""
+        with self._conn as conn:
+            return conn.execute(
+                "SELECT seq, title, meta -> 'source_digest' FROM chapters "
+                "WHERE project_id=%s ORDER BY seq",
+                (self.project_id,),
+            ).fetchall()
+
     def save_manifest(self, manifest: dict) -> None:
         with self.state_lock(), self._conn as conn:
             conn.execute(
@@ -578,21 +589,7 @@ class PostgresStorage:
     def load_annotation_contexts(self) -> dict | None:
         return self._load_field("annotation_contexts")
 
-    @staticmethod
-    def _artifact_key(key: str, *, allow_empty: bool = False) -> str:
-        if allow_empty and not key:
-            return key
-        if (
-            not isinstance(key, str)
-            or not key
-            or "\\" in key
-            or key.startswith("/")
-            or "\x00" in key
-        ):
-            raise ValueError("Invalid artifact key")
-        if any(part in {"", ".", ".."} for part in key.rstrip("/").split("/")):
-            raise ValueError("Invalid artifact key")
-        return key
+    _artifact_key = staticmethod(validate_artifact_key)
 
     def read_artifact(self, key: str) -> Any | None:
         key = self._artifact_key(key)
@@ -629,7 +626,7 @@ class PostgresStorage:
                 conn.execute("UPDATE projects SET usage=NULL WHERE id=%s", (self.project_id,))
 
     def list_artifacts(self, prefix: str = "") -> list[str]:
-        self._artifact_key(prefix, allow_empty=True)
+        self._artifact_key(prefix, prefix=True)
         with self._conn as conn:
             rows = conn.execute(
                 """SELECT key FROM artifacts WHERE project_id=%s AND starts_with(key,%s)
