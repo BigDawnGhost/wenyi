@@ -28,6 +28,67 @@ def test_version_mismatch_refuses_to_start(monkeypatch, tmp_path, capsys):
     assert "4.5.6" in stderr
 
 
+def test_dev_suffix_on_same_release_starts_normally(monkeypatch, tmp_path):
+    monkeypatch.setenv("WENYI_DESKTOP_VERSION", "1.2.3")
+    monkeypatch.setattr(main.importlib.metadata, "version", lambda name: "1.2.3.dev5+g1a2b3c4")
+    monkeypatch.chdir(tmp_path)
+
+    main.verify_version_handshake()
+
+
+def test_local_version_suffix_on_same_release_starts_normally(monkeypatch, tmp_path):
+    monkeypatch.setenv("WENYI_DESKTOP_VERSION", "1.2.3")
+    monkeypatch.setattr(main.importlib.metadata, "version", lambda name: "1.2.3+build.7")
+    monkeypatch.chdir(tmp_path)
+
+    main.verify_version_handshake()
+
+
+def test_pre_release_shell_matches_pre_release_engine(monkeypatch, tmp_path):
+    monkeypatch.setenv("WENYI_DESKTOP_VERSION", "1.2.3-rc.1")
+    monkeypatch.setattr(main.importlib.metadata, "version", lambda name: "1.2.3rc1")
+    monkeypatch.chdir(tmp_path)
+
+    main.verify_version_handshake()
+
+
+def test_pre_release_shell_refuses_a_different_release(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("WENYI_DESKTOP_VERSION", "1.2.3-rc.1")
+    monkeypatch.setattr(main.importlib.metadata, "version", lambda name: "1.2.4rc1")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit):
+        main.verify_version_handshake()
+    assert "1.2.4rc1" in capsys.readouterr().err
+
+
+def test_release_segments_pad_to_match(monkeypatch, tmp_path):
+    monkeypatch.setenv("WENYI_DESKTOP_VERSION", "1.2")
+    monkeypatch.setattr(main.importlib.metadata, "version", lambda name: "1.2.0")
+    monkeypatch.chdir(tmp_path)
+
+    main.verify_version_handshake()
+
+
+def test_dev_suffix_does_not_hide_a_release_mismatch(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("WENYI_DESKTOP_VERSION", "1.2.3")
+    monkeypatch.setattr(main.importlib.metadata, "version", lambda name: "1.2.4.dev1")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit):
+        main.verify_version_handshake()
+    assert "1.2.4.dev1" in capsys.readouterr().err
+
+
+def test_unparseable_versions_still_require_an_exact_match(monkeypatch, tmp_path):
+    monkeypatch.setenv("WENYI_DESKTOP_VERSION", "1.2.3")
+    monkeypatch.setattr(main.importlib.metadata, "version", lambda name: "mystery-build")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(SystemExit):
+        main.verify_version_handshake()
+
+
 def test_unknown_engine_version_only_warns(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("WENYI_DESKTOP_VERSION", "1.2.3")
 

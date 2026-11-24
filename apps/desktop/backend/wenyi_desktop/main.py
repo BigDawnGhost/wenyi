@@ -7,6 +7,7 @@ import importlib.metadata
 import json
 import logging
 import os
+import re
 import sqlite3
 import sys
 from contextlib import asynccontextmanager
@@ -288,6 +289,30 @@ def create_context(
     )
 
 
+def _release_version(version: str) -> tuple[int, ...] | None:
+    """Extract the numeric release segment of a PEP 440 style version string."""
+    match = re.match(r"^[vV]?(\d+(?:\.\d+)*)", version.strip())
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def _same_release(left: str, right: str) -> bool:
+    """Compare release versions, ignoring dev/local suffixes like "1.2.3.dev4".
+
+    The native shell and a source checkout of the engine frequently disagree
+    about suffixes while shipping the same release; only a different release
+    means the engine may not understand the workspace data.
+    """
+    left_release, right_release = _release_version(left), _release_version(right)
+    if left_release is None or right_release is None:
+        return left == right
+    width = max(len(left_release), len(right_release))
+    left_release += (0,) * (width - len(left_release))
+    right_release += (0,) * (width - len(right_release))
+    return left_release == right_release
+
+
 def verify_version_handshake() -> None:
     """Refuse to serve when the native shell and this engine are different builds.
 
@@ -295,7 +320,9 @@ def verify_version_handshake() -> None:
     process. A mismatch means the Python package on disk belongs to another
     install, so serving it could corrupt data written by a different schema.
     A missing variable means an older launcher started the engine; keep that
-    startup path working and only note the skipped check.
+    startup path working and only note the skipped check. Versions compare at
+    release granularity, so dev and local build suffixes on the same release
+    are accepted.
     """
     shell_version = os.environ.get("WENYI_DESKTOP_VERSION")
     if shell_version is None:
@@ -316,11 +343,13 @@ def verify_version_handshake() -> None:
             flush=True,
         )
         return
-    if engine_version != shell_version:
+    if not _same_release(engine_version, shell_version):
         print(
-            "wenyi-desktop: version mismatch between the desktop shell "
-            f"({shell_version}) and the Python engine ({engine_version}); "
-            "refusing to start. Install matching desktop components.",
+            "wenyi-desktop: the desktop shell reports version "
+            f"{shell_version}, but the Python engine is version "
+            f"{engine_version}; the release versions differ, so this engine "
+            "may not understand the workspace data. Install the shell and "
+            "the Python engine from the same release, then start again.",
             file=sys.stderr,
             flush=True,
         )
