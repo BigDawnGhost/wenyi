@@ -12,6 +12,7 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 from wenyi_backend.application import create_app
+from wenyi_core.storage.chapter_reading import ChapterNotFound
 
 
 def _client_with(context) -> TestClient:
@@ -24,17 +25,21 @@ def test_analysis_without_preparation_returns_409(backend_context):
     context = replace(backend_context, storage_for=Mock(return_value=storage))
     response = _client_with(context).get("/projects/pid1/analysis")
     assert response.status_code == 409
+    assert response.json() == {"detail": "Prepare the book before viewing the analysis"}
+    storage.read_chapter_digests.assert_not_called()
+    storage.close.assert_called_once()
 
 
 def test_analysis_missing_chapter_file_maps_to_404(backend_context):
     storage = MagicMock()
     storage.exists.return_value = True
-    storage.load_manifest.return_value = {"chapters": [{"index": 0}]}
-    storage.load_chapter.side_effect = FileNotFoundError("chapter not found")
+    storage.read_chapter_digests.side_effect = ChapterNotFound(0)
     context = replace(backend_context, storage_for=Mock(return_value=storage))
     response = _client_with(context).get("/projects/pid1/analysis")
     assert response.status_code == 404
     assert response.json()["code"] == "chapter_not_found"
+    assert response.json()["message"] == "chapter 0 not found"
+    storage.close.assert_called_once()
 
 
 def test_chapter_digest_missing_chapter_file_maps_to_404(backend_context):

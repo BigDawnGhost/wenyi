@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useIsMutating, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../api/client";
@@ -24,6 +24,15 @@ import { SETTINGS_CONTENT_CLASSNAME } from "./SettingsRow";
 
 type Document = Record<string, unknown>;
 const object = (value: unknown) => (value || {}) as Document;
+
+function DeferredSettingsPanel({ active, children }: { active: boolean; children: ReactNode }) {
+  // Don't load hidden panels on entry, but preserve pending saves and update
+  // state once the user has opened them.
+  const [opened, setOpened] = useState(active);
+  if (active && !opened) setOpened(true);
+  if (!active && !opened) return null;
+  return <div hidden={!active}>{children}</div>;
+}
 
 export function GlobalConfiguration({ section }: { section: SettingsSectionId }) {
   const { t } = useI18n();
@@ -142,9 +151,9 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
             </SettingsGroup>
           </SettingsSection>
         </div>
-        <div hidden={section !== "pdf"}>
+        <DeferredSettingsPanel active={section === "pdf"}>
           <PdfSettings disabled={installing} />
-        </div>
+        </DeferredSettingsPanel>
         <div hidden={section !== "advanced"}>
           <SettingsSection id="advanced-yaml" title={t("settings.sectionAdvanced")} grouped>
             <SettingsGroup title={t("settings.advancedYamlConfiguration")}>
@@ -158,14 +167,14 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
           <div hidden={section !== "diagnostics"}><Diagnostics /></div>
         )}
         {Updates && (
-          <div hidden={section !== "updates"}>
+          <DeferredSettingsPanel active={section === "updates"}>
             <LazyBoundary>
               <Updates
                 blocked={!query.data || editor.dirty || editor.pending || providerSaving || mutations > 0}
                 onInstalling={setInstalling}
               />
             </LazyBoundary>
-          </div>
+          </DeferredSettingsPanel>
         )}
       </div>
     </>
