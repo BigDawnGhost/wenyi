@@ -12,10 +12,11 @@ import yaml
 from openai import APIConnectionError, APIStatusError
 from typer.testing import CliRunner
 from wenyi_cli.cli import app
-from wenyi_core.llm.configuration import LLMConfig
+from wenyi_core.llm.configuration import LLMConfig, ModelConfig, ProviderConfig
 from wenyi_core.llm.connectivity import (
     PROBE_OUTPUT_TOKENS,
     probe_connections,
+    probe_draft_connection,
     probe_profiles,
     probe_targets,
 )
@@ -222,6 +223,22 @@ def test_routed_client_probes_with_its_credential_snapshot(sdk, monkeypatch):
     assert results["main/big"].ok and results["main/small"].ok
     assert results["backup/spare"].category == "missing_credential"
     assert sdk.clients == [{"timeout": 3, "max_retries": 0}] * 2
+
+
+def test_draft_probe_uses_current_endpoint_and_models_without_a_routing_graph(sdk):
+    provider = ProviderConfig(kind="openai-compatible", base_url="https://draft.invalid/v1")
+    results = probe_draft_connection(
+        "draft",
+        provider,
+        {"vendor/new-model": ModelConfig(), "spare": ModelConfig()},
+        credentials={"draft": SECRET},
+        timeout=5,
+    )
+    assert [result.profile for result in results] == ["draft/vendor/new-model", "draft/spare"]
+    assert all(result.ok and result.endpoint == provider.base_url for result in results)
+    assert all(result.operations == () for result in results)
+    assert sorted(call["model"] for call in sdk.calls) == ["spare", "vendor/new-model"]
+    assert sdk.clients == [{"timeout": 5, "max_retries": 0}] * 2
 
 
 def test_invalid_timeout_is_rejected():

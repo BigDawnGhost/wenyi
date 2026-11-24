@@ -185,8 +185,7 @@ test("export submits saved project preferences and keeps validation failures vis
   await page.getByRole("switch", { name: "Add an EPUB “About this translation” page", exact: true }).uncheck();
   await chooseOption(page.getByLabel("Bilingual order"), "Source first");
   await page.getByRole("switch", { name: "Preserve source formatting in bilingual output", exact: true }).check();
-  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
-  await expect(page.getByText("Project settings saved", { exact: true })).toBeVisible();
+  await expect.poll(() => saved.effective.output.bilingual_preserve_source_style).toBe(true);
   await page.goto(`/projects/${pid}/export`);
   await page.getByRole("button", { name: "EPUB", exact: true }).click();
   await page.getByRole("radio", { name: "Bilingual", exact: true }).check();

@@ -65,7 +65,7 @@ test("interface language is available only in global settings without changing p
   });
   await page.goto(`/projects/${pid}/settings`);
   await expect(
-    page.getByRole("button", { name: "Save configuration", exact: true }),
+    page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("Interface language")).toHaveCount(0);
   await page.getByRole("link", { name: "Projects", exact: true }).click();
@@ -73,7 +73,7 @@ test("interface language is available only in global settings without changing p
   await chooseOption(page.locator("#interface-language"), "简体中文");
   await page.goto(`/projects/${pid}/settings`);
   await expect(
-    page.getByRole("button", { name: "保存配置", exact: true }),
+    page.getByRole("textbox", { name: "高级 YAML 配置", exact: true }),
   ).toBeVisible();
   await expect(page.getByLabel("界面语言")).toHaveCount(0);
   await page.getByRole("link", { name: "项目列表", exact: true }).click();
@@ -81,7 +81,7 @@ test("interface language is available only in global settings without changing p
   await chooseOption(page.locator("#interface-language"), "English");
   await page.goto(`/projects/${pid}/settings`);
   await expect(
-    page.getByRole("button", { name: "Save configuration", exact: true }),
+    page.getByRole("textbox", { name: "Advanced YAML configuration", exact: true }),
   ).toBeVisible();
   expect(writes).toEqual([]);
   await page.goto(`/projects/${pid}/proofreading/0`);

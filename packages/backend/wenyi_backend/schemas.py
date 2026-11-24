@@ -444,6 +444,16 @@ class ModelPingRequest(RequestModel):
     timeout: float = Field(default=30, gt=0, le=120)
 
 
+class DraftModelPingRequest(RequestModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    connection: str | None = Field(default=None, max_length=200)
+    draft_id: str = Field(max_length=200, pattern=r"^[A-Za-z][A-Za-z0-9_-]*$")
+    provider: dict[str, Any]
+    models: dict[str, dict[str, Any]] = Field(min_length=1)
+    api_key: SecretStr | None = None
+    timeout: float = Field(default=30, gt=0, le=120)
+
+
 class ModelPingResult(BaseModel):
     profile: str
     connection: str

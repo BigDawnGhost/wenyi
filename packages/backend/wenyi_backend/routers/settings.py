@@ -6,7 +6,8 @@ import yaml
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import ValidationError
-from wenyi_core.llm.configuration import ProviderConfig
+from wenyi_core.llm.configuration import ModelConfig, ProviderConfig
+from wenyi_core.llm.connectivity import probe_draft_connection
 from wenyi_core.llm.models import list_connection_models
 from wenyi_core.llm.registry import provider_spec
 
@@ -23,6 +24,7 @@ from ..global_settings import (
 )
 from ..model_registry import project_registry_updates
 from ..schemas import (
+    DraftModelPingRequest,
     GlobalConfigInput,
     GlobalConfigOut,
     ModelListRequest,
@@ -100,6 +102,54 @@ def ping_models(body: ModelPingRequest) -> list[dict]:
         results = client.probe_profiles(profiles, timeout=body.timeout)
     except (ValueError, RuntimeError) as error:
         raise HTTPException(422, str(error)) from error
+    return [result.describe() for result in results]
+
+
+@router.post(
+    "/models/ping/draft",
+    response_model=list[ModelPingResult],
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {"application/json": {"schema": DraftModelPingRequest.model_json_schema()}},
+        }
+    },
+)
+async def ping_draft(request: Request) -> list[dict]:
+    """Test the current editor draft without updating the registry or credential store."""
+    try:
+        body = DraftModelPingRequest.model_validate(await request.json())
+    except (ValueError, TypeError):
+        raise ApiError(INVALID_CONFIGURATION, 422, "Invalid draft model test request") from None
+    return await run_in_threadpool(_ping_draft, body)
+
+
+def _ping_draft(body: DraftModelPingRequest) -> list[dict]:
+    try:
+        provider = ProviderConfig.model_validate(body.provider)
+        models = {name: ModelConfig.model_validate(raw) for name, raw in body.models.items()}
+    except ValidationError:
+        raise ApiError(INVALID_CONFIGURATION, 422, "Invalid draft connection or model") from None
+    resolve = current_context().connection_credential
+    credentials = None
+    if resolve is None:
+        if body.api_key is not None:
+            raise ApiError(INVALID_CONFIGURATION, 422, "Use a server environment variable")
+        try:
+            _require_known_environment(provider)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from None
+    else:
+        typed = body.api_key.get_secret_value().strip() if body.api_key is not None else None
+        # Clearing a stored key previews environment mode without changing the vault.
+        credential = typed or resolve(body.connection if typed is None else None, provider)
+        credentials = {body.draft_id: credential}
+    try:
+        results = probe_draft_connection(
+            body.draft_id, provider, models, credentials=credentials, timeout=body.timeout
+        )
+    except (ValueError, RuntimeError):
+        raise ApiError(INVALID_CONFIGURATION, 422, "Invalid draft connection or model") from None
     return [result.describe() for result in results]
 
 
