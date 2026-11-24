@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections.abc import Callable
 from pathlib import Path
+from types import TracebackType
 
 from ..atomicio import publish_target
 from ..models.document import MINERU_EPUB_DIGEST
@@ -13,6 +15,24 @@ from .epub_reader import read_epub
 from .errors import MinerUError
 from .models import Document
 from .source_hash import source_sha256
+
+logger = logging.getLogger(__name__)
+
+
+class _WithheldFailureText(Exception):
+    """Stand in for an exception whose own text must not reach the log."""
+
+
+def _loggable_failure(
+    error: BaseException,
+) -> tuple[type[BaseException], BaseException, TracebackType | None]:
+    """Return exc_info for a failure with its frames but not its own text.
+
+    MinerU and parser failures can quote credentials, signed URLs or untrusted
+    source text. The frames locate the failure; the message stays out of the
+    diagnostic log. The reported MinerUError still carries no exception chain.
+    """
+    return type(error), _WithheldFailureText("details withheld"), error.__traceback__
 
 
 def _valid_digest(value: object) -> bool:
@@ -84,9 +104,13 @@ def read_pdf(
         derived_digest = source_sha256(epub)
         try:
             doc = read_epub(str(epub), source_lang, target_lang)
-        except Exception:
+        except Exception as failure:
             # Parser and validation errors can include values from the upstream content.
-            pass
+            # The log keeps the frame stack and withholds the exception own text.
+            logger.debug(
+                "Could not read the derived MinerU source EPUB",
+                exc_info=_loggable_failure(failure),
+            )
         else:
             if source_sha256(epub) != derived_digest or source_sha256(path) != digest:
                 raise ValueError(
@@ -116,9 +140,14 @@ def read_pdf(
             # MinerUError is produced locally with diagnostics safe for task events.
             except MinerUError:
                 raise
-            except Exception:
+            except Exception as failure:
+                # A service exception might include credentials or presigned URLs.
+                # The log keeps the frame stack and withholds the exception own text.
+                logger.debug(
+                    "Unexpected MinerU conversion failure",
+                    exc_info=_loggable_failure(failure),
+                )
                 failed = True
-            # A service exception might include credentials or presigned URLs.
             if failed:
                 raise MinerUError(
                     "PDF conversion failed. Check MinerU credentials, service availability, "
