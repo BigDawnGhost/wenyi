@@ -40,7 +40,7 @@ docs/
 
 ## 本地预览文档站
 
-安装 Node 22 和 pnpm 9 后，在仓库根目录执行：
+安装[共享的 Node 与 pnpm 版本](frontend.md#两端验证)后，在仓库根目录执行：
 
 ```bash
 pnpm install --frozen-lockfile

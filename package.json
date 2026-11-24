@@ -12,7 +12,7 @@
     "test:docs": "node --test docs/.vitepress/docs.test.mjs",
     "dev:desktop-ui": "pnpm -C apps/desktop/frontend dev",
     "build:desktop-ui": "pnpm -C apps/desktop/frontend build",
-    "test:frontend-boundaries": "node --test \"packages/ui/tests/*.test.mjs\"",
+    "test:frontend-boundaries": "node --experimental-strip-types --test \"packages/ui/tests/*.test.mjs\"",
     "desktop": "node scripts/dev/desktop.mjs dev",
     "desktop:build": "node scripts/dev/desktop.mjs build",
     "dev:api": "uv run uvicorn wenyi_api.main:app --reload --port 8000",
@@ -24,13 +24,13 @@
     "build": "pnpm build:web"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.10.0",
+    "@tauri-apps/cli": "^2.12.6",
     "github-slugger": "^2.0.0",
     "openapi-typescript": "^7.4.4",
     "vitepress": "^1.6.4"
   },
   "engines": {
-    "node": "^22.0.0",
+    "node": "^22.12.0",
     "pnpm": "^9.0.0"
   },
   "browserslist": [
