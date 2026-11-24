@@ -38,4 +38,4 @@ zip = { version = "=2.6.1", default-features = false, features = ["deflate-flate
 flate2 = { version = "1", default-features = false, features = ["zlib-rs"] }
 
 [build-dependencies]
-pyo3-build-config = "=0.29.2"
+pyo3-build-config = "=0.30.1"
