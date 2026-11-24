@@ -213,11 +213,12 @@ class PostgresExports:
                    JOIN exports e ON e.id=(j.params->>'export_id')::bigint
                    WHERE j.project_id=%s AND j.kind='export'
                      AND j.status IN ('queued','running') AND e.format=%s
+                     AND e.options=%s
                    ORDER BY j.id DESC LIMIT 1""",
-                (pid, fmt),
+                (pid, fmt, Jsonb(options)),
             ).fetchone()
             if active is not None:
-                # Idempotent admission: one in-flight export per project and format.
+                # Idempotent admission: one in-flight export per request identity.
                 return int(active[2]), int(active[0])
             export_id = dal.create_export(pid, fmt, options, connection=connection)
             job_id = dal.create_job(
