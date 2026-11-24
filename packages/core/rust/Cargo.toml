@@ -19,7 +19,7 @@ panic-injection = []
 
 [dependencies]
 anyhow = "1"
-base64 = "0.22"
+base64 = "0.23"
 chardetng = "1"
 encoding_rs = "0.8"
 html5ever = "0.39"
