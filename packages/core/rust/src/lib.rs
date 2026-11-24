@@ -1,5 +1,6 @@
 //! Python bindings for Core's native document engines.
 
+mod alignment;
 mod docx;
 mod epub;
 mod fb2;

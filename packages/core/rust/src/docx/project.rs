@@ -7,7 +7,8 @@ use std::{borrow::Cow, collections::BTreeMap};
 use anyhow::{anyhow, ensure, Context, Result};
 use serde::{de::value::MapDeserializer, Deserialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
+
+use crate::alignment::target_digest;
 
 use super::{
     export::{Cell, ListRef, Paragraph, Placement, Side, Table, Writer},
@@ -253,9 +254,7 @@ fn side(text: String, source: &str, meta: &Value, font: Option<&str>) -> Result<
                     && styles
                         .get("target_digest")
                         .and_then(Value::as_str)
-                        .is_some_and(|digest| {
-                            digest == format!("{:x}", Sha256::digest(text.as_bytes()))
-                        })
+                        .is_some_and(|digest| digest == target_digest(&text))
             });
         side.placements = if let Some(saved) = saved {
             // First saved placement wins on overlap (in Side::write). Keep the

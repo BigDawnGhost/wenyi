@@ -5,9 +5,9 @@ use std::collections::{HashMap, HashSet};
 
 use pyo3::prelude::*;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use super::{canonical, translatable_attr, ATTRIBUTE};
+use crate::alignment::target_digest;
 use crate::epub::{
     dom::{strip, Dom, Id, Kind},
     export::{allocate, backfill, breaks, identities},
@@ -164,7 +164,7 @@ fn compatible_metadata(dom: &Dom, el: Id, source: &str, target: &str, meta: &Val
         let length = target.chars().count() as u64;
         if ann["version"].as_u64()? != 1
             || ann["source_length"].as_u64()? != source_length
-            || ann["target_digest"].as_str()? != format!("{:x}", Sha256::digest(target.as_bytes()))
+            || ann["target_digest"].as_str()? != target_digest(target)
         {
             return None;
         }
