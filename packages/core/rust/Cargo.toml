@@ -22,7 +22,7 @@ anyhow = "1"
 base64 = "0.22"
 chardetng = "1"
 encoding_rs = "0.8"
-html5ever = "0.39"
+html5ever = "0.40"
 indexmap = { version = "2", features = ["serde"] }
 lopdf = { version = "=0.47.0", default-features = false }
 percent-encoding = "2"
