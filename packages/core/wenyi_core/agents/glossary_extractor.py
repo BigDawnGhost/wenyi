@@ -15,6 +15,7 @@ from typing import Any
 from ..config import Config
 from ..glossary.prompt_scope import prompt_terms
 from ..glossary.store import (
+    TYPE_NAVIGATION,
     TYPE_TERM,
     GlossaryOccurrenceMatcher,
     GlossaryStore,
@@ -697,7 +698,7 @@ class GlossaryExtractor(Agent):
         With source_corpus, show only existing terms occurring at least twice in the source.
         Low-frequency terms remain stored but do not repeatedly consume extraction context.
         """
-        all_existing = store.all_terms()
+        all_existing = [t for t in store.all_terms() if t.type != TYPE_NAVIGATION]
         existing = (
             self._recurring_existing_terms(all_existing, source_corpus)
             if source_corpus is not None

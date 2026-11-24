@@ -115,7 +115,9 @@ unlocking `pipeline.chapter_concurrency` above 1). User-imported and manually ed
 are preserved unchanged.
 
 By default (`pipeline.batch_glossary: all`) each pending body batch receives all
-current mappings. With `batch_glossary: relevant`, each batch instead receives only
+current entity mappings, while newly stored EPUB navigation titles (`navigation`) are
+included only when they occur in that request's text (legacy projects with older
+`term`-typed navigation rows get this scoping automatically in Review). With `batch_glossary: relevant`, each batch instead receives only
 entries whose source or aliases occur in its source paragraphs, the following-source
 reference, its annotation contexts or the chapter digest, and glossary extraction
 sees only existing entries that occur in the extracted text. A long book's full
@@ -128,7 +130,9 @@ estimated prompt tokens plus output reserve against the model's `context_window`
 shrinking the glossary or raising an actionable error rather than overflowing the
 provider limit. A paragraph that names a
 character only by pronoun or title then relies on the digest and recent translations
-for that mapping. Fresh Reviewer requests always receive the complete final glossary.
+for that mapping. Fresh Reviewer requests receive the final entity glossary plus any
+navigation titles occurring in the reviewed chunk, fitted to the review model's
+`context_window` (and split automatically if a multi-paragraph chunk still overflows).
 Evidence queries and individual Fixers can use relevant subsets. Each
 `batch_translated` event records the entries (`glossary_terms`) it sent and an
 estimate of the glossary block's `cl100k_base` tokens (`glossary_tokens`).

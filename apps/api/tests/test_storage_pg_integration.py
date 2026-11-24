@@ -552,3 +552,44 @@ def test_postgres_initialization_preserves_only_matching_preview(pg_storage, pg_
     assert pg_storage.read_artifact("preview.json") == {"title": "Book"}
     assert set(pg_storage.list_artifacts()) == {"parsed_document.json", "preview.json"}
     assert pg_storage.read_artifact("reviews/review-obsolete/result.json") is None
+
+
+def test_postgres_upsert_promotes_navigation_stub_and_first_chapter(pg_storage):
+    from wenyi_core.models.glossary import STATUS_CONTEXT_DEPENDENT, TYPE_NAVIGATION, GlossaryTerm
+
+    assert (
+        pg_storage.upsert_term(GlossaryTerm("长安", "Chang'an", type=TYPE_NAVIGATION)) == "inserted"
+    )
+    assert (
+        pg_storage.upsert_term(GlossaryTerm("长安", "Chang'an", type="place"), chapter=2)
+        == "unchanged"
+    )
+    promoted = pg_storage.get_term("长安")
+    assert promoted is not None
+    assert promoted.type == "place"
+    assert promoted.first_chapter == 2
+    assert (
+        pg_storage.upsert_term(GlossaryTerm("长安", "Chang'an", type=TYPE_NAVIGATION))
+        == "unchanged"
+    )
+    still_place = pg_storage.get_term("长安")
+    assert (
+        still_place is not None and still_place.type == "place" and still_place.first_chapter == 2
+    )
+
+    # Context-dependent merge branch also promotes navigation -> entity without demotion.
+    assert (
+        pg_storage.upsert_term(
+            GlossaryTerm("大人", "Lord", type=TYPE_NAVIGATION, status=STATUS_CONTEXT_DEPENDENT)
+        )
+        == "inserted"
+    )
+    assert (
+        pg_storage.upsert_term(GlossaryTerm("大人", "My Lord", type="appellation"), chapter=4)
+        == "unchanged"
+    )
+    merged = pg_storage.get_term("大人")
+    assert merged is not None
+    assert merged.type == "appellation"
+    assert merged.first_chapter == 4
+    assert "Lord" in merged.target and "My Lord" in merged.target

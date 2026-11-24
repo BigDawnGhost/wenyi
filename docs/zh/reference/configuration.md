@@ -349,7 +349,7 @@ CLI 只覆盖其参数明确支持的设置；Web/Desktop 项目限制见[作用
 | `pipeline.deterministic_hygiene` | `true` | 启用零模型开销的确定性译后排版清理（含拉丁与中文标点规范，保护代码与 LaTeX）及少数译名归一。 |
 | `pipeline.consistency_sweep` | `false` | 启用快速译后跨章一致性扫描（统一跨章重复引文并定向修补遗漏的术语规范译名）。 |
 | `pipeline.entity_markers` | `false` | 实验选项：草稿翻译时将高稳定专有名词替换为不透明 `⟦N#⟧` 标记，译后按冻结术语表确定性回填。 |
-| `pipeline.batch_glossary` | `all` | `all` 向每个正文翻译、润色和精翻请求发送全量术语；`relevant` 只向每批发送与其文本匹配的词条，并让抽取只看到被抽取文本中出现的已有词条。见[翻译上下文与术语库](../guide/pipeline.md#context-and-glossary)。 |
+| `pipeline.batch_glossary` | `all` | `all` 向每个正文翻译、润色和精翻请求发送全量实体术语（EPUB 目录标题仅在命中本批原文时携带）；`relevant` 只向每批发送与其文本匹配的词条，并让抽取只看到被抽取文本中出现的已有词条。见[翻译上下文与术语库](../guide/pipeline.md#context-and-glossary)。 |
 | `pipeline.glossary_prompt_tokens` | `0` | 可选的单次请求术语表 token 上限（`cl100k_base`，整数 ≥ 0）。`0` 表示不设上限，发送内容只由 `batch_glossary` 决定。设置上限后，`all` 保留追加稳定的前导词条加命中本批的后续词条，`relevant` 限制命中词条总量。 |
 | `pipeline.skip_boilerplate` | `false` | 可选的导入时清理开关：将抓取站点的水印、广告标记和零散残片标记为 `meta.skip = true` 而非删除，从而跳过翻译与导出同时保持段落索引与锚点稳定。 |
 | `pipeline.boilerplate_patterns` | `[]` | 启用 `pipeline.skip_boilerplate` 时额外匹配的自定义正则表达式列表。 |

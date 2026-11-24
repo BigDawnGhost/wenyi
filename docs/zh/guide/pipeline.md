@@ -91,7 +91,7 @@ BabelDOC 另有[按版面角色约束的上下文边界](../reference/formats.md
 
 将 `pipeline.glossary_mode` 设为 `compiled` 时，文译会改为在第一章翻译前根据章节摘要与原文挖掘高频实体，通过双语境熵探测与全局裁定编译冻结的 Book Bible，从而跳过热路径上的逐批与章末抽取（消除一批延迟，并启用大于 1 的 `pipeline.chapter_concurrency`）。用户导入或手动编辑的词条保持不变。
 
-默认（`pipeline.batch_glossary: all`）每个待译正文批次接收全部当前映射。
+默认（`pipeline.batch_glossary: all`）每个待译正文批次接收全部当前实体映射，而新写入的 EPUB 目录标题（`navigation`）仅在命中当前请求原文时才携带（旧版以 `term` 存储目录标题的存量项目会在 Review 中自动获得同等过滤）。
 设为 `batch_glossary: relevant` 时，每批只接收原文或别名出现在本批原文段落、后续原文参考、
 注释上下文或章节摘要中的词条；术语抽取也只看到在被抽取文本中出现的已有词条。
 长篇书籍的完整术语表每次请求可能达到数万 token，因此长篇更适合 `relevant`。
@@ -99,7 +99,7 @@ BabelDOC 另有[按版面角色约束的上下文边界](../reference/formats.md
 （利于前缀缓存复用）并附加命中本批的后续词条，`relevant` 只发送上限内的命中词条。
 发送请求前，文译还会按模型的 `context_window` 估算提示词与输出预留总量，超限时自动缩减术语表或给出可执行报错。
 只用代词或称号指代人物的段落此时依靠章节摘要和近期译文获得映射。
-新的 Reviewer 请求总是接收最终全量术语库；取证查询和单段 Fixer 可使用相关子集。
+新的 Reviewer 请求接收最终全量实体术语库以及命中当前审校分块的 EPUB 目录标题，并按审校模型的 `context_window` 自动裁剪（多段分块仍超限时自动二分拆分）；取证查询和单段 Fixer 可使用相关子集。
 每条 `batch_translated` 事件记录所发送的词条数（`glossary_terms`）及术语块 `cl100k_base` 词元数估计（`glossary_tokens`）。
 
 因此术语抽取保持精简：只收人名地名等专名、本书特有术语、反复出现的称谓和固定表达，

@@ -29,7 +29,7 @@ from ...i18n.languages import (
     glossary_generic_target_words,
 )
 from ...models.document import Chapter, Segment
-from ...models.glossary import GlossaryTerm
+from ...models.glossary import TYPE_NAVIGATION, GlossaryTerm
 from ...storage.protocol import Storage
 from .quote_memory import QuoteMemory
 
@@ -920,7 +920,7 @@ class ConsistencySweepService:
             chapters,
             source_lang=self._src,
             target_lang=self._tgt,
-            existing_glossary_sources={t.source for t in terms},
+            existing_glossary_sources={t.source for t in terms if t.type != TYPE_NAVIGATION},
             extra_watch_sources=divergent_titles,
         )
         drift_patched = 0

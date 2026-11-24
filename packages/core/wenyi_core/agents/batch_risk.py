@@ -581,7 +581,9 @@ def assess_batch_risk(
     generic_words = glossary_generic_target_words(target_lang)
     variants_map = variants_by_source or {}
 
-    # Filter glossary terms to high-signal entity mappings for miss detection.
+    # Filter glossary terms to high-signal entity mappings for miss detection. Navigation
+    # titles (type="navigation") are headings, not inline entities, so the allowed entity
+    # type set excludes them from misses and phantom checks.
     entity_terms = [
         t
         for t in glossary_terms

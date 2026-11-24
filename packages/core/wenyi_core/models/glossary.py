@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 # Canonical glossary types.
 TYPE_PERSON = "person"
 TYPE_TERM = "term"
+TYPE_NAVIGATION = "navigation"
 TYPE_APPELLATION = "appellation"
 TYPE_HONORIFIC = "honorific"
 TYPE_SPEECH = "speech"
@@ -98,6 +99,22 @@ class GlossaryTerm:
         )
 
 
+def promote_navigation_term(
+    existing: GlossaryTerm,
+    incoming: GlossaryTerm,
+    chapter: int | None = None,
+) -> tuple[str, int | None]:
+    """Return ``(type, first_chapter)`` when merging ``incoming`` into ``existing``.
+
+    A real entity term promotes an existing ``TYPE_NAVIGATION`` stub (updating both type
+    and ``first_chapter``); existing non-navigation entries never change type or chapter.
+    """
+    if existing.type == TYPE_NAVIGATION and incoming.type != TYPE_NAVIGATION:
+        first_chapter = incoming.first_chapter if incoming.first_chapter is not None else chapter
+        return incoming.type, first_chapter
+    return existing.type, existing.first_chapter
+
+
 __all__ = [
     "SOURCE_ONLY_TYPES",
     "STATUS_CONFLICT",
@@ -106,6 +123,7 @@ __all__ = [
     "TYPE_APPELLATION",
     "TYPE_FIXED_EXPR",
     "TYPE_HONORIFIC",
+    "TYPE_NAVIGATION",
     "TYPE_PERSON",
     "TYPE_SPEECH",
     "TYPE_TERM",
@@ -115,4 +133,5 @@ __all__ = [
     "normalize_gender",
     "normalize_term_status",
     "normalize_term_type",
+    "promote_navigation_term",
 ]

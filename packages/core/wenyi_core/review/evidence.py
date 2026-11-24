@@ -10,7 +10,12 @@ from typing import Any
 
 from ..agent_tools import REVIEW_TOOLS, BoundTools, ToolError
 from ..glossary.notes import NoteJournal
-from ..glossary.store import GlossaryTerm, source_matches_text, term_match_sources
+from ..glossary.store import (
+    GlossaryTerm,
+    normalize_match_text,
+    source_matches_normalized,
+    term_match_sources,
+)
 from ..markup.contexts import object_contexts_for_segments
 from ..models.document import Chapter
 from .models import SegmentRef, normalize_value
@@ -97,6 +102,8 @@ class BookEvidenceIndex:
                     self._alias_lookup.setdefault(normalized_alias, []).append(term)
         self._occurrence_cache: dict[str, tuple[SegmentRef, ...]] = {}
         self._cache_lock = Lock()
+        self._normalize_lock = Lock()
+        self._normalized_sources: tuple[str, ...] | None = None
         self._tools = BoundTools(
             REVIEW_TOOLS,
             glossary_term=self.glossary_term,
@@ -144,6 +151,24 @@ class BookEvidenceIndex:
             return None, sorted(unique)
         return None, []
 
+    def _get_normalized_sources(self) -> tuple[str, ...]:
+        """Normalize every segment source once and reuse it for all term queries.
+
+        Matching each term against raw sources renormalizes the whole book per query;
+        the cached tuple keeps exact parity with ``source_matches_text`` while paying the
+        normalization cost once. A dedicated lock serializes cold-start initialization
+        without contending with ``_cache_lock`` on warm lookups.
+        """
+        normalized = self._normalized_sources
+        if normalized is not None:
+            return normalized
+        with self._normalize_lock:
+            if self._normalized_sources is None:
+                self._normalized_sources = tuple(
+                    normalize_match_text(segment.source) for segment in self.segments
+                )
+            return self._normalized_sources
+
     def _occurrences(self, query: str) -> tuple[str, tuple[SegmentRef, ...], list[str]]:
         """Scan and cache matching paragraphs lazily for a canonical term or literal phrase."""
         term, ambiguous = self.canonical_term(query)
@@ -161,10 +186,11 @@ class BookEvidenceIndex:
             return canonical, cached, []
 
         keys = term_match_sources(term) if term is not None else [canonical]
+        normalized_sources = self._get_normalized_sources()
         found = tuple(
             segment
-            for segment in self.segments
-            if any(source_matches_text(key, segment.source) for key in keys)
+            for segment, normalized_source in zip(self.segments, normalized_sources)
+            if any(source_matches_normalized(key, normalized_source) for key in keys)
         )
         with self._cache_lock:
             existing = self._occurrence_cache.setdefault(cache_key, found)

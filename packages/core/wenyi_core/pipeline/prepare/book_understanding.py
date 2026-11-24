@@ -14,7 +14,7 @@ from ...events import ProgressFn
 from ...i18n.policy.models import content_hash
 from ...llm.routing import inference_snapshot
 from ...models.document import Chapter
-from ...models.glossary import GlossaryTerm, normalize_gender
+from ...models.glossary import TYPE_NAVIGATION, GlossaryTerm, normalize_gender
 from ...storage.protocol import Storage
 from ..run.runtime_usage import UsageCoordinator
 
@@ -123,7 +123,11 @@ class BookUnderstandingService:
             return ""
 
         analysis = store.load_analysis() or {}
-        terms = sorted(store.all_terms(), key=lambda term: term.source)
+        # Navigation titles are chapter headings, not entities worth synopsis mappings.
+        terms = sorted(
+            (term for term in store.all_terms() if term.type != TYPE_NAVIGATION),
+            key=lambda term: term.source,
+        )
         matched_terms = store.terms_in(terms, "\n".join(digests))
         mappings = _synopsis_mappings(matched_terms)
         inputs = {

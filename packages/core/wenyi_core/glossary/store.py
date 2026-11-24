@@ -26,12 +26,14 @@ from ..models.glossary import (
     TYPE_APPELLATION,
     TYPE_FIXED_EXPR,
     TYPE_HONORIFIC,
+    TYPE_NAVIGATION,
     TYPE_PERSON,
     TYPE_SPEECH,
     TYPE_TERM,
     GlossaryTerm,
     merge_context_senses,
     normalize_term_status,
+    promote_navigation_term,
 )
 
 # The term record and its type tags moved to wenyi_core.models.glossary. They stay
@@ -45,6 +47,7 @@ __all__ = [
     "TYPE_APPELLATION",
     "TYPE_FIXED_EXPR",
     "TYPE_HONORIFIC",
+    "TYPE_NAVIGATION",
     "TYPE_PERSON",
     "TYPE_SPEECH",
     "TYPE_TERM",
@@ -436,12 +439,18 @@ class GlossaryStore:
                 # Context-dependent terms accept multiple senses without raising conflicts.
                 merged_target = merge_context_senses(existing.target, term.target)
                 merged_aliases = sorted(set(existing.aliases) | set(term.aliases))
+                promoted_type, promoted_first_chapter = promote_navigation_term(
+                    existing, term, chapter
+                )
                 self.conn.execute(
-                    """UPDATE glossary SET target=?, reading=COALESCE(NULLIF(?,''),reading),
+                    """UPDATE glossary SET target=?, type=?, first_chapter=?,
+                       reading=COALESCE(NULLIF(?,''),reading),
                        gender=COALESCE(NULLIF(?,''),gender), aliases=?,
                        note=COALESCE(NULLIF(?,''),note), updated_at=? WHERE source=?""",
                     (
                         merged_target or existing.target,
+                        promoted_type,
+                        promoted_first_chapter,
                         term.reading,
                         term.gender,
                         json.dumps(merged_aliases, ensure_ascii=False),
@@ -452,13 +461,20 @@ class GlossaryStore:
                 )
                 result = "unchanged"
             elif existing.target == term.target:
-                # Merging aliases or filling missing fields is not a conflict.
+                # Merging aliases, filling missing fields, or promoting a navigation stub to
+                # a real entity type is not a conflict.
                 merged_aliases = sorted(set(existing.aliases) | set(term.aliases))
+                promoted_type, promoted_first_chapter = promote_navigation_term(
+                    existing, term, chapter
+                )
                 self.conn.execute(
-                    """UPDATE glossary SET reading=COALESCE(NULLIF(?,''),reading),
+                    """UPDATE glossary SET type=?, first_chapter=?,
+                       reading=COALESCE(NULLIF(?,''),reading),
                        gender=COALESCE(NULLIF(?,''),gender), aliases=?,
                        note=COALESCE(NULLIF(?,''),note), updated_at=? WHERE source=?""",
                     (
+                        promoted_type,
+                        promoted_first_chapter,
                         term.reading,
                         term.gender,
                         json.dumps(merged_aliases, ensure_ascii=False),

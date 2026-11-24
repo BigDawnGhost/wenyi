@@ -787,17 +787,23 @@ class PostgresStorage:
                     ),
                 )
                 return "inserted"
-            if existing.status == "context_dependent":
-                from wenyi_core.models.glossary import merge_context_senses
+            from wenyi_core.models.glossary import merge_context_senses, promote_navigation_term
 
+            if existing.status == "context_dependent":
                 merged_target = merge_context_senses(existing.target, term.target)
                 aliases = sorted(set(existing.aliases) | set(term.aliases))
+                promoted_type, promoted_first_chapter = promote_navigation_term(
+                    existing, term, chapter
+                )
                 conn.execute(
-                    """UPDATE glossary SET target=%s,reading=COALESCE(NULLIF(%s,''),reading),
+                    """UPDATE glossary SET target=%s,type=%s,first_chapter=%s,
+                    reading=COALESCE(NULLIF(%s,''),reading),
                     gender=COALESCE(NULLIF(%s,''),gender),aliases=%s,note=COALESCE(NULLIF(%s,''),note),
                     updated_at=%s WHERE project_id=%s AND source=%s""",
                     (
                         merged_target or existing.target,
+                        promoted_type,
+                        promoted_first_chapter,
                         term.reading,
                         term.gender,
                         Jsonb(aliases),
@@ -810,11 +816,17 @@ class PostgresStorage:
                 return "unchanged"
             if existing.target == term.target:
                 aliases = sorted(set(existing.aliases) | set(term.aliases))
+                promoted_type, promoted_first_chapter = promote_navigation_term(
+                    existing, term, chapter
+                )
                 conn.execute(
-                    """UPDATE glossary SET reading=COALESCE(NULLIF(%s,''),reading),
+                    """UPDATE glossary SET type=%s,first_chapter=%s,
+                    reading=COALESCE(NULLIF(%s,''),reading),
                     gender=COALESCE(NULLIF(%s,''),gender),aliases=%s,note=COALESCE(NULLIF(%s,''),note),
                     updated_at=%s WHERE project_id=%s AND source=%s""",
                     (
+                        promoted_type,
+                        promoted_first_chapter,
                         term.reading,
                         term.gender,
                         Jsonb(aliases),

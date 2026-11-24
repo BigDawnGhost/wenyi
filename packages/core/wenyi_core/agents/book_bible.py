@@ -40,8 +40,11 @@ from .base import Agent
 
 _LOGGER = logging.getLogger(__name__)
 
-# CJK runs inside target-language digests (digests quote original source names in source spelling).
-_CJK_SPAN_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]{2,6}")
+# Full contiguous CJK runs inside target-language digests (digests quote original source
+# names in source spelling). Runs longer than _CJK_SPAN_MAX_LEN are prose clauses and are
+# skipped whole rather than sliced into arbitrary fragments.
+_CJK_SPAN_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]{2,}")
+_CJK_SPAN_MAX_LEN = 12
 # Japanese katakana entity spans (allow middle-dot / equals / prolonged sound mark).
 _JA_KATAKANA_RE = re.compile(r"[\u30a0-\u30ff][\u30a0-\u30ffー・＝=]{1,15}[\u30a0-\u30ffー]")
 # Japanese honorific-anchored character names (capture stem before honorific).
@@ -451,7 +454,7 @@ def _mine_japanese_spans(text: str) -> set[str]:
     for m in _CJK_SPAN_RE.finditer(clean):
         tok = m.group(0).strip()
         if (
-            len(tok) >= 2
+            2 <= len(tok) <= _CJK_SPAN_MAX_LEN
             and tok[0] not in _CJK_EDGE_PARTICLES
             and tok[-1] not in _CJK_EDGE_PARTICLES
         ):
@@ -506,7 +509,7 @@ def mine_bible_candidates(
         for match in _CJK_SPAN_RE.finditer(joined_digests):
             token = match.group(0).strip()
             if (
-                len(token) >= 2
+                2 <= len(token) <= _CJK_SPAN_MAX_LEN
                 and token[0] not in _CJK_EDGE_PARTICLES
                 and token[-1] not in _CJK_EDGE_PARTICLES
             ):

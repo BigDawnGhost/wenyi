@@ -12,7 +12,7 @@ from ...glossary.store import GlossaryStore, source_matches_text, trusted_match_
 from ...i18n.policy.models import content_hash
 from ...llm.routing import inference_snapshot
 from ...models.document import Segment
-from ...models.glossary import GlossaryTerm
+from ...models.glossary import TYPE_NAVIGATION, GlossaryTerm
 from ...storage.protocol import Storage
 
 
@@ -66,13 +66,17 @@ class GlossaryNotes:
         if complete is not None:
             return set(complete["terms"])
         terms = self.store.all_terms()
-        relevant = GlossaryStore.terms_in(terms, "\n".join(source for source, _ in window.pairs))
+        # Chapter-title navigation entries never get usage notes.
+        entity_terms = [term for term in terms if term.type != TYPE_NAVIGATION]
+        relevant = GlossaryStore.terms_in(
+            entity_terms, "\n".join(source for source, _ in window.pairs)
+        )
         covered = set()
         jobs = []
         for term in relevant:
             if exclude is not None and term.source in exclude:
                 continue
-            keys = trusted_match_sources(term, terms)
+            keys = trusted_match_sources(term, entity_terms)
             hits = [
                 start + i
                 for i, (source, _) in enumerate(window.pairs)

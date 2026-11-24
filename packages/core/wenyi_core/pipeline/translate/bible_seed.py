@@ -19,7 +19,7 @@ from ...config import Config
 from ...events import ProgressFn
 from ...glossary.store import normalize_match_text
 from ...llm.routing import inference_snapshot
-from ...models.glossary import GlossaryTerm
+from ...models.glossary import TYPE_NAVIGATION, GlossaryTerm
 from ...storage.protocol import Storage
 
 _LOGGER = logging.getLogger(__name__)
@@ -39,7 +39,7 @@ def _bible_fingerprint(
     locked_user_terms = sorted(
         (normalize_match_text(t.source).strip(), t.target.strip(), t.type, t.gender)
         for t in user_terms
-        if t.first_chapter is None
+        if t.first_chapter is None and t.type != TYPE_NAVIGATION
     )
     payload = {
         "version": _BIBLE_VERSION,
@@ -83,7 +83,7 @@ class BibleSeedService:
         """Seed the glossary once before translation; return observed variant spellings."""
         manifest = store.load_manifest()
         source_hash = str(manifest.get("source_sha256") or "")
-        existing_terms = store.all_terms()
+        existing_terms = [t for t in store.all_terms() if t.type != TYPE_NAVIGATION]
         fp = _bible_fingerprint(
             self._config,
             source_hash,
@@ -157,7 +157,7 @@ class BibleSeedService:
             existing_keys.add(norm_src)
             inserted.append(term.source)
 
-        all_terms = store.all_terms()
+        all_terms = [t for t in store.all_terms() if t.type != TYPE_NAVIGATION]
         quote_targets: dict[str, str] = {}
         if repeated_quotes:
             quote_targets = self._agent.pretranslate_quotes(

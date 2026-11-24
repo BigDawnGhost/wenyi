@@ -1744,9 +1744,10 @@ class TranslationService:
         """Select the glossary entries one batch sends under ``pipeline.batch_glossary`` and
         ``pipeline.glossary_prompt_tokens``.
 
-        ``all`` sends the full snapshot and ``relevant`` keeps only matching entries. An opt-in
-        token cap makes ``all`` keep its append-stable leading run plus matching later entries
-        and limits ``relevant`` to the matching entries that fit.
+        ``all`` sends the full non-navigation snapshot (plus navigation titles matching the
+        batch) and ``relevant`` keeps only matching entries. An opt-in token cap makes ``all``
+        keep its append-stable leading run plus matching later entries and limits ``relevant``
+        to the matching entries that fit.
         """
         parts = [segment.source for segment in batch]
         parts.extend(item.get("source", "") for group in annotation_contexts for item in group)

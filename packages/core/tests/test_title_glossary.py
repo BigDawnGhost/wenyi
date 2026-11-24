@@ -8,7 +8,7 @@ import pytest
 from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.models.document import Chapter, Document, Segment
-from wenyi_core.models.glossary import GlossaryTerm
+from wenyi_core.models.glossary import TYPE_NAVIGATION, GlossaryTerm
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
@@ -90,6 +90,7 @@ def test_all_navigation_mappings_are_stored_in_tree_order(navigation_project):
         ("Side Trail", "支路"),
         ("Saved Title", "已存标题"),
     ]
+    assert {term.type for term in store.all_terms()} == {TYPE_NAVIGATION}
     assert len(client.calls) == 1
     assert store.load_chapter(0).segments == before.segments
     assert store.load_manifest()["title"] == "Book"
@@ -135,6 +136,9 @@ def test_navigation_conflicts_preserve_existing_terms_and_do_not_repeat(
     assert saved.aliases == original.aliases
     assert saved.note == original.note
     assert saved.type == original.type
+    assert {term.type for term in store.all_terms() if term.source != original.source} == {
+        TYPE_NAVIGATION
+    }
     conflicts = store.open_conflicts()
     assert len(conflicts) == (existing_target != "铜拱门")
     if conflicts:
@@ -142,6 +146,23 @@ def test_navigation_conflicts_preserve_existing_terms_and_do_not_repeat(
 
     _translate_navigation(config, store, FakeClient())
     assert store.open_conflicts() == conflicts
+
+
+def test_title_prompt_omits_stored_navigation_terms(navigation_project):
+    config, store = navigation_project
+    # Earlier runs stored thousands of unrelated chapter titles; only entities guide titles.
+    store.upsert_term(GlossaryTerm(source="Old Chapter", target="旧章", type=TYPE_NAVIGATION))
+    store.upsert_term(GlossaryTerm(source="Copper", target="铜", type="term"))
+    client = FakeClient(handler=_title_handler)
+
+    _translate_navigation(config, store, client)
+
+    (call,) = client.calls
+    prompt = call["messages"][-1]["content"]
+    assert "Copper" in prompt and "铜" in prompt
+    assert "Old Chapter" not in prompt and "旧章" not in prompt
+    assert store.get_term("Old Chapter").type == TYPE_NAVIGATION
+    assert store.get_term("Side Trail").type == TYPE_NAVIGATION
 
 
 def test_failed_glossary_write_recovers_from_saved_titles(navigation_project, monkeypatch):
@@ -290,10 +311,11 @@ def test_navigation_terms_feed_review_and_only_autofix_changes_body(
             return '{"terms": []}'
         if "translation reviewer" in system:
             reviewed.append(user)
-            assert "Section 1 → 第一节" in user
             pairs = re.findall(
-                r"^\[(\d+)\] Source:.*?\n    Translation: ([^\n]*)", user, re.MULTILINE
+                r"^\[(\d+)\] Source:(.*?)\n    Translation: ([^\n]*)", user, re.MULTILINE
             )
+            has_section_1 = any("Section 1" in source_text for _, source_text, _ in pairs)
+            assert ("Section 1 → 第一节" in user) == has_section_1
             return review_json(
                 user,
                 [
@@ -303,7 +325,7 @@ def test_navigation_terms_feed_review_and_only_autofix_changes_body(
                         "detail": "章名与术语表不一致",
                         "suggestion": target.replace("旧节名", "第一节"),
                     }
-                    for index, target in pairs
+                    for index, _, target in pairs
                     if "旧节名" in target
                 ],
             )
@@ -321,6 +343,8 @@ def test_navigation_terms_feed_review_and_only_autofix_changes_body(
         assert store.get_term("Section 1").target == "第一节"
         assert len(store.all_terms()) == 4
         assert bool(reviewed) == review
+        if review:
+            assert any("Section 1 → 第一节" in prompt for prompt in reviewed)
         targets = "\n".join(
             segment.target or ""
             for row in store.load_manifest()["chapters"]

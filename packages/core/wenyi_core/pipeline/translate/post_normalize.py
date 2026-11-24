@@ -21,7 +21,7 @@ from typing import Any
 
 from ...glossary.store import STATUS_OK, source_matches_text
 from ...i18n.languages import glossary_generic_target_words
-from ...models.glossary import GlossaryTerm
+from ...models.glossary import TYPE_NAVIGATION, GlossaryTerm
 
 # Matches protected-object transport tokens such as 〘object:1〙 or ⟦N0⟧.
 _PROTECTED_MARKER_RE = re.compile(r"〘object:[A-Za-z0-9_.:-]+〙|⟦[^⟧]+⟧")
@@ -408,7 +408,8 @@ def normalize_minority_names(
     variants_map = variants_by_source or {}
     is_cjk_target = (target_lang or "").lower().split("-", 1)[0] in {"zh", "ja", "ko"}
 
-    all_canonical_lower = [t.target.strip().casefold() for t in terms if t.target.strip()]
+    entity_terms = [t for t in terms if t.type != TYPE_NAVIGATION]
+    all_canonical_lower = [t.target.strip().casefold() for t in entity_terms if t.target.strip()]
 
     def collides(variant: str, canonical: str) -> bool:
         """Never replace a variant that is part of another glossary entry's target."""
@@ -416,7 +417,7 @@ def normalize_minority_names(
         return any(v_low in other and other != c_low for other in all_canonical_lower)
 
     eligible_terms: list[tuple[GlossaryTerm, list[tuple[str, re.Pattern[str]]]]] = []
-    for term in terms:
+    for term in entity_terms:
         if term.status != STATUS_OK:
             continue
         canonical = term.target.strip()

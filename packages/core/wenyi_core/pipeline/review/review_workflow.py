@@ -12,14 +12,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
 
 from ...agents.prompts import readonly_object_context
 from ...events import ProgressFn
 from ...llm.retrying import is_resumable_provider_interrupt
 from ...markup.contexts import object_contexts_for_segments
-from ...models.glossary import GlossaryTerm
+from ...models.document import uses_epub_template
+from ...models.glossary import STATUS_OK, TYPE_NAVIGATION, TYPE_TERM, GlossaryTerm
 from ...review.evidence import BookEvidenceIndex
 from ...review.models import ReviewOutcome
 from ...review.run_store import ReviewRunStore
@@ -47,8 +48,52 @@ class ReviewService:
         )
 
     def session_terms(self, store: Storage) -> list[GlossaryTerm]:
-        """Return the final glossary snapshot used by this review."""
+        """Return the final persisted glossary snapshot used by this review."""
         return store.all_terms()
+
+    @staticmethod
+    def _classify_legacy_navigation_terms(
+        manifest: dict[str, Any], terms: list[GlossaryTerm]
+    ) -> list[GlossaryTerm]:
+        """Classify legacy unannotated EPUB navigation pairs as ``TYPE_NAVIGATION`` in-memory.
+
+        Applied to review prompts and evidence after checkpoint/skip fingerprint matching so
+        completed or interrupted legacy reviews keep their stored fingerprint while new or
+        resumed chunks still drop unrelated legacy chapter titles without mutating stored rows.
+        """
+        if not terms:
+            return terms
+        meta = manifest.get("meta")
+        if not isinstance(meta, dict) or not uses_epub_template(manifest.get("fmt"), meta):
+            return terms
+        toc_entries = meta.get("toc_entries")
+        if not isinstance(toc_entries, list) or not toc_entries:
+            return terms
+        nav_pairs: set[tuple[str, str]] = set()
+        for entry in toc_entries:
+            if not isinstance(entry, dict):
+                continue
+            source = " ".join(str(entry.get("title") or "").split())
+            translated = entry.get("title_translated")
+            if source and isinstance(translated, str) and translated.strip():
+                nav_pairs.add((source, translated.strip()))
+        if not nav_pairs:
+            return terms
+        return [
+            replace(term, type=TYPE_NAVIGATION)
+            if (
+                term.type == TYPE_TERM
+                and term.first_chapter is None
+                and term.status == STATUS_OK
+                and not term.reading
+                and not term.gender
+                and not term.aliases
+                and not term.note
+                and (term.source, term.target) in nav_pairs
+            )
+            else term
+            for term in terms
+        ]
 
     def _review_config_snapshot(self) -> dict[str, Any]:
         """Snapshot review configuration for persisted metadata and reuse checks."""
@@ -251,6 +296,7 @@ class ReviewService:
         if isinstance(opened, ReviewOutcome):
             return opened
         loaded, analysis, debug = opened.chapters, opened.analysis, opened.debug
+        review_terms = self._classify_legacy_navigation_terms(store.load_manifest(), all_terms)
 
         def save_review_usage() -> dict[str, Any]:
             """Persist this review's usage delta and merge it into cumulative book usage."""
@@ -280,7 +326,7 @@ class ReviewService:
                 overlay_digest = review_overlay_digest(loaded, state.target_overrides)
                 evidence = BookEvidenceIndex(
                     loaded,
-                    all_terms,
+                    review_terms,
                     analysis,
                     source_lang=self._runtime.config.source_lang,
                     target_overrides=state.target_overrides,
@@ -318,7 +364,7 @@ class ReviewService:
                     else:
                         state.latest = self._rounds.review_round(
                             loaded,
-                            all_terms,
+                            review_terms,
                             evidence,
                             debug,
                             review_round=review_round,
@@ -347,7 +393,7 @@ class ReviewService:
                     patches, failures = self._rounds.propose_review_patches(
                         state.latest,
                         evidence,
-                        all_terms,
+                        review_terms,
                         analysis,
                         debug,
                         review_round=review_round,

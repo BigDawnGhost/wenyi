@@ -6,8 +6,26 @@ from functools import lru_cache
 from typing import Literal
 
 from ..ingest.tokens import count_tokens
-from ..models.glossary import GlossaryTerm
+from ..models.glossary import TYPE_NAVIGATION, GlossaryTerm
 from .store import GlossaryStore
+
+
+def scope_navigation_terms(terms: list[GlossaryTerm], text: str) -> list[GlossaryTerm]:
+    """Keep all non-navigation terms plus only navigation titles occurring in ``text``.
+
+    EPUB navigation entries (thousands of chapter titles in long books) are stored so
+    Review and headings can stay consistent when a title actually appears in body text,
+    but dumping unrelated chapter titles into every prompt bloats context windows.
+    """
+    if not terms:
+        return terms
+    nav_terms = [term for term in terms if term.type == TYPE_NAVIGATION]
+    if not nav_terms:
+        return terms
+    matched_nav_ids = (
+        {id(term) for term in GlossaryStore.terms_in(nav_terms, text)} if text else set()
+    )
+    return [term for term in terms if term.type != TYPE_NAVIGATION or id(term) in matched_nav_ids]
 
 
 @lru_cache(maxsize=1 << 16)
@@ -30,11 +48,13 @@ def prompt_terms(
 ) -> list[GlossaryTerm]:
     """Return the glossary entries one request carries, in stable insertion order.
 
-    ``budget == 0`` means no cap: ``all`` sends the whole glossary and ``relevant`` sends
-    every entry matching ``text``. A positive ``budget`` is an opt-in cap:
+    ``TYPE_NAVIGATION`` entries are always scoped to matches in ``text`` (even in ``all``
+    mode) so stored chapter titles never bloat unrelated batches. ``budget == 0`` means no
+    cap: ``all`` sends all non-navigation entries plus matching navigation entries, and
+    ``relevant`` sends every entry matching ``text``. A positive ``budget`` is an opt-in cap:
 
     - In ``relevant`` mode, keeps entries matching ``text`` up to ``budget`` tokens.
-    - In ``all`` mode, sends the whole glossary while it fits ``budget`` tokens. When larger,
+    - In ``all`` mode, sends the scoped glossary while it fits ``budget`` tokens. When larger,
       keeps the append-stable leading run that fits ``budget`` tokens, plus any later entries
       matching ``text``.
     """
@@ -54,14 +74,15 @@ def prompt_terms(
             spent += cost
         return selected
 
+    scoped = scope_navigation_terms(terms, text)
     if budget <= 0:
-        return terms
+        return scoped
     spent = 0
-    for position, term in enumerate(terms):
+    for position, term in enumerate(scoped):
         spent += estimate_term_tokens(term)
         if spent > budget:
-            return [*terms[:position], *GlossaryStore.terms_in(terms[position:], text)]
-    return terms
+            return [*scoped[:position], *GlossaryStore.terms_in(scoped[position:], text)]
+    return scoped
 
 
 def fit_terms_to_budget(
@@ -78,7 +99,7 @@ def fit_terms_to_budget(
     matched_ids = {id(term) for term in GlossaryStore.terms_in(terms, text)}
     chosen_ids: set[int] = set()
     spent = 0
-    # Pass 1: prioritize entries occurring in the request text.
+    # Pass 1: prioritize entries occurring in the request text (including matching nav titles).
     for term in terms:
         if id(term) not in matched_ids:
             continue
@@ -87,9 +108,9 @@ def fit_terms_to_budget(
             continue
         chosen_ids.add(id(term))
         spent += cost
-    # Pass 2: fill any remaining budget from the append-stable leading prefix.
+    # Pass 2: fill any remaining budget from the append-stable leading non-navigation prefix.
     for term in terms:
-        if id(term) in chosen_ids:
+        if id(term) in chosen_ids or term.type == TYPE_NAVIGATION:
             continue
         cost = estimate_term_tokens(term)
         if spent + cost > max_tokens:

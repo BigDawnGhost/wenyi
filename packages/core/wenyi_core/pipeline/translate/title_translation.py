@@ -11,7 +11,7 @@ from ...agents import prompts
 from ...agents.title_translator import TitleOutputError, TitleTranslator
 from ...glossary.store import GlossaryStore
 from ...models.document import Chapter, uses_epub_template
-from ...models.glossary import GlossaryTerm
+from ...models.glossary import TYPE_NAVIGATION, GlossaryTerm
 from ...storage.protocol import Storage
 
 
@@ -255,7 +255,10 @@ def _store_navigation_terms(plan: TitlePlan, glossary: Storage | GlossaryStore) 
         existing = targets.get(source)
         if existing == target or (source, existing, target) in conflicts:
             continue
-        result = glossary.upsert_term(GlossaryTerm(source=source, target=target))
+        # Existing rows keep their type; only brand-new pairs are tagged as navigation.
+        result = glossary.upsert_term(
+            GlossaryTerm(source=source, target=target, type=TYPE_NAVIGATION)
+        )
         if result == "conflict":
             conflicts.add((source, existing, target))
         else:
@@ -293,8 +296,10 @@ class TitleTranslationService:
 
         batches = title_batches(plan.pending)
         completed = 0
+        # Only entity terms guide titles; stored navigation pairs would flood the prompt.
         glossary_text = prompts.render_glossary(
-            glossary.all_terms(), source_lang=self._translator.src
+            [term for term in glossary.all_terms() if term.type != TYPE_NAVIGATION],
+            source_lang=self._translator.src,
         )
         for batch_index, batch in enumerate(batches):
             titles = [item.source for item in batch]

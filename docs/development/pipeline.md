@@ -199,8 +199,14 @@ next page opens with a table caption, the caption's first sentence is included
 before that paragraph. If there is no following prose in the section, only the
 caption's first sentence is included.
 
-The full glossary owns name mappings. It retains stable insertion order, and fresh
-Reviewer requests share one complete final snapshot. `pipeline.batch_glossary`
+The full glossary owns name mappings. It retains stable insertion order; EPUB
+navigation titles are tagged `navigation` and included in prompts only when they
+occur in the request text (existing legacy EPUB states with unannotated `term`
+navigation pairs keep their persisted glossary fingerprint for skip/resume, while
+`ReviewService.run_session` classifies them as `navigation` in-memory for review
+prompts and evidence without mutating stored rows). Fresh Reviewer requests share one final snapshot,
+scoped for navigation titles and fitted to the review model's `context_window`
+(bisecting multi-paragraph chunks on overflow). `pipeline.batch_glossary`
 selects each body batch's entries once, in `TranslationService.batch_terms`, and the
 batch plan carries them to translation, polish (inline, deferred and resumed) and
 precision; extraction filters its existing entries by the extracted source text. Selective evidence and Fixer
