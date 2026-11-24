@@ -85,11 +85,7 @@ struct Engine {
 }
 
 /// The same launch path is used at startup and to recover a failed installation.
-fn start_backend(
-    app: &tauri::AppHandle,
-    engine: &Engine,
-    recovery: bool,
-) -> Result<(), String> {
+fn start_backend(app: &tauri::AppHandle, engine: &Engine, recovery: bool) -> Result<(), String> {
     let diagnostics = app.state::<diagnostics::Diagnostics>();
     let notifications = app.state::<notifications::Center>();
     let resources = app.path().resource_dir().map_err(|_| {

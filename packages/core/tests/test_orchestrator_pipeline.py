@@ -76,12 +76,12 @@ class TestProgressLabels(unittest.TestCase):
             events: list[tuple[int, int, str]] = []
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
 
-            orch.run_steps(
-                txt,
-                {"translate", "assemble"},
-                progress=lambda done, total, label, payload=None: events.append(
-                    (done, total, label)
-                ),
+            def progress(done: int, total: int, label: str, /) -> None:
+                events.append((done, total, label))
+
+            result = orch.run_steps(txt, {"translate", "assemble"}, progress=progress)
+            self.assertTrue(
+                all(row["title_translated"] for row in result["store"].load_manifest()["chapters"])
             )
 
             labels = [label for _, _, label in events]
@@ -91,6 +91,7 @@ class TestProgressLabels(unittest.TestCase):
                 "progress.stage.style",
                 "progress.stage.synopsis",
                 "Translating chapter titles…",
+                "Translating chapter titles",
                 "progress.stage.translationDone",
                 "progress.stage.assembling",
             ]
@@ -128,7 +129,9 @@ class TestRunAll(unittest.TestCase):
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
             result = orch.run_all(
                 txt,
-                progress=lambda done, total, label, payload=None: seen.append((done, total)),
+                progress=lambda done, total, label, payload=None: seen.append(
+                    (done, total, label, payload)
+                ),
                 out_format="epub",
             )
             self.assertTrue(result["output"].endswith(".epub"))
@@ -136,6 +139,9 @@ class TestRunAll(unittest.TestCase):
             # Progress callbacks run and finish with done equal to total.
             self.assertTrue(seen)
             self.assertEqual(seen[-1][0], seen[-1][1])
+            self.assertIn((0, 2, "Translating chapter titles…", None), seen)
+            self.assertIn((2, 2, "Translating chapter titles", {"batch": 0, "batch_size": 2}), seen)
+            self.assertIn((2, 2, "Repairing fallback annotations", {"chapter": 1}), seen)
             # Model detection resolves auto source to ja.
             self.assertEqual(cfg.source_lang, "ja")
             with open(result["store"].event_log_path, "r", encoding="utf-8") as f:

@@ -20,10 +20,10 @@ from contextvars import copy_context
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, TypeVar
 
 from wenyi_backend.context import BackendContext
-from wenyi_backend.execution.runner import CANCEL_DRAIN_TIMEOUT_SECONDS
+from wenyi_backend.execution.runner import drain
 from wenyi_backend.live_statistics import read_live_statistics
 from wenyi_core.storage.locks import FileLockHandle, StorageBusyError
 
@@ -32,6 +32,7 @@ from .diagnostics import Reporter, emit, failure_attributes, scope
 from .local_backend import LocalBackend
 
 log = logging.getLogger(__name__)
+_T = TypeVar("_T")
 TASK_NAMES = frozenset(
     {
         "run_parse",
@@ -175,30 +176,22 @@ class LocalJob:
     job_id: str
 
 
-async def run_workflow_sync(operation: Callable[[], None]) -> None:
+async def _await_owned(future: asyncio.Future[_T]) -> _T:
+    """Delay propagating caller cancellation until the owned work is finished."""
+    try:
+        return await asyncio.shield(future)
+    except asyncio.CancelledError:
+        await drain(future)
+        raise
+
+
+async def run_workflow_sync(operation: Callable[[], _T]) -> _T:
     """Own one thread per run, leaving the default executor free for control requests."""
     loop = asyncio.get_running_loop()
     # This executor belongs to one invocation, not to a fixed set of workflow slots.
-    executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="desktop-workflow")
-    future = loop.run_in_executor(executor, copy_context().run, operation)
-    abandoned = False
-    try:
-        await asyncio.shield(future)
-    except asyncio.CancelledError:
-        # The task adapter signals cooperative stop before waiting for this dispatcher, but a
-        # stuck drain must never keep the workflow slot hostage.
-        abandoned = True
-        try:
-            await asyncio.wait_for(asyncio.shield(future), timeout=CANCEL_DRAIN_TIMEOUT_SECONDS)
-            abandoned = False
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            log.warning(
-                "Desktop workflow thread ignored cancellation for %.1fs; abandoning it",
-                CANCEL_DRAIN_TIMEOUT_SECONDS,
-            )
-        raise
-    finally:
-        executor.shutdown(wait=not abandoned)
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="desktop-workflow") as executor:
+        future = loop.run_in_executor(executor, copy_context().run, operation)
+        return await _await_owned(future)
 
 
 class LocalRuntime:
@@ -220,7 +213,7 @@ class LocalRuntime:
         self._consumers: list[asyncio.Task] = []
         self._maintenance: asyncio.Task | None = None
         self._stopping = asyncio.Event()
-        self._stopped = asyncio.Event()
+        self._shutdown_task: asyncio.Task[None] | None = None
         self.accepting = False
 
     @property
@@ -281,7 +274,7 @@ class LocalRuntime:
             log.error("Desktop workflow supervision failed", exc_info=error)
 
     def _cancel(self, task: asyncio.Task) -> None:
-        # Repeated cancellation could interrupt the worker's checkpoint-flush wait.
+        # Timeout and shutdown can both request cancellation of the same task.
         if not task.done() and task not in self._cancelling:
             self._cancelling.add(task)
             task.cancel()
@@ -402,37 +395,22 @@ class LocalRuntime:
     async def _run_job(self, name: str, values: dict, run_id: str, timeout: float) -> None:
         try:
             if not self.accepting:
-                await asyncio.to_thread(self._interrupt, run_id, "Desktop is shutting down.")
+                await _await_owned(
+                    asyncio.create_task(
+                        asyncio.to_thread(self._interrupt, run_id, "Desktop is shutting down.")
+                    )
+                )
                 return
             task = asyncio.create_task(self._run_observed(name, values, run_id))
             self._active[run_id] = task
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=timeout)
             except asyncio.TimeoutError:
-                with scope(
-                    self.diagnostics, project_ref=values.get("project_id", ""), run_ref=run_id
-                ):
-                    emit("task_timeout", kind=name.removeprefix("run_"), category="timeout")
-                job = await asyncio.to_thread(self._durable_job, run_id)
-                was_active = job is not None and job["status"] in {"queued", "running"}
-                self._cancel(task)
-                await asyncio.gather(task, return_exceptions=True)
-                stopped = await asyncio.to_thread(
-                    self._interrupt, run_id, "Desktop task timed out."
+                await _await_owned(
+                    asyncio.create_task(self._stop_job(task, name, values, run_id, timed_out=True))
                 )
-                if not stopped and was_active:
-                    # Cooperative cancellation persists "paused" before the
-                    # interrupt fallback runs. It is still this timeout's stop,
-                    # not a user pause or a task that had already finished.
-                    job = await asyncio.to_thread(self._durable_job, run_id)
-                    stopped = job is not None and job["status"] in {"paused", "interrupted"}
-                if stopped:
-                    await self._task_notice("task_timeout", name, values, run_id, "timeout")
             except asyncio.CancelledError:
-                self._cancel(task)
-                await asyncio.gather(task, return_exceptions=True)
-                # Cancellation may precede the task adapter's first instruction.
-                await asyncio.to_thread(self._interrupt, run_id, "Desktop task stopped.")
+                await drain(asyncio.create_task(self._stop_job(task, name, values, run_id)))
                 if not self._stopping.is_set():
                     raise
             except Exception:
@@ -443,6 +421,28 @@ class LocalRuntime:
             if finished is not None:
                 self._cancelling.discard(finished)
             self._submitted.discard(run_id)
+
+    async def _stop_job(
+        self, task: asyncio.Task, name: str, values: dict, run_id: str, *, timed_out: bool = False
+    ) -> None:
+        was_active = False
+        if timed_out:
+            with scope(self.diagnostics, project_ref=values.get("project_id", ""), run_ref=run_id):
+                emit("task_timeout", kind=name.removeprefix("run_"), category="timeout")
+            job = await asyncio.to_thread(self._durable_job, run_id)
+            was_active = job is not None and job["status"] in {"queued", "running"}
+        self._cancel(task)
+        await asyncio.gather(task, return_exceptions=True)
+        # Cancellation may precede the task adapter's first instruction.
+        reason = "Desktop task timed out." if timed_out else "Desktop task stopped."
+        stopped = await asyncio.to_thread(self._interrupt, run_id, reason)
+        if timed_out:
+            if not stopped and was_active:
+                # The runner can have already persisted the cooperative pause.
+                job = await asyncio.to_thread(self._durable_job, run_id)
+                stopped = job is not None and job["status"] in {"paused", "interrupted"}
+            if stopped:
+                await self._task_notice("task_timeout", name, values, run_id, "timeout")
 
     def _interrupt(self, run_id: str, reason: str) -> bool:
         """Stop one durable job; True only when this call changed its status."""
@@ -507,22 +507,26 @@ class LocalRuntime:
                     log.exception("Could not recover local jobs")
 
     async def stop(self) -> None:
-        if self._stopping.is_set():
-            await self._stopped.wait()
-            return
-        self.accepting = False
-        self._stopping.set()
+        if self._shutdown_task is None:
+            self.accepting = False
+            self._stopping.set()
+            # A supervisor may already have scheduled a worker that has not entered yet.
+            for task in tuple(self._active.values()):
+                self._cancel(task)
+            self._shutdown_task = asyncio.create_task(self._shutdown())
+        # The caller also owns the services this task needs to finish draining.
+        await _await_owned(self._shutdown_task)
+
+    async def _shutdown(self) -> None:
         try:
+            await asyncio.gather(*tuple(self._active.values()), return_exceptions=True)
+            await asyncio.gather(*tuple(self._workflows), return_exceptions=True)
             while not self.export_queue.empty():
                 item = self.export_queue.get_nowait()
                 if item is not None:
                     await asyncio.to_thread(self._interrupt, item[2], "Desktop is shutting down.")
                     self._submitted.discard(item[2])
                 self.export_queue.task_done()
-            for task in tuple(self._active.values()):
-                self._cancel(task)
-            await asyncio.gather(*tuple(self._active.values()), return_exceptions=True)
-            await asyncio.gather(*tuple(self._workflows), return_exceptions=True)
             self.export_queue.put_nowait(None)
             self.export_queue.put_nowait(None)
             await asyncio.gather(*self._consumers, return_exceptions=True)
@@ -531,7 +535,6 @@ class LocalRuntime:
             await self.hub.stop()
         finally:
             self.lock.close()
-            self._stopped.set()
 
 
 def progress_snapshot(backend: LocalBackend, runtime: LocalRuntime | None, pid: str) -> dict | None:

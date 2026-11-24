@@ -12,7 +12,14 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from .diagnostics import EngineDiagnostics, Reporter, deliver
+from .diagnostics import (
+    EngineDiagnostics,
+    Reporter,
+    StartupFailure,
+    StartupFailureCode,
+    deliver,
+    write_protocol,
+)
 from .ownership import NativeOwner, profile_lock
 
 if TYPE_CHECKING:
@@ -170,6 +177,7 @@ async def serve(
         import uvicorn
 
         from .main import create_app
+        from .updates import UpgradeRecoveryRequired, finish_upgrade_startup, prune_backups
 
         app = create_app(
             workspace,
@@ -178,6 +186,7 @@ async def serve(
             engine_diagnostics=lifecycle,
             install_root=install_root,
         )
+    retention = None
     try:
         # asyncio recognizes TCP sockets by their protocol before enabling
         # TCP_NODELAY on accepted connections. Protocol 0 skips that check.
@@ -201,24 +210,30 @@ async def serve(
                     await asyncio.sleep(0.01)
             if server.started and not server.should_exit:
                 try:
-                    ready = (
-                        "WENYI_READY "
-                        + json.dumps({"protocol": 1, "port": port, "pid": os.getpid()})
-                        + "\n"
-                    )
-                    if lifecycle.reporter is not None:
-                        lifecycle.reporter.protocol(ready)
-                    else:
-                        protocol_stream.write(ready)
-                        protocol_stream.flush()
-                    lifecycle.ready = True
-                except (BrokenPipeError, OSError):
+                    # Serving is viable, but the host cannot submit writes before READY.
+                    if finish_upgrade_startup(workspace):
+                        retention = asyncio.create_task(asyncio.to_thread(prune_backups, workspace))
+                except UpgradeRecoveryRequired as error:
+                    server.should_exit = True
+                    await task
+                    raise StartupFailure(StartupFailureCode.UPGRADE_RECOVERY_REQUIRED) from error
+                ready = (
+                    "WENYI_READY "
+                    + json.dumps({"protocol": 1, "port": port, "pid": os.getpid()})
+                    + "\n"
+                )
+                lifecycle.ready = write_protocol(protocol_stream, lifecycle.reporter, ready)
+                if not lifecycle.ready:
                     server.should_exit = True
             with lifecycle.observe("running" if lifecycle.ready else "listen"):
                 await task
     finally:
         with lifecycle.observe("shutdown"):
-            app.state.backend.repository.close()
+            try:
+                if retention is not None:
+                    await retention
+            finally:
+                app.state.backend.repository.close()
 
 
 def main() -> None:
@@ -230,7 +245,36 @@ def main() -> None:
     # the installation directory from its own executable: when it runs as a
     # sidecar that path is the bundled runtime, not the application.
     parser.add_argument("--install-root", type=Path, default=None)
+    parser.add_argument(
+        "--recover-upgrade",
+        metavar="SNAPSHOT",
+        nargs="?",
+        const="",
+        help="show the pending upgrade snapshot ID, or restore that exact snapshot",
+    )
     args = parser.parse_args()
+    if args.recover_upgrade is not None:
+        if args.data_dir is None or args.native_startup:
+            parser.error("--recover-upgrade requires an explicit --data-dir and an offline launch")
+        from importlib.metadata import PackageNotFoundError, version
+
+        from .updates import pending_upgrade, recover_upgrade
+
+        try:
+            engine_version = version("wenyi-desktop")
+        except PackageNotFoundError:
+            parser.error("The installed Wenyi engine version is unknown")
+        if not args.recover_upgrade:
+            outcome = pending_upgrade(args.data_dir, engine_version)
+            if outcome.status != "available":
+                parser.exit(1, f"{outcome.detail}\n")
+            print(outcome.backup)
+            return
+        outcome = recover_upgrade(args.data_dir, args.recover_upgrade, engine_version)
+        if outcome.status != "restored":
+            parser.exit(1, f"{outcome.detail}\n")
+        print("The Desktop snapshot was restored. The previous live files were preserved.")
+        return
     if not os.environ.get("WENYI_API_TOKEN"):
         parser.error("WENYI_API_TOKEN must be supplied by the desktop parent")
     protocol_stream = sys.stdout
@@ -261,7 +305,14 @@ def main() -> None:
             # then let the interpreter return a misleading successful exit code.
             if lifecycle.failed:
                 raise SystemExit(lifecycle.exit_code or 1)
+    except StartupFailure:
+        # The typed failure is delivered on the private pipe below. Do not print
+        # the chained exception to stderr, even when launched standalone.
+        raise SystemExit(lifecycle.exit_code or 1) from None
     finally:
+        if lifecycle.startup_failure is not None:
+            payload = json.dumps({"code": lifecycle.startup_failure.value}, separators=(",", ":"))
+            write_protocol(protocol_stream, reporter, f"WENYI_FAILED {payload}\n")
         lifecycle.stopped()
         if reporter is not None:
             reporter.close()

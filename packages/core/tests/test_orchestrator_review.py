@@ -592,7 +592,7 @@ class TestReviewReporting(unittest.TestCase):
             orch = Orchestrator(cfg, client=client)
 
             with (
-                patch("wenyi_core.pipeline.prepare.preparation.load_document") as loader,
+                patch("wenyi_core.pipeline.prepare.input_preparation.load_document") as loader,
                 pytest.raises(ValueError, match="No translation progress found"),
             ):
                 orch.run_review(pdf)

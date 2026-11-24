@@ -11,10 +11,12 @@ from types import SimpleNamespace
 import pytest
 from api_test_support import new_project
 from fastapi.testclient import TestClient
+from psycopg_pool import PoolTimeout
 from type_helpers import must
-from wenyi_api import dal
+from wenyi_api import dal, export_retention
 from wenyi_api.adapters import postgres_repository
 from wenyi_api.main import create_app
+from wenyi_api.workers import recovery
 from wenyi_backend.context import current_context
 from wenyi_backend.execution.bindings import build_config_for
 from wenyi_backend.routers import dependencies as job_service
@@ -452,8 +454,12 @@ def test_duplicate_export_requests_share_one_task(api):
     client, queue = api
     pid = new_project(api)
     upload(api, pid)
-    first = client.post(f"/projects/{pid}/exports", json={"format": "txt"})
-    second = client.post(f"/projects/{pid}/exports", json={"format": "txt"})
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        requests = [
+            executor.submit(client.post, f"/projects/{pid}/exports", json={"format": "txt"})
+            for _ in range(2)
+        ]
+        first, second = [request.result() for request in requests]
     assert first.status_code == 200, first.text
     assert second.status_code == 200, second.text
     assert second.json() == {
@@ -472,6 +478,101 @@ def test_duplicate_export_requests_share_one_task(api):
     assert third.status_code == 200, third.text
     assert third.json()["export_id"] != first.json()["export_id"]
     assert [name for name, _ in queue if name == "run_export"] == ["run_export", "run_export"]
+
+
+def test_export_admission_distinguishes_options_config_and_source(api, monkeypatch):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    endpoint = f"/projects/{pid}/exports"
+
+    def unavailable(*args):
+        pytest.fail("Export admission must return the dispatch identity without another job read")
+
+    monkeypatch.setattr(current_context().repository, "get_job", unavailable)
+
+    def submit(**options):
+        response = client.post(endpoint, json={"format": "epub", **options})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    original = submit()
+    bilingual = submit(bilingual=True)
+    ordered = submit(bilingual=True, order="source_first")
+    styled = submit(bilingual=True, preserve_source_style=True)
+    no_about = submit(about_page=False)
+    assert submit(bilingual=True) == bilingual
+
+    dal.set_project_config(pid, {"pipeline": {"babeldoc_timeout": 80}})
+    # The parse cache is also configuration-bound. Reparse the same upload
+    # with the new config without changing its SHA-256 or pending export jobs.
+    asyncio.run(job_service.start_job(pid, "parse"))
+    queue.insert(0, queue.pop())
+    execute_next(api)
+    changed_config = submit()
+    assert submit() == changed_config
+
+    # Finish the second parse before admitting another export; leave the prior
+    # exports queued, so source identity alone must distinguish these requests.
+    pending = queue[:]
+    queue.clear()
+    upload(api, pid, data=b"<h1>Chapter One</h1><p>The replacement book begins.</p>")
+    queue.extend(pending)
+    changed_source = submit()
+    results = [original, bilingual, ordered, styled, no_about, changed_config, changed_source]
+    assert len({row["export_id"] for row in results}) == len(results)
+    assert [payload["run_id"] for _, payload in queue] == [row["job_id"] for row in results]
+    assert queue[0][1]["parsed_source_sha256"] == queue[-2][1]["parsed_source_sha256"]
+    assert queue[-1][1]["parsed_source_sha256"] != queue[-2][1]["parsed_source_sha256"]
+
+
+def test_export_cleanup_pool_timeout_preserves_success_and_can_be_retried(api, monkeypatch):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    endpoint = f"/projects/{pid}/exports"
+    for _ in range(5):
+        response = client.post(endpoint, json={"format": "txt"})
+        assert response.status_code == 200, response.text
+        execute_next(api)
+    evicted = client.get(endpoint).json()[-1]
+    old_file = export_retention.export_path(current_context().data_dir, pid, evicted["path"])
+    assert old_file is not None
+
+    response = client.post(endpoint, json={"format": "txt"})
+    assert response.status_code == 200, response.text
+    run = response.json()
+    payload = dict(queue[0][1])
+    status_at_cleanup = []
+
+    def exhausted(*args, **kwargs):
+        status_at_cleanup.append(must(dal.get_job_by_arq_id(run["job_id"]))["status"])
+        raise PoolTimeout("No free connection for retention cleanup")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(export_retention, "export_history_session_lock", exhausted)
+        execute_next(api)
+    assert status_at_cleanup == ["done"]
+    assert must(dal.get_job_by_arq_id(run["job_id"]))["status"] == "done"
+    assert client.get(f"{endpoint}/{run['export_id']}/download").status_code == 200
+    assert client.get(f"{endpoint}/{evicted['id']}/download").status_code == 404
+    assert old_file.is_file()
+
+    # With no new publication, maintenance must recover the committed cleanup
+    # record. Duplicate queue delivery must not render again.
+    asyncio.run(recovery.recover_jobs({"redis": None}))
+    assert not old_file.exists()
+    assert len(client.get(endpoint).json()) == 5
+
+    def unexpected_render(*args, **kwargs):
+        pytest.fail("A duplicate delivery must not render a published export again")
+
+    from wenyi_backend.execution import bindings
+
+    monkeypatch.setattr(bindings, "render_export", unexpected_render)
+    queue.append(("run_export", payload))
+    execute_next(api)
+    assert must(dal.get_job_by_arq_id(run["job_id"]))["status"] == "done"
 
 
 def test_start_job_reuses_in_flight_task_of_same_kind(api):

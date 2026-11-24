@@ -1,16 +1,11 @@
 [project]
 name = "wenyi-cli"
-dynamic = ["version"]
+dynamic = ["version", "dependencies"]
 description = "Local command-line interface for Wenyi's translation engine."
 readme = "README.md"
 license = "GPL-3.0-only"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
-dependencies = [
-    "wenyi-core",
-    "typer>=0.12",
-    "rich>=13.7",
-]
 
 [project.urls]
 Repository = "https://github.com/BigDawnGhost/wenyi"
@@ -18,6 +13,16 @@ Documentation = "https://github.com/BigDawnGhost/wenyi/blob/main/docs/guide/cli.
 
 [project.scripts]
 wenyi = "wenyi_cli.main:main"
+
+[tool.uv]
+# Refresh both editable distributions together when their SCM or packaging inputs change.
+cache-keys = [
+    { git = { commit = true, tags = true } },
+    { file = "../cli/pyproject.toml" },
+    { file = "../cli/hatch_build.py" },
+    { file = "../core/pyproject.toml" },
+    { file = "../core/hatch_build.py" },
+]
 
 [tool.uv.sources]
 wenyi-core = { workspace = true }
@@ -31,6 +36,9 @@ source = "vcs"
 
 [tool.hatch.version.raw-options]
 root = "../.."
+
+[tool.hatch.metadata.hooks.custom]
+dependencies = ["typer>=0.12", "rich>=13.7"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["wenyi_cli"]

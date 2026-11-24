@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from wenyi_cli.cli import app
 from wenyi_cli.commands.machine_output import MachineOutput
 from wenyi_core.config import Config
+from wenyi_core.events import emit_progress
 from wenyi_core.llm.providers.fake import FakeClient
 
 
@@ -329,7 +330,7 @@ def test_machine_progress_passthrough_keeps_structured_payload(workflow, tmp_pat
         def run_all(self, input_path, *, progress, **kwargs):
             progress(1, 3, "Translating")
             seen["plain"] = json.loads((tmp_path / "progress.json").read_text())
-            progress(2, 3, "Annotating", {"chapter": 7, "secret": "nope"})
+            emit_progress(progress, 2, 3, "Annotating", payload={"chapter": 7, "secret": "nope"})
             seen["located"] = json.loads((tmp_path / "progress.json").read_text())
             output.write_bytes(b"%PDF-1.7\ntranslated\n%%EOF")
             return {"store": store, "outputs": [str(output)], "output": str(output)}

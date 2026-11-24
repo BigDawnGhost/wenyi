@@ -15,8 +15,12 @@ use tauri::Manager;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::{
-    ipc_error::{codes, IpcError}, local_connection::Connection, migration, mutex::lock,
-    native_export::Saves, paths, Engine, State,
+    ipc_error::{codes, IpcError},
+    local_connection::Connection,
+    migration,
+    mutex::lock,
+    native_export::Saves,
+    paths, Engine, State,
 };
 
 /// The repository the updater publishes to and reads from.
@@ -531,7 +535,12 @@ fn prepare_engine(connection: &Connection) -> Result<()> {
         .post(format!("{}/desktop/updates/prepare", connection.base))
         .bearer_auth(&connection.token)
         .send()
-        .map_err(|_| IpcError::new(codes::UPDATE_UNAVAILABLE, "Updates are not available right now."))?;
+        .map_err(|_| {
+            IpcError::new(
+                codes::UPDATE_UNAVAILABLE,
+                "Updates are not available right now.",
+            )
+        })?;
     match response.status().as_u16() {
         204 => Ok(()),
         409 => Err(IpcError::new(
@@ -556,7 +565,10 @@ fn cancel_prepare(connection: &Connection) -> Result<()> {
         .send()
         .map_err(|_| IpcError::new(codes::UPDATE_UNAVAILABLE, CANCELLATION_UNCERTAIN))?;
     if response.status().as_u16() != 204 {
-        return Err(IpcError::new(codes::UPDATE_UNAVAILABLE, CANCELLATION_UNCERTAIN));
+        return Err(IpcError::new(
+            codes::UPDATE_UNAVAILABLE,
+            CANCELLATION_UNCERTAIN,
+        ));
     }
     Ok(())
 }
@@ -643,10 +655,14 @@ fn backup_plan(connection: &Connection) -> Result<BackupPlan> {
 fn snapshot(
     plan: &BackupPlan,
     workspace: &std::path::Path,
+    target_version: &str,
 ) -> std::result::Result<PathBuf, String> {
     let target = paths::backups(workspace);
     let sources = stopped_sources(plan)?;
     let snapshot = migration::snapshot_sources(&sources, &target, env!("WENYI_DESKTOP_VERSION"))
+        .map_err(|error| error.to_string())?;
+    snapshot
+        .arm_upgrade(target_version)
         .map_err(|error| error.to_string())?;
     Ok(snapshot.root)
 }
@@ -658,7 +674,7 @@ fn stopped_sources(plan: &BackupPlan) -> std::result::Result<Vec<migration::Back
         .iter()
         .filter(|source| source.name == "catalog.sqlite3")
     {
-        for suffix in ["-wal", "-shm"] {
+        for suffix in ["-wal", "-shm", "-journal"] {
             let mut path = catalog.path.as_os_str().to_os_string();
             path.push(suffix);
             let path = PathBuf::from(path);
@@ -733,8 +749,12 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
             "Updates are not available right now.",
         ))?
     };
-    let connection = Connection::new(&raw)
-        .map_err(|_| IpcError::new(codes::UPDATE_UNAVAILABLE, "Updates are not available right now."))?;
+    let connection = Connection::new(&raw).map_err(|_| {
+        IpcError::new(
+            codes::UPDATE_UNAVAILABLE,
+            "Updates are not available right now.",
+        )
+    })?;
     // Exclude every other native/standalone engine sharing this data root before
     // freezing the plan, and retain the lease until installation or recovery.
     let owned_writer = lock(&engine.child)
@@ -809,6 +829,7 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
                     .workspace
                     .as_deref()
                     .ok_or("Desktop data root unavailable.")?,
+                &update.version,
             )
         },
         || {
@@ -1213,11 +1234,19 @@ mod tests {
             }],
         };
         assert_eq!(stopped_sources(&plan).unwrap().len(), 1);
-        std::fs::write(&wal, b"committed pages left by a stopped engine").unwrap();
+        let shm = root.join("catalog.sqlite3-shm");
+        let journal = root.join("catalog.sqlite3-journal");
+        for sidecar in [&wal, &shm, &journal] {
+            std::fs::write(sidecar, b"present after the engine stopped").unwrap();
+        }
         let sources = stopped_sources(&plan).unwrap();
-        assert_eq!(sources.len(), 2);
+        assert_eq!(sources.len(), 4);
         assert_eq!(sources[1].path, wal);
-        std::fs::remove_file(wal).unwrap();
+        assert_eq!(sources[2].path, shm);
+        assert_eq!(sources[3].path, journal);
+        for sidecar in [wal, shm, journal] {
+            std::fs::remove_file(sidecar).unwrap();
+        }
         assert_eq!(stopped_sources(&plan).unwrap().len(), 1);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1267,6 +1296,8 @@ mod tests {
         std::fs::create_dir_all(user.join("locks/.desktop-writers")).unwrap();
         std::fs::create_dir_all(&project).unwrap();
         std::fs::create_dir_all(user.join(BACKUP)).unwrap();
+        let user = user.canonicalize().unwrap();
+        let project = project.canonicalize().unwrap();
         for (path, bytes) in [
             (
                 user.join("catalog.sqlite3"),

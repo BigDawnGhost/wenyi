@@ -189,7 +189,9 @@ def test_long_chapter_alignment_reuses_the_translation_view(tmp_path, config, mo
             ],
         )
     )
-    store.save_manifest({"chapters": [{"index": 0, "status": "pending"}]})
+    store.save_manifest(
+        {"source_sha256": "a" * 64, "chapters": [{"index": 0, "status": "pending"}]}
+    )
     client = FakeClient(handler=routing_handler)
     service = Orchestrator(config, client=client)._translation
     monkeypatch.setattr(service._runtime.extractor, "extract_and_store", lambda *a, **kw: {})

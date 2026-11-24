@@ -19,7 +19,15 @@ pub enum Failure {
     ProtocolEof,
     ReadyTimeout,
     ChannelClosed,
-    Migration { restored: bool, guidance: Option<Vec<String>> },
+    Startup(StartupFailure),
+}
+
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StartupFailure {
+    VersionMismatch,
+    LegacyCatalog,
+    UpgradeRecoveryRequired,
 }
 
 impl Failure {
@@ -32,7 +40,9 @@ impl Failure {
             Self::ProtocolEof => "protocol_eof",
             Self::ReadyTimeout => "ready_timeout",
             Self::ChannelClosed => "channel_closed",
-            Self::Migration { .. } => "migration_failed",
+            Self::Startup(StartupFailure::VersionMismatch) => "version_mismatch",
+            Self::Startup(StartupFailure::LegacyCatalog) => "legacy_catalog",
+            Self::Startup(StartupFailure::UpgradeRecoveryRequired) => "upgrade_recovery_required",
         }
     }
 
@@ -45,34 +55,30 @@ impl Failure {
                 "os_error": match self { Self::Spawn(code) => *code, _ => None },
             }),
         );
-        let mut message = match self {
-            Self::Setup(message) => (*message).to_string(),
-            Self::Spawn(_) => "Could not start local engine.".to_string(),
+        match self {
+            Self::Setup(message) => message,
+            Self::Spawn(_) => "Could not start local engine.",
             Self::ReadyTimeout => {
                 "The local engine timed out during startup. Export a diagnostic report."
-                    .to_string()
             }
-            Self::Migration { restored: true, .. } => {
-                "The update could not be applied. Your data was restored to its previous \
-                 state; install the previous Wenyi version to continue."
-                    .to_string()
+            Self::Startup(StartupFailure::VersionMismatch) => {
+                "This Wenyi Desktop app and its local engine are from different builds. \
+                 Install matching desktop components and reopen Wenyi."
             }
-            Self::Migration { restored: false, .. } => {
-                "The update could not be applied, and the automatic data restore did not \
-                 complete. Export a diagnostic report."
-                    .to_string()
+            Self::Startup(StartupFailure::LegacyCatalog) => {
+                "The selected data directory contains an old-format Desktop catalog. \
+                 Wenyi does not migrate it automatically. Keep the original data directory and \
+                 choose a new, empty one. In the library, use Import project for folders that \
+                 already have a current project.json. For older projects, use the previous \
+                 Wenyi version to export their content."
             }
-            _ => "The local engine did not become ready. Export a diagnostic report.".to_string(),
-        };
-        // Surface the backend's legacy-data recovery steps alongside the failure text
-        // instead of leaving them on the engine's stderr.
-        if let Self::Migration { guidance: Some(steps), .. } = self {
-            if !steps.is_empty() {
-                message.push_str("\n\n");
-                message.push_str(&steps.join("\n"));
+            Self::Startup(StartupFailure::UpgradeRecoveryRequired) => {
+                "Wenyi could not complete the upgrade. Keep the existing data, close Wenyi, \
+                 and follow “Restore a pre-upgrade snapshot” in the Desktop guide."
             }
+            _ => "The local engine did not become ready. Export a diagnostic report.",
         }
-        message
+        .to_string()
     }
 }
 
@@ -96,21 +102,15 @@ fn ready(line: &str, pid: u32) -> Result<u16, &'static str> {
 }
 
 #[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 struct Failed {
-    reason: String,
-    #[serde(default)]
-    restored: bool,
-    #[serde(default)]
-    guidance: Option<Vec<String>>,
+    code: StartupFailure,
 }
 
 fn failed_protocol(payload: &str) -> Failure {
     match serde_json::from_str::<Failed>(payload) {
-        Ok(failed) if failed.reason == "migration" => Failure::Migration {
-            restored: failed.restored,
-            guidance: failed.guidance,
-        },
-        _ => Failure::InvalidProtocol,
+        Ok(failed) => Failure::Startup(failed.code),
+        Err(_) => Failure::InvalidProtocol,
     }
 }
 
@@ -241,6 +241,10 @@ impl Backend {
             .env("WENYI_API_TOKEN", &token)
             .env("WENYI_DIAGNOSTICS_PROTOCOL", "1")
             .env("WENYI_DESKTOP_VERSION", env!("WENYI_DESKTOP_VERSION"))
+            .env(
+                "WENYI_DESKTOP_ENGINE_VERSION",
+                env!("WENYI_BUILD_PYTHON_VERSION"),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Never forward arbitrary backend output (which might contain credentials).
@@ -387,6 +391,7 @@ fn receive_protocol(
 ) {
     let mut reader = BufReader::new(output);
     let mut sent = false;
+    let mut is_ready = false;
     let mut discard = false;
     loop {
         let mut bytes = Vec::new();
@@ -428,7 +433,7 @@ fn receive_protocol(
         } else if let Some(payload) = line.strip_prefix("WENYI_NOTICE ") {
             // A notice cannot exist before a task could start; readiness is the
             // first moment the native owner is willing to deliver one.
-            if sent {
+            if is_ready {
                 notifications.submit_payload(payload);
             }
         } else if let Some(payload) = line.strip_prefix("WENYI_FAILED ") {
@@ -442,6 +447,7 @@ fn receive_protocol(
             let result = ready(line, pid).map_err(|_| Failure::InvalidProtocol).map(|port| {
                 serde_json::json!({"apiBase": format!("http://127.0.0.1:{port}"), "token": token}).to_string()
             });
+            is_ready = result.is_ok();
             let _ = tx.send(result);
             sent = true;
         }
@@ -557,27 +563,45 @@ mod tests {
     }
 
     #[test]
-    fn engine_failure_line_reports_migration_recovery() {
+    fn engine_failure_frames_report_only_registered_codes_and_static_guidance() {
         let diagnostics = Diagnostics::new(None);
         let notifications = crate::notifications::Center::silent(diagnostics.clone());
-        for (payload, expected) in [
+        for (payload, expected, guidance) in [
             (
-                r#"{"reason":"migration","restored":true}"#,
-                Failure::Migration { restored: true, guidance: None },
+                r#"{"code":"version_mismatch"}"#,
+                Failure::Startup(StartupFailure::VersionMismatch),
+                "Install matching desktop components",
             ),
             (
-                r#"{"reason":"migration","restored":false}"#,
-                Failure::Migration { restored: false, guidance: None },
+                r#"{"code":"legacy_catalog"}"#,
+                Failure::Startup(StartupFailure::LegacyCatalog),
+                "Import project",
             ),
             (
-                r#"{"reason":"migration"}"#,
-                Failure::Migration { restored: false, guidance: None },
+                r#"{"code":"upgrade_recovery_required"}"#,
+                Failure::Startup(StartupFailure::UpgradeRecoveryRequired),
+                "Restore a pre-upgrade snapshot",
             ),
-            (r#"{"reason":"unknown"}"#, Failure::InvalidProtocol),
-            ("not-json", Failure::InvalidProtocol),
+            (
+                r#"{"code":"fake-private-secret"}"#,
+                Failure::InvalidProtocol,
+                "did not become ready",
+            ),
+            (
+                r#"{"code":"legacy_catalog","guidance":["fake-private-secret"]}"#,
+                Failure::InvalidProtocol,
+                "did not become ready",
+            ),
+            (
+                r#"{"code":"version_mismatch","detail":"fake-private-path"}"#,
+                Failure::InvalidProtocol,
+                "did not become ready",
+            ),
+            ("not-json", Failure::InvalidProtocol, "did not become ready"),
         ] {
-            assert_eq!(failed_protocol(payload), expected);
-            let line = format!("WENYI_FAILED {payload}\n");
+            let line = format!(
+                "WENYI_FAILED {payload}\nWENYI_READY {{\"protocol\":1,\"pid\":9,\"port\":1234}}\n"
+            );
             let (tx, rx) = mpsc::channel();
             receive_protocol(
                 line.as_bytes(),
@@ -587,13 +611,12 @@ mod tests {
                 &notifications,
                 tx,
             );
-            assert_eq!(wait_ready(&rx, Duration::ZERO), Err(expected));
+            let failure = wait_ready(&rx, Duration::ZERO).unwrap_err();
+            assert_eq!(failure, expected);
             assert!(rx.try_recv().is_err());
-        }
-        for restored in [true, false] {
-            let failure = Failure::Migration { restored, guidance: None };
-            assert_eq!(failure.reason(), "migration_failed");
-            failure.report(&diagnostics);
+            let report = failure.report(&diagnostics);
+            assert!(report.contains(guidance));
+            assert!(!report.contains("fake-private"));
         }
         let records = native_records(&diagnostics);
         assert_eq!(
@@ -601,19 +624,16 @@ mod tests {
                 .iter()
                 .map(|row| row["attributes"]["reason"].as_str().unwrap())
                 .collect::<Vec<_>>(),
-            ["migration_failed", "migration_failed"],
+            [
+                "version_mismatch",
+                "legacy_catalog",
+                "upgrade_recovery_required",
+                "protocol_invalid",
+                "protocol_invalid",
+                "protocol_invalid",
+                "protocol_invalid",
+            ],
         );
-    }
-
-    #[test]
-    fn migration_failure_report_surfaces_legacy_guidance() {
-        let diagnostics = Diagnostics::new(None);
-        let failure = failed_protocol(
-            r#"{"reason":"migration","restored":true,"legacy_data":true,"guidance":["Step one.","Step two."]}"#,
-        );
-        let report = failure.report(&diagnostics);
-        assert!(report.contains("restored to its previous state"));
-        assert!(report.contains("Step one.\nStep two."));
     }
 
     #[test]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import typer
@@ -17,24 +16,9 @@ from .validation import (
     require_input_file,
     resolve_export_out_path,
     resolve_output_format,
+    runstore_for,
     runstore_for_cli,
 )
-
-
-def _resolve_run_store(source: str, config_path: str):
-    """Locate the existing run store for a source without creating or locking state."""
-    from wenyi_core.config_rebuild import load_rebuilt_config
-    from wenyi_core.storage.run_store import RunStore, translation_run_dir
-
-    config = load_rebuilt_config(config_path)
-    if os.path.splitext(source)[1].lower() == ".pdf":
-        title = os.path.splitext(os.path.basename(source))[0]
-    else:
-        from wenyi_core.ingest.segmenter import load_document
-
-        title = load_document(source, config.source_lang, config.target_lang).title
-    run_dir = translation_run_dir(config.state_dir, title, config.target_lang)
-    return RunStore(run_dir, create=False)
 
 
 def _format_failure_event(event: dict[str, Any]) -> str:
@@ -71,7 +55,9 @@ def describe_last_failure(source: str, config_path: str) -> str | None:
     or reading the state returns None so the caller can show its own fallback.
     """
     try:
-        store = _resolve_run_store(source, config_path)
+        from wenyi_core.config_rebuild import load_rebuilt_config
+
+        store = runstore_for(load_rebuilt_config(config_path), source)
         events = _read_events(store.event_log_path)
         exhausted = [event for event in events if event.get("event") == "llm_retry_exhausted"]
         pipeline_errors = [event for event in events if event.get("event") == "pipeline_error"]

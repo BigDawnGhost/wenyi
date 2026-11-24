@@ -16,6 +16,8 @@ on:
       - packages/core/LICENSE
       - packages/core/THIRD_PARTY_NOTICES.md
       - packages/cli/LICENSE
+      - packages/cli/pyproject.toml
+      - packages/cli/hatch_build.py
       - scripts/release/core_native_notices.py
       - scripts/release/release_version.py
       - scripts/release/package_release.py

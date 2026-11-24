@@ -368,7 +368,7 @@ class TestPdfIngest(unittest.TestCase):
             )
 
             with patch(
-                "wenyi_cli.commands.validation.load_document",
+                "wenyi_core.pipeline.prepare.input_preparation.load_document",
                 side_effect=AssertionError("PDF source should not be parsed"),
             ):
                 store = runstore_for(config, pdf_path)

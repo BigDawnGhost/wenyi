@@ -1,4 +1,4 @@
-"""Export publication ordering: history rows commit first, files are removed after."""
+"""Export publication ordering: retirements commit before deleting files."""
 
 from __future__ import annotations
 
@@ -44,6 +44,8 @@ class FakeConnection:
     def fetchone(self):
         if "hashtextextended" in self._pending:
             return (True,)
+        if "SET status='deleting'" in self._pending:
+            return self.expired_result[0][:1] if self.expired_result else None
         if "UPDATE exports" in self._pending:
             return self.update_result
         return None
@@ -103,15 +105,17 @@ def test_publish_commits_history_before_removing_expired_files(tmp_path):
     export_retention.publish_export(
         cast(ConnectionPool, FakePool(conn)), "p1", 7, str(output), data_dir=str(data_dir)
     )
+    retire_at = next(
+        index for index, sql in enumerate(conn.statements) if "SET status='deleting'" in sql
+    )
+    commit_at, old_file_at_commit = conn.commit_marks[0]
+    assert retire_at < commit_at and old_file_at_commit is True
+    session_lock = next(sql for sql in conn.statements if "pg_advisory_lock(" in sql)
+    assert conn.statements.index(session_lock) >= commit_at
     delete_at = next(
         index for index, sql in enumerate(conn.statements) if "DELETE FROM exports" in sql
     )
-    commit_at, old_file_at_commit = conn.commit_marks[0]
-    # The history row disappears inside the transaction, while the file only goes
-    # away in the compensating cleanup that runs after the commit.
-    assert delete_at < commit_at and old_file_at_commit is True
-    session_lock = next(sql for sql in conn.statements if "pg_advisory_lock(" in sql)
-    assert conn.statements.index(session_lock) >= commit_at
+    assert delete_at > commit_at and not conn.commit_marks[-1][1]
     assert any("pg_advisory_unlock" in sql for sql in conn.statements)
     assert not old_file.exists() and output.exists()
 
@@ -121,7 +125,7 @@ def test_publish_database_failure_keeps_files_and_rolls_back(tmp_path):
     old_file, output, conn = _prepare(
         data_dir,
         expired=[(1, "p1/exports/e-old/translation.txt", "txt")],
-        fail_on="DELETE FROM exports",
+        fail_on="SET status='deleting'",
     )
     with pytest.raises(RuntimeError, match="database unavailable"):
         export_retention.publish_export(

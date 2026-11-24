@@ -776,6 +776,7 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
                 {
                     "title": "Book",
                     "fmt": "txt",
+                    "source_sha256": "a" * 64,
                     "source_lang": "ja",
                     "target_lang": "zh",
                     "chapters": [{"index": 0, "title": "", "status": "pending"}],

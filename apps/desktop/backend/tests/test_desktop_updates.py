@@ -3,8 +3,8 @@
 import asyncio
 import hashlib
 import json
-import logging
 import shutil
+import sqlite3
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,15 +18,7 @@ from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.local_runtime import LocalRuntime
 from wenyi_desktop.main import DesktopServices, create_app, create_context
 from wenyi_desktop.settings import DesktopSettings
-from wenyi_desktop.updates import (
-    RETENTION_KEEP_BACKUPS,
-    RETENTION_MAX_BYTES,
-    PruneOutcome,
-    UpdateAdmissionMiddleware,
-    UpdateGuard,
-    prune_backups,
-    restore_latest_backup,
-)
+from wenyi_desktop.updates import UpdateAdmissionMiddleware, UpdateGuard
 
 
 @pytest.fixture
@@ -408,309 +400,22 @@ def _write_backup(workspace: Path, version: str, sources: dict[str, Path]) -> Pa
     return backup
 
 
-def _seed_migration_failure(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
+def test_unrelated_startup_error_does_not_replace_live_sqlite(tmp_path, monkeypatch):
     workspace = tmp_path / "workspace"
+    workspace.mkdir()
     catalog = workspace / "catalog.sqlite3"
-    project = workspace / "projects" / "0"
-    project.mkdir(parents=True)
-    catalog.write_bytes(b"pre-upgrade catalog")
-    (project / "book.epub").write_bytes(b"pre-upgrade project")
-    (project / "run.lock").write_bytes(b"runtime lock")
-    backup = _write_backup(workspace, "1.4.0", {"catalog.sqlite3": catalog, "projects/0": project})
-    # The upgrade half-migrated the live data before the new engine gave up.
-    catalog.write_bytes(b"half-migrated catalog")
-    (project / "book.epub").write_bytes(b"half-migrated project")
-    return workspace, backup, catalog, project
-
-
-def test_restore_recovers_the_workspace_after_a_failed_migration(tmp_path):
-    workspace, backup, catalog, project = _seed_migration_failure(tmp_path)
-
-    outcome = restore_latest_backup(workspace)
-
-    assert outcome.status == "restored"
-    assert outcome.files == 2
-    assert catalog.read_bytes() == b"pre-upgrade catalog"
-    assert (project / "book.epub").read_bytes() == b"pre-upgrade project"
-    # Runtime locks are never part of the snapshot and stay untouched.
-    assert (project / "run.lock").read_bytes() == b"runtime lock"
-    assert (backup / "MANIFEST.restored.json").is_file()
-    assert not (backup / "MANIFEST.json").exists()
-
-
-def test_restore_refuses_a_damaged_backup_without_touching_the_workspace(tmp_path):
-    workspace, backup, catalog, project = _seed_migration_failure(tmp_path)
-    (backup / "catalog.sqlite3").write_bytes(b"tampered catalog!!!")
-
-    outcome = restore_latest_backup(workspace)
-
-    assert outcome.status == "failed"
-    assert outcome.detail is not None and "checksum mismatch" in outcome.detail
-    assert catalog.read_bytes() == b"half-migrated catalog"
-    assert (project / "book.epub").read_bytes() == b"half-migrated project"
-    assert (backup / "MANIFEST.json").is_file()
-    assert not (backup / "MANIFEST.restored.json").exists()
-
-
-def test_restore_without_a_backup_reports_absent(tmp_path):
-    outcome = restore_latest_backup(tmp_path / "workspace")
-
-    assert outcome.status == "absent"
-    assert outcome.files == 0
-
-
-def test_restore_reports_failure_when_backups_directory_is_unreadable(tmp_path, monkeypatch):
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    original_iterdir = Path.iterdir
-
-    def failing_iterdir(self):
-        if self.name == "backups":
-            raise PermissionError(13, "backups denied")
-        return original_iterdir(self)
-
-    monkeypatch.setattr(Path, "iterdir", failing_iterdir)
-    outcome = restore_latest_backup(workspace)
-    assert outcome.status == "failed"
-    assert outcome.detail is not None and "unreadable" in outcome.detail
-
-
-def test_restore_never_clobbers_data_after_a_backup_was_consumed(tmp_path):
-    workspace, _, catalog, _ = _seed_migration_failure(tmp_path)
-    assert restore_latest_backup(workspace).status == "restored"
-    catalog.write_bytes(b"new attempt bytes")
-
-    outcome = restore_latest_backup(workspace)
-
-    assert outcome.status == "absent"
-    assert catalog.read_bytes() == b"new attempt bytes"
-
-
-def test_restore_resumes_after_an_interrupted_copy(tmp_path, monkeypatch):
-    workspace, backup, catalog, project = _seed_migration_failure(tmp_path)
-    original = shutil.copyfile
-    attempts = {"count": 0}
-
-    def interrupted(source, target):
-        attempts["count"] += 1
-        if attempts["count"] == 2:
-            raise OSError("simulated interruption")
-        return original(source, target)
-
-    monkeypatch.setattr(shutil, "copyfile", interrupted)
-    assert restore_latest_backup(workspace).status == "failed"
-    # Work completed before the interruption stays; the manifest survives.
-    assert catalog.read_bytes() == b"pre-upgrade catalog"
-    assert (backup / "MANIFEST.json").is_file()
-
-    monkeypatch.setattr(shutil, "copyfile", original)
-    assert restore_latest_backup(workspace).status == "restored"
-    assert (project / "book.epub").read_bytes() == b"pre-upgrade project"
-    assert (backup / "MANIFEST.restored.json").is_file()
-
-
-def test_restore_rejects_entries_outside_the_declared_sources(tmp_path):
-    workspace, backup, catalog, _ = _seed_migration_failure(tmp_path)
-    manifest = json.loads((backup / "MANIFEST.json").read_text(encoding="utf-8"))
-    manifest["files"].append({"path": "projects/9/extra.epub", "size": 3, "sha256": "0" * 64})
-    (backup / "MANIFEST.json").write_text(json.dumps(manifest), encoding="utf-8")
-
-    outcome = restore_latest_backup(workspace)
-
-    assert outcome.status == "failed"
-    assert outcome.detail is not None and "outside declared sources" in outcome.detail
-    assert catalog.read_bytes() == b"half-migrated catalog"
-
-
-def test_restore_covers_project_directories_outside_the_data_root(tmp_path):
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    library = tmp_path / "library" / "0"
-    library.mkdir(parents=True)
-    (library / "book.epub").write_bytes(b"pre-upgrade project")
-    _write_backup(workspace, "1.4.0", {"projects/0": library})
-    (library / "book.epub").write_bytes(b"half-migrated project")
-
-    outcome = restore_latest_backup(workspace)
-
-    assert outcome.status == "restored"
-    assert (library / "book.epub").read_bytes() == b"pre-upgrade project"
-
-
-def test_failed_bootstrap_restores_and_tells_the_shell(tmp_path, capsys, monkeypatch):
-    workspace, _, catalog, _ = _seed_migration_failure(tmp_path)
-
-    def refused(self, *args, **kwargs):
-        raise RuntimeError("This is not a current-format Desktop catalog.")
-
-    monkeypatch.setattr(LocalBackend, "__init__", refused)
-    with pytest.raises(RuntimeError):
-        create_context(workspace, api_token="test-token")
-    output = capsys.readouterr().out
-    assert output.startswith("WENYI_FAILED ")
-    assert '"reason":"migration"' in output
-    assert '"restored":true' in output
-    assert catalog.read_bytes() == b"pre-upgrade catalog"
-
-
-def _seed_backups(workspace: Path, names: list[str], payload: bytes = b"payload") -> None:
-    """Create fake upgrade snapshots: one payload file, manifest written last."""
-    for name in names:
-        backup = workspace / "backups" / name
-        backup.mkdir(parents=True, exist_ok=True)
-        (backup / "catalog.sqlite3").write_bytes(payload)
-        (backup / "MANIFEST.json").write_text("{}", encoding="utf-8")
-
-
-def test_prune_reports_unreadable_backups_directory(tmp_path, monkeypatch, caplog):
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    original_iterdir = Path.iterdir
-
-    def failing_iterdir(self):
-        if self.name == "backups":
-            raise PermissionError(13, "backups denied")
-        return original_iterdir(self)
-
-    monkeypatch.setattr(Path, "iterdir", failing_iterdir)
-    with caplog.at_level(logging.WARNING, logger="wenyi_desktop.updates"):
-        outcome = prune_backups(workspace)
-    assert outcome == PruneOutcome()
-    assert any("Backups directory scan failed" in message for message in caplog.messages)
-
-
-def test_prune_keeps_the_newest_and_the_configured_count(tmp_path):
-    workspace = tmp_path / "workspace"
-    names = [f"1.4.0-2026112{day}-000000" for day in range(1, 6)]
-    _seed_backups(workspace, names)
-    outcome = prune_backups(workspace, keep=3, delete=shutil.rmtree)
-    # Eviction follows the newest-first traversal, so the older of the two
-    # surplus snapshots is reported last.
-    assert outcome.evicted == (names[1], names[0])
-    assert outcome.kept == (names[4], names[3], names[2])
-    assert outcome.failed == ()
-    assert not (workspace / "backups" / names[0]).exists()
-    assert (workspace / "backups" / names[-1]).exists()
-
-
-def test_prune_enforces_the_size_budget(tmp_path):
-    workspace = tmp_path / "workspace"
-    old, middle, newest = (
-        "1.4.0-20261121-000000",
-        "1.4.0-20261122-000000",
-        "1.4.0-20261123-000000",
-    )
-    _seed_backups(workspace, [old], payload=b"o" * 50)
-    _seed_backups(workspace, [middle], payload=b"m" * 40)
-    _seed_backups(workspace, [newest], payload=b"n" * 30)
-    outcome = prune_backups(workspace, keep=10, max_bytes=100, delete=lambda path: None)
-    assert outcome.kept == (newest, middle)
-    assert outcome.evicted == (old,)
-
-
-def test_prune_never_deletes_the_newest_backup_even_over_budget(tmp_path):
-    workspace = tmp_path / "workspace"
-    name = "1.4.0-20261123-000000"
-    _seed_backups(workspace, [name], payload=b"huge" * 100)
-    outcome = prune_backups(workspace, keep=1, max_bytes=10, delete=lambda path: None)
-    assert outcome.kept == (name,)
-    assert outcome.evicted == ()
-    assert outcome.failed == ()
-    assert (workspace / "backups" / name).exists()
-
-
-def test_prune_defaults_are_pinned():
-    # The newest backup is the restore anchor; three copies cover it plus one
-    # failed-upgrade cycle and one in-flight or duplicate snapshot. 5 GiB
-    # bounds disk use while staying far above any single real snapshot, so the
-    # cap never evicts the newest backup in normal use.
-    assert RETENTION_KEEP_BACKUPS == 3
-    assert RETENTION_MAX_BYTES == 5 * 1024**3
-
-
-def test_prune_moves_to_trash_when_the_recycle_bin_is_unavailable(tmp_path, monkeypatch):
-    workspace = tmp_path / "workspace"
-    _seed_backups(workspace, ["1.4.0-20261121-000000", "1.4.0-20261122-000000"])
-    monkeypatch.setattr("wenyi_desktop.updates._recycle_delete", lambda path: False)
-    outcome = prune_backups(workspace, keep=1)
-    evicted = workspace / "backups" / "1.4.0-20261121-000000"
-    trashed = workspace / "backups-trash" / "1.4.0-20261121-000000"
-    assert outcome.evicted == ("1.4.0-20261121-000000",)
-    assert not evicted.exists()
-    assert (trashed / "MANIFEST.json").is_file()
-
-
-def test_prune_uses_the_recycle_bin_when_available(tmp_path, monkeypatch):
-    workspace = tmp_path / "workspace"
-    _seed_backups(workspace, ["1.4.0-20261121-000000", "1.4.0-20261122-000000"])
-    recycled = []
-
-    def recycle(path):
-        recycled.append(path)
-        return True
-
-    monkeypatch.setattr("wenyi_desktop.updates._recycle_delete", recycle)
-    outcome = prune_backups(workspace, keep=1)
-    assert outcome.evicted == ("1.4.0-20261121-000000",)
-    assert [path.name for path in recycled] == ["1.4.0-20261121-000000"]
-    assert not (workspace / "backups-trash").exists()
-
-
-def test_prune_failure_is_reported_and_keeps_the_backup(tmp_path):
-    workspace = tmp_path / "workspace"
-    _seed_backups(workspace, ["1.4.0-20261121-000000", "1.4.0-20261122-000000"])
-
-    def denied(path):
-        raise OSError("permission denied")
-
-    outcome = prune_backups(workspace, keep=1, delete=denied)
-    assert outcome.failed == ("1.4.0-20261121-000000",)
-    assert outcome.evicted == ()
-    assert (workspace / "backups" / "1.4.0-20261121-000000").exists()
-
-
-def test_prune_never_removes_the_snapshot_restore_would_use(tmp_path):
-    workspace = tmp_path / "workspace"
-    interrupted = workspace / "backups" / "1.5.0-20261123-000000"
-    interrupted.mkdir(parents=True)
-    (interrupted / "catalog.sqlite3").write_bytes(b"partial copy")
-    _seed_backups(workspace, ["1.4.0-20261122-000000"])
-    # Restore only ever considers the newest directory. Deleting the
-    # manifest-less newest one would make a failed upgrade fall back to the
-    # older snapshot, so retention must keep it even though it is unusable.
-    assert restore_latest_backup(workspace).status == "absent"
-    outcome = prune_backups(workspace, keep=1, delete=lambda path: None)
-    assert outcome.kept == ("1.5.0-20261123-000000",)
-    assert outcome.evicted == ("1.4.0-20261122-000000",)
-    assert restore_latest_backup(workspace).status == "absent"
-
-
-def test_prune_ignores_hidden_entries_and_missing_roots(tmp_path):
-    workspace = tmp_path / "workspace"
-    outcome = prune_backups(workspace)
-    assert outcome.kept == () and outcome.evicted == () and outcome.failed == ()
-    _seed_backups(workspace, ["1.4.0-20261121-000000", "1.4.0-20261122-000000"])
-    hidden = workspace / "backups" / ".junk"
-    hidden.mkdir()
-    (hidden / "catalog.sqlite3").write_bytes(b"junk")
-    outcome = prune_backups(workspace, keep=1, delete=lambda path: None)
-    assert outcome.kept == ("1.4.0-20261122-000000",)
-    assert outcome.evicted == ("1.4.0-20261121-000000",)
-    assert hidden.is_dir()
-
-
-def test_create_context_prunes_upgrade_backups_on_startup(tmp_path, monkeypatch):
-    workspace = tmp_path / "workspace"
-    names = [f"1.4.0-2026112{day}-000000" for day in range(1, 6)]
-    _seed_backups(workspace, names)
-    monkeypatch.setattr("wenyi_desktop.updates._recycle_delete", lambda path: False)
-    context = create_context(workspace, api_token="test-token")
-    backend = context.repository
-    assert isinstance(backend, LocalBackend)
-    try:
-        remaining = sorted(entry.name for entry in (workspace / "backups").iterdir())
-        assert remaining == names[2:]
-        trashed = sorted(entry.name for entry in (workspace / "backups-trash").iterdir())
-        assert trashed == names[:2]
-    finally:
-        backend.close()
+    with sqlite3.connect(catalog) as connection:
+        connection.execute("CREATE TABLE example (value TEXT)")
+        connection.execute("INSERT INTO example VALUES ('before upgrade')")
+    _write_backup(workspace, "1.9.0", {"catalog.sqlite3": catalog})
+    with sqlite3.connect(catalog) as connection:
+        connection.execute("UPDATE example SET value = 'live data'")
+
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("unrelated startup error")
+
+    monkeypatch.setattr(LocalBackend, "__init__", unavailable)
+    with pytest.raises(RuntimeError, match="unrelated startup error"):
+        create_context(workspace)
+    with sqlite3.connect(catalog) as connection:
+        assert connection.execute("SELECT value FROM example").fetchone() == ("live data",)

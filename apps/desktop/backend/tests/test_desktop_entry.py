@@ -9,11 +9,14 @@ import os
 import queue
 import secrets
 import socket
+import sqlite3
 import subprocess
 import sys
 import threading
 import urllib.error
 import urllib.request
+from contextlib import closing
+from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -163,7 +166,10 @@ def test_desktop_subprocess_ready_auth_origin_and_shutdown(tmp_path: Path, shutd
     env = {k: v for k, v in os.environ.items() if not k.startswith("WENYI_")}
     env.update(WENYI_API_TOKEN=token)
     if diagnostics:
-        env["WENYI_DIAGNOSTICS_PROTOCOL"] = "1"
+        env.update(
+            WENYI_DESKTOP_ENGINE_VERSION=version("wenyi-desktop"),
+            WENYI_DIAGNOSTICS_PROTOCOL="1",
+        )
     # A sentinel CLI configuration must not be read or changed.
     sentinel = tmp_path / "config.yaml"
     sentinel.write_text("This is not a Wenyi configuration.")
@@ -289,6 +295,54 @@ def test_native_startup_reads_utf8_proof_with_legacy_stdin_encoding(
     connection.__enter__.return_value.sendall.assert_called_with(
         MAGIC + bytes.fromhex(proof["token"])
     )
+
+
+@pytest.mark.xdist_group("desktop-subprocess")
+@pytest.mark.parametrize(
+    ("code", "diagnostics"),
+    [("version_mismatch", False), ("version_mismatch", True), ("legacy_catalog", True)],
+)
+def test_classified_startup_failure_reaches_saved_stdout(tmp_path, code, diagnostics):
+    workspace = tmp_path / "fake-private-workspace"
+    workspace.mkdir()
+    token = secrets.token_hex(32)
+    wrong_version = "999.999.999+fake.private.version"
+    env = {k: v for k, v in os.environ.items() if not k.startswith("WENYI_")}
+    env.update(
+        WENYI_API_TOKEN=token,
+        WENYI_DESKTOP_ENGINE_VERSION=(
+            wrong_version if code == "version_mismatch" else version("wenyi-desktop")
+        ),
+    )
+    if diagnostics:
+        env["WENYI_DIAGNOSTICS_PROTOCOL"] = "1"
+    catalog = workspace / "catalog.sqlite3"
+    if code == "legacy_catalog":
+        with closing(sqlite3.connect(catalog)) as conn, conn:
+            conn.execute("CREATE TABLE old_projects (name TEXT)")
+            conn.execute("INSERT INTO old_projects VALUES ('fake-private-book')")
+    before = catalog.read_bytes() if catalog.exists() else None
+
+    result = subprocess.run(
+        [owned_python(env), "-m", "wenyi_desktop", "--data-dir", str(workspace)],
+        cwd=tmp_path,
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == (2 if code == "version_mismatch" else 1)
+    assert token not in result.stdout and wrong_version not in result.stdout
+    assert "fake-private" not in result.stdout
+    frames = [
+        line for line in result.stdout.splitlines() if not line.startswith("WENYI_DIAGNOSTIC ")
+    ]
+    assert len(frames) == 1 and frames[0].startswith("WENYI_FAILED ")
+    assert json.loads(frames[0].removeprefix("WENYI_FAILED ")) == {"code": code}
+    assert (catalog.read_bytes() if catalog.exists() else None) == before
 
 
 @pytest.mark.parametrize("stage", ["application", "runtime"])

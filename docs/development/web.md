@@ -129,6 +129,9 @@ HTTP responses carry `X-Request-ID`; server failures also carry `X-Error-ID`. Co
 
 ## Progress identity and live statistics
 
+The backend forwards optional locating fields from the Core
+[progress callback](pipeline.md#progress-callbacks) as the event's `payload`.
+
 Treat project identity and run identity as part of the event contract:
 
 - A subscription belongs to one project. Run-scoped progress, statistics, state, and error events carry `project_id` and `run_id`; clients must not apply another project's event or an older run's output to the current workflow.
@@ -155,7 +158,19 @@ Long workflows use a PostgreSQL **session advisory lock** for project execution 
 
 Exports have a durable job/export identity and an independent execution lock. Their saved consistent snapshot allows rendering beside translation without holding the project's long-running write lock. Duplicate delivery must not regenerate a completed export.
 
-Cancellation must drain synchronous execution and checkpoint writes before releasing execution ownership. Publish workflow terminal status only after leaving its run lock; successful completion also follows completion-event persistence and live-statistics cleanup. Seeing a terminal workflow must not leave a previous worker still owning the lock that protects edits.
+Admission reuses an in-flight export only if its resolved format, options, frozen
+configuration and source identity all match. The catalog returns the run identity and
+whether to dispatch it from the same admission operation. A new request after completion
+always gets a fresh job. Publication keeps the five newest successful artifacts in
+completion order and records older ones as hidden retirements. Their files are removed
+after commit, under the project export-history lock; the worker recovery loop also
+retries this cleanup without regenerating exports.
+
+### Workflow cancellation
+
+An execution timeout requests cooperative stop; retry backoff can wake early, but a synchronous provider call or checkpoint may still need to finish. The runner retains the workflow slot and waits for the writer even if cancellation is requested again. After 30 seconds it logs that the drain is still in progress; this is neither a completion deadline nor permission to mark the job `paused` or to reacquire the writer's run lock.
+
+Publish the terminal result only after the synchronous writer exits. Keep conflicting starts and edits blocked while a writer can still change checkpoints. Recheck the run identity before publishing to the project so a late outcome cannot overwrite a newer workflow. An unresponsive writer can keep its slot occupied until the owning process is stopped; that is not a clean pause.
 
 ### Recovery is not a total-runtime timeout
 
@@ -178,6 +193,7 @@ The two-minute age is a recovery-candidate threshold, not proof of failure and n
 |---|---|
 | `wenyi_tasks_total{status,code}` | Finished workflow tasks with `done`, `paused`, or `error` outcomes; excludes exports |
 | `wenyi_llm_retries_total{provider,reason}` | Actual retry waits, deduplicated by call ID and attempt; exhaustion notifications are not additional retries |
+| `wenyi_task_cancel_drains_total{outcome,bucket}` | Completed workflow cancellation drains by elapsed time bucket (`outcome="drained"`); an in-progress drain is not counted. Older Redis counters may retain historical `forced` samples. |
 | `wenyi_queue_depth` | Admitted, queued workflow and export jobs from the PostgreSQL job catalog; excludes running jobs |
 
 API and workers must share a Redis database for counter visibility. Counters survive only as long as their Redis keys. Recent task/retry identities use a bounded 20,000-entry deduplication window, not an unlimited exactly-once history. Counter writes are best-effort and must not fail workflows. An unavailable counter store or job catalog returns HTTP 503 on scraping rather than a fabricated zero snapshot.

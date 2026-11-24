@@ -634,6 +634,62 @@ for (const scope of ["global", "project"] as const) {
   });
 }
 
+for (const { ref, label, levels, defaultEffort } of [
+  { ref: "fake/plain", label: "fake / plain", levels: [], defaultEffort: null },
+  { ref: "openai/gpt-5", label: "openai / gpt-5", levels: ["low", "high"], defaultEffort: "low" },
+]) {
+  test(`project model switch to ${label} explicitly clears incompatible thinking`, async ({ page }) => {
+    const operation = "translation.body";
+    const backup = "fake/backup";
+    const llm = configuration.effective.llm;
+    const effective = {
+      ...configuration.effective,
+      llm: {
+        ...llm,
+        routes: {
+          ...llm.routes,
+          [operation]: { ...llm.routes[operation], thinking: "max", fallbacks: [ref, backup] },
+        },
+      },
+    };
+    let saved = {
+      ...configuration,
+      effective,
+      registered_models: {
+        ...configuration.registered_models,
+        [ref]: {
+          provider: ref.split("/")[0], model: ref.split("/")[1],
+          thinking_levels: levels, thinking_value: defaultEffort,
+        },
+        [backup]: { provider: "fake", model: "backup", thinking_levels: [], thinking_value: null },
+      },
+    };
+    await page.route(`**/api/projects/${pid}/config`, async route => {
+      if (route.request().method() === "PUT") {
+        const { yaml } = route.request().postDataJSON();
+        saved = { ...saved, effective: JSON.parse(yaml), yaml };
+      }
+      await route.fulfill({ json: saved });
+    });
+    await page.goto(`/projects/${pid}/settings`);
+    const model = page.getByRole("combobox", { name: "Model: Translate chapters in batches" });
+    const thinking = page.getByRole("combobox", { name: "Thinking effort: Translate chapters in batches" });
+    const yaml = page.getByRole("textbox", { name: "Advanced YAML configuration" });
+    const expected = { model: ref, thinking: null, fallbacks: [backup] };
+    await expect(thinking).toHaveText("max");
+    await chooseOption(model, label);
+    if (defaultEffort) await expect(thinking).toHaveText(defaultEffort);
+    else await expect(thinking).toHaveCount(0);
+    expect(JSON.parse(await yaml.inputValue()).llm.routes[operation]).toEqual(expected);
+    await page.getByRole("button", { name: "Save configuration", exact: true }).click();
+    await expect(page.getByText("Project settings saved", { exact: true })).toBeVisible();
+    expect(saved.effective.llm.routes[operation]).toEqual(expected);
+    await page.reload();
+    await expect(model).toHaveText(label);
+    expect(JSON.parse(await yaml.inputValue()).llm.routes[operation]).toEqual(expected);
+  });
+}
+
 test("an in-flight project validation does not replace a newer YAML edit", async ({ page }) => {
   const endpoint = `**/api/projects/${pid}/config/validate`;
   let release!: () => void;

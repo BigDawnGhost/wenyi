@@ -6,7 +6,7 @@ import multiprocessing
 import os
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
-from contextlib import nullcontext
+from contextlib import closing, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event
@@ -1214,6 +1214,112 @@ def test_chapter_snapshot_releases_reader_after_load_error(store, document):
     assert store.exists()
 
 
+def test_open_can_retry_after_a_real_sqlite_exclusive_lock(store):
+    store.write_artifact("probe.json", {"value": 1})
+    store.close_all()
+    database = Path(store.database_path)
+    with closing(sqlite3.connect(database, isolation_level=None)) as locker:
+        # In WAL mode BEGIN EXCLUSIVE still allows readers. Use a rollback
+        # journal to make the integrity check on the second connection wait.
+        assert locker.execute("PRAGMA journal_mode = DELETE").fetchone() == ("delete",)
+        before = database.read_bytes()
+        locker.execute("BEGIN EXCLUSIVE")
+        with pytest.raises(StorageBusyError, match="then retry") as raised:
+            store.read_artifact("probe.json")
+        assert raised.value.code == "database_busy"
+        assert raised.value.retryable
+        assert isinstance(raised.value.__cause__, sqlite3.OperationalError)
+        assert not store._connections
+        locker.rollback()
+    assert database.read_bytes() == before
+    assert store.read_artifact("probe.json") == {"value": 1}
+
+
+def _stub_quick_check(monkeypatch, outcome):
+    """Use real connections except for the integrity check result."""
+
+    class CheckConnection(sqlite3.Connection):
+        def execute(self, sql, parameters=()):
+            if sql == "PRAGMA quick_check":
+                if isinstance(outcome, sqlite3.DatabaseError):
+                    raise outcome
+                return super().execute("SELECT ?", (outcome,))
+            return super().execute(sql, parameters)
+
+    connect = sqlite3.connect
+    monkeypatch.setattr(
+        sqlite3,
+        "connect",
+        lambda *args, **kwargs: connect(*args, **kwargs, factory=CheckConnection),
+    )
+
+
+@pytest.mark.parametrize(
+    ("message", "sqlite_errorcode"),
+    [
+        ("database table is locked: artifacts", None),
+        ("SQLite could not obtain a lock", getattr(sqlite3, "SQLITE_LOCKED_SHAREDCACHE", 262)),
+    ],
+    ids=["legacy-lock-message", "extended-lock-code"],
+)
+def test_quick_check_locked_is_retryable(store, monkeypatch, message, sqlite_errorcode):
+    store.close_all()
+    error = sqlite3.OperationalError(message)
+    if sqlite_errorcode is not None:
+        setattr(error, "sqlite_errorcode", sqlite_errorcode)
+    _stub_quick_check(monkeypatch, error)
+
+    with pytest.raises(StorageBusyError, match="then retry") as raised:
+        store.read_artifact("probe.json")
+    assert raised.value.code == "database_busy"
+    assert raised.value.retryable
+    assert raised.value.__cause__ is error
+
+
+@pytest.mark.parametrize(
+    "sqlite_errorcode",
+    [None, getattr(sqlite3, "SQLITE_IOERR_READ", 266)],
+    ids=["no-sqlite-error-code", "extended-io-error"],
+)
+def test_quick_check_preserves_io_exceptions(store, monkeypatch, sqlite_errorcode):
+    store.write_artifact("probe.json", {"value": 1})
+    store.close_all()
+    database = Path(store.database_path)
+    before = database.read_bytes()
+    io_error = sqlite3.OperationalError("disk I/O error")
+    if sqlite_errorcode is not None:
+        # Python 3.10 does not expose this attribute on real SQLite exceptions.
+        setattr(io_error, "sqlite_errorcode", sqlite_errorcode)
+
+    with monkeypatch.context() as patch:
+        _stub_quick_check(patch, io_error)
+        with pytest.raises(sqlite3.OperationalError, match="disk I/O error") as raised:
+            store.read_artifact("probe.json")
+        assert raised.value is io_error
+        assert not store._connections
+    assert database.read_bytes() == before
+    assert store.read_artifact("probe.json") == {"value": 1}
+
+
+@pytest.mark.parametrize(
+    "report",
+    [
+        "*** in database main ***\nPage 2: unable to get the page. error code=266",
+        "*** in database main ***\nPage 2: failed to get page 3",
+        "*** in database main ***\nFailed to read ptrmap key=4",
+    ],
+    ids=["extended-io-error", "uncoded-page-read-error", "uncoded-pointer-map-read-error"],
+)
+def test_quick_check_page_read_failure_does_not_imply_corruption(store, monkeypatch, report):
+    store.close_all()
+    _stub_quick_check(monkeypatch, report)
+
+    with pytest.raises(WenyiError, match="Could not check") as raised:
+        store.read_artifact("probe.json")
+    assert raised.value.code == "database_integrity_check_failed"
+    assert "backup" not in str(raised.value)
+
+
 def test_open_rejects_a_corrupted_database_with_recovery_guidance(tmp_path):
     run_dir = tmp_path / "corrupt"
     storage = SqliteStorage(str(run_dir))
@@ -1229,7 +1335,10 @@ def test_open_rejects_a_corrupted_database_with_recovery_guidance(tmp_path):
     message = str(raised.value)
     assert "corrupted" in message
     assert str(database) in message
-    assert "Restore the database from a backup" in message
+    assert "preserve a copy of the entire project directory" in message
+    assert "including any SQLite sidecar files" in message
+    assert "Restore from a known-good project backup" in message
+    assert "delete" not in message
     with pytest.raises(WenyiError, match="corrupted"):
         SqliteStorage(str(run_dir))._connection()
     assert database.read_bytes() == garbage
@@ -1241,9 +1350,16 @@ def test_open_rejects_a_database_corrupted_beyond_its_header(tmp_path):
     storage.write_artifact("chapters/ch0.json", {"text": "word " * 8192})
     storage.close_all()
     database = run_dir / "state.sqlite3"
+    with closing(sqlite3.connect(database)) as connection:
+        page_size = connection.execute("PRAGMA page_size").fetchone()[0]
+        root_page = connection.execute(
+            "SELECT rootpage FROM sqlite_master WHERE name = 'artifacts'"
+        ).fetchone()[0]
     with database.open("r+b") as handle:
-        handle.seek(4096)
-        handle.write(b"\xde\xad\xbe\xef" * 512)
+        handle.seek((root_page - 1) * page_size)
+        handle.write(b"\x00")  # An invalid B-tree page type, with the database header intact.
+    with closing(sqlite3.connect(database)) as connection:
+        assert connection.execute("PRAGMA quick_check").fetchone()[0] != "ok"
     broken = SqliteStorage(str(run_dir), create=False)
     with pytest.raises(WenyiError, match="corrupted") as raised:
         broken._connection()

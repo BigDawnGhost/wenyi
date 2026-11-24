@@ -99,40 +99,15 @@ def write_text_atomic(path: str | Path, text: str) -> None:
         raise
 
 
-def write_texts_atomic(items: list[tuple[str | Path, str]]) -> None:
-    """Publish several files as one commit, replacing them in the given order.
-
-    Every text is written to its own private temporary file and made durable
-    before any target is replaced, so a failure while writing any file leaves
-    every target with its previous content. The replacements then run in the
-    given order: a caller committing related state puts the file that marks
-    success (the manifest) last, so an interruption between replacements leaves
-    a state a resuming run reconciles from that marker.
-    """
-    prepared: list[tuple[str, str]] = []
+def sync_directory(path: str) -> None:
+    """Persist directory-entry changes on POSIX, where directories can be fsynced."""
+    if os.name == "nt":
+        return
+    descriptor = os.open(to_io_path(path), os.O_RDONLY | os.O_DIRECTORY)
     try:
-        for target, text in items:
-            target_text = str(target)
-            directory = os.path.dirname(target_text)
-            os.makedirs(to_io_path(directory), exist_ok=True)
-            temporary = resolve_temporary(target_text)
-            prepared.append((temporary, target_text))
-            with open(to_io_path(temporary), "w", encoding="utf-8") as handle:
-                handle.write(text)
-                handle.flush()
-                os.fsync(handle.fileno())
-        for temporary, target_text in prepared:
-            replace_with_retry(temporary, target_text)
-    except BaseException:
-        # Discard every temporary file that has not already been consumed by its
-        # replacement; a failure to remove one must not replace the original
-        # error.
-        for temporary, _target in prepared:
-            try:
-                os.remove(to_io_path(temporary))
-            except OSError:
-                pass
-        raise
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def sweep_temporary(directory: str | Path) -> list[str]:

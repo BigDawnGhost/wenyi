@@ -77,10 +77,8 @@ class Metrics:
         identity = f"{call_id}:{attempt}" if call_id else None
         self._record("retries", (provider, reason), identity)
 
-    def record_cancel_drain(
-        self, *, outcome: str, seconds: float, identity: str | None = None
-    ) -> None:
-        self._record("task_cancel_drains", (outcome, _drain_bucket(seconds)), identity)
+    def record_cancel_drain(self, *, seconds: float, identity: str | None = None) -> None:
+        self._record("task_cancel_drains", ("drained", _drain_bucket(seconds)), identity)
 
     def record_event(self, event: str, **data) -> None:
         if event != "llm_retry_wait":
@@ -124,7 +122,7 @@ def render(counts: Counters, *, depth: int) -> str:
         labels = _labels({"provider": provider, "reason": reason})
         lines.append(f"wenyi_llm_retries_total{labels} {value}")
     lines += [
-        "# HELP wenyi_task_cancel_drains_total Cancelled workflow drain outcomes by latency bucket.",
+        "# HELP wenyi_task_cancel_drains_total Completed cancellation drains by latency bucket.",
         "# TYPE wenyi_task_cancel_drains_total counter",
     ]
     for (outcome, bucket), value in sorted(counts["task_cancel_drains"].items()):

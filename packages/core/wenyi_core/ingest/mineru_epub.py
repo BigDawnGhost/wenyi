@@ -94,10 +94,10 @@ def _mathml(latex: str, *, display: str, crop: str = "") -> str:
             if node.text:
                 node.text = NUMERIC_ENTITY.sub(lambda match: unescape(match[0]), node.text)
                 if node.tag == "mi" and re.match(r"\\[A-Za-z]", node.text):
-                    raise ValueError(f"Unsupported LaTeX command: {node.text}")
-    except Exception as error:
+                    raise ValueError("Unsupported LaTeX command")
+    except Exception:
         fallback = "equation crop" if crop else "LaTeX text fallback"
-        LOGGER.warning("Using an %s (%s): %s", fallback, type(error).__name__, latex)
+        LOGGER.warning("Could not render a MinerU formula; using %s.", fallback)
         if crop:
             number = EQUATION_NUMBER.search(latex)
             return crop + (f" ({escape(number[1])})" if number else "")

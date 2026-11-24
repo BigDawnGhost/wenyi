@@ -223,15 +223,32 @@ Do not reduce it to “no running job rows.”
 [Upgrade snapshots](../../apps/desktop/src/migration/backup.rs#L114) are written under
 `<data-root>/backups/<version>-<timestamp>/`. Copy the catalog and selected project
 directories, not the entire root, user-selected parent folders or earlier backups.
-Include existing catalog WAL/SHM files after shutdown and preserve project database
+Include existing catalog WAL/SHM/rollback-journal files after shutdown and preserve project database
 sidecars; forced process exit does not prove checkpointing. The manifest records
 source paths, file sizes and SHA-256, and is written only after the copy succeeds.
 Credentials remain references, not exported vault/session secrets. Plugin runtime
 and PDF sessions require the separate [manual backup](../guide/desktop.md#data-locations-and-backups).
 
 Missing sources, unsafe links, insufficient space or copy/verification failure abort
-before installer execution. Recovery attempts to reopen the existing engine; this
-is not a promise of automatic restoration from backup after every installation failure.
+before installer execution. The native host binds one already-verified manifest
+digest, snapshot ID and target release to the current attempt, then launches the
+installer. After a healthy first start the engine retires the attempt before
+`WENYI_READY`, even if an unchanged engine came up after an installer failure.
+Ordinary startup errors never initiate restoration.
+
+[Offline recovery](../guide/desktop.md#restore-a-pre-upgrade-snapshot) requires the
+installed target release, the exact snapshot ID and exclusive profile, native,
+engine and writer leases. It refuses external project libraries rather than
+assuming ownership across roots. Stage and verify the backup on the same volume
+before journaled moves. Run SQLite `quick_check` on disposable copies of the
+catalog and initialized project databases with their sidecars, leaving the
+snapshot and staged files unchanged. Quarantine complete owned project directories
+and the old catalog with **all** its sidecars, then publish the staged set. An interrupted move
+keeps the marker; startup checks it before SQLite admission and tells the user to
+repeat the same offline command. Only a completely verified publication retires the
+marker. Retention ranks complete SHA-256-verified snapshots by creation time, not
+version text, and never evicts the recovery snapshot or its quarantine.
+
 If cancellation of engine update preparation is not acknowledged, keep an explicit
 unavailable/error state rather than resuming writes speculatively.
 

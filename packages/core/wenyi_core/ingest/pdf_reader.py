@@ -82,11 +82,22 @@ def read_pdf(
 
     def parse(epub: Path) -> Document:
         derived_digest = source_sha256(epub)
-        doc = read_epub(str(epub), source_lang, target_lang)
-        if source_sha256(epub) != derived_digest or source_sha256(path) != digest:
-            raise ValueError("PDF or its source EPUB changed during conversion or parsing. Retry.")
-        doc.meta[MINERU_EPUB_DIGEST] = derived_digest
-        return doc
+        try:
+            doc = read_epub(str(epub), source_lang, target_lang)
+        except Exception:
+            # Parser and validation errors can include values from the upstream content.
+            pass
+        else:
+            if source_sha256(epub) != derived_digest or source_sha256(path) != digest:
+                raise ValueError(
+                    "PDF or its source EPUB changed during conversion or parsing. Retry."
+                )
+            doc.meta[MINERU_EPUB_DIGEST] = derived_digest
+            return doc
+        raise MinerUError(
+            "PDF conversion failed: could not read the MinerU source EPUB. "
+            "Check the input PDF or re-import the project."
+        ) from None
 
     if cache.is_file():
         doc = parse(cache)
@@ -102,6 +113,7 @@ def read_pdf(
                     title=Path(path).stem,
                     lang=source_lang if source_lang not in ("", "auto") else "und",
                 )
+            # MinerUError is produced locally with diagnostics safe for task events.
             except MinerUError:
                 raise
             except Exception:

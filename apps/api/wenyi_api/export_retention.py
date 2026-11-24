@@ -49,21 +49,26 @@ def export_history_session_lock(
             yield connection
         finally:
             if acquired:
-                connection.rollback()
-                connection.execute("SELECT pg_advisory_unlock(hashtextextended(%s,0))", (key,))
-                connection.commit()
+                try:
+                    connection.rollback()
+                    connection.execute("SELECT pg_advisory_unlock(hashtextextended(%s,0))", (key,))
+                    connection.commit()
+                except BaseException:
+                    # A pooled session must not retain the lock if unlock fails.
+                    connection.close()
+                    raise
 
 
 def publish_export(
-    pool: ConnectionPool, pid: str, export_id: int, output: str, *, data_dir: str
+    pool: ConnectionPool,
+    pid: str,
+    export_id: int,
+    output: str,
+    *,
+    data_dir: str,
+    job_id: int | None = None,
 ) -> None:
-    """Publish the export, trim history rows, then delete superseded files.
-
-    Rows are updated and removed inside one transaction; file deletion happens
-    only after that transaction commits. A database failure therefore leaves the
-    previous files in place (rows and files stay consistent), while a failure
-    after the commit leaves at most a logged orphan file with no history row.
-    """
+    """Commit publication and retirement before touching any superseded files."""
     file = export_path(data_dir, pid, str(Path(output).absolute()))
     if file is None or not Path(to_io_path(file)).is_file():
         raise ValueError("Export output must be a file in the project's export directory")
@@ -71,51 +76,87 @@ def publish_export(
     size = Path(to_io_path(file)).stat().st_size
     with pool.connection() as conn:
         export_history_lock(conn, pid)
+        if job_id is not None:
+            job = conn.execute(
+                """UPDATE jobs SET status='done', error=NULL, updated_at=now()
+                   WHERE id=%s AND project_id=%s AND kind='export' AND status='running'
+                     AND params->'export_id'=to_jsonb(%s::bigint) RETURNING id""",
+                (job_id, pid, export_id),
+            ).fetchone()
+            if job is None:
+                raise ValueError("Export job is not running or does not own this export")
         published = conn.execute(
             """UPDATE exports SET status='done', path=%s, size=%s, error=NULL,
                    completed_at=clock_timestamp()
-               WHERE id=%s AND project_id=%s RETURNING id""",
+               WHERE id=%s AND project_id=%s AND status IN ('pending','running')
+               RETURNING id""",
             (stored, size, export_id, pid),
         ).fetchone()
         if published is None:
-            raise ValueError("Export record does not belong to this project")
+            raise ValueError("Export record does not belong to this project's pending history")
         expired = conn.execute(
-            """SELECT id,path,format FROM exports
-               WHERE project_id=%s AND status='done' AND path IS NOT NULL
-               ORDER BY COALESCE(completed_at,created_at) DESC,id DESC OFFSET %s""",
+            """UPDATE exports SET status='deleting' WHERE id IN (
+                   SELECT id FROM exports
+                   WHERE project_id=%s AND status='done' AND path IS NOT NULL
+                   ORDER BY COALESCE(completed_at,created_at) DESC,id DESC OFFSET %s
+               ) RETURNING id""",
             (pid, EXPORT_LIMIT),
+        ).fetchone()
+    if expired:
+        _try_cleanup(pool, pid, data_dir, blocking=True)
+
+
+def recover_export_cleanup(pool: ConnectionPool, data_dir: str) -> None:
+    """Find committed retirements even when the publishing worker has stopped."""
+    with pool.connection() as conn:
+        projects = conn.execute(
+            "SELECT DISTINCT project_id FROM exports WHERE status='deleting'"
         ).fetchall()
-        for old_id, _old_path, _fmt in expired:
-            conn.execute("DELETE FROM exports WHERE id=%s AND project_id=%s", (old_id, pid))
-    _remove_expired_files(pool, pid, expired, data_dir)
+    for (pid,) in projects:
+        _try_cleanup(pool, pid, data_dir, blocking=False)
 
 
-def _remove_expired_files(
-    pool: ConnectionPool, pid: str, expired: list[tuple[int, str, str]], data_dir: str
-) -> None:
-    """Delete files for history rows that the committed transaction removed."""
-    if not expired:
-        return
-    # Blocking session lock: the rows are already gone, so skipping cleanup here
-    # would leak the files permanently; waiting is preferable to orphans.
-    with export_history_session_lock(pool, pid, blocking=True):
+def _try_cleanup(pool: ConnectionPool, pid: str, data_dir: str, *, blocking: bool) -> None:
+    try:
+        _remove_expired_files(pool, pid, data_dir, blocking=blocking)
+    except BlockingIOError:
+        # Another operation owns this project's history; maintenance will retry.
+        pass
+    except Exception:
+        log.warning("Could not reclaim retired exports for project %s", pid, exc_info=True)
+
+
+def _remove_expired_files(pool: ConnectionPool, pid: str, data_dir: str, *, blocking: bool) -> None:
+    with export_history_session_lock(pool, pid, blocking=blocking) as conn:
+        expired = conn.execute(
+            "SELECT id,path,format FROM exports WHERE project_id=%s AND status='deleting'",
+            (pid,),
+        ).fetchall()
+        conn.commit()
+        removed = []
         for old_id, old_path, fmt in expired:
-            old_file = export_path(data_dir, pid, old_path)
-            if old_file is None:
-                log.warning("Refusing to remove export %s outside its owned directory", old_id)
-                continue
             try:
+                old_file = export_path(data_dir, pid, old_path)
+                if old_file is None:
+                    raise OSError("Export resolves outside its owned directory")
                 if fmt == "html":
                     assets = old_file.with_name(f"{old_file.stem}.assets")
+                    if export_path(data_dir, pid, str(assets)) is None:
+                        raise OSError("Export assets resolve outside their owned directory")
                     if Path(to_io_path(assets)).exists():
-                        if export_path(data_dir, pid, str(assets)) is None:
-                            raise OSError("Export assets resolve outside their owned directory")
                         shutil.rmtree(to_io_path(assets))
                 Path(to_io_path(old_file)).unlink(missing_ok=True)
-            except OSError:
-                # The history row is already gone; keep the orphan visible in logs.
+            except (OSError, RuntimeError):
                 log.warning("Could not remove expired export %s", old_id, exc_info=True)
-                continue
+            else:
+                removed.append(old_id)
+        if removed:
+            # Missing files are fine on retry after an interruption or a failed commit.
+            conn.execute(
+                "DELETE FROM exports WHERE project_id=%s AND id=ANY(%s) AND status='deleting'",
+                (pid, removed),
+            )
+            conn.commit()
 
 
 def open_export(

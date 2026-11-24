@@ -7,8 +7,9 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 from wenyi_desktop import catalog, paths
+from wenyi_desktop.diagnostics import StartupFailure, StartupFailureCode
 from wenyi_desktop.local_backend import LocalBackend
-from wenyi_desktop.main import create_app, create_context, legacy_data_report
+from wenyi_desktop.main import LEGACY_IMPORT_STEPS, create_app, create_context, legacy_data_report
 
 
 def _populate_legacy_catalog(root: Path) -> None:
@@ -21,27 +22,20 @@ def _populate_legacy_catalog(root: Path) -> None:
         connection.close()
 
 
-def _failure_payload(stdout: str) -> dict:
-    assert stdout.startswith("WENYI_FAILED ")
-    return json.loads(stdout.removeprefix("WENYI_FAILED ").strip())
-
-
 def test_legacy_catalog_refusal_carries_import_guidance(tmp_path, capsys):
     root = tmp_path / "data"
     root.mkdir()
     _populate_legacy_catalog(root)
     before = (root / "catalog.sqlite3").read_bytes()
 
-    with pytest.raises(RuntimeError, match="current-format Desktop catalog"):
+    with pytest.raises(StartupFailure) as caught:
         create_context(root)
 
-    payload = _failure_payload(capsys.readouterr().out)
-    assert payload["reason"] == "migration"
-    assert payload["restored"] is False
-    assert payload["legacy_data"] is True
-    assert any("Import project" in step for step in payload["guidance"])
-    assert any("project.json" in step for step in payload["guidance"])
-    assert "does not migrate" in payload["guidance"][0]
+    assert caught.value.code == StartupFailureCode.LEGACY_CATALOG
+    assert capsys.readouterr().out == ""
+    guidance = " ".join(LEGACY_IMPORT_STEPS)
+    assert "Import project" in guidance and "project.json" in guidance
+    assert "does not migrate" in guidance and "import a copy" in guidance
     assert (root / "catalog.sqlite3").read_bytes() == before
 
 
@@ -56,9 +50,7 @@ def test_other_failures_keep_the_original_payload(tmp_path, capsys, monkeypatch)
     with pytest.raises(RuntimeError, match="unrelated boom"):
         create_context(root)
 
-    payload = _failure_payload(capsys.readouterr().out)
-    assert "legacy_data" not in payload
-    assert "guidance" not in payload
+    assert capsys.readouterr().out == ""
 
 
 def test_old_format_folders_are_reported_and_left_untouched(tmp_path, capsys):

@@ -80,6 +80,62 @@ def test_rebuild_is_transactional_idempotent_and_safe_across_starting_workers(
     assert list(tmp_path.iterdir()) == []
 
 
+def test_startup_preserves_explicit_primary_when_inherited_route_fields_conflict(
+    pg_pool, saved_settings, tmp_path
+):
+    pid, _, _ = saved_settings
+    operation = "translation.body"
+    primary = "fake/custom"
+    fallbacks = ["fake/first", primary, "fake/last"]
+    global_config = {
+        "llm": {
+            "preset": "deepseek",
+            "providers": {"fake": {"kind": "fake"}},
+            "models": {ref: {} for ref in fallbacks},
+            "routes": {
+                operation: {
+                    "model": "deepseek/deepseek-flash",
+                    "thinking": "max",
+                    "fallbacks": fallbacks,
+                }
+            },
+        }
+    }
+    original = {"llm": {"routes": {operation: {"model": primary}}}}
+    with pg_pool.connection() as connection:
+        connection.execute(
+            "UPDATE application_settings SET document=%s WHERE id=1", (Jsonb(global_config),)
+        )
+        connection.execute("UPDATE projects SET config=%s WHERE id=%s", (Jsonb(original), pid))
+
+    for _ in range(2):
+        rebuild_saved_settings(pg_pool, str(tmp_path / "unused.yaml"))
+
+    with pg_pool.connection() as connection:
+        saved_config = connection.execute(
+            "SELECT config FROM projects WHERE id=%s", (pid,)
+        ).fetchone()[0]
+        assert saved_config == {
+            "llm": {
+                "routes": {
+                    operation: {
+                        "model": primary,
+                        "thinking": None,
+                        "fallbacks": ["fake/first", "fake/last"],
+                    }
+                }
+            }
+        }
+        assert connection.execute(
+            "SELECT document,removed FROM configuration_backups WHERE project_id=%s", (pid,)
+        ).fetchall() == [
+            (
+                {"config": original, "strategy": None},
+                [f"llm.routes.{operation}.fallbacks", f"llm.routes.{operation}.thinking"],
+            )
+        ]
+
+
 @pytest.mark.parametrize("failure", ["backup", "replacement"])
 @pytest.mark.parametrize("scope", ["global", "project"])
 def test_backup_and_replacement_failures_roll_back_original_settings(

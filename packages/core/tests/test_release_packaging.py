@@ -6,13 +6,18 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import zipfile
+from email.parser import BytesParser
 from pathlib import Path
 
 import pytest
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 pytestmark = pytest.mark.packaging
 
@@ -114,6 +119,53 @@ def test_release_tag_prerelease_policy(versions, repository, tag):
     else:
         with pytest.raises(ValueError, match="development/local"):
             versions.resolve(repository, tag)
+
+
+@pytest.mark.parametrize("tag", ["v1.2.3", "v1.2.4rc1", None])
+def test_cli_distributions_require_the_matching_core(versions, repository, tmp_path_factory, tag):
+    cli = repository / "packages/cli"
+    cli.mkdir(parents=True)
+    source = ROOT / "packages/cli"
+    for name in ("pyproject.toml", "hatch_build.py", "README.md", "LICENSE"):
+        shutil.copyfile(source / name, cli / name)
+    package = cli / "wenyi_cli"
+    package.mkdir()
+    (package / "__init__.py").touch()
+    git(repository, "add", "packages")
+    git(repository, "-c", "core.hooksPath=/dev/null", "commit", "-m", "Add CLI package")
+    if tag:
+        git(repository, "tag", "-f", tag)
+    expected = versions.resolve(repository, tag or "")["python"]
+
+    def build(directory, output, *args):
+        subprocess.run(
+            [sys.executable, "-I", "-m", "hatchling", "build", "-d", str(output), *args],
+            cwd=directory,
+            check=True,
+        )
+
+    def verify(metadata):
+        headers = BytesParser().parsebytes(metadata, headersonly=True)
+        assert Version(headers["Version"]) == Version(expected)
+        requirements = [Requirement(value) for value in headers.get_all("Requires-Dist", [])]
+        core = [req for req in requirements if req.name == "wenyi-core"]
+        assert core == [Requirement(f"wenyi-core=={expected}")]
+
+    dist = repository / "dist"
+    build(cli, dist)
+    (sdist,) = dist.glob("*.tar.gz")
+    extracted = tmp_path_factory.mktemp("cli-sdist")
+    with tarfile.open(sdist) as archive:
+        archive.extractall(extracted, filter="data")
+    (unpacked,) = extracted.iterdir()
+    verify((unpacked / "PKG-INFO").read_bytes())
+    rebuilt = extracted / "rebuilt"
+    build(unpacked, rebuilt, "-t", "wheel")
+    for output in (dist, rebuilt):
+        (wheel,) = output.glob("*.whl")
+        with zipfile.ZipFile(wheel) as archive:
+            (metadata,) = (name for name in archive.namelist() if name.endswith("/METADATA"))
+            verify(archive.read(metadata))
 
 
 def test_desktop_bundle_includes_native_icons_for_every_platform():
@@ -348,15 +400,22 @@ def test_sidecar_smoke_test_uses_a_private_user_profile(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_DATA_HOME", str(real / "data"))
     launches = []
 
-    def launch(executable, workspace, env, **kwargs):
+    def launch(executable, workspace, env, *, failed_stage=None, failure_code=None):
         profile = Path(env["HOME"])
         assert profile.is_dir() and workspace.parent == profile.parent
-        launches.append(env)
+        launches.append((env, failed_stage, failure_code))
 
     monkeypatch.setattr(sidecar, "smoke_launch", launch)
-    sidecar.smoke_test(tmp_path / "wenyi-engine")
-    assert len(launches) == 2
-    for env in launches:
+    expected = "1.2.3rc1.dev4+g123"
+    sidecar.smoke_test(tmp_path / "wenyi-engine", expected)
+    assert [
+        (env["WENYI_DESKTOP_ENGINE_VERSION"], stage, code) for env, stage, code in launches
+    ] == [
+        (expected, None, None),
+        (expected, "runtime", None),
+        (f"{expected}.otherbuild", "application", "version_mismatch"),
+    ]
+    for env, _, _ in launches:
         # The engine resolves the shared catalog from these, so none may name the real one.
         assert env["HOME"] == env["USERPROFILE"] != str(real)
         assert "XDG_DATA_HOME" not in env
@@ -678,6 +737,9 @@ def test_pypi_workflow_only_publishes_verified_release_artifacts():
     assert "check_wheel_resources.py dist/pypi" in commands
     assert "core_native_notices.py --check" in commands
     assert "for extension in whl tar.gz" in commands
+    assert "uv export --locked --package wenyi-cli --no-dev --no-emit-workspace" in commands
+    assert 'uv pip install --python "$environment/bin/python" --offline --no-index' in commands
+    assert ' "$distributions"/wenyi_cli-*."$extension"' in commands
     assert "uv pip check" in commands
     assert "version(package)" in commands
     assert '"$environment/bin/python" -I scripts/release/smoke_document_formats.py' in commands

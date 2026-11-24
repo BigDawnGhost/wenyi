@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Protocol, runtime_checkable
 
 from arq.jobs import Job, JobStatus
@@ -9,6 +10,7 @@ from wenyi_backend.context import BackendStorage, current_context
 
 from .. import dal
 from ..db import get_pool
+from ..export_retention import recover_export_cleanup
 
 _REMOTE_ACTIVE = {JobStatus.queued, JobStatus.deferred, JobStatus.in_progress}
 
@@ -82,3 +84,4 @@ async def recover_jobs(ctx: dict) -> None:
             continue
         finally:
             storage.close()
+    await asyncio.to_thread(recover_export_cleanup, get_pool(), current_context().data_dir)

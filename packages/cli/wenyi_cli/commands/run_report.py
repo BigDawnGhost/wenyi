@@ -6,6 +6,7 @@ import json
 import os
 from typing import Any
 
+from wenyi_core.storage.io_path import to_io_path
 from wenyi_core.timing import load_timing
 
 
@@ -16,6 +17,7 @@ def _read_events(path: str) -> list[dict[str, Any]]:
     multi-byte character in half; strict text-mode decoding would then raise before any
     record is read (audit Z-2/H-2). Read bytes and drop undecodable lines instead.
     """
+    path = to_io_path(path)
     if not os.path.isfile(path):
         return []
     events: list[dict[str, Any]] = []
@@ -80,7 +82,7 @@ def build_report(store) -> dict[str, Any]:
     retries = [event for event in events if str(event.get("event", "")).startswith("llm_retry")]
     exhausted = [event for event in events if event.get("event") == "llm_retry_exhausted"]
     paused = [event for event in events if event.get("event") == "task_paused"]
-    timing = load_timing(store.run_dir)
+    timing = load_timing(to_io_path(store.run_dir))
     usage = store.load_usage()
 
     last_failure = exhausted[-1] if exhausted else (failures[-1] if failures else None)

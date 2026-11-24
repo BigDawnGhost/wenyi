@@ -142,7 +142,7 @@ Presets do not query the remote service for capabilities.
 | `llm.models.<connection/model>.max_output_tokens` | Unset; positive integer if supplied. |
 | `llm.models.<connection/model>.options` | `{}`; adapter-specific fields below. |
 | `llm.routes.<operation>.model` | Registered `connection/model` for this operation. |
-| `llm.routes.<operation>.thinking` | Omit or set to `null` to use the registered model's settings. Otherwise set an effort supported by the selected provider configuration. |
+| `llm.routes.<operation>.thinking` | A supported effort, or `null` to use the registered model's own settings. |
 | `llm.routes.<operation>.fallbacks` | `[]`; ordered `connection/model` values, subject to failover restrictions below. |
 | `llm.quotas` | `{}`; optional named quota groups. |
 | `llm.budget` | No limits unless supplied. |
@@ -156,7 +156,10 @@ Project YAML overrides `llm.routes` and `llm.budget` **field by field**. Omitted
 inherit the global value, even when the project sets a different primary model for
 the same operation. Lists replace rather than append: use `fallbacks: []` to clear
 inherited backup models. Use `thinking: null` to clear an inherited operation-level
-thinking override and use the selected model's own settings.
+thinking override and use the selected model's own settings. Changing the primary
+in the project form explicitly clears an incompatible thinking override and removes
+the new primary from the fallback list. Saving project YAML stores the resolved route
+and budget values; omitted fields inherit at validation/save time.
 
 Thinking overrides affect only the operation's primary model. The same registered model can use different efforts across operations, for example `translation.body: {model: deepseek/deepseek-flash, thinking: high}` and `language.detect: {model: deepseek/deepseek-flash, thinking: "off"}`. DeepSeek offers `off`, `low`, `high`, and `max`; other adapters provide their own choices, and the endpoint ultimately determines which values its model accepts. Gemini 3 overrides replace the model's thinking budget with a level for that operation. If raw request overrides already set thinking fields, use those settings instead of a stage override. Fallbacks use their own registered settings.
 
@@ -546,6 +549,13 @@ schema:
 Web/Desktop also back up and reset unsupported default workflow templates and
 invalid saved project workflow selections. Valid explicit project settings are
 kept; the reset does not recreate an obsolete workflow's behavior.
+
+When an older sparse project route names a valid primary model, Web/Desktop startup
+keeps that choice. It saves `thinking: null` if the inherited effort is incompatible.
+If the inherited fallback list includes the primary, it saves the remaining list in
+the original order (or `[]` if empty). These repairs become explicit project overrides;
+compatible omitted fields remain inherited. New YAML submissions with conflicts
+are rejected rather than repaired.
 
 CLI backups are exact copies beside the selected file, named
 `<filename>.backup-<sha256>.yaml`; comments remain in the backup, while rebuilt

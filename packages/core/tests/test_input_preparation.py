@@ -12,6 +12,7 @@ from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.pipeline import input_preparation
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.run_store import translation_run_dir
 
 from tests.fake_llm import routing_handler
 
@@ -164,9 +165,7 @@ def test_filename_location_matches_parser(tmp_path, extension):
     with patch.object(input_preparation, "load_document", side_effect=AssertionError("parsed")):
         store, _ = input_preparation.locate_input_storage(str(source), config, FileStorage)
     assert parsed.title == source.stem
-    assert store.run_dir == input_preparation.translation_run_dir(
-        config.state_dir, parsed.title, config.target_lang
-    )
+    assert store.run_dir == translation_run_dir(config.state_dir, parsed.title, config.target_lang)
 
 
 def test_unknown_format_location_rejected(tmp_path):
@@ -206,9 +205,7 @@ def test_local_title_location_does_not_parse_twice(tmp_path):
             )
     load.assert_called_once()
     assert parsed.title == source.stem
-    assert store.run_dir == input_preparation.translation_run_dir(
-        config.state_dir, parsed.title, config.target_lang
-    )
+    assert store.run_dir == translation_run_dir(config.state_dir, parsed.title, config.target_lang)
 
 
 def test_parse_cache_and_settings_invalidation(tmp_path):

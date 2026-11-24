@@ -6,7 +6,11 @@ use std::{
 use serde::{Deserialize, Serialize};
 use tauri::{webview::PlatformWebview, Manager, WebviewWindow};
 
-use crate::{ipc_error::{codes, IpcError}, mutex::lock, native_preferences, trusted};
+use crate::{
+    ipc_error::{codes, IpcError},
+    mutex::lock,
+    native_preferences, trusted,
+};
 
 const FILE: &str = "interface-zoom.json";
 const DEFAULT: u8 = 100;
@@ -71,8 +75,9 @@ impl InterfaceZoom {
         }
         let previous = access(None)?;
         let result = set_confirmed(percent, |factor| access(Some(factor))).and_then(|()| {
-            native_preferences::save(&self.root, FILE, &Document { percent })
-                .map_err(|_| IpcError::new(codes::ZOOM_SAVE_FAILED, "Could not save interface zoom."))
+            native_preferences::save(&self.root, FILE, &Document { percent }).map_err(|_| {
+                IpcError::new(codes::ZOOM_SAVE_FAILED, "Could not save interface zoom.")
+            })
         });
         if let Err(error) = result {
             let _ = access(Some(previous));
@@ -83,7 +88,10 @@ impl InterfaceZoom {
 }
 
 fn zoom_error() -> IpcError {
-    IpcError::new(codes::ZOOM_APPLY_FAILED, "Could not confirm interface zoom.")
+    IpcError::new(
+        codes::ZOOM_APPLY_FAILED,
+        "Could not confirm interface zoom.",
+    )
 }
 
 fn preset_for(factor: f64) -> Option<u8> {

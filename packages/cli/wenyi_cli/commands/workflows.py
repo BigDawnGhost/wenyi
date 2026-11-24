@@ -10,6 +10,7 @@ import typer
 from rich.progress import Progress
 from wenyi_core.config import PipelineConfig
 from wenyi_core.errors import WenyiError
+from wenyi_core.events import ProgressPayload
 from wenyi_core.timing import load_timing
 
 from wenyi_cli.commands import presentation
@@ -219,7 +220,9 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
         ):
             rich_progress = progress_view.RichProgressBridge(prog, "Preparing…")
 
-            def cb(done: int, total: int, label: str, payload: dict | None = None) -> None:
+            def cb(
+                done: int, total: int, label: str, payload: ProgressPayload | None = None
+            ) -> None:
                 rich_progress(done, total, label)
                 machine(done, total, label, payload)
 

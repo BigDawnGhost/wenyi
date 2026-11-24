@@ -20,6 +20,7 @@ from typing import (
     ContextManager,
     Literal,
     Protocol,
+    TypeVar,
     runtime_checkable,
 )
 
@@ -83,14 +84,26 @@ class SettingsStore(Protocol):
     def project_configs(self, connection: Any) -> list[tuple[str, dict]]: ...
 
 
+@dataclass(frozen=True)
+class ExportAdmission:
+    export_id: int
+    job_id: int
+    run_id: str
+    created: bool
+
+
 class ExportStore(Protocol):
     def list_exports(self, pid: str) -> list[dict]: ...
     def admit_export(
-        self, pid: str, fmt: str, options: dict, run_id: str, snapshot: dict
-    ) -> tuple[int, int]: ...
+        self, pid: str, fmt: str, options: dict, run_id: str, snapshot: dict, *, source: dict
+    ) -> ExportAdmission: ...
     def fail_export_admission(self, job_id: int, error: str) -> Any: ...
     def open_export(self, pid: str, export_id: int) -> tuple[BinaryIO, Path]: ...
-    def publish_export(self, pid: str, export_id: int, output: str) -> None: ...
+    def publish_export(
+        self, pid: str, export_id: int, output: str, *, job_id: int | None = None
+    ) -> None:
+        """Publish the export and complete its job in one catalog transaction."""
+        ...
 
 
 class SourcePaths(Protocol):
@@ -108,10 +121,13 @@ class Telemetry(Protocol):
     async def relay(self, websocket: WebSocket, pid: str) -> None: ...
 
 
+_WorkflowResult = TypeVar("_WorkflowResult")
+
+
 class WorkflowDispatcher(Protocol):
     """Run a synchronous workflow with its context, retaining ownership until it exits."""
 
-    async def __call__(self, operation: Callable[[], None], /) -> None: ...
+    async def __call__(self, operation: Callable[[], _WorkflowResult], /) -> _WorkflowResult: ...
 
 
 @dataclass(frozen=True)

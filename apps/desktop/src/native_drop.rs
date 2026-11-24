@@ -298,7 +298,10 @@ fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<
         ));
     }
     serde_json::from_slice(&bytes).map_err(|_| {
-        crate::ipc_error::IpcError::new(codes::DROP_RESPONSE_INVALID, "Invalid local upload response.")
+        crate::ipc_error::IpcError::new(
+            codes::DROP_RESPONSE_INVALID,
+            "Invalid local upload response.",
+        )
     })
 }
 

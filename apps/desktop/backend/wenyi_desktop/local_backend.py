@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any, BinaryIO, Iterator
 
 from fastapi import HTTPException
 from wenyi_backend.config_rebuild import load_bootstrap_defaults
+from wenyi_backend.context import ExportAdmission
 from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_core.config import Config
 from wenyi_core.errors import SchemaTooNew
@@ -972,8 +973,8 @@ class LocalBackend:
             return True
 
     def admit_export(
-        self, pid: str, fmt: str, options: dict, run_id: str, snapshot: dict
-    ) -> tuple[int, int]:
+        self, pid: str, fmt: str, options: dict, run_id: str, snapshot: dict, *, source: dict
+    ) -> ExportAdmission:
         with self.transaction() as connection:
             self._reject_removing(pid)
             if self._get("projects", pid, connection) is None:
@@ -984,11 +985,11 @@ class LocalBackend:
                 "export",
                 run_id,
                 run_id=run_id,
-                params={"export_id": export_id},
+                params={"export_id": export_id, "export_source": source},
                 config_snapshot=snapshot,
                 connection=connection,
             )
-            return export_id, job_id
+            return ExportAdmission(export_id, job_id, run_id, created=True)
 
     def fail_export_admission(self, job_id: int, error: str) -> bool:
         with self.transaction() as connection:
@@ -1231,8 +1232,10 @@ class LocalBackend:
         storage = SqliteStorage(str(self.project_dir(pid)), create=False)
         return storage.export_history_lock()
 
-    def publish_export(self, pid: str, export_id: int, output: str) -> None:
-        from wenyi_backend.export_paths import EXPORT_LIMIT, export_path
+    def publish_export(
+        self, pid: str, export_id: int, output: str, *, job_id: int | None = None
+    ) -> None:
+        from wenyi_backend.export_paths import EXPORT_LIMIT, export_path, log
 
         root, name = self._export_location(pid)
         with self._export_history_lock(pid):
@@ -1245,6 +1248,18 @@ class LocalBackend:
                 export = self._get("exports", export_id, conn)
                 if export is None or export["project_id"] != pid or export["status"] == "deleting":
                     raise ValueError("Export record does not belong to this project's live history")
+                if job_id is not None:
+                    job = self._get("jobs", job_id, conn)
+                    if (
+                        job is None
+                        or job["project_id"] != pid
+                        or job["kind"] != "export"
+                        or job["status"] != "running"
+                        or job["params"].get("export_id") != export_id
+                    ):
+                        raise ValueError("Export job is not running or does not own this export")
+                    job.update(status="done", error=None, updated_at=_now())
+                    self._put("jobs", job_id, job, conn)
                 export.update(
                     status="done",
                     path=file.relative_to(root).as_posix(),
@@ -1265,7 +1280,10 @@ class LocalBackend:
                 for old in completed[EXPORT_LIMIT:]:
                     old["status"] = "deleting"
                     self._put("exports", old["id"], old, conn)
-            self._cleanup_exports(pid)
+            try:
+                self._cleanup_exports(pid)
+            except Exception:
+                log.warning("Could not reclaim retired exports for project %s", pid, exc_info=True)
 
     def recover_export_cleanup(self, pid: str) -> None:
         """Retry committed tombstones after an interrupted or failed file cleanup."""

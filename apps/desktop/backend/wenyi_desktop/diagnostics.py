@@ -19,6 +19,7 @@ import threading
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
+from enum import Enum
 from typing import Any, TextIO
 from uuid import uuid4
 
@@ -98,6 +99,9 @@ REASONS = frozenset(
         "forced",
         "wait_failed",
         "migration_failed",
+        "version_mismatch",
+        "legacy_catalog",
+        "upgrade_recovery_required",
     }
 )
 # Match known base classes, never serialize a user-defined exception class name.
@@ -236,6 +240,20 @@ def failure_attributes(error: BaseException) -> dict:
     return result
 
 
+class StartupFailureCode(str, Enum):
+    VERSION_MISMATCH = "version_mismatch"
+    LEGACY_CATALOG = "legacy_catalog"
+    UPGRADE_RECOVERY_REQUIRED = "upgrade_recovery_required"
+
+
+class StartupFailure(RuntimeError):
+    """A classification for the native owner, with no display text or private values."""
+
+    def __init__(self, code: StartupFailureCode):
+        super().__init__(code.value)
+        self.code = code
+
+
 class EngineDiagnostics:
     """One launch's first failure, captured before ASGI or cleanup can replace it."""
 
@@ -243,6 +261,7 @@ class EngineDiagnostics:
         self.reporter = reporter
         self.ready = False
         self.failed = False
+        self.startup_failure: StartupFailureCode | None = None
         self.exit_code = 0
 
     @contextmanager
@@ -258,9 +277,17 @@ class EngineDiagnostics:
                     self.exit_code = 0
                 elif type(error.code) is int:
                     self.exit_code = error.code
+            elif (
+                isinstance(error, StartupFailure)
+                and error.code is StartupFailureCode.VERSION_MISMATCH
+            ):
+                self.exit_code = 2
             if not self.failed:
                 self.failed = True
                 fields = failure_attributes(error)
+                if not self.ready and isinstance(error, StartupFailure):
+                    self.startup_failure = error.code
+                    fields["reason"] = error.code.value
                 # A lock wrapper often carries the actionable OS error as its cause.
                 cause = error.__cause__
                 if cause is not None:
@@ -366,7 +393,7 @@ class Reporter:
                 self.queue.task_done()
 
     def protocol(self, value: str) -> None:
-        """Serialize readiness with diagnostics so concurrent writes cannot interleave."""
+        """Serialize control frames with diagnostics so concurrent writes cannot interleave."""
         self.queue.put(value, timeout=2)
 
     def close(self) -> None:
@@ -376,6 +403,19 @@ class Reporter:
         except queue.Full:
             return
         self.writer.join(timeout=2)
+
+
+def write_protocol(stream: TextIO, reporter: Reporter | None, frame: str) -> bool:
+    """Send on the saved stdout, with at most one writer for each pipe."""
+    try:
+        if reporter is None:
+            stream.write(frame)
+            stream.flush()
+        else:
+            reporter.protocol(frame)
+    except (OSError, ValueError, queue.Full):
+        return False
+    return True
 
 
 @contextmanager

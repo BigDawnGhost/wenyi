@@ -25,6 +25,7 @@ on:
       - packages/core/rust/**
       - packages/cli/LICENSE
       - packages/cli/pyproject.toml
+      - packages/cli/hatch_build.py
       - packages/cli/README.md
       - packages/core/tests/test_release_packaging.py
       - packages/core/tests/test_distribution_licenses.py
@@ -88,7 +89,27 @@ jobs:
           uv build --no-sources --package wenyi-cli --out-dir dist/pypi
           uvx --from twine twine check --strict dist/pypi/*
           uv run --no-sync python scripts/release/check_wheel_resources.py dist/pypi
-      - name: Smoke test wheels and source distributions
+      - name: Prepare the local smoke-test wheelhouse
+        run: |
+          wheelhouse="$RUNNER_TEMP/pypi-smoke-wheelhouse"
+          requirements="$RUNNER_TEMP/pypi-smoke-requirements.txt"
+          uv export --locked --package wenyi-cli --no-dev --no-emit-workspace \
+            --no-hashes --quiet --output-file "$requirements"
+          python -m pip download --only-binary=:all: --dest "$wheelhouse" \
+            --requirement "$requirements" 'hatchling>=1.27' hatch-vcs
+
+          # Model the incompatible published 1.7.2 candidate without fetching it.
+          fixture="$RUNNER_TEMP/old-core"
+          mkdir -p "$fixture/wenyi_core"
+          touch "$fixture/wenyi_core/__init__.py"
+          cat > "$fixture/pyproject.toml" <<'TOML'
+          [project]
+          name = "wenyi-core"
+          version = "1.7.2"
+          TOML
+          hatch_python="$PWD/.venv/bin/python"
+          (cd "$fixture" && "$hatch_python" -I -m hatchling build -t wheel -d "$wheelhouse")
+      - name: Smoke test CLI-only installations from wheels and source distributions
         env:
           EXPECTED_VERSION: ${{ steps.version.outputs.python }}
           NO_COLOR: "1"
@@ -96,25 +117,24 @@ jobs:
         run: |
           set -eu
           distributions="$PWD/dist/pypi"
+          wheelhouse="$RUNNER_TEMP/pypi-smoke-wheelhouse"
           for extension in whl tar.gz; do
             environment="$RUNNER_TEMP/wenyi-pypi-$extension"
+            core_candidates="$RUNNER_TEMP/wenyi-core-$extension"
+            mkdir "$core_candidates"
+            cp "$distributions"/wenyi_core-*."$extension" "$core_candidates/"
             uv venv "$environment" --python 3.12
-            uv pip install --python "$environment/bin/python" "$distributions"/*."$extension"
+            # Prefer the old fixture if the CLI ever stops requiring its paired Core.
+            uv pip install --python "$environment/bin/python" --offline --no-index \
+              --resolution lowest --prerelease-package wenyi-core=allow \
+              --find-links "$wheelhouse" --find-links "$core_candidates" \
+              "$distributions"/wenyi_cli-*."$extension"
             uv pip check --python "$environment/bin/python"
             "$environment/bin/python" -I - <<'PY'
           import importlib.util
           import os
           from importlib.metadata import version
 
-          from wenyi_core.markup._epub_native import (
-              append_about, export, generate, html_present, ingest, parse_docx,
-              pdf_write_spreads, render_html_bodies, write_docx,
-          )
-          if not all(callable(operation) for operation in (
-              append_about, export, generate, html_present, ingest, parse_docx,
-              pdf_write_spreads, render_html_bodies, write_docx,
-          )):
-              raise SystemExit("Native document engine unavailable")
           for package in ("wenyi-core", "wenyi-cli"):
               actual = version(package)
               if actual != os.environ["EXPECTED_VERSION"]:
@@ -122,11 +142,27 @@ jobs:
           for module in ("babeldoc", "wenyi_babeldoc_bridge", "wenyi_api", "wenyi_desktop", "docx"):
               if importlib.util.find_spec(module) is not None:
                   raise SystemExit(f"Unexpected CLI dependency: {module}")
+
+          from wenyi_core.i18n.resources import read_text
+          from wenyi_core.markup._epub_native import (
+              append_about, export, generate, html_present, ingest, parse_docx,
+              pdf_write_spreads, render_html_bodies, write_docx,
+          )
+
+          if not read_text("tasks/translator_system.txt").strip():
+              raise SystemExit("Core translation prompt unavailable")
+          if not all(callable(operation) for operation in (
+              append_about, export, generate, html_present, ingest, parse_docx,
+              pdf_write_spreads, render_html_bodies, write_docx,
+          )):
+              raise SystemExit("Native document engine unavailable")
           PY
             "$environment/bin/python" -I scripts/release/smoke_document_formats.py
             (
               cd "$RUNNER_TEMP"
-              "$environment/bin/wenyi" --version
+              actual_version=$("$environment/bin/wenyi" --version)
+              printf 'wenyi %s\n' "$actual_version"
+              test "$actual_version" = "$EXPECTED_VERSION"
               "$environment/bin/wenyi" --help
               "$environment/bin/wenyi" translate --help
               "$environment/bin/wenyi" languages

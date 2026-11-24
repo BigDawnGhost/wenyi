@@ -144,10 +144,15 @@ Backup locations and user-visible fallback behavior are documented in the
 ## Execution and publication
 
 The workflow runner owns durable job rechecks, cancellation and resource cleanup. Its
-run lock covers recovery and domain work; successful catalog status writes follow the
-live-statistics scope and run-lock exit. Async cancellation drains synchronous checkpoint
-writes before releasing the scheduler slot. Export coordination holds one export lock
-through claim, render, publication and terminal status; rendering never publishes.
+run lock covers recovery and domain work. The synchronous writer returns only after
+checkpoint writes, live statistics and storage cleanup; then the runner rechecks run
+identity and publishes the catalog outcome. See the [shared cancellation contract](web.md#workflow-cancellation)
+for how cancellation retains scheduler ownership.
+
+Export coordination holds one export lock through claim, render and publication; rendering
+never publishes. The catalog commits the published artifact and its job's successful
+status together. Retired history is hidden at that commit; reclaiming its files afterward
+cannot change publication status.
 
 Pause admission checks the latest non-export run and active status in one catalog
 transaction. Source replacement commits preview-cache invalidation before publishing
@@ -216,6 +221,13 @@ EPUB reader and writer. The manifest binds the original PDF hash and the derived
 EPUB hash; `fmt` remains `pdf` for the project and its previews. Template-aware
 operations use the derived EPUB, not the uploaded file. Exports never request
 another conversion from MinerU.
+
+Core reports MinerU failures using local categories and controlled fields, such
+as the request stage, HTTP status, retry count, or missing field name. Never
+copy service messages, response excerpts, batch IDs, or signed URLs into
+exceptions or logs: task history and live progress reuse the error message.
+HTTP client traces are suppressed only during MinerU requests. Local guidance,
+such as adding an OCR text layer to an image-only PDF, remains visible.
 
 To inspect an existing MinerU result bundle, use the same renderer offline:
 

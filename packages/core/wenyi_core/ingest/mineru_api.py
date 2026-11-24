@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-import json
+import logging
 import tempfile
 import time
-from contextlib import closing
+from contextlib import closing, contextmanager
+from contextvars import ContextVar
 from pathlib import Path
+from typing import Literal
 
 import httpx
 from pypdf import PdfReader, PdfWriter
@@ -25,40 +27,84 @@ _TRANSIENT_ATTEMPTS = 3
 _RETRY_BACKOFF_SECONDS = 1.0
 _sleep = time.sleep
 
+_Operation = Literal["batch creation", "upload", "polling", "download"]
+_private_request = ContextVar("mineru_private_request", default=False)
+
+
+def _non_mineru_log(_record: logging.LogRecord) -> bool:
+    return not _private_request.get()
+
+
+# HTTPX logs full URLs, and httpcore's traces include response headers and
+# exceptions. Logger filters are not inherited, so filter their emitting loggers.
+for _logger_name in (
+    "httpx",
+    "httpcore.connection",
+    "httpcore.http11",
+    "httpcore.http2",
+    "httpcore.proxy",
+    "httpcore.socks",
+):
+    logging.getLogger(_logger_name).addFilter(_non_mineru_log)
+
+
+@contextmanager
+def _private_http():
+    scope = _private_request.set(True)
+    try:
+        yield
+    finally:
+        _private_request.reset(scope)
+
 
 def _request_with_retry(
     client: httpx.Client | None,
     method: str,
     url: str,
     *,
+    operation: _Operation,
     timeout: httpx.Timeout | None = None,
     **kwargs,
 ) -> httpx.Response:
-    """Send one request with bounded retries for transient transport and 5xx/429 failures.
+    """Return a successful response, or report the stage and a safe failure reason.
 
-    Non-transient 4xx responses return immediately so ``raise_for_status`` handling at the
-    call site keeps its meaning. ``client=None`` uses the module-level httpx request path
-    (pre-signed OSS uploads carry their own host, not the API base URL).
+    ``client=None`` keeps API authorization out of pre-signed object requests.
     """
     sender = client.request if client is not None else httpx.request
-    request_kwargs: dict = dict(kwargs)
     if timeout is not None:
-        request_kwargs["timeout"] = timeout
-    last_error: Exception | None = None
-    for attempt in range(_TRANSIENT_ATTEMPTS):
+        kwargs["timeout"] = timeout
+    for attempt in range(1, _TRANSIENT_ATTEMPTS + 1):
+        retry = False
         try:
-            resp = sender(method, url, **request_kwargs)
-        except httpx.TransportError as error:
-            last_error = error
+            with _private_http():
+                response = sender(method, url, **kwargs)
+        except (httpx.InvalidURL, httpx.LocalProtocolError, httpx.UnsupportedProtocol):
+            reason = "invalid HTTP request"
+        except httpx.TooManyRedirects:
+            reason = "too many redirects"
+        except httpx.DecodingError:
+            reason = "invalid HTTP response"
+        except httpx.TimeoutException:
+            reason, retry = "timeout", True
+        except httpx.TransportError:
+            reason, retry = "transport failure", True
+        except Exception:
+            reason = "HTTP client failure"
         else:
-            if resp.status_code < 500 and resp.status_code != 429:
-                return resp
-            last_error = MinerUError(f"transient HTTP {resp.status_code}")
-        if attempt + 1 < _TRANSIENT_ATTEMPTS:
-            _sleep(_RETRY_BACKOFF_SECONDS * (attempt + 1))
-    raise MinerUError(
-        f"MinerU request failed after {_TRANSIENT_ATTEMPTS} attempts: {last_error}"
-    ) from last_error
+            status = response.status_code
+            if type(status) is not int or not 100 <= status < 600:
+                reason = "invalid HTTP status"
+            elif 200 <= status < 300:
+                return response
+            else:
+                reason = f"HTTP {status}"
+                retry = status == 429 or status >= 500
+        if not retry or attempt == _TRANSIENT_ATTEMPTS:
+            break
+        _sleep(_RETRY_BACKOFF_SECONDS * attempt)
+    attempts = f" after {attempt} attempts" if attempt > 1 else ""
+    # Raise outside the handler: raw HTTP exceptions may retain requests and responses.
+    raise MinerUError(f"MinerU {operation} failed: {reason}{attempts}") from None
 
 
 # ── API client ──
@@ -68,84 +114,93 @@ class MinerUApi:
     """Thin HTTP client for MinerU Precision API (v4)."""
 
     def __init__(self, token: str) -> None:
-        self._client = httpx.Client(
-            base_url=API_BASE,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            },
-            timeout=httpx.Timeout(60.0),
-        )
+        try:
+            with _private_http():
+                self._client = httpx.Client(
+                    base_url=API_BASE,
+                    headers={
+                        "Authorization": f"Bearer {token}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=httpx.Timeout(60.0),
+                )
+        except Exception:
+            pass
+        else:
+            return
+        raise MinerUError(
+            "MinerU HTTP client setup failed. Check the credential and proxy settings."
+        ) from None
 
     def close(self) -> None:
-        self._client.close()
+        try:
+            with _private_http():
+                self._client.close()
+        except Exception:
+            pass
+        else:
+            return
+        raise MinerUError("MinerU HTTP client cleanup failed.") from None
 
     def submit_batch(self, file_paths: list[str], timeout: int = MAX_WAIT_PER_TASK) -> list[bytes]:
         """Upload files, wait for extraction, return list of ZIP bytes in order."""
         # 1. Request pre-signed upload URLs
-        files_meta = [{"name": Path(p).name} for p in file_paths]
+        expected_names = [Path(p).name for p in file_paths]
         resp = _request_with_retry(
             self._client,
             "POST",
             "/file-urls/batch",
+            operation="batch creation",
             json={
-                "files": files_meta,
+                "files": [{"name": name} for name in expected_names],
                 "model_version": "vlm",
             },
         )
-        resp.raise_for_status()
-        body = _json_body(resp)
-        if not isinstance(body, dict):
+        data = _response_data(resp, operation="batch creation")
+        batch_id = data.get("batch_id")
+        if not isinstance(batch_id, str) or not batch_id:
             raise MinerUError(
-                "MinerU upload response is not a JSON object; "
-                f"server reason: {_server_reason(body)}"
-            )
-        data = _check(body).get("data")
-        if not isinstance(data, dict):
-            raise MinerUError(
-                f"MinerU upload response is missing 'data'; server reason: {_server_reason(body)}"
+                "MinerU batch creation response is missing 'batch_id' or it is invalid"
             )
         upload_urls = data.get("file_urls")
-        if not isinstance(upload_urls, list) or len(upload_urls) != len(file_paths):
+        if not isinstance(upload_urls, list) or not all(
+            isinstance(url, str) and url for url in upload_urls
+        ):
+            raise MinerUError("MinerU batch creation response has invalid 'file_urls'")
+        if len(upload_urls) != len(file_paths):
             # A short URL list would silently skip chunks and misassemble the book.
             raise MinerUError(
-                f"MinerU returned {len(upload_urls) if isinstance(upload_urls, list) else 0} "
-                f"upload URLs for {len(file_paths)} files"
+                f"MinerU batch creation returned {len(upload_urls)} upload URLs "
+                f"for {len(file_paths)} files"
             )
 
         # 2. Upload each file (no Content-Type — required by OSS signature)
         for local_path, upload_url in zip(file_paths, upload_urls):
-            put_resp = _request_with_retry(
+            _request_with_retry(
                 None,
                 "PUT",
                 upload_url,
+                operation="upload",
                 timeout=httpx.Timeout(120.0),
                 content=Path(local_path).read_bytes(),
             )
-            put_resp.raise_for_status()
 
         # 3. Poll until all done, matching results back to the upload manifest by name
-        expected_names = [Path(p).name for p in file_paths]
-        batch_id = data.get("batch_id")
-        if not batch_id:
-            raise MinerUError(
-                "MinerU upload response is missing 'batch_id'; "
-                f"server reason: {_server_reason(data)}"
-            )
         return self._poll_batch(batch_id, timeout, expected_names=expected_names)
 
     def _poll_batch(self, batch_id: str, timeout: int, *, expected_names: list[str]) -> list[bytes]:
         deadline = time.monotonic() + timeout
         interval = POLL_INTERVAL
         while True:
-            resp = _request_with_retry(self._client, "GET", f"/extract-results/batch/{batch_id}")
-            resp.raise_for_status()
+            resp = _request_with_retry(
+                self._client, "GET", f"/extract-results/batch/{batch_id}", operation="polling"
+            )
             results = _poll_results(resp)
-            for result in results:
-                if not result.get("state"):
+            for index, result in enumerate(results, 1):
+                state = result.get("state")
+                if not isinstance(state, str) or not state:
                     raise MinerUError(
-                        f"MinerU polling result for {result.get('file_name', 'unknown file')} "
-                        f"is missing 'state'; server reason: {_server_reason(result)}"
+                        f"MinerU polling result {index} is missing 'state' or it is invalid"
                     )
             states = [result["state"] for result in results]
             if all(s in ("done", "failed") for s in states):
@@ -156,31 +211,29 @@ class MinerUApi:
                         f"MinerU returned {len(results)} extraction results "
                         f"for {len(expected_names)} uploaded files"
                     )
-                by_name = {r.get("file_name"): r for r in results}
-                missing = [name for name in expected_names if name not in by_name]
-                if missing:
-                    raise MinerUError(
-                        f"MinerU extraction results are missing uploaded files: "
-                        f"{', '.join(missing[:3])}"
-                    )
+                by_name = {}
+                for index, result in enumerate(results, 1):
+                    name = result.get("file_name")
+                    if not isinstance(name, str) or not name:
+                        raise MinerUError(f"MinerU polling result {index} has invalid 'file_name'")
+                    by_name[name] = result
+                if not all(name in by_name for name in expected_names):
+                    raise MinerUError("MinerU polling results do not match the uploaded files")
                 zips: list[bytes] = []
-                for name in expected_names:
+                for index, name in enumerate(expected_names, 1):
                     r = by_name[name]
                     if r["state"] == "failed":
-                        raise MinerUError(
-                            f"Extraction failed for {r.get('file_name', 'unknown file')}: "
-                            f"{r.get('err_msg', 'unknown')}"
-                        )
+                        raise MinerUError(f"MinerU polling: extraction failed for file {index}")
                     zip_url = r.get("full_zip_url")
-                    if not zip_url:
+                    if not isinstance(zip_url, str) or not zip_url:
                         raise MinerUError(
-                            f"Extraction result for {r.get('file_name', 'unknown file')} "
-                            f"is missing 'full_zip_url'; server reason: {_server_reason(r)}"
+                            f"MinerU polling result for file {index} is missing 'full_zip_url' "
+                            "or it is invalid"
                         )
                     zips.append(self._download_zip(zip_url))
                 return zips
             if time.monotonic() > deadline:
-                raise MinerUTimeoutError(f"Batch {batch_id} timed out")
+                raise MinerUTimeoutError("MinerU polling timed out")
             time.sleep(min(interval, max(0, deadline - time.monotonic())))
             interval = min(interval * 1.5, 30.0)
 
@@ -189,10 +242,10 @@ class MinerUApi:
             None,
             "GET",
             zip_url,
+            operation="download",
             timeout=httpx.Timeout(30.0, read=300.0),
             follow_redirects=True,
         )
-        resp.raise_for_status()
         return resp.content
 
 
@@ -230,41 +283,37 @@ def _prepare_chunks(source: Path, directory: Path, max_pages: int) -> tuple[int,
 # ── helpers ──
 
 
-def _check(body: dict) -> dict:
-    if body.get("code") != 0:
-        raise MinerUError(f"API error: code={body.get('code')} msg={body.get('msg')}")
-    return body
-
-
-def _server_reason(body: object) -> str:
-    """Return the server-provided failure reason, or a short JSON snippet."""
-    if isinstance(body, dict):
-        for key in ("msg", "message", "err_msg", "error"):
-            reason = body.get(key)
-            if reason:
-                return str(reason)
-        if "code" in body:
-            return f"code={body.get('code')}"
-    return json.dumps(body, ensure_ascii=False, default=str)[:200]
-
-
-def _json_body(response: httpx.Response) -> object:
-    """Parse a JSON body, wrapping decode failures in MinerUError with a short snippet."""
+def _response_data(
+    response: httpx.Response, *, operation: _Operation, code_required: bool = True
+) -> dict:
+    """Validate the API envelope without propagating any upstream diagnostic fields."""
     try:
-        return response.json()
-    except ValueError:
-        raise MinerUError(f"MinerU returned a non-JSON body: {response.text[:200]!r}") from None
+        body = response.json()
+    except (ValueError, RecursionError):
+        pass
+    else:
+        if not isinstance(body, dict):
+            raise MinerUError(f"MinerU {operation} response is not a JSON object")
+        if code_required or "code" in body:
+            code = body.get("code")
+            if type(code) is not int:
+                raise MinerUError(f"MinerU {operation} response has missing or invalid 'code'")
+            if code != 0:
+                raise MinerUError(f"MinerU {operation}: API reported failure")
+        data = body.get("data")
+        if not isinstance(data, dict):
+            raise MinerUError(f"MinerU {operation} response is missing 'data' or it is invalid")
+        return data
+    raise MinerUError(f"MinerU {operation} returned a non-JSON body") from None
 
 
 def _poll_results(response: httpx.Response) -> list[dict]:
-    """Extract polling results, reporting the server reason instead of a bare KeyError."""
-    body = _json_body(response)
-    data = body.get("data") if isinstance(body, dict) else None
-    results = data.get("extract_result") if isinstance(data, dict) else None
+    """Extract polling results; older successful replies can omit the top-level code."""
+    data = _response_data(response, operation="polling", code_required=False)
+    results = data.get("extract_result")
     if not isinstance(results, list) or not all(isinstance(item, dict) for item in results):
         raise MinerUError(
-            "MinerU polling response is missing 'data.extract_result'; "
-            f"server reason: {_server_reason(body)}"
+            "MinerU polling response is missing 'data.extract_result' or it is invalid"
         )
     return results
 

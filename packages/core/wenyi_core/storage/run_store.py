@@ -16,11 +16,13 @@ autofix publication indices.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
 import re
 import shutil
+import stat
 from collections.abc import Iterator
 from contextlib import contextmanager
 from copy import deepcopy
@@ -28,12 +30,13 @@ from datetime import datetime
 from threading import local
 from typing import Any
 
-from ..i18n.languages import require_language
+from ..i18n.languages import require_language, validate_run_languages
 from ..ingest.source_hash import source_sha256
 from ..models.document import Chapter, Document
 from ..timing import save_timing
 from .artifacts import FileArtifacts
-from .atomic_write import sweep_temporary, write_text_atomic, write_texts_atomic
+from .atomic_write import sweep_temporary, write_text_atomic
+from .chapter_publication import JOURNAL_NAME, ChapterPublication
 from .io_path import to_io_path
 from .locks import (
     ASSEMBLE_LOCK,
@@ -47,6 +50,8 @@ from .names import DEFAULT_COMPONENT, escape_reserved, strip_trailing
 
 STATUS_PENDING = "pending"
 STATUS_DONE = "done"
+_MANIFEST_NAME = "manifest.json"
+_INITIALIZING_NAME = ".initializing.json"
 
 
 #: Cap for the slug component so "state/<slug>/targets/<lang>/..." stays well
@@ -62,11 +67,14 @@ def slugify(name: str) -> str:
     deterministic sha256 suffix, so the same title always maps to the same
     directory and long titles sharing a prefix never collide.
     """
+    return _cap_slug(_uncapped_slug(name))
+
+
+def _uncapped_slug(name: str) -> str:
     s = re.sub(r"[^\w一-鿿぀-ヿ-]+", "_", name).strip("_")
     # The reserved-name escape prefixes an underscore, so it has to come after
     # the separator trim that would otherwise remove it again.
-    slug = escape_reserved(strip_trailing(s)) or DEFAULT_COMPONENT
-    return _cap_slug(slug)
+    return escape_reserved(strip_trailing(s)) or DEFAULT_COMPONENT
 
 
 def _cap_slug(slug: str) -> str:
@@ -84,6 +92,92 @@ def translation_run_dir(state_dir: str, title: str, target_lang: str) -> str:
     return os.path.join(state_dir, slugify(title), "targets", target)
 
 
+def resolve_file_run_dir(
+    state_dir: str,
+    title: str,
+    target_lang: str,
+    *,
+    source_lang: str,
+    actual_sha256: str,
+) -> str:
+    """Select one CLI target directory, without opening a store or changing either path."""
+    target = require_language(target_lang)
+    short = translation_run_dir(state_dir, title, target)
+    legacy = os.path.join(state_dir, _uncapped_slug(title), "targets", target)
+    use_legacy = legacy != short and _run_dir_exists(legacy, legacy_probe=True)
+    if use_legacy and _run_dir_exists(short):
+        raise ValueError(
+            f"Both short and legacy translation state directories exist for this target:\n"
+            f"  {short}\n  {legacy}\n"
+            "Back up both and keep only the state you intend to use in paths.state_dir. "
+            "Wenyi will not merge them."
+        )
+
+    run_dir = legacy if use_legacy else short
+    manifest = _read_run_identity(run_dir, _MANIFEST_NAME)
+    if manifest is not None:
+        validate_run_languages(manifest, source_lang, target_lang)
+        RunStore._validate_source_identity(manifest, actual_sha256)
+        return run_dir
+
+    if not use_legacy:
+        # The normal initialization path can already rebuild abandoned derived state.
+        return run_dir
+
+    # Require proof before taking over an old path. The initialization marker's target
+    # language is encoded by the target directory, not the marker.
+    marker = _read_run_identity(run_dir, _INITIALIZING_NAME)
+    if marker is not None:
+        RunStore._validate_source_identity(marker, actual_sha256)
+        return run_dir
+
+    # `parse` can leave a source cache without having started initialization.
+    parsed = _read_run_identity(run_dir, "parsed_document.json")
+    if parsed is None:
+        raise ValueError(
+            f"Legacy translation state has no saved source identity: {run_dir}. "
+            "Use a separate paths.state_dir to start fresh."
+        )
+    RunStore._validate_source_identity(parsed, actual_sha256)
+    ingest = parsed.get("ingest_config")
+    if not isinstance(ingest, dict) or ingest.get("target_lang") != target:
+        raise ValueError(
+            f"Saved target language in parsed state does not match requested {target_lang}: "
+            f"{run_dir}. Use the matching language.target or a separate paths.state_dir."
+        )
+    return run_dir
+
+
+def _run_dir_exists(path: str, *, legacy_probe: bool = False) -> bool:
+    try:
+        mode = os.stat(to_io_path(path)).st_mode
+    except FileNotFoundError:
+        return False
+    except OSError as error:
+        # A legacy slug that cannot be represented on this filesystem never existed here.
+        if legacy_probe and (
+            error.errno == errno.ENAMETOOLONG or getattr(error, "winerror", None) == 206
+        ):
+            return False
+        raise
+    if not stat.S_ISDIR(mode):
+        raise ValueError(f"Translation state path is not a directory: {path}")
+    return True
+
+
+def _read_run_identity(run_dir: str, filename: str) -> dict | None:
+    path = os.path.join(run_dir, filename)
+    try:
+        data = RunStore._read_json(path)
+    except FileNotFoundError:
+        return None
+    except (json.JSONDecodeError, UnicodeError) as error:
+        raise ValueError(f"Cannot read saved translation state identity: {path}") from error
+    if not isinstance(data, dict):
+        raise ValueError(f"Cannot read saved translation state identity: {path}")
+    return data
+
+
 class RunStore(FileArtifacts):
     def __init__(self, run_dir: str, *, create: bool = True):
         """Bind a book state directory and optionally create chapter subdirectories."""
@@ -94,7 +188,7 @@ class RunStore(FileArtifacts):
         self._state_local = local()
         if create:
             self.ensure_dirs()
-        self.clear_stale_initialization()
+            self.clear_stale_initialization()
 
     def ensure_dirs(self) -> None:
         """Create run and chapter-state directories."""
@@ -111,7 +205,11 @@ class RunStore(FileArtifacts):
     def lock(self) -> Iterator[None]:
         """Serialize long-running translation and review operations for one book."""
         with self._file_lock(RUN_LOCK):
-            yield
+            self._state_local.run_locked = True
+            try:
+                yield
+            finally:
+                self._state_local.run_locked = False
 
     @contextmanager
     def state_lock(self) -> Iterator[None]:
@@ -119,14 +217,22 @@ class RunStore(FileArtifacts):
         snapshot. Nested calls on the same store/thread reuse the outer lock; independent
         threads and processes still acquire the OS-level lock.
         """
+        with self._state_lock(create=True):
+            yield
+
+    @contextmanager
+    def _state_lock(self, *, create: bool) -> Iterator[None]:
         if getattr(self._state_local, "locked", False):
             yield
             return
-        with self._file_lock(STATE_LOCK):
+        if create:
+            os.makedirs(to_io_path(self.run_dir), exist_ok=True)
+        with exclusive_file_lock(to_io_path(os.path.join(self.run_dir, STATE_LOCK))):
             self._state_local.locked = True
             try:
                 yield
             finally:
+                self._state_local.__dict__.pop("publication", None)
                 self._state_local.locked = False
 
     @contextmanager
@@ -150,12 +256,12 @@ class RunStore(FileArtifacts):
     @property
     def manifest_path(self) -> str:
         """Return the book manifest path."""
-        return os.path.join(self.run_dir, "manifest.json")
+        return os.path.join(self.run_dir, _MANIFEST_NAME)
 
     @property
     def initialization_path(self) -> str:
         """Return the temporary source-identity path for incomplete initialization."""
-        return os.path.join(self.run_dir, ".initializing.json")
+        return os.path.join(self.run_dir, _INITIALIZING_NAME)
 
     @property
     def annotation_contexts_path(self) -> str:
@@ -233,7 +339,7 @@ class RunStore(FileArtifacts):
 
     def exists(self) -> bool:
         """Check whether initialization completed and committed a manifest."""
-        return self._exists(self.manifest_path)
+        return self._exists(self.manifest_path) or self._exists(self._publication_path)
 
     def begin_initialization(self, source_hash: str) -> None:
         """Clear incomplete derived state and record the current source identity.
@@ -245,7 +351,12 @@ class RunStore(FileArtifacts):
         """
         if not re.fullmatch(r"[0-9a-f]{64}", source_hash):
             raise ValueError("Invalid source SHA-256 format")
+        with self.state_lock():
+            if self._read_chapter_publication() is not None:
+                raise ValueError("Cannot initialize state with a pending chapter publication")
+            self._begin_initialization(source_hash)
 
+    def _begin_initialization(self, source_hash: str) -> None:
         previous_hash: str | None = None
         if self._exists(self.initialization_path):
             try:
@@ -308,15 +419,17 @@ class RunStore(FileArtifacts):
         A crash between the manifest commit and `finish_initialization` leaves
         `.initializing.json` in place even though initialization succeeded, and
         resumed runs never touch it. The committed manifest is the completion
-        authority, so such a marker is removable garbage; the unlink is idempotent
-        and needs no lock. A marker without a manifest is not stale: it carries the
-        source identity `begin_initialization` needs to recover pending usage, so
-        it is kept until that takeover. Returns True when a marker was removed.
+        authority, so such a marker is removable garbage. Do not change files
+        while chapter publication needs recovery. A marker without a manifest
+        carries the identity needed to recover pending initialization usage.
         """
-        if not self._exists(self.manifest_path) or not self._exists(self.initialization_path):
+        if not self._exists(self.initialization_path):
             return False
-        self._remove(self.initialization_path)
-        return True
+        with self.state_lock():
+            if not self._exists(self.manifest_path) or self._exists(self._publication_path):
+                return False
+            self._remove(self.initialization_path)
+            return True
 
     # ── manifest ──────────────────────────────────────────────────────────
     def stage_document(
@@ -370,19 +483,22 @@ class RunStore(FileArtifacts):
         input_path: str,
         *,
         actual_sha256: str | None = None,
+        recover_if_run_locked: bool = False,
     ) -> str:
         """Validate that input content belongs to this state; reject state lacking
-        source identity.
+        source identity. A modifying workflow can finish chapter recovery after validation.
         """
         actual = actual_sha256 or source_sha256(input_path)
         with self.state_lock():
             self._validate_source_identity(self.load_manifest(), actual)
+            if recover_if_run_locked and getattr(self._state_local, "run_locked", False):
+                self._recover_chapter_publication()
         return actual
 
     @staticmethod
     def _validate_source_identity(manifest: dict, actual: str) -> None:
         """Validate source identity using an already loaded manifest."""
-        if not re.fullmatch(r"[0-9a-f]{64}", actual):
+        if not isinstance(actual, str) or not re.fullmatch(r"[0-9a-f]{64}", actual):
             raise ValueError("Invalid source SHA-256 format")
 
         expected = manifest.get("source_sha256")
@@ -426,15 +542,17 @@ class RunStore(FileArtifacts):
     def save_manifest(self, manifest: dict) -> None:
         """Save the manifest and chapter status atomically."""
         with self.state_lock():
+            self._recover_chapter_publication()
             self._write_json(self.manifest_path, manifest)
 
     def load_manifest(self) -> dict:
         """Read the manifest and chapter status."""
-        return self._read_json(self.manifest_path)
+        return self._read_formal_state()
 
     def set_chapter_status(self, ci: int, status: str) -> None:
         """Update one chapter status and atomically save the complete manifest."""
         with self.state_lock():
+            self._recover_chapter_publication()
             manifest = self.load_manifest()
             for c in manifest["chapters"]:
                 if c["index"] == ci:
@@ -451,34 +569,113 @@ class RunStore(FileArtifacts):
     def save_chapter(self, chapter: Chapter) -> None:
         """Atomically save a chapter's source, target and stage metadata."""
         with self.state_lock():
+            self._recover_chapter_publication()
             self._write_json(self.chapter_path(chapter.index), chapter.model_dump())
 
     def save_chapter_with_status(self, chapter: Chapter, status: str) -> None:
-        """Publish final chapter content and its manifest status as one commit.
-
-        Both files are written to private temporary files before either name is
-        replaced, and the manifest - the commit marker - is replaced last. A
-        crash before that last replacement leaves the previous manifest, which
-        still marks the chapter pending; a resuming run re-reads the saved
-        chapter and skips the batches whose targets are already present instead
-        of retranslating them.
-        """
+        """Commit both values through one durable journal before replacing either file."""
         with self.state_lock():
-            manifest = self.load_manifest()
-            for entry in manifest["chapters"]:
-                if entry["index"] == chapter.index:
-                    entry["status"] = status
-                    break
-            write_texts_atomic(
-                [
-                    (self.chapter_path(chapter.index), self._json_text(chapter.model_dump())),
-                    (self.manifest_path, self._json_text(manifest)),
-                ]
+            self._recover_chapter_publication()
+            self._state_local.__dict__.pop("publication", None)
+            ChapterPublication.commit(
+                self._publication_path,
+                self.chapter_path(chapter.index),
+                self.manifest_path,
+                chapter,
+                status,
             )
 
     def load_chapter(self, ci: int) -> Chapter:
         """Read and validate chapter state."""
-        return Chapter.model_validate(self._read_json(self.chapter_path(ci)))
+        return Chapter.model_validate(self._read_formal_state(ci))
+
+    @property
+    def _publication_path(self) -> str:
+        return os.path.join(self.run_dir, JOURNAL_NAME)
+
+    def _read_chapter_publication(self) -> ChapterPublication | None:
+        """Validate once per lock scope, including all chapter reads in one export snapshot."""
+        if not hasattr(self._state_local, "publication"):
+            self._state_local.publication = ChapterPublication.read(
+                self._publication_path, self.manifest_path, self.chapter_path
+            )
+        return self._state_local.publication
+
+    def _recover_chapter_publication(self) -> None:
+        with self.state_lock():
+            publication = self._read_chapter_publication()
+            if publication is not None:
+                # Drop the cached image even if a replacement fails: on re-entry its
+                # old/new checks must use the latest materialized files.
+                self._state_local.__dict__.pop("publication", None)
+                publication.materialize(
+                    self._publication_path, self.chapter_path(publication.index), self.manifest_path
+                )
+
+    def _read_formal_state(self, index: int | None = None) -> dict:
+        with self._state_lock(create=False):
+            publication = self._read_chapter_publication()
+            if index is None:
+                return (
+                    deepcopy(publication.manifest.value)
+                    if publication is not None
+                    else self._read_json(self.manifest_path)
+                )
+            if publication is not None and index == publication.index:
+                return deepcopy(publication.chapter.value)
+            return self._read_json(self.chapter_path(index))
+
+    @staticmethod
+    def _formal_artifact(key: str) -> tuple[bool, int | None]:
+        """Recognize the legacy names used to address formal state as JSON artifacts."""
+        if os.name == "nt":
+            key = key.lower()
+        if key == "manifest.json":
+            return True, None
+        chapter = re.fullmatch(r"chapters/ch(0|[1-9][0-9]*)\.json", key)
+        return (True, int(chapter[1])) if chapter else (False, None)
+
+    def read_artifact(self, key: str) -> Any | None:
+        self._artifact_key(key)
+        if os.path.normcase(key) == os.path.normcase(JOURNAL_NAME):
+            return None
+        formal, index = self._formal_artifact(key)
+        if formal:
+            try:
+                return self._read_formal_state(index)
+            except FileNotFoundError:
+                return None
+        return super().read_artifact(key)
+
+    def list_artifacts(self, prefix: str = "") -> list[str]:
+        return [
+            key
+            for key in super().list_artifacts(prefix)
+            if key != JOURNAL_NAME and not key.startswith(f"{JOURNAL_NAME}.")
+        ]
+
+    def read_artifact_records(self, key: str) -> list[dict]:
+        # Formal state is a JSON document, not a JSONL stream.
+        if self._formal_artifact(key)[0] or os.path.normcase(key) == os.path.normcase(JOURNAL_NAME):
+            return []
+        return super().read_artifact_records(key)
+
+    def _require_mutable_artifact(self, key: str) -> None:
+        self._artifact_key(key)
+        if self._formal_artifact(key)[0] or os.path.normcase(key) == os.path.normcase(JOURNAL_NAME):
+            raise ValueError(f"{key} is reserved for chapter and manifest publication")
+
+    def write_artifact(self, key: str, value: Any) -> None:
+        self._require_mutable_artifact(key)
+        super().write_artifact(key, value)
+
+    def delete_artifact(self, key: str) -> None:
+        self._require_mutable_artifact(key)
+        super().delete_artifact(key)
+
+    def append_artifact_record(self, key: str, record: dict) -> None:
+        self._require_mutable_artifact(key)
+        super().append_artifact_record(key, record)
 
     # Annotation contexts and analysis.
     def save_annotation_contexts(self, data: dict) -> None:
@@ -677,3 +874,7 @@ class ExportSnapshotStore(RunStore):
         except KeyError as error:
             raise FileNotFoundError(f"Chapter not found in snapshot: {ci}") from error
         return chapter.model_copy(deep=True)
+
+    def _read_formal_state(self, index: int | None = None) -> dict:
+        # Artifact access to formal state is frozen just like the typed readers.
+        return self.load_manifest() if index is None else self.load_chapter(index).model_dump()

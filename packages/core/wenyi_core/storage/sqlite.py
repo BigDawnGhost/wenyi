@@ -56,6 +56,37 @@ _EVENT_DAY = "substr(json_extract(value, '$.ts'), 1, 10)"
 __all__ = ["SCHEMA_VERSION", "SqliteStorage", "StorageBusyError"]
 
 
+# SQLite primary result codes. Python 3.10 does not export these constants or
+# attach result codes to exceptions, but SQLite can still emit them in reports.
+_SQLITE_BUSY, _SQLITE_LOCKED = 5, 6
+_SQLITE_CORRUPT, _SQLITE_NOTADB = 11, 26
+_CORRUPTION_CODES = (_SQLITE_CORRUPT, _SQLITE_NOTADB)
+_LEGACY_SQLITE_ERRORS = {
+    "database is locked": _SQLITE_BUSY,
+    "database table is locked": _SQLITE_LOCKED,
+    "database schema is locked": _SQLITE_LOCKED,
+    "database disk image is malformed": _SQLITE_CORRUPT,
+    "file is not a database": _SQLITE_NOTADB,
+}
+
+
+def _sqlite_primary_error(error: sqlite3.DatabaseError) -> int | None:
+    code = getattr(error, "sqlite_errorcode", None)
+    if code is not None:
+        return code & 0xFF  # Extended result codes keep the primary code in the low byte.
+    message = str(error)
+    if message.startswith(("database table is locked:", "database schema is locked:")):
+        return _SQLITE_LOCKED
+    return _LEGACY_SQLITE_ERRORS.get(message)
+
+
+class _DatabaseBusy(StorageBusyError):
+    """SQLite could not check the database while another connection held a lock."""
+
+    code = "database_busy"
+    retryable = True
+
+
 class SqliteStorage:
     """One target-isolated local database, safe across threads and processes.
 
@@ -220,31 +251,46 @@ class SqliteStorage:
         return conn
 
     def _check_database_integrity(self, conn: sqlite3.Connection) -> None:
-        """Refuse to open a database whose contents fail SQLite's quick check.
-
-        A damaged file otherwise surfaces later as arbitrary
-        sqlite3.DatabaseError values from unrelated statements. The check
-        runs once per opened connection, and connections are cached per
-        thread, so ordinary statements do not pay for it again.
-        """
-        guidance = (
-            "Restore the database from a backup, or move or delete state.sqlite3 "
-            "so a fresh database is created; source files and exports in the run "
-            "directory are separate files and stay untouched."
-        )
+        """Check each new connection without mistaking an unreadable database for damage."""
         try:
-            report = conn.execute("PRAGMA quick_check").fetchone()[0]
+            row = conn.execute("PRAGMA quick_check").fetchone()
         except sqlite3.DatabaseError as error:
-            report = str(error)
+            code = _sqlite_primary_error(error)
+            if code in (_SQLITE_BUSY, _SQLITE_LOCKED):
+                raise _DatabaseBusy(
+                    f"Local state database is busy: {self.database_path}. "
+                    "Wait for the other operation to finish, then retry."
+                ) from error
+            if code not in _CORRUPTION_CODES:
+                raise  # Preserve I/O, permission, and other failures to complete the check.
+            raise self._database_corrupt(str(error)) from error
+
+        report = row[0] if row is not None else "SQLite returned no integrity-check result"
+        if report == "ok":
+            return
+        # SQLite's B-tree check can also include page read failures in a result
+        # row. An unreadable page is not proof of damage without a corruption code.
+        page_errors = re.findall(r"unable to get the page\. error code=(\d+)$", report, re.M)
+        if (
+            row is None
+            or re.search(r"(?:failed to get page \d+|Failed to read ptrmap key=\d+)$", report, re.M)
+            or any((int(code) & 0xFF) not in _CORRUPTION_CODES for code in page_errors)
+        ):
             raise WenyiError(
-                f"Local state database is corrupted ({report}): {self.database_path}. {guidance}",
-                code="database_corrupt",
-            ) from error
-        if report != "ok":
-            raise WenyiError(
-                f"Local state database is corrupted ({report}): {self.database_path}. {guidance}",
-                code="database_corrupt",
+                f"Could not check the local state database ({report}): {self.database_path}. "
+                "Check that the project drive is available and retry.",
+                code="database_integrity_check_failed",
             )
+        raise self._database_corrupt(report)
+
+    def _database_corrupt(self, report: str) -> WenyiError:
+        return WenyiError(
+            f"Local state database is corrupted ({report}): {self.database_path}. "
+            "Close Wenyi and preserve a copy of the entire project directory, "
+            "including any SQLite sidecar files. Restore from a known-good project backup "
+            "if available.",
+            code="database_corrupt",
+        )
 
     def _check_schema_version(self, conn: sqlite3.Connection) -> int:
         """Refuse newer schemas before reading data or attempting an upgrade.

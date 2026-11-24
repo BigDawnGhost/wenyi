@@ -394,7 +394,10 @@ def test_export_sql_failure_never_restores_deleted_file_as_done(
         patch.setattr(
             sqlite3, "connect", lambda *a, **kw: connect(*a, **kw, factory=FaultConnection)
         )
-        with pytest.raises(sqlite3.OperationalError, match="injected"):
+        if phase == "publication":
+            with pytest.raises(sqlite3.OperationalError, match="injected"):
+                backend.publish_export(pid, new_id, str(new_file))
+        else:
             backend.publish_export(pid, new_id, str(new_file))
     # Reopen the catalog as after process restart; no in-memory recovery assumptions.
     reopened = LocalBackend(str(backend.workspace))
@@ -408,6 +411,8 @@ def test_export_sql_failure_never_restores_deleted_file_as_done(
         assert published["status"] == "pending"
         reopened.publish_export(pid, new_id, str(new_file))
     else:
+        published = reopened._get("exports", new_id)
+        assert published is not None and published["status"] == "done"
         with pytest.raises(FileNotFoundError):
             reopened.open_export(pid, old_id)
         reopened.recover_export_cleanup(pid)
@@ -792,16 +797,17 @@ def test_export_admission_is_atomic_and_late_compensation_is_ignored(backend):
     import sqlite3
 
     pid = new_project()
-    export_id, job_id = backend.admit_export(pid, "txt", {}, "unique", {})
+    admitted = backend.admit_export(pid, "txt", {}, "unique", {}, source={})
+    assert admitted.created and admitted.run_id == "unique"
     with pytest.raises(sqlite3.IntegrityError):
-        backend.admit_export(pid, "txt", {}, "unique", {})
+        backend.admit_export(pid, "txt", {}, "unique", {}, source={})
     assert len(backend.list_exports(pid)) == 1
-    assert backend.fail_export_admission(job_id, "queue unavailable")
-    assert backend.list_exports(pid)[0]["id"] == export_id
+    assert backend.fail_export_admission(admitted.job_id, "queue unavailable")
+    assert backend.list_exports(pid)[0]["id"] == admitted.export_id
     assert backend.list_exports(pid)[0]["status"] == "error"
-    _, newer = backend.admit_export(pid, "txt", {}, "newer", {})
-    backend.set_job_status(newer, "running", expected_status="queued")
-    assert not backend.fail_export_admission(newer, "late failure")
+    newer = backend.admit_export(pid, "txt", {}, "newer", {}, source={})
+    backend.set_job_status(newer.job_id, "running", expected_status="queued")
+    assert not backend.fail_export_admission(newer.job_id, "late failure")
 
 
 def test_model_rename_updates_projects_not_frozen_jobs(backend):

@@ -12,16 +12,38 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Optional, Protocol, runtime_checkable
+from inspect import signature
+from typing import Protocol, cast, runtime_checkable
 
-ProgressFn = Callable[..., None]
-"""Core progress callback: ``(done, total, label, payload=None)``.
+ProgressFn = Callable[[int, int, str], None]
+"""Core progress callback: ``(done, total, label)`` as positional arguments."""
 
-``done``/``total``/``label`` describe the current stage tick. Emitters MAY pass a
-fourth argument: `payload`, a JSON-serialisable dict of structured locating
-fields (for example `{"chapter": 3, "batch": 1, "batch_size": 8}`). The payload
-is passed only when the stage has structured context, so callbacks must accept
-the optional fourth positional argument and tolerate `None`."""
+ProgressPayload = dict[str, object]
+"""JSON-serializable locating fields, such as ``{"chapter": 3, "batch": 1}``."""
+
+
+class StructuredProgressFn(Protocol):
+    """A progress callback that also accepts an optional fourth positional argument."""
+
+    def __call__(
+        self, done: int, total: int, label: str, payload: ProgressPayload | None = None, /
+    ) -> None: ...
+
+
+def emit_progress(
+    progress: ProgressFn, done: int, total: int, label: str, *, payload: ProgressPayload
+) -> None:
+    """Report a structured tick, omitting payload unless the callback accepts it."""
+    try:
+        signature(progress).bind(done, total, label, payload)
+    except (TypeError, ValueError):
+        # The signature cannot bind four arguments or is unavailable. Use the base contract.
+        pass
+    else:
+        cast(StructuredProgressFn, progress)(done, total, label, payload)
+        return
+    progress(done, total, label)
+
 
 # Event kinds that carry a terminal failure to live subscribers. Anything not
 # listed here keeps its existing progress handling, so this stays additive.
@@ -36,12 +58,12 @@ class TranslationEvent:
     the core ProgressFn callback, and ``payload`` holds optional event details.
     """
 
-    project_id: Optional[str] = None
+    project_id: str | None = None
     kind: str = "progress"  # progress | batch | chapter | term | pipeline | log | error
     done: int = 0
     total: int = 0
     label: str = ""
-    payload: Optional[dict] = None
+    payload: ProgressPayload | None = None
 
 
 @runtime_checkable
@@ -52,17 +74,15 @@ class ProgressEmitter(Protocol):
 
 
 def make_progress_fn(
-    emitter: ProgressEmitter, project_id: Optional[str] = None, *, kind: str = "progress"
-):
-    """Wrap a :class:`ProgressEmitter` as a core ProgressFn callback.
+    emitter: ProgressEmitter, project_id: str | None = None, *, kind: str = "progress"
+) -> StructuredProgressFn:
+    """Wrap a :class:`ProgressEmitter` as a callback that preserves structured ticks.
 
-    The signature is
-    ``progress(done: int, total: int, label: str, payload: dict | None = None) -> None``.
-    The optional `payload` carries structured locating fields and is published
-    on the event unchanged; adapters decide how to expose it.
+    The optional payload is published on the event unchanged; adapters decide how
+    to expose it.
     """
 
-    def fn(done: int, total: int, label: str, payload: Optional[dict] = None) -> None:
+    def fn(done: int, total: int, label: str, payload: ProgressPayload | None = None) -> None:
         emitter.emit(
             TranslationEvent(
                 project_id=project_id,

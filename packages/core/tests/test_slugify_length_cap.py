@@ -10,7 +10,12 @@ import os
 
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.run_store import SLUG_MAX_LENGTH, slugify, translation_run_dir
+from wenyi_core.storage.run_store import (
+    SLUG_MAX_LENGTH,
+    resolve_file_run_dir,
+    slugify,
+    translation_run_dir,
+)
 
 
 def test_slugify_caps_long_titles_with_deterministic_suffix():
@@ -55,9 +60,10 @@ def test_slugify_is_idempotent_on_its_own_output():
 def test_long_cjk_title_creates_run_dir_and_glossary(tmp_path):
     """End to end: a title far past the cap still creates state and glossary paths."""
     state_dir = str(tmp_path / "state")
-    title = "長い日本語タイトルのテスト小説" * 12
-    run_dir = translation_run_dir(state_dir, title, "zh")
-    assert len(os.path.basename(run_dir)) <= SLUG_MAX_LENGTH
+    title = "長い日本語タイトルのテスト小説" * 20
+    run_dir = resolve_file_run_dir(state_dir, title, "zh", source_lang="ja", actual_sha256="0" * 64)
+    assert run_dir == translation_run_dir(state_dir, title, "zh")
+    assert len(slugify(title)) <= SLUG_MAX_LENGTH
     assert run_dir == os.path.join(state_dir, slugify(title), "targets", "zh")
 
     storage = FileStorage(run_dir)

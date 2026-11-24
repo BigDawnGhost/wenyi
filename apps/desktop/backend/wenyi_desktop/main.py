@@ -23,7 +23,14 @@ from wenyi_core.observability import configure_logging
 
 from . import catalog, paths
 from .babeldoc_plugin import BabeldocPlugin
-from .diagnostics import DiagnosticsMiddleware, EngineDiagnostics, Reporter, scope
+from .diagnostics import (
+    DiagnosticsMiddleware,
+    EngineDiagnostics,
+    Reporter,
+    StartupFailure,
+    StartupFailureCode,
+    scope,
+)
 from .local_backend import PROJECT_SCHEMA_TOO_NEW, LocalBackend
 from .local_credentials import CredentialStore, build_local_client, system_keyring
 from .local_runtime import (
@@ -36,8 +43,9 @@ from .settings import DesktopSettings
 from .updates import (
     UpdateAdmissionMiddleware,
     UpdateGuard,
-    prune_backups,
-    restore_latest_backup,
+    UpgradeRecoveryRequired,
+    check_upgrade_startup,
+    upgrade_recovery_available,
 )
 from .updates import router as updates_router
 
@@ -58,8 +66,8 @@ LEGACY_IMPORT_STEPS = (
     "Old-format Wenyi Desktop data was found in the selected data directory; "
     "this version does not migrate it automatically.",
     "A project folder that contains a current project.json (schema_version 2) "
-    "can be brought over with the library's Import project action; the "
-    "original stays untouched.",
+    "can be brought over with the library's Import project action. Import moves "
+    "the selected folder; import a copy if you need to keep the original.",
     "Folders without a current project.json use an unsupported old layout and "
     "cannot be imported; keep using the Wenyi version that created them or "
     "export their content from that version first.",
@@ -231,6 +239,10 @@ def create_context(
     install_root: str | Path | None = None,
 ) -> BackendContext:
     try:
+        check_upgrade_startup(workspace)
+    except UpgradeRecoveryRequired as error:
+        raise StartupFailure(StartupFailureCode.UPGRADE_RECOVERY_REQUIRED) from error
+    try:
         backend = LocalBackend(
             workspace,
             config_path,
@@ -238,27 +250,13 @@ def create_context(
             install_root=install_root,
         )
     except (RuntimeError, ValueError, sqlite3.Error, SchemaTooNew) as error:
-        # The upgraded engine refused this workspace's data. Roll it back to the
-        # snapshot the shell wrote before the update, and report the outcome on
-        # stdout so the native shell can tell the user, instead of leaving the
-        # data half-migrated behind a generic bootstrap timeout.
-        outcome = restore_latest_backup(workspace)
-        payload = {
-            "reason": "migration",
-            "restored": outcome.status == "restored",
-            "detail": outcome.detail or str(error)[:200],
-        }
+        # An initialization error is not evidence that an upgrade failed.
+        # Recovery is only ever initiated by a separate explicit offline command.
+        if upgrade_recovery_available(workspace, os.environ.get("WENYI_DESKTOP_VERSION")):
+            raise StartupFailure(StartupFailureCode.UPGRADE_RECOVERY_REQUIRED) from error
         if "not a current-format Desktop catalog" in str(error):
-            # The refusal is about old-format data, not a failed update: attach
-            # the explicit import steps so the shell and the logs can guide the
-            # user instead of the generic migration text.
-            payload["legacy_data"] = True
-            payload["guidance"] = list(LEGACY_IMPORT_STEPS)
-        print(f"WENYI_FAILED {json.dumps(payload, separators=(',', ':'))}", flush=True)
+            raise StartupFailure(StartupFailureCode.LEGACY_CATALOG) from error
         raise
-    # Retention runs only on a healthy start: a failed migration must keep
-    # every snapshot it may still need to roll back to.
-    prune_backups(workspace)
     _report_legacy_data(workspace)
     credentials = credentials or CredentialStore(backend.workspace, vault_factory=system_keyring)
     if credentials.database != backend.database:
@@ -291,14 +289,16 @@ def create_context(
 def verify_version_handshake() -> None:
     """Refuse to serve when the native shell and this engine are different builds.
 
-    The shell injects the version it was compiled with before spawning this
-    process. A mismatch means the Python package on disk belongs to another
-    install, so serving it could corrupt data written by a different schema.
-    A missing variable means an older launcher started the engine; keep that
-    startup path working and only note the skipped check.
+    The shell injects the expected PEP 440 distribution version from the same
+    build identity as its native SemVer. Compare the complete installed version,
+    including prerelease and local identifiers. Older launchers and uninstalled
+    source builds can lack one side of the check; keep their warning-only path.
     """
-    shell_version = os.environ.get("WENYI_DESKTOP_VERSION")
-    if shell_version is None:
+    expected_version = os.environ.get("WENYI_DESKTOP_ENGINE_VERSION")
+    if expected_version is None:
+        # Older launchers supplied only the native version (identical for stable releases).
+        expected_version = os.environ.get("WENYI_DESKTOP_VERSION")
+    if expected_version is None:
         print(
             "wenyi-desktop: launcher did not set WENYI_DESKTOP_VERSION; "
             "skipping the shell/engine version handshake.",
@@ -316,15 +316,8 @@ def verify_version_handshake() -> None:
             flush=True,
         )
         return
-    if engine_version != shell_version:
-        print(
-            "wenyi-desktop: version mismatch between the desktop shell "
-            f"({shell_version}) and the Python engine ({engine_version}); "
-            "refusing to start. Install matching desktop components.",
-            file=sys.stderr,
-            flush=True,
-        )
-        raise SystemExit(2)
+    if engine_version != expected_version:
+        raise StartupFailure(StartupFailureCode.VERSION_MISMATCH)
 
 
 def create_app(

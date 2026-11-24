@@ -135,7 +135,7 @@ llm:
 | `llm.models.<连接名/模型名>.max_output_tokens` | 默认不设置；设置时为正整数。 |
 | `llm.models.<连接名/模型名>.options` | `{}`，下文的适配器专属字段。 |
 | `llm.routes.<operation>.model` | 本操作使用的 `连接名/模型名`。 |
-| `llm.routes.<operation>.thinking` | 省略或设为 `null` 时沿用已登记模型的思考设置；也可指定所选提供商配置支持的强度。 |
+| `llm.routes.<operation>.thinking` | 模型支持的思考强度，或用 `null` 沿用已登记模型自身的设置。 |
 | `llm.routes.<operation>.fallbacks` | `[]`；按顺序填写 `连接名/模型名`，受下文故障切换限制。 |
 | `llm.quotas` | `{}`，可选命名配额组。 |
 | `llm.budget` | 未设置则不限制。 |
@@ -147,6 +147,8 @@ llm:
 `llm.routes` 和 `llm.budget`：即使项目为某个操作更换了主模型，未填写的字段仍沿用全局值。
 列表是整体替换，不会追加；用 `fallbacks: []` 清空继承的备用模型。
 用 `thinking: null` 清除继承的操作级思考强度，改用当前所选模型自身的设置。
+在项目表单更换主模型时，会显式清除不兼容的思考强度，并将新主模型从备用列表中移除。
+保存项目 YAML 时会存下解析后的路由和用量预算；未填写的字段在校验或保存时继承。
 
 思考强度只覆盖本阶段的主模型。同一个模型可在不同阶段使用不同强度，例如 `translation.body: {model: deepseek/deepseek-flash, thinking: high}` 与 `language.detect: {model: deepseek/deepseek-flash, thinking: "off"}`。DeepSeek 支持 `off`、`low`、`high`、`max`；其他适配器提供各自的选项，具体远端模型接受哪些值以提供商为准。Gemini 3 的阶段强度会在本次操作中取代模型的思考预算。若高级请求字段已指定思考参数，则沿用这些参数，不再设置阶段覆盖。备用模型使用各自登记的设置。
 
@@ -511,6 +513,11 @@ CLI 加载已保存的 YAML，或 Web/Desktop 启动并读取全局、项目设�
 
 Web/Desktop 也会先备份再重置不支持的默认流程模板和无效的已存项目流程选择。
 有效的项目显式设置继续保留；重置不会复现已废弃流程的行为。
+
+旧项目路由只填写了部分字段时，Web/Desktop 启动重建会保留显式指定且有效的主模型。
+若继承的思考强度不兼容，则保存 `thinking: null`；若继承的备用列表包含主模型，
+则按原顺序保存剩余备用模型（没有剩余项则保存 `[]`）。这些修复会成为项目的显式覆盖；
+其余未填写且兼容的字段仍然继承。新提交的 YAML 若有冲突，会报错而不是自动修复。
 
 CLI 在所选文件旁保存原始字节备份，名称为 `<文件名>.backup-<sha256>.yaml`；
 注释保留在备份里，重建后的 YAML 只保存支持的设置。

@@ -9,8 +9,11 @@ import threading
 import time
 from contextlib import ExitStack, closing
 from contextvars import copy_context
+from dataclasses import dataclass
 from functools import partial
+from typing import TypeVar
 
+from wenyi_core.events import ProgressPayload
 from wenyi_core.llm.base import LLMClient
 from wenyi_core.llm.limits import RequestCancelled, RequestStopped
 
@@ -19,10 +22,19 @@ from ..live_statistics import LiveStatistics
 from .contracts import ExecutionDependencies, ExecutionRequest
 
 log = logging.getLogger(__name__)
+CANCEL_DRAIN_WARNING_SECONDS = 30.0
+_T = TypeVar("_T")
 
-# A cancelled workflow gets this long to flush synchronous checkpoints before its slot is
-# released forcibly; a stuck in-flight model call must not block the queue indefinitely.
-CANCEL_DRAIN_TIMEOUT_SECONDS: float = 30.0
+
+async def drain(future: asyncio.Future[_T]) -> _T:
+    """Wait for an owned operation after cancellation, including repeated requests to cancel."""
+    while not future.done():
+        try:
+            # Unlike a direct await, this cannot cancel the future it observes.
+            await asyncio.wait((future,))
+        except asyncio.CancelledError:
+            continue
+    return future.result()
 
 
 def error_code(error: BaseException) -> str:
@@ -37,55 +49,68 @@ class PauseRequested(KeyboardInterrupt):
     """Stop at a persisted boundary, using the core's interruption recovery path."""
 
 
+@dataclass(frozen=True)
+class WorkflowOutcome:
+    status: str
+    project_status: str | None = None
+    error: BaseException | None = None
+
+
 def record_terminal_status(
     request: ExecutionRequest,
     dependencies: ExecutionDependencies,
     error: BaseException | None = None,
     *,
     status: str = "error",
-) -> None:
-    """A late Future or duplicate delivery may update only its own task's project."""
+    project_status: str | None = None,
+) -> bool:
+    """Finalize the job; update the project only if this is still its active run."""
     projects, jobs = dependencies.projects, dependencies.jobs
     pid, run_id = request.project_id, request.run_id
+    project_status = project_status or status
     message = str(error) if error is not None else None
     job = jobs.get_job_by_arq_id(run_id) if run_id else None
     if job:
-        if job["project_id"] != pid:
-            return
+        if (
+            job["project_id"] != pid
+            or job["kind"] != request.kind
+            or job["status"] not in {"queued", "running"}
+        ):
+            return False
+        updated_project = False
+        finalize_job = True
         try:
             latest = next((item for item in jobs.list_jobs(pid) if item["kind"] != "export"), None)
             if not latest or latest["id"] != job["id"]:
-                return
-            project = projects.get_project(pid)
-            if (
-                job["status"] == status
-                and project
-                and project["status"] == status
-                and project.get("error") == message
-            ):
-                return
+                return False
             # Wait for a brief API write boundary rather than dropping the terminal status.
             with closing(dependencies.storage_for(pid)) as storage, storage.lock():
                 latest = next(
                     (item for item in jobs.list_jobs(pid) if item["kind"] != "export"), None
                 )
                 if latest and latest["id"] == job["id"]:
-                    projects.set_project_status(pid, status, error=message)
+                    finalize_job = latest["status"] in {"queued", "running"}
+                    if finalize_job:
+                        projects.set_project_status(pid, project_status, error=message)
+                        updated_project = True
         finally:
-            jobs.set_job_status(job["id"], status, error=message)
-    elif not run_id:
-        projects.set_project_status(pid, status, error=message)
+            if finalize_job:
+                jobs.set_job_status(job["id"], status, error=message)
+        return updated_project
+    if not run_id:
+        projects.set_project_status(pid, project_status, error=message)
+        return True
+    return False
 
 
 def execute(
     request: ExecutionRequest,
     dependencies: ExecutionDependencies,
     stop: threading.Event | None = None,
-) -> None:
-    """Run one synchronous workflow, retaining ownership until all callbacks are drained."""
+) -> WorkflowOutcome | None:
+    """Run one checkpoint writer; return its outcome only after releasing its resources."""
     projects, jobs = dependencies.projects, dependencies.jobs
     pid, run_id, kind = request.project_id, request.run_id, request.kind
-    metric_identity = f"{pid}:{run_id}" if run_id else None
     stop = stop or threading.Event()
     finished = threading.Event()
     client: LLMClient | None = None
@@ -116,138 +141,138 @@ def execute(
         resources.callback(stop_watcher)
         emitter = redis_progress_fn(cache, pid, kind=kind, run_id=run_id)
 
-        def progress(done: int, total: int, label: str, payload: dict | None = None) -> None:
+        def progress(
+            done: int, total: int, label: str, payload: ProgressPayload | None = None
+        ) -> None:
             if stop.is_set() or projects.is_paused(pid):
                 if client is not None:
                     client.cancel()
                 raise PauseRequested(pid)
             emitter(done, total, label, payload)
 
-        def record_failure(error: BaseException) -> None:
-            # Provider credentials are stripped before they reach this point; the
-            # traceback stays on the operator side and is never returned to clients.
-            log.exception("Pipeline task failed: kind=%s run_id=%s", kind, run_id)
-            record_terminal_status(request, dependencies, error)
-            storage.log_event(
-                "pipeline_error",
-                kind=kind,
-                run_id=run_id,
-                error=str(error),
-                error_type=type(error).__name__,
-            )
-            # Tell live subscribers the run is over; failure here must not mask the
-            # original error, so publish_error swallows transport problems.
-            publish_error(cache, pid, code=error_code(error), message=str(error), run_id=run_id)
-            # Observability only: the counter swallows its own failures.
-            if job or not run_id:
-                dependencies.metrics.record_task(
-                    status="error", code=error_code(error), identity=metric_identity
+        with storage.lock():
+            if run_id:
+                current = jobs.get_job_by_arq_id(run_id)
+                latest = next(
+                    (item for item in jobs.list_jobs(pid) if item["kind"] != "export"), None
                 )
-
-        job = None
-        try:
-            with storage.lock(), ExitStack() as scope:
-                if run_id:
-                    current = jobs.get_job_by_arq_id(run_id)
-                    latest = next(
-                        (item for item in jobs.list_jobs(pid) if item["kind"] != "export"), None
-                    )
-                    if (
-                        not current
-                        or current["project_id"] != pid
-                        or current["kind"] != kind
-                        or not latest
-                        or current["id"] != latest["id"]
-                        or current["status"] != "queued"
-                    ):
-                        return
-                    job = current
-                    jobs.set_job_status(job["id"], "running")
-                storage.recover_usage()
-                live = scope.enter_context(LiveStatistics(cache, pid, run_id or "", storage))
-
-                def bind_client(value: LLMClient) -> None:
-                    nonlocal client
-                    client = value
-                    live.bind_client(value)
-                    value.set_event_sink(storage.log_event)
-                    scope.enter_context(value.observe_events(dependencies.metrics.record_event))
-                    if stop.is_set():
-                        value.cancel()
-
-                progress(0, 0, "progress.stage.taskStart")
-                result_status = dependencies.operation(request, storage, progress, bind_client)
-                progress(1, 1, "progress.stage.taskDone")
-                storage.log_event("task_completed", kind=kind, run_id=run_id)
-            # Publish completion only after telemetry and the run lock have exited.
-            projects.set_project_status(pid, result_status)
-            if job:
-                jobs.set_job_status(job["id"], "done")
-            dependencies.metrics.record_task(status="done", code="none", identity=metric_identity)
-        except (KeyboardInterrupt, RequestCancelled):
-            record_terminal_status(request, dependencies, status="paused")
-            storage.log_event("task_paused", kind=kind, run_id=run_id)
-            if job or not run_id:
-                dependencies.metrics.record_task(
-                    status="paused", code="none", identity=metric_identity
-                )
-        except RequestStopped as error:
-            record_terminal_status(request, dependencies, error, status="paused")
-            storage.log_event("task_paused", kind=kind, run_id=run_id, reason=str(error))
-            if job or not run_id:
-                dependencies.metrics.record_task(
-                    status="paused", code="none", identity=metric_identity
-                )
-        except Exception as error:
-            record_failure(error)
-            raise
-        except BaseException as error:
-            # Native panics reach Python as BaseException subclasses (pyo3's
-            # PanicException); catch them too or the task would stay running forever.
-            record_failure(error)
-            raise
-        finally:
-            stop_watcher()
+                if (
+                    not current
+                    or current["project_id"] != pid
+                    or current["kind"] != kind
+                    or not latest
+                    or current["id"] != latest["id"]
+                    or current["status"] != "queued"
+                ):
+                    return None
+                jobs.set_job_status(current["id"], "running")
             try:
-                cache.publish(
-                    f"project:{pid}",
-                    json.dumps({"kind": "state", "project_id": pid, "run_id": run_id}),
+                with ExitStack() as scope:
+                    storage.recover_usage()
+                    live = scope.enter_context(LiveStatistics(cache, pid, run_id or "", storage))
+
+                    def bind_client(value: LLMClient) -> None:
+                        nonlocal client
+                        client = value
+                        live.bind_client(value)
+                        value.set_event_sink(storage.log_event)
+                        scope.enter_context(value.observe_events(dependencies.metrics.record_event))
+                        if stop.is_set():
+                            value.cancel()
+
+                    progress(0, 0, "progress.stage.taskStart")
+                    result = dependencies.operation(request, storage, progress, bind_client)
+                    progress(1, 1, "progress.stage.taskDone")
+                    storage.log_event("task_completed", kind=kind, run_id=run_id)
+                return WorkflowOutcome("done", project_status=result)
+            except (KeyboardInterrupt, RequestCancelled):
+                storage.log_event("task_paused", kind=kind, run_id=run_id)
+                return WorkflowOutcome("paused")
+            except RequestStopped as error:
+                storage.log_event("task_paused", kind=kind, run_id=run_id, reason=str(error))
+                return WorkflowOutcome("paused", error=error)
+            except BaseException as error:
+                # Include native panics, which PyO3 wraps in BaseException.
+                log.exception("Pipeline task failed: kind=%s run_id=%s", kind, run_id)
+                storage.log_event(
+                    "pipeline_error",
+                    kind=kind,
+                    run_id=run_id,
+                    error=str(error),
+                    error_type=type(error).__name__,
                 )
-            except Exception:
-                pass
+                raise
+
+
+def _publish_outcome(
+    request: ExecutionRequest, dependencies: ExecutionDependencies, outcome: WorkflowOutcome
+) -> None:
+    if not record_terminal_status(
+        request,
+        dependencies,
+        outcome.error,
+        status=outcome.status,
+        project_status=outcome.project_status,
+    ):
+        return
+    pid, run_id = request.project_id, request.run_id
+    failed = outcome.error if outcome.status == "error" else None
+    code = error_code(failed) if failed is not None else "none"
+    dependencies.metrics.record_task(
+        status=outcome.status, code=code, identity=f"{pid}:{run_id}" if run_id else None
+    )
+    try:
+        cache = dependencies.telemetry.connect()
+        try:
+            if failed is not None:
+                publish_error(cache, pid, code=code, message=str(failed), run_id=run_id)
+            cache.publish(
+                f"project:{pid}",
+                json.dumps({"kind": "state", "project_id": pid, "run_id": run_id}),
+            )
+        finally:
+            dependencies.telemetry.release(cache)
+    except Exception:
+        # The durable result is authoritative; a transport failure cannot change it.
+        pass
+
+
+async def _run_owned(
+    request: ExecutionRequest, dependencies: ExecutionDependencies, stop: threading.Event
+) -> None:
+    try:
+        outcome = await dependencies.run_sync(partial(execute, request, dependencies, stop))
+    except asyncio.CancelledError:
+        raise
+    except BaseException as error:
+        await asyncio.to_thread(
+            _publish_outcome, request, dependencies, WorkflowOutcome("error", error=error)
+        )
+        raise
+    if outcome is not None:
+        await asyncio.to_thread(_publish_outcome, request, dependencies, outcome)
 
 
 async def run(request: ExecutionRequest, dependencies: ExecutionDependencies) -> None:
     stop = threading.Event()
-    task = asyncio.create_task(dependencies.run_sync(partial(execute, request, dependencies, stop)))
+    task = asyncio.create_task(_run_owned(request, dependencies, stop))
     try:
         await asyncio.shield(task)
     except asyncio.CancelledError:
-        # Timeout/shutdown must drain synchronous checkpoint writes before releasing the slot,
-        # but a stuck drain must never hold the workflow slot indefinitely.
         stop.set()
         started = time.monotonic()
-        outcome = "forced"
+        warning = asyncio.get_running_loop().call_later(
+            CANCEL_DRAIN_WARNING_SECONDS,
+            log.warning,
+            "Workflow %s is still draining after %.1fs; retaining ownership",
+            request.run_id or request.project_id,
+            CANCEL_DRAIN_WARNING_SECONDS,
+        )
         try:
-            await asyncio.wait_for(asyncio.shield(task), timeout=CANCEL_DRAIN_TIMEOUT_SECONDS)
-            outcome = "drained"
-        except asyncio.TimeoutError:
-            log.warning(
-                "Workflow %s ignored cancellation for %.1fs; forcing terminal paused state",
-                request.run_id or request.project_id,
-                CANCEL_DRAIN_TIMEOUT_SECONDS,
-            )
-            await asyncio.to_thread(record_terminal_status, request, dependencies, status="paused")
+            await drain(task)
         finally:
+            warning.cancel()
             dependencies.metrics.record_cancel_drain(
-                outcome=outcome, seconds=time.monotonic() - started, identity=request.run_id
+                seconds=time.monotonic() - started, identity=request.run_id
             )
-        raise
-    except Exception as error:
-        # Startup may fail before the synchronous runner can enter its recovery scope.
-        await asyncio.to_thread(record_terminal_status, request, dependencies, error)
-        raise
-    except BaseException as error:
-        # Native panics arrive as BaseException subclasses; still land the terminal state.
-        await asyncio.to_thread(record_terminal_status, request, dependencies, error)
         raise

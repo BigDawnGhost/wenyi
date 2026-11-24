@@ -30,10 +30,14 @@ pnpm desktop --data-dir /path/to/desktop-test-data
 临时外部项目库和 fake 凭据存储：系统凭据库不在数据根目录内。
 不要把真实项目库当作可丢弃的开发数据。
 
-[启动脚本](../../../scripts/dev/desktop.mjs#L55)解析 Git 版本、构建 UI，再启动原生
+[启动脚本](../../../scripts/dev/desktop.mjs#L89)解析 Git 版本、构建 UI，再启动原生
 debug 应用。默认使用仓库 `.venv`，也可通过 `WENYI_DESKTOP_PYTHON` 指定开发解释器。
 不提供远程 `--url` 模式，也不会静默回退到 Web 服务。仅启动 UI 的 Vite 服务不会提供
 原生引擎或 IPC 实现。
+
+对于默认的 `.venv`，`pnpm desktop` 只在 Desktop 包的版本元数据与当前 checkout 不匹配时刷新，
+不会删除其他开发依赖。启动器不修改 `WENYI_DESKTOP_PYTHON` 指定的环境；请在启动前为该环境
+安装匹配的 Desktop 组件。
 
 直接调用 Cargo 前先构建前端，因为 Tauri 在编译时嵌入其产物。例如：
 
@@ -58,7 +62,9 @@ cargo test --locked --manifest-path apps/desktop/Cargo.toml
 PostgreSQL/Redis/Arq/keyring 适配。仓库整体依赖方向见[架构](architecture.md)。
 
 引擎只监听随机 loopback 端口，每次启动使用新的、仅内存保存的 bearer token。
-[原生进程协议](../../../apps/desktop/src/process.rs#L65)在公布连接前校验
+宿主同时传递原生 SemVer 和预期的 PEP 440 包版本；引擎在打开目录库前检查已安装的完整版本，
+包括预发行和本地版本标识。独立或旧启动器缺少版本信息、源码引擎缺少包版本元数据时，
+只告警而不拒绝启动。[原生进程协议](../../../apps/desktop/src/process.rs#L93)在公布连接前校验
 `WENYI_READY` 的协议版本、端口及准确的自有子进程 PID。UI 必须等待就绪；
 启动失败不意味着可以尝试其他端点。端口和 token 不写入项目。
 
@@ -163,12 +169,12 @@ SQLite 锁、占位文件及分时复制的 WAL 可能破坏一致性。应用�
 
 ## 并行工作流与退出排空
 
-[LocalRuntime](../../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L191)
+[LocalRuntime](../../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L197)
 监管跨项目独立执行的解析、准备、翻译、章节翻译和 Review。派发前先持久化 job/run
 身份和配置快照，准入失败需补偿。同一项目的冲突写入仍然互斥。
 
 每次调用独占一个异步监管任务和
-[单线程执行器](../../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L177)，
+[单线程执行器](../../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L188)，
 跨线程复制上下文。不能改成共享的固定工作流线程池；默认 executor 必须留给控制请求和
 快照读取。Desktop 没有工作流数量门禁，但不承诺无限内存、线程、吞吐或供应商容量。
 单客户端限流和重试策略继续生效，共用凭据不等于具备账号级全局限流。
@@ -180,13 +186,13 @@ SQLite 锁、占位文件及分时复制的 WAL 可能破坏一致性。应用�
 1. 调度前登记所有权；重复派发已持有或已终态的 run 不得再次执行。
 2. 每个 run 独立创建客户端、停止信号和存储。某个 run 暂停/失败，包括线程分配失败，
    不得取消其他项目。
-3. 超时或退出时，异步 worker **只取消一次**。
-   [共享执行 runner](../../../packages/backend/wenyi_backend/execution/runner.py#L207)
-   发出协作停止信号，并 shield 同步操作直至检查点写入结束。重复取消会打断这段等待。
+3. 超时或退出时，每个 worker 只请求一次取消。
+   [共享取消契约](web.md#workflow-cancellation)要求保留所有权，直到写入线程退出。
+   即使再次收到取消，执行器和监管任务都不丢弃写入线程。
 4. 先停止准入，再排空。尚未进入执行的已接纳工作持久化为中断/可继续状态，不开始模型
    工作；worker 执行第一条指令前被取消的情况也要处理。
-5. 等待活跃写入者、监管任务、导出和进度持久化全部结束后才释放工作区锁。即使目录库
-   已是终态，更新准入仍须检查 pending/draining 所有权。
+5. 即使退出调用方被取消，也要等待活跃写入者、监管任务、导出和进度持久化全部结束后
+   才释放工作区锁。即使目录库已是终态，更新准入仍须检查待执行和排空中的所有权。
 6. 崩溃后将孤儿任务恢复为适当的可继续/错误状态，不自动重启全部中断工作。
 
 不强杀 Python 线程；尚未退出的线程继续保留所有权。原生宿主可在宽限期结束后终止无响应
@@ -247,8 +253,9 @@ dbus-run-session -- env WENYI_PRIVATE_NOTIFICATION_BUS=1 cargo test --locked --m
 已知 OS/SQLite 错误码及白名单应用模块/行号，不包含异常字符串或调用栈转储。
 不要把任意 stdout/stderr 或第三方日志器接入持久化 sink。
 
-原生进程是**唯一文件写入者**。Python 通过私有管道发送有界 `WENYI_DIAGNOSTIC`
-消息；`WENYI_READY` 保持独立协议帧，任意 stderr 仍被丢弃。前端 IPC 只接受可信窗口
+原生进程是**唯一文件写入者**。Python 通过保存的 stdout 管道发送有界 `WENYI_DIAGNOSTIC`
+消息；`WENYI_READY` 和 `WENYI_FAILED` 在该管道上使用独立控制帧。启动失败只传已注册的
+错误码，由原生宿主提供面向用户的指引。任意 stderr 仍被丢弃。前端 IPC 只接受可信窗口
 提交的已注册事件名，不接受任意载荷或文件读取请求。复用任务/run/模型调用身份，
 显式向线程传播上下文，并在操作结束后复位。Desktop 自行生成 request/error ID，
 不持久化调用方提交的 request ID。导出对 session/project/run/call 引用使用包内别名。

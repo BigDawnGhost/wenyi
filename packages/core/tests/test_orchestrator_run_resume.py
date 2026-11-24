@@ -12,14 +12,65 @@ from unittest.mock import patch
 
 import pytest
 from wenyi_core.llm.providers.fake import FakeClient
+from wenyi_core.llm.usage import UsageSample
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.translate.translation import TranslationService
+from wenyi_core.storage.chapter_publication import JOURNAL_NAME
 from wenyi_core.storage.run_store import STATUS_DONE, STATUS_PENDING
 
-from tests.fake_llm import routing_handler
+from tests.fake_llm import MeteredFakeClient, routing_handler
 from tests.pipeline_fixtures import fake_pipeline_config as _config
 from tests.pipeline_fixtures import require_file_storage
 from tests.sample_data import write_sample_txt
+
+
+def test_resume_finalized_chapter_after_manifest_disk_failure(tmp_path, monkeypatch):
+    source = tmp_path / "novel.txt"
+    source.write_text("綾小路は教室の窓際に座っていた。", encoding="utf-8")
+    cfg = _config(str(tmp_path / "state"))
+    # Keep synopsis invalidation after glossary growth out of this checkpoint test.
+    cfg.pipeline.book_understanding = False
+    client_args = {
+        "handler": routing_handler,
+        "usage_sample": UsageSample(prompt_tokens=7, completion_tokens=3, total_tokens=10),
+    }
+    first_client = MeteredFakeClient(**client_args)
+    first = Orchestrator(cfg, client=first_client)
+    store = require_file_storage(first.prepare(str(source)))
+    journal = Path(store.run_dir) / JOURNAL_NAME
+    real_replace = os.replace
+
+    def fail_manifest_after_chapter_commit(temp, target):
+        if os.path.basename(target) == "manifest.json" and journal.is_file():
+            raise OSError("manifest device full")
+        real_replace(temp, target)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", fail_manifest_after_chapter_commit)
+        with pytest.raises(OSError, match="manifest device full"):
+            first.run(str(source), only_chapter=0)
+
+    assert journal.is_file()
+    assert store.load_manifest()["chapters"][0]["status"] == STATUS_DONE
+    saved_translation = store.load_chapter(0)
+    usage = store.load_usage()
+    assert usage is not None, "Completed body calls must already be in the durable ledger"
+    assert usage["by_stage"]["translation.body"]["total_tokens"] > 0
+    second_client = MeteredFakeClient(**client_args)
+    second = Orchestrator(cfg, client=second_client)
+    resumed = second.run(str(source))
+    # Title translation had not started before the disk failure. It is new work;
+    # recovery must not request or charge for completed body, polish or glossary calls.
+    assert [call["operation"] for call in second_client.calls] == ["translation.title"]
+    assert resumed.load_chapter(0) == saved_translation
+    resumed_usage = resumed.load_usage()
+    assert resumed_usage is not None, "Recovery must preserve the usage ledger"
+    assert resumed_usage["by_stage"] == {
+        **usage["by_stage"],
+        "translation.title": second_client.usage_summary()["by_stage"]["translation.title"],
+    }
+    assert resumed_usage["totals"]["total_tokens"] == usage["totals"]["total_tokens"] + 10
+    assert not journal.exists()
 
 
 def _translated_para_count(calls) -> int:

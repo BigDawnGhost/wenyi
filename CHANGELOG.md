@@ -39,19 +39,19 @@ Historical releases remain available in the repository's GitHub Releases pages.
   - cli: fail fast on missing explicit config
   - desktop: guide users away from legacy data layouts
   - desktop: prune upgrade backups with retention limits
-  - desktop: restore upgrade backups on migration failure
+  - desktop: offer explicit offline recovery from the verified snapshot for a pending upgrade
   - export: explain orphaned continuation failures
   - storage: validate file artifact keys portably
   - docx: restore source images in exports
-  - ingest: surface mineru failure reasons
+  - ingest: report the failing MinerU stage without exposing signed URLs or credentials
   - epub: tolerate continuation-first footnote slices
   - api: fail closed on token requirement parsing
   - epub: rebuild the table of contents hierarchy
   - backend: compare ws tokens as bytes
-  - storage: cap slug length for windows paths
+  - storage: shorten new CLI book paths and recognize verified legacy state directories
   - api: write job admission atomically
-  - backend: bound cooperative cancellation drain
-  - api: publish exports from a consistent database snapshot
+  - backend: retain execution ownership until a cancelled writer finishes its checkpoints
+  - api: distinguish export editions and preserve successful publications when cleanup must retry
   - native: convert rust panics into python runtime errors
   - api: stop session locks from pinning shared pool connections
   - backend: land failed terminal state on native panics
