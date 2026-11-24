@@ -47,7 +47,6 @@ def options(
     description: str | None = None,
     subjects: list[str] | None = None,
     chapter_titles: Mapping[int, str] | None = None,
-    resource_titles: Mapping[str, str] | None = None,
     horizontal: bool = False,
     about: str | None = None,
 ) -> bytes:
@@ -56,6 +55,7 @@ def options(
     raw_entries = meta.get("toc_entries")
     package_path = meta.get("opf_path")
     entries = []
+    resource_titles: dict[str, str] = {}
     for record in raw_entries if isinstance(raw_entries, list) else []:
         if not isinstance(record, dict):
             continue
@@ -67,23 +67,27 @@ def options(
             if isinstance(value := record.get(key), str):
                 row[key] = value
         entries.append(row)
-    resolved_resource_titles: dict[str, str] = {}
-    if resource_titles:
-        for href, title in resource_titles.items():
-            if isinstance(href, str) and href and isinstance(title, str) and title.strip():
-                resolved_resource_titles[href] = title.strip()
+        resource, title = record.get("resource_href"), row.get("title_translated")
+        if (
+            target_lang is not None
+            and isinstance(resource, str)
+            and resource
+            and record.get("fragment") == ""
+            and not record.get("external")
+            and isinstance(title, str)
+            and (title := title.strip())
+        ):
+            resource_titles.setdefault(resource, title)
+    chapter_resource_titles: dict[str, str] = {}
     merged = {}
     for chapter in chapters:
-        chapter_title = (
-            chapter_titles.get(chapter.index, "").strip() if chapter_titles is not None else ""
-        )
-        chapter_href = chapter.href or ""
+        chapter_hrefs: set[str] = set()
         for segment in chapter.segments:
             href = segment.resource_href
             if not href:
                 continue
-            if not chapter_href:
-                chapter_href = href
+            if chapter_titles is not None:
+                chapter_hrefs.add(href)
             current = merged.setdefault(href, {})
             if segment.cont and current:
                 previous = next(reversed(current.values()))
@@ -102,24 +106,17 @@ def options(
                 raise ValueError(
                     f"EPUB state is inconsistent: segment {segment.index} has no anchor"
                 )
-        if chapter_title and chapter_href and chapter_href not in resolved_resource_titles:
-            resolved_resource_titles[chapter_href] = chapter_title
-    if target_lang is not None and isinstance(raw_entries, list):
-        for record in raw_entries:
-            if not isinstance(record, dict):
-                continue
-            href = record.get("resource_href")
-            fragment = record.get("fragment")
-            title = record.get("title_translated")
-            if (
-                isinstance(href, str)
-                and href
-                and not fragment
-                and isinstance(title, str)
-                and title.strip()
-                and href not in resolved_resource_titles
-            ):
-                resolved_resource_titles[href] = title.strip()
+        if chapter_titles is not None:
+            # Only use a chapter title when the chapter and page are one-to-one.
+            for href in chapter_hrefs:
+                chapter_resource_titles[href] = (
+                    chapter_titles.get(chapter.index, "").strip()
+                    if len(chapter_hrefs) == 1 and href not in chapter_resource_titles
+                    else ""
+                )
+    for href, title in chapter_resource_titles.items():
+        if title:
+            resource_titles.setdefault(href, title)
     return json.dumps(
         {
             "title": book_title,
@@ -135,7 +132,7 @@ def options(
             "segments": [record for page in merged.values() for record in page.values()],
             "about": about,
             "package_path": package_path if isinstance(package_path, str) else None,
-            "resource_titles": resolved_resource_titles,
+            "resource_titles": resource_titles,
             "presentation": (
                 {
                     "lang": target_lang,

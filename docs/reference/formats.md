@@ -73,6 +73,14 @@ styles, images, table of contents, anchors and internal links. It merges split
 continuations into their original logical paragraphs. Source preservation follows
 the [bilingual-output rules](#naming-and-bilingual-output).
 
+Single-language and bilingual EPUBs both use the translated book title when
+available, with the original title kept in the package metadata. Without a
+translated title, the book title keeps the `-wenyi-<language>` suffix (`-bi` for
+bilingual output). Subject tags captured on import use saved translations where
+available; the author and description stay in the source metadata. A page title
+uses the translated table-of-contents entry for the whole page first, or the
+translated chapter title when that chapter and page correspond one-to-one.
+
 High-confidence footnote/endnote references supply their source note bodies as
 translation context. Ordinary navigation links, backlinks and external links are
 not borrowed as note content. Spine note resources remain normal translatable

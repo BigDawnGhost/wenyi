@@ -506,7 +506,7 @@ def test_mineru_epub_export_updates_head_title_from_translated_chapter(tmp_path)
         ),
         encoding="utf-8",
     )
-    pdf_path = tmp_path / "paper-2026.pdf"
+    pdf_path = tmp_path / "Quantum Notes.pdf"
     pdf_path.write_bytes(pdf_bytes(["page one"]))
     store = FileStorage(str(tmp_path / "state"))
     cache = pdf_cache_epub_path(store.source_dir, source_sha256(pdf_path))
@@ -518,6 +518,7 @@ def test_mineru_epub_export_updates_head_title_from_translated_chapter(tmp_path)
     doc.source_path = str(pdf_path)
     doc.meta["mineru_epub_sha256"] = source_sha256(cache)
     manifest = store.init_from_document(doc)
+    assert manifest["title"] == manifest["chapters"][0]["title"]
     chapter = store.load_chapter(0)
     chapter.segments[0].target = "量子笔记"
     chapter.segments[1].target = "正文段落。"
@@ -530,6 +531,6 @@ def test_mineru_epub_export_updates_head_title_from_translated_chapter(tmp_path)
     with ZipFile(out) as archive:
         opf_name = next(name for name in archive.namelist() if name.endswith(".opf"))
         opf = archive.read(opf_name).decode("utf-8")
-        xhtml = archive.read("EPUB/source.xhtml").decode("utf-8")
-    assert "<dc:title>paper-2026-wenyi-zh</dc:title>" in opf
-    assert "<title>量子笔记</title>" in xhtml
+        xhtml = ET.fromstring(archive.read("EPUB/source.xhtml"))
+    assert "<dc:title>Quantum Notes-wenyi-zh</dc:title>" in opf
+    assert xhtml.findtext("x:head/x:title", namespaces=NS) == "量子笔记"

@@ -149,13 +149,12 @@ def _resolve_export_title(
 ) -> tuple[str, str]:
     """Return ``(export_title, original_title)``.
 
-    Prefer the translated book title for ``dc:title`` when available (retaining the source
-    title as metadata), falling back to ``<source>-wenyi-<lang>`` when untranslated.
+    Only native EPUB projects have translated package titles. Other inputs keep the
+    standard ``<source>-wenyi-<lang>`` title, even if their first chapter has the same name.
     """
     raw_title = manifest.get("title")
     source_title = raw_title.strip() if isinstance(raw_title, str) else ""
-    translated = _translated_book_title(manifest)
-    if translated:
+    if manifest.get("fmt") == "epub" and (translated := _translated_book_title(manifest)):
         return translated, source_title
     return _export_book_title(source_title or "translated", target_lang, bilingual=bilingual), ""
 
