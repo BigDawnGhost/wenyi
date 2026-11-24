@@ -1229,7 +1229,7 @@ class TestReviewReporting(unittest.TestCase):
             orch = Orchestrator(cfg, client=FakeClient(handler=routing_handler))
             orch.run(txt)
 
-            with patch.object(orch._review._chunks, "review_chapter", side_effect=BalanceError()):
+            with patch.object(orch._review._chunks, "review_chapters", side_effect=BalanceError()):
                 with self.assertRaises(BalanceError):
                     orch.run_review(txt)
 
@@ -1260,7 +1260,7 @@ class TestReviewReporting(unittest.TestCase):
             orch.run(txt)
 
             with patch.object(
-                orch._review._chunks, "review_chapter", side_effect=ValueError("bad block")
+                orch._review._chunks, "review_chapters", side_effect=ValueError("bad block")
             ):
                 with self.assertRaises(ValueError):
                     orch.run_review(txt)
@@ -1432,6 +1432,7 @@ class TestReviewReporting(unittest.TestCase):
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
             cfg.segment.max_tokens_per_batch = 100_000
+            cfg.pipeline.review_concurrency = 1
             client = MeteredFakeClient(handler=handler)
             orch = Orchestrator(cfg, client=client)
             store = require_file_storage(orch.run(txt))
@@ -1502,6 +1503,7 @@ class TestReviewReporting(unittest.TestCase):
             txt = os.path.join(d, "novel.txt")
             write_sample_txt(txt)
             cfg = _config(os.path.join(d, "state"))
+            cfg.pipeline.review_concurrency = 1
             client1 = MeteredFakeClient(handler=interrupting_handler)
             orch1 = Orchestrator(cfg, client=client1)
             store = require_file_storage(orch1.run(txt))
@@ -1640,22 +1642,28 @@ class TestReviewReporting(unittest.TestCase):
             orch.run(txt)
             progress_events: list[tuple[int, int, str]] = []
 
-            def fake_review(text_segs, terms, *, chapter_index, **kwargs):
-                proposed = "绫小路" if chapter_index == 0 else "绫小路君"
-                return [
-                    {
-                        "index": 0,
-                        "_chunk_id": f"ch{chapter_index}-chunk",
-                        "type": "terminology",
-                        "detail": "译名不统一",
-                        "suggestion": f"统一为{proposed}",
-                        "consistency": {
-                            "kind": "term",
-                            "subject_source": "綾小路",
-                            "proposed_value": proposed,
-                        },
-                    }
-                ]
+            def fake_review_chapters(chapters, terms, *, on_chapter_finished=None, **kwargs):
+                all_issues = []
+                for chapter in chapters:
+                    proposed = "绫小路" if chapter.index == 0 else "绫小路君"
+                    issues = [
+                        {
+                            "index": 0,
+                            "_chunk_id": f"ch{chapter.index}-chunk",
+                            "type": "terminology",
+                            "detail": "译名不统一",
+                            "suggestion": f"统一为{proposed}",
+                            "consistency": {
+                                "kind": "term",
+                                "subject_source": "綾小路",
+                                "proposed_value": proposed,
+                            },
+                        }
+                    ]
+                    if on_chapter_finished is not None:
+                        on_chapter_finished(chapter, issues)
+                    all_issues.append(issues)
+                return all_issues
 
             def fake_arbitrate(arbiter, conflict):
                 issue_ids = [issue["issue_id"] for issue in conflict["issues"]]
@@ -1672,7 +1680,9 @@ class TestReviewReporting(unittest.TestCase):
                 }
 
             with (
-                patch.object(orch._review._chunks, "review_chapter", side_effect=fake_review),
+                patch.object(
+                    orch._review._chunks, "review_chapters", side_effect=fake_review_chapters
+                ),
                 patch(
                     "wenyi_core.pipeline.review.review_rounds.ReviewConflictArbiter.arbitrate",
                     new=fake_arbitrate,
@@ -2379,63 +2389,72 @@ class TestReviewReporting(unittest.TestCase):
             orch = Orchestrator(cfg, client=FakeClient(handler=handler))
             orch.run(txt)
 
-            def fake_review(
-                text_segs,
+            def fake_review_chapters(
+                chapters,
                 terms,
                 *,
-                chapter_index,
                 review_round,
+                on_chapter_finished=None,
                 **kwargs,
             ):
-                if review_round != 1:
-                    return []
-                if chapter_index == 0:
-                    return [
-                        {
-                            "index": 0,
-                            "_chunk_id": "conflict-a",
-                            "type": "terminology",
-                            "detail": "第一种译名",
-                            "suggestion": "统一为绫小路",
-                            "consistency": {
-                                "kind": "term",
-                                "subject_source": "綾小路",
-                                "proposed_value": "绫小路",
+                all_issues = []
+                for chapter in chapters:
+                    if review_round != 1:
+                        issues = []
+                    elif chapter.index == 0:
+                        issues = [
+                            {
+                                "index": 0,
+                                "_chunk_id": "conflict-a",
+                                "type": "terminology",
+                                "detail": "第一种译名",
+                                "suggestion": "统一为绫小路",
+                                "consistency": {
+                                    "kind": "term",
+                                    "subject_source": "綾小路",
+                                    "proposed_value": "绫小路",
+                                },
                             },
-                        },
-                        {
-                            "index": 1,
-                            "_chunk_id": "fallback-a",
-                            "type": "mistranslation",
-                            "detail": "Agent 未完成核验",
-                            "suggestion": "人工复核",
-                            "agent_fallback": True,
-                            "fallback_reason": "max_rounds",
-                        },
-                        {
-                            "index": 2,
-                            "_chunk_id": "fixable-a",
-                            "type": "mistranslation",
-                            "detail": "用于进入下一轮的可修问题",
-                            "suggestion": "修订该段",
-                        },
-                    ]
-                return [
-                    {
-                        "index": 0,
-                        "_chunk_id": "conflict-b",
-                        "type": "terminology",
-                        "detail": "第二种译名",
-                        "suggestion": "统一为绫小路君",
-                        "consistency": {
-                            "kind": "term",
-                            "subject_source": "綾小路",
-                            "proposed_value": "绫小路君",
-                        },
-                    }
-                ]
+                            {
+                                "index": 1,
+                                "_chunk_id": "fallback-a",
+                                "type": "mistranslation",
+                                "detail": "Agent 未完成核验",
+                                "suggestion": "人工复核",
+                                "agent_fallback": True,
+                                "fallback_reason": "max_rounds",
+                            },
+                            {
+                                "index": 2,
+                                "_chunk_id": "fixable-a",
+                                "type": "mistranslation",
+                                "detail": "用于进入下一轮的可修问题",
+                                "suggestion": "修订该段",
+                            },
+                        ]
+                    else:
+                        issues = [
+                            {
+                                "index": 0,
+                                "_chunk_id": "conflict-b",
+                                "type": "terminology",
+                                "detail": "第二种译名",
+                                "suggestion": "统一为绫小路君",
+                                "consistency": {
+                                    "kind": "term",
+                                    "subject_source": "綾小路",
+                                    "proposed_value": "绫小路君",
+                                },
+                            }
+                        ]
+                    if on_chapter_finished is not None:
+                        on_chapter_finished(chapter, issues)
+                    all_issues.append(issues)
+                return all_issues
 
-            with patch.object(orch._review._chunks, "review_chapter", side_effect=fake_review):
+            with patch.object(
+                orch._review._chunks, "review_chapters", side_effect=fake_review_chapters
+            ):
                 result = orch.run_review(txt)
 
             review_dir = Path(result["review_dir"])
@@ -2711,7 +2730,7 @@ class TestFullGlossary(unittest.TestCase):
                     ensure_ascii=False,
                 )
             if "translation reviewer" in system:
-                self.assertIn("夏帆ちゃん → 小夏帆", user)
+                self.assertIn("夏帆ちゃん → 小夏帆", system)
                 return _review_json(user, [])
             return routing_handler(messages, tier, json_mode)
 

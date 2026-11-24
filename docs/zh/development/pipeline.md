@@ -276,6 +276,11 @@ Review 快照，不向所有 agent 开放全部工具。具体数据权限、参
 Reviewer 输出需包含与实际被审片段数相符的完成回执。
 不得通过补造 JSON 内容接受截断输出。
 回执无效时只拆分受影响块，单段输出重试有界。
+`Reviewer.review_result` 将全书实体 `[Glossary]` 放在 `system` 消息末尾、把本块命中的
+`navigation` 标题保留在 `user` 消息中，在术语表未超出模型上下文窗口时使相邻审校块在
+完整消息边界上共享字节一致的前缀（仍兼容冻结的旧版含 `$glossary` 的 `reviewer_user`
+模板）。跨章审校块共享一个受 `review_concurrency` 限制的工作池，按源书顺序落盘缓冲的
+块级事件、`review_chapter_finished` 与合并后的问题列表。
 未确认候选和未解决仲裁不能绕过发布校验。
 `not_rereported` 只记录后续观察，不证明修订正确。
 

@@ -362,6 +362,14 @@ and value limits. Each agent keeps its own turn budget, output validation and re
 Reviewer output requires a completion receipt matching the exact reviewed-segment
 count. Do not accept truncated output by inventing missing JSON content. Invalid
 receipts split only the affected chunk; single-segment output retries are bounded.
+`Reviewer.review_result` places the book-wide entity `[Glossary]` at the end of the
+`system` message and keeps per-chunk matched `navigation` titles in the `user` message
+so consecutive review blocks share a byte-identical prefix on a complete message
+boundary while the glossary fits within the model context window (legacy frozen
+`reviewer_user` templates containing `$glossary` remain compatible). Review blocks
+across chapters share one bounded worker pool sized to `review_concurrency`, flushing
+buffered chunk events, `review_chapter_finished`, and merged issues in deterministic
+source order.
 Unverified candidates or unresolved arbitration cannot bypass publication checks.
 `not_rereported` records a later observation, not proof of correctness.
 

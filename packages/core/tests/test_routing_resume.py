@@ -202,7 +202,7 @@ def _review_with_absent_term(tmp_path, interrupted):
         nonlocal scans
         if "translation reviewer" in messages[0]["content"]:
             scans += 1
-            assert "Unused → 无关术语" in messages[-1]["content"]
+            assert "Unused → 无关术语" in messages[0]["content"]
             if interrupted and scans == 2:
                 raise KeyboardInterrupt("after the first full-glossary chunk")
         return routing_handler(messages, tier, json_mode)
@@ -237,7 +237,7 @@ def test_full_glossary_review_reuses_completed_results_and_pending_chunks(tmp_pa
     assert len(client.calls) == (1 if interrupted else 0)
     for call in client.calls:
         assert call["operation"] == "review.scan"
-        assert "Unused → 无关术语" in call["messages"][-1]["content"]
+        assert "Unused → 无关术语" in call["messages"][0]["content"]
         assert "翌日" in call["messages"][-1]["content"]
     usage = store.load_usage()
     assert usage is not None
@@ -292,7 +292,7 @@ def test_full_glossary_changes_invalidate_completed_and_interrupted_reviews(
     assert store.read_artifact(f"reviews/{review_id}/rounds/metadata.json") is not None
     assert store.load_chapter(0) == original_chapter
     for call in client.calls:
-        prompt = call["messages"][-1]["content"]
+        prompt = call["messages"][0]["content"]
         if change == "delete":
             assert "Unused →" not in prompt
         else:

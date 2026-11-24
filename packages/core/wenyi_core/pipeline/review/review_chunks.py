@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from threading import Lock
+from types import SimpleNamespace
 from typing import Any
 
 from ...agents.review_loop import ReviewAgentLoop
@@ -56,55 +57,24 @@ class ReviewChunkService:
         self._client = client
         self._reviewer = reviewer
 
-    def review_chapter(
+    def _review_chunk_adaptive(
         self,
-        text_segs,
+        chunk_base: int,
+        chunk: list,
         terms: list[GlossaryTerm],
         *,
-        chapter_index: int | None = None,
-        evidence: BookEvidenceIndex | None = None,
-        debug: ReviewRunStore | None = None,
-        target_overrides: Mapping[tuple[int, int], str] | None = None,
-        review_round: int | None = None,
-        on_chunk_finished: Callable[[int], None] | None = None,
+        chapter_index: int | None,
+        evidence: BookEvidenceIndex | None,
+        debug: ReviewRunStore | None,
+        target_overrides: Mapping[tuple[int, int], str] | None,
+        review_round: int | None,
+        buffer_event: Callable[..., None],
     ) -> list[dict]:
-        """Review contiguous chapter blocks in parallel and return chapter-local issue indices.
-        Use blocks around three translation batches to reduce calls and repeated context.
-        Convert valid block-local indices by the block offset and reject invalid positions.
-        Supply the full entity glossary (plus navigation titles matching the chunk, fitted
-        to the model context window) to every fresh reviewer request and share the same
-        snapshot across workers. Completed chunks and initial traces bypass model calls.
-        Read fixed target/glossary snapshots. Recursively bisect invalid output and retry
-        single paragraphs a bounded number of times. Merge results in original block order
-        for determinism.
-        """
-        budget = self._config.segment.max_tokens_per_batch * 3
-        chunks = self.pack_contiguous(text_segs, budget)
-        if not chunks:
-            return []
+        """Run one contiguous review block with adaptive bisection and bounded singleton retries."""
 
-        jobs: list[tuple[int, list]] = []
-        base = 0
-        for chunk in chunks:
-            jobs.append((base, chunk))
-            base += len(chunk)
-
-        buffered_events: list[dict[str, Any]] = []
-        buffer_lock = Lock()
-
-        def buffer_event(event: str, **data: Any) -> None:
-            """Buffer an event under a lock; the main thread writes them in source order.
-
-            Workers finish in whatever order the pool schedules them, so anything they
-            record directly would leave the log ordered by completion instead of by
-            position in the book.
-            """
-            with buffer_lock:
-                buffered_events.append({"event": event, **data})
-
-        def review_once(chunk_base: int, chunk: list, *, attempt: int = 1) -> list[dict]:
+        def review_once(base: int, segs: list, *, attempt: int = 1) -> list[dict]:
             """Run one review call and map valid block-local indices to chapter indices."""
-            srcs = [s.source for s in chunk]
+            srcs = [s.source for s in segs]
             overrides = target_overrides or {}
 
             def target_for(local_index: int, segment) -> str:
@@ -114,15 +84,15 @@ class ReviewChunkService:
                 if chapter_index is None:
                     return segment.target or ""
                 return overrides.get(
-                    (chapter_index, chunk_base + local_index),
+                    (chapter_index, base + local_index),
                     segment.target or "",
                 )
 
-            tgts = [target_for(local_index, segment) for local_index, segment in enumerate(chunk)]
+            tgts = [target_for(local_index, segment) for local_index, segment in enumerate(segs)]
 
             # Check the chunk cache to skip reviewer and evidence-loop model calls on resume.
             round_prefix = f"r{review_round}-" if review_round is not None else ""
-            chunk_id = f"{round_prefix}ch{chapter_index}-base{chunk_base}-n{len(chunk)}"
+            chunk_id = f"{round_prefix}ch{chapter_index}-base{base}-n{len(segs)}"
             if debug is not None:
                 cached = debug.load_chunk_result(chunk_id)
                 if cached is not None:
@@ -130,12 +100,12 @@ class ReviewChunkService:
                     if chapter_index is not None:
                         debug.record_initial_issues(
                             chapter=chapter_index,
-                            chunk_base=chunk_base,
+                            chunk_base=base,
                             issues=cached.get("initial_issues", []),
                         )
                         debug.record_dismissed(
                             chapter=chapter_index,
-                            chunk_base=chunk_base,
+                            chunk_base=base,
                             issues=cached.get("dismissed", []),
                         )
                     return cached.get("issues", [])
@@ -143,10 +113,10 @@ class ReviewChunkService:
             # Probe child chunk caches using boundaries compatible with adaptive recovery.
             # Match review_adaptive's recursive bisection. If every child is cached,
             # merge them directly without making a reviewer call.
-            if debug is not None and len(chunk) > 1:
+            if debug is not None and len(segs) > 1:
                 cached_sub = self.try_cached_subchunks(
-                    chunk_base,
-                    chunk,
+                    base,
+                    segs,
                     debug,
                     round_prefix,
                     chapter_index,
@@ -163,8 +133,8 @@ class ReviewChunkService:
             if debug is not None:
                 round_prefix = f"r{review_round}-" if review_round is not None else ""
                 initial_id = (
-                    f"initial-{round_prefix}ch{chapter_index}-base{chunk_base}"
-                    f"-n{len(chunk)}-attempt{attempt}"
+                    f"initial-{round_prefix}ch{chapter_index}-base{base}"
+                    f"-n{len(segs)}-attempt{attempt}"
                 )
                 initial_path = f"initial/{initial_id}.json"
                 # Reuse completed initial screening and skip its expensive reviewer call.
@@ -178,7 +148,7 @@ class ReviewChunkService:
                     reused_initial = existing_initial
                 else:
                     if (
-                        len(chunk) > 1
+                        len(segs) > 1
                         and existing_initial
                         and existing_initial.get("status") == "failed"
                     ):
@@ -193,8 +163,8 @@ class ReviewChunkService:
                     initial_trace = {
                         "agent_id": initial_id,
                         "chapter": chapter_index,
-                        "chunk_base": chunk_base,
-                        "segment_count": len(chunk),
+                        "chunk_base": base,
+                        "segment_count": len(segs),
                         "attempt": attempt,
                         "status": "running",
                     }
@@ -212,14 +182,14 @@ class ReviewChunkService:
                 if repaired:
                     buffer_event(
                         "review_json_repaired",
-                        start_index=chunk_base,
-                        count=len(chunk),
+                        start_index=base,
+                        count=len(segs),
                     )
                 # reused_initial is assigned only with nonempty debug data; narrow it explicitly for typing.
                 if debug is not None and chapter_index is not None:
                     debug.record_initial_issues(
                         chapter=chapter_index,
-                        chunk_base=chunk_base,
+                        chunk_base=base,
                         issues=local_issues,
                     )
                 initial_issue_count = len(local_issues)
@@ -236,7 +206,7 @@ class ReviewChunkService:
 
                 try:
                     object_contexts = (
-                        evidence.object_contexts(chapter_index, chunk_base, len(chunk))
+                        evidence.object_contexts(chapter_index, base, len(segs))
                         if evidence is not None and chapter_index is not None
                         else []
                     )
@@ -262,13 +232,13 @@ class ReviewChunkService:
                 if repaired:
                     buffer_event(
                         "review_json_repaired",
-                        start_index=chunk_base,
-                        count=len(chunk),
+                        start_index=base,
+                        count=len(segs),
                     )
                 for it in review_result.issues:
                     it = dict(it)
                     idx = integer_index(it.get("index"))
-                    if idx is not None and 0 <= idx < len(chunk):
+                    if idx is not None and 0 <= idx < len(segs):
                         it["index"] = idx
                         local_issues.append(it)
                     else:
@@ -284,7 +254,7 @@ class ReviewChunkService:
                     if chapter_index is not None:
                         debug.record_initial_issues(
                             chapter=chapter_index,
-                            chunk_base=chunk_base,
+                            chunk_base=base,
                             issues=local_issues,
                         )
 
@@ -306,7 +276,7 @@ class ReviewChunkService:
                     ReviewTraceStore(debug),
                 ).review_chunk(
                     chapter=chapter_index,
-                    chunk_base=chunk_base,
+                    chunk_base=base,
                     sources=srcs,
                     targets=tgts,
                     initial_issues=local_issues,
@@ -317,7 +287,7 @@ class ReviewChunkService:
                 fallback_reason = outcome.fallback_reason
                 debug.record_dismissed(
                     chapter=chapter_index,
-                    chunk_base=chunk_base,
+                    chunk_base=base,
                     issues=dismissed,
                 )
 
@@ -327,10 +297,10 @@ class ReviewChunkService:
                 if (
                     isinstance(local_index, int)
                     and not isinstance(local_index, bool)
-                    and 0 <= local_index < len(chunk)
+                    and 0 <= local_index < len(segs)
                 ):
                     issue = dict(issue)
-                    issue["index"] = chunk_base + local_index
+                    issue["index"] = base + local_index
                     issue["_chunk_id"] = chunk_id
                     if fallback_reason:
                         issue["fallback_reason"] = fallback_reason
@@ -338,8 +308,8 @@ class ReviewChunkService:
             if debug is not None:
                 buffer_event(
                     "review_leaf_finished",
-                    chunk_base=chunk_base,
-                    segment_count=len(chunk),
+                    chunk_base=base,
+                    segment_count=len(segs),
                     initial_issue_count=initial_issue_count,
                     final_issue_count=len(mapped),
                     dismissed_count=len(dismissed),
@@ -355,32 +325,32 @@ class ReviewChunkService:
                         "dismissed": dismissed,
                         "fallback_reason": fallback_reason,
                         "glossary_alerts": [
-                            {**a, "chapter": chapter_index, "index": chunk_base + a["index"]}
+                            {**a, "chapter": chapter_index, "index": base + a["index"]}
                             for a in glossary_alerts
                         ],
                     },
                 )
             return mapped
 
-        def review_adaptive(chunk_base: int, chunk: list) -> list[dict]:
+        def review_adaptive(base: int, segs: list) -> list[dict]:
             """Shrink malformed requests; use bounded same-input retries only after reaching
             one paragraph.
             """
             try:
-                return review_once(chunk_base, chunk)
+                return review_once(base, segs)
             except ReviewOutputError as error:
-                if len(chunk) > 1:
-                    mid = len(chunk) // 2
+                if len(segs) > 1:
+                    mid = len(segs) // 2
                     buffer_event(
                         "review_chunk_split",
-                        start_index=chunk_base,
-                        count=len(chunk),
+                        start_index=base,
+                        count=len(segs),
                         left_count=mid,
-                        right_count=len(chunk) - mid,
+                        right_count=len(segs) - mid,
                         reason=error.reason,
                     )
-                    return review_adaptive(chunk_base, chunk[:mid]) + review_adaptive(
-                        chunk_base + mid, chunk[mid:]
+                    return review_adaptive(base, segs[:mid]) + review_adaptive(
+                        base + mid, segs[mid:]
                     )
 
                 last_error = error
@@ -388,74 +358,220 @@ class ReviewChunkService:
                 for attempt in range(1, retries + 1):
                     buffer_event(
                         "review_singleton_retry",
-                        start_index=chunk_base,
+                        start_index=base,
                         count=1,
                         attempt=attempt,
                         max_retries=retries,
                         reason=last_error.reason,
                     )
                     try:
-                        result = review_once(chunk_base, chunk, attempt=attempt + 1)
+                        result = review_once(base, segs, attempt=attempt + 1)
                     except ReviewOutputError as retry_error:
                         last_error = retry_error
                         continue
                     buffer_event(
                         "review_singleton_recovered",
-                        start_index=chunk_base,
+                        start_index=base,
                         count=1,
                         attempt=attempt,
                     )
                     return result
                 buffer_event(
                     "review_singleton_failed",
-                    start_index=chunk_base,
+                    start_index=base,
                     count=1,
                     attempts=retries + 1,
                     reason=last_error.reason,
                 )
                 raise last_error
 
-        def review_one(job: tuple[int, list]) -> list[dict]:
-            """Review one initial contiguous block with local recovery as needed."""
-            chunk_base, chunk = job
-            return review_adaptive(chunk_base, chunk)
+        return review_adaptive(chunk_base, chunk)
 
-        workers = min(
-            max(1, self._config.pipeline.review_concurrency),
-            len(jobs),
-        )
+    def review_chapters(
+        self,
+        chapters,
+        terms: list[GlossaryTerm],
+        *,
+        evidence: BookEvidenceIndex | None = None,
+        debug: ReviewRunStore | None = None,
+        target_overrides: Mapping[tuple[int, int], str] | None = None,
+        review_round: int | None = None,
+        on_chunk_finished: Callable[[int], None] | None = None,
+        on_chapter_finished: Callable[[Any, list[dict]], None] | None = None,
+    ) -> list[list[dict]]:
+        """Review blocks across all chapters up to ``review_concurrency`` and merge in source order.
+
+        Flattening chapter blocks into one bounded worker pool lets ``review_concurrency``
+        parallelize single-chunk chapters without spawning nested pools, while streaming
+        events and invoking ``on_chapter_finished`` strictly in source chapter order.
+        """
+        chapter_list = list(chapters)
+        if not chapter_list:
+            return []
+        budget = self._config.segment.max_tokens_per_batch * 3
+        all_jobs: list[tuple[int, int | None, int, int, list]] = []
+        chapter_chunk_slots: list[list[list[dict] | None]] = []
+        remaining_chunks: list[int] = []
+        chapter_events: list[list[dict[str, Any]]] = [[] for _ in chapter_list]
+        final_chapter_issues: list[list[dict]] = [[] for _ in chapter_list]
+
+        for cpos, chapter in enumerate(chapter_list):
+            chunks = self.pack_contiguous(chapter.text_segments, budget)
+            chapter_chunk_slots.append([None] * len(chunks))
+            remaining_chunks.append(len(chunks))
+            base = 0
+            for kpos, chunk in enumerate(chunks):
+                all_jobs.append((cpos, chapter.index, kpos, base, chunk))
+                base += len(chunk)
+
+        buffer_lock = Lock()
+        next_chapter_to_flush = 0
+
+        def flush_chapter_events(cpos: int) -> None:
+            if debug is None:
+                return
+            with buffer_lock:
+                pending = order_buffered_events(chapter_events[cpos])
+                chapter_events[cpos].clear()
+            cidx = chapter_list[cpos].index
+            for row in pending:
+                event = row["event"]
+                payload = {
+                    "chapter": cidx,
+                    **{key: value for key, value in row.items() if key != "event"},
+                }
+                debug.log_event(event, **payload)
+
+        def flush_ready_chapters() -> None:
+            nonlocal next_chapter_to_flush
+            while (
+                next_chapter_to_flush < len(chapter_list)
+                and remaining_chunks[next_chapter_to_flush] == 0
+            ):
+                cpos = next_chapter_to_flush
+                flush_chapter_events(cpos)
+                merged = [
+                    issue
+                    for chunk_issues in chapter_chunk_slots[cpos]
+                    if chunk_issues is not None
+                    for issue in chunk_issues
+                ]
+                final_chapter_issues[cpos] = merged
+                if on_chapter_finished is not None:
+                    on_chapter_finished(chapter_list[cpos], merged)
+                next_chapter_to_flush += 1
+
+        def run_job(cpos: int, cidx: int | None, cbase: int, chunk: list) -> list[dict]:
+            def buffer_event(event: str, **data: Any) -> None:
+                with buffer_lock:
+                    chapter_events[cpos].append({"event": event, **data})
+
+            return self._review_chunk_adaptive(
+                cbase,
+                chunk,
+                terms,
+                chapter_index=cidx,
+                evidence=evidence,
+                debug=debug,
+                target_overrides=target_overrides,
+                review_round=review_round,
+                buffer_event=buffer_event,
+            )
+
+        flush_ready_chapters()
+        if not all_jobs:
+            return final_chapter_issues
+
+        workers = min(max(1, self._config.pipeline.review_concurrency), len(all_jobs))
         try:
             if workers == 1:
-                results = []
-                for job in jobs:
-                    results.append(review_one(job))
-                    if on_chunk_finished:
-                        on_chunk_finished(len(job[1]))
+                for cpos, cidx, kpos, cbase, chunk in all_jobs:
+                    chapter_chunk_slots[cpos][kpos] = run_job(cpos, cidx, cbase, chunk)
+                    remaining_chunks[cpos] -= 1
+                    if on_chunk_finished is not None:
+                        on_chunk_finished(len(chunk))
+                    flush_ready_chapters()
             else:
-                ordered_results: list[list[dict] | None] = [None] * len(jobs)
+                job_iter = iter(all_jobs)
+                in_flight: dict[Future[list[dict]], tuple[int, int, int]] = {}
                 with ThreadPoolExecutor(max_workers=workers) as ex:
-                    futures = {
-                        ex.submit(review_one, job): (position, len(job[1]))
-                        for position, job in enumerate(jobs)
-                    }
-                    for future in as_completed(futures):
-                        position, segment_count = futures[future]
-                        ordered_results[position] = future.result()
-                        if on_chunk_finished:
-                            on_chunk_finished(segment_count)
-                results = [result for result in ordered_results if result is not None]
+
+                    def submit_next() -> bool:
+                        try:
+                            cpos, cidx, kpos, cbase, chunk = next(job_iter)
+                        except StopIteration:
+                            return False
+                        fut = ex.submit(run_job, cpos, cidx, cbase, chunk)
+                        in_flight[fut] = (cpos, kpos, len(chunk))
+                        return True
+
+                    for _ in range(workers):
+                        if not submit_next():
+                            break
+
+                    while in_flight:
+                        done_futs, _ = wait(in_flight, return_when=FIRST_COMPLETED)
+                        ordered_done = sorted(done_futs, key=lambda fut: in_flight[fut][:2])
+                        first_error: BaseException | None = None
+                        for fut in ordered_done:
+                            cpos, kpos, seg_count = in_flight.pop(fut)
+                            try:
+                                chunk_issues = fut.result()
+                            except BaseException as exc:
+                                if first_error is None:
+                                    first_error = exc
+                                continue
+                            chapter_chunk_slots[cpos][kpos] = chunk_issues
+                            remaining_chunks[cpos] -= 1
+                            if on_chunk_finished is not None:
+                                on_chunk_finished(seg_count)
+                        flush_ready_chapters()
+                        if first_error is not None:
+                            for pending_fut in in_flight:
+                                pending_fut.cancel()
+                            raise first_error
+                        while len(in_flight) < workers and submit_next():
+                            pass
         finally:
-            if debug is not None:
-                with buffer_lock:
-                    pending_events = order_buffered_events(buffered_events)
-                for row in pending_events:
-                    event = row["event"]
-                    payload = {
-                        "chapter": chapter_index,
-                        **{key: value for key, value in row.items() if key != "event"},
-                    }
-                    debug.log_event(event, **payload)
-        return [issue for chunk_issues in results for issue in chunk_issues]
+            # All worker threads have exited before flushing remaining diagnostic events.
+            for cpos in range(next_chapter_to_flush, len(chapter_list)):
+                flush_chapter_events(cpos)
+        return final_chapter_issues
+
+    def review_chapter(
+        self,
+        text_segs,
+        terms: list[GlossaryTerm],
+        *,
+        chapter_index: int | None = None,
+        evidence: BookEvidenceIndex | None = None,
+        debug: ReviewRunStore | None = None,
+        target_overrides: Mapping[tuple[int, int], str] | None = None,
+        review_round: int | None = None,
+        on_chunk_finished: Callable[[int], None] | None = None,
+    ) -> list[dict]:
+        """Review contiguous chapter blocks in parallel and return chapter-local issue indices.
+        Use blocks around three translation batches to reduce calls and repeated context.
+        Convert valid block-local indices by the block offset and reject invalid positions.
+        Supply the full entity glossary (plus navigation titles matching the chunk, fitted
+        to the model context window) to every fresh reviewer request and share the same
+        snapshot across workers. Completed chunks and initial traces bypass model calls.
+        Read fixed target/glossary snapshots. Recursively bisect invalid output and retry
+        single paragraphs a bounded number of times. Merge results in original block order
+        for determinism.
+        """
+        if not text_segs:
+            return []
+
+        return self.review_chapters(
+            [SimpleNamespace(index=chapter_index, text_segments=text_segs)],
+            terms,
+            evidence=evidence,
+            debug=debug,
+            target_overrides=target_overrides,
+            review_round=review_round,
+            on_chunk_finished=on_chunk_finished,
+        )[0]
 
     @staticmethod
     def try_cached_subchunks(

@@ -459,7 +459,7 @@ class TestReviewer(unittest.TestCase):
 
                 def handler(messages, tier, json_mode):
                     barrier.wait(timeout=2)
-                    self.assertIn("Unused → Unused", messages[-1]["content"])
+                    self.assertIn("Unused → Unused", messages[0]["content"])
                     return _review_response([], 1)
 
                 orch = Orchestrator(cfg, client=FakeClient(handler=handler))

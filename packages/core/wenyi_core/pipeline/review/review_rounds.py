@@ -61,28 +61,17 @@ class ReviewRoundService:
         if progress:
             progress(0, total, review_label)
         raw_issues: list[dict[str, Any]] = []
-        for chapter in loaded:
-            text_segs = chapter.text_segments
 
-            def on_chunk_finished(segment_count: int) -> None:
-                """Advance this round's paragraph progress after a top-level review block
-                completes.
-                """
-                nonlocal done
-                done += segment_count
-                if progress:
-                    progress(done, total, review_label)
+        def on_chunk_finished(segment_count: int) -> None:
+            """Advance this round's paragraph progress after a top-level review block
+            completes.
+            """
+            nonlocal done
+            done += segment_count
+            if progress:
+                progress(done, total, review_label)
 
-            chapter_issues = self._chunks.review_chapter(
-                text_segs,
-                all_terms,
-                chapter_index=chapter.index,
-                evidence=evidence,
-                debug=debug,
-                target_overrides=target_overrides,
-                review_round=review_round,
-                on_chunk_finished=on_chunk_finished,
-            )
+        def on_chapter_finished(chapter, chapter_issues: list[dict[str, Any]]) -> None:
             for issue in chapter_issues:
                 issue["chapter"] = chapter.index
                 issue["stage"] = "review_agent"
@@ -91,9 +80,20 @@ class ReviewRoundService:
             debug.log_event(
                 "review_chapter_finished",
                 chapter=chapter.index,
-                segment_count=len(text_segs),
+                segment_count=len(chapter.text_segments),
                 issue_count=len(chapter_issues),
             )
+
+        self._chunks.review_chapters(
+            loaded,
+            all_terms,
+            evidence=evidence,
+            debug=debug,
+            target_overrides=target_overrides,
+            review_round=review_round,
+            on_chunk_finished=on_chunk_finished,
+            on_chapter_finished=on_chapter_finished,
+        )
 
         pre_arbitration_issues = normalize_review_issues(raw_issues, evidence)
         for issue in pre_arbitration_issues:
