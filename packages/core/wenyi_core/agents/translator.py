@@ -1,13 +1,15 @@
 """Translation agent using the body translation route.
 Guarantee paragraph alignment: N source paragraphs must produce N corresponding
 translations. Request an equal-length JSON array, retry count mismatches up to
-align_retry_limit, then translate paragraphs individually. This final fallback prevents
-entire paragraphs from being omitted.
+align_retry_limit, then recursively split the batch in half down to individual
+paragraphs if needed. This final fallback prevents entire paragraphs from being
+omitted while avoiding N-way call blowups on localized batch alignment failures.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 
 from ..alignment.objects import marked_sources
 from ..llm.json_parser import JsonParseError
@@ -17,6 +19,8 @@ from ..models.glossary import GlossaryTerm
 from . import prompts
 from .base import Agent, Messages
 from .note_tools import batch_note_tools
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AlignmentError(Exception):
@@ -28,8 +32,8 @@ class Translator(Agent):
 
     After a successful single-shot batch call, ``last_batch_turn`` holds the
     ``system`` / ``user`` / ``assistant`` messages so polishing can append another
-    user turn instead of opening a new conversation. Per-paragraph fallback clears
-    that transcript.
+    user turn instead of opening a new conversation. Binary-split / per-paragraph
+    fallback clears that transcript.
     """
 
     def __init__(self, client, config):
@@ -284,12 +288,17 @@ class Translator(Agent):
         translated_annotation_contexts = [
             annotation_contexts[index] for index in translated_indices
         ]
-        # A filtered trailing number or symbol remains the immediate source neighbor.
-        following_index = translated_indices[-1] + 1
-        batch_next_source = sources[following_index] if following_index < n else next_source
 
-        attempts = self.config.pipeline.align_retry_limit + 1
-        for _ in range(attempts):
+        # A filtered trailing number or symbol remains the immediate source neighbor.
+        def _next_source_for(slice_indices: list[int]) -> str:
+            following_index = slice_indices[-1] + 1
+            return sources[following_index] if following_index < n else next_source
+
+        batch_next_source = _next_source_for(translated_indices)
+
+        attempts = max(0, self.config.pipeline.align_retry_limit) + 1
+        last_error: AlignmentError | None = None
+        for attempt in range(1, attempts + 1):
             try:
                 translated, turn = self._call_batch(
                     translated_sources,
@@ -306,35 +315,122 @@ class Translator(Agent):
                 for index, target in zip(translated_indices, translated):
                     targets[index] = target
                 return targets, turn, list(translated_indices)
-            except AlignmentError:
+            except AlignmentError as error:
                 # Recover only output protocol/alignment errors; the provider handles transport retries.
+                last_error = error
+                _LOGGER.warning(
+                    "Translation batch alignment failed (size=%d, attempt=%d/%d): %s",
+                    len(translated_sources),
+                    attempt,
+                    attempts,
+                    error,
+                )
                 continue
 
-        # Fall back to individual paragraphs. If any still fails, stop explicitly and preserve saved
-        # batches for resume. Without allow_empty_translations, empty placeholders must not mark
-        # the chapter complete; MinerU may persist "" when the model returns a blank string.
-        targets = list(sources)
-        for index, source, annotation_context in zip(
+        if len(translated_sources) == 1:
+            index = translated_indices[0]
+            _LOGGER.warning(
+                "Single-paragraph fallback failed at paragraph %d after %d attempt(s): %s",
+                index,
+                attempts,
+                last_error,
+            )
+            raise AlignmentError(
+                f"Single-paragraph fallback failed at paragraph {index}"
+            ) from last_error
+
+        # Fall back to recursive binary splitting down to single paragraphs. If any leaf still
+        # fails, stop explicitly and preserve saved batches for resume. Without
+        # allow_empty_translations, empty placeholders must not mark the chapter complete;
+        # MinerU may persist "" when the model returns a blank string.
+        def _translate_split(
+            slice_indices: list[int],
+            slice_sources: list[str],
+            slice_annotations: list[list[dict[str, str]]],
+            *,
+            try_whole: bool,
+        ) -> list[str]:
+            size = len(slice_sources)
+            if size == 1:
+                index = slice_indices[0]
+                _LOGGER.warning(
+                    "Running single-paragraph alignment fallback at paragraph %d",
+                    index,
+                )
+                try:
+                    translated_one = self._translate_one(
+                        slice_sources[0],
+                        glossary_terms,
+                        style,
+                        context,
+                        book_synopsis,
+                        chapter_digest,
+                        slice_annotations[0],
+                        next_source=_next_source_for(slice_indices),
+                        allow_empty_translations=allow_empty_translations,
+                    )
+                except AlignmentError as error:
+                    _LOGGER.warning(
+                        "Single-paragraph fallback failed at paragraph %d: %s",
+                        index,
+                        error,
+                    )
+                    raise AlignmentError(
+                        f"Single-paragraph fallback failed at paragraph {index}"
+                    ) from error
+                return [translated_one]
+
+            if try_whole:
+                try:
+                    translated, _turn = self._call_batch(
+                        slice_sources,
+                        glossary_terms,
+                        style,
+                        context,
+                        book_synopsis,
+                        chapter_digest,
+                        slice_annotations,
+                        next_source=_next_source_for(slice_indices),
+                        allow_empty_translations=allow_empty_translations,
+                    )
+                    return translated
+                except AlignmentError as error:
+                    _LOGGER.debug(
+                        "Split translation sub-batch alignment failed (size=%d, attempt=1/1): %s",
+                        size,
+                        error,
+                    )
+
+            mid = size // 2
+            _LOGGER.warning(
+                "Falling back to binary split for %d-paragraph batch -> %d + %d",
+                size,
+                mid,
+                size - mid,
+            )
+            left = _translate_split(
+                slice_indices[:mid],
+                slice_sources[:mid],
+                slice_annotations[:mid],
+                try_whole=True,
+            )
+            right = _translate_split(
+                slice_indices[mid:],
+                slice_sources[mid:],
+                slice_annotations[mid:],
+                try_whole=True,
+            )
+            return left + right
+
+        split_translated = _translate_split(
             translated_indices,
             translated_sources,
             translated_annotation_contexts,
-        ):
-            try:
-                targets[index] = self._translate_one(
-                    source,
-                    glossary_terms,
-                    style,
-                    context,
-                    book_synopsis,
-                    chapter_digest,
-                    annotation_context,
-                    next_source=sources[index + 1] if index + 1 < n else next_source,
-                    allow_empty_translations=allow_empty_translations,
-                )
-            except Exception as error:
-                raise AlignmentError(
-                    f"Single-paragraph fallback failed at paragraph {index}"
-                ) from error
+            try_whole=False,
+        )
+        targets = list(sources)
+        for index, target in zip(translated_indices, split_translated):
+            targets[index] = target
         return targets, None, None
 
     def translate_batch(

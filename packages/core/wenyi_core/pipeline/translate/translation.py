@@ -254,10 +254,13 @@ class TranslationService:
             for row in manifest.get("chapters", [])
         ]
         self._quote_memory = QuoteMemory.from_chapters(chapter_sources_for_quotes)
-        # Snapshot whole-book cross-chapter quotes BEFORE observing already-translated drafts so
-        # the compiled Book Bible cache fingerprint stays invariant across resumes.
+        # Whole-book cross-chapter quotes keep the compiled Book Bible cache fingerprint
+        # invariant across resumes: include_canonical returns the same spans whether or not
+        # already-translated drafts below have populated the canonical table.
         repeated_quotes = (
-            self._quote_memory.cross_chapter_spans() if pipeline.glossary_mode == "compiled" else ()
+            self._quote_memory.cross_chapter_spans(include_canonical=True)
+            if pipeline.glossary_mode == "compiled"
+            else ()
         )
         for pos, src, tgt in drafts:
             self._quote_memory.observe(pos, src, tgt)

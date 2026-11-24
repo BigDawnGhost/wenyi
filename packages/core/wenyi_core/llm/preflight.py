@@ -18,7 +18,7 @@ _LOGGER = logging.getLogger(__name__)
 _DEFAULT_OUTPUT_RESERVE = 4096
 
 
-def _output_reserve(configured_max_output: int | None, context_window: int) -> int:
+def output_reserve(configured_max_output: int | None, context_window: int) -> int:
     """Reserve configured output tokens (capped sensibly) or a conservative default."""
     if configured_max_output is not None and configured_max_output > 0:
         return configured_max_output
@@ -51,9 +51,9 @@ def fit_prompt_to_context_window(
     # failover during a provider outage cannot hit a terminal over-context 4xx.
     bounded = [
         (
-            r.context_window - _output_reserve(r.max_output_tokens, r.context_window),
+            r.context_window - output_reserve(r.max_output_tokens, r.context_window),
             r.context_window,
-            _output_reserve(r.max_output_tokens, r.context_window),
+            output_reserve(r.max_output_tokens, r.context_window),
         )
         for r in candidate_routes
         if r.context_window is not None

@@ -14,6 +14,7 @@ Pure functions only: zero LLM calls, zero pipeline or storage imports.
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -151,6 +152,197 @@ def _target_contains_term(target_clean: str, canonical: str, *, target_lang: str
     return False
 
 
+_OPEN_QUOTES = frozenset("\"“‘'«‹「『([")
+_CLOSE_QUOTES = frozenset("\"”’'»›」』)]")
+_SENTENCE_END = frozenset(".!?…")
+_INLINE_SPACE_RE = re.compile(r"[^\S\n]+")
+_LEADING_ARTICLE_RE = re.compile(r"^(?:the|a|an)\s+", re.I)
+_LEADING_THE_RE = re.compile(r"^the\s+", re.I)
+_SINGLE_WORD_RE = re.compile(r"[^\W\d_]+")
+_TITLE_ABBREVIATIONS = frozenset(
+    {
+        "mr",
+        "mrs",
+        "ms",
+        "dr",
+        "st",
+        "sr",
+        "jr",
+        "prof",
+        "rev",
+        "gen",
+        "col",
+        "lt",
+        "sgt",
+        "capt",
+        "hon",
+        "rep",
+        "sen",
+        "gov",
+    }
+)
+# Ordinary English words (>=4 chars) that double as given names/surnames. A capitalized
+# single-word glossary target equal to one of these is ambiguous at sentence start.
+_EN_NAME_WORD_COLLISIONS = frozenset(
+    {
+        "will",
+        "hope",
+        "white",
+        "black",
+        "brown",
+        "green",
+        "gray",
+        "grey",
+        "young",
+        "rose",
+        "mark",
+        "bill",
+        "frank",
+        "grace",
+        "faith",
+        "june",
+        "april",
+        "august",
+        "summer",
+        "autumn",
+        "winter",
+        "dawn",
+        "iris",
+        "lily",
+        "rich",
+        "long",
+        "king",
+        "wood",
+        "stone",
+        "hill",
+        "field",
+        "bell",
+        "miles",
+        "chase",
+        "hunter",
+        "page",
+        "price",
+        "reed",
+        "rush",
+        "cook",
+        "baker",
+        "carter",
+        "mason",
+        "fisher",
+        "porter",
+        "ward",
+        "wells",
+        "star",
+        "river",
+        "storm",
+        "wolf",
+        "bear",
+        "hawk",
+        "swift",
+        "patience",
+        "honor",
+        "honour",
+        "victor",
+        "sterling",
+        "earl",
+        "duke",
+        "prince",
+        "noble",
+        "sunny",
+        "golden",
+        "silver",
+    }
+)
+
+
+def _is_sentence_initial(text: str, start: int) -> bool:
+    """Return True if ``text[start:]`` begins a sentence, line, or quoted utterance."""
+    j = start
+    while j > 0 and text[j - 1] in _OPEN_QUOTES:
+        j -= 1
+    if j < start:
+        # Directly after an opening quote: an utterance start ("…asked, "Will you stay?"").
+        return j == 0 or text[j - 1].isspace() or text[j - 1] in "—–-:"
+    k = j
+    while k > 0 and text[k - 1] == " ":
+        k -= 1
+    if k == 0 or text[k - 1] == "\n":
+        return True
+    if k == j:
+        # NFKC expands '…' to '...', so check both raw ellipsis/dashes and '...'.
+        return text[k - 1] in "…—–" or text[max(0, k - 3) : k] == "..."
+    while k > 0 and text[k - 1] in _CLOSE_QUOTES:
+        k -= 1
+    if not (k > 0 and text[k - 1] in _SENTENCE_END):
+        return False
+    if text[k - 1] == ".":
+        # Honorific abbreviations ("Mr. White", "Dr. Hope") are not sentence boundaries.
+        word_end = k - 1
+        word_start = word_end
+        while word_start > 0 and text[word_start - 1].isalpha():
+            word_start -= 1
+        if text[word_start:word_end].casefold() in _TITLE_ABBREVIATIONS:
+            return False
+    return True
+
+
+def _lowercase_words(drafts: Sequence[str]) -> frozenset[str]:
+    """Collect casefolded words that appear lowercase-initial anywhere in ``drafts``."""
+    return frozenset(
+        w.casefold()
+        for d in drafts
+        for w in _WORD_RE.findall(unicodedata.normalize("NFKC", d))
+        if w[:1].islower()
+    )
+
+
+def _phantom_target_hit(
+    target_clean: str,
+    canonical: str,
+    *,
+    target_lang: str,
+    lowercase_words: frozenset[str] = frozenset(),
+    term_type: str = "",
+) -> bool:
+    """Return True if ``target_clean`` really uses the proper noun ``canonical``.
+
+    Stricter than :func:`_target_contains_term` (kept for canonical-miss checks) on
+    Latin-script targets: matching is case-sensitive, so ordinary lowercase "will", "hope"
+    or "white" never count as the names "Will", "Hope" or "White". A single-word target that
+    is also an ordinary word (curated English collisions for ``en``, or a word written
+    lowercase elsewhere in the batch) is ignored at sentence/utterance start, where
+    capitalization is ambiguous; a mid-sentence capitalized use still counts. Distinctive
+    names ("Jingxiang fell.") still match at sentence start.
+    """
+    if not _is_latin_lang(target_lang):
+        return _target_contains_term(target_clean, canonical, target_lang=target_lang)
+    tgt_base = (target_lang or "").lower().split("-", 1)[0]
+    canon = " ".join(unicodedata.normalize("NFKC", canonical).replace("’", "'").split())
+    if not canon:
+        return False
+    text = _INLINE_SPACE_RE.sub(" ", unicodedata.normalize("NFKC", target_clean).replace("’", "'"))
+    forms = [canon]
+    # Support sentence-initial capitalization of lowercase-particle names ("de Gaulle" -> "De Gaulle").
+    if canon[:1].islower():
+        forms.append(canon[:1].upper() + canon[1:])
+    article_re = _LEADING_THE_RE if term_type == "person" else _LEADING_ARTICLE_RE
+    stripped = article_re.sub("", canon)
+    if stripped and stripped != canon and stripped not in forms:
+        forms.append(stripped)
+    for form in forms:
+        folded = form.casefold()
+        is_en_collision = tgt_base == "en" and folded in _EN_NAME_WORD_COLLISIONS
+        ambiguous = bool(_SINGLE_WORD_RE.fullmatch(form)) and (
+            is_en_collision or folded in lowercase_words
+        )
+        form_pattern = r"\s+".join(re.escape(part) for part in form.split())
+        pat = re.compile(rf"(?<![^\W\d_]){form_pattern}(?![^\W\d_])")
+        for m in pat.finditer(text):
+            if not ambiguous or not _is_sentence_initial(text, m.start()):
+                return True
+    return False
+
+
 def _is_generic(text: str, generic_words: frozenset[str]) -> bool:
     if not generic_words:
         return False
@@ -242,6 +434,12 @@ def assess_batch_risk(
         and len(t.target.strip()) >= 2
         and not _is_generic(t.target, generic_words)
     ]
+
+    batch_lowercase_words = (
+        _lowercase_words([_strip_protected(d) for d in drafts])
+        if _is_latin_lang(tgt_base) and entity_terms
+        else frozenset()
+    )
 
     verse_indices = verse_block_indices(sources)
     unlineated_couplets: list[int] = []
@@ -375,7 +573,13 @@ def assess_batch_risk(
                 continue
             if len(term.target.strip()) < 4:
                 continue
-            if not _target_contains_term(clean_drf, term.target, target_lang=target_lang):
+            if not _phantom_target_hit(
+                clean_drf,
+                term.target,
+                target_lang=target_lang,
+                lowercase_words=batch_lowercase_words,
+                term_type=term.type,
+            ):
                 continue
             if _source_mentions_term_or_stem(term, src, src_base=src_base):
                 continue

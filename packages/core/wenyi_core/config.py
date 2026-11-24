@@ -84,7 +84,7 @@ pipeline:
   # Prescan content budgets in cl100k_base tokens; prompt/context overhead is additional.
   # Larger values reduce splitting but may exceed model limits or reduce summary quality.
   synopsis_source_tokens: 8000 # Maximum source tokens per chapter-digest chunk
-  synopsis_reduce_tokens: 12000 # Maximum joined digest tokens per merge and per generated summary
+  synopsis_reduce_tokens: 12000 # Maximum joined digest tokens per merge, generated summary, and style-analysis digest block
   annotation_alignment: true # Align translated annotations; EPUB uses fallback markers, PDF omits failed items
   annotation_alignment_concurrency: 4 # Maximum concurrent per-annotation requests for a logical paragraph with multiple annotations
   review_concurrency: 4 # Concurrent review blocks over a read-only translation/glossary snapshot; 1 runs serially

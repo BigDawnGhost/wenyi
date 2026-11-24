@@ -125,10 +125,19 @@ class QuoteMemory:
     def repeated_count(self) -> int:
         return len(self._repeated_keys)
 
-    def cross_chapter_spans(self, *, max_items: int = 15) -> list[str]:
-        """Return raw source spans that recur across >=2 distinct chapters (for pre-rendering)."""
+    def cross_chapter_spans(
+        self, *, max_items: int = 15, include_canonical: bool = False
+    ) -> list[str]:
+        """Return raw source spans that recur across >=2 distinct chapters (for pre-rendering).
+
+        ``include_canonical`` also returns spans whose canonical rendering was already
+        observed or pre-seeded, so whole-book snapshots stay identical on resume runs where
+        earlier chapters were already translated.
+        """
         return [
-            span for key, span in self._cross_chapter_examples.items() if key not in self._canonical
+            span
+            for key, span in self._cross_chapter_examples.items()
+            if include_canonical or key not in self._canonical
         ][:max_items]
 
     def seed_canonical(self, source_span: str, target_rendering: str) -> None:

@@ -18,6 +18,7 @@ from ...i18n.policy.models import Phase, content_hash
 from ...i18n.prompts import render
 from ...ingest.epub_reader import peek_epub_title
 from ...ingest.segmenter import load_document
+from ...ingest.tokens import count_tokens
 from ...llm.errors import ProviderFailure, describe_provider_failure
 from ...models.document import Document
 from ...storage.protocol import Storage
@@ -278,19 +279,23 @@ class PreparationService:
         if not sample:
             return {}
         policy = self._runtime.config.language_policy("analysis")
-        key = (
-            "preparation/analysis/"
-            + content_hash(
-                {
-                    "source": source_hash,
-                    "sample": sample,
-                    "digests": digests,
-                    "policy": policy.task_fingerprint("analyzer"),
-                    "routing": self._runtime.config.llm.model_dump(mode="json"),
-                }
-            )
-            + ".json"
-        )
+        digest_budget = self._runtime.config.pipeline.synopsis_reduce_tokens
+        key_payload: dict[str, Any] = {
+            "source": source_hash,
+            "sample": sample,
+            "digests": digests,
+            "policy": policy.task_fingerprint("analyzer"),
+            "routing": self._runtime.config.llm.model_dump(mode="json"),
+        }
+        # Only bind digest_budget when the raw digest block exceeds it, preserving existing
+        # cache keys for small books whose digests render byte-for-byte identically.
+        if (
+            digests
+            and count_tokens("\n".join(f"[{i}] {digest}" for i, digest in enumerate(digests)))
+            > digest_budget
+        ):
+            key_payload["digest_budget"] = digest_budget
+        key = "preparation/analysis/" + content_hash(key_payload) + ".json"
         saved = store.read_artifact(key)
         if isinstance(saved, dict):
             return saved
