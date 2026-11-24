@@ -6,7 +6,7 @@
 
 ## 从源码运行
 
-准备 Python 3.10+、`uv`、Node 22、pnpm 9、Rust stable 和
+准备 Python 3.10+、`uv`、[前端工具链](frontend.md#两端验证)、Rust stable 和
 [Tauri 平台前置依赖](https://v2.tauri.app/start/prerequisites/)。
 Debian/Ubuntu 还需安装 `libdbus-1-dev`，用于原生托盘可用性检查。
 这些是开发环境要求；发行包自带 Python 引擎。

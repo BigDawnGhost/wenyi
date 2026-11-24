@@ -3,6 +3,7 @@
   "private": true,
   "license": "GPL-3.0-only",
   "description": "Frontend tooling for the Wenyi workspace.",
+  "packageManager": "pnpm@9.15.9",
   "scripts": {
     "dev:web": "pnpm -C apps/web dev",
     "build:web": "pnpm -C apps/web build",
@@ -30,8 +31,8 @@
     "vitepress": "^1.6.4"
   },
   "engines": {
-    "node": "^22.0.0",
-    "pnpm": "^9.0.0"
+    "node": "^26.13.0",
+    "pnpm": "^9.15.9"
   },
   "browserslist": [
     "safari >= 15.4",

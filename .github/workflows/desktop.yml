@@ -142,11 +142,9 @@ jobs:
       # reason. pnpm/action-setup comes first because setup-node resolves the
       # pnpm binary when caching is enabled.
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
-        with:
-          version: 9
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: 22
+          node-version-file: package.json
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - name: Build the frontend the Tauri context embeds
@@ -222,14 +220,24 @@ jobs:
           else
             echo "signed=true" >> "$GITHUB_OUTPUT"
           fi
+      # Manual rebuilds check out the original tag, which may predate the pins.
+      - name: Resolve frontend toolchain for the checked-out ref
+        id: frontend-toolchain
+        shell: bash
+        run: |
+          node --input-type=commonjs <<'JS' >> "$GITHUB_OUTPUT"
+          const { engines, packageManager } = require("./package.json");
+          console.log(`node=${engines?.node ?? "22"}`);
+          console.log(`legacy-pnpm=${packageManager ? "" : "9.15.9"}`);
+          JS
       # pnpm/action-setup must run first: setup-node resolves the pnpm binary
       # when caching is enabled, so the reverse order fails on a clean runner.
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
         with:
-          version: "9"
+          version: ${{ steps.frontend-toolchain.outputs.legacy-pnpm }}
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: "22"
+          node-version: ${{ steps.frontend-toolchain.outputs.node }}
           cache: pnpm
       - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       # nextest runs every test in its own process and reports per-test timings,

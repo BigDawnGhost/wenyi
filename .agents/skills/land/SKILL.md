@@ -226,8 +226,9 @@ Do not start or reset the project's ordinary deployment databases for testing.
 
 ### Web and API
 
-For frontend changes, use Node 22 and pnpm 9, as specified by the current CI
-configuration. A different installed major version does not establish CI parity.
+For frontend changes, use the Node and pnpm versions declared in the candidate's
+root `package.json` and used by CI. A different installed major version does not
+establish CI parity.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -320,7 +321,7 @@ of server-required checks is insufficient.
   because service variables or dependencies are missing.
 - The Python 3.12 job also supplies PDF regression dependencies and builds the
   packages with the resource check. The web job runs typecheck, build, and the
-  full Chromium Playwright suite with Node 22 / pnpm 9.
+  full Chromium Playwright suite with the workspace toolchain.
 - Require `CLI packages` and `Desktop packages` when their current PR path
   conditions apply. `.github/workflows/build.yml` and `desktop.yml` target PRs
   to `main`, with path filters, manual dispatch, and published-release triggers.
