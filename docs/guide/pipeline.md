@@ -41,6 +41,39 @@ prefix reuse may help provider caching but does not guarantee a cache hit.
 None of these options guarantees a more accurate translation; compare representative
 passages and review important results yourself.
 
+<a id="reasoning-effort"></a>
+
+### Reasoning effort by stage
+
+On reasoning models, hidden thinking tokens often account for the largest share of
+output spend and wall-clock latency. You can override `thinking` per operation in
+`llm.routes` (see [connections, profiles, and routes](../reference/configuration.md#model-profiles)):
+
+| Operation | Recommended setting | Trade-off |
+| --- | --- | --- |
+| `translation.body` | `thinking: "off"` under `nextgen` (`polish_mode: sparse`); keep reasoning on without sparse polishing | In controlled A/B runs on DeepSeek V4.1 Flash under `nextgen`, turning reasoning off cut body completion tokens by ~71% while blind judges rated the final polished prose near parity with `high` (`8.35` vs `8.40` / 10). |
+| `glossary.align_history` | `thinking: "off"` | Small alignment calls; disabling reasoning cut completion tokens by ~85% and ran ~3× faster with exact match parity. |
+| `glossary.extract` | `thinking: low` (do **not** disable) | Enough to extract names reliably while much faster than `high`. Disabling reasoning risks wrong mappings for forms of address in `incremental` mode, and in `compiled` (Book Bible) mode lets common-word/substring noise into the glossary, which then triggers false `glossary_miss` alerts and triples escalated polish calls. |
+| `polish.body` | `thinking: low` under `polish_mode: sparse` | Keeps routine batches cheap while allowing risk-routed `thinking_boost` to escalate batches that trigger a high-severity alert or meet both the classical-dense and dialogue-density thresholds. |
+
+Quote `"off"` in YAML so it is parsed as a string rather than boolean `false`, and enable sparse polishing when disabling reasoning on `translation.body`:
+
+```yaml
+pipeline:
+  polish: true
+  polish_mode: sparse
+
+llm:
+  routes:
+    translation.body: {model: deepseek/deepseek-flash, thinking: "off"}
+    polish.body: {model: deepseek/deepseek-flash, thinking: low}
+    glossary.extract: {model: deepseek/deepseek-flash, thinking: low}
+    glossary.align_history: {model: deepseek/deepseek-flash, thinking: "off"}
+```
+
+Exact savings and quality vary by model family and language pair; spot-check a few
+chapters before applying lower effort to a full book.
+
 <a id="preparation"></a>
 
 ## Preparation before translation
@@ -162,10 +195,9 @@ as written, so in a target language that inflects names (Russian "Лондоне
 
 Extraction runs after every batch and once per chapter. The DeepSeek preset runs
 `glossary.extract` at `thinking: low`, which is enough to read names off a finished
-translation and takes far less time than high effort. With your own routes, set
-`thinking: low` on `glossary.extract` as shown in
-[connections, profiles, and routes](../reference/configuration.md#model-profiles).
-Disabling reasoning entirely risks wrong mappings for forms of address.
+translation and takes far less time than high effort. For per-stage reasoning
+recommendations—and why `glossary.extract` should stay at `low` rather than `"off"`—see
+[Reasoning effort by stage](#reasoning-effort).
 
 After EPUB body translation, Wenyi completes the parsed navigation tree and adds its
 source-and-translation pairs to the glossary before final Review, including nested,
