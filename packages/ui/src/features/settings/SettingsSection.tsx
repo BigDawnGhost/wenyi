@@ -50,17 +50,24 @@ export function SettingsSection({
 export function SettingsGroup({
   title,
   summary,
+  meta,
   children,
 }: {
   title: string;
   summary?: ReactNode;
+  /** Identity metadata (for example a license badge) read as part of the heading. */
+  meta?: ReactNode;
   children: ReactNode;
 }) {
   const headingId = useId();
   return (
     <section aria-labelledby={headingId} className="min-w-0 space-y-4">
-      <h3 id={headingId} className={SETTINGS_HEADING_CLASSNAME}>
+      <h3
+        id={headingId}
+        className={cn(SETTINGS_HEADING_CLASSNAME, meta != null && "flex flex-wrap items-center gap-2")}
+      >
         {title}
+        {meta}
         {summary != null && (
           <span className="ml-2 font-normal text-muted-foreground">{summary}</span>
         )}
