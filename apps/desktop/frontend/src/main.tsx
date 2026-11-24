@@ -15,6 +15,7 @@ import { installDiagnostics } from "./diagnostics";
 import { useNotificationLocale } from "./notifications";
 import { DiagnosticExportButton } from "./DesktopDiagnostics";
 import { NotificationPermissionPrompt } from "./DesktopNotifications";
+import { useInterfaceZoomReset } from "./InterfaceZoomSettings";
 
 installDiagnostics();
 
@@ -74,6 +75,7 @@ function Bootstrap() {
   const status = useRuntimeStatus();
   const { t } = useDesktopI18n();
   useNotificationLocale();
+  useInterfaceZoomReset();
   if (status === "pending" || status === "closing")
     return (
       <main

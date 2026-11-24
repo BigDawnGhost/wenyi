@@ -40,7 +40,7 @@ for (const theme of ["light", "dark"]) {
       await expect(preferences.getByRole("switch")).toHaveCount(2);
       await expect(page.getByRole("checkbox")).toHaveCount(0);
       for (const [name, checked] of [
-        ["Include an “About this translation” page", true],
+        ["Add an EPUB “About this translation” page", true],
         ["Preserve source formatting in bilingual output", false],
       ] as const) {
         const control = preferences.getByRole("switch", { name, exact: true });

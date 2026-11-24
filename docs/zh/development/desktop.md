@@ -96,6 +96,11 @@ Windows 上的 debug Python 覆盖值必须是已存在的可执行文件路径�
 现有 API 中的 `workspace` 就是选定的数据根目录，不是第二个存储位置。
 系统凭据库与 macOS 管理的 WKWebView 数据仍在根目录之外。
 
+原生宿主在显示窗口前从 `<data-root>/runtime/interface-zoom.json` 恢复界面缩放。
+只接受支持的整数百分比；缺失或无效时回退到 100%。缩放不依赖项目配置或网络。
+设置页读取 WebView 的实际比例；宿主在 WebView 的 UI 线程上确认比例后才保存，
+失败时不覆盖原有偏好。
+
 项目必须经
 [目录库的项目路径解析器](../../../apps/desktop/backend/wenyi_desktop/local_backend.py#L157)
 定位，不能直接拼接当前根目录和项目 ID。修改默认项目库不会搬迁已登记项目；

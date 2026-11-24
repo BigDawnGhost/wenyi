@@ -159,12 +159,10 @@ const en = {
   "settings.bilingualOrder": "Bilingual order",
   "settings.translationFirst": "Translation first",
   "settings.sourceFirst": "Source first",
-  "settings.includeAnAboutThisTranslationPage":
-    "Include an “About this translation” page",
-  "settings.aboutPageHelp": "Applies to EPUB exports only.",
+  "settings.includeAnAboutThisTranslationPage": "Add an EPUB “About this translation” page",
   "settings.preserveSourceFormattingInBilingualOutput":
     "Preserve source formatting in bilingual output",
-  "settings.preserveSourceStyleHelp": "Not used for PDF exports.",
+  "settings.preserveSourceStyleHelp": "Not for PDF.",
   "common.submitting": "Submitting…",
   "export.generateExport": "Generate export",
   "export.saving": "Saving the export…",
