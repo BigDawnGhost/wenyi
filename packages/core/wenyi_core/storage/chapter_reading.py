@@ -1,6 +1,17 @@
-"""Read projections for continuous chapter readers, separate from mutable domain models."""
+"""Chapter read projections, separate from mutable domain models."""
 
 from typing import Protocol
+
+ChapterDigestRow = tuple[int, str, object]  # Index, title, raw source_digest metadata.
+
+
+class ChapterNotFound(FileNotFoundError):
+    """A chapter in the saved inventory has no corresponding body."""
+
+    def __init__(self, index: int) -> None:
+        self.index = index
+        super().__init__(f"chapter {index} not found")
+
 
 # Match Python str.strip(), including non-ASCII whitespace, on both SQL adapters.
 SOURCE_WHITESPACE = "".join(chr(code) for code in range(0x3001) if chr(code).isspace())

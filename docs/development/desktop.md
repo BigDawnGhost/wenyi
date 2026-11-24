@@ -197,6 +197,10 @@ positions and translation refresh uses segment IDs, without scanning chapter JSO
 Artifact writes update existing indexes in the same transaction, including rollback
 and deletion. Chapter artifacts remain authoritative and unchanged by index creation.
 The index trades extra disk space and a one-time cold build for bounded warm reads.
+The optional manual-edit event index is built on the first upgrade-enabled open
+without changing the project schema version or rewriting the ledger. Segment history
+looks up legacy edits by chapter and segment; recovery can run the same filtered
+query without the index, but must then scan the event ledger.
 Schema upgrades never bypass catalog or project-marker admission.
 
 Deletion and recovery share directory ownership rules. Preserve the
