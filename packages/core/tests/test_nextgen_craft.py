@@ -63,11 +63,15 @@ def test_boilerplate_ignores_normal_prose_with_urls(text: str):
 def test_zh_en_and_zh_hant_en_register_sheet_and_verse_policy_render():
     for src in ("zh", "zh-Hant"):
         prompt = render("translator_system", src=src, tgt="en")
-        assert "Forms of address and self-reference register sheet" in prompt
+        assert "Forms of address, register and fidelity guidance (zh→en)" in prompt
         assert "孤" in prompt
-        assert "莫…只管…" in prompt
+        assert "the sir" in prompt
         assert "em dashes" in prompt
         assert "line breaks" in prompt
+        # Keep the zh->en pair sheet compact and free of book-specific answer rules.
+        assert "two hours" not in prompt
+        assert "three to five" not in prompt
+        assert "Xin Qiji" not in prompt
 
 
 def test_verse_aware_batching_keeps_couplet_poem_intact():
@@ -409,8 +413,9 @@ def test_typography_preserves_escaped_newlines_and_dashes_in_code_spans():
         normalize_latin_typography("The board measures 5' 6\"", source="木板长五尺六寸。")[0]
         == "The board measures 5' 6\""
     )
-    # LaTeX commands starting with \n (including after punctuation inside math) stay intact,
-    # while ordinary currency ranges still receive prose em-dash normalization.
+    # LaTeX commands starting with \n (both inside math delimiters and immediately after
+    # punctuation in bare prose) and relative paths like .\new stay intact, while genuine
+    # leaked literal \n line breaks still normalize.
     latex_math = (
         r"When $x \neq y$, $\alpha,\nu$, \(\alpha,\nu\), $$a,\nabla b$$, f(x)\neq 0, "
         r"and $A \nRightarrow B$."
@@ -418,6 +423,35 @@ def test_typography_preserves_escaped_newlines_and_dashes_in_code_spans():
     cleaned_math, math_applied = normalize_latin_typography(latex_math)
     assert cleaned_math == latex_math
     assert "escaped_newline" not in math_applied
+    for bare_protected in (
+        r"He stopped.\neq x",
+        r"He stopped.\ne x",
+        r"He stopped.\nu x",
+        r"He stopped.\nabla x",
+        r"He stopped.\not x",
+        r"He stopped.\nRightarrow x",
+        r"He stopped.\nVDash x",
+        r"Let a,\nu be real, b,\neq c, p,\neg q, a,\notin S, S,\ni x, a,\napprox b, a,\nolimits.",
+        r"See .\new folder for notes.",
+    ):
+        cleaned_bare, bare_applied = normalize_latin_typography(bare_protected)
+        assert cleaned_bare == bare_protected
+        assert "escaped_newline" not in bare_applied
+    assert normalize_latin_typography(r"He stopped.\nNext morning.")[0] == (
+        "He stopped.\nNext morning."
+    )
+    assert normalize_latin_typography(r"Stop.\nthen he left.")[0] == "Stop.\nthen he left."
+    assert normalize_latin_typography(r"He stopped.\n\nNext morning.")[0] == (
+        "He stopped.\n\nNext morning."
+    )
+    assert normalize_latin_typography(r"He stopped.\n\nnext line.")[0] == (
+        "He stopped.\n\nnext line."
+    )
+    assert normalize_latin_typography(r"Line one,\nline two.")[0] == "Line one,\nline two."
+    assert normalize_latin_typography(r"Line one,\nnot today.")[0] == "Line one,\nnot today."
+    assert normalize_latin_typography(r"At dusk,\nu-boats arrived.")[0] == (
+        "At dusk,\nu-boats arrived."
+    )
     assert normalize_latin_typography("It cost $5 -- or $10.")[0] == "It cost $5—or $10."
 
 

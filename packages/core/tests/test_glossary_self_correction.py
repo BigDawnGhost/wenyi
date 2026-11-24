@@ -90,15 +90,15 @@ class TestGlossaryAdherence:
     def test_overridden_extracted_mapping_is_left_out_after_enough_evidence(self):
         tracker = GlossaryAdherence()
         lone = _term("孤", "lone", type="appellation")
-        name = _term("江哲", "Jiang Zhe", type="person")
+        name = _term("林远", "Lin Yuan", type="person")
         # Extraction learned "lone" from 孤舟; later paragraphs use 孤 as "I".
-        _observe(tracker, [("孤舟一叶，江哲独坐。", "A lone boat; Jiang Zhe sat alone.")])
+        _observe(tracker, [("孤舟一叶，林远独坐。", "A lone boat; Lin Yuan sat alone.")])
         _observe(tracker, [("孤意已决。", "My mind is made up.")] * 3)
         # Four occurrences are not enough evidence yet.
         assert tracker.filter([lone, name]) == ([lone, name], [])
-        _observe(tracker, [("江哲与孤同行。", "Jiang Zhe walked with me.")])
-        _observe(tracker, [("孤问江哲。", "I asked Jiang Zhe.")])
-        # 孤: used in 1 of 6 paragraphs. 江哲: used in all 3.
+        _observe(tracker, [("林远与孤同行。", "Lin Yuan walked with me.")])
+        _observe(tracker, [("孤问林远。", "I asked Lin Yuan.")])
+        # 孤: used in 1 of 6 paragraphs. 林远: used in all 3.
         assert tracker.filter([lone, name]) == ([name], ["孤"])
 
     def test_user_terms_and_context_dependent_terms_are_always_sent(self):

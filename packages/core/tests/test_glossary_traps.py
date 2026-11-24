@@ -77,15 +77,15 @@ class TestContextDependentSources(unittest.TestCase):
         extractor, _ = _extractor(
             [
                 {
-                    "source": "德亲王",
-                    "target": "Prince De",
+                    "source": "宁亲王",
+                    "target": "Prince Ning",
                     "type": "person",
-                    "aliases": ["本王", "赵珏", "王爷"],
+                    "aliases": ["本王", "沈衡", "王爷"],
                 }
             ]
         )
-        result = extractor.extract("德亲王赵珏道：本王来了。", "Text.", [])
-        self.assertEqual(result[0].aliases, ["赵珏"])
+        result = extractor.extract("宁亲王沈衡道：本王来了。", "Text.", [])
+        self.assertEqual(result[0].aliases, ["沈衡"])
 
     def test_single_character_common_words_are_dropped_but_names_kept(self):
         payload = [
@@ -150,7 +150,7 @@ class TestHistoryAlignmentTraps(unittest.TestCase):
         ]
         with self.assertLogs("wenyi_core.agents.glossary_extractor", level="WARNING"):
             summary, terms = self._store_once(
-                extractor, "德亲王至横江。", "Prince De went to Hengjiang.", history
+                extractor, "安亲王至横江。", "Prince An went to Hengjiang.", history
             )
         self.assertEqual(terms["横江"].target, "Hengjiang")
         self.assertEqual(terms["横江"].first_chapter, 6)
@@ -172,13 +172,13 @@ class TestHistoryAlignmentTraps(unittest.TestCase):
 
     def test_name_aligned_to_an_earlier_capitalized_rendering_still_aligns(self):
         extractor, _ = _extractor(
-            [{"source": "江哲", "target": "Jiang Che", "type": "person"}],
-            aligned=[{"source": "江哲", "target": "Jiang Zhe"}],
+            [{"source": "林远", "target": "Lin Yuen", "type": "person"}],
+            aligned=[{"source": "林远", "target": "Lin Yuan"}],
         )
-        history = [TranslatedSegmentEvidence(1, 0, "江哲到了。", "Jiang Zhe arrived.")]
-        summary, terms = self._store_once(extractor, "江哲笑了。", "Jiang Che smiled.", history)
-        self.assertEqual(terms["江哲"].target, "Jiang Zhe")
-        self.assertEqual(terms["江哲"].first_chapter, 1)
+        history = [TranslatedSegmentEvidence(1, 0, "林远到了。", "Lin Yuan arrived.")]
+        summary, terms = self._store_once(extractor, "林远笑了。", "Lin Yuen smiled.", history)
+        self.assertEqual(terms["林远"].target, "Lin Yuan")
+        self.assertEqual(terms["林远"].first_chapter, 1)
         self.assertEqual(summary["history_aligned"], 1)
 
 
@@ -186,17 +186,17 @@ class TestSingleOccurrenceTerms(unittest.TestCase):
     def test_new_terms_that_never_recur_in_the_book_are_not_stored(self):
         extractor, _ = _extractor(
             [
-                {"source": "江哲", "target": "Jiang Zhe", "type": "person"},
+                {"source": "林远", "target": "Lin Yuan", "type": "person"},
                 {"source": "刘祯", "target": "Liu Zhen", "type": "person"},
             ]
         )
-        corpus = "刘祯送来一幅画。江哲看了。\n后来江哲又来了。"
+        corpus = "刘祯送来一幅画。林远看了。\n后来林远又来了。"
         with tempfile.TemporaryDirectory() as d:
             store = GlossaryStore(os.path.join(d, "g.db"))
             summary = extractor.extract_and_store(
-                store, "刘祯送来一幅画。江哲看了。", "Text.", chapter=0, source_corpus=corpus
+                store, "刘祯送来一幅画。林远看了。", "Text.", chapter=0, source_corpus=corpus
             )
-            self.assertIsNotNone(store.get_term("江哲"))
+            self.assertIsNotNone(store.get_term("林远"))
             self.assertIsNone(store.get_term("刘祯"))
             self.assertEqual(summary["inserted"], 1)
             store.close()
@@ -233,7 +233,7 @@ class TestEquivalentTargets(unittest.TestCase):
             with self.subTest(left=left, right=right):
                 self.assertTrue(equivalent_targets(left, right))
         for left, right in [
-            ("Prince De", "Prince of De"),
+            ("Prince Ning", "Prince of Ning"),
             ("second place", "second-place laureate"),
             ("", " "),
             ("Theodore", "odore"),

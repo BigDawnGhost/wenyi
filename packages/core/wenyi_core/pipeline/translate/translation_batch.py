@@ -11,7 +11,7 @@ from ...agents.batch_risk import has_embedded_verse
 from ...agents.polisher import Polisher
 from ...agents.sparse_editor import SparseSemanticEditor
 from ...agents.translator import Translator
-from ...ingest.segmenter import batch_segments, is_verse_segment
+from ...ingest.segmenter import batch_segments, verse_block_indices
 from ...llm.retrying import is_resumable_provider_interrupt
 from ...markup.ruby import strip_ruby_markers
 from ...models.document import Segment
@@ -226,7 +226,7 @@ class TranslationBatchExecutor:
                     else mask_plan.legend_block
                 )
 
-        has_couplets = sum(1 for src in plan.sources if is_verse_segment(src)) >= 2
+        has_couplets = bool(verse_block_indices(plan.sources))
         has_embedded = any(
             has_embedded_verse(src, source_lang=self._translator.src) for src in plan.sources
         )

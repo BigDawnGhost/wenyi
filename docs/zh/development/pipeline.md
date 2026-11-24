@@ -162,7 +162,7 @@ CLI 或 Web/Desktop 项目开启增量术语备注后，在译后生成备注；
 
 标准模式且 `glossary_mode: compiled` 下当 `pipeline.chapter_concurrency` 大于 `1` 时，`TranslationService` 并发翻译多章（超过 12 批的超大单章按每 6 批切分为并发波次）：工作线程持有波次内克隆的 `QuoteMemory` 且仅发起模型调用，不触碰 `Storage`、SQLite、adherence 或用量账本。各章／波次起始上下文采用确定性位置规则——前章梗概加其最后 3 段不可变原文——确保线程完成顺序不影响章节内容与续跑结果；主协调线程严格按全书顺序落盘章节、对齐、事件与用量。BabelDOC 非正文批次与顺序路径一致，不带滚动上下文、梗概或章节摘要。某批失败时，其波次返回此前已起草的批次，不再启动新波次，所有已起草批次都会落盘；全书顺序中失败点之后的章节不发布，续跑只翻译缺失批次。仍带润色标记的已存初稿在章节发布前重新润色。
 
-当 `pipeline.polish_mode` 为 `sparse` 时，`SparseSemanticEditor` 先以确定性异常预筛（`batch_risk`，覆盖漏译术语、幻觉替换的术语专名、句内代词性别翻转、条件／否定／典故陷阱及未断行诗词）定位可疑段落，仅对高风险批次沿提供商思考阶梯自动升级一档（`ThinkingControl.escalate`），并对照 `(原文, 初稿)` 仅对存在实质语义反转、典故或格式缺陷的段落输出 JSON 补丁，同时保留受保护对象标记并拦截无端改写文风的补丁。`QuoteMemory` 索引全书重复引文与诗词以保持一致，`batch_segments` 在有界余量内避免将连续多联诗词截断跨批，`pipeline.deterministic_hygiene` 在章末发布前执行零模型开销的拉丁／中文排版清理与少数译名归一，启用 `pipeline.consistency_sweep` 时还在章节标题翻译前执行快速跨章一致性扫描（统一重复引文、补齐遗漏术语并裁定修补已确认的头衔词形或大小写漂移），且绝不修改绑定偏移量的已对齐段落。
+当 `pipeline.polish_mode` 为 `sparse` 时，`SparseSemanticEditor` 先以确定性异常预筛（`batch_risk`，覆盖漏译术语、幻觉替换的术语专名、句内代词性别翻转、条件／否定陷阱及未断行诗词——仅限多行诗或连续的五言／七言古典对句块，不含孤立的现代散文句）定位可疑段落，仅对高风险批次沿提供商思考阶梯自动升级一档（`ThinkingControl.escalate`），并对照 `(原文, 初稿)` 仅对存在实质语义反转、典故或格式缺陷的段落输出 JSON 补丁，同时保留受保护对象标记并拦截无端改写文风的补丁。`QuoteMemory` 索引全书重复引文与诗词以保持一致，`batch_segments` 在有界余量内避免将连续多联诗词截断跨批，`pipeline.deterministic_hygiene` 在章末发布前执行零模型开销的拉丁／中文排版清理与少数译名归一，启用 `pipeline.consistency_sweep` 时还在章节标题翻译前执行快速跨章一致性扫描（统一重复引文、补齐遗漏术语并裁定修补已确认的头衔词形或大小写漂移），且绝不修改绑定偏移量的已对齐段落。
 
 <a id="storage-and-artifacts"></a>
 

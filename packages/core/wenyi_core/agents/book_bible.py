@@ -34,7 +34,7 @@ from ..i18n.languages import (
     glossary_single_character_names_only,
 )
 from ..llm.json_parser import JsonParseError
-from ..llm.retrying import is_resumable_provider_interrupt
+from ..llm.retrying import TruncatedResponseError, is_resumable_provider_interrupt
 from ..models.glossary import GlossaryTerm, normalize_gender
 from .base import Agent
 
@@ -680,7 +680,7 @@ def _cluster_candidate_rows(
                 if len(tok) >= 4 and tok.casefold() not in _LATIN_SENTENCE_NOISE:
                     stem_groups[tok.casefold()].append(idx)
         elif len(clean) >= 3:
-            # Share 2-char prefix (e.g. 明月楼 / 明月公主) or 2-char suffix (e.g. 德亲王 / 齐王 -> 王).
+            # Share 2-char prefix (e.g. 青云楼 / 青云阁) or 2-char suffix (e.g. 镇北王 / 镇南王).
             stem_groups[clean[:2]].append(idx)
             stem_groups[clean[-2:]].append(idx)
 
@@ -828,23 +828,53 @@ class BookBibleAgent(Agent):
             chunk = list(items[offset : offset + batch_size])
             raw_map = _query_chunk(chunk)
             missing: list[tuple[str, str]] = []
+            chunk_ok = 0
             for idx, (src, snip) in enumerate(chunk):
                 found, val = _lookup_entry(raw_map, idx, src)
                 if found and isinstance(val, str):
                     results[src] = val.strip()
+                    chunk_ok += 1
                 else:
                     missing.append((src, snip))
             if missing:
-                retry_map = _query_chunk(missing, retry=True)
+                try:
+                    retry_map = _query_chunk(missing, retry=True)
+                except (JsonParseError, TruncatedResponseError, ValueError) as exc:
+                    if is_resumable_provider_interrupt(exc) or chunk_ok == 0:
+                        raise
+                    _LOGGER.warning(
+                        "Book Bible probe retry failed (%s); dropping %d unresolved candidate(s): %s",
+                        exc,
+                        len(missing),
+                        [src for src, _ in missing[:5]],
+                    )
+                    continue
+                still_missing: list[str] = []
+                still_invalid: list[str] = []
                 for idx, (src, _) in enumerate(missing):
                     found, val = _lookup_entry(retry_map, idx, src)
                     if not found:
-                        raise ValueError(f"Book Bible probe omitted candidate: {src}")
-                    if not isinstance(val, str):
-                        raise ValueError(
-                            f"Book Bible probe returned a non-string rendering for: {src}"
-                        )
-                    results[src] = val.strip()
+                        still_missing.append(src)
+                    elif not isinstance(val, str):
+                        still_invalid.append(src)
+                    else:
+                        results[src] = val.strip()
+                        chunk_ok += 1
+                if still_missing or still_invalid:
+                    if chunk_ok == 0:
+                        if still_invalid and not still_missing:
+                            raise ValueError(
+                                f"Book Bible probe returned a non-string rendering for: {still_invalid[0]}"
+                            )
+                        raise ValueError(f"Book Bible probe omitted candidate: {still_missing[0]}")
+                    _LOGGER.warning(
+                        "Book Bible probe dropped %d unresolved candidate(s) after retry "
+                        "(omitted=%d, non_string=%d): %s",
+                        len(still_missing) + len(still_invalid),
+                        len(still_missing),
+                        len(still_invalid),
+                        (still_missing + still_invalid)[:5],
+                    )
         return results
 
     def _adjudicate_chunk(

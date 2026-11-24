@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 from ..glossary.store import STATUS_OK, normalize_match_text, source_matches_text
 from ..i18n.languages import glossary_generic_target_words
-from ..ingest.segmenter import is_verse_segment
+from ..ingest.segmenter import verse_block_indices
 from ..models.glossary import GlossaryTerm
 
 _PROTECTED_RE = re.compile(
@@ -71,35 +71,25 @@ _EN_LONE_TRAP = re.compile(r"\b(?:the\s+)?lone(?:\s+one)?\b", re.I)
 _ZH_CLASSICAL_GU_RE = re.compile(r"[，,；;。]\s*故[\u4e00-\u9fff]{1,6}[之矣也焉。，]")
 _EN_DELIBERATELY_TRAP = re.compile(r"\b(?:deliberately|on purpose|intentionally)\b", re.I)
 
-_ZH_VERSE_LI_ALLUSION_RE = re.compile(r"八百里[^，。！？]{0,6}(?:分|炙|麾下)")
-_EN_EIGHT_HUNDRED_LI_TRAP = re.compile(
-    r"\b(?:eight\s+hundred|800)\s+(?:li|ox|oxen|steers?|bulls?)\b", re.I
-)
 _EN_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 _EN_QUOTED_SPAN_RE = re.compile(r'"[^"]*"|“[^”]*”')
 _EN_MALE_PRONOUN_RE = re.compile(r"\b(?:he|him|his)\b", re.I)
 _EN_FEMALE_PRONOUN_RE = re.compile(r"\b(?:she|her|hers)\b", re.I)
 _EN_MID_CAP_NAME_RE = re.compile(r"(?<!^)(?<![.!?]\s)\b[A-Z][a-z]{2,}\b")
 _ZH_DISGUISE_CUE_RE = re.compile(
-    r"(?:乔装|喬裝|女扮男装|女扮男裝|男装|男裝|扮作|遮挡|遮擋|斗笠|看不清相貌|身材举止|身材舉止)"
+    r"(?:乔装|喬裝|女扮男装|女扮男裝|男扮女装|男扮女裝|易容|化装|化裝|伪装|偽裝|扮作)"
 )
 _ZH_QUOTED_SPAN_RE = re.compile(r"“[^”]*”|「[^」]*」|『[^』]*』")
 
-_ZH_AGENCY_PROMISE_RE = re.compile(r"(?:我答应替他|我答應替他|他答应替我|他答應替我)")
 _ZH_AT_LEAST_RE = re.compile(r"至少")
 _EN_AT_MOST_TRAP = re.compile(r"\b(?:no\s+more\s+than|at\s+most)\b", re.I)
 _ZH_INLAW_KINSHIP_RE = re.compile(r"(?:大姨|二姨|三姨|小姨|大舅子|小舅子)")
 _EN_AUNT_UNCLE_TRAP = re.compile(r"\b(?:aunts?|uncles?)\b", re.I)
-_ZH_VOCATIVE_SHIFT_RE = re.compile(
-    r"(?:别走|別走|莫走|休走|且慢|慢着|慢著)[^。！？]{0,8}[，,]\s*[\u4e00-\u9fff]{1,3}(?:大人|先生|将军|將軍|殿下|公子|师父|師父|长老|長老)[，,]"
-)
 _EN_CALQUE_SENTINEL_RE = re.compile(
-    r"\b(?:dream(?:ed|ing)?\s+(?:its\s+|a\s+)?drunken\s+dream\s+of\s+death|"
-    r"fire-dwelling\s+daoist|filled\s+in\s+lyrics|flashed\s+with\s+treasure\s+light|"
-    r"to\s+death\s+with\s+her|ten\s+thousand\s+years|the\s+sir)\b",
+    r"\b(?:long\s+live\s+the\s+ten\s+thousand|ten\s+thousand\s+years|the\s+sir)\b",
     re.I,
 )
-_ZH_CLASSICAL_PARTICLES_RE = re.compile(r"[之乎者也矣焉哉岂豈孰乃遂故既若非莫勿裣衽斂衽]")
+_ZH_CLASSICAL_PARTICLES_RE = re.compile(r"[之乎者也矣焉哉岂豈孰乃遂故既若非莫勿]")
 
 
 @dataclass(frozen=True)
@@ -153,7 +143,7 @@ def _target_contains_term(target_clean: str, canonical: str, *, target_lang: str
     pat = re.compile(rf"(?<![^\W\d_]){re.escape(norm_canon)}(?![^\W\d_])", re.I)
     if pat.search(norm_tgt):
         return True
-    # Also accept canonical without a leading article ("the Prince of De" -> "Prince of De").
+    # Also accept canonical without a leading article ("the Duke of North" -> "Duke of North").
     stripped = re.sub(r"^(?:the|a|an)\s+", "", norm_canon, flags=re.I)
     if stripped and stripped != norm_canon:
         pat2 = re.compile(rf"(?<![^\W\d_]){re.escape(stripped)}(?![^\W\d_])", re.I)
@@ -184,7 +174,7 @@ def _source_mentions_term_or_stem(
     clean_term = term.source.strip()
     if src_base in {"zh", "ja"}:
         # For Chinese/Japanese personal names, allow bare given-name/surname mentions without
-        # triggering false phantom alerts (e.g. '梁' for '梁婉' or '随云' for '江随云').
+        # triggering false phantom alerts (e.g. '林' for '林青' or '明远' for '陈明远').
         if len(clean_term) >= 2:
             for i in range(len(clean_term) - 1):
                 if clean_term[i : i + 2] in src:
@@ -253,6 +243,7 @@ def assess_batch_risk(
         and not _is_generic(t.target, generic_words)
     ]
 
+    verse_indices = verse_block_indices(sources)
     unlineated_couplets: list[int] = []
     classical_dense_paras = 0
     dialogue_paras = 0
@@ -335,7 +326,7 @@ def assess_batch_risk(
                 )
 
         # 4. Standalone & embedded verse lineation
-        if is_verse_segment(src) and "\n" not in clean_drf:
+        if idx in verse_indices and "\n" not in clean_drf:
             unlineated_couplets.append(idx)
         elif has_embedded_verse(src, source_lang=source_lang) and "\n" not in clean_drf:
             alerts.append(
@@ -378,7 +369,7 @@ def assess_batch_risk(
 
         # 5b. Phantom entity / reverse-glossary substitution check (language-agnostic):
         # Catch when a familiar glossary place/organization/person appears in the draft even
-        # though its source term does NOT appear in this source paragraph (e.g. 襄樊 -> Jingxiang).
+        # though its source term does NOT appear in this source paragraph (e.g. substituting one city name for another).
         for term in entity_terms:
             if term.type not in {"place", "organization", "person"}:
                 continue
@@ -474,25 +465,6 @@ def assess_batch_risk(
                         high_severity=True,
                     )
                 )
-            if _ZH_VERSE_LI_ALLUSION_RE.search(src) and _EN_EIGHT_HUNDRED_LI_TRAP.search(clean_drf):
-                alerts.append(
-                    ParagraphAlert(
-                        idx,
-                        "allusion",
-                        "'八百里' in this lyric is the singular nickname of a famed ox (meaning roasted "
-                        "beef shared among troops), not a distance of 800 li or 800 oxen.",
-                        high_severity=True,
-                    )
-                )
-            if _ZH_AGENCY_PROMISE_RE.search(src):
-                alerts.append(
-                    ParagraphAlert(
-                        idx,
-                        "agency_direction",
-                        "Verify who promised to act for whom (答应替他 = promised to do it for him).",
-                        high_severity=True,
-                    )
-                )
             if (
                 _ZH_AT_LEAST_RE.search(src)
                 and _EN_AT_MOST_TRAP.search(clean_drf)
@@ -519,21 +491,12 @@ def assess_batch_risk(
                         high_severity=True,
                     )
                 )
-            if _ZH_VOCATIVE_SHIFT_RE.search(src):
-                alerts.append(
-                    ParagraphAlert(
-                        idx,
-                        "addressee_shift",
-                        "Mid-sentence vocative after imperative; verify the vocative attaches to the right clause.",
-                        high_severity=True,
-                    )
-                )
             if _EN_CALQUE_SENTINEL_RE.search(clean_drf):
                 alerts.append(
                     ParagraphAlert(
                         idx,
                         "calque_or_idiom",
-                        "Possible literalized idiom/calque or pronoun-referent glitch detected; verify against source.",
+                        "Possible literalized register calque detected; verify against source.",
                         high_severity=True,
                     )
                 )
@@ -545,12 +508,12 @@ def assess_batch_risk(
         if any(a.high_severity for a in alerts[para_alerts_before:]):
             high_sev_count += 1
 
-    if len(unlineated_couplets) >= 2:
+    if unlineated_couplets:
         alerts.append(
             ParagraphAlert(
                 unlineated_couplets[0],
                 "unlineated_verse",
-                f"Paragraphs {unlineated_couplets} are rhymed verse couplets drafted without '\\n' line breaks.",
+                f"Paragraphs {unlineated_couplets} are verse lines drafted without '\\n' line breaks.",
                 high_severity=False,
             )
         )

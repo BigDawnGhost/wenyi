@@ -135,7 +135,7 @@ class BibleSeedService:
             return variants
 
         if progress:
-            progress(0, 0, "Compiling Book Bible (entropy probe)…")
+            progress(0, 0, "progress.stage.compilingBible")
 
         existing_keys = {normalize_match_text(t.source).strip() for t in existing_terms}
         max_candidates = min(260, max(120, len(digests) * 12))

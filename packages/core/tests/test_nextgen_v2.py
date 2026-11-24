@@ -105,13 +105,13 @@ def test_book_bible_probe_accepts_numeric_index_keys():
     def handler(messages, operation, json_mode):
         user = messages[-1]["content"]
         if "Render each term" in user:
-            # Simulate DeepSeek returning numeric index keys "0", "1", ...
-            return json.dumps({"renderings": {"0": "Southern Chu", "1": "Jiang Zhe"}})
+            # Simulate returning numeric index keys "0", "1", ...
+            return json.dumps({"renderings": {"0": "Eastern Wu", "1": "Lin Yuan"}})
         return json.dumps(
             {
                 "terms": [
-                    {"source": "南楚", "target": "Southern Chu", "type": "place"},
-                    {"source": "江哲", "target": "Jiang Zhe", "type": "person", "gender": "male"},
+                    {"source": "东吴", "target": "Eastern Wu", "type": "place"},
+                    {"source": "林远", "target": "Lin Yuan", "type": "person", "gender": "male"},
                 ],
                 "conventions": ["Render 国主 consistently as 'the sovereign'."],
             }
@@ -119,10 +119,10 @@ def test_book_bible_probe_accepts_numeric_index_keys():
 
     agent = BookBibleAgent(FakeClient(handler), cfg)
     res = agent.compile_bible(
-        ["南楚 and 江哲 debate at court."],
-        "南楚大军压境。南楚君臣震动。江哲微笑。江哲拱手。",
+        ["东吴 and 林远 debate at court."],
+        "东吴大军压境。东吴君臣震动。林远微笑。林远拱手。",
     )
-    assert {t.source: t.target for t in res.terms} == {"南楚": "Southern Chu", "江哲": "Jiang Zhe"}
+    assert {t.source: t.target for t in res.terms} == {"东吴": "Eastern Wu", "林远": "Lin Yuan"}
     assert res.conventions == ("Render 国主 consistently as 'the sovereign'.",)
 
 
@@ -153,41 +153,41 @@ def test_book_bible_mines_latin_connectors_and_corpus_entities():
 
 def test_book_bible_morpheme_clustering_and_spoiler_safe_gender_guard():
     cands = [
-        (BibleCandidate("明月楼", 4, True, "", ""), "Misty Moon", "Bright Moon Tower", True),
+        (BibleCandidate("青云楼", 4, True, "", ""), "Azure Pavilion", "Qingyun Tower", True),
         (
-            BibleCandidate("明月公主", 3, True, "", ""),
-            "Princess Mingyue",
-            "Princess Mingyue",
+            BibleCandidate("青云阁", 3, True, "", ""),
+            "Qingyun Hall",
+            "Qingyun Hall",
             False,
         ),
-        (BibleCandidate("江哲", 9, True, "", ""), "Jiang Zhe", "Jiang Zhe", False),
+        (BibleCandidate("林远", 9, True, "", ""), "Lin Yuan", "Lin Yuan", False),
     ]
     rows = _cluster_candidate_rows(cands)
-    assert any("[Linked family: 明月]" in r for r in rows)
+    assert any("[Linked family: 青云]" in r for r in rows)
 
     terms = [
         GlossaryTerm(source="秦公子", target="Young Master Qin", type="person", gender="female"),
-        GlossaryTerm(source="梁婉", target="Liang Wan", type="person", gender="female"),
+        GlossaryTerm(source="林青", target="Lin Qing", type="person", gender="female"),
     ]
-    corpus = "秦公子微微一笑，他端起茶杯。后来秦公子敛衽一礼，她低声道。梁婉笑道，她很得意。"
+    corpus = "秦公子微微一笑，他端起茶杯。后来秦公子敛衽一礼，她低声道。林青笑道，她很得意。"
     guarded = _apply_spoiler_safe_gender_guard(terms, corpus, source_lang="zh")
     by_src = {t.source: t for t in guarded}
     assert by_src["秦公子"].gender == ""
     assert "do not spoil" in by_src["秦公子"].note.lower()
-    assert by_src["梁婉"].gender == "female"
+    assert by_src["林青"].gender == "female"
 
 
 def test_batch_risk_screener_catches_traps_and_escalates_sparse_editor():
-    terms = [GlossaryTerm(source="明月楼", target="Mingyue Tower", type="place")]
+    terms = [GlossaryTerm(source="青云楼", target="Qingyun Tower", type="place")]
     sources = [
-        "不攻蜀以免心腹之患，就平南楚以求清卧榻之侧。",
-        "江哲来到明月楼前，吟道：“八百里分麾下炙，五十弦翻塞外声。”",
-        "有尚大人在，孤可以旦夕宴饮了。",
+        "不守北关以免后患，就先取西原以稳大局。",
+        "林远来到青云楼前，吟道：“大漠孤烟直，长河落日圆。”",
+        "有陈大人在，孤可以安枕无忧了。",
     ]
     drafts = [
-        "Whether to leave Shu unattacked to spare ourselves a threat.",
-        "Jiang Zhe arrived at Misty Moon Pavilion and recited, 'Eight hundred li of roast meat.'",
-        "With Chancellor Shang here, the lone one could feast morning and night.",
+        "Whether to leave the northern pass unguarded to spare ourselves trouble.",
+        "Lin Yuan arrived at Azure Cloud Pavilion and recited, 'Lone smoke rises straight over the desert; the setting sun is round above the long river.'",
+        "With Minister Chen here, the lone one could rest easy.",
     ]
     report = assess_batch_risk(
         sources,
@@ -198,7 +198,8 @@ def test_batch_risk_screener_catches_traps_and_escalates_sparse_editor():
     )
     codes = {a.code for a in report.alerts}
     assert report.should_escalate is True
-    assert {"conditional_logic", "glossary_miss", "allusion", "royal_pronoun"} <= codes
+    assert {"conditional_logic", "glossary_miss", "royal_pronoun"} <= codes
+    assert "allusion" not in codes
     assert has_embedded_verse(sources[1], source_lang="zh") is True
 
     # Verify SparseSemanticEditor passes thinking_boost=1 on risky batch and 0 on clean batch.
@@ -247,10 +248,10 @@ def test_post_normalize_fixes_straight_quotes_intra_para_and_cjk():
 
     # Mid-sentence spaced em dashes normalize to tight em dashes while attribution dashes stay intact.
     em_cleaned, _ = normalize_chapter_latin_typography(
-        [("他笑道。", "I knew it — you agree.\n—History of Southern Chu")],
+        [("他笑道。", "I knew it — you agree.\n—Chronicles of Eastern Wu")],
         target_lang="en",
     )
-    assert em_cleaned[0] == "I knew it—you agree.\n—History of Southern Chu"
+    assert em_cleaned[0] == "I knew it—you agree.\n—Chronicles of Eastern Wu"
 
     # Intra-paragraph mixed spelling (both "Sanzang" and "San Zang" in same paragraph) is fixed.
     terms = [GlossaryTerm(source="三藏", target="Sanzang", type="person")]
@@ -412,11 +413,11 @@ def test_pr30_review_regressions(tmp_path):
 
     # 2. _cluster_candidate_rows deduplicates repeated stem hits on the same candidate.
     dup_cands = [
-        (BibleCandidate("明月明月", 5, True, "", ""), "Mingyue", "Mingyue", False),
-        (BibleCandidate("明月楼", 4, True, "", ""), "Mingyue Tower", "Moon Tower", True),
+        (BibleCandidate("青云青云", 5, True, "", ""), "Qingyun", "Qingyun", False),
+        (BibleCandidate("青云楼", 4, True, "", ""), "Qingyun Tower", "Cloud Tower", True),
     ]
     rows = _cluster_candidate_rows(dup_cands)
-    assert sum("明月明月" in r for r in rows) == 1
+    assert sum("青云青云" in r for r in rows) == 1
 
     # 3. Spoiler-safe gender guard does not clear male gender on mixed-gender dialogue about two people.
     mixed = _apply_spoiler_safe_gender_guard(
@@ -512,22 +513,22 @@ def test_pr30_review_regressions(tmp_path):
     assert store.load_chapter(1).text_segments[0].target == "Protected DOCX styled line."
 
 
-def test_batch_risk_catches_phantom_entity_pronoun_flip_and_oxen_allusion():
+def test_batch_risk_catches_phantom_entity_and_pronoun_flip_without_book_traps():
     terms = [
-        GlossaryTerm(source="荆襄", target="Jingxiang", type="place"),
-        GlossaryTerm(source="南楚", target="Southern Chu", type="place"),
+        GlossaryTerm(source="河洛", target="Heluo", type="place"),
+        GlossaryTerm(source="东吴", target="Eastern Wu", type="place"),
     ]
     sources = [
-        "若是王爷亲自领兵，便能稳守襄樊，护我南楚。",
-        "我看见一个青衣书生，披了玄色披风，看不清相貌，只看她的身材举止，我冲过去握着他的双手。",
-        "我听过你的诗：‘八百里分麾下炙，五十弦翻塞外声。’",
-        "大军稳守荆襄，保我南楚安宁。",
+        "若是将军亲自领兵，便能稳守北原，护我东吴。",
+        "她女扮男装混入营中，乔装成年轻书生后便径直走上高台。",
+        "我答应替他查清此事，绝不食言。",
+        "大军稳守河洛，保我东吴安宁。",
     ]
     drafts = [
-        "If Your Highness leads the army, we can hold Jingxiang firmly and shield Southern Chu.",
-        "I saw a scholar in a green robe, a cloak covering him so his face was hidden, yet from her figure alone I seized her hands.",
-        'I have heard your poem: "Eight hundred oxen roasted, shared among my men;\nfifty strings play frontier songs."',
-        "The army held Jingxiang firmly and kept Southern Chu at peace.",
+        "If the general leads the army, we can hold Heluo firmly and shield Eastern Wu.",
+        "Disguised in men's robes as a young scholar, he walked straight onto the platform while she adjusted her sleeves.",
+        "I promised to look into this matter for him and would never break my word.",
+        "The army held Heluo firmly and kept Eastern Wu at peace.",
     ]
     report = assess_batch_risk(
         sources,
@@ -539,8 +540,9 @@ def test_batch_risk_catches_phantom_entity_pronoun_flip_and_oxen_allusion():
     by_idx = {(a.index, a.code) for a in report.alerts}
     assert (0, "phantom_entity") in by_idx
     assert (1, "pronoun_consistency") in by_idx
-    assert (2, "allusion") in by_idx
-    # Paragraph 3 genuinely contains 荆襄 in source, so no false phantom_entity alert.
+    # Removed book-specific agency trap must not fire.
+    assert (2, "agency_direction") not in by_idx
+    # Paragraph 3 genuinely contains 河洛 in source, so no false phantom_entity alert.
     assert (3, "phantom_entity") not in by_idx
     assert report.should_escalate is True
 
@@ -555,6 +557,91 @@ def test_batch_risk_catches_phantom_entity_pronoun_flip_and_oxen_allusion():
     assert any(a.code == "calque_or_idiom" for a in sir_report.alerts)
 
 
+def test_verse_segment_and_block_detection_ignore_modern_prose_and_isolated_lines():
+    from wenyi_core.ingest.segmenter import is_verse_segment, verse_block_indices
+
+    # Balanced modern prose (Simplified + Traditional) and 4-char pairs must not be flagged.
+    for prose in (
+        "悬崖边缘，横尸遍野！",
+        "他耐得住寂寞，甚至享受寂寞。",
+        "天色渐暗，微风轻拂。",
+        "你放心吧，我明白的。",
+        "他們向前走，這條路很長。",
+        "你們看著吧，這事還沒完。",
+    ):
+        assert is_verse_segment(prose) is False
+
+    # Classical 5- and 7-char shi couplets and multi-line stanzas (including >48 chars) qualify.
+    assert is_verse_segment("大漠孤烟直，长河落日圆。") is True
+    assert is_verse_segment("两个黄鹂鸣翠柳，一行白鹭上青天。") is True
+    assert is_verse_segment("床前明月光，\n疑是地上霜。") is True
+    eight_line_poem = "\n".join(
+        [
+            "两个黄鹂鸣翠柳，",
+            "一行白鹭上青天。",
+            "窗含西岭千秋雪，",
+            "门泊东吴万里船。",
+            "千山鸟飞绝，",
+            "万径人踪灭。",
+            "孤舟蓑笠翁，",
+            "独钓寒江雪。",
+        ]
+    )
+    assert len(eight_line_poem) > 48
+    assert is_verse_segment(eight_line_poem) is True
+    assert verse_block_indices([eight_line_poem]) == {0}
+
+    # Hard-wrapped multi-line narrative prose (>48 chars) must NOT be misclassified as verse.
+    wrapped_prose_3 = (
+        "他推开木门走进昏暗的屋子，桌上点着一盏油灯，\n"
+        "灯芯微微跳动，把墙上的影子拉得很长很长，\n"
+        "窗外传来几声犬吠，很快又归于沉寂。"
+    )
+    wrapped_prose_4 = (
+        "清晨的薄雾还没有完全散去，石板路上泛着湿气，\n"
+        "几个挑着担子的小贩已经沿着长街缓缓走来，\n"
+        "茶馆的伙计刚卸下门板，便听见远处传来一阵脚步声，\n"
+        "众人抬头望去，只见一队车马正从巷口转入大街。"
+    )
+    assert len(wrapped_prose_3) > 48
+    assert is_verse_segment(wrapped_prose_3) is False
+    assert is_verse_segment(wrapped_prose_4) is False
+    assert verse_block_indices([wrapped_prose_3, wrapped_prose_4]) == set()
+
+    # Two isolated couplets separated by prose must NOT form a verse block or force \n splits.
+    scattered_sources = [
+        "大漠孤烟直，长河落日圆。",
+        "他在屋里坐了很久，才慢慢站起身来。",
+        "两个黄鹂鸣翠柳，一行白鹭上青天。",
+    ]
+    scattered_drafts = [
+        "Lone smoke rises straight in the desert; the setting sun is round above the long river.",
+        "He sat in the room for a long while before slowly rising.",
+        "Two orioles sing among green willows; a line of egrets climbs the blue sky.",
+    ]
+    assert verse_block_indices(scattered_sources) == set()
+    scattered_report = assess_batch_risk(
+        scattered_sources, scattered_drafts, source_lang="zh", target_lang="en"
+    )
+    assert not any(a.code == "unlineated_verse" for a in scattered_report.alerts)
+
+    # Contiguous multi-couplet poems and explicit multi-line stanzas DO require line breaks.
+    contiguous_sources = [
+        "两个黄鹂鸣翠柳，一行白鹭上青天。",
+        "窗含西岭千秋雪，门泊东吴万里船。",
+    ]
+    contiguous_drafts = [
+        "Two orioles sing among green willows, a line of egrets climbs the blue sky.",
+        "The window frames the western peak's ancient snow, boats from Wu moor by the gate.",
+    ]
+    assert verse_block_indices(contiguous_sources) == {0, 1}
+    contiguous_report = assess_batch_risk(
+        contiguous_sources, contiguous_drafts, source_lang="zh", target_lang="en"
+    )
+    assert any(a.code == "unlineated_verse" for a in contiguous_report.alerts)
+    assert verse_block_indices(["床前明月光，\n疑是地上霜。"]) == {0}
+
+
 def test_book_bible_captures_divergent_titles_and_compiles_voice_exemplars():
     cfg = Config(source_lang="zh", target_lang="en", llm=LLMConfig(preset="fake"))
     probe_call = 0
@@ -567,13 +654,13 @@ def test_book_bible_captures_divergent_titles_and_compiles_voice_exemplars():
         if "terminology prober" in sys_msg:
             probe_call += 1
             if probe_call == 1:
-                return json.dumps({"renderings": {"南楚": "Southern Chu", "国主": "the sovereign"}})
-            return json.dumps({"renderings": {"南楚": "Southern Chu", "国主": "the king"}})
+                return json.dumps({"renderings": {"东吴": "Eastern Wu", "国主": "the sovereign"}})
+            return json.dumps({"renderings": {"东吴": "Eastern Wu", "国主": "the king"}})
         if "Book Bible" in sys_msg:
             seen_adjudicate_user = user_msg
             return json.dumps(
                 {
-                    "terms": [{"source": "南楚", "target": "Southern Chu", "type": "place"}],
+                    "terms": [{"source": "东吴", "target": "Eastern Wu", "type": "place"}],
                     "conventions": ["Render 国主 consistently as 'the sovereign'."],
                 }
             )
@@ -581,7 +668,7 @@ def test_book_bible_captures_divergent_titles_and_compiles_voice_exemplars():
             return json.dumps(
                 {
                     "exemplars": {
-                        "0": "Autumn rain pattered against the eaves of Mingyue Tower.",
+                        "0": "Autumn rain pattered against the eaves of Qingyun Tower.",
                         "1": '"Wait a moment," he said with a wry smile.',
                     }
                 }
@@ -590,8 +677,8 @@ def test_book_bible_captures_divergent_titles_and_compiles_voice_exemplars():
 
     fake = FakeClient(handler)
     agent = BookBibleAgent(fake, cfg)
-    corpus = "南楚国主微恙。南楚国主召见群臣。国主问政。国主叹息。南楚朝野震动。国主点头。"
-    res = agent.compile_bible(["南楚 and 国主 meet at court."], corpus)
+    corpus = "东吴国主微恙。东吴国主召见群臣。国主问政。国主叹息。东吴朝野震动。国主点头。"
+    res = agent.compile_bible(["东吴 and 国主 meet at court."], corpus)
     assert "Divergent recurring titles" in seen_adjudicate_user
     assert "国主" in seen_adjudicate_user
     assert dict(res.divergent_titles)["国主"] == ("the sovereign", "the king")
@@ -601,8 +688,8 @@ def test_book_bible_captures_divergent_titles_and_compiles_voice_exemplars():
     assert select_voice_excerpts("短句。\n又一句。", source_lang="zh") == []
     rich_corpus = "\n".join(
         [
-            "显德十六年秋，细雨打在明月楼的飞檐上，街市间却依旧车水马龙，往来文士议论着今科恩科的金榜题名与朝中局势，气氛既热闹又暗藏机锋。",
-            "他放下折扇，微微笑道：“阁下此言差矣，若我南楚一味退让，强敌岂会因此止步？与其坐以待毙，不如先发制人，方能为社稷争得数十年喘息之机。”",
+            "秋雨细细打在青云楼的飞檐上，长街间却依旧车水马龙，往来文士议论着今科秋试的榜单与朝中局势，气氛既热闹又暗藏机锋。",
+            "他放下折扇，微微笑道：“阁下此言差矣，若我东吴一味退让，强敌岂会因此止步？与其坐以待毙，不如先发制人，方能为社稷争得数十年喘息之机。”",
             "夜深人静之时，我独自站在廊下望着一弯冷月，想起白天宴席上的唇枪舌剑，只觉得人心难测，步步皆是险棋，稍有不慎便会万劫不复。",
         ]
     )

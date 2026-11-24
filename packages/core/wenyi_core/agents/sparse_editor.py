@@ -19,7 +19,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
-from ..ingest.segmenter import is_verse_segment
+from ..ingest.segmenter import verse_block_indices
 from ..llm.json_parser import JsonParseError
 from ..llm.preflight import fit_prompt_to_context_window
 from ..llm.retrying import TruncatedResponseError, is_resumable_provider_interrupt
@@ -105,11 +105,10 @@ def _pair_specific_audit_note(src: str, tgt: str) -> str:
     tgt_base = (tgt or "").lower().split("-", 1)[0]
     if src_base == "zh" and tgt_base == "en":
         return (
-            "Pair-specific checks (zh -> en): verify classical negation scope (莫…只管…), "
-            "correlative conditionals (不A就B), delayed realization (良久…才), traditional time "
-            "and numeric ranges (時辰 = two hours; 三五 = three to five), classical chronicle "
-            "verb-vs-name parsing, royal/humble register (孤/臣/陛下/大人), kinship seniority, "
-            "literary allusions (do not translate surface words literally), and embedded poems/lyrics."
+            "Pair-specific checks (zh -> en): verify negation scope, correlative conditionals, "
+            "delayed realizations, quantifier polarity and exact numbers, agent/object direction, "
+            "speaker register and kinship seniority, non-literal idioms/allusions, and embedded "
+            "poems or lyrics."
         )
     if src_base == "ja" and tgt_base == "en":
         return (
@@ -197,15 +196,16 @@ class SparseSemanticEditor(Agent):
         next_ref = prompts.render_source_reference(next_source)
 
         alert_blocks: list[str] = []
+        verse_indices = verse_block_indices(src_list)
         unlineated_verse = [
             idx
-            for idx, (src, tgt) in enumerate(zip(src_list, draft_list))
-            if is_verse_segment(src) and "\n" not in tgt
+            for idx, (_src, tgt) in enumerate(zip(src_list, draft_list))
+            if idx in verse_indices and tgt.strip() and "\n" not in tgt
         ]
-        if len(unlineated_verse) >= 2:
+        if unlineated_verse:
             alert_blocks.append(
-                f"[Verse formatting alert] Paragraphs {unlineated_verse} are rhymed verse couplets "
-                "drafted without line breaks. Emit patches splitting each couplet onto two lines with '\\n'."
+                f"[Verse formatting alert] Paragraphs {unlineated_verse} are verse lines "
+                "drafted without line breaks. Emit patches splitting each verse line/couplet with '\\n'."
             )
         risk_alert_text = risk.format_prompt_alerts(max_items=6)
         if risk_alert_text:

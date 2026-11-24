@@ -1259,7 +1259,9 @@ def test_parallel_persistent_save_error_on_one_chapter_still_saves_other_chapter
     assert all(s.target for s in store.load_chapter(1).text_segments)
 
 
-def test_book_bible_probe_failure_raises_instead_of_caching_empty_bible():
+def test_book_bible_probe_failure_raises_instead_of_caching_empty_bible(caplog):
+    import logging
+
     import pytest
 
     agent = _bible_agent(lambda messages, tier, json_mode: "NOT JSON")
@@ -1276,13 +1278,167 @@ def test_book_bible_probe_failure_raises_instead_of_caching_empty_bible():
     with pytest.raises(ValueError, match="omitted candidate"):
         empty_map.compile_bible(digests, corpus)
 
-    null_val = _bible_agent(
-        lambda messages, tier, json_mode: json.dumps(
-            {"renderings": {"行者": None, "三藏": "Sanzang"}}
-        )
+    all_null = _bible_agent(
+        lambda messages, tier, json_mode: json.dumps({"renderings": {"行者": None, "三藏": None}})
     )
     with pytest.raises(ValueError, match="non-string rendering"):
-        null_val.compile_bible(digests, corpus)
+        all_null.compile_bible(digests, corpus)
+
+    # Partial stubborn omission or non-string after retry degrades gracefully (warns + drops
+    # the unresolved item) instead of aborting the entire book run post-compile.
+    def partial_null_handler(messages, tier, json_mode):
+        sys_msg = messages[0]["content"]
+        if "terminology prober" in sys_msg:
+            return json.dumps({"renderings": {"行者": None, "三藏": "Sanzang"}})
+        return json.dumps(
+            {"terms": [{"source": "三藏", "target": "Sanzang", "type": "person", "gender": "male"}]}
+        )
+
+    partial_agent = _bible_agent(partial_null_handler)
+    with caplog.at_level(logging.WARNING, logger="wenyi_core.agents.book_bible"):
+        res = partial_agent.compile_bible(digests, corpus)
+    assert [t.source for t in res.terms] == ["三藏"]
+    assert "dropped 1 unresolved candidate" in caplog.text
+
+    # Partial omission where the retry call returns malformed JSON also degrades gracefully
+    # when other candidates in the chunk already succeeded.
+    caplog.clear()
+    probe_attempts = 0
+
+    def partial_omit_then_bad_retry(messages, tier, json_mode):
+        nonlocal probe_attempts
+        sys_msg = messages[0]["content"]
+        if "terminology prober" in sys_msg:
+            probe_attempts += 1
+            if probe_attempts in (1, 3):
+                return json.dumps({"renderings": {"三藏": "Sanzang"}})
+            return "NOT JSON"
+        return json.dumps(
+            {"terms": [{"source": "三藏", "target": "Sanzang", "type": "person", "gender": "male"}]}
+        )
+
+    omit_agent = _bible_agent(partial_omit_then_bad_retry)
+    with caplog.at_level(logging.WARNING, logger="wenyi_core.agents.book_bible"):
+        res_omit = omit_agent.compile_bible(digests, corpus)
+    assert [t.source for t in res_omit.terms] == ["三藏"]
+    assert "Book Bible probe retry failed" in caplog.text
+
+
+def test_compiled_book_bible_cache_hits_on_resume_with_translated_repeated_quotes(tmp_path):
+    from wenyi_core.progress_labels import english_progress_label
+    from wenyi_core.storage.file import FileStorage
+
+    quote = "山高月小，水落石出，此景难忘。"
+    book_text = (
+        f"第一章\n\n行者与三藏来到山谷。\n\n「{quote}」\n\n"
+        f"第二章\n\n三藏再念道：「{quote}」\n\n行者点头。\n"
+    )
+    src_file = tmp_path / "resume_quotes.txt"
+    src_file.write_text(book_text, encoding="utf-8")
+
+    bible_probe_calls = 0
+    fail_second_chapter = True
+
+    def handler(messages, tier, json_mode):
+        nonlocal bible_probe_calls
+        sys_msg = messages[0]["content"]
+        user_msg = messages[-1]["content"]
+        if "pre-translation analyst" in sys_msg:
+            return json.dumps({"style_guide": "Classical adventure style.", "characters": []})
+        if "chapter digest writer" in sys_msg:
+            return "行者 and 三藏 travel through the valley."
+        if "whole-book synopsis writer" in sys_msg:
+            return "A short journey of 行者 and 三藏."
+        if "terminology prober" in sys_msg:
+            bible_probe_calls += 1
+            keys = re.findall(r"^\d+\.\s+(.+?)\s+\|", user_msg, re.MULTILINE)
+            return json.dumps(
+                {"renderings": {k: ("Pilgrim" if k == "行者" else "Sanzang") for k in keys}}
+            )
+        if "Book Bible" in sys_msg:
+            return json.dumps(
+                {
+                    "terms": [
+                        {"source": "行者", "target": "Pilgrim", "type": "person"},
+                        {"source": "三藏", "target": "Sanzang", "type": "person"},
+                    ],
+                    "conventions": [],
+                }
+            )
+        if "repeated" in sys_msg.lower() and "quote" in sys_msg.lower():
+            return json.dumps({"quotes": {"0": "The mountains are high and the moon is small."}})
+        if "literary translator" in sys_msg:
+            if fail_second_chapter and "行者点头" in user_msg:
+                raise RuntimeError("simulated chapter 2 interrupt")
+            nums = re.findall(r"^\[(\d+)\]", user_msg, re.MULTILINE)
+            return json.dumps(
+                {
+                    "translations": [
+                        (
+                            '"The mountains are high and the moon is small."'
+                            if f"[{n}]" in user_msg and quote in user_msg
+                            else f"Translated paragraph {n}."
+                        )
+                        for n in nums
+                    ]
+                }
+            )
+        if "bilingual literary editor" in sys_msg:
+            return json.dumps({"patches": []})
+        if "chapter title translator" in sys_msg:
+            nums = re.findall(r"^\[(\d+)\]", user_msg, re.MULTILINE)
+            return json.dumps({"titles": [f"Chapter {int(n) + 1}" for n in nums]})
+        return json.dumps({})
+
+    cfg = Config.from_dict(
+        {
+            "language": {"source": "zh", "target": "en"},
+            "llm": {"preset": "fake"},
+            "paths": {"state_dir": str(tmp_path / "state")},
+            "pipeline": {
+                "glossary_mode": "compiled",
+                "polish_mode": "sparse",
+                "chapter_concurrency": 1,
+                "polish_concurrency": 1,
+                "consistency_sweep": True,
+                "review": False,
+            },
+        }
+    )
+
+    progress_labels: list[str] = []
+    orch1 = Orchestrator(cfg, client=FakeClient(handler))
+    try:
+        orch1.run(
+            str(src_file),
+            progress=lambda _d, _t, lbl: progress_labels.append(lbl),
+        )
+    except RuntimeError:
+        pass
+    assert bible_probe_calls > 0
+    assert "progress.stage.compilingBible" in progress_labels
+    assert english_progress_label("progress.stage.compilingBible") == "Compiling Book Bible…"
+
+    # Resume: chapter 0 is already translated (including the repeated quote). The compiled
+    # Book Bible cache MUST hit instead of re-probing!
+    calls_before_resume = bible_probe_calls
+    fail_second_chapter = False
+    resume_labels: list[str] = []
+    orch2 = Orchestrator(cfg, client=FakeClient(handler))
+    orch2.run(
+        str(src_file),
+        progress=lambda _d, _t, lbl: resume_labels.append(lbl),
+    )
+    assert bible_probe_calls == calls_before_resume
+    assert "progress.stage.consistencySweep" in resume_labels
+    assert (
+        english_progress_label("progress.stage.consistencySweep")
+        == "Running cross-chapter consistency sweep…"
+    )
+    run_dir = next((tmp_path / "state").glob("*/targets/*"))
+    store = FileStorage(str(run_dir), create=False)
+    events = [ev["event"] for ev in store.list_events()]
+    assert "glossary_bible_reused" in events
 
 
 def test_bible_candidates_mine_accented_greek_and_latin_extended_names():

@@ -254,6 +254,11 @@ class TranslationService:
             for row in manifest.get("chapters", [])
         ]
         self._quote_memory = QuoteMemory.from_chapters(chapter_sources_for_quotes)
+        # Snapshot whole-book cross-chapter quotes BEFORE observing already-translated drafts so
+        # the compiled Book Bible cache fingerprint stays invariant across resumes.
+        repeated_quotes = (
+            self._quote_memory.cross_chapter_spans() if pipeline.glossary_mode == "compiled" else ()
+        )
         for pos, src, tgt in drafts:
             self._quote_memory.observe(pos, src, tgt)
 
@@ -264,9 +269,6 @@ class TranslationService:
                 str(store.load_chapter(row["index"]).meta.get("source_digest") or "")
                 for row in manifest.get("chapters", [])
             ]
-            repeated_quotes = (
-                self._quote_memory.cross_chapter_spans() if self._quote_memory is not None else ()
-            )
             self._bible_variants = self._bible_seed.ensure_seeded(
                 store,
                 digests=digests,
@@ -382,7 +384,7 @@ class TranslationService:
             if not store.pending_chapters():
                 if pipeline.consistency_sweep and only_chapter is None:
                     if progress:
-                        progress(done, total, "Running cross-chapter consistency sweep…")
+                        progress(done, total, "progress.stage.consistencySweep")
                     all_chapter_indices = [
                         chapter["index"] for chapter in manifest.get("chapters", [])
                     ]

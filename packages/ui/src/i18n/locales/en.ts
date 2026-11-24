@@ -648,6 +648,8 @@ const en = {
   "progress.stage.prescan": "Prescanning chapters…",
   "progress.stage.style": "Analysing the book's style…",
   "progress.stage.synopsis": "Generating the whole-book synopsis…",
+  "progress.stage.compilingBible": "Compiling Book Bible…",
+  "progress.stage.consistencySweep": "Running cross-chapter consistency sweep…",
   "progress.stage.chapter": "Chapter {count}",
   "progress.stage.translationDone": "Translation complete",
   "progress.stage.assembling": "Assembling the translation…",

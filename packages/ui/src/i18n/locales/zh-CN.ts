@@ -619,6 +619,8 @@ const zhCN = {
   "progress.stage.prescan": "正在预扫章节…",
   "progress.stage.style": "正在分析书籍风格…",
   "progress.stage.synopsis": "正在生成全书概要…",
+  "progress.stage.compilingBible": "正在编译全书术语词典…",
+  "progress.stage.consistencySweep": "正在执行全书一致性巡检…",
   "progress.stage.chapter": "第 {count} 章",
   "progress.stage.translationDone": "翻译完成",
   "progress.stage.assembling": "正在组装译文…",

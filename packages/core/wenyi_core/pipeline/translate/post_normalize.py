@@ -37,11 +37,26 @@ _TYPOGRAPHY_PROTECTED_RE = re.compile(
     r"|(?<!\\)\$(?!\$)(?!\s)(?:\\.|[^$\\\n])+?(?<!\s)\$(?![$\d])"
     r"|https?://[^\s\"'“”‘’]+"
 )
+# LaTeX commands beginning with '\n' whose suffixes should never be mistaken for leaked newlines
+# even when written outside math delimiters immediately after punctuation (e.g. "a,\nu", ".\nRightarrow").
+_LATEX_N_CMD_SUFFIXES = (
+    r"eq|e|eg|i|abla|approx|leq|geq|leqslant|geqslant|less|gtr|mid|parallel|vdash|Vdash|vDash|VDash|"
+    r"cong|sim|subseteq|supseteq|subset|supset|rightarrow|leftarrow|leftrightarrow|"
+    r"Rightarrow|Leftarrow|Leftrightarrow|earrow|warrow|exists|shortmid|shortparallel|"
+    r"succ|prec|triangleleft|triangleright|otin|olimits|obreak|ewline|ewpage|ewcommand|"
+    r"ewenvironment|ewtheorem|oindent|olinebreak|umberwithin|onumber|opagebreak|ormalfont|"
+    r"ormalsize|otag|ocite"
+)
+# Bare '\nu' is protected unless followed by a hyphen/dot/letter (so "a,\nu-boats" still normalizes).
+_LATEX_N_GUARD = rf"(?:(?:{_LATEX_N_CMD_SUFFIXES})(?![A-Za-z])|u(?![A-Za-z.\-]))"
+# After a period '.', also protect relative paths like '.\new' and bare '.\not'.
+_PERIOD_N_GUARD = rf"(?:(?:{_LATEX_N_CMD_SUFFIXES}|ew|ot)(?![A-Za-z])|u(?![A-Za-z.\-]))"
 # Match standalone leaked literal '\n' line breaks without touching LaTeX commands
-# ('\neq', '\nu', '\nabla', '\nRightarrow'), escaped backslashes ('\\n'), or paths ('C:\new').
+# ('\neq', '\ne', '\nu', '\nabla', '\nRightarrow'), escaped backslashes ('\\n'), or paths ('C:\new', '.\new').
 _ESCAPED_NEWLINE_RE = re.compile(
-    r"(?<!\\)(?:\\n)+(?![A-Za-z])"
-    r"|(?<=[.,;!?…—\"”'’】》」』])(?<!\\)(?:\\n)+(?=[A-Za-z])"
+    rf"(?<=[,;!?…—\"”'’】》」』])(?<!\\)(?:\\n)+(?=[A-Za-z])(?!{_LATEX_N_GUARD})"
+    rf"|(?<=\.)(?<!\\)(?:\\n)+(?=[A-Za-z])(?!{_PERIOD_N_GUARD})"
+    r"|(?<!\\)(?:\\n)+(?![A-Za-z])"
 )
 _RAW_DOUBLE_DASH_RE = re.compile(r"(?<!-)(?: -- |--)(?!-)")
 # Normalize mid-sentence spaced em dashes (" — ") to tight American em dashes ("—") while

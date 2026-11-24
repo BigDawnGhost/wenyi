@@ -21,6 +21,8 @@ _ENGLISH = {
     "style": "Analyzing book style…",
     "synopsis": "Generating whole-book synopsis…",
     "prescan": "Prescanning chapter digests",
+    "compilingBible": "Compiling Book Bible…",
+    "consistencySweep": "Running cross-chapter consistency sweep…",
     "translationDone": "Translation complete",
     "assembling": "Assembling translation…",
     "reviewChapters": "Loading review chapters",
