@@ -44,7 +44,7 @@ The full maintenance rules are in [AGENTS.md](../../AGENTS.md#文档维护).
 
 ## Documentation preview
 
-With Node 22 and pnpm 9, run from the repository root:
+With the [shared Node and pnpm versions](frontend.md#validation-in-both-hosts), run from the repository root:
 
 ```bash
 pnpm install --frozen-lockfile
