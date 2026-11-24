@@ -23,6 +23,8 @@ from typing import Any, Iterable, Literal
 from ..errors import ArtifactCorrupt, SchemaTooNew, WenyiError
 from ..glossary.store import GlossaryStore, GlossaryTerm
 from ..models.document import Chapter, Document
+from .artifact_keys import validate_artifact_key
+from .chapter_reading import ChapterDigestRow, ChapterNotFound
 from .io_path import require_sqlite_path
 from .locks import (
     ASSEMBLE_LOCK,
@@ -51,6 +53,14 @@ SCHEMA_VERSION = 3
 _REVIEW_EVENTS = """key='events.jsonl' AND json_extract(value, '$.review_id') IS NOT NULL
     AND json_extract(value, '$.event') IN ('review_started', 'review_autofix_finished')"""
 _EVENT_DAY = "substr(json_extract(value, '$.ts'), 1, 10)"
+
+# Match the partial expression index exactly; unupgraded databases can run the
+# same query without it. The event ledger remains the source of legacy IDs.
+_MANUAL_EDIT_EVENTS = (
+    "key='events.jsonl' AND json_extract(value, '$.event')='manual_translation_edited'"
+)
+_EVENT_CHAPTER = "json_extract(value, '$.chapter')"
+_EVENT_SEGMENT = "json_extract(value, '$.index')"
 
 # Re-exported: the class moved to locks.py, but callers still import it from here.
 __all__ = ["SCHEMA_VERSION", "SqliteStorage", "StorageBusyError"]
@@ -244,6 +254,11 @@ class SqliteStorage:
                 conn.execute(
                     f"CREATE INDEX IF NOT EXISTS review_events_by_day "
                     f"ON artifact_records(key, {_EVENT_DAY}) WHERE {_REVIEW_EVENTS}"
+                )
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS manual_translation_events_segment "
+                    f"ON artifact_records({_EVENT_CHAPTER}, {_EVENT_SEGMENT}) "
+                    f"WHERE {_MANUAL_EDIT_EVENTS}"
                 )
         except BaseException:
             conn.close()
@@ -465,17 +480,7 @@ class SqliteStorage:
         digest = hashlib.sha256(str(export_id).encode("ascii")).hexdigest()
         return self._file_lock(f".export-{digest}.lock", blocking=blocking)
 
-    @staticmethod
-    def _key(key: str, *, prefix: bool = False) -> str:
-        """Accept portable relative keys only, never filesystem-dependent aliases."""
-        if not isinstance(key, str) or "\\" in key or "\0" in key or ":" in key:
-            raise ValueError("Artifact key must be a portable relative path")
-        value = key.removesuffix("/") if prefix else key
-        if not value and prefix and not key:
-            return key
-        if not value or any(part in ("", ".", "..") for part in value.split("/")):
-            raise ValueError("Artifact key must remain within the run")
-        return key
+    _key = staticmethod(validate_artifact_key)
 
     def read_artifact(self, key: str) -> Any | None:
         key = self._key(key)
@@ -798,16 +803,11 @@ class SqliteStorage:
             SqliteStorage._chapter_statistics_row(chapter),
         )
 
-    def chapter_statistics(self) -> list[dict]:
-        """Read summaries in manifest order, including headings and empty targets."""
-        with self.read_chapter_statistics_snapshot() as chapters:
-            return list(chapters)
-
     @contextmanager
-    def read_chapter_statistics_snapshot(self) -> Iterator[Iterator[dict]]:
-        """Keep manifest, compact counts and the caller's review reads in one snapshot."""
+    def _chapter_statistics_snapshot(self) -> Iterator[tuple[list[dict], dict[int, sqlite3.Row]]]:
+        """Read the inventory and its compact rows in the same WAL snapshot."""
         if not self._database_present():
-            yield iter(())
+            yield [], {}
             return
         with self._read_lock():
             manifest = self.read_artifact("manifest.json") or {}
@@ -822,9 +822,38 @@ class SqliteStorage:
                 if conn.execute("PRAGMA user_version").fetchone()[0] >= 2
                 else {}
             )
+            yield manifest.get("chapters", []), rows
+
+    def read_chapter_digests(self) -> list[ChapterDigestRow]:
+        """Read saved titles and digests in manifest order without counting paragraphs."""
+        digests = []
+        with self._chapter_statistics_snapshot() as (entries, rows):
+            for entry in entries:
+                ci = entry["index"]
+                row = rows.get(ci)
+                if row is not None:
+                    digests.append((ci, row["title"], json.loads(row["meta"]).get("source_digest")))
+                    continue
+                # Legacy state and generic artifact writes can lack a compact row.
+                try:
+                    chapter = self._load_chapter(ci, entry)
+                except FileNotFoundError:
+                    raise ChapterNotFound(ci) from None
+                digests.append((chapter.index, chapter.title, chapter.meta.get("source_digest")))
+        return digests
+
+    def chapter_statistics(self) -> list[dict]:
+        """Read summaries in manifest order, including headings and empty targets."""
+        with self.read_chapter_statistics_snapshot() as chapters:
+            return list(chapters)
+
+    @contextmanager
+    def read_chapter_statistics_snapshot(self) -> Iterator[Iterator[dict]]:
+        """Keep manifest, compact counts and the caller's review reads in one snapshot."""
+        with self._chapter_statistics_snapshot() as (entries, rows):
 
             def summaries():
-                for entry in manifest.get("chapters", []):
+                for entry in entries:
                     ci = entry["index"]
                     row = rows.get(ci)
                     if row is None:
@@ -937,15 +966,13 @@ class SqliteStorage:
             ]
             # Event-only manual edits remain visible without duplicating recorded revisions.
             for row in self._connection().execute(
-                "SELECT sequence,value FROM artifact_records WHERE key='events.jsonl' "
-                "ORDER BY sequence"
+                f"SELECT sequence,value FROM artifact_records WHERE {_MANUAL_EDIT_EVENTS} "
+                f"AND {_EVENT_CHAPTER}=? AND {_EVENT_SEGMENT}=? ORDER BY sequence",
+                (ci, si),
             ):
                 event = json.loads(row["value"])
                 if (
-                    event.get("event") == "manual_translation_edited"
-                    and event.get("chapter") == ci
-                    and event.get("index") == si
-                    and not event.get("history_recorded")
+                    not event.get("history_recorded")
                     and "before" in event
                     and "after" in event
                     and event["before"] != event["after"]

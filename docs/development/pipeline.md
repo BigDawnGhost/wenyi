@@ -228,8 +228,11 @@ database to bypass the injected adapter.
 | Desktop SQLite | Independent project database and workspace; no CLI/Web state migration |
 | Web PostgreSQL | Project-scoped mutable state; upload/cache/export directories are not JSON or SQLite state mirrors |
 
-Artifact keys are run-relative, `/`-separated names on every backend. Limit prefix
-queries to the relevant subtree rather than scanning unrelated source caches.
+Artifact keys are nonempty, run-relative, `/`-separated names on every backend.
+Empty, `.` and `..` components, backslashes, colons and NUL are invalid. Prefix
+queries match literal text: an empty prefix lists all keys, and a single trailing
+`/` is allowed only in a prefix. Limit queries to the relevant subtree rather than
+scanning unrelated source caches. File storage also checks resolved path containment.
 Precision archives, policy plans and Review traces are artifacts, not portable
 absolute filesystem paths. `Storage` path-shaped identity properties do not grant
 domain services permission to write around the port.
