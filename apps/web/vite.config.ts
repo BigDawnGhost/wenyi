@@ -1,11 +1,11 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
-import { frontendManualChunks } from "../../packages/ui/vite.shared";
-import { createSandboxState, resolveFixture } from "../../packages/ui/sandbox/fixtures";
-import { attachProgressServer } from "../../packages/ui/sandbox/progress-server";
-import { matchFault, pickScenario } from "../../packages/ui/sandbox/scenarios";
-import { thirdPartyNotices } from "./scripts/third-party-notices";
+import { frontendManualChunks } from "../../packages/ui/vite.shared.ts";
+import { createSandboxState, resolveFixture } from "../../packages/ui/sandbox/fixtures.ts";
+import { attachProgressServer } from "../../packages/ui/sandbox/progress-server.ts";
+import { matchFault, pickScenario } from "../../packages/ui/sandbox/scenarios.ts";
+import { thirdPartyNotices } from "./scripts/third-party-notices.ts";
 
 // MOCK_API=1 pnpm dev:web serves the same fixture data the Playwright suites
 // use, directly from the dev server — click around every page without a
@@ -88,7 +88,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(import.meta.dirname, "./src"),
     },
   },
   build: {
