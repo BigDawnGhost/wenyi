@@ -214,8 +214,8 @@ class PostgresExports:
                    JOIN exports e ON e.id=(j.params->>'export_id')::bigint
                                  AND e.project_id=j.project_id
                    WHERE j.project_id=%s AND j.kind='export'
-                     AND j.status IN ('queued','running') AND e.format=%s
-                     AND e.status IN ('pending','running') AND e.options=%s
+                     AND j.status='queued' AND e.format=%s
+                     AND e.status='pending' AND e.options=%s
                      AND j.params->'config_snapshot'=%s AND j.params->'export_source'=%s
                    ORDER BY j.id DESC LIMIT 1""",
                 (pid, fmt, Jsonb(options), Jsonb(snapshot), Jsonb(source)),

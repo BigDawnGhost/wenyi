@@ -202,13 +202,6 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
             config.pipeline.review = False
         context().validate_api_configuration(config, "translate")
         require_input_file(input_path, console=console)
-        out = resolve_export_out_path(
-            out,
-            source_path=input_path,
-            bilingual=bool(config.output.bilingual),
-            overwrite=overwrite,
-            console=console,
-        )
         orch = Orchestrator(config, allow_glossary_notes=True)
 
         with (
@@ -244,7 +237,7 @@ def register_workflows_commands(app: typer.Typer, context: ContextAccessor) -> N
                 input_path,
                 progress=cb,
                 out_format=fmt,
-                out_path=out,
+                out_path=resolve_export_out_path(out, overwrite=overwrite, console=console),
             )
 
         store = result["store"]
