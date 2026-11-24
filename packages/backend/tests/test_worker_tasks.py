@@ -6,13 +6,15 @@ from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
+from unittest.mock import Mock
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 import pytest
 from bs4 import BeautifulSoup
 from bs4.element import Tag
 from fastapi import HTTPException
-from wenyi_backend.context import current_context
+from wenyi_backend.context import BackendStorage, current_context
 from wenyi_backend.execution import bindings, exporting, runner
 from wenyi_backend.execution.contracts import ExportRequest
 from wenyi_backend.routers.dependencies import start_job
@@ -48,9 +50,10 @@ def test_previously_queued_exports_drop_retired_options(monkeypatch, fmt):
 
 def test_previously_queued_jobs_keep_other_frozen_config_settings():
     context = current_context()
+    repository = cast(Mock, context.repository)
     snapshot = {"output": {"punctuation_normalize": True, "bilingual_order": "source_first"}}
-    context.repository.get_project.return_value = {"id": "p"}
-    context.repository.get_job_by_arq_id.return_value = {"params": {"config_snapshot": snapshot}}
+    repository.get_project.return_value = {"id": "p"}
+    repository.get_job_by_arq_id.return_value = {"params": {"config_snapshot": snapshot}}
 
     config = bindings.build_config_for(context, "p", "queued")
 
@@ -180,7 +183,7 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
                 export_id=1,
                 fmt="epub",
                 services=services,
-                storage_for=lambda pid: storage,
+                storage_for=lambda pid: cast(BackendStorage, storage),
                 bilingual=True,
                 order=order,
                 preserve_source_style=preserve_source_style,
@@ -195,7 +198,7 @@ def test_bilingual_epub_export_keeps_untranslated_ruby_once(
         export_id=1,
         fmt="epub",
         services=services,
-        storage_for=lambda pid: storage,
+        storage_for=lambda pid: cast(BackendStorage, storage),
         bilingual=True,
         order=order,
         preserve_source_style=preserve_source_style,
@@ -305,9 +308,12 @@ def test_export_cancellation_waits_for_render_to_finish(monkeypatch):
     monkeypatch.setattr(exporting, "execute", render)
 
     async def run():
-        task = asyncio.create_task(
-            tasks.run_export({"backend": current_context()}, project_id="p", export_id=1, fmt="txt")
-        )
+        from wenyi_backend.workers.signing import SIGNATURE_FIELD, sign_task
+
+        context = current_context()
+        payload = {"project_id": "p", "export_id": 1, "fmt": "txt"}
+        payload[SIGNATURE_FIELD] = sign_task("run_export", payload, context.api_token)
+        task = asyncio.create_task(tasks.run_export({"backend": context}, **payload))
         assert await asyncio.to_thread(started.wait, 2)
         task.cancel()
         await asyncio.sleep(0)

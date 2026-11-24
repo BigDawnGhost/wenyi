@@ -90,7 +90,9 @@ def test_a_project_chosen_location_is_recorded_and_still_found(tmp_path):
     try:
         pid = backend.create_project("A book", "en", "zh", {}, library_root=str(chosen))
         assert backend.project_dir(pid).parent == chosen
-        assert backend._get("projects", pid)["library_root"] == str(chosen)
+        row = backend._get("projects", pid)
+        assert row is not None
+        assert row["library_root"] == str(chosen)
     finally:
         backend.close()
 
@@ -111,7 +113,9 @@ def test_a_project_found_after_a_restart_that_names_no_default(tmp_path):
     second = LocalBackend(workspace)
     try:
         assert second.project_dir(pid).parent == chosen
-        assert second.get_project(pid)["available"] is True
+        project = second.get_project(pid)
+        assert project is not None
+        assert project["available"] is True
     finally:
         second.close()
 
@@ -234,6 +238,8 @@ def test_a_refused_location_leaves_no_record_and_no_directory(backend, roots, tm
 
 def test_the_route_refuses_a_location_before_the_upload_is_written(tmp_path):
     context = create_context(tmp_path / "desktop")
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
     try:
         with TestClient(create_app(context=context)) as client:
             answer = client.post("/desktop/library/admit", json={"path": str(tmp_path / "desktop")})
@@ -244,11 +250,13 @@ def test_the_route_refuses_a_location_before_the_upload_is_written(tmp_path):
             assert accepted.status_code == 200
             assert accepted.json()["path"] == str(tmp_path / "Books")
     finally:
-        context.repository.close()
+        backend.close()
 
 
 def test_a_project_created_through_the_route_lands_in_the_chosen_folder(tmp_path):
     context = create_context(tmp_path / "desktop")
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
     chosen = tmp_path / "Books"
     try:
         with use_context(context), TestClient(create_app(context=context)) as client:
@@ -265,11 +273,11 @@ def test_a_project_created_through_the_route_lands_in_the_chosen_folder(tmp_path
             )
             assert created.status_code == 201, created.text
             pid = created.json()["id"]
-            directory = context.repository.project_dir(pid)
+            directory = backend.project_dir(pid)
             assert directory.parent == chosen
             # The source was written into the directory the record names, so the
             # upload and the record cannot disagree about where the project is.
             assert list(directory.glob("source-*.txt"))
             assert Path(context.data_dir) not in directory.parents
     finally:
-        context.repository.close()
+        backend.close()

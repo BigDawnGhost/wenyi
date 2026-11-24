@@ -2,11 +2,11 @@
 
 import json
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from wenyi_backend.context import current_context
-from wenyi_backend.live_statistics import LiveStatistics, read_live_statistics
+from wenyi_backend.live_statistics import LIVE_TTL_SECONDS, LiveStatistics, read_live_statistics
 from wenyi_core.events import TranslationEvent
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, empty_usage
@@ -102,31 +102,51 @@ def test_live_time_uses_the_core_timer_identity_and_freezes_after_exit():
 
 
 @pytest.mark.parametrize(
-    "status, run_id, project_id, age",
+    "status, run_id, project_id",
     [
-        ("paused", "run", "book", 0),
-        ("done", "run", "book", 0),
-        ("queued", "run", "book", 0),
-        ("running", "old", "book", 0),
-        ("running", "run", "other", 0),
-        ("running", "run", "book", 60),
+        ("paused", "run", "book"),
+        ("done", "run", "book"),
+        ("queued", "run", "book"),
+        ("running", "old", "book"),
+        ("running", "run", "other"),
     ],
 )
-def test_live_reader_rejects_stopped_unrelated_and_stale_runs(status, run_id, project_id, age):
+def test_live_reader_rejects_stopped_and_unrelated_runs(status, run_id, project_id):
     redis = MemoryRedis()
-    from datetime import timedelta
-
     redis.values["project:book:stats"] = json.dumps(
         {
             "project_id": project_id,
             "run_id": run_id,
-            "updated_at": (datetime.now(timezone.utc) - timedelta(seconds=age)).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
             "usage": empty_usage(),
             "timing": {"runs": [], "total_seconds": 5},
         }
     )
     job = {"run_id": "run", "status": status}
     assert read_live_statistics(redis, "book", job) is None
+
+
+def test_live_reader_tolerates_host_clock_rollback():
+    # Freshness comes from the cache TTL, so a wall clock that rolled back on
+    # either side must not reject an in-progress run's snapshot.
+    redis = MemoryRedis()
+    for stamp in (
+        datetime.now(timezone.utc) - timedelta(minutes=5),
+        datetime.now(timezone.utc) + timedelta(minutes=5),
+    ):
+        redis.values["project:book:stats"] = json.dumps(
+            {
+                "project_id": "book",
+                "run_id": "run",
+                "updated_at": stamp.isoformat(),
+                "usage": empty_usage(),
+                "timing": {"runs": [], "total_seconds": 5},
+            }
+        )
+        result = read_live_statistics(redis, "book", {"run_id": "run", "status": "running"})
+        assert result is not None
+        assert result["live"]["run_id"] == "run"
+        assert result["live"]["valid_for_seconds"] == LIVE_TTL_SECONDS
 
 
 def test_live_reader_returns_current_snapshot_without_writing_ledgers():

@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 
 from psycopg.types.json import Jsonb
-from wenyi_backend.context import BackendContext
+from wenyi_backend.context import BackendContext, ExportAdmission
 from wenyi_backend.errors import PROJECT_BUSY, PROJECT_NOT_FOUND, ApiError
 from wenyi_backend.export_paths import EXPORT_LIMIT
 from wenyi_backend.metrics import Metrics
@@ -65,7 +65,7 @@ class PostgresRepository:
         return self._pool
 
     def start(self):
-        self._pool = init_pool(self.settings.psycopg_dsn)
+        self._pool = init_pool(self.settings.psycopg_dsn, max_size=self.settings.db_pool_max_size)
         try:
             from .config_rebuild import rebuild_saved_settings
 
@@ -132,8 +132,11 @@ class PostgresRepository:
             return row[0]
 
     def admit_job(self, pid, kind, job_id, *, project_status, **kwargs):
-        result = dal.create_job(pid, kind, job_id, status="queued", **kwargs)
-        dal.set_project_status(pid, project_status)
+        with self.pool.connection() as connection, connection.transaction():
+            result = dal.create_job(
+                pid, kind, job_id, status="queued", connection=connection, **kwargs
+            )
+            dal.set_project_status(pid, project_status, connection=connection)
         return result
 
     def fail_admission(self, job_id, status, error):
@@ -174,7 +177,8 @@ class PostgresExports:
         with self.repository.pool.connection() as connection:
             rows = connection.execute(
                 """SELECT id,project_id,format,status,path,size,created_at,options,error FROM exports
-                   WHERE project_id=%s ORDER BY COALESCE(completed_at,created_at) DESC,id DESC
+                   WHERE project_id=%s AND status<>'deleting'
+                   ORDER BY COALESCE(completed_at,created_at) DESC,id DESC
                    LIMIT %s""",
                 (pid, EXPORT_LIMIT),
             ).fetchall()
@@ -200,44 +204,69 @@ class PostgresExports:
             result.append(item)
         return result
 
-    def admit_export(self, pid, fmt, options, run_id, snapshot):
+    def admit_export(self, pid, fmt, options, run_id, snapshot, *, source) -> ExportAdmission:
         with self.repository.pool.connection() as connection:
             export_history_lock(connection, pid)
             if connection.execute("SELECT 1 FROM projects WHERE id=%s", (pid,)).fetchone() is None:
                 raise ApiError(PROJECT_NOT_FOUND, 404, "project not found")
+            active = connection.execute(
+                """SELECT j.id, j.run_id, e.id FROM jobs j
+                   JOIN exports e ON e.id=(j.params->>'export_id')::bigint
+                                 AND e.project_id=j.project_id
+                   WHERE j.project_id=%s AND j.kind='export'
+                     AND j.status='queued' AND e.format=%s
+                     AND e.status='pending' AND e.options=%s
+                     AND j.params->'config_snapshot'=%s AND j.params->'export_source'=%s
+                   ORDER BY j.id DESC LIMIT 1""",
+                (pid, fmt, Jsonb(options), Jsonb(snapshot), Jsonb(source)),
+            ).fetchone()
+            if active is not None:
+                return ExportAdmission(active[2], active[0], active[1], created=False)
             export_id = dal.create_export(pid, fmt, options, connection=connection)
             job_id = dal.create_job(
                 pid,
                 "export",
                 run_id,
                 run_id=run_id,
-                params={"export_id": export_id},
+                params={"export_id": export_id, "export_source": source},
                 config_snapshot=snapshot,
                 connection=connection,
             )
-        return export_id, job_id
+        return ExportAdmission(export_id, job_id, run_id, created=True)
 
     def fail_export_admission(self, job_id, error):
-        job = dal.get_job(job_id)
-        dal.set_job_status(job_id, "error", error=error)
-        if job:
-            dal.set_export_status(job["params"]["export_id"], "error", error=error)
+        with self.repository.pool.connection() as conn:
+            conn.execute(
+                """WITH rejected AS (
+                       UPDATE jobs SET status='error', error=%s, updated_at=now()
+                       WHERE id=%s AND kind='export' AND status='queued'
+                       RETURNING project_id, (params->>'export_id')::bigint AS export_id
+                   )
+                   UPDATE exports e SET status='error', error=%s FROM rejected r
+                   WHERE e.project_id=r.project_id AND e.id=r.export_id AND e.status='pending'""",
+                (error, job_id, error),
+            )
 
     def open_export(self, pid, export_id):
         return open_export(
             self.repository.pool, pid, export_id, data_dir=self.repository.settings.data_dir
         )
 
-    def publish_export(self, pid, export_id, output):
+    def publish_export(self, pid, export_id, output, *, job_id=None):
         return publish_export(
-            self.repository.pool, pid, export_id, output, data_dir=self.repository.settings.data_dir
+            self.repository.pool,
+            pid,
+            export_id,
+            output,
+            data_dir=self.repository.settings.data_dir,
+            job_id=job_id,
         )
 
 
 def postgres_repository(context: BackendContext) -> PostgresRepository:
     """Narrow platform capabilities without adding PostgreSQL to the shared port."""
     repository = context.repository
-    assert isinstance(repository, PostgresRepository)
+    assert isinstance(repository, PostgresRepository), "expected a PostgresRepository backend"
     return repository
 
 
@@ -247,7 +276,7 @@ def create_context(settings: Settings) -> BackendContext:
     repository = PostgresRepository(settings)
 
     async def submit(name, **kwargs):
-        return await enqueue(settings.redis_url, name, **kwargs)
+        return await enqueue(settings.redis_url, name, settings.api_token, **kwargs)
 
     return BackendContext(
         repository=repository,
@@ -263,6 +292,7 @@ def create_context(settings: Settings) -> BackendContext:
         health=repository.health,
         update_term=repository.update_term,
         api_token=settings.api_token,
+        require_token=settings.require_token,
         remove_project=repository.remove_project,
         metrics=Metrics(RedisCounters(settings.redis_url)),
     )

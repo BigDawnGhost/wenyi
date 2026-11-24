@@ -244,7 +244,7 @@ def test_missing_publication_result_is_not_silently_skipped(tmp_path, monkeypatc
         raise RuntimeError("after chapter commit")
 
     monkeypatch.setattr(service._precision, "mark_published", interrupt)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="after chapter commit"):
         service.run(store, book_synopsis="synopsis")
     key = next(
         key

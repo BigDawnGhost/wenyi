@@ -41,10 +41,18 @@ def _located_error(error: ValueError, location: tuple[str, ...]) -> ValidationEr
 
 
 def merge_llm_settings(base: dict, override: dict) -> dict:
-    """A configuration layer replaces only the routes it explicitly specifies."""
-    result = {**base, **override}
-    if isinstance(base.get("routes"), dict) and isinstance(override.get("routes"), dict):
-        result["routes"] = {**base["routes"], **override["routes"]}
+    """Merge a configuration layer by key; fields the layer omits inherit from base.
+
+    Nested dictionaries merge recursively so one layer can override a single
+    field without discarding sibling fields. Every other value - including
+    lists and explicit None - replaces the base value wholesale.
+    """
+    result = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = merge_llm_settings(result[key], value)
+        else:
+            result[key] = value
     return result
 
 
@@ -129,6 +137,7 @@ class BudgetConfig(BaseModel):
     max_requests: int | None = Field(default=None, gt=0)
     max_tokens: int | None = Field(default=None, gt=0)
     deadline_seconds: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    token_estimate_divisor: float = Field(default=2.0, gt=0, allow_inf_nan=False)
 
 
 class LLMConfig(BaseModel):

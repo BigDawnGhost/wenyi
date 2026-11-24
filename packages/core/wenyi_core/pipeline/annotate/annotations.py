@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING
 from ...alignment import AlignmentUnit, TextAligner, target_digest, unresolved_alignment
 from ...alignment.object_repair import repair_object_markers
 from ...alignment.objects import clean_object_markers, resolve_objects
-from ...events import ProgressFn
+from ...events import ProgressFn, emit_progress
 from ...markup.contexts import annotation_metadata, reference_source
 from ...markup.objects import (
     OBJECT_RELATION,
@@ -359,7 +359,7 @@ class AnnotationService:
                     ci, chapter, position, store, segments=segments, retry_fallbacks=True
                 )
             if progress:
-                progress(done, len(chapter_indices), label)
+                emit_progress(progress, done, len(chapter_indices), label, payload={"chapter": ci})
 
     @staticmethod
     def _logical_segments(segments: list[Segment], position: int) -> list[Segment]:

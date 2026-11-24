@@ -11,8 +11,10 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+import pytest
 from wenyi_core.agents.base import Agent
 from wenyi_core.config import Config, LLMConfig
+from wenyi_core.glossary.store import GlossaryStore
 from wenyi_core.llm.factory import build_client
 from wenyi_core.llm.providers._openai_compatible import (
     EmptyResponseError,
@@ -37,8 +39,9 @@ from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.run_store import source_sha256
 
-from tests.fake_llm import routing_handler
+from tests.fake_llm import METERED_TOTAL_TOKENS, MeteredFakeClient, routing_handler
 from tests.model_fixtures import model_config
+from tests.pipeline_fixtures import fake_pipeline_config
 from tests.sample_data import write_sample_txt
 
 
@@ -99,35 +102,18 @@ class _ClientStub:
         self.chat = _ChatStub(responses)
 
 
-class _MeteredFakeClient(FakeClient):
-    """Record fixed tokens per offline call for per-run ledger assertions."""
+_METERED_USAGE_SAMPLE = UsageSample(
+    prompt_tokens=7,
+    completion_tokens=3,
+    total_tokens=10,
+    cache_hit_tokens=2,
+    cache_miss_tokens=5,
+)
 
-    def complete(
-        self,
-        messages,
-        *,
-        operation: str,
-        json_mode: bool = False,
-        max_tokens: int | None = None,
-    ) -> str:
-        result = super().complete(
-            messages,
-            operation=operation,
-            json_mode=json_mode,
-            max_tokens=max_tokens,
-        )
-        self.usage.record(
-            "direct",
-            UsageSample(
-                prompt_tokens=7,
-                completion_tokens=3,
-                total_tokens=10,
-                cache_hit_tokens=2,
-                cache_miss_tokens=5,
-            ),
-            operation,
-        )
-        return result
+
+def _metered_client() -> MeteredFakeClient:
+    """Build the shared offline client with the per-run ledger sample injected."""
+    return MeteredFakeClient(handler=routing_handler, usage_sample=_METERED_USAGE_SAMPLE)
 
 
 def _minimal_deepseek_cfg() -> LLMConfig:
@@ -195,7 +181,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         with patch.object(
             client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
         ):
-            with self.assertRaisesRegex(EmptyResponseError, "fallback response is invalid JSON"):
+            with pytest.raises(EmptyResponseError, match="fallback response is invalid JSON"):
                 client.complete_json(
                     [{"role": "user", "content": "translate"}], operation="translation.body"
                 )
@@ -228,7 +214,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         with patch.object(
             client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
         ):
-            with self.assertRaisesRegex(EmptyResponseError, "content is empty"):
+            with pytest.raises(EmptyResponseError, match="content is empty"):
                 client.complete(
                     [{"role": "user", "content": "translate"}], operation="translation.body"
                 )
@@ -240,7 +226,7 @@ class TestOpenAICompatibleReasoningContent(unittest.TestCase):
         with patch.object(
             client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
         ):
-            with self.assertRaisesRegex(EmptyResponseError, "content is empty"):
+            with pytest.raises(EmptyResponseError, match="content is empty"):
                 client.complete_json(
                     [{"role": "user", "content": "translate"}], operation="translation.body"
                 )
@@ -348,7 +334,7 @@ class TestDeepSeekProviderDefaults(unittest.TestCase):
         self.assertTrue(client.routes["synopsis.chapter"].request_model().options.thinking)
 
     def test_unknown_provider_option_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, "unknown_option"):
+        with pytest.raises(ValueError, match="unknown_option"):
             RoutedLLMClient(
                 model_config(
                     profiles={
@@ -551,6 +537,62 @@ class TestEmptyCacheHitRate(unittest.TestCase):
         self.assertEqual(c.usage_summary()["by_stage"], {})
 
 
+class TestUsageMaxTokens(unittest.TestCase):
+    """Requested output caps land in usage details; absence stays None, never fabricated."""
+
+    def test_normalize_openai_usage_prefers_reported_max_tokens(self):
+        reported = SimpleNamespace(
+            prompt_tokens=10, completion_tokens=5, total_tokens=15, max_tokens=77
+        )
+        usage = normalize_openai_usage(reported, max_tokens=512)
+        assert usage is not None
+        self.assertEqual(usage.max_tokens, 77)
+        requested = SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        usage_capped = normalize_openai_usage(requested, max_tokens=512)
+        assert usage_capped is not None
+        self.assertEqual(usage_capped.max_tokens, 512)
+        usage_uncapped = normalize_openai_usage(requested)
+        assert usage_uncapped is not None
+        self.assertIsNone(usage_uncapped.max_tokens)
+
+    def test_adapter_records_requested_max_tokens_in_usage_details(self):
+        client = RoutedLLMClient(_minimal_openai_compatible_cfg())
+        usage = _make_usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
+        events: list[dict[str, Any]] = []
+        client.set_event_sink(lambda event, **data: events.append({"event": event, **data}))
+        response = _make_response("ok", usage)
+        with patch.object(
+            client.adapter("default"), "_ensure_client", return_value=_ClientStub([response])
+        ):
+            client.complete(
+                [{"role": "user", "content": "translate"}],
+                operation="translation.body",
+                max_tokens=512,
+            )
+        usage_events = [event for event in events if event["event"] == "llm_usage"]
+        self.assertEqual(len(usage_events), 1)
+        self.assertEqual(usage_events[0]["max_tokens"], 512)
+        totals = client.usage_summary()["totals"]
+        self.assertEqual(totals["max_tokens"], 512)
+        self.assertEqual(totals["completion_tokens"], 5)
+
+    def test_missing_output_cap_records_none_without_fabrication(self):
+        tracker = UsageTracker()
+        uncounted = make_usage_sample(
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        )
+        tracker.record("direct", uncounted, "translation.body")
+        tracker.record(
+            "direct",
+            UsageSample(prompt_tokens=1, completion_tokens=1, total_tokens=2, max_tokens=64),
+            "translation.body",
+        )
+        summary = tracker.summary()
+        self.assertEqual(summary["totals"]["calls"], 2)
+        self.assertEqual(summary["totals"]["max_tokens"], 64)
+        self.assertEqual(summary["by_stage"]["translation.body"]["max_tokens"], 64)
+
+
 class TestUsageThreadSafety(unittest.TestCase):
     def test_concurrent_record_exact_counts(self):
         client = FakeClient()
@@ -710,6 +752,100 @@ class TestUsageIncrementalPersistence(unittest.TestCase):
             self.assertEqual(usage["totals"]["calls"], 2)
             self.assertEqual(result["store"].load_usage(), usage)
 
+    def test_batch_usage_flush_survives_interruption_and_replay_bills_once(self):
+        """Usage from completed batches survives an interrupted run and is billed once on replay."""
+        with tempfile.TemporaryDirectory() as directory:
+            config = fake_pipeline_config(os.path.join(directory, "state"))
+            config.pipeline.polish = False
+            config.pipeline.annotation_alignment = False
+            config.pipeline.glossary_note_workers = False
+            config.segment.max_tokens_per_batch = 1  # three single-segment batches
+
+            store = FileStorage(os.path.join(directory, "state", "book"))
+            store.save_chapter(
+                Chapter(
+                    index=0,
+                    segments=[
+                        Segment(index=0, source="ああ"),
+                        Segment(index=1, source="いい"),
+                        Segment(index=2, source="ううう"),
+                    ],
+                )
+            )
+            store.save_manifest(
+                {
+                    "title": "Book",
+                    "fmt": "txt",
+                    "source_sha256": "a" * 64,
+                    "source_lang": "ja",
+                    "target_lang": "zh",
+                    "chapters": [{"index": 0, "title": "", "status": "pending"}],
+                }
+            )
+            glossary = GlossaryStore(store.glossary_path)
+            try:
+
+                class InterruptedAfterFirstBatch(BaseException):
+                    """Simulate process death: no finally block can run afterwards."""
+
+                first = Orchestrator(config, client=MeteredFakeClient(handler=routing_handler))
+                service = first._translation
+                real_execute = service._batches.execute
+                executed = {"count": 0}
+
+                def crashing_execute(plan, **kwargs):
+                    executed["count"] += 1
+                    if executed["count"] == 2:
+                        raise InterruptedAfterFirstBatch
+                    return real_execute(plan, **kwargs)
+
+                with (
+                    patch.object(service._batches, "execute", side_effect=crashing_execute),
+                    patch.object(service, "extract_batch_glossary", return_value={}),
+                    patch.object(first._runtime.extractor, "extract_and_store", return_value={}),
+                ):
+                    with self.assertRaises(InterruptedAfterFirstBatch):
+                        service.translate_chapter(
+                            0,
+                            store,
+                            glossary,
+                            "",
+                            translation_history={},
+                            source_corpus="ああいいううう",
+                            annotation_context_registry=None,
+                        )
+
+                # The interrupted run must have persisted the first batch's usage.
+                after_crash = store.load_usage()
+                self.assertIsNotNone(after_crash)
+                assert after_crash is not None
+                self.assertEqual(after_crash["totals"]["calls"], 1)
+                self.assertEqual(after_crash["totals"]["total_tokens"], METERED_TOTAL_TOKENS)
+
+                # Replay skips the finished batch and bills its usage exactly once overall.
+                resumed = Orchestrator(config, client=MeteredFakeClient(handler=routing_handler))
+                with (
+                    patch.object(resumed._translation, "extract_batch_glossary", return_value={}),
+                    patch.object(resumed._runtime.extractor, "extract_and_store", return_value={}),
+                ):
+                    resumed._translation.translate_chapter(
+                        0,
+                        store,
+                        glossary,
+                        "",
+                        translation_history={},
+                        source_corpus="ああいいううう",
+                        annotation_context_registry=None,
+                    )
+
+                final = store.load_usage()
+                self.assertIsNotNone(final)
+                assert final is not None
+                self.assertEqual(final["totals"]["calls"], 3)
+                self.assertEqual(final["totals"]["total_tokens"], 3 * METERED_TOTAL_TOKENS)
+            finally:
+                glossary.close()
+
 
 class TestSourceIdentityAndExport(unittest.TestCase):
     @staticmethod
@@ -745,7 +881,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
                 config = self._config(directory)
                 store = Orchestrator(
                     config,
-                    client=_MeteredFakeClient(handler=routing_handler),
+                    client=_metered_client(),
                 ).run_steps(source, {"translate"})["store"]
                 completed = threading.Event()
                 errors: list[BaseException] = []
@@ -786,7 +922,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             config = self._config(directory)
             store = Orchestrator(
                 config,
-                client=_MeteredFakeClient(handler=routing_handler),
+                client=_metered_client(),
             ).run_steps(source, {"translate"})["store"]
             completed = threading.Event()
             errors: list[BaseException] = []
@@ -821,13 +957,13 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             config = self._config(directory)
             store = Orchestrator(
                 config,
-                client=_MeteredFakeClient(handler=routing_handler),
+                client=_metered_client(),
             ).run_steps(source, {"translate"})["store"]
             with open(source, "a", encoding="utf-8") as file:
                 file.write("\n追加された本文。\n")
 
-            with self.assertRaisesRegex(
-                ValueError, "content does not match existing translation state"
+            with pytest.raises(
+                ValueError, match="content does not match existing translation state"
             ):
                 Orchestrator(config, client=FakeClient()).run_assemble(source, out_format="txt")
 
@@ -840,7 +976,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             config = self._config(directory)
             Orchestrator(
                 config,
-                client=_MeteredFakeClient(handler=routing_handler),
+                client=_metered_client(),
             ).run_steps(source, {"translate"})
             resumed = Orchestrator(config, client=FakeClient())
             locate = resumed._preparation.locate_existing
@@ -865,8 +1001,8 @@ class TestSourceIdentityAndExport(unittest.TestCase):
                     "locate_existing",
                     side_effect=mutate_then_locate,
                 ),
-                self.assertRaisesRegex(
-                    ValueError, "content does not match existing translation state"
+                pytest.raises(
+                    ValueError, match="content does not match existing translation state"
                 ),
             ):
                 resumed.run_assemble(source, out_format="txt")
@@ -878,7 +1014,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
             initial_config = self._config(directory)
             Orchestrator(
                 initial_config,
-                client=_MeteredFakeClient(handler=routing_handler),
+                client=_metered_client(),
             ).run_steps(source, {"translate"})
             resumed_config = self._config(directory)
             resumed_config.source_lang = "auto"
@@ -904,7 +1040,7 @@ class TestSourceIdentityAndExport(unittest.TestCase):
                 }
             )
 
-            with self.assertRaisesRegex(ValueError, "has no valid source_sha256"):
+            with pytest.raises(ValueError, match="has no valid source_sha256"):
                 store.ensure_source_identity(source)
 
 

@@ -27,6 +27,8 @@ def pe_image(magic=0x20B, subsystem=2):
 
 def validator():
     spec = importlib.util.spec_from_file_location("desktop_pe", SCRIPT)
+    assert spec is not None
+    assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

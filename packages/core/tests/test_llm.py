@@ -6,6 +6,7 @@ import os
 import unittest
 from unittest.mock import patch
 
+import pytest
 from wenyi_core.llm.json_parser import parse_json_loose, parse_json_result
 from wenyi_core.llm.providers.fake import FakeClient
 
@@ -429,7 +430,7 @@ class TestProviderFactory(unittest.TestCase):
         self.assertEqual(client.adapter("default").api_key_env, "ORCAROUTER_API_KEY")
         self.assertTrue(client.adapter("default").requires_api_key)
         with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "ORCAROUTER_API_KEY"):
+            with pytest.raises(RuntimeError, match="ORCAROUTER_API_KEY"):
                 client.validate_credentials()
         with patch.dict(os.environ, {"ORCAROUTER_API_KEY": "secret"}, clear=True):
             client.validate_credentials()
@@ -458,7 +459,7 @@ class TestProviderFactory(unittest.TestCase):
 
         client = build_client(self._config("deepseek"))
         with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "DEEPSEEK_API_KEY"):
+            with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
                 client.validate_credentials()
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "secret"}, clear=True):
             client.validate_credentials()
@@ -466,7 +467,7 @@ class TestProviderFactory(unittest.TestCase):
     def test_generic_provider_requires_base_url(self):
         from wenyi_core.llm.factory import build_client
 
-        with self.assertRaisesRegex(ValueError, "base_url"):
+        with pytest.raises(ValueError, match="base_url"):
             build_client(self._config("openai-compatible"))
 
     def test_compatible_clients_use_configured_reasoning_style(self):

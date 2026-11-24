@@ -6,8 +6,10 @@ import asyncio
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import cast
 
 import anyio
 import pytest
@@ -15,8 +17,9 @@ from desktop_test_support import initialize
 from starlette.websockets import WebSocketDisconnect
 from wenyi_backend.context import current_context, use_context
 from wenyi_desktop import local_runtime
+from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.local_runtime import LocalRuntime, ProgressHub
-from wenyi_desktop.main import create_context
+from wenyi_desktop.main import DesktopServices, create_context
 
 # These cases drive one LocalRuntime through admission, supervision and shutdown.
 # Their assertions depend on how the event loop interleaves those tasks, so they
@@ -30,6 +33,7 @@ pytestmark = pytest.mark.xdist_group("local-runtime")
 def catalog(tmp_path):
     context = create_context(tmp_path / "desktop")
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     try:
         with use_context(context):
             yield backend
@@ -164,8 +168,9 @@ def test_failure_notice_uses_the_catalog_name_and_a_bounded_reason(catalog, monk
     stream = io.StringIO()
     reporter = Reporter(stream)
 
-    async def execute(ctx, *, project_id, run_id):
+    async def execute(ctx, *, project_id, run_id, **values):
         job = current_context().repository.get_job_by_arq_id(run_id)
+        assert job is not None
         # The shared runner persists the terminal status before it re-raises.
         current_context().repository.set_job_status(job["id"], "error", error="fake-private-error")
         raise ValueError("fake-private-error")
@@ -252,8 +257,9 @@ def test_completion_notice_requires_the_persisted_terminal_status(
     stream = io.StringIO()
     reporter = Reporter(stream)
 
-    async def execute(ctx, *, project_id, run_id):
+    async def execute(ctx, *, project_id, run_id, **values):
         job = current_context().repository.get_job_by_arq_id(run_id)
+        assert job is not None
         current_context().repository.set_job_status(job["id"], "done")
         current_context().repository.set_project_status(project_id, status)
 
@@ -347,7 +353,9 @@ def test_real_workflow_status_notices_follow_the_stop_cause(catalog, monkeypatch
     async def run():
         context = current_context()
         runtime = LocalRuntime(catalog, context, diagnostics=reporter)
-        context.telemetry.runtime = runtime
+        services = context.telemetry
+        assert isinstance(services, DesktopServices)
+        services.runtime = runtime
         started = asyncio.Event()
         loop = asyncio.get_running_loop()
 
@@ -393,7 +401,7 @@ def test_real_workflow_status_notices_follow_the_stop_cause(catalog, monkeypatch
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
             await runtime.stop()
-            context.telemetry.runtime = None
+            services.runtime = None
 
     try:
         asyncio.run(run())
@@ -416,15 +424,18 @@ def test_recovery_pauses_orphan_workflows_and_fails_exports(catalog, status):
         job = current_context().repository.create_job(pid, "translation", "orphan", run_id="orphan")
         current_context().repository.set_job_status(job, status)
         current_context().repository.set_project_status(pid, "translating")
-        eid, export_job = catalog.admit_export(other, "txt", {}, "orphan-export", {})
-        current_context().repository.set_job_status(export_job, status)
+        export = catalog.admit_export(other, "txt", {}, "orphan-export", {}, source={})
+        current_context().repository.set_job_status(export.job_id, status)
         runtime = LocalRuntime(catalog, current_context())
         await runtime.start()
         try:
-            assert current_context().repository.get_job(job)["status"] == "interrupted"
-            assert current_context().repository.get_project(pid)["status"] == "paused"
-            assert current_context().repository.get_job(export_job)["status"] == "error"
-            assert catalog.list_exports(other)[0]["id"] == eid
+            job_row = current_context().repository.get_job(job)
+            assert job_row is not None and job_row["status"] == "interrupted"
+            project_row = current_context().repository.get_project(pid)
+            assert project_row is not None and project_row["status"] == "paused"
+            export_row = current_context().repository.get_job(export.job_id)
+            assert export_row is not None and export_row["status"] == "error"
+            assert catalog.list_exports(other)[0]["id"] == export.export_id
             assert catalog.list_exports(other)[0]["status"] == "error"
         finally:
             await asyncio.wait_for(runtime.stop(), 3)
@@ -443,9 +454,10 @@ def test_duplicate_delivery_and_independent_two_export_slots(catalog, monkeypatc
         exports_started = asyncio.Event()
         calls = []
 
-        async def execute(ctx, *, project_id, run_id):
+        async def execute(ctx, *, project_id, run_id, **values):
             calls.append(run_id)
             job = current_context().repository.get_job_by_arq_id(run_id)
+            assert job is not None
             current_context().repository.set_job_status(job["id"], "running")
             if run_id == "workflow":
                 workflow_started.set()
@@ -499,14 +511,22 @@ def test_export_queue_remains_bounded_and_shutdown_fails_unstarted_exports(catal
         pid = project()
         for index in range(runtime.export_queue.maxsize):
             run_id = f"export-{index}"
-            eid, _ = catalog.admit_export(pid, "txt", {}, run_id, {})
+            export = catalog.admit_export(pid, "txt", {}, run_id, {}, source={})
             runtime.enqueue(
-                "run_export", _job_id=run_id, project_id=pid, run_id=run_id, export_id=eid
+                "run_export",
+                _job_id=run_id,
+                project_id=pid,
+                run_id=run_id,
+                export_id=export.export_id,
             )
-        eid, _ = catalog.admit_export(pid, "txt", {}, "overflow", {})
+        overflow = catalog.admit_export(pid, "txt", {}, "overflow", {}, source={})
         with pytest.raises(asyncio.QueueFull):
             runtime.enqueue(
-                "run_export", _job_id="overflow", project_id=pid, run_id="overflow", export_id=eid
+                "run_export",
+                _job_id="overflow",
+                project_id=pid,
+                run_id="overflow",
+                export_id=overflow.export_id,
             )
         assert "overflow" not in runtime._submitted
         await asyncio.wait_for(runtime.stop(), 10)
@@ -671,10 +691,12 @@ def test_progress_cache_is_bounded_expires_and_persists_latest(catalog, monkeypa
         workspace = catalog.workspace
         catalog.close()
         reopened = create_context(workspace)
+        reopened_backend = reopened.repository
+        assert isinstance(reopened_backend, LocalBackend)
         try:
-            assert local_runtime.progress_snapshot(reopened.repository, None, pid) == latest
+            assert local_runtime.progress_snapshot(reopened_backend, None, pid) == latest
         finally:
-            reopened.repository.close()
+            reopened_backend.close()
 
     asyncio.run(run())
 
@@ -755,21 +777,27 @@ def test_an_idle_progress_hub_still_sends_a_heartbeat(catalog, monkeypatch):
         pid = project()
         hub = ProgressHub(catalog, asyncio.get_running_loop())
         services = DesktopServices(catalog)
-        services.runtime = SimpleNamespace(hub=hub)
+        services.runtime = cast(LocalRuntime, SimpleNamespace(hub=hub))
         # A short deadline keeps the test fast; the relay reads this constant.
         monkeypatch.setattr(module, "HEARTBEAT_SECONDS", 0.05)
         sent = []
+        heartbeats = asyncio.Event()
+
+        def signal_heartbeat() -> None:
+            if sum(frame.get("kind") == "heartbeat" for frame in sent) >= 2:
+                heartbeats.set()
 
         async def send_json(payload):
             sent.append(payload)
+            signal_heartbeat()
 
         async def send_text(payload):
             sent.append(json.loads(payload))
+            signal_heartbeat()
 
         async def receive():
             # Heartbeats alone end the relay, so no peer is needed to close it.
-            while sum(frame.get("kind") == "heartbeat" for frame in sent) < 2:
-                await asyncio.sleep(0.01)
+            await asyncio.wait_for(heartbeats.wait(), 5)
             return {"type": "websocket.disconnect"}
 
         await services.relay(
@@ -790,7 +818,7 @@ def test_progress_after_heartbeats_is_delivered_and_all_receivers_are_drained(ca
         pid = project()
         hub = ProgressHub(catalog, asyncio.get_running_loop())
         services = DesktopServices(catalog)
-        services.runtime = SimpleNamespace(hub=hub)
+        services.runtime = cast(LocalRuntime, SimpleNamespace(hub=hub))
         monkeypatch.setattr(module, "HEARTBEAT_SECONDS", 0.01)
         sent = asyncio.Queue()
         idle = asyncio.Event()
@@ -859,7 +887,7 @@ def test_progress_relay_cancellation_drains_children_and_unsubscribes(catalog, m
         pid = project()
         hub = ProgressHub(catalog, asyncio.get_running_loop())
         services = DesktopServices(catalog)
-        services.runtime = SimpleNamespace(hub=hub)
+        services.runtime = cast(LocalRuntime, SimpleNamespace(hub=hub))
         tasks = []
         drained = []
         create_task = asyncio.create_task
@@ -938,3 +966,126 @@ def test_workflow_cached_progress_rejects_other_project_and_old_run(desktop):
     finally:
         client.portal.call(services.runtime.stop)
     store.close()
+
+
+def test_dispatcher_keeps_a_cancelled_checkpoint_writer_owned(catalog):
+    pid, initial = initialize(catalog)
+    initial.close()
+    release = threading.Event()
+
+    async def scenario():
+        started = asyncio.Event()
+        loop = asyncio.get_running_loop()
+
+        def operation():
+            with closing(catalog.storage_for(pid)) as storage, storage.lock():
+                loop.call_soon_threadsafe(started.set)
+                assert release.wait(10)
+                storage.write_artifact("checkpoint.json", {"saved": True})
+
+        task = asyncio.create_task(local_runtime.run_workflow_sync(operation))
+        try:
+            await asyncio.wait_for(started.wait(), 5)
+            task.cancel()
+            await asyncio.sleep(0)
+            task.cancel()
+            await asyncio.wait((task,), timeout=0.05)
+            assert not task.done()
+        finally:
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, 5)
+
+    asyncio.run(scenario())
+    with closing(catalog.storage_for(pid)) as store, store.lock(blocking=False):
+        assert store.read_artifact("checkpoint.json") == {"saved": True}
+
+
+@pytest.mark.parametrize("timed_out", [False, True])
+def test_cancelled_shutdown_retains_workspace_until_checkpoint_writer_exits(
+    catalog, monkeypatch, timed_out
+):
+    from fastapi import HTTPException
+    from wenyi_backend.errors import ApiError
+    from wenyi_backend.execution import bindings, runner
+    from wenyi_backend.project_service import project_write
+    from wenyi_desktop.updates import UpdateGuard
+
+    monkeypatch.setattr(runner, "CANCEL_DRAIN_WARNING_SECONDS", 0.02)
+
+    async def scenario():
+        context = current_context()
+        runtime = LocalRuntime(catalog, context)
+        services = context.telemetry
+        assert isinstance(services, DesktopServices)
+        services.runtime = runtime
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+        draining = asyncio.Event()
+        release = threading.Event()
+        pid, initial = initialize(catalog)
+        initial.close()
+        catalog.set_project_status(pid, "translating")
+
+        def operation(request, storage, progress, bind_client, **kwargs):
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(10)
+            storage.write_artifact("checkpoint.json", {"saved": True})
+            progress(1, 1, "checkpoint saved")
+            pytest.fail("The workflow did not observe cancellation")
+
+        monkeypatch.setattr(bindings, "run_operation", operation)
+        monkeypatch.setattr(runner.log, "warning", lambda *args, **kw: draining.set())
+        if timed_out:
+            run_job = runtime._run_job
+
+            async def deadline(name, values, run_id, timeout):
+                await run_job(name, values, run_id, timeout=1)
+
+            monkeypatch.setattr(runtime, "_run_job", deadline)
+        await runtime.start()
+        shutdown = None
+        try:
+            enqueue(runtime, pid, "checkpoint")
+            await asyncio.wait_for(started.wait(), 5)
+            if timed_out:
+                await asyncio.wait_for(draining.wait(), 5)
+                assert runtime.accepting
+                guard = UpdateGuard(services)
+                with pytest.raises(HTTPException) as update:
+                    await guard.prepare()
+                assert update.value.status_code == 409
+                assert not guard.closed
+                with (
+                    pytest.raises(ApiError) as conflict,
+                    project_write(pid, catalog, catalog.storage_for),
+                ):
+                    pytest.fail("A conflicting start/edit acquired the project")
+                assert conflict.value.status == 409
+            shutdown = asyncio.create_task(runtime.stop())
+            await asyncio.sleep(0)  # Let shutdown close admission even if draining is already set.
+            await asyncio.wait_for(draining.wait(), 5)
+            shutdown.cancel()
+            await asyncio.sleep(0)
+            assert not shutdown.done()
+            assert not runtime.idle
+            assert not runtime.accepting
+            assert catalog.get_job_by_arq_id("checkpoint")["status"] == "running"
+            assert catalog.catalog_project(pid)["status"] == "translating"
+            second = LocalRuntime(catalog, context)
+            with pytest.raises(RuntimeError, match="already open"):
+                await second.start()
+        finally:
+            release.set()
+            if shutdown is not None:
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(shutdown, 5)
+            await asyncio.wait_for(runtime.stop(), 5)
+            services.runtime = None
+
+        assert runtime.idle
+        assert catalog.get_job_by_arq_id("checkpoint")["status"] == "paused"
+        with closing(catalog.storage_for(pid)) as store, store.lock(blocking=False):
+            assert store.read_artifact("checkpoint.json") == {"saved": True}
+
+    asyncio.run(scenario())

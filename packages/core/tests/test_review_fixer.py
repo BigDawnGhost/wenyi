@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import unittest
 
+import pytest
 from wenyi_core.agents.review_fixer import (
     ProvisionalPatch,
     ReviewFixer,
@@ -81,7 +82,7 @@ class TestReviewFixer(unittest.TestCase):
             (non_true, "completion_marker_missing"),
         ):
             with self.subTest(reason=reason):
-                with self.assertRaisesRegex(ReviewFixerProtocolError, reason):
+                with pytest.raises(ReviewFixerProtocolError, match=reason):
                     self._propose(payload)
 
     def test_rejects_truncated_replacement_after_completion_marker(self):
@@ -93,7 +94,7 @@ class TestReviewFixer(unittest.TestCase):
             '"replacement":"修订后的完整译文'
         )
 
-        with self.assertRaisesRegex(ReviewFixerProtocolError, "unsafe_json_repair"):
+        with pytest.raises(ReviewFixerProtocolError, match="unsafe_json_repair"):
             self._propose_raw(raw)
 
     def test_rejects_protocol_drift_and_unchanged_replacement(self):
@@ -114,7 +115,7 @@ class TestReviewFixer(unittest.TestCase):
             (self._valid_payload("当前译文。"), "unchanged_replacement"),
         ):
             with self.subTest(reason=reason):
-                with self.assertRaisesRegex(ReviewFixerProtocolError, reason):
+                with pytest.raises(ReviewFixerProtocolError, match=reason):
                     self._propose(payload)
 
     def test_rejects_dropped_dialogue_quotes(self):
@@ -131,9 +132,9 @@ class TestReviewFixer(unittest.TestCase):
             )
         )
 
-        with self.assertRaisesRegex(
+        with pytest.raises(
             ReviewFixerProtocolError,
-            "dropped_dialogue_quotes",
+            match="dropped_dialogue_quotes",
         ):
             ReviewFixer(client, _config()).propose(
                 1,

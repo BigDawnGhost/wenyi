@@ -74,6 +74,73 @@ def test_startup_backs_up_global_and_project_settings_once(saved_catalog):
         assert connection.execute("SELECT count(*) FROM configuration_backups").fetchone()[0] == 2
 
 
+def test_reopening_catalog_repairs_only_conflicting_inherited_route_fields(tmp_path):
+    from fastapi.testclient import TestClient
+    from wenyi_desktop.main import create_app, create_context
+
+    workspace = tmp_path / "workspace"
+    operation = "translation.body"
+    primary = "openai/gpt-5"
+    strategy = {"template": "标准翻译"}
+    original = {
+        "llm": {"routes": {operation: {"model": primary}, "review.verify": {"model": primary}}}
+    }
+    defaults = {
+        "llm": {
+            "preset": "deepseek",
+            "providers": {"openai": {"kind": "openai"}},
+            "models": {primary: {}},
+            "routes": {
+                operation: {
+                    "model": "deepseek/deepseek-flash",
+                    "thinking": "max",
+                    "fallbacks": [primary],
+                },
+                "review.verify": {"model": "deepseek/deepseek-flash", "thinking": "low"},
+            },
+        }
+    }
+    backend = LocalBackend(workspace)
+    pid = backend.create_project("Book", "en", "zh", strategy)
+    with backend.transaction() as connection:
+        backend.save_settings({"config": defaults, "revision": 1}, connection)
+    backend.set_project_config(pid, original)
+    backend.close()
+
+    context = create_context(workspace)
+    with TestClient(create_app(context=context)) as client:
+        response = client.get(f"/projects/{pid}/config")
+        assert response.status_code == 200, response.text
+        routes = response.json()["effective"]["llm"]["routes"]
+        assert routes[operation] == {"model": primary, "thinking": None, "fallbacks": []}
+        assert routes["review.verify"]["thinking"] == "low"
+
+    reopened = LocalBackend(workspace)
+    try:
+        assert reopened.get_project_config(pid) == {
+            "llm": {
+                "routes": {
+                    operation: routes[operation],
+                    "review.verify": {"model": primary},
+                }
+            }
+        }
+        with reopened.transaction(write=False) as connection:
+            document, removed = connection.execute(
+                "SELECT document,removed FROM configuration_backups WHERE project_id=?", (pid,)
+            ).fetchone()
+            assert json.loads(document) == {"config": original, "strategy": strategy}
+            assert json.loads(removed) == [
+                f"llm.routes.{operation}.fallbacks",
+                f"llm.routes.{operation}.thinking",
+            ]
+            assert (
+                connection.execute("SELECT count(*) FROM configuration_backups").fetchone()[0] == 1
+            )
+    finally:
+        reopened.close()
+
+
 @pytest.mark.parametrize("preset", ["deepseek", None])
 def test_reopening_catalog_removes_old_choices_from_both_model_pickers(tmp_path, preset):
     from fastapi.testclient import TestClient

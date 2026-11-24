@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import fs, { readFileSync } from 'node:fs';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { mock, test } from 'node:test';
@@ -46,7 +46,7 @@ test('Tauri runs in the native project without pnpm changing its working directo
   ];
   const originalSigning = Object.fromEntries(signingNames.map(name => [name, process.env[name]]));
   for (const name of signingNames) delete process.env[name];
-  const identity = { python: '1.2.3', version: '1.2.3', bundle_version: '1.2.3' };
+  let identity = { python: '1.2.3rc1', version: '1.2.3-rc.1', bundle_version: '1.2.3' };
   mock.method(childProcess, 'spawnSync', (command, parameters, options) => {
     calls.push({ command, parameters, options });
     return { status: 0, stdout: JSON.stringify(identity) };
@@ -79,6 +79,8 @@ test('Tauri runs in the native project without pnpm changing its working directo
       assert.throws(() => updaterConfigured(signing, version), /stable/);
     }
     assert.equal(calls.length, 4);
+    const sidecar = calls[2];
+    assert.equal(sidecar.options.env.WENYI_BUILD_PYTHON_VERSION, identity.python);
     const build = calls[3];
     assert.equal(build.command, process.execPath);
     assert.deepEqual(build.parameters, [
@@ -96,6 +98,7 @@ test('Tauri runs in the native project without pnpm changing its working directo
     assert.equal(build.options.env.WENYI_DESKTOP_VERSION, identity.version);
     assert.equal(build.options.env.WENYI_BUILD_PYTHON_VERSION, identity.python);
     Object.assign(process.env, signing);
+    identity = { python: '1.2.3', version: '1.2.3', bundle_version: '1.2.3' };
     calls.length = 0;
     await import('./desktop.mjs?signed-build-test');
     const signedBuild = calls[3];
@@ -122,7 +125,7 @@ test('Desktop launches pnpm JavaScript entry points with Node and native executa
   const argv = process.argv;
   const environmentNames = ['npm_execpath', 'WENYI_DESKTOP_PYTHON'];
   const originalEnvironment = Object.fromEntries(environmentNames.map(name => [name, process.env[name]]));
-  const identity = { python: '1.2.3', version: '1.2.3', bundle_version: '1.2.3' };
+  const identity = { python: '1.2.3.dev4+g123', version: '1.2.3-dev.4+g123', bundle_version: '1.2.3' };
   mock.method(childProcess, 'spawnSync', (command, parameters, options) => {
     calls.push({ command, parameters, options });
     return { status: 0, stdout: JSON.stringify(identity) };
@@ -159,6 +162,8 @@ test('Desktop launches pnpm JavaScript entry points with Node and native executa
           'run', '--locked', '--manifest-path', 'apps/desktop/Cargo.toml',
           '--', '--data-dir', 'test workspace',
         ]);
+        assert.equal(calls[2].options.env.WENYI_DESKTOP_VERSION, identity.version);
+        assert.equal(calls[2].options.env.WENYI_BUILD_PYTHON_VERSION, identity.python);
       });
     }
   } finally {
@@ -166,6 +171,83 @@ test('Desktop launches pnpm JavaScript entry points with Node and native executa
     for (const [name, value] of Object.entries(originalEnvironment)) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
+    }
+    mock.restoreAll();
+    syncBuiltinESMExports();
+  }
+});
+
+test('Desktop refreshes only stale workspace Python metadata before launching Cargo', async (t) => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const venv = path.join(root, '.venv');
+  const python = path.join(venv, process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+  const argv = process.argv;
+  const keys = ['npm_execpath', 'WENYI_DESKTOP_PYTHON', 'UV_PROJECT_ENVIRONMENT'];
+  const originalEnvironment = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  delete process.env.WENYI_DESKTOP_PYTHON;
+  delete process.env.npm_execpath;
+  process.env.UV_PROJECT_ENVIRONMENT = path.join(root, 'other-venv');
+  process.argv = [process.execPath, 'desktop.mjs', 'dev'];
+  const exists = fs.existsSync;
+  mock.method(fs, 'existsSync', file => file === python || exists(file));
+  const clean = '1.2.3.dev4+g123';
+  const dirty = `${clean}.d20260101`;
+  try {
+    const cases = [
+      { name: 'already matched', installed: clean, expected: clean },
+      { name: 'cached from an earlier checkout', installed: '1.2.1.dev119+g456', expected: clean },
+      { name: 'same commit became dirty', installed: clean, expected: dirty },
+      { name: 'same commit became clean', installed: dirty, expected: clean },
+      { name: 'metadata is not installed yet', installed: '', expected: clean },
+      { name: 'refuses to launch if refresh does not match', installed: clean, expected: dirty, stale: true },
+    ];
+    for (const [index, { name, installed, expected, stale }] of cases.entries()) {
+      await t.test(name, async () => {
+        let metadata = installed;
+        const identity = { python: expected, version: expected.replace('.dev', '-dev.'), bundle_version: '1.2.3' };
+        const calls = [];
+        const spawn = mock.method(childProcess, 'spawnSync', (command, args, options) => {
+          calls.push({ command, args, options });
+          if (command === python) return { status: 0, stdout: `${metadata}\n` };
+          if (command === 'uv' && args[0] === 'sync' && !stale) metadata = expected;
+          return { status: 0, stdout: JSON.stringify(identity) };
+        });
+        syncBuiltinESMExports();
+        try {
+          const launchScript = import(`./desktop.mjs?workspace-python-${index}`);
+          if (stale) {
+            await assert.rejects(launchScript, /different Desktop version after refresh/);
+            assert.deepEqual(calls.map(call => call.command), ['uv', python, 'uv', python]);
+            return;
+          }
+          await launchScript;
+          const refresh = installed !== expected;
+          assert.deepEqual(calls.map(call => call.command), refresh
+            ? ['uv', python, 'uv', python, 'pnpm', 'cargo']
+            : ['uv', python, 'pnpm', 'cargo']);
+          if (refresh) {
+            assert.deepEqual(calls[2].args, [
+              'sync', '--inexact', '--locked', '--package', 'wenyi-desktop', '--group', 'dev',
+              '--reinstall-package', 'wenyi-desktop', '--python', python,
+            ]);
+            assert.equal(calls[2].options.cwd, root);
+            assert.equal(calls[2].options.env.UV_PROJECT_ENVIRONMENT, venv);
+          }
+          const launch = calls.at(-1);
+          assert.equal(launch.options.env.WENYI_DESKTOP_PYTHON, python);
+          assert.equal(launch.options.env.WENYI_DESKTOP_VERSION, identity.version);
+          assert.equal(launch.options.env.WENYI_BUILD_PYTHON_VERSION, expected);
+        } finally {
+          spawn.mock.restore();
+          syncBuiltinESMExports();
+        }
+      });
+    }
+  } finally {
+    process.argv = argv;
+    for (const [key, value] of Object.entries(originalEnvironment)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
     }
     mock.restoreAll();
     syncBuiltinESMExports();

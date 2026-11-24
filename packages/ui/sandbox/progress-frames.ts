@@ -2,7 +2,7 @@
  * server WebSocket simulator. Both speak the backend's frame vocabulary so
  * the live-progress client behaves as it does against the real API. */
 
-import { resolveFixture, runRatio, workflow, type SandboxState } from "./fixtures";
+import { resolveFixture, runRatio, workflow, type SandboxState } from "./fixtures.ts";
 
 export type ProgressFrame = Record<string, unknown>;
 

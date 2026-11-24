@@ -15,8 +15,12 @@ use tauri::Manager;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 use crate::{
-    ipc_error::IpcError, local_connection::Connection, migration, mutex::lock,
-    native_export::Saves, paths, Engine, State,
+    ipc_error::{codes, IpcError},
+    local_connection::Connection,
+    migration,
+    mutex::lock,
+    native_export::Saves,
+    paths, Engine, State,
 };
 
 /// The repository the updater publishes to and reads from.
@@ -214,7 +218,7 @@ fn trusted(window: &tauri::WebviewWindow) -> Result<()> {
         Ok(())
     } else {
         Err(IpcError::new(
-            "update_unavailable",
+            codes::UPDATE_UNAVAILABLE,
             "Updates are not available right now.",
         ))
     }
@@ -232,12 +236,12 @@ fn release_metadata(
 ) -> Result<Option<(String, String)>> {
     if value["draft"].as_bool() != Some(false) || value["prerelease"].as_bool() != Some(false) {
         return Err(IpcError::new(
-            "update_check_failed",
+            codes::UPDATE_CHECK_FAILED,
             "Could not check for updates.",
         ));
     }
     let tag = value["tag_name"].as_str().ok_or(IpcError::new(
-        "update_check_failed",
+        codes::UPDATE_CHECK_FAILED,
         "Could not check for updates.",
     ))?;
     let mut parts: Vec<&str> = tag.strip_prefix('v').unwrap_or(tag).split('.').collect();
@@ -247,16 +251,16 @@ fn release_metadata(
             .any(|p| p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()))
     {
         return Err(IpcError::new(
-            "update_check_failed",
+            codes::UPDATE_CHECK_FAILED,
             "Could not check for updates.",
         ));
     }
     parts.resize(3, "0");
     let version = Version::parse(&parts.join("."))
-        .map_err(|_| IpcError::new("update_check_failed", "Could not check for updates."))?;
+        .map_err(|_| IpcError::new(codes::UPDATE_CHECK_FAILED, "Could not check for updates."))?;
     if !stable(&version) {
         return Err(IpcError::new(
-            "update_check_failed",
+            codes::UPDATE_CHECK_FAILED,
             "Could not check for updates.",
         ));
     }
@@ -282,14 +286,14 @@ fn manual_check() -> Result<Option<(String, String)>> {
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
         .build()
-        .map_err(|_| IpcError::new("update_check_failed", "Could not check for updates."))?;
+        .map_err(|_| IpcError::new(codes::UPDATE_CHECK_FAILED, "Could not check for updates."))?;
     let response = client
         .get(release_api_url())
         .send()
-        .map_err(|_| IpcError::new("update_check_failed", "Could not check for updates."))?;
+        .map_err(|_| IpcError::new(codes::UPDATE_CHECK_FAILED, "Could not check for updates."))?;
     if !response.status().is_success() {
         return Err(IpcError::new(
-            "update_check_failed",
+            codes::UPDATE_CHECK_FAILED,
             "Could not check for updates.",
         ));
     }
@@ -297,15 +301,15 @@ fn manual_check() -> Result<Option<(String, String)>> {
     response
         .take(1024 * 1024 + 1)
         .read_to_end(&mut bytes)
-        .map_err(|_| IpcError::new("update_check_failed", "Could not check for updates."))?;
+        .map_err(|_| IpcError::new(codes::UPDATE_CHECK_FAILED, "Could not check for updates."))?;
     if bytes.len() > 1024 * 1024 {
         return Err(IpcError::new(
-            "update_check_failed",
+            codes::UPDATE_CHECK_FAILED,
             "Could not check for updates.",
         ));
     }
     let value = serde_json::from_slice(&bytes)
-        .map_err(|_| IpcError::new("update_check_failed", "Could not check for updates."))?;
+        .map_err(|_| IpcError::new(codes::UPDATE_CHECK_FAILED, "Could not check for updates."))?;
     release_metadata(
         &value,
         &Version::parse(env!("WENYI_DESKTOP_VERSION")).unwrap(),
@@ -334,7 +338,7 @@ fn trusted_artifact(url: &reqwest::Url) -> bool {
 fn begin_check(state: &mut UpdateState) -> Result<()> {
     if state.snapshot.phase.busy() {
         return Err(IpcError::new(
-            "update_busy",
+            codes::UPDATE_BUSY,
             "Wenyi is busy. Try again when the current task finishes.",
         ));
     }
@@ -368,7 +372,7 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
                     // A later registry change must not redirect this update.
                     let dir = registered_user_install().ok_or_else(|| {
                         IpcError::new(
-                            "update_check_failed",
+                            codes::UPDATE_CHECK_FAILED,
                             "The installation registration changed.",
                         )
                     })?;
@@ -379,7 +383,7 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
                 let updater = builder
                     .endpoints(vec![manifest])
                     .map_err(|_| {
-                        IpcError::new("update_check_failed", "Could not check for updates.")
+                        IpcError::new(codes::UPDATE_CHECK_FAILED, "Could not check for updates.")
                     })?
                     .timeout(Duration::from_secs(30))
                     .version_comparator(|current, remote| {
@@ -390,15 +394,15 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
                     .on_before_exit(|| {})
                     .build()
                     .map_err(|_| {
-                        IpcError::new("update_check_failed", "Could not check for updates.")
+                        IpcError::new(codes::UPDATE_CHECK_FAILED, "Could not check for updates.")
                     })?;
                 let update = updater.check().await.map_err(|_| {
-                    IpcError::new("update_check_failed", "Could not check for updates.")
+                    IpcError::new(codes::UPDATE_CHECK_FAILED, "Could not check for updates.")
                 })?;
                 if let Some(update) = &update {
                     if !trusted_artifact(&update.download_url) {
                         return Err(IpcError::new(
-                            "update_check_failed",
+                            codes::UPDATE_CHECK_FAILED,
                             "Could not check for updates.",
                         ));
                     }
@@ -414,7 +418,7 @@ fn start_check(app: &tauri::AppHandle) -> Result<()> {
                 .await
                 .unwrap_or_else(|_| {
                     Err(IpcError::new(
-                        "update_check_failed",
+                        codes::UPDATE_CHECK_FAILED,
                         "Could not check for updates.",
                     ))
                 })
@@ -469,18 +473,18 @@ pub fn desktop_update_download(window: tauri::WebviewWindow) -> Result<()> {
         let mut state = lock(&updates.0);
         if state.snapshot.phase.busy() {
             return Err(IpcError::new(
-                "update_busy",
+                codes::UPDATE_BUSY,
                 "Wenyi is busy. Try again when the current task finishes.",
             ));
         }
         if state.snapshot.mode != Mode::Automatic || state.snapshot.phase != Phase::Available {
             return Err(IpcError::new(
-                "update_unavailable",
+                codes::UPDATE_UNAVAILABLE,
                 "Updates are not available right now.",
             ));
         }
         let update = state.update.clone().ok_or(IpcError::new(
-            "update_unavailable",
+            codes::UPDATE_UNAVAILABLE,
             "Updates are not available right now.",
         ))?;
         state.snapshot.phase = Phase::Downloading;
@@ -531,15 +535,20 @@ fn prepare_engine(connection: &Connection) -> Result<()> {
         .post(format!("{}/desktop/updates/prepare", connection.base))
         .bearer_auth(&connection.token)
         .send()
-        .map_err(|_| IpcError::new("update_unavailable", "Updates are not available right now."))?;
+        .map_err(|_| {
+            IpcError::new(
+                codes::UPDATE_UNAVAILABLE,
+                "Updates are not available right now.",
+            )
+        })?;
     match response.status().as_u16() {
         204 => Ok(()),
         409 => Err(IpcError::new(
-            "update_busy",
+            codes::UPDATE_BUSY,
             "Wenyi is busy. Try again when the current task finishes.",
         )),
         _ => Err(IpcError::new(
-            "update_unavailable",
+            codes::UPDATE_UNAVAILABLE,
             "Updates are not available right now.",
         )),
     }
@@ -554,9 +563,12 @@ fn cancel_prepare(connection: &Connection) -> Result<()> {
         .post(format!("{}/desktop/updates/cancel", connection.base))
         .bearer_auth(&connection.token)
         .send()
-        .map_err(|_| IpcError::new("update_unavailable", CANCELLATION_UNCERTAIN))?;
+        .map_err(|_| IpcError::new(codes::UPDATE_UNAVAILABLE, CANCELLATION_UNCERTAIN))?;
     if response.status().as_u16() != 204 {
-        return Err(IpcError::new("update_unavailable", CANCELLATION_UNCERTAIN));
+        return Err(IpcError::new(
+            codes::UPDATE_UNAVAILABLE,
+            CANCELLATION_UNCERTAIN,
+        ));
     }
     Ok(())
 }
@@ -564,7 +576,7 @@ fn cancel_prepare(connection: &Connection) -> Result<()> {
 fn unavailable(state: &Mutex<State>, closing: &AtomicBool, reason: &'static str) {
     let mut state = lock(state);
     state.connection = None;
-    state.error = Some(reason);
+    state.error = Some(reason.to_string());
     state.closing = false;
     // Keep native save admission closed, but allow an explicit Quit to proceed.
     closing.store(false, Ordering::SeqCst);
@@ -613,7 +625,7 @@ struct BackupPlan {
 fn backup_plan(connection: &Connection) -> Result<BackupPlan> {
     let failure = || {
         IpcError::new(
-            "update_backup_failed",
+            codes::UPDATE_BACKUP_FAILED,
             "Wenyi could not locate all project data. Reconnect missing project folders and retry.",
         )
     };
@@ -643,10 +655,14 @@ fn backup_plan(connection: &Connection) -> Result<BackupPlan> {
 fn snapshot(
     plan: &BackupPlan,
     workspace: &std::path::Path,
+    target_version: &str,
 ) -> std::result::Result<PathBuf, String> {
     let target = paths::backups(workspace);
     let sources = stopped_sources(plan)?;
     let snapshot = migration::snapshot_sources(&sources, &target, env!("WENYI_DESKTOP_VERSION"))
+        .map_err(|error| error.to_string())?;
+    snapshot
+        .arm_upgrade(target_version)
         .map_err(|error| error.to_string())?;
     Ok(snapshot.root)
 }
@@ -658,7 +674,7 @@ fn stopped_sources(plan: &BackupPlan) -> std::result::Result<Vec<migration::Back
         .iter()
         .filter(|source| source.name == "catalog.sqlite3")
     {
-        for suffix in ["-wal", "-shm"] {
+        for suffix in ["-wal", "-shm", "-journal"] {
             let mut path = catalog.path.as_os_str().to_os_string();
             path.push(suffix);
             let path = PathBuf::from(path);
@@ -681,8 +697,8 @@ fn install_prepared(
     backup: impl FnOnce() -> std::result::Result<PathBuf, String>,
     installer: impl FnOnce() -> std::result::Result<(), String>,
 ) -> std::result::Result<(), (&'static str, String)> {
-    backup().map_err(|error| ("update_backup_failed", error))?;
-    installer().map_err(|error| ("update_install_failed", error))
+    backup().map_err(|error| (codes::UPDATE_BACKUP_FAILED, error))?;
+    installer().map_err(|error| (codes::UPDATE_INSTALL_FAILED, error))
 }
 
 /// Put the application back into the state it was in before the upgrade attempt.
@@ -705,8 +721,8 @@ fn recover(
     {
         let mut state = lock(state);
         state.closing = false;
-        if let Err(error) = recovery {
-            state.error = Some(error);
+        if let Err(error) = &recovery {
+            state.error = Some(error.to_string());
         }
     }
     if recovery.is_ok() {
@@ -724,17 +740,21 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
         let state = lock(&state);
         if state.closing || state.error.is_some() {
             return Err(IpcError::new(
-                "update_unavailable",
+                codes::UPDATE_UNAVAILABLE,
                 "Updates are not available right now.",
             ));
         }
         state.connection.clone().ok_or(IpcError::new(
-            "update_unavailable",
+            codes::UPDATE_UNAVAILABLE,
             "Updates are not available right now.",
         ))?
     };
-    let connection = Connection::new(&raw)
-        .map_err(|_| IpcError::new("update_unavailable", "Updates are not available right now."))?;
+    let connection = Connection::new(&raw).map_err(|_| {
+        IpcError::new(
+            codes::UPDATE_UNAVAILABLE,
+            "Updates are not available right now.",
+        )
+    })?;
     // Exclude every other native/standalone engine sharing this data root before
     // freezing the plan, and retain the lease until installation or recovery.
     let owned_writer = lock(&engine.child)
@@ -744,10 +764,10 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
     let profile = engine
         .profile
         .exclusive(owned_writer.as_deref())
-        .map_err(|error| IpcError::new("update_busy", error))?;
+        .map_err(|error| IpcError::new(codes::UPDATE_BUSY, error))?;
     if engine.closing.swap(true, Ordering::SeqCst) {
         return Err(IpcError::new(
-            "update_busy",
+            codes::UPDATE_BUSY,
             "Wenyi is busy. Try again when the current task finishes.",
         ));
     }
@@ -755,7 +775,7 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
     if !saves.close_if_idle() {
         engine.closing.store(false, Ordering::SeqCst);
         return Err(IpcError::new(
-            "update_busy",
+            codes::UPDATE_BUSY,
             "Wenyi is busy. Try again when the current task finishes.",
         ));
     }
@@ -780,7 +800,7 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
     if let Err(error) = stop_engine(&engine) {
         unavailable(&state, &engine.closing, error);
         crate::publish(app, &state);
-        return Err(IpcError::new("update_unavailable", error));
+        return Err(IpcError::new(codes::UPDATE_UNAVAILABLE, error));
     }
     if let Err(error) = profile.quiescent() {
         drop(profile);
@@ -789,7 +809,7 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
             &engine,
             &state,
             &saves,
-            "update_backup_failed",
+            codes::UPDATE_BACKUP_FAILED,
             error,
         ));
     }
@@ -809,6 +829,7 @@ fn install(app: &tauri::AppHandle, update: Update, bytes: Arc<Vec<u8>>) -> Resul
                     .workspace
                     .as_deref()
                     .ok_or("Desktop data root unavailable.")?,
+                &update.version,
             )
         },
         || {
@@ -841,22 +862,22 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
         let mut state = lock(&updates.0);
         if state.snapshot.phase.busy() {
             return Err(IpcError::new(
-                "update_busy",
+                codes::UPDATE_BUSY,
                 "Wenyi is busy. Try again when the current task finishes.",
             ));
         }
         if state.snapshot.mode != Mode::Automatic || state.snapshot.phase != Phase::Ready {
             return Err(IpcError::new(
-                "update_unavailable",
+                codes::UPDATE_UNAVAILABLE,
                 "Updates are not available right now.",
             ));
         }
         let update = state.update.clone().ok_or(IpcError::new(
-            "update_unavailable",
+            codes::UPDATE_UNAVAILABLE,
             "Updates are not available right now.",
         ))?;
         let bytes = state.bytes.clone().ok_or(IpcError::new(
-            "update_unavailable",
+            codes::UPDATE_UNAVAILABLE,
             "Updates are not available right now.",
         ))?;
         state.snapshot.phase = Phase::Installing;
@@ -882,7 +903,7 @@ pub async fn desktop_update_install(window: tauri::WebviewWindow) -> Result<()> 
     .await;
     result.unwrap_or_else(|_| {
         Err(IpcError::new(
-            "update_install_failed",
+            codes::UPDATE_INSTALL_FAILED,
             "The update could not be installed.",
         ))
     })
@@ -1013,7 +1034,7 @@ mod tests {
                     } else {
                         assert!(result.is_err());
                         assert!(lock(&state).connection.is_none());
-                        assert_eq!(lock(&state).error, Some(CANCELLATION_UNCERTAIN));
+                        assert_eq!(lock(&state).error, Some(CANCELLATION_UNCERTAIN.to_string()));
                         assert!(
                             !saves.close_if_idle(),
                             "uncertain cancellation reopened saves"
@@ -1169,7 +1190,7 @@ mod tests {
             assert_eq!(
                 begin_check(&mut state),
                 Err(IpcError::new(
-                    "update_busy",
+                    codes::UPDATE_BUSY,
                     "Wenyi is busy. Try again when the current task finishes."
                 ))
             );
@@ -1213,11 +1234,19 @@ mod tests {
             }],
         };
         assert_eq!(stopped_sources(&plan).unwrap().len(), 1);
-        std::fs::write(&wal, b"committed pages left by a stopped engine").unwrap();
+        let shm = root.join("catalog.sqlite3-shm");
+        let journal = root.join("catalog.sqlite3-journal");
+        for sidecar in [&wal, &shm, &journal] {
+            std::fs::write(sidecar, b"present after the engine stopped").unwrap();
+        }
         let sources = stopped_sources(&plan).unwrap();
-        assert_eq!(sources.len(), 2);
+        assert_eq!(sources.len(), 4);
         assert_eq!(sources[1].path, wal);
-        std::fs::remove_file(wal).unwrap();
+        assert_eq!(sources[2].path, shm);
+        assert_eq!(sources[3].path, journal);
+        for sidecar in [wal, shm, journal] {
+            std::fs::remove_file(sidecar).unwrap();
+        }
         assert_eq!(stopped_sources(&plan).unwrap().len(), 1);
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1240,7 +1269,7 @@ mod tests {
         // code is what the page branches on, and it has to stay distinct from a
         // failed launch so the two failures are not reported as one.
         let refusal = IpcError::new(
-            "update_backup_failed",
+            codes::UPDATE_BACKUP_FAILED,
             migration::Error::InsufficientSpace {
                 required: 2_000_000_000,
                 available: 1_000_000_000,
@@ -1267,6 +1296,8 @@ mod tests {
         std::fs::create_dir_all(user.join("locks/.desktop-writers")).unwrap();
         std::fs::create_dir_all(&project).unwrap();
         std::fs::create_dir_all(user.join(BACKUP)).unwrap();
+        let user = user.canonicalize().unwrap();
+        let project = project.canonicalize().unwrap();
         for (path, bytes) in [
             (
                 user.join("catalog.sqlite3"),

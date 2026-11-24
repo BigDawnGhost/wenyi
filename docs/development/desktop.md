@@ -7,7 +7,8 @@ Packaging and upgrades belong in [Releasing](releasing.md); shared UI rules are 
 
 ## Run from source
 
-Use Python 3.10+, `uv`, Node 22, pnpm 9, Rust stable and the
+Use Python 3.10+, `uv`, the [frontend toolchain](frontend.md#validation-in-both-hosts),
+Rust stable and the
 [Tauri platform prerequisites](https://v2.tauri.app/start/prerequisites/).
 Debian/Ubuntu also needs `libdbus-1-dev` for the native tray availability checks.
 These are development requirements; packaged applications carry their Python engine.
@@ -32,11 +33,16 @@ is no separate shared catalog behind it. Automated tests should inject a tempora
 root, temporary external libraries and fake credential storage: the OS credential
 vault is not inside the data root. Never use a real project library as disposable data.
 
-The [launcher](../../scripts/dev/desktop.mjs#L55) resolves the Git version, builds
+The [launcher](../../scripts/dev/desktop.mjs#L89) resolves the Git version, builds
 the UI, then starts the native debug application. It uses the repository's `.venv`
 unless `WENYI_DESKTOP_PYTHON` selects an explicit development interpreter. There is
 no remote `--url` mode or silent fallback to a Web server. A UI-only Vite server
 does not provide a native engine or IPC implementation.
+
+For the default `.venv`, `pnpm desktop` refreshes the Desktop package metadata
+only if it no longer matches the checkout, without removing other development
+packages. It never edits an interpreter selected with `WENYI_DESKTOP_PYTHON`;
+install matching Desktop components there before launching.
 
 Build the frontend before invoking Cargo directly: Tauri embeds its output during
 compilation. For example:
@@ -64,7 +70,12 @@ PostgreSQL/Redis/Arq/keyring adapters. See [Architecture](architecture.md) for t
 repository-wide dependency direction.
 
 The engine listens on a random loopback port with a fresh memory-only bearer token.
-The [native process protocol](../../apps/desktop/src/process.rs#L65) validates the
+The host passes the expected PEP 440 distribution version alongside its native
+SemVer; the engine checks the full installed version, including prerelease and
+local qualifiers, before opening the catalog. A standalone or older launcher
+without version information, or a source engine without distribution metadata,
+gets a warning instead of a refusal. The
+[native process protocol](../../apps/desktop/src/process.rs#L93) validates the
 `WENYI_READY` protocol version, port and exact owned child PID before publishing a
 connection. The UI waits for readiness; startup failure is not permission to try
 another endpoint. Do not persist ports or tokens in project data.
@@ -186,6 +197,10 @@ positions and translation refresh uses segment IDs, without scanning chapter JSO
 Artifact writes update existing indexes in the same transaction, including rollback
 and deletion. Chapter artifacts remain authoritative and unchanged by index creation.
 The index trades extra disk space and a one-time cold build for bounded warm reads.
+The optional manual-edit event index is built on the first upgrade-enabled open
+without changing the project schema version or rewriting the ledger. Segment history
+looks up legacy edits by chapter and segment; recovery can run the same filtered
+query without the index, but must then scan the event ledger.
 Schema upgrades never bypass catalog or project-marker admission.
 
 Deletion and recovery share directory ownership rules. Preserve the
@@ -196,14 +211,14 @@ directory marked for deletion.
 
 ## Concurrent workflows and shutdown
 
-[LocalRuntime](../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L191)
+[LocalRuntime](../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L197)
 supervises independent parse, preparation, translation, chapter-translation and
 Review workflows across projects. Durable job/run identity and the configuration
 snapshot are recorded before dispatch; rejected admission is compensated.
 Conflicting writes to the same project remain mutually exclusive.
 
 Each invocation owns an async supervisor and a
-[private single-thread executor](../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L177).
+[private single-thread executor](../../apps/desktop/backend/wenyi_desktop/local_runtime.py#L188).
 Copy context into that thread. Do not substitute a shared fixed workflow pool:
 the default executor must remain available for control requests and snapshots.
 There is no Desktop workflow-count admission cap; this does not promise unlimited
@@ -219,16 +234,17 @@ status alone does not mean the runtime is idle.
    run must not execute it again.
 2. Give each run its own client, stop signal and storage. One run's pause/failure,
    including thread-allocation failure, must not cancel sibling projects.
-3. On timeout or shutdown, cancel the async worker **once**. The
-   [shared execution runner](../../packages/backend/wenyi_backend/execution/runner.py#L207)
-   signals cooperative stop and shields the synchronous operation until its
-   checkpoint writes finish. Repeated cancellation can interrupt that wait.
+3. On timeout or shutdown, request cancellation once per worker. The
+   [shared cancellation contract](web.md#workflow-cancellation) keeps the run
+   owned until its writer exits. Neither the dispatcher nor the supervisor
+   abandons a writer, even if cancellation is requested again.
 4. Stop admission before draining. Accepted work that has not entered execution
    becomes interrupted/resumable without starting model work; handle cancellation
    before the worker's first instruction as well.
 5. Await active writers, supervisors, exports and progress persistence before
-   releasing the workspace lock. Update admission must also include pending and
-   draining ownership, even when catalog rows are already terminal.
+   releasing the workspace lock, even if the shutdown caller is cancelled.
+   Update admission must also include pending and draining ownership, even when
+   catalog rows are already terminal.
 6. After a crash, recover orphaned jobs into resumable/error state as appropriate;
    do not automatically restart all interrupted work.
 
@@ -308,9 +324,11 @@ locations, not exception stringification or traceback dumps. Do not attach arbit
 stdout/stderr or third-party loggers to the persistent sink.
 
 The native process is the **single file writer**. Python sends bounded
-`WENYI_DIAGNOSTIC` frames through the private pipe; `WENYI_READY` stays a separate
-protocol frame and arbitrary stderr is discarded. Frontend IPC accepts registered
-event names from the trusted window, not arbitrary payloads or file-read requests.
+`WENYI_DIAGNOSTIC` frames through the saved stdout pipe. `WENYI_READY` and
+`WENYI_FAILED` are separate control frames on that pipe; startup failure carries
+only a registered code and the native host supplies the user-facing guidance.
+Arbitrary stderr is discarded. Frontend IPC accepts registered event names from
+the trusted window, not arbitrary payloads or file-read requests.
 Reuse task/run/model-call identities, explicitly propagate context into threads and
 reset it after each operation. Desktop generates request/error IDs; caller-supplied
 request IDs are not persisted. Export aliases session/project/run/call references.

@@ -2,6 +2,7 @@
 
 import inspect
 from contextlib import contextmanager
+from typing import cast
 
 import pytest
 from psycopg_pool import ConnectionPool
@@ -39,6 +40,100 @@ def test_strategy_and_admission_calls_match_repository():
         config_snapshot={},
         run_id="run",
     )
+
+
+def test_admit_job_writes_job_and_project_in_one_transaction(monkeypatch):
+    repository = PostgresRepository(Settings())
+    events = []
+
+    class Transaction:
+        def __enter__(self):
+            events.append("begin")
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            events.append("rollback" if exc_type else "commit")
+            return False
+
+    class Connection:
+        def transaction(self):
+            return Transaction()
+
+    class Pool:
+        @contextmanager
+        def connection(self):
+            events.append("checkout")
+            yield Connection()
+            events.append("checkin")
+
+    def fake_create_job(pid, kind, job_id, *, status, connection, **kwargs):
+        events.append(("create_job", connection, status, kwargs))
+        return 42
+
+    def fake_set_project_status(pid, status, *, connection, error=None):
+        events.append(("set_project_status", connection, status))
+
+    repository._pool = cast(ConnectionPool, Pool())
+    monkeypatch.setattr(dal, "create_job", fake_create_job)
+    monkeypatch.setattr(dal, "set_project_status", fake_set_project_status)
+
+    job_id = repository.admit_job(
+        "project", "translation", "run", project_status="translating", run_id="run"
+    )
+
+    assert job_id == 42
+    tuples = [event for event in events if isinstance(event, tuple)]
+    assert len(tuples) == 2
+    assert tuples[0][1] is tuples[1][1]
+    assert tuples[0][2] == "queued"
+    assert tuples[0][3] == {"run_id": "run"}
+    assert tuples[1][2] == "translating"
+    assert [event if isinstance(event, str) else event[0] for event in events] == [
+        "checkout",
+        "begin",
+        "create_job",
+        "set_project_status",
+        "commit",
+        "checkin",
+    ]
+
+
+def test_admit_job_rolls_back_both_writes_when_project_update_fails(monkeypatch):
+    repository = PostgresRepository(Settings())
+    events = []
+
+    class Transaction:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            events.append("rollback" if exc_type else "commit")
+            return False
+
+    class Connection:
+        def transaction(self):
+            return Transaction()
+
+    class Pool:
+        @contextmanager
+        def connection(self):
+            yield Connection()
+
+    def fake_create_job(pid, kind, job_id, *, status, connection, **kwargs):
+        events.append("create_job")
+        return 42
+
+    def fake_set_project_status(pid, status, *, connection, error=None):
+        raise RuntimeError("crash between the two writes")
+
+    repository._pool = cast(ConnectionPool, Pool())
+    monkeypatch.setattr(dal, "create_job", fake_create_job)
+    monkeypatch.setattr(dal, "set_project_status", fake_set_project_status)
+
+    with pytest.raises(RuntimeError, match="crash between the two writes"):
+        repository.admit_job("project", "translation", "run", project_status="translating")
+
+    assert events == ["create_job", "rollback"]
 
 
 @pytest.mark.parametrize(
@@ -92,17 +187,24 @@ def test_a_silent_progress_channel_still_proves_the_link_is_alive(monkeypatch):
         async def aclose(self):
             return None
 
+    heartbeats = asyncio.Event()
+
+    def signal_heartbeat() -> None:
+        if sum(frame.get("kind") == "heartbeat" for frame in sent) >= 2:
+            heartbeats.set()
+
     class Socket:
         async def send_json(self, payload):
             sent.append(payload)
+            signal_heartbeat()
 
         async def send_text(self, payload):
             sent.append(json.loads(payload))
+            signal_heartbeat()
 
         async def receive(self):
             # Heartbeats alone end the relay, so no peer is needed to close it.
-            while sum(frame.get("kind") == "heartbeat" for frame in sent) < 2:
-                await asyncio.sleep(0.01)
+            await asyncio.wait_for(heartbeats.wait(), 5)
             return {"type": "websocket.disconnect"}
 
     class Projects:

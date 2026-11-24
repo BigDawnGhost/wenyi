@@ -20,6 +20,9 @@ class RequestCancelled(RequestStopped):
     """Stop cooperatively at the caller's request, without reporting a failure."""
 
 
+CANCEL_MESSAGE = "Model requests cancelled; completed work remains resumable"
+
+
 @dataclass
 class Reservation:
     started: float
@@ -48,7 +51,7 @@ class RequestLimits:
 
     def check(self) -> None:
         if self.cancelled.is_set():
-            raise RequestCancelled("Model requests cancelled; completed work remains resumable")
+            raise RequestCancelled(CANCEL_MESSAGE)
         deadline = self.config.budget.deadline_seconds
         if deadline is not None and self.clock() - self.started >= deadline:
             raise RequestStopped("Model request deadline reached; resume with a new deadline")
@@ -71,6 +74,12 @@ class RequestLimits:
         quota = self.config.quotas.get(provider.quota_group or "")
         budget = self.config.budget
         if quota and quota.tokens_per_minute and estimate > quota.tokens_per_minute:
+            emit(
+                "llm_budget_exhausted",
+                reason="tokens_per_minute",
+                estimate=estimate,
+                limit=quota.tokens_per_minute,
+            )
             raise RequestStopped(
                 "A request exceeds tokens_per_minute; reduce the batch/output limit"
             )
@@ -82,16 +91,19 @@ class RequestLimits:
                 window = self._windows[provider.quota_group or ""]
                 while window and now - window[0].started >= 60:
                     window.popleft()
-                if budget.max_requests is not None and self.requests >= budget.max_requests:
-                    raise RequestStopped("Model request budget exhausted")
                 reason = None
-                if (
+                stop_reason = None
+                if budget.max_requests is not None and self.requests >= budget.max_requests:
+                    # Completed attempts never release their request count; waiting cannot help.
+                    stop_reason = "request_budget"
+                elif (
                     budget.max_tokens is not None
                     and self.reserved_tokens + estimate > budget.max_tokens
                 ):
                     if not any(self._active.values()):
-                        raise RequestStopped("Model token reservation budget exhausted")
-                    reason = "token_budget"
+                        stop_reason = "token_budget"
+                    else:
+                        reason = "token_budget"
                 elif (
                     provider.max_concurrency is not None
                     and self._active[connection] >= provider.max_concurrency
@@ -109,7 +121,7 @@ class RequestLimits:
                     and sum(r.tokens for r in window) + estimate > quota.tokens_per_minute
                 ):
                     reason = "tokens_per_minute"
-                if reason is None:
+                if stop_reason is None and reason is None:
                     reservation = Reservation(now, estimate)
                     self.requests += 1
                     self.reserved_tokens += estimate
@@ -117,19 +129,44 @@ class RequestLimits:
                     if quota:
                         window.append(reservation)
                     break
-                changed_reason = reason != last_reason
-                if not changed_reason:
-                    self._condition.wait(timeout=0.1)
+                if stop_reason is None:
+                    changed_reason = reason != last_reason
+                    if not changed_reason:
+                        self._condition.wait(timeout=0.1)
             # Event sinks may take file locks; never call them while holding the permit lock.
+            if stop_reason is not None:
+                limit = (
+                    budget.max_requests if stop_reason == "request_budget" else budget.max_tokens
+                )
+                emit(
+                    "llm_budget_exhausted",
+                    reason=stop_reason,
+                    estimate=estimate,
+                    limit=limit,
+                    reserved_tokens=self.reserved_tokens,
+                )
+                raise RequestStopped(
+                    "Model request budget exhausted"
+                    if stop_reason == "request_budget"
+                    else "Model token reservation budget exhausted"
+                )
             if changed_reason:
                 emit("llm_request_waiting", reason=reason)
                 last_reason = reason
+        failed = False
         try:
             yield reservation
+        except BaseException:
+            failed = True
+            raise
         finally:
             with self._condition:
                 if reservation.actual_tokens is not None:
                     self.reserved_tokens += reservation.actual_tokens - reservation.tokens
                     reservation.tokens = reservation.actual_tokens
+                elif failed:
+                    # A failed attempt has no confirmed usage; release its reservation so
+                    # failures alone cannot drive a false budget-exhausted stop.
+                    self.reserved_tokens -= reservation.tokens
                 self._active[connection] -= 1
                 self._condition.notify_all()

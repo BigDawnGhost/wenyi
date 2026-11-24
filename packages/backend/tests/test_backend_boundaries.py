@@ -61,7 +61,9 @@ def test_platform_dependency_direction(directory, forbidden):
             )
             for module in modules:
                 if module.split(".")[0] in forbidden:
-                    violations.append(f"{file.relative_to(ROOT)}:{node.lineno}: {module}")
+                    violations.append(
+                        f"{file.relative_to(ROOT)}:{getattr(node, 'lineno', 0)}: {module}"
+                    )
     assert not violations, "\n".join(violations)
 
 

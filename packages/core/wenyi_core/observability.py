@@ -16,8 +16,12 @@ _request_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "wenyi_request_id", default=None
 )
 
-HUMAN_FORMAT = "%(asctime)s %(levelname)-8s [%(request_id)s] %(name)s: %(message)s"
+HUMAN_FORMAT = "%(asctime)s %(levelname)-8s [%(request_id)s] [%(run_id)s] %(name)s: %(message)s"
 JSON_LOG_FORMAT_ENV = "WENYI_LOG_FORMAT"
+LOG_MAX_BYTES_ENV = "WENYI_LOG_MAX_BYTES"
+LOG_BACKUP_COUNT_ENV = "WENYI_LOG_BACKUP_COUNT"
+DEFAULT_LOG_MAX_BYTES = 5 * 1024 * 1024
+DEFAULT_LOG_BACKUP_COUNT = 2
 
 
 def current_request_id() -> str | None:
@@ -35,6 +39,25 @@ def reset_request_id(token: contextvars.Token) -> None:
     _request_id.reset(token)
 
 
+# Carries the per-invocation run ID so diagnostic lines can be grepped end to end.
+_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar("wenyi_run_id", default=None)
+
+
+def current_run_id() -> str | None:
+    """Return the run ID bound to the current context, if any."""
+    return _run_id.get()
+
+
+def bind_run_id(run_id: str) -> contextvars.Token:
+    """Bind a run ID for the current context and return its reset token."""
+    return _run_id.set(run_id)
+
+
+def reset_run_id(token: contextvars.Token) -> None:
+    """Restore the run ID binding that preceded :func:`bind_run_id`."""
+    _run_id.reset(token)
+
+
 class _ContextFilter(logging.Filter):
     """Attach the ambient request ID and service name to every record."""
 
@@ -45,6 +68,8 @@ class _ContextFilter(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         if not getattr(record, "request_id", None):
             record.request_id = current_request_id() or "-"
+        if not getattr(record, "run_id", None):
+            record.run_id = current_run_id() or "-"
         if self.service and not getattr(record, "service", None):
             record.service = self.service
         return True
@@ -60,6 +85,7 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "message": record.getMessage(),
             "request_id": getattr(record, "request_id", "-"),
+            "run_id": getattr(record, "run_id", "-"),
         }
         service = getattr(record, "service", None)
         if service:
@@ -74,6 +100,17 @@ def use_json_logs(json_logs: bool | None = None) -> bool:
     if json_logs is not None:
         return json_logs
     return os.environ.get(JSON_LOG_FORMAT_ENV, "").strip().lower() == "json"
+
+
+def _rotation_value(name: str, default: int) -> int:
+    """Read one integer rotation setting, falling back when unset or not a number."""
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
 
 
 class _ConsoleHandler(logging.StreamHandler):
@@ -111,12 +148,18 @@ def configure_logging(
     service: str | None = None,
     stream: Any | None = None,
     file_path: str | Path | None = None,
+    max_bytes: int | None = None,
+    backup_count: int | None = None,
 ) -> None:
     """Install process logging; safe to call again when an entry point restarts.
 
     Only handlers this function installed are replaced. A handler added by
     someone else — a test runner's capture handler, for example — is kept so
     reconfiguring never silences existing output.
+
+    File rotation follows ``max_bytes``/``backup_count`` when given, otherwise the
+    ``WENYI_LOG_MAX_BYTES``/``WENYI_LOG_BACKUP_COUNT`` environment variables, otherwise
+    the built-in defaults.
     """
     if file_path is not None and stream is not None:
         raise ValueError("Choose either a diagnostic file or a console stream")
@@ -131,7 +174,13 @@ def configure_logging(
     if file_path is None:
         handler = console_handler(stream=stream, service=service)
     else:
-        handler = _FileHandler(file_path, maxBytes=5 * 1024 * 1024, backupCount=2, encoding="utf-8")
+        if max_bytes is None:
+            max_bytes = _rotation_value(LOG_MAX_BYTES_ENV, DEFAULT_LOG_MAX_BYTES)
+        if backup_count is None:
+            backup_count = _rotation_value(LOG_BACKUP_COUNT_ENV, DEFAULT_LOG_BACKUP_COUNT)
+        handler = _FileHandler(
+            file_path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
+        )
         handler.addFilter(_ContextFilter(service))
     handler.setFormatter(
         JsonFormatter() if use_json_logs(json) else logging.Formatter(HUMAN_FORMAT)

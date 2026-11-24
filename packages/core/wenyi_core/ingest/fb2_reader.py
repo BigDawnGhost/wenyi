@@ -68,3 +68,28 @@ def read_fb2_binaries(path: str) -> dict[str, tuple[str, bytes]]:
             continue
         resources[resource_id] = (content_type, data)
     return resources
+
+
+def read_fb2_image_alts(path: str) -> dict[str, str]:
+    """Collect the original image alt text by binary id at export time.
+
+    The native parser records image positions but not presentation attributes,
+    so rescan the source XML for the alt attribute without changing ingest state.
+    """
+    content = _read_source(path)
+    if content.startswith("<?xml"):
+        content = content.split("?>", 1)[-1]
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError:
+        return {}
+    alts: dict[str, str] = {}
+    for image in root.iter():
+        if image.tag.rpartition("}")[2] != "image":
+            continue
+        alt = (image.get("alt") or "").strip()
+        href = image.get("{http://www.w3.org/1999/xlink}href") or image.get("href") or ""
+        target = href.rpartition("#")[2]
+        if alt and target and target not in alts:
+            alts[target] = alt
+    return alts

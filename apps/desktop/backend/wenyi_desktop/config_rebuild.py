@@ -35,6 +35,7 @@ def _move_preset_credential(conn: sqlite3.Connection, old_llm: dict, config: Con
     try:
         original = ProviderConfig.model_validate(previous["default"])
     except ValueError:
+        # An unparseable legacy preset cannot be matched; leave credentials alone.
         return
     if original != config.llm.providers.get(target) or original != ProviderConfig(kind=target):
         return

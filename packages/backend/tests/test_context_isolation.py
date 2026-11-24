@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from wenyi_backend.context import ContextMiddleware, current_context, use_context
 from wenyi_backend.execution import runner
 from wenyi_backend.workers import tasks
+from wenyi_backend.workers.signing import SIGNATURE_FIELD, sign_task
 
 
 def scoped_app(context):
@@ -62,12 +63,13 @@ def test_worker_owns_its_context_not_the_submitters_scope(backend_context, monke
     monkeypatch.setattr(runner, "execute", execute)
 
     async def run():
-        await asyncio.gather(
-            *(
-                tasks.run_parse({"backend": context}, project_id=context.data_dir)
-                for context in contexts
-            )
-        )
+
+        def dispatch(context):
+            payload = {"project_id": context.data_dir}
+            payload[SIGNATURE_FIELD] = sign_task("run_parse", payload, context.api_token)
+            return tasks.run_parse({"backend": context}, **payload)
+
+        await asyncio.gather(*(dispatch(context) for context in contexts))
         assert current_context() is backend_context
 
     asyncio.run(run())

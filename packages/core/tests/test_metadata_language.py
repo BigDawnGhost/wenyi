@@ -124,11 +124,16 @@ def test_analysis_preserves_style_bullets_and_normalizes_character_metadata():
     assert "terms" not in result
 
 
-def test_cli_and_generated_configuration_use_english(tmp_path):
+def test_cli_and_generated_configuration_use_english(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     path = tmp_path / "config.yaml"
-    result = CliRunner().invoke(app, ["--config", str(path), "--help"])
+    result = CliRunner().invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "Multilingual translation" in result.output
     assert not any("\u3400" <= c <= "\u9fff" for c in result.output)
-    comments = [line.partition("#")[2] for line in path.read_text().splitlines() if "#" in line]
+    comments = [
+        line.partition("#")[2]
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if "#" in line
+    ]
     assert not any("\u3400" <= c <= "\u9fff" for c in "\n".join(comments))

@@ -60,8 +60,15 @@ PyPI 不允许两个待定项目共用完全相同的 Owner、仓库、工作流
    现有 CLI/Desktop 可执行文件打包工作流仍独立运行。
 
 构建作业会检查标签、检出提交和版本一致性、打包契约、严格分发元数据，以及语言和提示词
-资源。随后分别将 wheel 与源码分发包安装到干净的 Python 3.12 环境，检查安装版本和
-依赖隔离，并执行 CLI 冒烟测试。另用合成文档验证已安装的 Markdown → DOCX → HTML
+资源。CLI 根据 Hatch 的 SCM 元数据声明 `wenyi-core==<CLI 版本>`；脱离 Git 从源码
+包重建时也会保留这个依赖。uv workspace 从本地成员解析 Core，因此 `uv.lock` 记录的
+是工作区来源，不固定开发版本。CLI 和 Core 的可编辑构建使用相同的缓存输入，Git 身份
+或两者的打包文件变化时，uv 会一起刷新它们。
+
+构建作业分别在干净的 Python 3.12 环境中仅安装 CLI 的 wheel 或源码包。解析器必须从
+同时包含不兼容旧版 Core 测试包的本地 wheelhouse 选中匹配的 Core，不向 PyPI 查询
+Wenyi 候选包。随后检查两个包的安装版本、依赖隔离、CLI 启动和随包资源。另用合成文档
+验证已安装的 Markdown → DOCX → HTML
 → EPUB → TXT 转换链路和原生双语 PDF 拼版，不调用模型或 PDF 服务。
 
 Core 将原生文档引擎打包为私有 PyO3 扩展。`wheels` 作业构建并验证 CPython 3.10+ 稳定 ABI

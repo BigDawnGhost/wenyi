@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::Manager;
 
-use crate::ipc_error::IpcError;
+use crate::ipc_error::{codes, IpcError};
 
 /// Open the folder picker and return the chosen absolute path.
 ///
@@ -24,7 +24,7 @@ pub async fn native_library_choose(
 ) -> Result<Option<String>, IpcError> {
     if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
         return Err(IpcError::new(
-            "library_unavailable",
+            codes::LIBRARY_UNAVAILABLE,
             "Choosing a folder is unavailable.",
         ));
     }
@@ -35,7 +35,7 @@ pub async fn native_library_choose(
     };
     if refusing {
         return Err(IpcError::new(
-            "library_engine_unavailable",
+            codes::LIBRARY_ENGINE_UNAVAILABLE,
             "Local engine unavailable.",
         ));
     }
@@ -47,7 +47,7 @@ pub async fn native_library_choose(
             None => Ok(None),
             Some(path) if path.is_absolute() => Ok(Some(path.to_string_lossy().into_owned())),
             Some(_) => Err(IpcError::new(
-                "library_path_invalid",
+                codes::LIBRARY_PATH_INVALID,
                 "That folder cannot be used.",
             )),
         }
@@ -55,7 +55,7 @@ pub async fn native_library_choose(
     .await
     .map_err(|_| {
         IpcError::new(
-            "library_unavailable",
+            codes::LIBRARY_UNAVAILABLE,
             "Choosing a folder stopped unexpectedly.",
         )
     })?
@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn a_refused_path_is_reported_with_the_code_the_page_matches() {
-        let error = IpcError::new("library_path_invalid", "That folder cannot be used.");
+        let error = IpcError::new(codes::LIBRARY_PATH_INVALID, "That folder cannot be used.");
         assert_eq!(error.code, "library_path_invalid");
         assert_eq!(error.to_string(), "That folder cannot be used.");
     }

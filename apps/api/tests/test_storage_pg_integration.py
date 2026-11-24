@@ -9,16 +9,18 @@ from __future__ import annotations
 import json
 import threading
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import pytest
 from api_test_support import document, initialize
+from psycopg.errors import DivisionByZero
 from type_helpers import must
 from wenyi_api.storage_pg import PostgresStorage, ProjectBusyError
 from wenyi_core.config import Config
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample, UsageTracker, empty_usage
+from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.models.glossary import GlossaryTerm
 from wenyi_core.pipeline.run.runtime_usage import UsageCoordinator
 from wenyi_core.pipeline.translate.precision import PrecisionBatchExecutor
@@ -326,6 +328,42 @@ def test_postgres_state_transaction_rolls_back_complete_chapter(pg_storage, tmp_
     assert pg_storage.load_manifest()["chapters"][0]["status"] == "pending"
 
 
+def test_postgres_nested_state_lock_failure_rolls_back_to_savepoint(pg_storage, tmp_path):
+    initialize(pg_storage, tmp_path)
+    before = pg_storage.load_manifest()["title"]
+    with pg_storage.state_lock():
+        manifest = pg_storage.load_manifest()
+        manifest["title"] = "outer-rename"
+        pg_storage.save_manifest(manifest)
+        with pytest.raises(DivisionByZero):
+            with pg_storage.state_lock():
+                nested = pg_storage.load_manifest()
+                nested["title"] = "nested-rename"
+                pg_storage.save_manifest(nested)
+                with pg_storage._conn as conn:
+                    conn.execute("SELECT 1/0")
+        # The savepoint rollback leaves the connection usable for more state writes.
+        final = pg_storage.load_manifest()
+        final["title"] = "final-rename"
+        pg_storage.save_manifest(final)
+    assert pg_storage.load_manifest()["title"] == "final-rename"
+    assert before != "final-rename"
+
+
+def test_postgres_nested_state_lock_failure_propagating_rolls_back_everything(pg_storage, tmp_path):
+    initialize(pg_storage, tmp_path)
+    before = pg_storage.load_manifest()["title"]
+    with pytest.raises(DivisionByZero):
+        with pg_storage.state_lock():
+            manifest = pg_storage.load_manifest()
+            manifest["title"] = "never-committed"
+            pg_storage.save_manifest(manifest)
+            with pg_storage.state_lock():
+                with pg_storage._conn as conn:
+                    conn.execute("SELECT 1/0")
+    assert pg_storage.load_manifest()["title"] == before
+
+
 def test_postgres_complete_workflow_review_reuse_and_export(pg_storage, tmp_path):
     from tests.fake_llm import MeteredFakeClient, routing_handler
     from wenyi_core.config import Config
@@ -536,3 +574,77 @@ def test_postgres_initialization_preserves_only_matching_preview(pg_storage, pg_
     assert pg_storage.read_artifact("preview.json") == {"title": "Book"}
     assert set(pg_storage.list_artifacts()) == {"parsed_document.json", "preview.json"}
     assert pg_storage.read_artifact("reviews/review-obsolete/result.json") is None
+
+
+def test_locks_do_not_starve_shared_pool_connections(pg_pool, tmp_path):
+    """Nine concurrent project locks must leave the shared pool fully usable."""
+    holders = []
+    with ExitStack() as held:
+        for index in range(9):  # One more holder than the fixture pool's max_size.
+            pid = uuid.uuid4().hex
+            with pg_pool.connection() as conn:
+                conn.execute("INSERT INTO projects(id,name) VALUES(%s,'lock-load')", (pid,))
+            storage = PostgresStorage(pid, pg_pool, run_dir=str(tmp_path / f"hold-{index}"))
+            holders.append(storage)
+            held.enter_context(storage.lock())
+        # Every lock above sits on its own dedicated connection, so the shared
+        # pool still serves state reads and accepts new checkouts instantly.
+        with pg_pool.connection(timeout=2) as conn:
+            assert conn.execute("SELECT 1").fetchone() == (1,)
+        # exists() reports a committed manifest, not merely a catalog row.
+        assert not holders[0].exists()
+        extra = PostgresStorage(uuid.uuid4().hex, pg_pool, run_dir=str(tmp_path / "extra"))
+        with extra.lock(blocking=False):
+            pass
+
+
+def test_save_chapters_batches_chapter_writes(pg_storage, tmp_path, monkeypatch):
+    monkeypatch.setattr(PostgresStorage, "_CHAPTER_BATCH_SIZE", 2)
+    source = tmp_path / "batch-source.txt"
+    source.write_text("batch source", encoding="utf-8")
+    chapters = [
+        Chapter(
+            index=index,
+            title=f"Chapter {index}",
+            href=f"chapter-{index}.xhtml",
+            segments=[
+                Segment(index=0, source=f"Source {index}", anchor="a"),
+                Segment(index=1, source=f"Second {index}", target=f"Target {index}"),
+            ],
+        )
+        for index in range(5)
+    ]
+    doc = Document(
+        title="Batch",
+        fmt="text",
+        source_lang="en",
+        target_lang="zh",
+        source_path=str(source),
+        meta={},
+        chapters=chapters,
+    )
+    digest = source_sha256(doc.source_path)
+
+    pg_storage.begin_initialization(digest)
+    manifest = pg_storage.stage_document(doc, source_hash=digest)
+    pg_storage.save_manifest(manifest)
+    pg_storage.finish_initialization()
+
+    for chapter in chapters:
+        # PostgreSQL keeps chapters in relational tables; the chapter artifact key
+        # belongs to the file and SQLite backends.
+        assert pg_storage.read_artifact(f"chapters/ch{chapter.index}.json") is None
+        assert pg_storage.load_chapter(chapter.index).title == chapter.title
+
+    def revision_count() -> int:
+        # The module-scoped schema is shared by every test here; count only this project.
+        with pg_storage._conn as conn:
+            return conn.execute(
+                "SELECT COUNT(*) FROM segment_revisions WHERE project_id=%s",
+                (pg_storage.project_id,),
+            ).fetchone()[0]
+
+    initial = revision_count()
+    assert initial == 5
+    pg_storage.save_chapters(chapters)
+    assert revision_count() == initial

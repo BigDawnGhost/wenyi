@@ -13,6 +13,26 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 @pytest.mark.parametrize(
+    ("workflow", "key_jobs"),
+    [
+        ("build.yml", ("plan", "build", "release")),
+        ("desktop.yml", ("plan", "cargo-warm", "local-package", "release")),
+        ("docs.yml", ("build", "deploy")),
+        ("publish-pypi.yml", ("build", "wheels", "publish-core", "publish-cli")),
+        ("tests.yml", ("changes", "contract", "python", "python-windows", "web", "e2e")),
+    ],
+)
+def test_every_workflow_keeps_its_key_jobs(workflow, key_jobs):
+    """CI drift guard: renaming or dropping a workflow job must fail loudly here."""
+    jobs = yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text())["jobs"]
+    assert sorted(jobs) == sorted(key_jobs), (
+        f"{workflow} jobs drifted: expected {sorted(key_jobs)}, found {sorted(jobs)}"
+    )
+    empty = [name for name, job in jobs.items() if not job.get("steps")]
+    assert empty == [], f"{workflow} has jobs without steps: {empty}"
+
+
+@pytest.mark.parametrize(
     ("path", "contract_changed", "expected"),
     [
         ("packages/backend/wenyi_backend/routers/projects.py", False, True),

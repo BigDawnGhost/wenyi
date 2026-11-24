@@ -71,6 +71,48 @@ def test_shared_registry_persists_and_projects_only_save_selections(api):
     )
 
 
+@pytest.mark.parametrize("primary", ["fake/plain", "openai/gpt-5"])
+def test_project_model_switch_requires_explicit_clear_of_incompatible_thinking(api, primary):
+    client, _ = api
+    operation = "translation.body"
+    default_model = "deepseek/deepseek-flash"
+    global_config = client.get("/settings").json()
+    global_config["effective"]["llm"] = {
+        "preset": "deepseek",
+        "providers": {"fake": {"kind": "fake"}, "openai": {"kind": "openai"}},
+        "models": {"fake/plain": {}, "openai/gpt-5": {}},
+        "routes": {operation: {"model": default_model, "thinking": "max", "fallbacks": [primary]}},
+        "budget": {"max_requests": 21, "max_tokens": 400},
+    }
+    saved = client.put("/settings", json=payload(global_config))
+    assert saved.status_code == 200, saved.text
+    pid = new_project(api)
+    endpoint = f"/projects/{pid}/config"
+    initial = client.get(endpoint).json()["effective"]
+    assert initial["llm"]["routes"][operation]["thinking"] == "max"
+
+    route = {"model": primary, "fallbacks": []}
+    document = {"llm": {"routes": {operation: route}, "budget": {"max_requests": 8}}}
+    for method, path in ((client.post, endpoint + "/validate"), (client.put, endpoint)):
+        response = method(path, json={"yaml": json.dumps(document)})
+        assert response.status_code == 422, response.text
+        assert response.json()["code"] == "invalid_configuration"
+        assert operation in response.json()["message"] and "thinking" in response.json()["message"]
+    assert must(dal.get_project(pid))["config"] == {}
+
+    route["thinking"] = None
+    validated = client.post(endpoint + "/validate", json={"yaml": json.dumps(document)})
+    assert validated.status_code == 200, validated.text
+    assert must(dal.get_project(pid))["config"] == {}
+    saved = client.put(endpoint, json={"yaml": json.dumps(document)})
+    assert saved.status_code == 200, saved.text
+    llm = client.get(endpoint).json()["effective"]["llm"]
+    assert llm == saved.json()["effective"]["llm"] == validated.json()["effective"]["llm"]
+    assert llm["routes"] == {**initial["llm"]["routes"], operation: route}
+    assert llm["budget"] == {**initial["llm"]["budget"], "max_requests": 8}
+    assert must(dal.get_project(pid))["config"]["llm"] == llm
+
+
 @pytest.mark.parametrize(
     "key,value",
     [

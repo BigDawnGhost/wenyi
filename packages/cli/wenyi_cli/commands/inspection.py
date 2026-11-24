@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import typer
 from rich.table import Table
 from wenyi_core.timing import load_timing
@@ -9,12 +11,67 @@ from wenyi_core.timing import load_timing
 from wenyi_cli.commands import presentation
 
 from .context import ContextAccessor
-from .run_report import build_report
+from .run_report import _crashed_step_events, _read_events, build_report
 from .validation import (
     require_input_file,
+    resolve_export_out_path,
     resolve_output_format,
+    runstore_for,
     runstore_for_cli,
 )
+
+
+def _format_failure_event(event: dict[str, Any]) -> str:
+    """Render one recorded failure event as a concise, configuration-free message."""
+    name = event.get("event")
+    if name == "llm_retry_exhausted":
+        message = f"LLM request failed after {event.get('attempts', '?')} attempts"
+        if event.get("error_type"):
+            message += f": {event['error_type']}"
+        detail = ", ".join(
+            f"{key}={event[key]}"
+            for key in ("reason", "stage", "status_code")
+            if event.get(key) is not None
+        )
+        if detail:
+            message += f" ({detail})"
+        return message
+    if name == "pipeline_error":
+        error_type = event.get("error_type") or "unknown"
+        error = event.get("error") or "no error message recorded"
+        return f"{error_type}: {error}"
+    steps = [step for step in event.get("steps") or [] if isinstance(step, str)]
+    if steps:
+        return f"Run failed: pipeline step(s) started but never finished: {', '.join(steps)}"
+    return "Run failed: a pipeline step started but never finished (see the Wenyi log)"
+
+
+def describe_last_failure(source: str, config_path: str) -> str | None:
+    """Return the latest failure reason from a run's event log, or None.
+
+    Machine failure receipts use this so supervisors can read the real reason
+    without scraping logs. Reads the same error events as ``inspect_run`` and
+    prefers them in the same order. Best-effort and silent: any problem locating
+    or reading the state returns None so the caller can show its own fallback.
+    """
+    try:
+        from wenyi_core.config_rebuild import load_rebuilt_config
+
+        store = runstore_for(load_rebuilt_config(config_path), source)
+        events = _read_events(store.event_log_path)
+        exhausted = [event for event in events if event.get("event") == "llm_retry_exhausted"]
+        pipeline_errors = [event for event in events if event.get("event") == "pipeline_error"]
+        crashed = _crashed_step_events(events)
+    except Exception:
+        return None
+    failures = pipeline_errors + crashed
+    last = exhausted[-1] if exhausted else (failures[-1] if failures else None)
+    if last is None:
+        return None
+    try:
+        return _format_failure_event(last)
+    except Exception:
+        return None
 
 
 def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> None:
@@ -149,9 +206,14 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
             "--bilingual/--no-bilingual",
             help="Override output.bilingual to enable or disable bilingual output",
         ),
+        overwrite: bool = typer.Option(
+            False,
+            "--overwrite",
+            help="Replace existing --out files instead of writing numbered alternatives",
+        ),
     ):
         """Export translations from existing state without calling a model."""
-        from wenyi_core.models.errors import IngestError
+        from wenyi_core.models.errors import ExportPartialError, IngestError
 
         console = context().console
         from wenyi_core.llm.providers.fake import FakeClient
@@ -168,8 +230,20 @@ def register_inspection_commands(app: typer.Typer, context: ContextAccessor) -> 
             result = Orchestrator(config, client=FakeClient()).run_assemble(
                 input,
                 out_format=fmt,
-                out_path=out,
+                out_path=resolve_export_out_path(out, overwrite=overwrite, console=console),
             )
+        except ExportPartialError as error:
+            for outcome in error.outcomes:
+                if outcome.ok:
+                    console.print(
+                        f"[green]{outcome.product} {outcome.out_format} written:[/]"
+                        f" [bold]{outcome.output}[/]"
+                    )
+                else:
+                    console.print(
+                        f"[red]{outcome.product} {outcome.out_format} failed:[/] {outcome.error}"
+                    )
+            raise typer.Exit(1) from None
         except (IngestError, OSError, ValueError) as error:
             console.print(f"[red]Error: {error}[/]")
             raise typer.Exit(1) from None

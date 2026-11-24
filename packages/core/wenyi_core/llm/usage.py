@@ -30,6 +30,7 @@ _USAGE_FIELDS = (
     "cache_unknown_tokens",
     "cache_write_5m_tokens",
     "cache_write_1h_tokens",
+    "max_tokens",
     *_REPORTED_FIELDS.values(),
 )
 
@@ -51,6 +52,7 @@ class UsageSample:
     uncached_tokens: int | None = None
     cache_write_5m_tokens: int | None = None
     cache_write_1h_tokens: int | None = None
+    max_tokens: int | None = None
 
     @property
     def cache_unknown_tokens(self) -> int:
@@ -97,6 +99,7 @@ def make_usage_sample(
     uncached_tokens: int | None = None,
     cache_write_5m_tokens: int | None = None,
     cache_write_1h_tokens: int | None = None,
+    max_tokens: int | None = None,
 ) -> UsageSample | None:
     """Build usage from inclusive totals supplied by an adapter, not native wire fields."""
     if usage is None:
@@ -126,6 +129,7 @@ def make_usage_sample(
         uncached_tokens=uncached_tokens,
         cache_write_5m_tokens=cache_write_5m_tokens,
         cache_write_1h_tokens=cache_write_1h_tokens,
+        max_tokens=max_tokens,
     )
 
 

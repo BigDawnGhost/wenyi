@@ -115,8 +115,14 @@ def get_project(pid: str) -> Optional[dict]:
     }
 
 
-def set_project_status(pid: str, status: str, *, error: str | None = None) -> None:
-    with _conn() as c:
+def set_project_status(
+    pid: str,
+    status: str,
+    *,
+    error: str | None = None,
+    connection: Connection[Any] | None = None,
+) -> None:
+    with _conn(connection) as c:
         c.execute(
             "UPDATE projects SET status=%s, error=%s, updated_at=now() WHERE id=%s",
             (status, error, pid),
@@ -262,19 +268,28 @@ def create_job(
                VALUES (%s,%s,%s,%s,%s,%s) RETURNING id""",
             (pid, kind, status, arq_job_id, Jsonb(saved_params), run_id or uuid.uuid4().hex),
         ).fetchone()
-    assert r is not None
+    assert r is not None, f"job insert returned no row (project {pid}, kind {kind})"
     return r[0]
 
 
 def set_job_status(
-    job_id: int, status: str, error: Optional[str] = None, *, result: dict[str, Any] | None = None
-) -> None:
+    job_id: int,
+    status: str,
+    error: Optional[str] = None,
+    *,
+    result: dict[str, Any] | None = None,
+    expected_status: str | set[str] | None = None,
+) -> bool:
+    expected = [expected_status] if isinstance(expected_status, str) else expected_status
+    states = list(expected) if expected is not None else None
     with _conn() as c:
-        c.execute(
+        row = c.execute(
             """UPDATE jobs SET status=%s, error=%s, result=COALESCE(%s,result),
-               updated_at=now() WHERE id=%s""",
-            (status, error, Jsonb(result) if result is not None else None, job_id),
-        )
+               updated_at=now() WHERE id=%s AND (%s::text[] IS NULL OR status=ANY(%s))
+               RETURNING id""",
+            (status, error, Jsonb(result) if result is not None else None, job_id, states, states),
+        ).fetchone()
+    return row is not None
 
 
 _JOB_COLUMNS = (
@@ -358,7 +373,7 @@ def create_export(
                VALUES (%s,%s,%s,'pending') RETURNING id""",
             (pid, fmt, Jsonb(options)),
         ).fetchone()
-    assert row is not None
+    assert row is not None, f"export insert returned no row (project {pid}, format {fmt})"
     return row[0]
 
 
@@ -372,7 +387,8 @@ def set_export_status(
 ) -> None:
     with _conn() as c:
         c.execute(
-            """UPDATE exports SET status=%s, path=%s, size=%s, error=%s WHERE id=%s""",
+            """UPDATE exports SET status=%s, path=%s, size=%s, error=%s
+               WHERE id=%s AND status NOT IN ('done','deleting')""",
             (status, path, size, error, export_id),
         )
 

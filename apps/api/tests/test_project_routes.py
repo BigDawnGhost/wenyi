@@ -4,20 +4,27 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 from api_test_support import new_project
 from fastapi.testclient import TestClient
+from psycopg_pool import PoolTimeout
 from type_helpers import must
-from wenyi_api import dal
+from wenyi_api import dal, export_retention
 from wenyi_api.adapters import postgres_repository
 from wenyi_api.main import create_app
+from wenyi_api.workers import recovery
 from wenyi_backend.context import current_context
 from wenyi_backend.execution.bindings import build_config_for
 from wenyi_backend.routers import dependencies as job_service
 from wenyi_backend.routers.dependencies import storage_for
 from wenyi_backend.workers import tasks
+from wenyi_backend.workers.signing import SIGNATURE_FIELD, sign_task
 
 
 def test_creation_requires_an_uploaded_source(api):
@@ -202,7 +209,9 @@ def execute_next(api):
     _, queue = api
     name, params = queue.pop(0)
     params.pop("_job_id")
-    asyncio.run(getattr(tasks, name)({"backend": current_context()}, **params))
+    payload = dict(params)
+    payload[SIGNATURE_FIELD] = sign_task(name, payload, current_context().api_token)
+    asyncio.run(getattr(tasks, name)({"backend": current_context()}, **payload))
 
 
 def upload(api, pid, filename="book.html", data=None):
@@ -342,7 +351,7 @@ def test_live_redis_queue_executes_persisted_parse_job(api, monkeypatch):
     monkeypatch.setattr(queue, "WORKFLOW_QUEUE", queue_name)
 
     async def enqueue(name, **kwargs):
-        return await queue.enqueue(redis_url, name, **kwargs)
+        return await queue.enqueue(redis_url, name, current_context().api_token, **kwargs)
 
     monkeypatch.setattr(job_service, "enqueue", enqueue)
     client, _ = api
@@ -412,4 +421,238 @@ def test_http_download_and_websocket_require_token(api, monkeypatch):
         with pytest.raises(WebSocketDisconnect) as raised:
             connection.receive_json()
         assert raised.value.code == 1008
+    with secured_client.websocket_connect(f"/ws/projects/{pid}/progress") as connection:
+        connection.send_json({"token": "caf\u00e9"})
+        with pytest.raises(WebSocketDisconnect) as raised:
+            connection.receive_json()
+        assert raised.value.code == 1008
     secured_client.close()
+
+
+def test_websocket_skips_token_check_when_require_token_disabled(api):
+    from starlette.websockets import WebSocketDisconnect
+
+    client, _ = api
+    pid = new_project(api)
+    open_context = replace(current_context(), api_token="test-access-token", require_token=False)
+
+    async def local_relay(websocket, project_id):
+        # Serve the socket until the client hangs up; no token was required.
+        await websocket.receive()
+        await websocket.close(code=1000)
+
+    open_context = replace(open_context, telemetry=SimpleNamespace(relay=local_relay))
+    open_client = TestClient(create_app(context=open_context))
+    with open_client.websocket_connect(f"/ws/projects/{pid}/progress") as connection:
+        connection.send_json({"token": "wrong"})
+        connection.close()
+        with pytest.raises(WebSocketDisconnect) as raised:
+            connection.receive_json()
+        assert raised.value.code != 1008
+    open_client.close()
+
+
+def test_duplicate_export_requests_share_one_task(api):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        requests = [
+            executor.submit(client.post, f"/projects/{pid}/exports", json={"format": "txt"})
+            for _ in range(2)
+        ]
+        first, second = [request.result() for request in requests]
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert second.json() == {
+        "job_id": first.json()["job_id"],
+        "project_id": pid,
+        "kind": "export",
+        "export_id": first.json()["export_id"],
+    }
+    assert [name for name, _ in queue if name == "run_export"] == ["run_export"]
+    export_jobs = [row for row in dal.list_jobs(pid) if row["kind"] == "export"]
+    assert len(export_jobs) == 1
+    # A finished export no longer deduplicates: a new request gets a fresh task.
+    dal.set_job_status(export_jobs[0]["id"], "done")
+    dal.set_export_status(first.json()["export_id"], "done")
+    third = client.post(f"/projects/{pid}/exports", json={"format": "txt"})
+    assert third.status_code == 200, third.text
+    assert third.json()["export_id"] != first.json()["export_id"]
+    assert [name for name, _ in queue if name == "run_export"] == ["run_export", "run_export"]
+
+
+def test_export_after_edit_does_not_reuse_a_running_snapshot(api, monkeypatch):
+    from wenyi_core.assemble import writer
+
+    client, _ = api
+    pid = new_project(api)
+    upload(api, pid, filename="book.txt", data=b"One source paragraph.")
+    client.post(f"/projects/{pid}/prepare").raise_for_status()
+    execute_next(api)
+    endpoint = f"/projects/{pid}/exports"
+    segment = f"/projects/{pid}/review/0/segments/0"
+
+    def edit(before, after):
+        client.put(segment, json={"expected_target": before, "target": after}).raise_for_status()
+
+    def submit():
+        response = client.post(endpoint, json={"format": "txt"})
+        response.raise_for_status()
+        return response.json()["export_id"]
+
+    def download(eid):
+        response = client.get(f"{endpoint}/{eid}/download")
+        response.raise_for_status()
+        return response.text
+
+    rendering, release = threading.Event(), threading.Event()
+    render = writer.assemble
+
+    def hold_snapshot(*args, **kwargs):
+        rendering.set()
+        assert release.wait(10)
+        return render(*args, **kwargs)
+
+    edit(None, "First edition")
+    first = submit()
+    with monkeypatch.context() as patch, ThreadPoolExecutor(1) as pool:
+        patch.setattr(writer, "assemble", hold_snapshot)
+        worker = pool.submit(copy_context().run, execute_next, api)
+        try:
+            assert rendering.wait(10)
+            edit("First edition", "Corrected edition")
+            second = submit()
+        finally:
+            release.set()
+        worker.result(timeout=10)
+    assert second != first
+    execute_next(api)
+    assert "First edition" in download(first)
+    assert "Corrected edition" in download(second)
+
+
+def test_export_admission_distinguishes_options_config_and_source(api, monkeypatch):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    endpoint = f"/projects/{pid}/exports"
+
+    def unavailable(*args):
+        pytest.fail("Export admission must return the dispatch identity without another job read")
+
+    monkeypatch.setattr(current_context().repository, "get_job", unavailable)
+
+    def submit(**options):
+        response = client.post(endpoint, json={"format": "epub", **options})
+        assert response.status_code == 200, response.text
+        return response.json()
+
+    original = submit()
+    bilingual = submit(bilingual=True)
+    ordered = submit(bilingual=True, order="source_first")
+    styled = submit(bilingual=True, preserve_source_style=True)
+    no_about = submit(about_page=False)
+    assert submit(bilingual=True) == bilingual
+
+    dal.set_project_config(pid, {"pipeline": {"babeldoc_timeout": 80}})
+    # The parse cache is also configuration-bound. Reparse the same upload
+    # with the new config without changing its SHA-256 or pending export jobs.
+    asyncio.run(job_service.start_job(pid, "parse"))
+    queue.insert(0, queue.pop())
+    execute_next(api)
+    changed_config = submit()
+    assert submit() == changed_config
+
+    # Finish the second parse before admitting another export; leave the prior
+    # exports queued, so source identity alone must distinguish these requests.
+    pending = queue[:]
+    queue.clear()
+    upload(api, pid, data=b"<h1>Chapter One</h1><p>The replacement book begins.</p>")
+    queue.extend(pending)
+    changed_source = submit()
+    results = [original, bilingual, ordered, styled, no_about, changed_config, changed_source]
+    assert len({row["export_id"] for row in results}) == len(results)
+    assert [payload["run_id"] for _, payload in queue] == [row["job_id"] for row in results]
+    assert queue[0][1]["parsed_source_sha256"] == queue[-2][1]["parsed_source_sha256"]
+    assert queue[-1][1]["parsed_source_sha256"] != queue[-2][1]["parsed_source_sha256"]
+
+
+def test_export_cleanup_pool_timeout_preserves_success_and_can_be_retried(api, monkeypatch):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    endpoint = f"/projects/{pid}/exports"
+    for _ in range(5):
+        response = client.post(endpoint, json={"format": "txt"})
+        assert response.status_code == 200, response.text
+        execute_next(api)
+    evicted = client.get(endpoint).json()[-1]
+    old_file = export_retention.export_path(current_context().data_dir, pid, evicted["path"])
+    assert old_file is not None
+
+    response = client.post(endpoint, json={"format": "txt"})
+    assert response.status_code == 200, response.text
+    run = response.json()
+    payload = dict(queue[0][1])
+    status_at_cleanup = []
+
+    def exhausted(*args, **kwargs):
+        status_at_cleanup.append(must(dal.get_job_by_arq_id(run["job_id"]))["status"])
+        raise PoolTimeout("No free connection for retention cleanup")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(export_retention, "export_history_session_lock", exhausted)
+        execute_next(api)
+    assert status_at_cleanup == ["done"]
+    assert must(dal.get_job_by_arq_id(run["job_id"]))["status"] == "done"
+    assert client.get(f"{endpoint}/{run['export_id']}/download").status_code == 200
+    assert client.get(f"{endpoint}/{evicted['id']}/download").status_code == 404
+    assert old_file.is_file()
+
+    # With no new publication, maintenance must recover the committed cleanup
+    # record. Duplicate queue delivery must not render again.
+    asyncio.run(recovery.recover_jobs({"redis": None}))
+    assert not old_file.exists()
+    assert len(client.get(endpoint).json()) == 5
+
+    def unexpected_render(*args, **kwargs):
+        pytest.fail("A duplicate delivery must not render a published export again")
+
+    from wenyi_backend.execution import bindings
+
+    monkeypatch.setattr(bindings, "render_export", unexpected_render)
+    queue.append(("run_export", payload))
+    execute_next(api)
+    assert must(dal.get_job_by_arq_id(run["job_id"]))["status"] == "done"
+
+
+def test_start_job_reuses_in_flight_task_of_same_kind(api):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    parse_job = must(dal.latest_workflow_job(pid))
+    dal.set_job_status(parse_job["id"], "paused")
+    dal.set_project_status(pid, "paused")
+    in_flight = dal.create_job(pid, "parse", "resumed-parse", run_id="resumed-run")
+    result = asyncio.run(job_service.start_job(pid, "parse"))
+    assert result == {"job_id": "resumed-run", "project_id": pid, "kind": "parse"}
+    assert [name for name, _ in queue if name == "run_parse"] == []
+    resumed = must(dal.get_job(in_flight))
+    assert resumed["run_id"] == "resumed-run" and resumed["status"] == "queued"
+
+
+def test_concurrent_resume_dispatches_exactly_one_task(api):
+    client, queue = api
+    pid = new_project(api)
+    upload(api, pid)
+    parse_job = must(dal.latest_workflow_job(pid))
+    dal.set_job_status(parse_job["id"], "paused")
+    dal.set_project_status(pid, "paused")
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        responses = list(pool.map(lambda _: client.post(f"/projects/{pid}/resume"), range(4)))
+    assert sum(response.status_code == 200 for response in responses) >= 1
+    assert all(response.status_code in (200, 409) for response in responses)
+    assert [name for name, _ in queue if name == "run_parse"].count("run_parse") == 1
+    parse_jobs = [row for row in dal.list_jobs(pid) if row["kind"] == "parse"]
+    assert len(parse_jobs) == 2  # the upload's parse plus exactly one resumed task

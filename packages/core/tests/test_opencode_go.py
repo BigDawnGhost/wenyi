@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+import pytest
 from wenyi_core.config import Config
 from wenyi_core.llm.configuration import ProviderConfig
 from wenyi_core.llm.providers.opencode_go import USER_AGENT, OpenCodeGoClient
@@ -17,7 +18,7 @@ class TestOpenCodeGoProvider(unittest.TestCase):
         self.assertEqual(provider_spec("opencode-go").client_class, "OpenCodeGoClient")
 
     def test_opencode_go_has_no_builtin_preset(self):
-        with self.assertRaisesRegex(ValueError, "has no preset"):
+        with pytest.raises(ValueError, match="has no preset"):
             provider_spec("opencode-go").preset()
 
     def test_config_accepts_opencode_go_connection(self):

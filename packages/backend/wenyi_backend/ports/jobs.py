@@ -6,8 +6,14 @@ from typing import Any, Protocol
 class JobRepository(Protocol):
     def get_job_by_arq_id(self, arq_job_id: str) -> dict | None: ...
     def set_job_status(
-        self, job_id: int, status: str, error: str | None = None, *, result: dict | None = None
-    ) -> Any: ...
+        self,
+        job_id: int,
+        status: str,
+        error: str | None = None,
+        *,
+        result: dict | None = None,
+        expected_status: str | set[str] | None = None,
+    ) -> bool: ...
     def list_jobs(self, pid: str) -> list[dict]: ...
 
 

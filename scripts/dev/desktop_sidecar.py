@@ -61,7 +61,7 @@ def verify_bundle(directory: Path) -> None:
         assert not list(internal.glob(f"{module}-*.dist-info")), module
 
 
-def smoke_test(executable: Path) -> None:
+def smoke_test(executable: Path, expected_version: str) -> None:
     # Launch outside the repository and with no Python path or external services.
     with tempfile.TemporaryDirectory(prefix="wenyi-sidecar-") as temporary:
         token = secrets.token_hex(32)
@@ -77,6 +77,7 @@ def smoke_test(executable: Path) -> None:
         env["NO_PROXY"] = "127.0.0.1,localhost"
         env["WENYI_API_TOKEN"] = token
         env["WENYI_DIAGNOSTICS_PROTOCOL"] = "1"
+        env["WENYI_DESKTOP_ENGINE_VERSION"] = expected_version
         # Keep platform-default lookups private too; --data-dir owns all app data.
         profile = Path(temporary) / "profile"
         profile.mkdir()
@@ -88,10 +89,26 @@ def smoke_test(executable: Path) -> None:
         blocked = Path(temporary) / "fake-private-workspace"
         (blocked / "locks" / ".desktop.lock").mkdir(parents=True)
         smoke_launch(executable, blocked, env, failed_stage="runtime")
+        # Keep the release/SCM version and change only the local identity. The
+        # frozen runtime must still refuse it over stdout with stderr discarded.
+        separator = "." if "+" in expected_version else "+"
+        wrong = expected_version + separator + "otherbuild"
+        smoke_launch(
+            executable,
+            Path(temporary) / "version-mismatch",
+            {**env, "WENYI_DESKTOP_ENGINE_VERSION": wrong},
+            failed_stage="application",
+            failure_code="version_mismatch",
+        )
 
 
 def smoke_launch(
-    executable: Path, workspace: Path, env: dict[str, str], *, failed_stage: str | None = None
+    executable: Path,
+    workspace: Path,
+    env: dict[str, str],
+    *,
+    failed_stage: str | None = None,
+    failure_code: str | None = None,
 ) -> None:
     token = env["WENYI_API_TOKEN"]
     with subprocess.Popen(
@@ -117,6 +134,7 @@ def smoke_launch(
         reader = threading.Thread(target=collect, daemon=True)
         reader.start()
         observations = []
+        startup_failures = []
         ready_seen = False
         deadline = time.monotonic() + 60
         try:
@@ -128,6 +146,9 @@ def smoke_launch(
                 assert token not in line and str(workspace) not in line
                 if line.startswith("WENYI_DIAGNOSTIC "):
                     observations.append(json.loads(line.removeprefix("WENYI_DIAGNOSTIC ")))
+                    continue
+                if line.startswith("WENYI_FAILED "):
+                    startup_failures.append(json.loads(line.removeprefix("WENYI_FAILED ")))
                     continue
                 assert line.startswith("WENYI_READY "), "Unexpected sidecar protocol frame"
                 assert failed_stage is None and not ready_seen, "Unexpected ready frame"
@@ -146,6 +167,7 @@ def smoke_launch(
             reader.join(timeout=5)
             assert observations[0]["event"] == "engine_bootstrap"
             assert observations[-1]["event"] == "engine_stopped"
+            assert startup_failures == ([] if failure_code is None else [{"code": failure_code}])
             stopped = observations[-1]["attributes"]
             assert stopped["exit_code"] == child.returncode
             failures = [
@@ -160,7 +182,10 @@ def smoke_launch(
                 assert not ready_seen and child.returncode != 0
                 assert len(failures) == 1
                 assert failures[0]["attributes"]["stage"] == failed_stage
-                assert failures[0]["attributes"]["module"] == "local_runtime"
+                if failed_stage == "runtime":
+                    assert failures[0]["attributes"]["module"] == "local_runtime"
+                if failure_code is not None:
+                    assert failures[0]["attributes"]["reason"] == failure_code
                 assert failures[0]["attributes"]["line"] > 0
                 assert stopped["reason"] == "failed" and stopped["stage"] == "bootstrap"
         except BaseException:
@@ -296,10 +321,13 @@ def build() -> None:
     )
     directory = DESTINATION / "wenyi-engine"
     verify_bundle(directory)
-    smoke_test(directory / ("wenyi-engine.exe" if sys.platform == "win32" else "wenyi-engine"))
+    smoke_test(
+        directory / ("wenyi-engine.exe" if sys.platform == "win32" else "wenyi-engine"),
+        expected_version or version("wenyi-desktop"),
+    )
     print(
-        "Desktop sidecar: metadata, resources, diagnostics, offline TXT parse/preview, "
-        "shutdown and startup failure verified."
+        "Desktop sidecar: metadata, resources, version handshake, diagnostics, "
+        "offline TXT parse/preview, shutdown and startup failure verified."
     )
 
 

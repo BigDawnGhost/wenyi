@@ -19,6 +19,15 @@ pub enum Failure {
     ProtocolEof,
     ReadyTimeout,
     ChannelClosed,
+    Startup(StartupFailure),
+}
+
+#[derive(Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StartupFailure {
+    VersionMismatch,
+    LegacyCatalog,
+    UpgradeRecoveryRequired,
 }
 
 impl Failure {
@@ -31,10 +40,13 @@ impl Failure {
             Self::ProtocolEof => "protocol_eof",
             Self::ReadyTimeout => "ready_timeout",
             Self::ChannelClosed => "channel_closed",
+            Self::Startup(StartupFailure::VersionMismatch) => "version_mismatch",
+            Self::Startup(StartupFailure::LegacyCatalog) => "legacy_catalog",
+            Self::Startup(StartupFailure::UpgradeRecoveryRequired) => "upgrade_recovery_required",
         }
     }
 
-    pub fn report(&self, diagnostics: &Diagnostics) -> &'static str {
+    pub fn report(&self, diagnostics: &Diagnostics) -> String {
         diagnostics.record(
             Source::Native,
             Event::EngineFailed,
@@ -49,8 +61,24 @@ impl Failure {
             Self::ReadyTimeout => {
                 "The local engine timed out during startup. Export a diagnostic report."
             }
+            Self::Startup(StartupFailure::VersionMismatch) => {
+                "This Wenyi Desktop app and its local engine are from different builds. \
+                 Install matching desktop components and reopen Wenyi."
+            }
+            Self::Startup(StartupFailure::LegacyCatalog) => {
+                "The selected data directory contains an old-format Desktop catalog. \
+                 Wenyi does not migrate it automatically. Keep the original data directory and \
+                 choose a new, empty one. In the library, use Import project for folders that \
+                 already have a current project.json. For older projects, use the previous \
+                 Wenyi version to export their content."
+            }
+            Self::Startup(StartupFailure::UpgradeRecoveryRequired) => {
+                "Wenyi could not complete the upgrade. Keep the existing data, close Wenyi, \
+                 and follow “Restore a pre-upgrade snapshot” in the Desktop guide."
+            }
             _ => "The local engine did not become ready. Export a diagnostic report.",
         }
+        .to_string()
     }
 }
 
@@ -71,6 +99,19 @@ fn ready(line: &str, pid: u32) -> Result<u16, &'static str> {
         return Err("Invalid ready identity");
     }
     Ok(value.port)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Failed {
+    code: StartupFailure,
+}
+
+fn failed_protocol(payload: &str) -> Failure {
+    match serde_json::from_str::<Failed>(payload) {
+        Ok(failed) => Failure::Startup(failed.code),
+        Err(_) => Failure::InvalidProtocol,
+    }
 }
 
 fn token() -> Result<String, &'static str> {
@@ -199,6 +240,11 @@ impl Backend {
             .arg("--native-startup")
             .env("WENYI_API_TOKEN", &token)
             .env("WENYI_DIAGNOSTICS_PROTOCOL", "1")
+            .env("WENYI_DESKTOP_VERSION", env!("WENYI_DESKTOP_VERSION"))
+            .env(
+                "WENYI_DESKTOP_ENGINE_VERSION",
+                env!("WENYI_BUILD_PYTHON_VERSION"),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             // Never forward arbitrary backend output (which might contain credentials).
@@ -345,6 +391,7 @@ fn receive_protocol(
 ) {
     let mut reader = BufReader::new(output);
     let mut sent = false;
+    let mut is_ready = false;
     let mut discard = false;
     loop {
         let mut bytes = Vec::new();
@@ -386,13 +433,21 @@ fn receive_protocol(
         } else if let Some(payload) = line.strip_prefix("WENYI_NOTICE ") {
             // A notice cannot exist before a task could start; readiness is the
             // first moment the native owner is willing to deliver one.
-            if sent {
+            if is_ready {
                 notifications.submit_payload(payload);
+            }
+        } else if let Some(payload) = line.strip_prefix("WENYI_FAILED ") {
+            // A bootstrap failure is reported exactly once; the shell decides
+            // how to present recovery instead of learning it from raw output.
+            if !sent {
+                let _ = tx.send(Err(failed_protocol(payload)));
+                sent = true;
             }
         } else if !sent {
             let result = ready(line, pid).map_err(|_| Failure::InvalidProtocol).map(|port| {
                 serde_json::json!({"apiBase": format!("http://127.0.0.1:{port}"), "token": token}).to_string()
             });
+            is_ready = result.is_ok();
             let _ = tx.send(result);
             sent = true;
         }
@@ -503,6 +558,80 @@ mod tests {
                 "protocol_invalid",
                 "ready_timeout",
                 "channel_closed"
+            ],
+        );
+    }
+
+    #[test]
+    fn engine_failure_frames_report_only_registered_codes_and_static_guidance() {
+        let diagnostics = Diagnostics::new(None);
+        let notifications = crate::notifications::Center::silent(diagnostics.clone());
+        for (payload, expected, guidance) in [
+            (
+                r#"{"code":"version_mismatch"}"#,
+                Failure::Startup(StartupFailure::VersionMismatch),
+                "Install matching desktop components",
+            ),
+            (
+                r#"{"code":"legacy_catalog"}"#,
+                Failure::Startup(StartupFailure::LegacyCatalog),
+                "Import project",
+            ),
+            (
+                r#"{"code":"upgrade_recovery_required"}"#,
+                Failure::Startup(StartupFailure::UpgradeRecoveryRequired),
+                "Restore a pre-upgrade snapshot",
+            ),
+            (
+                r#"{"code":"fake-private-secret"}"#,
+                Failure::InvalidProtocol,
+                "did not become ready",
+            ),
+            (
+                r#"{"code":"legacy_catalog","guidance":["fake-private-secret"]}"#,
+                Failure::InvalidProtocol,
+                "did not become ready",
+            ),
+            (
+                r#"{"code":"version_mismatch","detail":"fake-private-path"}"#,
+                Failure::InvalidProtocol,
+                "did not become ready",
+            ),
+            ("not-json", Failure::InvalidProtocol, "did not become ready"),
+        ] {
+            let line = format!(
+                "WENYI_FAILED {payload}\nWENYI_READY {{\"protocol\":1,\"pid\":9,\"port\":1234}}\n"
+            );
+            let (tx, rx) = mpsc::channel();
+            receive_protocol(
+                line.as_bytes(),
+                9,
+                "fake-private-token",
+                &diagnostics,
+                &notifications,
+                tx,
+            );
+            let failure = wait_ready(&rx, Duration::ZERO).unwrap_err();
+            assert_eq!(failure, expected);
+            assert!(rx.try_recv().is_err());
+            let report = failure.report(&diagnostics);
+            assert!(report.contains(guidance));
+            assert!(!report.contains("fake-private"));
+        }
+        let records = native_records(&diagnostics);
+        assert_eq!(
+            records
+                .iter()
+                .map(|row| row["attributes"]["reason"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "version_mismatch",
+                "legacy_catalog",
+                "upgrade_recovery_required",
+                "protocol_invalid",
+                "protocol_invalid",
+                "protocol_invalid",
+                "protocol_invalid",
             ],
         );
     }

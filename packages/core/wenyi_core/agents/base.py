@@ -1,7 +1,6 @@
 """Shared agent initialization and LLM helpers with optional fallback values.
-Centralize the render-system/user, complete_json and fallback pattern. Business fallback
-semantics belong here, not in the LLM transport layer. Every agent exposes .src for language
-propagation by the pipeline.
+Business fallback semantics belong here, not in the LLM transport layer.
+Every agent exposes .src for language propagation by the pipeline.
 """
 
 from __future__ import annotations
@@ -10,13 +9,34 @@ import logging
 from typing import Any, ClassVar
 
 from ..config import Config
+from ..errors import WenyiError
 from ..i18n.policy.models import Phase
 from ..i18n.prompts import render
 from ..llm.base import LLMClient
-from ..llm.json_parser import parse_json_loose
+from ..llm.json_parser import JsonParseError, parse_json_loose
+from ..llm.retrying import EmptyResponseError, ProviderRequestError, TruncatedResponseError
 
 _RAISE = object()  # Sentinel: propagate exceptions when the caller supplies no default.
 _LOGGER = logging.getLogger(__name__)
+
+# Failures an agent may absorb into its configured fallback: unusable model output and
+# transient provider or transport problems. Budget stops and cancellations derive from
+# BaseException and never reach these handlers; any other WenyiError or ValueError
+# (configuration, routing, semantic validation) must propagate to the caller.
+_FALLBACKABLE_ERRORS = (
+    ProviderRequestError,
+    EmptyResponseError,
+    TruncatedResponseError,
+    JsonParseError,
+)
+
+
+def _is_fallbackable(error: Exception) -> bool:
+    """Return True when the error may be replaced by an agent's fallback value."""
+    if isinstance(error, _FALLBACKABLE_ERRORS):
+        return True
+    return not isinstance(error, (WenyiError, ValueError))
+
 
 Messages = list[dict[str, str]]
 
@@ -98,37 +118,18 @@ class Agent:
         max_tokens: int | None = None,
         item_type: type | None = None,
     ) -> Any:
-        """Send system/user messages through complete_json.
-        Return default on failure, or propagate when no default is supplied (for example,
-        Translator handles alignment retries). With key, use data[key] for dictionaries, a
-        nonempty list directly, or the fallback otherwise. With item_type, a keyed list must
-        contain only items of that type or the fallback is returned instead.
-        """
-        try:
-            data, _raw = self._complete_json_turn(
-                [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user},
-                ],
-                operation=operation,
-                max_tokens=max_tokens,
-            )
-        except Exception as error:
-            if default is _RAISE:
-                raise
-            _LOGGER.warning(
-                "Agent call failed; returning fallback (operation=%s): %s: %s",
-                operation,
-                type(error).__name__,
-                error,
-            )
-            return default
-        if key is None:
-            return data
-        fb = None if default is _RAISE else default
-        if isinstance(data, dict):
-            return _validated_collection(data.get(key, fb), item_type, operation, key, fb)
-        return _validated_collection(data if data else fb, item_type, operation, key, fb)
+        """Send a system/user pair using the shared JSON request helper."""
+        return self._ask_json_messages(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            operation=operation,
+            key=key,
+            default=default,
+            max_tokens=max_tokens,
+            item_type=item_type,
+        )
 
     def _ask_json_messages(
         self,
@@ -140,7 +141,14 @@ class Agent:
         max_tokens: int | None = None,
         item_type: type | None = None,
     ) -> Any:
-        """Like ``_ask_json`` but for an already-built message list (multi-turn continues)."""
+        """Request JSON for a prepared conversation and return the parsed value.
+
+        With ``key``, read that field from a JSON object or use a truthy non-object
+        response directly. A missing field, falsy non-object, or list that fails
+        ``item_type`` validation returns ``default`` (or ``None`` if omitted).
+        Recoverable request or parse errors return ``default`` only if supplied;
+        all other errors propagate.
+        """
         try:
             data, _raw = self._complete_json_turn(
                 messages,
@@ -148,7 +156,7 @@ class Agent:
                 max_tokens=max_tokens,
             )
         except Exception as error:
-            if default is _RAISE:
+            if default is _RAISE or not _is_fallbackable(error):
                 raise
             _LOGGER.warning(
                 "Agent call failed; returning fallback (operation=%s): %s: %s",
@@ -173,7 +181,7 @@ class Agent:
         default: str = "",
         max_tokens: int | None = None,
     ) -> str:
-        """Complete plain text and strip whitespace; return default on failure."""
+        """Complete plain text and strip whitespace; return default on recoverable failure."""
         try:
             return (
                 self.client.complete(
@@ -187,6 +195,8 @@ class Agent:
                 or ""
             ).strip()
         except Exception as error:  # noqa: BLE001 - Text helper calls return the configured fallback on failure.
+            if not _is_fallbackable(error):
+                raise
             _LOGGER.warning(
                 "Agent call failed; returning fallback (operation=%s): %s: %s",
                 operation,

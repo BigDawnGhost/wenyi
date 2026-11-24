@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 
+from ..export_paths import bilingual_out_path as bilingual_out_path
 from ..i18n.languages import require_language
 from ..i18n.policy.models import PolicyContext
 from ..i18n.policy.resolver import resolve_policy
@@ -100,15 +101,57 @@ def _default_out(
     )
 
 
-def bilingual_out_path(out_path: str) -> str:
-    """Derive the bilingual path from an explicit out_path by appending -bi to the stem."""
-    base, ext = os.path.splitext(out_path)
-    return f"{base}-bi{ext}"
-
-
 def _ch_title(c: dict) -> str:
     """Prefer a translated chapter display title, falling back to the original."""
     return (c.get("title_translated") or c.get("title") or "").strip()
+
+
+def _translated_book_title(manifest: dict) -> str:
+    """Resolve a translated book title from manifest metadata or chapter 0 when available."""
+    direct = manifest.get("title_translated")
+    if isinstance(direct, str) and direct.strip():
+        return direct.strip()
+    meta = manifest.get("meta")
+    if isinstance(meta, dict):
+        meta_title = meta.get("book_title_translated")
+        if isinstance(meta_title, str) and meta_title.strip():
+            return meta_title.strip()
+    source_title = manifest.get("title")
+    chapters = manifest.get("chapters")
+    if (
+        isinstance(source_title, str)
+        and source_title.strip()
+        and isinstance(chapters, list)
+        and chapters
+        and isinstance(chapters[0], dict)
+    ):
+        first = chapters[0]
+        if (
+            isinstance(first.get("title"), str)
+            and " ".join(first["title"].split()) == " ".join(source_title.split())
+            and isinstance(first.get("title_translated"), str)
+            and first["title_translated"].strip()
+        ):
+            return first["title_translated"].strip()
+    return ""
+
+
+def _resolve_export_title(
+    manifest: dict,
+    target_lang: str | None,
+    *,
+    bilingual: bool,
+) -> tuple[str, str]:
+    """Return ``(export_title, original_title)``.
+
+    Only native EPUB projects have translated package titles. Other inputs keep the
+    standard ``<source>-wenyi-<lang>`` title, even if their first chapter has the same name.
+    """
+    raw_title = manifest.get("title")
+    source_title = raw_title.strip() if isinstance(raw_title, str) else ""
+    if manifest.get("fmt") == "epub" and (translated := _translated_book_title(manifest)):
+        return translated, source_title
+    return _export_book_title(source_title or "translated", target_lang, bilingual=bilingual), ""
 
 
 def _export_book_title(

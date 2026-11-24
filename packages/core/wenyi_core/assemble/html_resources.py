@@ -174,8 +174,13 @@ def _package_html_resources(
     href_prefix: str,
     zip_resources: dict[str, bytes] | None = None,
     inline: bool = False,
+    warnings: list[str] | None = None,
 ) -> tuple[str, dict[str, tuple[str, bytes]]]:
-    """Package references using the exclusive source contract of ``_load_html_resource``."""
+    """Package references using the exclusive source contract of ``_load_html_resource``.
+
+    Internal references that fail to resolve are appended to ``warnings`` when given.
+    Fragment and remote references stay exempt because they are kept by design.
+    """
     soup = BeautifulSoup(html, "html.parser")
     packaged: dict[str, tuple[str, bytes]] = {}
     href_by_reference: dict[str, str] = {}
@@ -187,6 +192,13 @@ def _package_html_resources(
             return href_by_reference[reference]
         loaded = _load_html_resource(reference, source_dir=source_dir, zip_resources=zip_resources)
         if loaded is None:
+            stripped = reference.strip()
+            if (
+                warnings is not None
+                and stripped
+                and not stripped.startswith(("#", "http://", "https://", "//"))
+            ):
+                warnings.append(f"unresolved media reference: {reference}")
             return reference
         media_type, payload = loaded
         if inline:
