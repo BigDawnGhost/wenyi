@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "../../lib/toast";
@@ -60,6 +60,15 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
     setDraft(value);
     setYamlDirty(false);
   };
+  // Fields stay editable while a request runs. A reply answers the document that
+  // was submitted, so if the draft has changed since, keep the newer edits and
+  // take only the revision the server moved to.
+  const latestDraft = useRef(draft);
+  latestDraft.current = draft;
+  const applyAnswer = (value: GlobalConfig, submittedYaml: string) => {
+    if (latestDraft.current?.yaml === submittedYaml) apply(value);
+    else setDraft((current) => current && { ...current, revision: value.revision });
+  };
   const rememberSaved = (value: GlobalConfig) => {
     if (credentials) void credentials.refresh();
     qc.setQueryData(["globalConfig"], value);
@@ -67,32 +76,34 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
       void qc.invalidateQueries({ queryKey: [key] });
   };
   const save = useMutation({
-    mutationFn: () => api.saveGlobalConfig(input()),
-    onSuccess: (value) => {
-      apply(value);
+    mutationFn: (body: ReturnType<typeof input>) => api.saveGlobalConfig(body),
+    onSuccess: (value, body) => {
+      applyAnswer(value, body.yaml);
       setUncommitted(false);
       rememberSaved(value);
       toast.success(t("settings.globalSaved"));
     },
   });
   const validate = useMutation({
-    mutationFn: () => api.validateGlobalConfig(input()),
-    onSuccess: (value) => {
-      setUncommitted((current) => current || draft?.yaml !== query.data?.yaml);
-      apply(value);
+    mutationFn: (body: ReturnType<typeof input>) => api.validateGlobalConfig(body),
+    onSuccess: (value, body) => {
+      setUncommitted((current) => current || body.yaml !== query.data?.yaml);
+      applyAnswer(value, body.yaml);
       toast.success(t("settings.configurationIsValidButNotSavedYet"));
     },
   });
   const restore = useMutation({
-    mutationFn: api.getGlobalDefaults,
-    onSuccess: (value) => {
+    mutationFn: (_submittedYaml: string) => api.getGlobalDefaults(),
+    onSuccess: (value, submittedYaml) => {
+      if (latestDraft.current?.yaml !== submittedYaml) return;
       setUncommitted(true);
-      apply({ ...value, revision: draft!.revision });
+      apply({ ...value, revision: latestDraft.current.revision });
       toast.success(t("settings.defaultsLoaded"));
     },
   });
   const error = save.error || validate.error || restore.error;
-  // Installing a credential is a state the page is in, so it disables the form.
+  // Installing an app update is a state the page is in, so it disables the form
+  // and the actions that would write configuration underneath the relaunch.
   // A request in flight is not: disabling for it applied the disabled face to
   // every control and stripped the hover state from the button being pressed.
   const pending = providerSaving || save.isPending || validate.isPending || restore.isPending;
@@ -225,7 +236,7 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
                   spellCheck={false}
                   className="min-h-editor font-mono text-xs"
                   value={draft?.yaml || ""}
-                  disabled={!draft || pending}
+                  disabled={!draft || pending || installing}
                   onChange={(event) => {
                     if (draft) {
                       setDraft({ ...draft, yaml: event.target.value });
@@ -270,26 +281,26 @@ export function GlobalConfiguration({ section }: { section: SettingsSectionId })
       >
         <Button
           variant="outline"
-          disabled={!draft}
+          disabled={!draft || installing}
           aria-busy={restore.isPending || undefined}
-          onClick={() => { if (!pending) restore.mutate(); }}
+          onClick={() => { if (!pending && !installing && draft) restore.mutate(draft.yaml); }}
         >
           {t("settings.restoreDefaults")}
         </Button>
         {section === "advanced" && (
           <Button
             variant="outline"
-            disabled={!draft}
+            disabled={!draft || installing}
             aria-busy={validate.isPending || undefined}
-            onClick={() => { if (!pending) validate.mutate(); }}
+            onClick={() => { if (!pending && !installing && draft) validate.mutate(input()); }}
           >
             {t("settings.validateConfiguration")}
           </Button>
         )}
         <Button
-          disabled={!draft}
+          disabled={!draft || installing}
           aria-busy={save.isPending || undefined}
-          onClick={() => { if (!pending) save.mutate(); }}
+          onClick={() => { if (!pending && !installing && draft) save.mutate(input()); }}
         >
           {t("settings.saveConfiguration")}
         </Button>
