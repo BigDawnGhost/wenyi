@@ -22,6 +22,7 @@ _LOGGER = logging.getLogger(__name__)
 _DIGEST_VERSION = 2
 _SYNOPSIS_VERSION = 4
 _LEGACY_SYNOPSIS_VERSION = 3
+_CHAPTER_DIGEST_OPERATION = "synopsis.chapter"
 _SYNOPSIS_OPERATION = "synopsis.book"
 
 
@@ -231,10 +232,11 @@ class BookUnderstandingService:
             for ci, ch in loaded.items()
             if ch.text_segments
         }
+        digest_routing = inference_snapshot(self._config.llm, (_CHAPTER_DIGEST_OPERATION,))
         fingerprint = content_hash(
             [
                 self._config.language_policy("analysis").task_fingerprint("chapter_digest"),
-                self._config.llm.model_dump(mode="json"),
+                digest_routing,
             ]
         )
         source_hashes = {
@@ -249,7 +251,7 @@ class BookUnderstandingService:
                         _DIGEST_VERSION,
                         source_hashes[ci],
                         fingerprint,
-                        self._config.llm.model_dump(mode="json"),
+                        digest_routing,
                     ]
                 )
                 + ".json"

@@ -687,7 +687,7 @@ def test_version_3_synopsis_snapshot_is_reused_across_alias_and_unmatched_change
     assert upgraded["book_synopsis_meta"]["version"] == 4
 
 
-def test_unrelated_route_change_reuses_synopsis(tmp_path):
+def test_unrelated_route_change_reuses_chapter_digests_and_synopsis(tmp_path):
     ref = "deepseek/deepseek-flash"
     service, store, runtime = _service(tmp_path)
     runtime.config.llm = Config.from_dict(
@@ -695,6 +695,7 @@ def test_unrelated_route_change_reuses_synopsis(tmp_path):
             "llm": {
                 "preset": "deepseek",
                 "routes": {
+                    "synopsis.chapter": {"model": ref, "thinking": "off"},
                     "synopsis.book": {"model": ref, "thinking": "off"},
                     "translation.body": {"model": ref, "thinking": "off"},
                 },
@@ -707,6 +708,7 @@ def test_unrelated_route_change_reuses_synopsis(tmp_path):
             "llm": {
                 "preset": "deepseek",
                 "routes": {
+                    "synopsis.chapter": {"model": ref, "thinking": "off"},
                     "synopsis.book": {"model": ref, "thinking": "off"},
                     "translation.body": {"model": ref, "thinking": "max"},
                 },
@@ -715,6 +717,7 @@ def test_unrelated_route_change_reuses_synopsis(tmp_path):
     ).llm
     runtime.synopsizer.reset_mock()
     assert service.ensure_understanding(store) == "Whole-book synopsis."
+    runtime.synopsizer.digest_chapter.assert_not_called()
     runtime.synopsizer.book_synopsis.assert_not_called()
 
 
@@ -874,3 +877,34 @@ def test_book_synopsis_inline_fast_path_and_digest_chapter_no_nested_pool(monkey
     agent_ch._ask_text = Mock(return_value="Short.")
     assert agent_ch.digest_chapter(" x" * 24) == "Short."
     assert pool_calls == 0
+
+
+def test_chapter_digest_route_change_rebuilds_chapter_digests(tmp_path):
+    ref = "deepseek/deepseek-flash"
+    service, store, runtime = _service(tmp_path)
+    runtime.config.llm = Config.from_dict(
+        {
+            "llm": {
+                "preset": "deepseek",
+                "routes": {
+                    "synopsis.chapter": {"model": ref, "thinking": "off"},
+                    "synopsis.book": {"model": ref, "thinking": "off"},
+                },
+            }
+        }
+    ).llm
+    service.ensure_understanding(store)
+    runtime.config.llm = Config.from_dict(
+        {
+            "llm": {
+                "preset": "deepseek",
+                "routes": {
+                    "synopsis.chapter": {"model": ref, "thinking": "low"},
+                    "synopsis.book": {"model": ref, "thinking": "off"},
+                },
+            }
+        }
+    ).llm
+    runtime.synopsizer.reset_mock()
+    service.ensure_understanding(store)
+    assert runtime.synopsizer.digest_chapter.call_count == 2

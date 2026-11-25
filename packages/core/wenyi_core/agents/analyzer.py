@@ -92,6 +92,30 @@ def _representative_digest_block(digests: list[str], budget: int) -> str:
     return ""
 
 
+def analysis_digest_budget(config: Any, system: str, user: str) -> int:
+    """Bound the style-analysis digests block by synopsis_reduce_tokens and context windows."""
+    budget = config.pipeline.synopsis_reduce_tokens
+    route = resolve_routes(config.llm).get("analysis.style")
+    if route is None:
+        return budget
+    # Enforce the tightest input budget across primary and configured fallback models,
+    # matching the preflight checks the translation routes already run.
+    candidates = [route]
+    for profile in route.fallbacks:
+        candidates.append(model_route(config.llm, "analysis.style", profile, origin="fallback"))
+    bounded = [r for r in candidates if r.context_window is not None]
+    if not bounded:
+        return budget
+    available = min(
+        r.context_window - output_reserve(r.max_output_tokens, r.context_window) for r in bounded
+    )
+    # The rendered prompt already carries the system message, sample, template, and header.
+    return min(
+        budget,
+        available - count_tokens(system) - count_tokens(user) - count_tokens(_DIGESTS_HEADER),
+    )
+
+
 class Analyzer(Agent):
     policy_phase = "analysis"
 
@@ -146,29 +170,7 @@ class Analyzer(Agent):
 
     def _digests_token_budget(self, system: str, user: str) -> int:
         """Bound the digests block by the synopsis cap and the analysis context window."""
-        budget = self.config.pipeline.synopsis_reduce_tokens
-        route = resolve_routes(self.config.llm).get("analysis.style")
-        if route is None:
-            return budget
-        # Enforce the tightest input budget across primary and configured fallback models,
-        # matching the preflight checks the translation routes already run.
-        candidates = [route]
-        for profile in route.fallbacks:
-            candidates.append(
-                model_route(self.config.llm, "analysis.style", profile, origin="fallback")
-            )
-        bounded = [r for r in candidates if r.context_window is not None]
-        if not bounded:
-            return budget
-        available = min(
-            r.context_window - output_reserve(r.max_output_tokens, r.context_window)
-            for r in bounded
-        )
-        # The rendered prompt already carries the system message, sample, template, and header.
-        return min(
-            budget,
-            available - count_tokens(system) - count_tokens(user) - count_tokens(_DIGESTS_HEADER),
-        )
+        return analysis_digest_budget(self.config, system, user)
 
     def style_brief(self, analysis: dict[str, Any], terms: list[GlossaryTerm] | None = None) -> str:
         """Condense style and character guidance; name mappings belong to the glossary."""
