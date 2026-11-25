@@ -2,6 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Selection is opt-in: a stray drag or double click must not select chrome
+   (labels, headings, metrics, navigation, table cells, dialog copy), so the
+   default is off. Copyable text opts in with the select-text utility on the
+   text or on a content-only container; form controls, reader paragraphs,
+   alerts and toasts keep their own selection without any component work. */
+body {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+:is(
+  input,
+  textarea,
+  select,
+  [contenteditable="true"],
+  [data-reader-text],
+  [role="alert"],
+  [data-sonner-toast]
+) {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* Only supply ambiguous quotation glyphs. Letters, spaces, shaping and emoji
    still use the normal body stack; no font download or text substitution. */
 @font-face {

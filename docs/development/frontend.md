@@ -201,6 +201,14 @@ These are authoring conventions, not a claim that every dependency or older
 arbitrary utility is px-only. Keep shared theme tokens and reduced-motion behavior
 consistent in both hosts; do not duplicate styles into an app to bypass the shared rule.
 
+Text selection is opt-in. The shared [stylesheet](../../packages/ui/src/index.css)
+disables selection on `body`, so chrome — labels, headings, metrics, navigation,
+table cells and dialog copy — cannot be picked up by a stray drag or double click.
+Text users copy opts in with the `select-text` utility on the text or on a
+content-only container; reader paragraphs (`data-reader-text`), alerts, toasts and
+form controls stay selectable without per-component work. Do not add `select-none`
+to individual chrome components; this rule replaces that pattern.
+
 ## Dialogs and global notifications
 
 Use the shared [Dialog](../../packages/ui/src/components/ui/misc.tsx#L7), a

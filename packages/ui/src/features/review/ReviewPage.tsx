@@ -224,7 +224,7 @@ function ReviewWorkbench({ pid }: { pid: string }) {
               <summary className="w-fit cursor-pointer text-xs text-muted-foreground">
                 {t("review.technicalDetails")}
               </summary>
-              <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap text-xs [overflow-wrap:anywhere]">
+              <pre className="select-text mt-3 max-h-96 overflow-auto whitespace-pre-wrap text-xs [overflow-wrap:anywhere]">
                 {JSON.stringify(run.data, null, 2)}
               </pre>
             </details>

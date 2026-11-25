@@ -234,7 +234,7 @@ function ProjectExport({ pid }: { pid: string }) {
                     <td className="px-4 py-3.5">
                       <StatusBadge status={e.status} />
                       {e.error && (
-                        <p className="mt-1 text-sm text-destructive">
+                        <p className="select-text mt-1 text-sm text-destructive">
                           {e.error}
                         </p>
                       )}

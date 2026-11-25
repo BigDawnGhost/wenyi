@@ -162,6 +162,12 @@ px，而非 rem/em。视口约束可用视口单位；相对尺寸、动态进�
 这些是编写约定，不代表每个依赖或已有 arbitrary utility 都已完全采用 px。
 两端保持共享主题 token 及减少动态效果行为，不通过把样式复制到 app 绕过共享规则。
 
+文字选择采用 opt-in。共享[样式表](../../../packages/ui/src/index.css)在 `body` 上关闭
+选择，标签、标题、指标、导航、表格单元格和弹窗文案不会因误拖拽或双击被选中。需要
+复制的文字在自身或纯内容容器上使用 `select-text` 工具类；阅读段落
+（`data-reader-text`）、报错、Toast 和表单控件无需逐组件处理即可选中。不要给单个
+外壳组件加 `select-none`，该规则已取代这种写法。
+
 ## 弹窗与全局通知
 
 使用共享 [Dialog](../../../packages/ui/src/components/ui/misc.tsx#L7)，即通过 Portal
