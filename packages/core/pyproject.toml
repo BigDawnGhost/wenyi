@@ -27,6 +27,16 @@ dependencies = [
 Repository = "https://github.com/BigDawnGhost/wenyi"
 Documentation = "https://github.com/BigDawnGhost/wenyi/blob/main/docs/development/architecture.md"
 
+[tool.uv]
+# Keep this in sync with CLI's cache keys: its metadata pins the shared SCM version.
+cache-keys = [
+    { git = { commit = true, tags = true } },
+    { file = "../cli/pyproject.toml" },
+    { file = "../cli/hatch_build.py" },
+    { file = "../core/pyproject.toml" },
+    { file = "../core/hatch_build.py" },
+]
+
 [build-system]
 requires = ["hatchling>=1.27", "hatch-vcs"]
 build-backend = "hatchling.build"

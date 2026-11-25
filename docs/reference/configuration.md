@@ -143,7 +143,7 @@ Presets do not query the remote service for capabilities.
 | `llm.models.<connection/model>.context_window` | Unset (uses conservative known defaults for DeepSeek/OpenAI/Gemini where documented); positive integer if supplied. Preflight shrinks the glossary or fails with a clear message before overflowing the window. |
 | `llm.models.<connection/model>.options` | `{}`; adapter-specific fields below. |
 | `llm.routes.<operation>.model` | Registered `connection/model` for this operation. |
-| `llm.routes.<operation>.thinking` | Omit or set to `null` to use the registered model's settings. Otherwise set an effort supported by the selected provider configuration. |
+| `llm.routes.<operation>.thinking` | A supported effort, or `null` to use the registered model's own settings. |
 | `llm.routes.<operation>.fallbacks` | `[]`; ordered `connection/model` values, subject to failover restrictions below. |
 | `llm.quotas` | `{}`; optional named quota groups. |
 | `llm.budget` | No limits unless supplied. |
@@ -152,7 +152,15 @@ Connection and quota IDs start with a letter and contain only letters,
 digits, underscores, or hyphens. Unknown operations, fields, and references in
 the routing schema fail validation.
 
-Preset overrides replace **whole connection, model, or route entries** by key. In project YAML, supplied routes replace the corresponding global operation routes; omitted operations retain their global selections.
+Preset overrides replace **whole connection, model, or route entries** by key.
+Project YAML overrides `llm.routes` and `llm.budget` **field by field**. Omitted fields
+inherit the global value, even when the project sets a different primary model for
+the same operation. Lists replace rather than append: use `fallbacks: []` to clear
+inherited backup models. Use `thinking: null` to clear an inherited operation-level
+thinking override and use the selected model's own settings. Changing the primary
+in the project form explicitly clears an incompatible thinking override and removes
+the new primary from the fallback list. Saving project YAML stores the resolved route
+and budget values; omitted fields inherit at validation/save time.
 
 Thinking overrides affect only the operation's primary model. The same registered model can use different efforts across operations, for example `translation.body: {model: deepseek/deepseek-flash, thinking: high}` and `language.detect: {model: deepseek/deepseek-flash, thinking: "off"}`. DeepSeek offers `off`, `low`, `high`, and `max`; other adapters provide their own choices, and the endpoint ultimately determines which values its model accepts. Gemini 3 overrides replace the model's thinking budget with a level for that operation. If raw request overrides already set thinking fields, use those settings instead of a stage override. Fallbacks use their own registered settings.
 
@@ -286,6 +294,7 @@ its stage is disabled; reachable checks follow the selected workflow switches.
 | `llm.budget.max_requests` | Unset | Positive integer |
 | `llm.budget.max_tokens` | Unset | Positive integer |
 | `llm.budget.deadline_seconds` | Unset | Positive finite seconds |
+| `llm.budget.token_estimate_divisor` | `2.0` | Positive finite divisor for the prompt-byte estimate |
 
 ```yaml
 llm:
@@ -313,9 +322,12 @@ Connections sharing a `quota_group` share reservations within the invocation.
 Connection concurrency spans all operations using it. Neither coordinates other
 processes nor replaces the provider's account limits.
 
-Token limits reserve a conservative prompt-byte estimate plus the configured
-output cap, then adjust against returned usage. Every reachable primary and
-fallback profile needs a finite output cap when token limits are enabled.
+Token limits reserve the number of UTF-8 prompt bytes divided by
+`token_estimate_divisor`, rounded down, plus a fixed 256-token buffer and the
+configured output cap. Returned usage replaces that estimate when available.
+Set the divisor to `1.0` to retain the previous, more conservative byte estimate.
+Every reachable primary and fallback profile needs a finite output cap when
+token limits are enabled.
 Reservations are not billed usage or a currency spending cap.
 Deadline/Ctrl+C cancellation is cooperative; in-flight requests may finish or
 time out. Restarting creates a new invocation budget.
@@ -551,6 +563,13 @@ schema:
 Web/Desktop also back up and reset unsupported default workflow templates and
 invalid saved project workflow selections. Valid explicit project settings are
 kept; the reset does not recreate an obsolete workflow's behavior.
+
+When an older sparse project route names a valid primary model, Web/Desktop startup
+keeps that choice. It saves `thinking: null` if the inherited effort is incompatible.
+If the inherited fallback list includes the primary, it saves the remaining list in
+the original order (or `[]` if empty). These repairs become explicit project overrides;
+compatible omitted fields remain inherited. New YAML submissions with conflicts
+are rejected rather than repaired.
 
 CLI backups are exact copies beside the selected file, named
 `<filename>.backup-<sha256>.yaml`; comments remain in the backup, while rebuilt

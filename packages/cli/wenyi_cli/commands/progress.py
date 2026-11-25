@@ -68,8 +68,12 @@ class RichProgressBridge:
         )
         self._stage: tuple[str, int | None] = (initial_description, None)
 
-    def __call__(self, done: int, total: int, label: str) -> None:
-        """Refresh the current stage and counts without accumulating progress bars."""
+    def __call__(self, done: int, total: int, label: str, payload: dict | None = None) -> None:
+        """Refresh the current stage and counts without accumulating progress bars.
+
+        `payload` is accepted for the shared progress contract; the Rich view
+        only needs counts and labels.
+        """
         label = english_progress_label(label)
         stage = (label, total if total > 0 else None)
         short = _short_progress_description(label)

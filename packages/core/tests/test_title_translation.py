@@ -3,6 +3,8 @@
 import json
 import re
 from contextlib import closing
+from copy import deepcopy
+from unittest.mock import Mock
 
 import pytest
 from wenyi_core.agents.prompts import numbered
@@ -14,6 +16,7 @@ from wenyi_core.models.document import Chapter, Document, Segment
 from wenyi_core.pipeline.orchestrator import Orchestrator
 from wenyi_core.pipeline.translate.title_translation import plan_titles
 from wenyi_core.storage.file import FileStorage
+from wenyi_core.storage.protocol import Storage
 
 
 def _titles(messages):
@@ -117,6 +120,88 @@ def test_resume_only_reissues_uncommitted_title_batch(title_project):
     assert store.load_manifest() == before
 
 
+@pytest.mark.parametrize("pending_metadata", [False, True], ids=["complete", "manifest-only"])
+def test_titles_without_heading_candidates_do_not_load_chapters(tmp_path, pending_metadata):
+    manifest = {
+        "title": "Chapter",
+        "fmt": "epub",
+        "chapters": [
+            {"index": 0, "title": "Chapter", "title_translated": "章节", "toc_entry_id": "nav:0"}
+        ],
+        "meta": {
+            "opf_path": "EPUB/package.opf",
+            "book_title_translated": "章节",
+            "toc_entries": [
+                {
+                    "entry_id": "nav:0",
+                    "title": "Chapter",
+                    "segment_anchor": "tn0_0",
+                    "title_translated": "章节",
+                }
+            ],
+            "epub_subjects": ["Fiction", "Drama"],
+            "epub_subjects_translated": ["小说", "剧情"],
+        },
+    }
+    if pending_metadata:
+        del manifest["chapters"][0]["title_translated"]
+        manifest["chapters"].append({"index": 1, "title": " "})
+        del manifest["meta"]["book_title_translated"]
+        manifest["meta"]["toc_entries"].append({"entry_id": "nav:1", "title": "Appendix"})
+        manifest["meta"]["epub_subjects_translated"][1] = ""
+
+    saved = []
+    store = Mock(spec=Storage)
+    store.load_manifest.return_value = manifest
+    store.load_chapter.side_effect = lambda index: Chapter(index=index)
+    store.save_manifest.side_effect = lambda value: saved.append(deepcopy(value))
+    config = Config.from_dict(
+        {"llm": {"preset": "fake"}, "language": {"source": "en", "target": "zh"}}
+    )
+    client = FakeClient(handler=lambda *args: '{"titles": ["附录", "剧情"]}')
+    with closing(GlossaryStore(str(tmp_path / "glossary.db"))) as glossary:
+        _run_titles(config, store, glossary, client)
+        terms = [(term.source, term.target) for term in glossary.all_terms()]
+
+    store.load_chapter.assert_not_called()
+    if pending_metadata:
+        assert [_titles(call["messages"]) for call in client.calls] == [["Appendix", "Drama"]]
+        reused, completed = saved
+        assert reused["chapters"][0]["title_translated"] == "章节"
+        assert reused["meta"]["book_title_translated"] == "章节"
+        assert reused["meta"]["epub_subjects_translated"] == ["小说", ""]
+        assert completed["meta"]["epub_subjects_translated"] == ["小说", "剧情"]
+        assert terms == [("Chapter", "章节"), ("Appendix", "附录")]
+    else:
+        assert client.calls == []
+        assert saved == []
+        assert terms == [("Chapter", "章节")]
+        store.log_event.assert_called_once_with(
+            "titles_skipped", reason="already_translated_or_reused"
+        )
+
+
+def test_title_completion_callback_type_error_propagates_without_retry(title_project):
+    config, store, glossary, initialize = title_project
+    initialize([Chapter(index=0, title="A title")])
+    client = FakeClient(handler=lambda *args: '{"titles": ["标题"]}')
+    service = Orchestrator(config, client)._translation._titles
+    error = TypeError("raised inside the callback")
+    completion_payloads = []
+
+    def progress(done: int, total: int, label: str, payload: dict | None = None) -> None:
+        if done:
+            assert store.load_manifest()["chapters"][0]["title_translated"] == "标题"
+            completion_payloads.append(payload)
+            raise error
+
+    with pytest.raises(TypeError) as raised:
+        service.run(store, glossary, progress=progress)
+
+    assert raised.value is error
+    assert completion_payloads == [{"batch": 0, "batch_size": 1}]
+
+
 def test_title_requests_preserve_character_budget_and_location_duplicates(title_project):
     config, store, glossary, initialize = title_project
     titles = ["a" * 2000, "b" * 2000, "Repeated", "Repeated", "c" * 4001, "Last\n title"]
@@ -131,7 +216,10 @@ def test_title_requests_preserve_character_budget_and_location_duplicates(title_
     ]
 
 
-def test_reuse_complete_heading_continuations_without_changing_book_identity(title_project):
+@pytest.mark.parametrize("chapter_title", [None, "手定标题"])
+def test_reuse_complete_heading_continuations_without_changing_book_identity(
+    title_project, chapter_title
+):
     config, store, glossary, initialize = title_project
     chapter = Chapter(
         index=0,
@@ -150,16 +238,42 @@ def test_reuse_complete_heading_continuations_without_changing_book_identity(tit
             ]
         },
     )
-    manifest["chapters"][0]["toc_entry_id"] = "nav:0"
+    if chapter_title is None:
+        manifest["chapters"][0]["toc_entry_id"] = "nav:0"
+    else:
+        manifest["chapters"][0]["title_translated"] = chapter_title
     store.save_manifest(manifest)
     client = FakeClient(handler=lambda *args: '{"titles": ["另一个标题"]}')
     _run_titles(config, store, glossary, client)
     saved = store.load_manifest()
     assert _titles(client.calls[0]["messages"]) == ["Another title"]
-    assert saved["chapters"][0]["title_translated"] == "开篇"
+    assert saved["chapters"][0]["title_translated"] == (chapter_title or "开篇")
     assert saved["meta"]["toc_entries"][0]["title_translated"] == "开篇"
     assert saved["title"] == "Original book title"
     assert store.load_chapter(0) == chapter
+
+
+def test_reuse_first_heading_when_linked_toc_has_no_anchor():
+    manifest = {
+        "chapters": [{"index": 0, "title": "Opening", "toc_entry_id": "nav:0"}],
+        "meta": {"toc_entries": [{"entry_id": "nav:0", "title": "Part One"}]},
+    }
+    load_chapters = Mock(
+        return_value={
+            0: Chapter(
+                index=0,
+                segments=[
+                    Segment(index=0, source="Opening", target="开篇", kind="heading", anchor="h0")
+                ],
+            )
+        }
+    )
+
+    plan = plan_titles(manifest, load_chapters)
+
+    load_chapters.assert_called_once_with()
+    assert plan.manifest["chapters"][0]["title_translated"] == "开篇"
+    assert [item.source for item in plan.pending] == ["Part One"]
 
 
 @pytest.mark.parametrize("response", [{"titles": []}, {"wrong": ["unused"]}, "not a list"])

@@ -11,6 +11,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use crate::ipc_error::codes;
 use crate::mutex::lock;
 use serde::Serialize;
 use tauri::Manager;
@@ -92,7 +93,7 @@ impl Grant {
             "epub" | "fb2" | "txt" | "text" | "md" | "markdown" | "html" | "htm" | "pdf" | "docx"
         ) {
             return Err(crate::ipc_error::IpcError::new(
-                "drop_unsupported_format",
+                codes::DROP_UNSUPPORTED_FORMAT,
                 "Unsupported input format.",
             ));
         }
@@ -101,7 +102,7 @@ impl Grant {
             .map_err(|_| "Cannot inspect source file.")?;
         if stamp.size == 0 {
             return Err(crate::ipc_error::IpcError::new(
-                "drop_empty_source",
+                codes::DROP_EMPTY_SOURCE,
                 "Source file is empty.",
             ));
         }
@@ -182,13 +183,13 @@ impl Grants {
     fn drop_files(&self, paths: &[PathBuf]) -> Result<Source> {
         if self.1.load(Ordering::SeqCst) {
             return Err(crate::ipc_error::IpcError::new(
-                "drop_upload_busy",
+                codes::DROP_UPLOAD_BUSY,
                 "A source upload is already running.",
             ));
         }
         if paths.len() != 1 {
             return Err(crate::ipc_error::IpcError::new(
-                "drop_selection_invalid",
+                codes::DROP_SELECTION_INVALID,
                 "Select exactly one source file.",
             ));
         }
@@ -196,7 +197,7 @@ impl Grants {
         grants.retain(|_, grant| grant.expires > Instant::now());
         if grants.len() >= MAX_GRANTS {
             return Err(crate::ipc_error::IpcError::new(
-                "drop_too_many_files",
+                codes::DROP_TOO_MANY_FILES,
                 "Too many pending files. Clear the selection and try again.",
             ));
         }
@@ -278,7 +279,7 @@ fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<
         .map_err(|_| "Local upload failed. Drop the source again to retry.")?;
     if !response.status().is_success() {
         return Err(crate::ipc_error::IpcError::new(
-            "drop_upload_failed",
+            codes::DROP_UPLOAD_FAILED,
             format!(
                 "Local upload failed (HTTP {}). Drop the source again to retry.",
                 response.status().as_u16()
@@ -292,19 +293,22 @@ fn upload(grant: Grant, connection: &str, project: serde_json::Value) -> Result<
         .map_err(|_| "Could not read local upload result.")?;
     if bytes.len() > 1024 * 1024 {
         return Err(crate::ipc_error::IpcError::new(
-            "drop_response_invalid",
+            codes::DROP_RESPONSE_INVALID,
             "Local upload response was too large.",
         ));
     }
     serde_json::from_slice(&bytes).map_err(|_| {
-        crate::ipc_error::IpcError::new("drop_response_invalid", "Invalid local upload response.")
+        crate::ipc_error::IpcError::new(
+            codes::DROP_RESPONSE_INVALID,
+            "Invalid local upload response.",
+        )
     })
 }
 
 fn trusted_window(window: &tauri::WebviewWindow) -> Result<()> {
     if window.label() != "main" || !window.url().is_ok_and(|url| crate::trusted(&url)) {
         return Err(crate::ipc_error::IpcError::new(
-            "drop_untrusted_window",
+            codes::DROP_UNTRUSTED_WINDOW,
             "Untrusted window.",
         ));
     }
@@ -353,7 +357,7 @@ pub async fn native_drop_upload(
         let state = lock(&state);
         if state.closing || state.error.is_some() {
             return Err(crate::ipc_error::IpcError::new(
-                "drop_engine_unavailable",
+                codes::DROP_ENGINE_UNAVAILABLE,
                 "Local service is unavailable.",
             ));
         }
@@ -451,7 +455,7 @@ mod tests {
     #[test]
     fn drag_errors_keep_a_string_message_for_the_renderer() {
         let value = error_event(
-            crate::ipc_error::IpcError::new("drop_empty_source", "Source file is empty."),
+            crate::ipc_error::IpcError::new(codes::DROP_EMPTY_SOURCE, "Source file is empty."),
             serde_json::json!({"x": 1, "y": 2}),
         );
         assert_eq!(value["kind"], "error");

@@ -6,6 +6,7 @@ import pytest
 from catalog_support import orphan
 from fastapi.testclient import TestClient
 from wenyi_desktop import paths, project_import
+from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.main import create_app, create_context
 
 
@@ -75,16 +76,19 @@ def test_duplicate_import_is_refused_and_failed_copy_keeps_original(tmp_path, mo
         raise OSError("Simulated copy failure")
 
     monkeypatch.setattr(project_import.shutil, "copytree", fail)
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
     with pytest.raises(project_import.ImportRefused):
-        project_import.import_project(context.repository, directory)
+        project_import.import_project(backend, directory)
     assert source.read_bytes() == original
-    assert context.repository.list_projects() == []
-    context.repository.close()
+    assert backend.list_projects() == []
+    backend.close()
 
 
 def test_catalog_failure_keeps_the_import_original(tmp_path, monkeypatch):
     directory, source, _ = orphan(tmp_path / "Downloads")
     backend = create_context(tmp_path / "data").repository
+    assert isinstance(backend, LocalBackend)
     original = source.read_bytes()
 
     def fail(*args, **kwargs):
@@ -113,6 +117,7 @@ def test_linked_files_are_refused_before_reading_project_metadata(tmp_path, monk
     except OSError:
         pytest.skip("Symlink creation is unavailable")
     backend = create_context(tmp_path / "data").repository
+    assert isinstance(backend, LocalBackend)
 
     def forbidden(*args, **kwargs):
         raise AssertionError("Linked project metadata was opened")

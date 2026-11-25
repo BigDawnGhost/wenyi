@@ -49,7 +49,7 @@ class TestLocateExistingStore(unittest.TestCase):
             orch = Orchestrator(cfg, client=FakeClient())
 
             with patch(
-                "wenyi_core.pipeline.prepare.preparation.load_document",
+                "wenyi_core.pipeline.prepare.input_preparation.load_document",
                 side_effect=AssertionError("locate 不应调用 load_document"),
             ):
                 located = orch._preparation.locate_existing(epub)

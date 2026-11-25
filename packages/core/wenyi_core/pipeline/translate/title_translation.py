@@ -5,10 +5,12 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from functools import cache
 from typing import Any
 
 from ...agents import prompts
 from ...agents.title_translator import TitleOutputError, TitleTranslator
+from ...events import ProgressFn, emit_progress
 from ...glossary.store import GlossaryStore
 from ...models.document import Chapter, uses_epub_template
 from ...models.glossary import TYPE_NAVIGATION, GlossaryTerm
@@ -112,8 +114,11 @@ def _heading_targets(chapters: Mapping[int, Chapter]) -> dict[str, tuple[str, st
     return targets
 
 
-def plan_titles(manifest: dict[str, Any], chapters: Mapping[int, Chapter]) -> TitlePlan:
-    """Reuse translated headings and select pending titles without mutating inputs."""
+def plan_titles(
+    manifest: dict[str, Any],
+    chapters: Mapping[int, Chapter] | Callable[[], Mapping[int, Chapter]],
+) -> TitlePlan:
+    """Plan titles without mutating inputs, loading chapters only for heading candidates."""
     copied = deepcopy(manifest)
     raw_meta = copied.get("meta")
     meta = raw_meta if isinstance(raw_meta, dict) else {}
@@ -121,12 +126,20 @@ def plan_titles(manifest: dict[str, Any], chapters: Mapping[int, Chapter]) -> Ti
     entries = raw_entries if isinstance(raw_entries, list) else []
     entries = [entry for entry in entries if isinstance(entry, dict) and _flat(entry.get("title"))]
     plan = TitlePlan(copied, entries, [])
-    headings = _heading_targets(chapters)
+
+    @cache
+    def heading_data() -> tuple[Mapping[int, Chapter], dict[str, tuple[str, str]]]:
+        loaded = chapters if isinstance(chapters, Mapping) else chapters()
+        return loaded, _heading_targets(loaded)
+
     for entry in entries:
         if entry.get("title_translated"):
             continue
         anchor = entry.get("segment_anchor")
-        linked = headings.get(anchor) if isinstance(anchor, str) else None
+        if not isinstance(anchor, str) or not anchor:
+            continue
+        _, headings = heading_data()
+        linked = headings.get(anchor)
         can_reuse = linked is not None and _flat(linked[0]) == _flat(entry.get("title"))
         target = linked[1] if linked and can_reuse else ""
         if target.strip():
@@ -138,16 +151,20 @@ def plan_titles(manifest: dict[str, Any], chapters: Mapping[int, Chapter]) -> Ti
     for row in copied.get("chapters", []):
         if row.get("title_translated"):
             continue
-        chapter = chapters.get(row.get("index"))
+        title = _flat(row.get("title"))
+        if not title:
+            continue
+        loaded, headings = heading_data()
+        chapter = loaded.get(row.get("index"))
         if chapter is None:
             continue
         heading = next(
             (segment for segment in chapter.text_segments if segment.kind == "heading"), None
         )
-        if heading and heading.anchor and _flat(heading.source) == _flat(row.get("title")):
-            target = headings.get(heading.anchor, ("", ""))[1]
-            if target.strip():
-                row["title_translated"] = target.strip()
+        if heading and heading.anchor and _flat(heading.source) == title:
+            linked = headings.get(heading.anchor)
+            if linked and linked[1].strip():
+                row["title_translated"] = linked[1].strip()
                 plan.changed = True
 
     plan.pending = [
@@ -275,16 +292,19 @@ class TitleTranslationService:
         self,
         store: Storage,
         glossary: Storage | GlossaryStore,
-        progress: Callable[[int, int, str], None] | None = None,
+        progress: ProgressFn | None = None,
     ) -> None:
         """Reuse complete headings, then translate and commit only pending title batches."""
         manifest = store.load_manifest()
-        chapters = {
-            row["index"]: store.load_chapter(row["index"])
-            for row in manifest.get("chapters", [])
-            if isinstance(row.get("index"), int)
-        }
-        plan = plan_titles(manifest, chapters)
+
+        def load_chapters() -> dict[int, Chapter]:
+            return {
+                row["index"]: store.load_chapter(row["index"])
+                for row in manifest.get("chapters", [])
+                if isinstance(row.get("index"), int)
+            }
+
+        plan = plan_titles(manifest, load_chapters)
         if plan.changed:
             store.save_manifest(plan.manifest)
         if not plan.pending:
@@ -334,6 +354,12 @@ class TitleTranslationService:
             )
             completed += len(batch)
             if progress:
-                progress(completed, len(plan.pending), "Translating chapter titles")
+                emit_progress(
+                    progress,
+                    completed,
+                    len(plan.pending),
+                    "Translating chapter titles",
+                    payload={"batch": batch_index, "batch_size": len(batch)},
+                )
         # Commit titles first so an interrupted glossary write can resume without model calls.
         _store_navigation_terms(plan, glossary)

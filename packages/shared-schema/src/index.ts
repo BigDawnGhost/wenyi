@@ -9,3 +9,7 @@ export type {
 
 /** Pipeline mode stored inside the editable configuration document. */
 export type TranslationMode = "standard" | "three_draft_synthesis";
+
+/** Stable desktop IPC error codes shared with the native shell. */
+export { IpcErrorCodes } from "./ipc-errors";
+export type { IpcErrorCode } from "./ipc-errors";

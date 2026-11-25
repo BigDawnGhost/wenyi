@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from contextvars import copy_context
 from dataclasses import replace
 
@@ -40,15 +41,17 @@ def worker_state(pg_storage, pg_pool, monkeypatch):
     postgres_repository(context)._pool = pg_pool
     telemetry = context.telemetry
     assert isinstance(telemetry, RedisTelemetry)
-    telemetry.url = "redis://127.0.0.1:56379/0"
+    telemetry.url = os.environ.get("WENYI_TEST_REDIS_URL", "redis://127.0.0.1:56379/0")
     with use_context(context):
         yield pg_storage
 
 
 def execute_workflow(kind, pid, run_id, params=None):
-    runner.execute(
-        ExecutionRequest(kind, pid, run_id, params or {}),
-        bindings.workflow_dependencies(current_context()),
+    asyncio.run(
+        runner.run(
+            ExecutionRequest(kind, pid, run_id, params or {}),
+            bindings.workflow_dependencies(current_context()),
+        )
     )
 
 
@@ -143,7 +146,6 @@ def test_async_error_fallback_does_not_overwrite_a_newer_task(worker_state, monk
 
 
 def test_worker_streams_time_and_usage_before_a_batch_finishes(worker_state, monkeypatch):
-    import os
     import time
 
     from redis import Redis

@@ -74,6 +74,7 @@ class NativeOwner:
                 stream.sendall(MAGIC + self.token)
                 return stream.recv(1) == b"\x01"
         except (OSError, ValueError, KeyError, TypeError, OverflowError):
+            # Any probe failure means the caller cannot be vouched for.
             return False
 
 

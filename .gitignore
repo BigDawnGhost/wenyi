@@ -59,6 +59,10 @@ htmlcov/
 .pytest-tmp/
 pytest-of-*/
 
+# Stray tempfile fallback trees created at the repository root when the temporary
+# directory was unusable; only synthetic probe/run leftovers are expected here.
+/tmp*/
+
 # tiktoken byte cache; falls back to the working directory when TMPDIR is unusable.
 data-gym-cache/
 

@@ -9,13 +9,16 @@ import subprocess
 import sys
 from contextlib import nullcontext
 from pathlib import Path
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
 from wenyi_core.glossary.store import GlossaryStore, GlossaryTerm
 from wenyi_core.llm.usage import UsageSample, UsageTracker
+from wenyi_core.models.document import Chapter, Segment
+from wenyi_core.storage.chapter_publication import JOURNAL_NAME
 from wenyi_core.storage.file import FileStorage
-from wenyi_core.storage.run_store import RunStore, slugify
+from wenyi_core.storage.run_store import STATUS_DONE, STATUS_PENDING, RunStore, slugify
 
 
 class _RecordingText:
@@ -81,6 +84,32 @@ def test_initialization_retry_recovers_first_usage_commit(tmp_path, published):
             storage.begin_initialization("a" * 64)
             assert storage.load_usage() == ledger
             assert storage.read_artifact("usage-pending.json") is None
+
+
+def test_stale_initialization_marker_cleared_once_manifest_committed(tmp_path):
+    storage = FileStorage(str(tmp_path))
+    with storage.lock():
+        storage.begin_initialization("a" * 64)
+        storage.save_manifest({"source_sha256": "a" * 64, "initialized": True})
+        # No finish_initialization: a crash after the manifest commit leaves the marker.
+        assert os.path.isfile(storage.initialization_path)
+
+    reopened = FileStorage(str(tmp_path))
+    assert reopened.exists()
+    assert not os.path.exists(reopened.initialization_path)
+
+
+def test_initialization_marker_without_manifest_survives_for_recovery(tmp_path):
+    storage = FileStorage(str(tmp_path))
+    with storage.lock():
+        storage.begin_initialization("a" * 64)
+        assert os.path.isfile(storage.initialization_path)
+
+    # A marker without a committed manifest is the recovery anchor for the next
+    # initialization attempt, so reopening the store must not discard it.
+    reopened = FileStorage(str(tmp_path), create=False)
+    assert not reopened.exists()
+    assert os.path.isfile(reopened.initialization_path)
 
 
 @pytest.mark.parametrize(
@@ -403,6 +432,290 @@ def test_replacement_succeeds_while_the_target_is_open(tmp_path):
 
     assert json.loads(target.read_text(encoding="utf-8")) == {"target": "updated"}
     assert [path.name for path in tmp_path.iterdir()] == ["manifest.json"]
+
+
+def _pending_store(tmp_path) -> FileStorage:
+    """A run with one pending chapter, ready for its translation result."""
+    storage = FileStorage(str(tmp_path / "run"))
+    storage.save_chapter(Chapter(index=0, segments=[Segment(index=0, source="Alice waited.")]))
+    storage.save_manifest(
+        {
+            "title": "book",
+            "source_lang": "en",
+            "target_lang": "zh",
+            "source_sha256": "0" * 64,
+            "chapters": [{"index": 0, "status": STATUS_PENDING}],
+        }
+    )
+    return storage
+
+
+def _translated_chapter() -> Chapter:
+    return Chapter(
+        index=0, segments=[Segment(index=0, source="Alice waited.", target="爱丽丝等着。")]
+    )
+
+
+def test_save_chapter_with_status_publishes_content_and_status_together(tmp_path):
+    """One call must leave the chapter file and the manifest agreeing."""
+    storage = _pending_store(tmp_path)
+    storage.save_chapter_with_status(_translated_chapter(), STATUS_DONE)
+    assert storage.load_chapter(0).segments[0].target == "爱丽丝等着。"
+    assert storage.load_manifest()["chapters"][0]["status"] == STATUS_DONE
+    assert storage.pending_chapters() == []
+
+
+def test_second_formal_replace_failure_is_invisible_to_public_readers(tmp_path, monkeypatch):
+    storage = _pending_store(tmp_path)
+    manifest_path = Path(storage.manifest_path)
+    chapter_path = Path(storage.chapter_path(0))
+    old_manifest = manifest_path.read_bytes()
+    stale_marker = Path(storage.initialization_path)
+    stale_marker.write_text('{"source_sha256": "' + "0" * 64 + '"}', encoding="utf-8")
+    real_replace = os.replace
+
+    def fail_manifest(source, target):
+        if os.path.basename(target) == "manifest.json":
+            raise OSError("cannot materialize manifest")
+        real_replace(source, target)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", fail_manifest)
+        with pytest.raises(OSError, match="cannot materialize manifest"):
+            storage.save_chapter_with_status(_translated_chapter(), STATUS_DONE)
+
+        assert manifest_path.read_bytes() == old_manifest
+        assert json.loads(chapter_path.read_bytes())["segments"][0]["target"] == "爱丽丝等着。"
+        # A read-only reopen (as used by CLI status) must not replay or clean up on disk.
+        reopened = RunStore(storage.run_dir, create=False)
+        assert reopened.load_manifest()["chapters"][0]["status"] == STATUS_DONE
+        assert reopened.pending_chapters() == []
+        assert reopened.load_chapter(0) == _translated_chapter()
+        artifact_reader = FileStorage(storage.run_dir, create=False)
+        assert artifact_reader.read_artifact("manifest.json") == reopened.load_manifest()
+        assert (
+            artifact_reader.read_artifact("chapters/ch0.json") == _translated_chapter().model_dump()
+        )
+        snapshot = artifact_reader.create_export_snapshot(actual_sha256="0" * 64)
+        assert snapshot.load_manifest()["chapters"][0]["status"] == STATUS_DONE
+        assert snapshot.load_chapter(0) == _translated_chapter()
+        assert manifest_path.read_bytes() == old_manifest
+        assert stale_marker.is_file()
+        with pytest.raises(ValueError, match="Input content does not match"):
+            reopened.create_export_snapshot(actual_sha256="1" * 64)
+
+    # A subsequent writer materializes the same generation before modifying it.
+    with artifact_reader.lock():
+        chapter = artifact_reader.load_chapter(0)
+        chapter.segments[0].target = "edited"
+        artifact_reader.save_chapter(chapter)
+        assert json.loads(manifest_path.read_bytes())["chapters"][0]["status"] == STATUS_DONE
+    assert artifact_reader.load_chapter(0).segments[0].target == "edited"
+    assert snapshot.load_chapter(0) == _translated_chapter()
+    assert snapshot.read_artifact("chapters/ch0.json") == _translated_chapter().model_dump()
+
+
+def test_export_snapshot_waits_for_in_flight_chapter_publication(tmp_path, monkeypatch):
+    storage = _pending_store(tmp_path)
+    reader = FileStorage(storage.run_dir, create=False)
+    chapter_replaced = Event()
+    snapshot_started = Event()
+    snapshot_finished = Event()
+    release_writer = Event()
+    real_replace = os.replace
+    errors = []
+    snapshots = []
+
+    def replace_then_pause(temp, target):
+        real_replace(temp, target)
+        if os.path.basename(target) == "ch0.json":
+            chapter_replaced.set()
+            assert release_writer.wait(10)
+
+    def publish():
+        try:
+            storage.save_chapter_with_status(_translated_chapter(), STATUS_DONE)
+        except BaseException as error:
+            errors.append(error)
+
+    def export():
+        snapshot_started.set()
+        try:
+            snapshots.append(reader.create_export_snapshot(actual_sha256="0" * 64))
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            snapshot_finished.set()
+
+    monkeypatch.setattr(os, "replace", replace_then_pause)
+    writer = Thread(target=publish)
+    exporter = Thread(target=export)
+    writer.start()
+    try:
+        assert chapter_replaced.wait(10)
+        exporter.start()
+        assert snapshot_started.wait(10)
+        assert not snapshot_finished.wait(0.1)
+    finally:
+        release_writer.set()
+        writer.join(10)
+        if exporter.ident is not None:
+            exporter.join(10)
+
+    assert not errors
+    (snapshot,) = snapshots
+    assert snapshot.load_chapter(0) == _translated_chapter()
+    assert snapshot.load_manifest()["chapters"][0]["status"] == STATUS_DONE
+
+
+def test_chapter_publication_survives_process_exit_between_formal_replacements(tmp_path):
+    storage = _pending_store(tmp_path)
+    script = """
+import os
+import sys
+from wenyi_core.storage.file import FileStorage
+
+store = FileStorage(sys.argv[1], create=False)
+chapter = store.load_chapter(0)
+chapter.segments[0].target = ""
+replace = os.replace
+
+def exit_after_chapter(source, target):
+    replace(source, target)
+    if os.path.basename(target) == "ch0.json":
+        os._exit(42)
+
+os.replace = exit_after_chapter
+store.save_chapter_with_status(chapter, "done")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script, storage.run_dir],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    assert result.returncode == 42, result.stderr
+
+    reopened = FileStorage(storage.run_dir, create=False)
+    assert reopened.pending_chapters() == []
+    assert reopened.load_chapter(0).segments[0].target == ""
+    # Recovery survives a normal temp sweep, then runs only once.
+    with reopened._run.lock():
+        reopened._run.sweep_temporary_files()
+    with reopened.lock():
+        reopened.ensure_source_identity("", actual_sha256="0" * 64)
+        assert reopened.pending_chapters() == []
+    with reopened.lock():
+        reopened.ensure_source_identity("", actual_sha256="0" * 64)
+        assert reopened.pending_chapters() == []
+    assert (
+        json.loads(Path(storage.manifest_path).read_bytes())["chapters"][0]["status"] == STATUS_DONE
+    )
+
+
+@pytest.mark.parametrize("foreign_state", [{"source_sha256": "1" * 64}, {"title": "edited"}])
+def test_pending_chapter_publication_refuses_changed_source_state(
+    tmp_path, monkeypatch, foreign_state
+):
+    storage = _pending_store(tmp_path)
+    old = storage.load_manifest()
+    real_replace = os.replace
+
+    def fail_manifest(source, target):
+        if os.path.basename(target) == "manifest.json":
+            raise OSError("cannot materialize manifest")
+        real_replace(source, target)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "replace", fail_manifest)
+        with pytest.raises(OSError, match="cannot materialize manifest"):
+            storage.save_chapter_with_status(_translated_chapter(), STATUS_DONE)
+
+    foreign_manifest = {**old, **foreign_state}
+    RunStore._write_json(storage.manifest_path, foreign_manifest)
+    reopened = FileStorage(storage.run_dir, create=False)
+    with pytest.raises(ValueError, match="pending chapter publication"):
+        reopened.load_manifest()
+    with pytest.raises(ValueError, match="pending chapter publication"):
+        reopened.load_chapter(0)
+    with reopened.lock(), pytest.raises(ValueError, match="pending chapter publication"):
+        reopened.ensure_source_identity("", actual_sha256="1" * 64)
+    assert RunStore._read_json(storage.manifest_path) == foreign_manifest
+
+
+def test_save_chapter_with_status_commits_the_intent_first(tmp_path, monkeypatch):
+    """A durable after-image must be available before replacing either canonical file."""
+    storage = _pending_store(tmp_path)
+    published = []
+    real_replace = os.replace
+
+    def recording_replace(source, target):
+        published.append(os.path.basename(str(target)))
+        real_replace(source, target)
+
+    monkeypatch.setattr("wenyi_core.storage.run_store.os.replace", recording_replace)
+    storage.save_chapter_with_status(_translated_chapter(), STATUS_DONE)
+    assert published == [JOURNAL_NAME, "ch0.json", "manifest.json"]
+    assert not (Path(storage.run_dir) / JOURNAL_NAME).exists()
+
+
+def test_save_chapter_with_status_keeps_previous_state_when_intent_write_fails(
+    tmp_path, monkeypatch
+):
+    """A disk failure before the journal is published leaves the old generation."""
+    storage = _pending_store(tmp_path)
+    old_chapter = storage.load_chapter(0)
+    old_manifest = storage.load_manifest()
+
+    def fail_fsync(descriptor):
+        raise OSError("no space left for intent")
+
+    monkeypatch.setattr(os, "fsync", fail_fsync)
+    with pytest.raises(OSError, match="no space left for intent"):
+        storage.save_chapter_with_status(_translated_chapter(), STATUS_DONE)
+    assert storage.load_chapter(0) == old_chapter
+    assert storage.load_manifest() == old_manifest
+    assert not (Path(storage.run_dir) / JOURNAL_NAME).exists()
+    assert [path.name for path in (tmp_path / "run").rglob("*.tmp")] == []
+
+
+@pytest.mark.parametrize("payload", ["{incomplete", '{"version": 0, "index": 0}'])
+def test_unreadable_chapter_intent_blocks_reads_and_new_writes(tmp_path, payload):
+    storage = _pending_store(tmp_path)
+    marker = Path(storage.run_dir) / JOURNAL_NAME
+    marker.write_text(payload, encoding="utf-8")
+    with pytest.raises(ValueError, match="pending chapter publication"):
+        storage.load_manifest()
+    with pytest.raises(ValueError, match="pending chapter publication"):
+        storage.save_chapter_with_status(_translated_chapter(), STATUS_DONE)
+    assert marker.read_text(encoding="utf-8") == payload
+
+
+def test_retry_after_journal_removal_failure_does_not_rewrite_formal_files(tmp_path, monkeypatch):
+    storage = _pending_store(tmp_path)
+    marker = Path(storage.run_dir) / JOURNAL_NAME
+    real_unlink = os.unlink
+
+    def fail_retirement(path, *args, **kwargs):
+        if os.path.basename(path) == JOURNAL_NAME:
+            raise OSError("cannot retire journal")
+        return real_unlink(path, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "unlink", fail_retirement)
+        with pytest.raises(OSError, match="cannot retire journal"):
+            storage.save_chapter_with_status(_translated_chapter(), STATUS_DONE)
+
+    assert marker.is_file()
+    assert storage.pending_chapters() == []
+
+    def no_replace(*_):
+        pytest.fail("recovery replaced a file that was already materialized")
+
+    monkeypatch.setattr(os, "replace", no_replace)
+    with storage.lock():
+        storage.ensure_source_identity("", actual_sha256="0" * 64)
+    assert not marker.exists()
 
 
 #: Filesystem calls that need the extended-length spelling, and the ones that do not.

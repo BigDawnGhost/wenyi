@@ -21,6 +21,20 @@ Use the operation registry for model routing, validation and inference identitie
 Provider transport retries belong to the shared retry layer; disable SDK retries
 instead of stacking retry loops around it.
 
+### Progress callbacks
+
+Every `Orchestrator` workflow accepts `progress(done, total, label)` with three
+positional arguments (`ProgressFn` in `wenyi_core.events`). Counts describe the
+current stage, not the whole invocation. A callback can also declare an optional
+fourth positional argument, `payload=None` (`StructuredProgressFn`), for
+JSON-serializable locating fields such as `chapter`, `batch`, and `batch_size`.
+Ticks without locating fields still call with three arguments.
+
+Use `emit_progress` when reporting a structured tick. It checks the callback
+signature before invocation. A callback that cannot bind four positional
+arguments, or whose signature cannot be inspected, receives the same tick
+without the payload. Callback exceptions propagate without retrying the callback.
+
 <a id="initialization"></a>
 
 ## Initialization and source identity
@@ -41,6 +55,13 @@ Parsing and initialized translation are distinct states.
 - Retry preserves compatible parsed source, complete chapter digests, paid style
   analysis and cumulative usage. Missing work is not an excuse to reset those
   records. An unfinished chapter's digest chunks are not individually checkpointed.
+
+CLI file lookup checks only the short slug and the original untruncated slug for
+the requested target. It refuses both directories if they coexist and never
+migrates either one. A legacy candidate must match the source hash in the committed
+manifest, the unfinished `.initializing.json` marker, or, for parse-only state, the
+parsed cache. Check the saved target in the manifest or parsed cache; the marker
+is scoped by its parent target directory. Injected storage bypasses this lookup.
 
 With book understanding enabled, every nonempty chapter needs a complete digest
 before body work. A failed chunk or merge cannot publish a partial chapter digest.
@@ -246,8 +267,11 @@ database to bypass the injected adapter.
 | Desktop SQLite | Independent project database and workspace; no CLI/Web state migration |
 | Web PostgreSQL | Project-scoped mutable state; upload/cache/export directories are not JSON or SQLite state mirrors |
 
-Artifact keys are run-relative, `/`-separated names on every backend. Limit prefix
-queries to the relevant subtree rather than scanning unrelated source caches.
+Artifact keys are nonempty, run-relative, `/`-separated names on every backend.
+Empty, `.` and `..` components, backslashes, colons and NUL are invalid. Prefix
+queries match literal text: an empty prefix lists all keys, and a single trailing
+`/` is allowed only in a prefix. Limit queries to the relevant subtree rather than
+scanning unrelated source caches. File storage also checks resolved path containment.
 Precision archives, policy plans and Review traces are artifacts, not portable
 absolute filesystem paths. `Storage` path-shaped identity properties do not grant
 domain services permission to write around the port.
@@ -261,10 +285,21 @@ Preserve the lock roles:
   then renders without holding the long translation lock.
 
 File JSON publication uses a same-directory temporary file and atomic replacement.
-SQL adapters implement the equivalent transaction/locking contract; a successful
-in-memory update is not a durable commit. Storage owners close resources on success
-and failure. Standalone local Review reads a glossary snapshot that includes committed
-WAL data without modifying the formal glossary database.
+For chapter completion, atomically publishing a flushed `.chapter-publication.json`
+commits both the chapter and manifest status under the short state lock. Until both
+legacy files have been updated, Wenyi readers use the verified after-images in the
+journal, without replaying it. A reader combining manifest and chapter data must
+hold one state-lock scope or use an export snapshot. A modifying resume with verified
+source identity, or a subsequent chapter/manifest write, completes the materialization
+before changing formal state. Recovery does not rerun translation or update the usage ledger.
+Unknown, corrupt, or mismatched journals stop access to formal state rather than
+exposing a mixed generation. POSIX directory entries are synced before materializing
+and before retiring the journal. Direct readers of the two files and older Wenyi
+processes do not participate in the publication protocol.
+
+SQL adapters use a database transaction for the equivalent contract. Storage owners
+close resources on success and failure. Standalone local Review reads a glossary
+snapshot that includes committed WAL data without modifying the formal glossary database.
 
 <a id="cache-identity"></a>
 
@@ -514,7 +549,11 @@ Validate changes at the boundary they affect:
   Autofix index and usage-journal commits; verify idempotent recovery.
 - Check content, glossary, policy and model changes invalidate only compatible scopes.
 - Exercise File, SQLite and PostgreSQL adapters for storage changes, including locks
-  and concurrent export snapshots.
+  and concurrent export snapshots. Offline lock runs can force the pure-Python
+  backend with `WENYI_LOCKS_BACKEND=python`, fail loudly when the native library is
+  missing with `WENYI_LOCKS_MODE=error`, or point `WENYI_LOCKS_LIB` at a built
+  library; the switches are specified in
+  [architecture](architecture.md#locks-backend).
 - Use fake model/parser services and temporary data. Follow the repository's required
   architecture, orchestration, storage and affected-domain tests.
 

@@ -261,38 +261,44 @@ fn attributes(input: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
                         | "shutdown"
                 )
             ),
-            "reason" => matches!(
-                value.as_str(),
-                Some(
-                    "failed"
-                        | "completed"
-                        | "setup_failed"
-                        | "spawn_failed"
-                        | "protocol_invalid"
-                        | "protocol_read_failed"
-                        | "protocol_eof"
-                        | "ready_timeout"
-                        | "channel_closed"
-                        | "process_exited"
-                        | "shutdown_requested"
-                        | "forced"
-                        | "wait_failed"
-                        | "disabled"
-                        | "disabled_success"
-                        | "unarmed"
-                        | "duplicate"
-                        | "rate_limited"
-                        | "os_disabled"
-                        | "queue_full"
-                        | "invalid_payload"
-                        | "winrt_failed"
-                        | "unavailable"
-                )
-            ) || value.as_str().is_some_and(|reason| {
-                crate::notifications::Failure::ALL
-                    .iter()
-                    .any(|failure| failure.reason() == reason)
-            }),
+            "reason" => {
+                matches!(
+                    value.as_str(),
+                    Some(
+                        "failed"
+                            | "completed"
+                            | "setup_failed"
+                            | "spawn_failed"
+                            | "protocol_invalid"
+                            | "protocol_read_failed"
+                            | "protocol_eof"
+                            | "ready_timeout"
+                            | "channel_closed"
+                            | "migration_failed"
+                            | "version_mismatch"
+                            | "legacy_catalog"
+                            | "upgrade_recovery_required"
+                            | "process_exited"
+                            | "shutdown_requested"
+                            | "forced"
+                            | "wait_failed"
+                            | "disabled"
+                            | "disabled_success"
+                            | "unarmed"
+                            | "duplicate"
+                            | "rate_limited"
+                            | "os_disabled"
+                            | "queue_full"
+                            | "invalid_payload"
+                            | "winrt_failed"
+                            | "unavailable"
+                    )
+                ) || value.as_str().is_some_and(|reason| {
+                    crate::notifications::Failure::ALL
+                        .iter()
+                        .any(|failure| failure.reason() == reason)
+                })
+            }
             "exception" | "cause_exception" => matches!(
                 value.as_str(),
                 Some(

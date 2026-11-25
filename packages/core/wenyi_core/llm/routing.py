@@ -9,7 +9,14 @@ from dataclasses import asdict, dataclass
 from types import MappingProxyType
 from typing import Any
 
-from .configuration import LLMConfig, _located_error, effective_context_window, split_model_ref
+from .configuration import (
+    LLMConfig,
+    ModelConfig,
+    ProviderConfig,
+    _located_error,
+    effective_context_window,
+    split_model_ref,
+)
 from .operations import OPERATIONS, require_operation
 from .registry import provider_spec
 from .transport import ResolvedModel
@@ -64,10 +71,33 @@ def model_route(
     output_hint: int | None = None,
     thinking: str | None = None,
 ) -> ResolvedRoute:
+    connection_name, _ = split_model_ref(profile)
+    return resolve_model(
+        operation,
+        profile,
+        config.providers[connection_name],
+        config.models[profile],
+        origin=origin,
+        fallbacks=fallbacks,
+        output_hint=output_hint,
+        thinking=thinking,
+    )
+
+
+def resolve_model(
+    operation: str,
+    profile: str,
+    connection: ProviderConfig,
+    model: ModelConfig,
+    *,
+    origin: str,
+    fallbacks: tuple[str, ...] = (),
+    output_hint: int | None = None,
+    thinking: str | None = None,
+) -> ResolvedRoute:
+    """Resolve a single profile without depending on the rest of the routing graph."""
     spec = require_operation(operation)
-    model = config.models[profile]
     connection_name, remote_model = split_model_ref(profile)
-    connection = config.providers[connection_name]
     provider = provider_spec(connection.kind)
     adapter = provider.adapter_type()
     overrides = None

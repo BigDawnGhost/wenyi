@@ -716,6 +716,8 @@ class TranslationService:
                 seg_base += len(b)
                 if progress:
                     progress(done, total, label)
+                # Persist skipped-batch usage (e.g. recovered glossary extraction) before continuing.
+                self._runtime.usage.flush(store, scope="batch")
                 continue
 
             if term_snapshot_stale:
@@ -918,6 +920,8 @@ class TranslationService:
             if polish_job is not None:
                 # Queue after extraction so terms come from the draft, not a later polish.
                 self._schedule_polish(store, polish_job)
+            # Persist each batch's usage immediately so a crash between batches keeps completed work billed.
+            self._runtime.usage.flush(store, scope="batch")
 
         # Precision publication reloads the chapter; publish the object this loop last saved.
         self._open_chapters[ci] = chapter

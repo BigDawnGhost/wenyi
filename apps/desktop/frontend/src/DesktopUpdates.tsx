@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@wenyi/ui/primitives";
 import { SettingsSection } from "@wenyi/ui/settings";
+import { IpcErrorCodes } from "@wenyi/shared-schema";
 import { useDesktopI18n } from "./i18n";
 import { useCredentialSafety } from "./updateSafety";
 import { ReleaseNotes } from "./ReleaseNotes";
-import { TransferProgress } from "./TransferProgress";
+import { TransferStatus } from "./TransferStatus";
 import { ipcFailure } from "./ipcError";
 
 type Status = {
@@ -19,13 +20,14 @@ type Status = {
   error?: "check_failed" | "download_failed" | "install_failed" | "busy" | "unavailable";
 };
 // Command code -> the label this page already knows how to render. The codes
-// come from apps/desktop/src/{updates,native_export,native_drop,diagnostics_ui}.rs.
+// come from the shared registry that both ends use; the native mirror lives in
+// apps/desktop/src/ipc_error.rs.
 const SUCCESS_LABELS: Record<string, NonNullable<Status["error"]>> = {
-  update_busy: "busy",
-  update_unavailable: "unavailable",
-  update_check_failed: "check_failed",
-  update_download_failed: "download_failed",
-  update_install_failed: "install_failed",
+  [IpcErrorCodes.updateBusy]: "busy",
+  [IpcErrorCodes.updateUnavailable]: "unavailable",
+  [IpcErrorCodes.updateCheckFailed]: "check_failed",
+  [IpcErrorCodes.updateDownloadFailed]: "download_failed",
+  [IpcErrorCodes.updateInstallFailed]: "install_failed",
 };
 
 function invoke<T>(command: string): Promise<T> {
@@ -91,10 +93,9 @@ export function DesktopUpdates({ blocked, onInstalling }: {
           {data?.version && <p className="text-muted-foreground">{t("updates.version", { version: data.version })}</p>}
         </div>
         {data && (["checking", "downloading", "installing"].includes(data.phase) ? (
-          <TransferProgress
+          <TransferStatus
             label={t(`updates.${data.phase}`)}
-            downloaded={data.phase === "downloading" ? data.downloaded : undefined}
-            total={data.phase === "downloading" ? data.total : undefined}
+            transfer={data.phase === "downloading" ? { downloaded: data.downloaded, total: data.total } : {}}
           />
         ) : <p role="status" className="text-sm text-muted-foreground">{t(`updates.${data.phase}`)}</p>)}
         {data?.mode !== "automatic" && <p className="text-sm text-muted-foreground">{t("updates.manual")}</p>}

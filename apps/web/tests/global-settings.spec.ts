@@ -54,9 +54,6 @@ test("projects select registered models independently for each operation", async
   await expect(page.getByLabel("Model name", { exact: true })).toHaveCount(0);
   const translation = page.getByRole("combobox", { name: "Model: Translate chapters in batches" });
   await chooseOption(translation, "second / editor-model");
-  await page
-    .getByRole("button", { name: "Save configuration", exact: true })
-    .click();
   await expect(
     page.getByText("Project settings saved", { exact: true }),
   ).toBeVisible();
@@ -111,9 +108,6 @@ test("global defaults persist independently of existing project settings", async
   await page.goto("/settings/workflow");
   await expect(page.getByLabel("Default workflow template")).toHaveCount(0);
   await page.getByLabel("Polishing", { exact: true }).uncheck();
-  await page
-    .getByRole("button", { name: "Save configuration", exact: true })
-    .click();
   await expect(
     page.getByText("Global settings saved", { exact: true }),
   ).toBeVisible();
@@ -257,7 +251,7 @@ test("provider and remote model changes update references; unused registrations 
   });
 });
 
-test("duplicate model names cannot overwrite registrations and defaults restore the draft", async ({
+test("duplicate and blank model names cannot overwrite registrations", async ({
   page,
 }) => {
   await fakeApi(page);
@@ -277,44 +271,8 @@ test("duplicate model names cannot overwrite registrations and defaults restore 
   await page.getByRole("button", { name: "Save provider" }).click();
   await expect(page.getByRole("alert")).toContainText("Enter a remote model name");
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Restore defaults", exact: true })
-    .click();
-  await expect(
-    page.getByText("Defaults loaded into the draft. Save to apply.", {
-      exact: true,
-    }),
-  ).toBeVisible();
   expect(writes).toBe(0);
   await expect(page.getByRole("button", { name: "Edit provider deepseek" })).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Save configuration", exact: true }),
-  ).toBeEnabled();
-  await page
-    .getByRole("button", { name: "Save configuration", exact: true })
-    .click();
-  await expect(
-    page.getByText("Global settings saved", { exact: true }),
-  ).toBeVisible();
-  expect(writes).toBe(1);
-});
-
-test("project defaults load without registering models or saving automatically", async ({
-  page,
-}) => {
-  const changed = structuredClone(configuration);
-  changed.effective.pipeline.polish = false;
-  changed.yaml = JSON.stringify(changed.effective);
-  await fakeApi(page, { [`/projects/${pid}/config`]: changed });
-  await page.goto(`/projects/${pid}/settings`);
-  await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
-  await page
-    .getByRole("button", { name: "Restore defaults", exact: true })
-    .click();
-  await expect(page.getByLabel("Polishing", { exact: true })).toBeChecked();
-  await expect(page.getByLabel("Model ID", { exact: true })).toHaveCount(0);
-  await page.reload();
-  await expect(page.getByLabel("Polishing", { exact: true })).not.toBeChecked();
 });
 
 test("adding another model preserves a previously saved model rename", async ({
@@ -355,53 +313,4 @@ test("adding another model preserves a previously saved model rename", async ({
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(renames).toEqual([{ "deepseek/deepseek-flash": "deepseek/editor" }, {}]);
   expect(Object.keys(current.effective.llm.models)).toEqual(["deepseek/editor", "deepseek/writer-v1"]);
-});
-
-test("global settings keep a field edited while a save is in flight and advance revision", async ({
-  page,
-}) => {
-  await fakeApi(page);
-  let release = () => {};
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let serverRevision = globalConfiguration.revision;
-  const submittedRevisions: number[] = [];
-  await page.route("**/api/settings", async (route) => {
-    if (route.request().method() !== "PUT") return route.fallback();
-    const body = route.request().postDataJSON();
-    submittedRevisions.push(body.revision);
-    if (submittedRevisions.length === 1) await gate;
-    serverRevision += 1;
-    await route.fulfill({
-      json: {
-        ...globalConfiguration,
-        revision: serverRevision,
-        effective: JSON.parse(body.yaml),
-        yaml: body.yaml,
-      },
-    });
-  });
-  await page.goto("/settings/workflow");
-  const review = page.getByLabel("Whole-book review", { exact: true });
-  await expect(review).toBeEnabled();
-  const initial = await review.isChecked();
-  const firstSave = page.waitForRequest(
-    (request) => request.method() === "PUT" && request.url().endsWith("/api/settings"),
-  );
-  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
-  await firstSave;
-  // The form stays editable during the request; the late reply must not revert it.
-  await review.setChecked(!initial);
-  release();
-  await expect(page.getByText("Global settings saved", { exact: true })).toBeVisible();
-  await expect(review).toBeChecked({ checked: !initial });
-  await expect(page.getByText("Unsaved changes", { exact: true })).toBeVisible();
-  // Saving the newer edit must use the revision returned by the first save.
-  await page.getByRole("button", { name: "Save configuration", exact: true }).click();
-  await expect.poll(() => submittedRevisions).toEqual([
-    globalConfiguration.revision,
-    globalConfiguration.revision + 1,
-  ]);
-  await expect(review).toBeChecked({ checked: !initial });
 });

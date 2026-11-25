@@ -379,6 +379,7 @@ def test_oversized_book_digest_is_balanced_without_losing_its_ending():
 @pytest.mark.parametrize(
     ("output", "accepted"),
     [(" word" * 12000, True), (" word" * 12001, False), ("🙂" * 6500, False)],
+    ids=["within-limit", "over-limit", "emoji-over-limit"],
 )
 def test_digest_output_limit_is_measured_in_tokens(method, output, accepted):
     agent = Synopsizer(FakeClient(), Config())

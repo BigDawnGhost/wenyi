@@ -72,7 +72,9 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
     return merged
 
 
-def normalize_openai_usage(usage: Any, *, separate_cache_writes: bool = True) -> UsageSample | None:
+def normalize_openai_usage(
+    usage: Any, *, separate_cache_writes: bool = True, max_tokens: int | None = None
+) -> UsageSample | None:
     """Normalize inclusive Chat Completions totals, not native Anthropic input_tokens.
 
     Gateways may expose OpenRouter-style nested cache_write_tokens or top-level
@@ -104,6 +106,7 @@ def normalize_openai_usage(usage: Any, *, separate_cache_writes: bool = True) ->
     ordinary = None
     if cache_hit_tokens is not None and cache_write_tokens is not None and writes_complete:
         ordinary = max(0, prompt_tokens - cache_hit_tokens - cache_write_tokens)
+    reported_max_tokens = read_usage_counter(usage, "max_tokens")
     return make_usage_sample(
         usage,
         cache_hit_tokens=cache_hit_tokens,
@@ -114,6 +117,7 @@ def normalize_openai_usage(usage: Any, *, separate_cache_writes: bool = True) ->
         uncached_tokens=ordinary,
         cache_write_5m_tokens=write_5m,
         cache_write_1h_tokens=write_1h,
+        max_tokens=reported_max_tokens if reported_max_tokens is not None else max_tokens,
     )
 
 
@@ -150,8 +154,8 @@ class OpenAICompatibleBaseClient(ProviderAdapter, Generic[OptionsT]):
             return explicit
         return max(hint, 4096) if thinking and hint is not None else hint
 
-    def _normalize_usage(self, usage: Any) -> UsageSample | None:
-        return normalize_openai_usage(usage)
+    def _normalize_usage(self, usage: Any, *, max_tokens: int | None = None) -> UsageSample | None:
+        return normalize_openai_usage(usage, max_tokens=max_tokens)
 
     def _json_response_fallback(
         self, model_config: ResolvedModel[OptionsT], message: Any
@@ -185,7 +189,9 @@ class OpenAICompatibleBaseClient(ProviderAdapter, Generic[OptionsT]):
         if response_format is not None:
             kwargs["response_format"] = response_format
         response = self._ensure_client().chat.completions.create(**kwargs)
-        context.record_usage(self._normalize_usage(getattr(response, "usage", None)))
+        context.record_usage(
+            self._normalize_usage(getattr(response, "usage", None), max_tokens=context.max_tokens)
+        )
         choice = response.choices[0]
         message = choice.message
         raw_content = getattr(message, "content", None)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from typing import Any
 
 from wenyi_core.llm.providers.fake import FakeClient
 from wenyi_core.llm.usage import UsageSample
@@ -79,17 +80,38 @@ def routing_handler(messages, tier, json_mode):
             ensure_ascii=False,
         )
 
+    if "terminology consistency aligner" in system:
+        # No historical rewrites: newly found terms keep their extracted targets.
+        return json.dumps({"terms": []})
+
     if "chapter digest writer" in system:
         return "本章梗概：人物登场，情节推进。"
 
     if "whole-book synopsis writer" in system:
         return "全书概览：主线与人物关系，整体基调。"
 
-    return "{}" if json_mode else ""
+    raise AssertionError(
+        f"routing_handler has no branch for operation {tier!r}: "
+        f"unrecognized system prompt {system[:160]!r}"
+    )
 
 
 class MeteredFakeClient(FakeClient):
-    """Record fixed small usage per offline call so tests can assert stage-level accounting."""
+    """Record injectable fixed usage per offline call for stage-level accounting assertions."""
+
+    def __init__(
+        self,
+        *args: Any,
+        usage_sample: UsageSample | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(*args, **kwargs)
+        self.usage_sample = usage_sample or UsageSample(
+            prompt_tokens=5,
+            completion_tokens=3,
+            total_tokens=8,
+            cache_miss_tokens=5,
+        )
 
     def complete(
         self,
@@ -99,16 +121,7 @@ class MeteredFakeClient(FakeClient):
         json_mode=False,
         max_tokens=None,
     ):
-        self.usage.record(
-            "direct",
-            UsageSample(
-                prompt_tokens=5,
-                completion_tokens=3,
-                total_tokens=8,
-                cache_miss_tokens=5,
-            ),
-            operation,
-        )
+        self.usage.record("direct", self.usage_sample, operation)
         return super().complete(
             messages,
             operation=operation,

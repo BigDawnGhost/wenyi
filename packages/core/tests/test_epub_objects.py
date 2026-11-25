@@ -132,7 +132,7 @@ def test_failed_object_alignment_stays_pending_and_is_omitted_from_export(tmp_pa
     rendered = BeautifulSoup(_render_segments_html(template, saved.segments), "html.parser")
     assert rendered.math is None
     assert "设为正数。" in rendered.get_text()
-    assert "Omitting protected object" in caplog.text
+    assert any("Omitting protected object" in message for message in caplog.messages)
     annotations.align_annotations_after_batch(0, saved, 0, 1, store)
     assert len(client.calls) == 1
 
@@ -583,6 +583,6 @@ def test_read_only_export_omits_broken_object_but_keeps_valid_sibling(
         source = soup.select_one(".tn-source")
         assert source is not None
         assert len(source.find_all("math")) == 2
-    assert "Omitting protected object" in caplog.text
+    assert any("Omitting protected object" in message for message in caplog.messages)
     assert store.load_chapter(0) == before
     assert not client.calls

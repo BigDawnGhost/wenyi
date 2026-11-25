@@ -15,7 +15,12 @@ from types import SimpleNamespace
 
 import pytest
 from wenyi_core.storage import locks
-from wenyi_core.storage.locks import FileLockHandle, StorageBusyError, exclusive_file_lock
+from wenyi_core.storage.locks import (
+    FileLockHandle,
+    LockReentryError,
+    StorageBusyError,
+    exclusive_file_lock,
+)
 
 
 @pytest.fixture(params=["python", "rust"])
@@ -30,17 +35,20 @@ def backend(request, monkeypatch):
 def test_blocking_acquire_waits_for_release(tmp_path, backend):
     path = tmp_path / ".run.lock"
     holder = FileLockHandle(str(path))
-    holder.acquire()
+    acquired = threading.Event()
     released = threading.Event()
 
-    def release_later() -> None:
+    def hold_then_release() -> None:
+        holder.acquire()
+        acquired.set()
         time.sleep(0.3)
         holder.release()
         released.set()
 
-    thread = threading.Thread(target=release_later)
+    thread = threading.Thread(target=hold_then_release)
     thread.start()
     try:
+        assert acquired.wait(timeout=5)
         started = time.monotonic()
         with exclusive_file_lock(str(path)):
             waited = time.monotonic() - started
@@ -178,16 +186,45 @@ def test_native_interrupt_after_acquisition_releases_handle(tmp_path, monkeypatc
             library.wenyi_lock_release(handle)
 
 
-def test_blocking_timeout_releases_failed_attempt(tmp_path, backend):
+def test_same_thread_reentry_is_detected_without_waiting(tmp_path, backend):
     path = str(tmp_path / ".run.lock")
     with exclusive_file_lock(path):
         started = time.monotonic()
-        with pytest.raises(StorageBusyError):
+        with pytest.raises(LockReentryError):
             with exclusive_file_lock(path, timeout_ms=100):
-                pytest.fail("Entered a lock held by another handle")
-        assert 0.08 <= time.monotonic() - started < 2
+                pytest.fail("Re-entering the owning thread's lock must not enter")
+        assert time.monotonic() - started < 2
     with exclusive_file_lock(path, blocking=False):
         pass
+
+
+def test_blocking_wait_reports_holder_and_duration(tmp_path, backend, capsys):
+    path = tmp_path / ".run.lock"
+    holder = FileLockHandle(str(path))
+    acquired = threading.Event()
+    released = threading.Event()
+
+    def hold_then_release() -> None:
+        holder.acquire()
+        acquired.set()
+        time.sleep(0.3)
+        holder.release()
+        released.set()
+
+    thread = threading.Thread(target=hold_then_release)
+    thread.start()
+    try:
+        assert acquired.wait(timeout=5)
+        with exclusive_file_lock(str(path)):
+            pass
+    finally:
+        thread.join(timeout=5)
+
+    assert released.is_set()
+    captured = capsys.readouterr()
+    assert f"Waiting for lock {path}" in captured.err
+    assert f"pid={os.getpid()}" in captured.err
+    assert "waited" in captured.err
 
 
 def test_native_error_interrupted_on_return_does_not_release_another_lock(tmp_path, monkeypatch):

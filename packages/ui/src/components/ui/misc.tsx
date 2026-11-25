@@ -103,12 +103,14 @@ export function Dialog({
   );
 }
 
-// Lightweight tab components.
+// Lightweight tab components following the ARIA tabs pattern; accessible
+// names come from callers (TabsList aria-label / trigger children).
 const TabsCtx = React.createContext<{
   value: string;
   setValue: (v: string) => void;
   variant: "default" | "segmented";
-}>({ value: "", setValue: () => {}, variant: "default" });
+  baseId: string;
+}>({ value: "", setValue: () => {}, variant: "default", baseId: "" });
 export function Tabs({
   value,
   onValueChange,
@@ -123,8 +125,9 @@ export function Tabs({
   /** "segmented" renders the settings-style pill track (zcode adoption). */
   variant?: "default" | "segmented";
 }) {
+  const baseId = React.useId();
   return (
-    <TabsCtx.Provider value={{ value, setValue: onValueChange, variant }}>
+    <TabsCtx.Provider value={{ value, setValue: onValueChange, variant, baseId }}>
       <div className={className}>{children}</div>
     </TabsCtx.Provider>
   );
@@ -132,13 +135,32 @@ export function Tabs({
 export function TabsList({
   children,
   className,
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
+  ...rest
+}: React.ComponentPropsWithoutRef<"div">) {
   const { variant } = React.useContext(TabsCtx);
+  const listRef = React.useRef<HTMLDivElement>(null);
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+    const tabs = Array.from(
+      listRef.current?.querySelectorAll<HTMLButtonElement>('[role="tab"]') ?? [],
+    );
+    const index = tabs.findIndex((tab) => tab === document.activeElement);
+    if (tabs.length === 0 || index < 0) return;
+    const next =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? tabs.length - 1
+          : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    tabs[next].focus();
+    event.preventDefault();
+  };
   return (
     <div
+      {...rest}
+      ref={listRef}
+      role="tablist"
+      onKeyDown={handleKeyDown}
       className={cn(
         variant === "segmented"
           ? "inline-flex h-8 items-center gap-0.5 rounded-full bg-surface p-0.5"
@@ -154,16 +176,20 @@ export function TabsTrigger({
   value,
   children,
   className,
-}: {
-  value: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
+  ...rest
+}: React.ComponentPropsWithoutRef<"button"> & { value: string }) {
   const ctx = React.useContext(TabsCtx);
   const active = ctx.value === value;
   const segmented = ctx.variant === "segmented";
   return (
     <button
+      {...rest}
+      type="button"
+      role="tab"
+      id={`${ctx.baseId}-tab-${value}`}
+      aria-selected={active}
+      aria-controls={`${ctx.baseId}-panel-${value}`}
+      tabIndex={active ? 0 : -1}
       className={cn(
         segmented
           ? "h-7 rounded-full px-2.5 text-sm font-medium transition-colors"
@@ -185,14 +211,22 @@ export function TabsContent({
   value,
   children,
   className,
-}: {
-  value: string;
-  children: React.ReactNode;
-  className?: string;
-}) {
+  ...rest
+}: React.ComponentPropsWithoutRef<"div"> & { value: string }) {
   const ctx = React.useContext(TabsCtx);
   if (ctx.value !== value) return null;
-  return <div className={className}>{children}</div>;
+  return (
+    <div
+      {...rest}
+      role="tabpanel"
+      id={`${ctx.baseId}-panel-${value}`}
+      aria-labelledby={`${ctx.baseId}-tab-${value}`}
+      tabIndex={0}
+      className={className}
+    >
+      {children}
+    </div>
+  );
 }
 
 /**

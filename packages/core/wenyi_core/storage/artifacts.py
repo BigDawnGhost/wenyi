@@ -12,6 +12,7 @@ from threading import RLock
 from typing import Any
 
 from ..errors import ArtifactCorrupt
+from .artifact_keys import validate_artifact_key
 from .atomic_write import write_text_atomic
 from .io_path import to_io_path
 
@@ -21,12 +22,18 @@ class FileArtifacts:
         self._artifact_root = os.path.abspath(run_dir)
         self._artifact_lock = RLock()
 
-    def _artifact_path(self, key: str) -> Path:
+    _artifact_key = staticmethod(validate_artifact_key)
+
+    def _artifact_path(self, key: str, *, prefix: bool = False) -> Path:
+        if not isinstance(key, str) or "\0" in key:
+            # Reject NUL before path resolution so it never reaches a filesystem call.
+            raise ValueError("Artifact key must be a portable relative path")
         # Resolve both paths in the same Windows namespace, even for a short root.
         root = Path(self._io_path(self._artifact_root)).resolve()
         path = Path(self._io_path(Path(self._artifact_root, key))).resolve()
         if not path.is_relative_to(root):
             raise ValueError("Artifact key must remain within the run")
+        self._artifact_key(key, prefix=prefix)
         return path
 
     @staticmethod
@@ -55,8 +62,9 @@ class FileArtifacts:
         self._artifact_path(key).unlink(missing_ok=True)
 
     def list_artifacts(self, prefix: str = "") -> list[str]:
-        base = self._artifact_path("")
-        directory = self._artifact_path(prefix.rpartition("/")[0])
+        self._artifact_key(prefix, prefix=True)
+        base = self._artifact_path("", prefix=True)
+        directory = self._artifact_path(prefix.rpartition("/")[0], prefix=True)
         if not directory.is_dir():
             return []
         keys = (

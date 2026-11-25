@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Collection
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -20,6 +21,12 @@ def file_digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+# Structured progress fields that may be copied into machine receipts. The
+# whitelist keeps run configuration, credentials and book text out of the
+# receipts; pipeline stages only emit scalar locating fields.
+DEFAULT_PAYLOAD_KEYS = ("batch", "batch_size", "chapter", "stage")
+
+
 class MachineOutput:
     """Publish progress and receipts without exposing configuration or model responses."""
 
@@ -31,14 +38,19 @@ class MachineOutput:
         source: str,
         config: str,
         output: str | None,
+        payload_keys: Collection[str] | None = None,
     ) -> None:
         self.progress_path = Path(progress_path).resolve() if progress_path else None
         self.result_path = Path(result_path).resolve() if result_path else None
         self.source = Path(source).resolve()
         self.run_id = uuid4().hex
         self.completed = False
+        if payload_keys is None:
+            payload_keys = DEFAULT_PAYLOAD_KEYS
+        self.payload_keys = frozenset(payload_keys)
+        self.config_path = Path(config).resolve()
         paths = [path for path in (self.progress_path, self.result_path) if path is not None]
-        protected = {self.source, Path(config).resolve()}
+        protected = {self.source, self.config_path}
         if output:
             protected.add(Path(output).resolve())
         if len(set(paths)) != len(paths) or protected.intersection(paths):
@@ -64,14 +76,28 @@ class MachineOutput:
         self._write(self.result_path, status="running", outputs=[])
         self(0, 0, "Starting Wenyi")
 
-    def __call__(self, done: int, total: int, label: str) -> None:
-        self._write(
-            self.progress_path,
-            status="running",
-            done=done,
-            total=total if total > 0 else None,
-            label=english_progress_label(label),
-        )
+    def __call__(self, done: int, total: int, label: str, payload: dict | None = None) -> None:
+        data: dict = {
+            "status": "running",
+            "done": done,
+            "total": total if total > 0 else None,
+            "label": english_progress_label(label),
+        }
+        filtered = self._filter_payload(payload)
+        if filtered:
+            data["payload"] = filtered
+        self._write(self.progress_path, **data)
+
+    def _filter_payload(self, payload: dict | None) -> dict | None:
+        """Keep whitelisted scalar fields so receipts never carry config or text."""
+        if not isinstance(payload, dict):
+            return None
+        filtered = {
+            key: value
+            for key, value in payload.items()
+            if key in self.payload_keys and isinstance(value, (bool, int, float, str))
+        }
+        return filtered or None
 
     def success(self, paths: list[str], state_dir: str) -> None:
         if not self.enabled:
@@ -94,10 +120,19 @@ class MachineOutput:
         self.completed = True
 
     def failed(self) -> None:
+        # The failure reason lives in the run's event log; read it before the
+        # receipt replaces the previous one, and keep config values out of it.
+        from wenyi_cli.commands.inspection import describe_last_failure
+
+        message = describe_last_failure(str(self.source), str(self.config_path))
         self._write(
             self.result_path,
             status="failed",
             outputs=[],
-            error={"code": "translation_failed", "message": "See the Wenyi log for details."},
+            error={
+                "code": "translation_failed",
+                "message": message
+                or "Run failed but no error events were recorded; see the Wenyi log for details.",
+            },
         )
         self._write(self.progress_path, status="failed", done=0, total=None, label="Stopped")

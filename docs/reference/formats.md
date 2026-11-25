@@ -40,6 +40,10 @@ An explicit `--out editions/book.epub` keeps that path for the monolingual outpu
 and derives `editions/book-bi.epub` for bilingual output, without injecting a
 language suffix. The same `-bi` derivation applies when only bilingual output is
 requested. Choose a suffix consistent with the selected format.
+Without `--overwrite`, a collision at publication selects the next free name
+(such as `book (1).epub`), even if another process wrote the file during rendering.
+The CLI reports the actual path for each edition. On POSIX, this requires an output
+filesystem that supports hard links; otherwise the CLI fails rather than risking replacement.
 
 Only monolingual output is enabled by default. `--bilingual` enables the bilingual
 edition; `--no-mono --bilingual` requests only that edition.
@@ -72,6 +76,14 @@ EPUB-to-EPUB export attempts to backfill the original XHTML templates, retaining
 styles, images, table of contents, anchors and internal links. It merges split
 continuations into their original logical paragraphs. Source preservation follows
 the [bilingual-output rules](#naming-and-bilingual-output).
+
+Single-language and bilingual EPUBs both use the translated book title when
+available, with the original title kept in the package metadata. Without a
+translated title, the book title keeps the `-wenyi-<language>` suffix (`-bi` for
+bilingual output). Subject tags captured on import use saved translations where
+available; the author and description stay in the source metadata. A page title
+uses the translated table-of-contents entry for the whole page first, or the
+translated chapter title when that chapter and page correspond one-to-one.
 
 High-confidence footnote/endnote references supply their source note bodies as
 translation context. Ordinary navigation links, backlinks and external links are
@@ -239,6 +251,10 @@ Run the separate `wenyi-babeldoc-bridge` service and select
 `pipeline.babeldoc_pages` optionally selects 1-based pages. Wenyi does not import
 BabelDOC or include its AGPL runtime in Core/CLI; extraction and fillback use HTTP.
 Review the external service's deployment and licensing requirements separately.
+
+Extraction creates a new bridge session. Wenyi automatically retries connection setup
+failures, but does not resend the PDF after a read/write failure or an HTTP error:
+the bridge may already have created the session. Check the service before retrying manually.
 
 Before contacting the bridge, Wenyi checks selected pages for image-only content.
 If no extractable text layer is found, use MinerU or run OCR first. Chapter grouping

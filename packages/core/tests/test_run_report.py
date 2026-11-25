@@ -8,6 +8,7 @@ from rich.console import Console
 from typer.testing import CliRunner
 from wenyi_cli.cli import create_app
 from wenyi_cli.commands.run_report import build_report
+from wenyi_core.config import Config
 from wenyi_core.llm.usage import UsageSample, UsageTracker
 from wenyi_core.storage.run_store import RunStore
 
@@ -155,11 +156,11 @@ def test_inspect_run_displays_the_real_usage_schema(tmp_path, monkeypatch):
     tracker.record("cheap", UsageSample(120, 30, 150, cache_hit_tokens=40))
     store.save_usage(tracker.summary())
     monkeypatch.setattr("wenyi_cli.commands.inspection.runstore_for_cli", lambda *a, **kw: store)
+    config_path = tmp_path / "config.yaml"
+    Config.create_default_file(str(config_path))
     output = StringIO()
     app = create_app(console=Console(file=output, width=120))
-    result = CliRunner().invoke(
-        app, ["-c", str(tmp_path / "config.yaml"), "inspect-run", "synthetic.txt"]
-    )
+    result = CliRunner().invoke(app, ["-c", str(config_path), "inspect-run", "synthetic.txt"])
     assert result.exit_code == 0, result.output
     assert "Tokens: in 120  out 30  cache read 40" in output.getvalue()
 

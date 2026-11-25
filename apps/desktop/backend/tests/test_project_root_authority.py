@@ -12,6 +12,7 @@ from wenyi_backend.context import use_context
 from wenyi_backend.errors import ApiError
 from wenyi_backend.execution.bindings import resolve_source
 from wenyi_desktop import paths, project_import
+from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.main import create_app, create_context
 
 PROJECT = "0123456789abcdef"
@@ -19,6 +20,7 @@ PROJECT = "0123456789abcdef"
 
 def test_project_list_scans_each_library_once_and_rechecks_next_time(desktop_context, monkeypatch):
     backend = desktop_context.repository
+    assert isinstance(backend, LocalBackend)
     identities = [backend.create_project(f"Book {index}", "en", "zh", {}) for index in range(10)]
     for pid in identities:
         backend.storage_for(pid).close()
@@ -49,6 +51,7 @@ def project_with_stale_copy(tmp_path, *, stale_name="Original"):
     owner, other = tmp_path / "Owner", tmp_path / "Other"
     context = create_context(tmp_path / "workspace", library_root=other)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     backend.create_project("Original", "en", "zh", {}, project_id=PROJECT, library_root=owner)
     backend.storage_for(PROJECT).close()
     directory = backend.project_dir(PROJECT)
@@ -64,10 +67,13 @@ def project_with_stale_copy(tmp_path, *, stale_name="Original"):
 def test_missing_owner_never_uses_or_deletes_a_copy_in_another_root(tmp_path, stale_name):
     context, directory, stale = project_with_stale_copy(tmp_path, stale_name=stale_name)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     directory.parent.rename(tmp_path / "Disconnected drive")
 
     assert backend.project_dir(PROJECT) == directory
-    assert backend.get_project(PROJECT)["available"] is False
+    project = backend.get_project(PROJECT)
+    assert project is not None
+    assert project["available"] is False
     with pytest.raises(ValueError, match="source file is missing"):
         resolve_source(context, PROJECT)
     with pytest.raises(HTTPException) as error:
@@ -85,12 +91,15 @@ def test_missing_owner_never_uses_or_deletes_a_copy_in_another_root(tmp_path, st
 def test_writable_open_does_not_recreate_a_missing_uploaded_project(tmp_path):
     context, directory, stale = project_with_stale_copy(tmp_path)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     directory.parent.rename(tmp_path / "Disconnected drive")
     with pytest.raises(ApiError) as error:
         backend.storage_for(PROJECT).close()
     assert error.value.code == "project_location_unavailable"
     assert not directory.parent.exists()
-    assert backend.get_project(PROJECT)["available"] is False
+    project = backend.get_project(PROJECT)
+    assert project is not None
+    assert project["available"] is False
     with pytest.raises(ApiError):
         backend.project_directories()
     assert (stale / "source-book.txt").read_text(encoding="utf-8") == "Original content."
@@ -100,6 +109,7 @@ def test_writable_open_does_not_recreate_a_missing_uploaded_project(tmp_path):
 def test_missing_project_removal_still_refuses_active_work(tmp_path, activity):
     context, directory, _ = project_with_stale_copy(tmp_path)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     if activity == "job":
         backend.create_job(PROJECT, "translation", "task-1", status="running")
     else:
@@ -125,6 +135,7 @@ def test_missing_project_removal_still_refuses_active_work(tmp_path, activity):
 def test_catalog_root_change_invalidates_a_previously_found_directory(tmp_path):
     context, directory, stale = project_with_stale_copy(tmp_path)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     assert backend.project_dir(PROJECT) == directory
     # An explicit relocation updates the row. The formerly found path still
     # exists, so an existence-only cache would silently ignore the new owner.
@@ -143,6 +154,7 @@ def test_same_root_rename_wins_over_a_stale_copy_with_the_old_title(tmp_path):
     renamed = directory.with_name("Renamed within the owner")
     directory.rename(renamed)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     assert backend.project_dir(PROJECT) == renamed
     assert backend.project_directories() == (renamed.resolve(),)
     assert Path(resolve_source(context, PROJECT)).parent == renamed
@@ -156,6 +168,7 @@ def test_same_root_rename_wins_over_a_stale_copy_with_the_old_title(tmp_path):
 def test_ambiguous_or_conflicting_owner_is_refused_for_every_operation(tmp_path, issue):
     context, directory, stale = project_with_stale_copy(tmp_path)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     if issue == "duplicate":
         # The exact title and an already-found directory must not win merely
         # because another matching identity sorts later.
@@ -179,6 +192,7 @@ def test_ambiguous_or_conflicting_owner_is_refused_for_every_operation(tmp_path,
 def test_rows_without_an_owner_are_refused_without_discovery(tmp_path):
     context, directory, stale = project_with_stale_copy(tmp_path)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     backend.update_project(PROJECT, library_root=None)
     for operation in (
         lambda: backend.project_dir(PROJECT),
@@ -197,6 +211,7 @@ def test_rows_without_an_owner_are_refused_without_discovery(tmp_path):
 def test_an_unadmitted_recorded_root_cannot_fall_back_to_an_admitted_copy(tmp_path):
     context, directory, stale = project_with_stale_copy(tmp_path)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     backend.update_project(PROJECT, library_root=str(tmp_path / "Unadmitted"))
     for operation in (
         lambda: backend.project_dir(PROJECT),
@@ -213,6 +228,7 @@ def test_an_unadmitted_recorded_root_cannot_fall_back_to_an_admitted_copy(tmp_pa
 def test_unsafe_project_does_not_hide_healthy_projects_in_the_list(tmp_path, issue):
     context, directory, stale = project_with_stale_copy(tmp_path)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     healthy = backend.create_project("Healthy", "en", "zh", {})
     backend.storage_for(healthy).close()
     if issue == "duplicate":
@@ -230,7 +246,9 @@ def test_unsafe_project_does_not_hide_healthy_projects_in_the_list(tmp_path, iss
         assert listed[healthy]["error"] is None
         assert listed[PROJECT]["available"] is False
         assert listed[PROJECT]["error"]
-        assert backend._get("projects", PROJECT)["error"] is None
+        record = backend._get("projects", PROJECT)
+        assert record is not None
+        assert record["error"] is None
         refused = client.post(f"/projects/{PROJECT}/prepare")
         assert refused.status_code == 409, refused.text
         assert refused.json()["code"] == "project_location_unavailable"
@@ -240,6 +258,7 @@ def test_unsafe_project_does_not_hide_healthy_projects_in_the_list(tmp_path, iss
 def test_unrelated_api_errors_are_not_hidden_as_location_failures(tmp_path, monkeypatch):
     context, _, _ = project_with_stale_copy(tmp_path)
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
 
     def fail(*args, **kwargs):
         raise ApiError("unrelated_error", 409, "Unrelated failure")
@@ -257,6 +276,7 @@ def test_startup_does_not_adopt_unregistered_projects_from_saved_library_roots(t
     healthy, _, _ = orphan(tmp_path / "First", "b" * 16)
     context = create_context(tmp_path / "workspace")
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     with backend.transaction() as connection:
         backend.save_settings(
             {
@@ -291,12 +311,14 @@ def test_import_refuses_invalid_identity_before_copying_or_removing(tmp_path, ma
     original_state = (directory / "state.sqlite3").read_bytes()
     original_source = source.read_bytes()
     context = create_context(tmp_path / "workspace")
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
     with pytest.raises(project_import.ImportRefused) as error:
-        project_import.import_project(context.repository, directory)
+        project_import.import_project(backend, directory)
     assert error.value.reason == "project_identity_invalid"
     assert "marker" in error.value.message.lower()
-    assert context.repository.list_projects() == []
-    assert not paths.projects(context.repository.workspace).exists()
+    assert backend.list_projects() == []
+    assert not paths.projects(backend.workspace).exists()
     assert source.read_bytes() == original_source
     assert (directory / "state.sqlite3").read_bytes() == original_state
 
@@ -310,7 +332,9 @@ def test_import_preserves_marker_identity_after_a_directory_rename(tmp_path):
     renamed = directory.with_name("Renamed book")
     directory.rename(renamed)
     context = create_context(tmp_path / "workspace")
-    imported = project_import.import_project(context.repository, renamed)
+    backend = context.repository
+    assert isinstance(backend, LocalBackend)
+    imported = project_import.import_project(backend, renamed)
     assert imported["id"] == pid
     assert imported["source_sha256"] == digest
     assert imported["status"] == "done"

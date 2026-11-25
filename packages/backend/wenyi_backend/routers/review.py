@@ -5,9 +5,11 @@ from __future__ import annotations
 import re
 from contextlib import closing
 from datetime import datetime, timezone
+from typing import cast
 
 from fastapi import APIRouter, HTTPException
 
+from ..context import BackendStorage
 from ..errors import CHAPTER_NOT_FOUND, SEGMENT_NOT_FOUND, ApiError
 from ..review_presentation import review_items
 from ..schemas import (
@@ -133,7 +135,7 @@ def segment_history(pid: str, ci: int, seg_idx: int) -> list[dict]:
         raise HTTPException(409, "Prepare the book before inspecting translation history")
     storage = read_storage_for(pid)
     try:
-        return storage.load_segment_history(ci, seg_idx)
+        return cast(BackendStorage, storage).load_segment_history(ci, seg_idx)
     except KeyError:
         raise ApiError(SEGMENT_NOT_FOUND, 404, "segment not found") from None
     finally:

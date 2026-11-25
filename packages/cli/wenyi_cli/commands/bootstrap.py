@@ -7,6 +7,7 @@ import sys
 from collections.abc import Sequence
 from enum import Enum
 from importlib.metadata import version as package_version
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -14,9 +15,11 @@ from rich.console import Console
 from typer.core import TyperGroup
 from wenyi_core.config import Config
 from wenyi_core.i18n.genres import DEFAULT_GENRE
+from wenyi_core.observability import current_run_id
 
 from ..logging_config import CliLoggingError, invocation_logging
 from .context import CommandContext, current_context
+from .error_pointer import unexpected_error_message
 
 
 class PromptGenre(str, Enum):
@@ -43,18 +46,23 @@ def configure_windows_console(
                 pass
 
 
-def config_path_from_args(args: Sequence[str]) -> str:
-    """Locate the config before Click parses arguments, including help and early exits."""
+def explicit_config_path(args: Sequence[str]) -> str | None:
+    """Return the config path named on the command line before Click parses it."""
     for index, arg in enumerate(args):
         if arg in {"--config", "-c"}:
-            if index + 1 < len(args):
+            if index + 1 < len(args) and not args[index + 1].startswith("-"):
                 return args[index + 1]
-            break
-        if arg.startswith("--config="):
+            return None
+        if arg.startswith("--config=") and arg.partition("=")[2]:
             return arg.partition("=")[2]
         if arg.startswith("-c") and len(arg) > 2:
             return arg[2:]
-    return "config.yaml"
+    return None
+
+
+def config_path_from_args(args: Sequence[str]) -> str:
+    """Locate the config before Click parses arguments, including help and early exits."""
+    return explicit_config_path(args) or "config.yaml"
 
 
 def initializing_group(console: Console) -> type[TyperGroup]:
@@ -69,21 +77,28 @@ def initializing_group(console: Console) -> type[TyperGroup]:
             *main_args: Any,
             **main_kwargs: Any,
         ) -> Any:
-            """Locate and create a missing default config before Click parses the command."""
+            """Validate the selected config and create a missing default before Click parses."""
             cli_args = list(args) if args is not None else sys.argv[1:]
             config_path = config_path_from_args(cli_args)
+            explicit_path = explicit_config_path(cli_args)
             main_kwargs["obj"] = CommandContext(
                 config_path, any(arg in {"--help", "-h"} for arg in cli_args), console
             )
+            if explicit_path is not None and not Path(explicit_path).is_file():
+                typer.echo(f"Configuration error: config file not found: {explicit_path}", err=True)
+                raise SystemExit(1) from None
             from wenyi_core.llm.limits import RequestStopped
 
+            run_id: str | None = None
             try:
                 with invocation_logging(config_path):
-                    try:
-                        Config.create_default_file(config_path)
-                    except OSError as error:
-                        typer.echo(f"Configuration error: {error}", err=True)
-                        raise SystemExit(1) from None
+                    run_id = current_run_id()
+                    if explicit_path is None:
+                        try:
+                            Config.create_default_file(config_path)
+                        except OSError as error:
+                            typer.echo(f"Configuration error: {error}", err=True)
+                            raise SystemExit(1) from None
                     try:
                         return super().main(*main_args, args=args, **main_kwargs)
                     except RequestStopped as error:
@@ -91,6 +106,11 @@ def initializing_group(console: Console) -> type[TyperGroup]:
                         raise SystemExit(1) from None
             except CliLoggingError as error:
                 typer.echo(f"Error: {error}", err=True)
+                raise SystemExit(1) from None
+            except Exception as error:
+                # Unexpected failure: keep the traceback in the diagnostic log and
+                # show a concise pointer instead of leaking it to the console.
+                typer.echo(unexpected_error_message(error, config_path, run_id), err=True)
                 raise SystemExit(1) from None
 
     return ConfigInitializingGroup
@@ -110,7 +130,7 @@ def register_bootstrap(app: typer.Typer) -> None:
             "config.yaml",
             "--config",
             "-c",
-            help="Configuration path; created automatically if missing",
+            help="Configuration path; the default is auto-created; an explicit path must exist",
         ),
         prompt_genre: PromptGenre | None = typer.Option(
             None,

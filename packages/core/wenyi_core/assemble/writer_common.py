@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 
+from ..export_paths import bilingual_out_path as bilingual_out_path
 from ..i18n.languages import require_language
 from ..i18n.policy.models import PolicyContext
 from ..i18n.policy.resolver import resolve_policy
@@ -100,12 +101,6 @@ def _default_out(
     )
 
 
-def bilingual_out_path(out_path: str) -> str:
-    """Derive the bilingual path from an explicit out_path by appending -bi to the stem."""
-    base, ext = os.path.splitext(out_path)
-    return f"{base}-bi{ext}"
-
-
 def _ch_title(c: dict) -> str:
     """Prefer a translated chapter display title, falling back to the original."""
     return (c.get("title_translated") or c.get("title") or "").strip()
@@ -149,13 +144,12 @@ def _resolve_export_title(
 ) -> tuple[str, str]:
     """Return ``(export_title, original_title)``.
 
-    Prefer the translated book title for ``dc:title`` when available (retaining the source
-    title as metadata), falling back to ``<source>-wenyi-<lang>`` when untranslated.
+    Only native EPUB projects have translated package titles. Other inputs keep the
+    standard ``<source>-wenyi-<lang>`` title, even if their first chapter has the same name.
     """
     raw_title = manifest.get("title")
     source_title = raw_title.strip() if isinstance(raw_title, str) else ""
-    translated = _translated_book_title(manifest)
-    if translated:
+    if manifest.get("fmt") == "epub" and (translated := _translated_book_title(manifest)):
         return translated, source_title
     return _export_book_title(source_title or "translated", target_lang, bilingual=bilingual), ""
 

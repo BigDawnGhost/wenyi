@@ -4,13 +4,18 @@ from contextlib import closing
 
 from fastapi.testclient import TestClient
 from wenyi_backend.application import create_app
+from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.main import create_context
 
 
 def test_desktop_scrapes_are_isolated_and_follow_real_job_transitions(tmp_path):
     first = create_context(tmp_path / "first")
     second = create_context(tmp_path / "second")
-    with closing(first.repository), closing(second.repository):
+    first_backend = first.repository
+    assert isinstance(first_backend, LocalBackend)
+    second_backend = second.repository
+    assert isinstance(second_backend, LocalBackend)
+    with closing(first_backend), closing(second_backend):
         pid = first.repository.create_project("test", "en", "zh", {})
         workflow = first.repository.create_job(pid, "translation", "workflow")
         export = first.repository.create_job(pid, "export", "export")

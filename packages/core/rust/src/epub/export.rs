@@ -13,7 +13,8 @@ use indexmap::IndexMap;
 use regex::Regex;
 use serde::Deserialize;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
+
+use crate::alignment::target_digest;
 
 use super::{
     archive::{open, read, rewrite, Archive},
@@ -446,7 +447,7 @@ pub(crate) fn backfill(
         .collect();
     let correct = stored["target_digest"]
         .as_str()
-        .is_some_and(|expected| expected == format!("{:x}", Sha256::digest(text.as_bytes())));
+        .is_some_and(|expected| expected == target_digest(text));
     let objects: HashSet<_> = items
         .iter()
         .filter(|v| v["relation"] == OBJECT)
@@ -784,18 +785,21 @@ fn present(dom: &mut Dom, href: &str, p: &Presentation, options: &Options) -> bo
         .map(|s| strip(s))
         .filter(|s| !s.is_empty())
     {
-        let head = dom.find(0, "head").unwrap_or_else(|| {
+        let head = dom.direct(html, "head").unwrap_or_else(|| {
             let head = dom.tag("head");
             dom.prepend(html, head);
             head
         });
-        if let Some(title_node) = dom.direct(head, "title") {
+        let title_node = dom.direct(head, "title").unwrap_or_else(|| {
+            let title_node = dom.tag("title");
+            dom.prepend(head, title_node);
+            title_node
+        });
+        if strip(&dom.text(title_node, "", false)) != title {
             dom.clear(title_node);
             dom.append_text(title_node, title);
-        } else {
-            let title_node = dom.tag("title");
-            dom.append_text(title_node, title);
-            dom.prepend(head, title_node);
+            dom.set(title_node, "lang", p.lang.clone());
+            dom.set(title_node, "xml:lang", p.lang.clone());
         }
     }
     if let Some(classes) = dom
@@ -1090,6 +1094,33 @@ fn xml_append(
     }
 }
 
+fn translate_opf_field(
+    text: &str,
+    node: roxmltree::Node<'_, '_>,
+    value: &str,
+    lang: &str,
+    edits: &mut Vec<(ops::Range<usize>, String)>,
+) {
+    if strip(node.text().unwrap_or("")) == value {
+        return;
+    }
+    let mut escaped_lang = String::new();
+    escape(&mut escaped_lang, lang, true);
+    let attribute = format!("xml:lang=\"{escaped_lang}\"");
+    const XML: &str = "http://www.w3.org/XML/1998/namespace";
+    if let Some(existing) = node.attribute_node((XML, "lang")) {
+        edits.push((existing.range(), attribute));
+    } else {
+        let range = node.range();
+        let at = range.start
+            + text[range]
+                .find(|c: char| c.is_whitespace() || matches!(c, '/' | '>'))
+                .unwrap();
+        edits.push((at..at, format!(" {attribute}")));
+    }
+    edits.push(xml_contents(text, node, value));
+}
+
 fn rewrite_xml(
     bytes: &[u8],
     href: &str,
@@ -1110,7 +1141,11 @@ fn rewrite_xml(
         let p = options.presentation.as_ref()?;
         if !p.title.is_empty() {
             if let Some(n) = field("title") {
-                edits.push(xml_contents(&text, n, &p.title));
+                if p.original_title.is_some() {
+                    translate_opf_field(&text, n, &p.title, &p.lang, &mut edits);
+                } else {
+                    edits.push(xml_contents(&text, n, &p.title));
+                }
                 if let Some(orig) = p
                     .original_title
                     .as_deref()
@@ -1151,7 +1186,7 @@ fn rewrite_xml(
             .filter(|s| !s.is_empty())
         {
             if let Some(n) = field("description") {
-                edits.push(xml_contents(&text, n, desc));
+                translate_opf_field(&text, n, desc, &p.lang, &mut edits);
             }
         }
         if !p.subjects.is_empty() {
@@ -1172,7 +1207,7 @@ fn rewrite_xml(
             for (node, translated) in subject_nodes.into_iter().zip(p.subjects.iter()) {
                 let value = strip(translated);
                 if !value.is_empty() {
-                    edits.push(xml_contents(&text, node, value));
+                    translate_opf_field(&text, node, value, &p.lang, &mut edits);
                 }
             }
         }

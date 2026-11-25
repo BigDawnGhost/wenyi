@@ -35,23 +35,57 @@ if (!env.RUSTUP_HOME && existsSync(path.join(root, '.scratch/rustup/toolchains')
   env.RUSTUP_HOME = path.join(root, '.scratch/rustup');
   env.CARGO_HOME = path.join(root, '.scratch/cargo');
 }
-function run(command, parameters, cwd = root) {
+function run(command, parameters, cwd = root, commandEnv = env) {
   let shell = false;
-  if (command === 'pnpm' && env.npm_execpath) {
-    if (/\.[cm]?js$/i.test(env.npm_execpath)) {
-      parameters = [env.npm_execpath, ...parameters];
+  if (command === 'pnpm' && commandEnv.npm_execpath) {
+    if (/\.[cm]?js$/i.test(commandEnv.npm_execpath)) {
+      parameters = [commandEnv.npm_execpath, ...parameters];
       command = process.execPath;
     } else {
       // Standalone pnpm binaries may have no extension (for example, Linux ELF).
-      command = env.npm_execpath;
+      command = commandEnv.npm_execpath;
     }
   } else if (command === 'pnpm' && process.platform === 'win32') {
     // No npm_execpath (direct node invocation): pnpm may exist only as a .cmd shim.
     shell = true;
   }
-  const result = spawnSync(command, parameters, { cwd, env, stdio: 'inherit', shell });
+  const result = spawnSync(command, parameters, { cwd, env: commandEnv, stdio: 'inherit', shell });
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
+
+function installedDesktopVersion(python) {
+  const result = spawnSync(python, ['-I', '-c', [
+    'from importlib.metadata import PackageNotFoundError, version',
+    'try:',
+    '    print(version("wenyi-desktop"))',
+    'except PackageNotFoundError:',
+    '    pass',
+  ].join('\n')], { cwd: root, env, encoding: 'utf8' });
+  if (result.status !== 0) throw new Error('Could not read version metadata from the workspace Python.');
+  return result.stdout.trim();
+}
+
+function workspacePython(expected) {
+  const venv = path.join(root, '.venv');
+  const python = path.join(venv, process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
+  if (!existsSync(python)) {
+    throw new Error('Install Desktop dependencies with uv sync --locked --package wenyi-desktop --group dev first.');
+  }
+  if (installedDesktopVersion(python) !== expected) {
+    // Editable installs retain metadata from the time they were built, including
+    // the previous Git revision or dirty state. Refresh the selected workspace
+    // environment without pruning packages installed for other workspace apps.
+    run('uv', [
+      'sync', '--inexact', '--locked', '--package', 'wenyi-desktop', '--group', 'dev',
+      '--reinstall-package', 'wenyi-desktop', '--python', python,
+    ], root, { ...env, UV_PROJECT_ENVIRONMENT: venv });
+    if (installedDesktopVersion(python) !== expected) {
+      throw new Error('Workspace Python still has a different Desktop version after refresh. Check the checkout and retry.');
+    }
+  }
+  return python;
+}
+
 const identity = spawnSync('uv', [
   'run', '--no-project', '--with', 'hatch-vcs', 'python', 'scripts/release/release_version.py',
 ], { cwd: root, env, encoding: 'utf8' });
@@ -71,6 +105,9 @@ const versionConfig = JSON.stringify({
   plugins: { updater: { pubkey: env.WENYI_UPDATER_PUBLIC_KEY?.trim() || '' } },
 });
 env.TAURI_CONFIG = versionConfig;
+if (!build && !env.WENYI_DESKTOP_PYTHON) {
+  env.WENYI_DESKTOP_PYTHON = workspacePython(version.python);
+}
 console.log(`Wenyi Desktop ${version.version} (Python ${version.python})`);
 run('pnpm', ['-C', 'apps/desktop/frontend', 'build']);
 if (build) {
@@ -81,13 +118,5 @@ if (build) {
     '--config', path.join(root, 'apps/desktop/tauri.bundle.conf.json'),
     '--config', versionConfig, ...args], path.join(root, 'apps/desktop'));
 } else {
-  if (!env.WENYI_DESKTOP_PYTHON) {
-    const python = path.join(root, '.venv', process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python');
-    if (!existsSync(python)) {
-      console.error('Install Desktop dependencies with uv sync --locked --package wenyi-desktop --group dev first.');
-      process.exit(1);
-    }
-    env.WENYI_DESKTOP_PYTHON = python;
-  }
   run('cargo', ['run', '--locked', '--manifest-path', 'apps/desktop/Cargo.toml', '--', ...args]);
 }

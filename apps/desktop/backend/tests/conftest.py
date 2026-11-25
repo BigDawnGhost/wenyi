@@ -8,7 +8,9 @@ from fastapi.testclient import TestClient
 from tests.fake_llm import MeteredFakeClient, routing_handler
 from wenyi_backend.context import use_context
 from wenyi_desktop import main
+from wenyi_desktop.local_backend import LocalBackend
 from wenyi_desktop.local_credentials import CredentialStore
+from wenyi_desktop.settings import DesktopSettings
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +48,8 @@ def no_external_services(monkeypatch):
     if find_spec("redis") is not None:
         import redis
         import redis.asyncio
+        import redis.asyncio.connection
+        import redis.connection
 
         monkeypatch.setattr(redis, "from_url", forbidden)
         monkeypatch.setattr(redis.Redis, "from_url", forbidden)
@@ -66,8 +70,12 @@ def desktop_context(tmp_path):
         with use_context(context):
             yield context
     finally:
-        context.settings_store.credentials.clear_session()
-        context.repository.close()
+        settings = context.settings_store
+        assert isinstance(settings, DesktopSettings)
+        settings.credentials.clear_session()
+        backend = context.repository
+        assert isinstance(backend, LocalBackend)
+        backend.close()
 
 
 @pytest.fixture
@@ -78,6 +86,7 @@ def desktop(tmp_path):
         build_client=lambda config: fake,
     )
     backend = context.repository
+    assert isinstance(backend, LocalBackend)
     try:
         with (
             use_context(context),

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from collections.abc import Iterable, Iterator
 from copy import deepcopy
-from typing import Any, TypeAlias
+from typing import Any, Protocol, TypeAlias
 
 from ..alignment.objects import resolve_objects
 from ..i18n.policy.models import PolicyContext, PolicyPlan
@@ -19,12 +20,25 @@ from .quotes import QuoteStyle, normalize_quotes
 from .writer_common import _manifest_target_lang
 
 
+class ExportChapterSource(Protocol):
+    """Storage subset the export view needs: manifest and chapter reads plus manifest saves."""
+
+    @property
+    def run_dir(self) -> str: ...
+
+    def load_manifest(self) -> dict: ...
+
+    def load_chapter(self, ci: int) -> Chapter: ...
+
+    def save_manifest(self, manifest: dict) -> None: ...
+
+
 class ExportViewStore(RunStore):
     """Overlay read-only export transformations on RunStore and delegate other capabilities."""
 
     def __init__(
         self,
-        store: Storage | ExportSnapshotStore,
+        store: ExportChapterSource,
         *,
         plan: PolicyPlan | None = None,
         quote_style: QuoteStyle = "preserve",
@@ -33,8 +47,10 @@ class ExportViewStore(RunStore):
         self._store = store
         self._chapters: dict[int, Chapter] = {}
         self._quote_style: QuoteStyle = quote_style
-        manifest = store.load_manifest()
-        self._target_lang = _manifest_target_lang(manifest)
+        self._target_lang = ""
+        self._manifest: dict | None = None
+        self._manifest_lock = threading.Lock()
+        manifest = self.load_manifest()
         self.language_policy = plan or resolve_policy(
             PolicyContext(
                 manifest.get("source_lang", "auto"),
@@ -46,49 +62,81 @@ class ExportViewStore(RunStore):
         )
 
     def load_manifest(self) -> dict:
-        manifest = self._store.load_manifest()
-        if self._quote_style == "preserve":
-            return manifest
-        copied = deepcopy(manifest)
-        for row in copied.get("chapters", []):
+        """Return the export-session manifest, querying storage once per view.
+
+        Translated titles and metadata carry the export-only quote normalization.
+        """
+        if self._manifest is None:
+            with self._manifest_lock:
+                if self._manifest is None:
+                    manifest = self._store.load_manifest()
+                    self._target_lang = _manifest_target_lang(manifest)
+                    if self._quote_style != "preserve":
+                        manifest = deepcopy(manifest)
+                        self._normalize_manifest_quotes(manifest)
+                    self._manifest = manifest
+        return deepcopy(self._manifest)
+
+    def save_manifest(self, manifest: dict) -> None:
+        """Delegate the save and drop this session's stale copy."""
+        self._store.save_manifest(manifest)
+        with self._manifest_lock:
+            self._manifest = None
+
+    def _normalize_manifest_quotes(self, manifest: dict) -> None:
+        """Normalize quotes in translated manifest titles and metadata in place."""
+        for row in manifest.get("chapters", []):
             if isinstance(row.get("title_translated"), str):
                 row["title_translated"] = normalize_quotes(
                     row["title_translated"], self._quote_style, target_lang=self._target_lang
                 )
-        meta = copied.get("meta")
-        if isinstance(meta, dict):
-            for key in ("book_title_translated", "epub_description_translated"):
-                if isinstance(meta.get(key), str):
-                    meta[key] = normalize_quotes(
-                        meta[key], self._quote_style, target_lang=self._target_lang
-                    )
-            if isinstance(meta.get("epub_subjects_translated"), list):
-                meta["epub_subjects_translated"] = [
-                    normalize_quotes(item, self._quote_style, target_lang=self._target_lang)
-                    if isinstance(item, str)
-                    else item
-                    for item in meta["epub_subjects_translated"]
-                ]
-            for entry in (
-                meta.get("toc_entries", []) if isinstance(meta.get("toc_entries"), list) else []
-            ):
-                if isinstance(entry, dict) and isinstance(entry.get("title_translated"), str):
-                    entry["title_translated"] = normalize_quotes(
-                        entry["title_translated"], self._quote_style, target_lang=self._target_lang
-                    )
-        return copied
+        meta = manifest.get("meta")
+        if not isinstance(meta, dict):
+            return
+        for key in ("book_title_translated", "epub_description_translated"):
+            if isinstance(meta.get(key), str):
+                meta[key] = normalize_quotes(
+                    meta[key], self._quote_style, target_lang=self._target_lang
+                )
+        if isinstance(meta.get("epub_subjects_translated"), list):
+            meta["epub_subjects_translated"] = [
+                normalize_quotes(item, self._quote_style, target_lang=self._target_lang)
+                if isinstance(item, str)
+                else item
+                for item in meta["epub_subjects_translated"]
+            ]
+        for entry in (
+            meta.get("toc_entries", []) if isinstance(meta.get("toc_entries"), list) else []
+        ):
+            if isinstance(entry, dict) and isinstance(entry.get("title_translated"), str):
+                entry["title_translated"] = normalize_quotes(
+                    entry["title_translated"], self._quote_style, target_lang=self._target_lang
+                )
 
     def load_chapter(self, ci: int) -> Chapter:
-        if ci in self._chapters:
-            return self._chapters[ci].model_copy(deep=True)
-        chapter = self._store.load_chapter(ci).model_copy(deep=True)
-        self._resolve_protected_objects(chapter)
-        self._normalize_chapter_quotes(chapter)
-        self._chapters[ci] = chapter.model_copy(deep=True)
-        return chapter
+        """Return the prepared read-only chapter, resolving it on first request.
+
+        The view keeps one resolved chapter per requested index and hands the same
+        instance to every reader, so exports stop paying repeated full-chapter deep
+        copies. Stores return independent chapter objects per call, so storage stays
+        untouched; callers that need to mutate a chapter copy it first with
+        ``model_copy(deep=True)``.
+        """
+        cached = self._chapters.get(ci)
+        if cached is None:
+            cached = self._store.load_chapter(ci)
+            self._resolve_protected_objects(cached)
+            self._normalize_chapter_quotes(cached)
+            self._chapters[ci] = cached
+        return cached
 
     def iter_chapters_once(self, indices: Iterable[int]) -> Iterator[Chapter]:
-        """Yield independent render copies without retaining a second book in the view."""
+        """Yield chapters for one render pass without retaining a second book.
+
+        Snapshot stores copy each chapter per call, so those yields stay independent
+        across passes. Live storage and previously prepared chapters share the view
+        read-only copy instead of copying again per reader.
+        """
         for ci in indices:
             if not isinstance(self._store, ExportSnapshotStore) or ci in self._chapters:
                 # Live storage and any previously prepared view keep their cached-read semantics.

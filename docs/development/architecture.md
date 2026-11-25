@@ -88,6 +88,34 @@ The creator of a per-operation Storage instance closes it on success and failure
 Read routes use explicit close scopes; runners register cleanup immediately after each
 resource acquisition, including failures while starting telemetry.
 
+<a id="locks-backend"></a>
+
+### Cross-process file locks
+
+Local stores serialize workflow-critical sections with cross-process advisory file
+locks (`packages/core/wenyi_core/storage/locks.py`). Two interchangeable backends
+satisfy one contract (`packages/core/tests/test_locks_contract.py`): the optional
+`wenyi-locks` native library loaded through ctypes and a pure-Python fallback.
+The backend is probed once per process:
+
+- `WENYI_LOCKS_BACKEND` selects `auto` (default), `rust` or `python`. `auto` and
+  `rust` prefer the native library; `python` always uses the fallback. Unknown
+  values raise `ValueError`.
+- `WENYI_LOCKS_LIB` names an explicit shared library (`wenyi_locks.dll`,
+  `libwenyi_locks.dylib` or `libwenyi_locks.so`) and is tried first; if it fails
+  to load, the override is ignored with an error log and the search continues.
+  Without it the loader probes the PyInstaller bundle directory,
+  `$CARGO_TARGET_DIR/{release,debug}` and the repository-root
+  `target/{release,debug}` — native crates share the root Cargo workspace, so a
+  checkout build is found without an override.
+- `WENYI_LOCKS_MODE` decides what a failed native load means: `warn` (default)
+  logs one warning naming the tried paths and keeps the Python fallback, `error`
+  fails lock acquisition with those reasons, and `silent` keeps the fallback
+  without the warning. Unknown values raise `ValueError`.
+
+Build the library with `cargo build -p wenyi-locks` (or `--release`); how release
+packaging bundles it is described in [Desktop releases](releasing.md).
+
 ### Saved settings reconstruction
 
 Reconstruction is separate from book-state or ledger migration. It runs when CLI
@@ -116,10 +144,15 @@ Backup locations and user-visible fallback behavior are documented in the
 ## Execution and publication
 
 The workflow runner owns durable job rechecks, cancellation and resource cleanup. Its
-run lock covers recovery and domain work; successful catalog status writes follow the
-live-statistics scope and run-lock exit. Async cancellation drains synchronous checkpoint
-writes before releasing the scheduler slot. Export coordination holds one export lock
-through claim, render, publication and terminal status; rendering never publishes.
+run lock covers recovery and domain work. The synchronous writer returns only after
+checkpoint writes, live statistics and storage cleanup; then the runner rechecks run
+identity and publishes the catalog outcome. See the [shared cancellation contract](web.md#workflow-cancellation)
+for how cancellation retains scheduler ownership.
+
+Export coordination holds one export lock through claim, render and publication; rendering
+never publishes. The catalog commits the published artifact and its job's successful
+status together. Retired history is hidden at that commit; reclaiming its files afterward
+cannot change publication status.
 
 Pause admission checks the latest non-export run and active status in one catalog
 transaction. Source replacement commits preview-cache invalidation before publishing
@@ -188,6 +221,13 @@ EPUB reader and writer. The manifest binds the original PDF hash and the derived
 EPUB hash; `fmt` remains `pdf` for the project and its previews. Template-aware
 operations use the derived EPUB, not the uploaded file. Exports never request
 another conversion from MinerU.
+
+Core reports MinerU failures using local categories and controlled fields, such
+as the request stage, HTTP status, retry count, or missing field name. Never
+copy service messages, response excerpts, batch IDs, or signed URLs into
+exceptions or logs: task history and live progress reuse the error message.
+HTTP client traces are suppressed only during MinerU requests. Local guidance,
+such as adding an OCR text layer to an image-only PDF, remains visible.
 
 To inspect an existing MinerU result bundle, use the same renderer offline:
 

@@ -53,6 +53,27 @@ def _remove_location(value: dict, location: tuple) -> tuple | None:
     return location[: len(ancestors)]
 
 
+def _mask_inherited_route_conflict(candidate: dict, base: dict, location: tuple) -> bool:
+    """Keep a saved primary when validation rejects a field inherited alongside it."""
+    if len(location) != 3 or location[0] != "routes":
+        return False
+    _, operation, field = location
+    routes = candidate.get("routes")
+    route = routes.get(operation) if isinstance(routes, dict) else None
+    if not isinstance(route, dict) or "model" not in route or field in route:
+        return False
+    inherited = base.get("routes", {}).get(operation, {})
+    if field == "thinking" and isinstance(inherited.get(field), str):
+        route[field] = None
+        return True
+    if field == "fallbacks":
+        fallbacks = inherited.get(field)
+        if isinstance(fallbacks, list) and route["model"] in fallbacks:
+            route[field] = [ref for ref in fallbacks if ref != route["model"]]
+            return True
+    return False
+
+
 def _rebuild_section(
     name: str, model: type[BaseModel], value: dict, base: dict
 ) -> tuple[dict, list[str]]:
@@ -75,9 +96,12 @@ def _rebuild_section(
                 )
             ]
         for location in locations:
-            deleted = _remove_location(candidate, location)
-            if deleted is not None:
-                removed.append(".".join((name, *map(str, deleted))))
+            if name == "llm" and _mask_inherited_route_conflict(candidate, base, location):
+                discarded = location
+            else:
+                discarded = _remove_location(candidate, location)
+            if discarded is not None:
+                removed.append(".".join((name, *map(str, discarded))))
                 break
         else:
             # Once a broken registry loses required routes, restore

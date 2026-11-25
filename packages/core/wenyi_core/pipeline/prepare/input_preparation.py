@@ -21,7 +21,7 @@ from ...ingest.segmenter import load_document
 from ...markup.objects import OBJECT_SCHEMA_VERSION
 from ...models.document import MINERU_EPUB_DIGEST, Document, uses_epub_template
 from ...storage.protocol import Storage
-from ...storage.run_store import source_sha256, translation_run_dir
+from ...storage.run_store import resolve_file_run_dir, source_sha256
 
 
 def ingest_config(config: Config) -> dict[str, Any]:
@@ -143,12 +143,25 @@ def locate_input_storage(
     *,
     progress: ProgressFn | None = None,
 ) -> tuple[Storage, str]:
-    """Locate local state using filename or metadata titles, without parsing chapters."""
+    """Resolve local state before constructing a store that may create directories."""
+    run_dir, digest = locate_input_run(input_path, config, progress=progress)
+    return storage_factory(run_dir), digest
+
+
+def locate_input_run(
+    input_path: str, config: Config, *, progress: ProgressFn | None = None
+) -> tuple[str, str]:
+    """Locate CLI state using the filename or metadata title, without parsing chapters."""
     if progress:
         progress(0, 0, "progress.stage.locateSource")
     extension = os.path.splitext(input_path)[1].lower()
-    digest = source_sha256(input_path)
-    if extension in (
+    peek_title = {".epub": peek_epub_title, ".fb2": peek_fb2_title}.get(extension)
+    if peek_title is not None:
+        digest = source_sha256(input_path)
+        title = peek_title(input_path)
+        if source_sha256(input_path) != digest:
+            raise ValueError("Source changed during parsing; ensure the file is stable and retry.")
+    elif extension in (
         ".txt",
         ".text",
         ".md",
@@ -160,16 +173,17 @@ def locate_input_storage(
         ".pdf",
     ):
         title = os.path.splitext(os.path.basename(input_path))[0]
-    elif extension == ".epub":
-        title = peek_epub_title(input_path)
-    elif extension == ".fb2":
-        title = peek_fb2_title(input_path)
+        digest = source_sha256(input_path)
     else:
         raise ValueError(
             f"Unsupported format: {extension} "
             "(supported: .epub / .txt / .md / .fb2 / .html / .xhtml / .pdf / .docx)"
         )
-    if source_sha256(input_path) != digest:
-        raise ValueError("Source changed during parsing; ensure the file is stable and retry.")
-    store = storage_factory(translation_run_dir(config.state_dir, title, config.target_lang))
-    return store, digest
+    run_dir = resolve_file_run_dir(
+        config.state_dir,
+        title,
+        config.target_lang,
+        source_lang=config.source_lang,
+        actual_sha256=digest,
+    )
+    return run_dir, digest

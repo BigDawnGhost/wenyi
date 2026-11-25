@@ -78,6 +78,29 @@ schema 生成与传输契约见 [Web 开发](web.md)。
 每次操作的 Storage 由创建方在成功和失败路径中关闭。读取路由使用显式关闭作用域；
 runner 每取得一个资源就登记清理，包括启动遥测时失败的情况。
 
+<a id="locks-backend"></a>
+
+### 跨进程文件锁
+
+本地存储使用跨进程建议锁（`packages/core/wenyi_core/storage/locks.py`）串行化
+工作流关键段。两个可互换的后端满足同一契约
+（`packages/core/tests/test_locks_contract.py`）：经 ctypes 加载的可选
+`wenyi-locks` 原生库，以及纯 Python 回退。后端在每个进程内只探测一次：
+
+- `WENYI_LOCKS_BACKEND` 取 `auto`（默认）、`rust` 或 `python`。`auto` 与 `rust`
+  优先使用原生库，`python` 始终使用回退；未知取值抛出 `ValueError`。
+- `WENYI_LOCKS_LIB` 指定共享库的显式路径（`wenyi_locks.dll`、
+  `libwenyi_locks.dylib` 或 `libwenyi_locks.so`），并最先尝试；若加载失败，
+  记录错误日志后忽略该覆盖并继续搜索。未设置时按顺序探测 PyInstaller 打包目录、
+  `$CARGO_TARGET_DIR/{release,debug}` 与仓库根目录 `target/{release,debug}`——
+  原生 crate 共用仓库根 Cargo 工作区，检出版本构建后无需设置该变量即可被找到。
+- `WENYI_LOCKS_MODE` 决定原生库加载失败时的行为：`warn`（默认）记录一次包含
+  尝试路径与原因的警告并保留 Python 回退；`error` 以相同原因使取锁直接失败；
+  `silent` 保留回退且不告警。未知取值抛出 `ValueError`。
+
+原生库使用 `cargo build -p wenyi-locks`（或 `--release`）构建；发布打包如何
+捆绑该库见[桌面发布](releasing.md)。
+
 ### 已保存设置重建
 
 重建与书籍状态、账本迁移分离，在 CLI 加载配置，以及 Web repository、
@@ -100,9 +123,13 @@ Web 使用设置 advisory lock 与项目行锁；Desktop 使用短目录库写�
 ## 执行与发布
 
 工作流 runner 负责持久化任务复核、取消与资源清理，运行锁覆盖恢复和领域操作；
-成功的目录库状态写入在实时统计作用域和运行锁退出后进行。异步取消先等待
-同步检查点写入结束，再释放调度槽位。导出协调器在同一个导出锁内完成
-claim、render、publish 和终态写入；渲染自身不发布文件。
+同步写入线程在检查点保存、实时统计和存储清理全部结束后返回，随后 runner 重新核对
+运行身份并发布终态。[共享取消契约](web.md#workflow-cancellation)说明取消如何保留
+调度所有权。
+
+导出协调器在同一个导出锁内完成任务领取、渲染与发布；渲染自身不发布文件。
+目录库在同一事务提交产物和任务的成功状态，并隐藏已淘汰的历史记录；
+提交后回收旧文件不会改变发布状态。
 
 暂停准入在一个目录库事务中检查最新非导出运行及活动状态。原文替换先提交预览缓存
 失效，再发布新原文引用；缓存失效失败会回滚，目录库提交结果不确定时保留完整候选
@@ -151,6 +178,11 @@ MinerU 大 PDF 由 `pdf/` 在私有目录内切页，遇不支持的页面特性
 Python 按分块顺序读取 Content List V2 结果 ZIP，生成一个 `converted.epub`。
 新项目使用常规 EPUB 读写流程；manifest 绑定原 PDF 和派生 EPUB 的哈希。
 项目和预览的 `fmt` 始终为 `pdf`。需要模板的操作读取派生 EPUB，导出不会重新请求 MinerU。
+
+Core 用本地定义的类别和受控字段报告 MinerU 故障，例如请求阶段、HTTP 状态码、
+重试次数或缺失的字段名。任务历史和实时进度会复用异常消息，因此异常和日志不得包含
+服务端错误消息、响应片段、批次 ID 或签名 URL。HTTP 客户端的跟踪日志仅在 MinerU
+请求期间停用。为纯图片 PDF 添加 OCR 文本层等本地操作指引仍会显示。
 
 已有 MinerU 结果包可用同一转换器离线检查：
 

@@ -1,7 +1,9 @@
 """The shared middleware must not duplicate headers the Desktop layer sets."""
 
 import asyncio
+from typing import cast
 
+from starlette.types import Receive
 from wenyi_backend.request_context import (
     ERROR_ID_HEADER,
     REQUEST_ID_HEADER,
@@ -23,7 +25,7 @@ def test_headers_are_added_once_when_no_outer_layer_sets_them():
     async def send(message):
         sent.append(message)
 
-    asyncio.run(RequestContextMiddleware(app)(_scope(), None, send))
+    asyncio.run(RequestContextMiddleware(app)(_scope(), cast(Receive, None), send))
     headers = sent[0]["headers"]
     assert [k for k, _ in headers].count(REQUEST_ID_HEADER.encode()) == 1
     assert [k for k, _ in headers].count(ERROR_ID_HEADER.encode()) == 1
@@ -40,6 +42,6 @@ def test_inbound_correlation_is_used_verbatim():
 
     scope = _scope()
     scope["headers"] = [(b"x-request-id", b"trace-42")]
-    asyncio.run(RequestContextMiddleware(app)(scope, None, send))
+    asyncio.run(RequestContextMiddleware(app)(scope, cast(Receive, None), send))
     assert (REQUEST_ID_HEADER.encode(), b"trace-42") in sent[0]["headers"]
     assert all(k != ERROR_ID_HEADER.encode() for k, _ in sent[0]["headers"])

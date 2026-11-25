@@ -23,8 +23,9 @@ def template(name: str, *, genre: Genre = DEFAULT_GENRE) -> Template:
 
 
 def render(
-    name: str, *, src: str = "ja", tgt: str = "zh", plan: PolicyPlan | None = None, **kwargs
+    name: str, *, src: str = "en", tgt: str = "en", plan: PolicyPlan | None = None, **kwargs
 ) -> str:
+    """Render a task prompt; only an explicit locale selects ja/zh-specific guidance."""
     src = languages.require_language(src, allow_auto=True)
     if plan is None:
         plan = resolve_policy(PolicyContext(src, tgt))

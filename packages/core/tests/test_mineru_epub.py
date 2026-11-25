@@ -14,6 +14,7 @@ from wenyi_core.ingest.epub_reader import read_epub
 from wenyi_core.ingest.mineru_epub import convert_json
 from wenyi_core.ingest.pdf_reader import pdf_cache_epub_path
 from wenyi_core.ingest.source_hash import source_sha256
+from wenyi_core.models.errors import MinerUError
 from wenyi_core.pipeline.prepare.input_preparation import parse_document
 from wenyi_core.storage.file import FileStorage
 from wenyi_core.storage.sqlite import SqliteStorage
@@ -506,7 +507,7 @@ def test_mineru_epub_export_updates_head_title_from_translated_chapter(tmp_path)
         ),
         encoding="utf-8",
     )
-    pdf_path = tmp_path / "paper-2026.pdf"
+    pdf_path = tmp_path / "Quantum Notes.pdf"
     pdf_path.write_bytes(pdf_bytes(["page one"]))
     store = FileStorage(str(tmp_path / "state"))
     cache = pdf_cache_epub_path(store.source_dir, source_sha256(pdf_path))
@@ -518,6 +519,7 @@ def test_mineru_epub_export_updates_head_title_from_translated_chapter(tmp_path)
     doc.source_path = str(pdf_path)
     doc.meta["mineru_epub_sha256"] = source_sha256(cache)
     manifest = store.init_from_document(doc)
+    assert manifest["title"] == manifest["chapters"][0]["title"]
     chapter = store.load_chapter(0)
     chapter.segments[0].target = "量子笔记"
     chapter.segments[1].target = "正文段落。"
@@ -530,6 +532,19 @@ def test_mineru_epub_export_updates_head_title_from_translated_chapter(tmp_path)
     with ZipFile(out) as archive:
         opf_name = next(name for name in archive.namelist() if name.endswith(".opf"))
         opf = archive.read(opf_name).decode("utf-8")
-        xhtml = archive.read("EPUB/source.xhtml").decode("utf-8")
-    assert "<dc:title>paper-2026-wenyi-zh</dc:title>" in opf
-    assert "<title>量子笔记</title>" in xhtml
+        xhtml = ET.fromstring(archive.read("EPUB/source.xhtml"))
+    assert "<dc:title>Quantum Notes-wenyi-zh</dc:title>" in opf
+    assert xhtml.findtext("x:head/x:title", namespaces=NS) == "量子笔记"
+
+
+def test_image_only_content_list_reports_missing_text_layer(tmp_path):
+    (tmp_path / "scan.gif").write_bytes(GIF)
+    source = tmp_path / "example_content_list_v2.json"
+    source.write_text(
+        json.dumps([[_block("image", image_source={"path": "scan.gif"})]]),
+        encoding="utf-8",
+    )
+    output = tmp_path / "source.epub"
+    with pytest.raises(MinerUError, match="no text from the PDF"):
+        convert_json(source, output)
+    assert not output.exists()

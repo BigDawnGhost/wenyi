@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path, PurePath
+from typing import cast
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -28,7 +29,7 @@ class ImportRequest(BaseModel):
 
 
 def _backend() -> LocalBackend:
-    return current_context().repository
+    return cast(LocalBackend, current_context().repository)
 
 
 @router.post("/import", status_code=201)

@@ -14,11 +14,16 @@ from ..execution.bindings import export_dependencies, workflow_dependencies
 from ..execution.contracts import ExecutionRequest, ExportRequest, WorkflowKind
 from ..execution.outage import AUTO_RESUME_ATTEMPT_PARAM
 from ..project_service import effective_config
+from .signing import SIGNATURE_FIELD, verify_task
 
 
 def _worker_entry(function):
     @wraps(function)
     async def run(ctx, **kwargs):
+        signature = kwargs.pop(SIGNATURE_FIELD, None)
+        secret = getattr(ctx.get("backend"), "api_token", None)
+        if not verify_task(function.__name__, kwargs, signature, secret):
+            raise ValueError(f"Rejecting unsigned or tampered {function.__name__} payload")
         with (
             use_context(ctx["backend"]),
             use_bridge_connection(ctx["backend"].babeldoc_connection),
