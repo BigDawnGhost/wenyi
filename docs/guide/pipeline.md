@@ -53,8 +53,8 @@ output spend and wall-clock latency. You can override `thinking` per operation i
 | --- | --- | --- |
 | `translation.body` | `thinking: "off"` under `nextgen` (`polish_mode: sparse`); keep reasoning on without sparse polishing | In controlled A/B runs on DeepSeek V4.1 Flash under `nextgen`, turning reasoning off cut body completion tokens by ~71% while blind judges rated the final polished prose near parity with `high` (`8.35` vs `8.40` / 10). |
 | `glossary.align_history` | `thinking: "off"` | Small alignment calls; disabling reasoning cut completion tokens by ~85% and ran ~3× faster with exact match parity. |
-| `glossary.extract` | `thinking: low` (do **not** disable) | Enough to extract names reliably while much faster than `high`. Disabling reasoning risks wrong mappings for forms of address in `incremental` mode, and in `compiled` (Book Bible) mode lets common-word/substring noise into the glossary, which then triggers false `glossary_miss` alerts and triples escalated polish calls. |
-| `polish.body` | `thinking: low` under `polish_mode: sparse` | Keeps routine batches cheap while allowing risk-routed `thinking_boost` to escalate batches that trigger a high-severity alert or meet both the classical-dense and dialogue-density thresholds. |
+| `glossary.extract` | `thinking: low` (do **not** disable) | Enough to extract names reliably while much faster than `high`. Disabling reasoning risks wrong mappings for forms of address in `incremental` mode, and in `compiled` (Book Bible) mode lets common-word/substring noise into the glossary, which then triggers false `glossary_miss` alerts during polishing. |
+| `polish.body` | `thinking: low` under `polish_mode: sparse` | Keeps batches fast and predictable; `polish.body` strictly honors the configured thinking level (raise it to `medium` or `high` explicitly for unusually dense classical texts). |
 
 Quote `"off"` in YAML so it is parsed as a string rather than boolean `false`, and enable sparse polishing when disabling reasoning on `translation.body`:
 

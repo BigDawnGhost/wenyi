@@ -48,8 +48,8 @@
 | --- | --- | --- |
 | `translation.body` | `nextgen`（`polish_mode: sparse`）下可用 `thinking: "off"`；不开启稀疏润色时建议保留推理 | 在 DeepSeek V4.1 Flash 的 `nextgen` 对照测试中，关闭正文翻译推理使正文输出 token 减少约 71%，经稀疏润色后的盲评质量与 `high` 基本持平（`8.35` 对 `8.40` / 10）。 |
 | `glossary.align_history` | `thinking: "off"` | 输入很小的历史对齐调用；关闭推理使输出 token 减少约 85%、速度快约 3 倍，且结果完全一致。 |
-| `glossary.extract` | 保持 `thinking: low`（**不要**关闭） | 足以稳定识别人名地名，耗时远低于 `high`。完全关闭在 `incremental` 模式下容易误判称谓映射；在 `compiled`（Book Bible）模式下更会放行普通词与残片噪声，进而触发大量误报 `glossary_miss` 并使润色升档次数增至 3 倍，反倒抵消节省。 |
-| `polish.body` | `polish_mode: sparse` 下设为 `thinking: low` | 常规批次保持低成本，同时让风险路由 `thinking_boost` 在命中高严重度告警，或同时达到古文密集与对话密集阈值时自动升档。 |
+| `glossary.extract` | 保持 `thinking: low`（**不要**关闭） | 足以稳定识别人名地名，耗时远低于 `high`。完全关闭在 `incremental` 模式下容易误判称谓映射；在 `compiled`（Book Bible）模式下更会放行普通词与残片噪声，进而在润色预筛中触发大量误报 `glossary_miss`。 |
+| `polish.body` | `polish_mode: sparse` 下设为 `thinking: low` | 保持批次快速且成本可控；`polish.body` 严格遵循你配置的推理档位（遇到特别晦涩的古文作品时可显式调高到 `medium` 或 `high`）。 |
 
 在 YAML 中请给 `"off"` 加引号（避免被解析为布尔值 `false`），且关闭 `translation.body` 推理时需同时启用稀疏润色：
 

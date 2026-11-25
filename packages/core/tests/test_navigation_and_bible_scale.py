@@ -91,7 +91,7 @@ def test_fit_terms_to_budget_backfills_only_non_navigation_prefix():
 # --- batch risk ----------------------------------------------------------------------------
 
 
-def test_batch_risk_ignores_navigation_titles_for_misses_and_phantoms():
+def test_batch_risk_ignores_navigation_titles_for_glossary_misses():
     sources = ["威尔推门而入。", "他转身看着来人。"]
     drafts = ["Bill pushed the door open.", "He turned and looked at Jingxiang."]
     entity = [
@@ -102,13 +102,13 @@ def test_batch_risk_ignores_navigation_titles_for_misses_and_phantoms():
         sources, drafts, source_lang="zh", target_lang="en", glossary_terms=entity
     )
     codes = {(a.index, a.code) for a in flagged.alerts}
-    assert (0, "glossary_miss") in codes and (1, "phantom_entity") in codes
+    assert (0, "glossary_miss") in codes
 
     navigation = [_nav(t.source, t.target) for t in entity]
     report = assess_batch_risk(
         sources, drafts, source_lang="zh", target_lang="en", glossary_terms=navigation
     )
-    assert not any(a.code in {"glossary_miss", "phantom_entity"} for a in report.alerts)
+    assert not any(a.code == "glossary_miss" for a in report.alerts)
 
 
 # --- glossary notes ------------------------------------------------------------------------

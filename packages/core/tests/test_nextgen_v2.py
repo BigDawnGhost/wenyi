@@ -177,17 +177,17 @@ def test_book_bible_morpheme_clustering_and_spoiler_safe_gender_guard():
     assert by_src["林青"].gender == "female"
 
 
-def test_batch_risk_screener_catches_traps_and_escalates_sparse_editor():
+def test_batch_risk_screener_flags_structural_defects_without_escalating_sparse_editor():
     terms = [GlossaryTerm(source="青云楼", target="Qingyun Tower", type="place")]
     sources = [
-        "不守北关以免后患，就先取西原以稳大局。",
+        "这是一位老人在夜幕降临之后独自走在长街尽头、回头望着远方灯火摇曳时轻轻叹息的一段很长的文字描述，记录着他多年来的思索与感慨。",
         "林远来到青云楼前，吟道：“大漠孤烟直，长河落日圆。”",
-        "有陈大人在，孤可以安枕无忧了。",
+        "他低声道谢，转身离去。",
     ]
     drafts = [
-        "Whether to leave the northern pass unguarded to spare ourselves trouble.",
+        "An old man sighed.",
         "Lin Yuan arrived at Azure Cloud Pavilion and recited, 'Lone smoke rises straight over the desert; the setting sun is round above the long river.'",
-        "With Minister Chen here, the lone one could rest easy.",
+        "He thanked them quietly and left 离去.",
     ]
     report = assess_batch_risk(
         sources,
@@ -197,22 +197,23 @@ def test_batch_risk_screener_catches_traps_and_escalates_sparse_editor():
         glossary_terms=terms,
     )
     codes = {a.code for a in report.alerts}
-    assert report.should_escalate is True
-    assert {"conditional_logic", "glossary_miss", "royal_pronoun"} <= codes
-    assert "allusion" not in codes
+    assert {"possible_omission", "embedded_verse", "glossary_miss", "script_residue"} <= codes
     assert has_embedded_verse(sources[1], source_lang="zh") is True
 
-    # Verify SparseSemanticEditor passes thinking_boost=1 on risky batch and 0 on clean batch.
+    # Verify SparseSemanticEditor passes pre-screen hints in the prompt while strictly honoring
+    # the configured polish.body thinking level (never silently escalating thinking_boost).
     cfg = Config(source_lang="zh", target_lang="en", llm=LLMConfig(preset="fake"))
     fake = FakeClient(lambda m, op, jm: json.dumps({"patches": []}))
     editor = SparseSemanticEditor(fake, cfg)
-    res_risky = editor.edit_batch(sources, drafts, glossary_terms=terms)
-    assert res_risky.thinking_boost == 1
-    assert fake.calls[-1]["thinking_boost"] == 1
+    res_alerted = editor.edit_batch(sources, drafts, glossary_terms=terms)
+    assert not res_alerted.failed
+    assert fake.calls[-1]["thinking_boost"] == 0
+    assert "[Pre-screen alerts" in fake.calls[-1]["messages"][-1]["content"]
 
     res_clean = editor.edit_batch(["天气很好。"], ["The weather was fine."], glossary_terms=terms)
-    assert res_clean.thinking_boost == 0
+    assert not res_clean.failed
     assert fake.calls[-1]["thinking_boost"] == 0
+    assert "[Pre-screen alerts" not in fake.calls[-1]["messages"][-1]["content"]
 
 
 def test_sparse_editor_voice_guard_rejects_gratuitous_style_rewrites():
@@ -511,50 +512,6 @@ def test_pr30_review_regressions(tmp_path):
     res_docx = svc.run(store, chapter_indices=[0, 1], terms=[])
     assert res_docx.quotes_unified == 0
     assert store.load_chapter(1).text_segments[0].target == "Protected DOCX styled line."
-
-
-def test_batch_risk_catches_phantom_entity_and_pronoun_flip_without_book_traps():
-    terms = [
-        GlossaryTerm(source="河洛", target="Heluo", type="place"),
-        GlossaryTerm(source="东吴", target="Eastern Wu", type="place"),
-    ]
-    sources = [
-        "若是将军亲自领兵，便能稳守北原，护我东吴。",
-        "她女扮男装混入营中，乔装成年轻书生后便径直走上高台。",
-        "我答应替他查清此事，绝不食言。",
-        "大军稳守河洛，保我东吴安宁。",
-    ]
-    drafts = [
-        "If the general leads the army, we can hold Heluo firmly and shield Eastern Wu.",
-        "Disguised in men's robes as a young scholar, he walked straight onto the platform while she adjusted her sleeves.",
-        "I promised to look into this matter for him and would never break my word.",
-        "The army held Heluo firmly and kept Eastern Wu at peace.",
-    ]
-    report = assess_batch_risk(
-        sources,
-        drafts,
-        source_lang="zh",
-        target_lang="en",
-        glossary_terms=terms,
-    )
-    by_idx = {(a.index, a.code) for a in report.alerts}
-    assert (0, "phantom_entity") in by_idx
-    assert (1, "pronoun_consistency") in by_idx
-    # Removed book-specific agency trap must not fire.
-    assert (2, "agency_direction") not in by_idx
-    # Paragraph 3 genuinely contains 河洛 in source, so no false phantom_entity alert.
-    assert (3, "phantom_entity") not in by_idx
-    assert report.should_escalate is True
-
-    # Ungrammatical third-person "the sir" calque triggers calque_or_idiom escalation.
-    sir_report = assess_batch_risk(
-        ["不要惊动先生。"],
-        ["Let us not disturb the sir."],
-        source_lang="zh",
-        target_lang="en",
-    )
-    assert sir_report.should_escalate is True
-    assert any(a.code == "calque_or_idiom" for a in sir_report.alerts)
 
 
 def test_verse_segment_and_block_detection_ignore_modern_prose_and_isolated_lines():

@@ -1,20 +1,17 @@
-"""Full-book scale regressions for the batch risk pre-screener and consistency drift miner.
+"""Full-book scale regressions for the structural batch pre-screener and consistency drift miner.
 
-Covers false positives seen on a 1,479-chapter run: ordinary English words colliding with
-glossary names in ``phantom_entity`` checks, everyday Chinese vocabulary / English
-inflections crowding real term drift out of ``detect_mid_frequency_drift``, mid-clause and
-temporal ``不…，就`` patterns firing ``conditional_logic``, and the batch-level term
-pre-filtering that keeps first/middle/last-paragraph hits cheap without losing alerts.
+Covers glossary miss matching (case-insensitivity, conservative English plurals, CJK numeral
+boundary isolation, covering-term deduplication, and batch-level pre-filtering), embedded verse
+precision against prose dialogue verbs, concise-reasoning sparse-editor prompts, and everyday
+Chinese vocabulary / English inflection filtering in ``detect_mid_frequency_drift``.
 """
 
 from __future__ import annotations
 
 from wenyi_core.agents.batch_risk import (
-    _ZH_CONDITIONAL_RE,
-    _lowercase_words,
-    _phantom_target_hit,
     _target_contains_term,
     assess_batch_risk,
+    has_embedded_verse,
 )
 from wenyi_core.models.document import Chapter, Segment
 from wenyi_core.models.glossary import GlossaryTerm
@@ -35,118 +32,10 @@ def _codes(report) -> set[tuple[int, str]]:
     return {(a.index, a.code) for a in report.alerts}
 
 
-# --- batch_risk: phantom_entity ---------------------------------------------------------
-
-
-def test_phantom_entity_ignores_lowercase_and_sentence_initial_common_words():
-    sources = [
-        "他说他明天会去城里。",
-        "她心里还存着一丝希望。",
-        "白烟从屋顶升起。",
-        "你会去吗？",
-        "希望渐渐破灭了。",
-        "白烟升起。",
-        "他问道：“你会留下吗？”",
-    ]
-    drafts = [
-        "He said he will go into the city tomorrow.",
-        "She still held on to a thread of hope.",
-        "A white smoke curled up from the roof.",
-        "Will you go?",
-        "Hope faded little by little.",
-        "White smoke rose.",
-        'He asked, "Will you stay?"',
-    ]
-    report = assess_batch_risk(
-        sources, drafts, source_lang="zh", target_lang="en", glossary_terms=_NAME_TERMS
-    )
-    assert not any(a.code == "phantom_entity" for a in report.alerts)
-    assert report.should_escalate is False
-
-
-def test_phantom_entity_still_catches_mid_sentence_names_and_distinctive_sentence_start():
-    sources = ["他转身看着来人。", "他骑马回到了城里。", "城池陷落了。", "她叹了口气。"]
-    drafts = [
-        "He turned and looked at Will.",
-        "He rode back to Jingxiang.",
-        "Jingxiang fell.",
-        "She sighed, and White said nothing.",
-    ]
-    report = assess_batch_risk(
-        sources, drafts, source_lang="zh", target_lang="en", glossary_terms=_NAME_TERMS
-    )
-    codes = _codes(report)
-    for idx in range(4):
-        assert (idx, "phantom_entity") in codes
-    assert report.should_escalate is True
-
-
-def test_phantom_entity_skips_when_source_names_the_entity():
-    report = assess_batch_risk(
-        ["威尔推门而入。"],
-        ["Will pushed the door open."],
-        source_lang="zh",
-        target_lang="en",
-        glossary_terms=_NAME_TERMS,
-    )
-    assert not report.alerts
-
-
-def test_phantom_target_hit_rules():
-    # Case-sensitive on Latin targets.
-    assert not _phantom_target_hit("I will go.", "Will", target_lang="en")
-    assert _phantom_target_hit("I saw Will go.", "Will", target_lang="en")
-    # Sentence/line/quote/dash/ellipsis starts are ambiguous only for common words.
-    for text in (
-        "Will you go?",
-        "Done. Will you go?",
-        '"Will you go?"',
-        "Yes.\nWill you?",
-        "—Will you go?",
-        "…Will came.",
-        "nodded.—Will stood.",
-    ):
-        assert not _phantom_target_hit(text, "Will", target_lang="en")
-    assert _phantom_target_hit("Done. Jingxiang fell.", "Jingxiang", target_lang="en")
-    assert _phantom_target_hit('"Jingxiang fell," he said.', "Jingxiang", target_lang="en")
-    # A word written lowercase elsewhere in the batch is ambiguous at sentence start too,
-    # including NFD-decomposed Latin characters.
-    assert _phantom_target_hit("Rowan branches swayed.", "Rowan", target_lang="en")
-    assert not _phantom_target_hit(
-        "Rowan branches swayed.",
-        "Rowan",
-        target_lang="en",
-        lowercase_words=frozenset({"rowan"}),
-    )
-    assert "café" in _lowercase_words(["a cafe\u0301 on the corner"])
-    # Multi-word targets (including across line breaks), honorific prefixes, apostrophe variants,
-    # lowercase particles, and articles.
-    assert _phantom_target_hit("Envoys from the Eastern Wu court.", "Eastern Wu", target_lang="en")
-    assert _phantom_target_hit("Envoys from Eastern\nWu arrived.", "Eastern Wu", target_lang="en")
-    assert _phantom_target_hit("Envoys from Eastern\r\nWu arrived.", "Eastern Wu", target_lang="en")
-    assert not _phantom_target_hit(
-        "Envoys from Eastern\nwu arrived.", "Eastern Wu", target_lang="en"
-    )
-    assert _phantom_target_hit("The Duke of North smiled.", "the Duke of North", target_lang="en")
-    assert not _phantom_target_hit("the eastern wu court", "Eastern Wu", target_lang="en")
-    assert _phantom_target_hit("He met Mr. White at noon.", "White", target_lang="en")
-    assert _phantom_target_hit("Then Dr. Hope came in.", "Hope", target_lang="en")
-    assert _phantom_target_hit("He called O\u2019Brien over.", "O'Brien", target_lang="en")
-    assert _phantom_target_hit(
-        "De Gaulle arrived.", "de Gaulle", target_lang="en", term_type="person"
-    )
-    # Person names never strip 'An'/'A' as an indefinite article ("An Lushan" != "Lushan").
-    assert not _phantom_target_hit(
-        "They climbed Lushan.", "An Lushan", target_lang="en", term_type="person"
-    )
-    # English collision list is gated to English; other Latin languages rely on lowercase_words.
-    assert _phantom_target_hit("Will arriva tard.", "Will", target_lang="fr")
-    # CJK targets keep the existing substring matching.
-    assert _phantom_target_hit("他望向京襄城。", "京襄", target_lang="zh")
+# --- batch_risk: glossary_miss ----------------------------------------------------------
 
 
 def test_glossary_miss_matching_stays_case_insensitive():
-    # Canonical-miss detection must not be weakened by the stricter phantom matcher.
     assert _target_contains_term("will you go?", "Will", target_lang="en")
     assert _target_contains_term("Will you go?", "Will", target_lang="en")
     report = assess_batch_risk(
@@ -165,88 +54,6 @@ def test_glossary_miss_matching_stays_case_insensitive():
         glossary_terms=_NAME_TERMS,
     )
     assert any(a.code == "glossary_miss" for a in miss.alerts)
-
-
-# --- batch_risk: zh conditional precision -------------------------------------------------
-
-
-def test_zh_conditional_regex_true_positives():
-    # Sentence/quote/ellipsis/paren/line starts and explicit conditional introducers
-    # (including with a short subject or normally-excluded 不-compound) are real correlatives.
-    for text in (
-        "不守北关以免后患，就先取西原以稳大局。",
-        "不答应，就别想走。",
-        "“不尊重我的，就滚出去。”",
-        "……不交钱，就别走。",
-        "（不交钱，就别走）",
-        "(不交钱，就别走。)",
-        "‘不交钱，就别走’",
-        "如果不臣服，就毁灭。",
-        "如果不是你，就完了。",
-        "如果不知道答案，就问老师。",
-        "如果他不来，就走。",
-        "要是不同意，就再议。",
-        "要是大家不同意，就再议。",
-        "要是不敢反抗，就只能挨打。",
-        "倘若不低头，就被打压。",
-        "倘若不到万不得已，就绝不动手。",
-        "假如不去赴宴，就算弃权。",
-        "只要不下雨，就出发。",
-        "一旦不注意，就会出事。",
-        "若不低头，就退无可退。",
-        "他若不至，便开战。",
-        "他沉默良久。不投降，就屠城。",
-        "前路已断。\n不低头，就退无可退。",
-    ):
-        assert _ZH_CONDITIONAL_RE.search(text), text
-
-
-def test_zh_conditional_regex_rejects_mid_clause_and_temporal_false_positives():
-    for text in (
-        # Mid-clause 不: the correlative reading does not exist.
-        "他不需要休息，就去睡觉了。",
-        "城墙挡不住敌人的进攻，就被攻破了。",
-        "他站在门口，不需要帮忙，就自己搬进去了。",
-        # Temporal/aspectual openers at sentence start are not conditionals.
-        "不到十分钟，就到了城下。",
-        "不一会儿，就到了城下。",
-        "不多时，就到了。",
-        "不多久，就来了。",
-        "不一时，就来了。",
-        "不大一会儿，就到了。",
-        "不消片刻，就到了。",
-        "不出三日，就到了。",
-        "不经意间，就到了。",
-        "不得已，就走了。",
-        "不等总统回应，就宣布了结果。",
-        "不敢怠慢，就连夜出发了。",
-        "不知不觉间，就到了天明。",
-        # Non-conditional clause-initial 不-compounds.
-        "不过是一场误会，就别计较了。",
-        "不管对方说什么，就当没听见。",
-        "不是不想去，就是没时间。",
-        "不必担心，就有我在。",
-        # The span must not run past closing quotes/parens or clause/line boundaries.
-        "所谓“不犯法”的方式，就是钻空子。",
-        "所谓‘不犯法’的方式，就是钻空子。",
-        "（不交钱）的情况下，就别走了。",
-        "(不交钱)的情况下，就别走了。",
-        "（不交钱)的情况下，就别走了。",
-        "不吃,不喝,就躺着。",
-        "不日即可抵达；次日，就出发了。",
-        "不辞而别：次日，就有人来报。",
-        "不日即可抵达\n次日，就出发了。",
-    ):
-        assert not _ZH_CONDITIONAL_RE.search(text), text
-
-
-def test_zh_conditional_regex_keeps_ru_branches():
-    for text in (
-        "若是将军亲自领兵，便能稳守北原。",
-        "若非亲眼所见，绝不敢信。",
-        "如若不然，定当严惩。",
-    ):
-        assert _ZH_CONDITIONAL_RE.search(text), text
 
 
 # --- batch_risk: conservative English plural matching -------------------------------------
@@ -422,7 +229,6 @@ def test_batch_prefilter_catches_glossary_miss_on_first_middle_last_paragraphs()
     for idx in (0, 2, 4):
         assert (idx, "glossary_miss") in codes
     assert not any(idx in {1, 3} for idx, code in codes if code == "glossary_miss")
-    assert report.should_escalate is True
 
 
 def test_batch_prefilter_keeps_ascii_word_boundaries_at_paragraph_edges():
@@ -449,32 +255,6 @@ def test_batch_prefilter_keeps_ascii_word_boundaries_at_paragraph_edges():
     assert _codes(report) == {(0, "glossary_miss"), (2, "glossary_miss"), (4, "glossary_miss")}
 
 
-def test_batch_prefilter_catches_phantom_entity_on_first_middle_last_paragraphs():
-    terms = [GlossaryTerm(source="临江", target="Riverside", type="place")]
-    sources = [
-        "船只顺流而下。",
-        "两岸青山如画。",
-        "暮色四合。",
-        "渔火点点。",
-        "夜色渐深。",
-    ]
-    drafts = [
-        "They moored at Riverside by dusk.",
-        "Green hills slid past on both banks.",
-        "Riverside lights flickered on the water.",
-        "Fishing fires glimmered far off.",
-        "The boat slipped past Riverside in the dark.",
-    ]
-    report = assess_batch_risk(
-        sources, drafts, source_lang="zh", target_lang="en", glossary_terms=terms
-    )
-    codes = _codes(report)
-    for idx in (0, 2, 4):
-        assert (idx, "phantom_entity") in codes
-    assert not any(idx in {1, 3} for idx, code in codes if code == "phantom_entity")
-    assert report.should_escalate is True
-
-
 def test_glossary_miss_covering_term_dedup_survives_batch_prefilter():
     terms = [
         GlossaryTerm(source="石城", target="Stone City", type="place"),
@@ -486,46 +266,8 @@ def test_glossary_miss_covering_term_dedup_survives_batch_prefilter():
         sources, drafts, source_lang="zh", target_lang="en", glossary_terms=terms
     )
     # The shorter source 石城 matches too, but the longer covering term renders correctly,
-    # so neither paragraph may raise a glossary_miss or phantom_entity alert.
-    assert not any(a.code in {"glossary_miss", "phantom_entity"} for a in report.alerts)
-
-
-def test_phantom_entity_target_overlap_checked_before_source_stem():
-    terms = [
-        GlossaryTerm(source="雪峰城", target="Snowpeak City", type="place"),
-        GlossaryTerm(source="雪峰", target="Snowpeak", type="place"),
-        GlossaryTerm(source="临江", target="Riverside", type="place"),
-    ]
-    sources = [
-        "商队缓缓驶向雪峰。",
-        "他继续赶路。",
-    ]
-    drafts = [
-        "The caravan rolled toward Snowpeak City.",
-        "He passed Riverside on the way.",
-    ]
-    report = assess_batch_risk(
-        sources, drafts, source_lang="zh", target_lang="en", glossary_terms=terms
-    )
-    codes = _codes(report)
-    # "Snowpeak City" hits the draft, but the overlapping "Snowpeak" term's source 雪峰
-    # really appears in this paragraph, so the overlap dedup suppresses the alert.
-    assert (0, "phantom_entity") not in codes
-    # A genuinely unexplained target still fires on the other paragraph.
-    assert (1, "phantom_entity") in codes
-    assert report.should_escalate is True
-
-
-def test_phantom_multiline_target_survives_batch_prefilter():
-    terms = [GlossaryTerm(source="东吴", target="Eastern Wu", type="place")]
-    sources = ["北原大战结束后，诸将班师。"]
-    drafts = ["Envoys from Eastern\nWu arrived at dusk."]
-    report = assess_batch_risk(
-        sources, drafts, source_lang="zh", target_lang="en", glossary_terms=terms
-    )
-    # A multi-word hit spanning a line break must survive the whitespace-collapsed
-    # batch pre-hit text and still raise the phantom_entity alert.
-    assert any(a.code == "phantom_entity" for a in report.alerts)
+    # so neither paragraph may raise a glossary_miss alert.
+    assert not any(a.code == "glossary_miss" for a in report.alerts)
 
 
 def test_assess_batch_risk_keeps_hits_at_full_book_scale():
@@ -534,7 +276,6 @@ def test_assess_batch_risk_keeps_hits_at_full_book_scale():
         for i in range(240)
     ]
     terms[10] = GlossaryTerm(source="黑石城", target="Blackstone City", type="place")
-    terms[11] = GlossaryTerm(source="临江", target="Riverside", type="place")
     sources, drafts = [], []
     for i in range(200):
         sources.append(f"第{i}段：将士们在城外列阵，旌旗猎猎作响。")
@@ -545,21 +286,108 @@ def test_assess_batch_risk_keeps_hits_at_full_book_scale():
     drafts[100] = "The army camped beneath the dark fortress, supplies plentiful."
     sources[199] = "黑石城的守军开城投降。"
     drafts[199] = "The garrison of the dark fortress surrendered."
-    sources[50] = "船只顺流而下，两岸青山如画。"
-    drafts[50] = "The boat drifted past Riverside on the way downstream."
-    sources[150] = "暮色四合，渔火点点。"
-    drafts[150] = "Dusk fell; Riverside lights flickered on the water."
     report = assess_batch_risk(
         sources, drafts, source_lang="zh", target_lang="en", glossary_terms=terms
     )
     codes = _codes(report)
-    # 242 terms against 200 paragraphs: the batch pre-filter must keep every real hit on
+    # 241 terms against 200 paragraphs: the batch pre-filter must keep every real hit on
     # the first, middle and last paragraphs while skipping the absent filler terms.
     for idx in (0, 100, 199):
         assert (idx, "glossary_miss") in codes
-    for idx in (50, 150):
-        assert (idx, "phantom_entity") in codes
-    assert report.should_escalate is True
+    assert len(codes) == 3
+
+
+def test_embedded_verse_excludes_prose_yin_dao_dialogue_tags_but_keeps_recitations():
+    # Prose dialogue verbs ending in 吟道 must never trigger embedded_verse.
+    for prose in (
+        "夏洛特沉吟道：“难道是他无意中走入了迷失地带？”",
+        "女仆小姐此时笑吟吟道：“秦小姐难道又忘记了？”",
+        "伤员痛苦地呻吟道：“别碰我的伤口。”",
+    ):
+        assert has_embedded_verse(prose, source_lang="zh") is False
+
+    # Genuine verse recitations still trigger embedded_verse.
+    for verse in (
+        "林远来到青云楼前，吟道：“大漠孤烟直，长河落日圆。”",
+        "他情不自禁便轻声吟道：“含吐缃缥之上，翩跹樽俎之侧……”",
+        "只听见那青年低声吟道：“别来春半，触目柔肠断。砌下落梅如雪乱。”",
+    ):
+        assert has_embedded_verse(verse, source_lang="zh") is True
+
+
+def test_zh_numeral_glossary_name_ignores_chapter_headings_and_counts():
+    terms = [GlossaryTerm(source="十一", target="Eleven", type="person")]
+    sources = [
+        "第七十一章 我要做英雄",
+        "第十一章 第一晚",
+        "第十一回 英雄出世",
+        "十一回 英雄出世",
+        "十一月十一日十一点，他买回十一个苹果。",
+        "十一人齐声答道，两人大战十一回合，他去了十一回才找到。十一回过去了，他仍未成功。",
+        "十一笑了笑，推门走了进来。",
+        "十一回头望去。",
+        "十一回到屋内。",
+    ]
+    drafts = [
+        "Chapter 71: I Want to Be a Hero",
+        "Chapter 11: The First Night",
+        "Chapter 11: A Hero Appears",
+        "Episode 11: A Hero Appears",
+        "At eleven o'clock on November 11, he bought eleven apples.",
+        "All 11 people answered in unison; the two fought 11 rounds, he went 11 times before finding it, and 11 times passed without success.",
+        "Shi Yi smiled and pushed the door open.",
+        "Shi Yi looked back.",
+        "Shi Yi returned inside.",
+    ]
+    report = assess_batch_risk(
+        sources, drafts, source_lang="zh", target_lang="en", glossary_terms=terms
+    )
+    assert _codes(report) == {(6, "glossary_miss"), (7, "glossary_miss"), (8, "glossary_miss")}
+
+
+def test_modern_prose_produces_zero_structural_false_positives():
+    sources = [
+        "夏洛特沉吟道：“他与她近万年的时光没有见面了。”",
+        "不要说是小舢板了，就算是个水性好的人，也未必敢闯入。",
+        "只要不是拆了这个城堡，就没有问题了。",
+        "这不可能是天煞孤星，也不是孤胆英雄。",
+        "“我看你，故意制造事端，好让我们内讧？”",
+        "她比那位霸道的大姨妈也不差多少。",
+        "许久之后，他才缓缓地睁开了眼睛。",
+    ]
+    drafts = [
+        'Charlotte mused, "He and she had not met for nearly ten thousand years."',
+        "Never mind a small rowboat—even a strong swimmer might not dare enter.",
+        "As long as you don't tear down this castle, there's no problem.",
+        "This couldn't be the lone star of calamity, nor a lone hero.",
+        '"I see you are deliberately causing trouble to make us fight?"',
+        "She's no weaker than that overbearing Aunt Lucia.",
+        "A long while later, he slowly opened his eyes.",
+    ]
+    report = assess_batch_risk(sources, drafts, source_lang="zh", target_lang="en")
+    assert report.alerts == ()
+
+
+def test_sparse_editor_system_prompt_includes_concise_reasoning_rule():
+    from wenyi_core.agents.sparse_editor import SparseSemanticEditor
+    from wenyi_core.config import Config
+    from wenyi_core.llm.configuration import LLMConfig
+    from wenyi_core.llm.providers.fake import FakeClient
+
+    seen_systems: list[str] = []
+
+    def handler(messages, op, json_mode):
+        seen_systems.append(messages[0]["content"])
+        return '{"patches": []}'
+
+    cfg = Config(source_lang="zh", target_lang="en", llm=LLMConfig(preset="fake"))
+    fake = FakeClient(handler)
+    editor = SparseSemanticEditor(fake, cfg)
+    res = editor.edit_batch(["天气很好。"], ["The weather was fine."])
+    assert not res.failed
+    assert seen_systems
+    assert "NEVER enumerate, summarize, or check off clean paragraphs" in seen_systems[0]
+    assert fake.calls[-1]["thinking_boost"] == 0
 
 
 # --- consistency_sweep: drift mining ----------------------------------------------------

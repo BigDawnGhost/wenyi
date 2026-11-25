@@ -1,4 +1,4 @@
-"""Sparse source-grounded semantic and craft editor with risk-routed reasoning.
+"""Sparse source-grounded semantic and craft editor.
 
 Replaces full-batch source-blind polishing (which rewrites ~84% of paragraphs without
 seeing the source and fixes zero meaning errors) with a source-aware audit that returns
@@ -8,8 +8,9 @@ JSON patches *only* for paragraphs with genuine fidelity or craft defects:
 - Literalized idioms, missed literary allusions, or stiff translationese calques
 - Broken verse lineation, glossary drift, or inconsistent dialogue punctuation
 
-A deterministic pre-screener (``batch_risk``) flags concrete anomalies and escalates
-thinking effort along the provider's ladder only for high-risk batches.
+A deterministic structural pre-screener (``batch_risk``) flags concrete anomalies as
+compact prompt hints while strictly honoring the user's configured ``polish.body``
+thinking level.
 """
 
 from __future__ import annotations
@@ -75,8 +76,6 @@ class SparseEditResult:
     patched_indices: tuple[int, ...]
     reasons: dict[int, str]
     failed: bool = False
-    thinking_boost: int = 0
-    risk_reasons: tuple[str, ...] = ()
 
 
 def _token_overlap_ratio(a: str, b: str) -> float:
@@ -127,7 +126,7 @@ def _pair_specific_audit_note(src: str, tgt: str) -> str:
 
 
 class SparseSemanticEditor(Agent):
-    """Source-grounded sparse editor using the ``polish.body`` route with risk escalation."""
+    """Source-grounded sparse editor using the configured ``polish.body`` route."""
 
     def edit_batch(
         self,
@@ -160,7 +159,6 @@ class SparseSemanticEditor(Agent):
             glossary_terms=glossary_terms or (),
             variants_by_source=variants_by_source,
         )
-        thinking_boost = 1 if risk.should_escalate else 0
 
         base_system = (
             f"You are a senior bilingual literary editor auditing a {self.src} -> {self.tgt} draft translation "
@@ -184,6 +182,10 @@ class SparseSemanticEditor(Agent):
             + (f"{pair_note}\n" if pair_note else "")
             + f"Language & formatting rules:\n{lang_rules}\n{punct_rule}\n"
             "Preserve every protected marker (e.g. 〘object:...〙 or ⟦...⟧) verbatim if present.\n"
+            "Reasoning efficiency: Read every paragraph against its source carefully, but in your "
+            "internal reasoning NEVER enumerate, summarize, or check off clean paragraphs one by one. "
+            "Note ONLY paragraphs with a suspected defect or a [Pre-screen alerts] item briefly, "
+            "verify them, and output the JSON immediately.\n"
             'Return ONLY JSON: {"patches": [{"index": 0, "reason": "short_tag", "text": "corrected paragraph"}]}. '
             'If every paragraph is faithful and natural, return {"patches": []}.'
         )
@@ -259,14 +261,7 @@ class SparseSemanticEditor(Agent):
             _LOGGER.warning(
                 "Sparse editor prompt does not fit context window (%s); keeping drafts", exc
             )
-            return SparseEditResult(
-                tuple(draft_list),
-                (),
-                {},
-                failed=True,
-                thinking_boost=thinking_boost,
-                risk_reasons=risk.reasons,
-            )
+            return SparseEditResult(tuple(draft_list), (), {}, failed=True)
 
         try:
             data, _raw = self._complete_json_turn(
@@ -275,41 +270,19 @@ class SparseSemanticEditor(Agent):
                     {"role": "user", "content": user_msg},
                 ],
                 operation="polish.body",
-                thinking_boost=thinking_boost,
             )
         except (JsonParseError, TruncatedResponseError, ValueError) as exc:
             _LOGGER.warning("Sparse editor returned invalid output (%s); keeping drafts", exc)
-            return SparseEditResult(
-                tuple(draft_list),
-                (),
-                {},
-                failed=True,
-                thinking_boost=thinking_boost,
-                risk_reasons=risk.reasons,
-            )
+            return SparseEditResult(tuple(draft_list), (), {}, failed=True)
         except Exception as exc:
             if is_resumable_provider_interrupt(exc):
                 raise
             _LOGGER.warning("Sparse editor call failed (%s); keeping drafts", exc)
-            return SparseEditResult(
-                tuple(draft_list),
-                (),
-                {},
-                failed=True,
-                thinking_boost=thinking_boost,
-                risk_reasons=risk.reasons,
-            )
+            return SparseEditResult(tuple(draft_list), (), {}, failed=True)
 
         raw_patches = data.get("patches") if isinstance(data, dict) else None
         if not isinstance(raw_patches, list):
-            return SparseEditResult(
-                tuple(draft_list),
-                (),
-                {},
-                failed=True,
-                thinking_boost=thinking_boost,
-                risk_reasons=risk.reasons,
-            )
+            return SparseEditResult(tuple(draft_list), (), {}, failed=True)
 
         updated = list(draft_list)
         patched_indices: list[int] = []
@@ -346,8 +319,6 @@ class SparseSemanticEditor(Agent):
             patched_indices=tuple(sorted(set(patched_indices))),
             reasons=reasons,
             failed=False,
-            thinking_boost=thinking_boost,
-            risk_reasons=risk.reasons,
         )
 
     def adjudicate_drift(
